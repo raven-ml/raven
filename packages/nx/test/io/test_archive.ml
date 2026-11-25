@@ -17,9 +17,6 @@ module P = Nx.Ptree
 let vec dt xs = Nx.create dt [| Array.length xs |] xs
 let fails_with message f = raises (Failure message) (fun () -> ignore (f ()))
 
-let refuses message f =
-  raises (Invalid_argument message) (fun () -> ignore (f ()))
-
 (* Drawn structures *)
 
 (* A structure and a generator of its values. *)
@@ -165,11 +162,406 @@ let model_with extra =
       Archive.of_value ~prefix:"model" model model_value; Archive.of_list extra;
     ]
 
-let ownership =
+(* A float16, an 8-bit float and an int32 entry. *)
+let entries =
+  Archive.of_list
+    [
+      ("w", Nx.P (vec Nx.float16 [| 1.5; -2. |]));
+      ("q", Nx.P (vec Nx.float8_e4m3fn [| 1. |]));
+      ("count", Nx.P (vec Nx.int32 [| 7l |]));
+    ]
+
+let lists =
+  let x = Nx.P (Nx.zeros Nx.int8 [| 1 |]) in
+  group "Archive.of_list and union"
+    [
+      cases "a name given twice or empty, or in two archives, is refused"
+        ~id:fst
+        [
+          ( "of_list, a name twice",
+            ( "Nx_io.Archive.of_list",
+              fun () -> Archive.of_list [ ("w", x); ("w", x) ] ) );
+          ( "of_list, an empty name",
+            ("Nx_io.Archive.of_list", fun () -> Archive.of_list [ ("", x) ]) );
+          ( "union, a name in two",
+            ( "Nx_io.Archive.union",
+              fun () ->
+                Archive.union
+                  [ Archive.of_list [ ("w", x) ]; Archive.of_list [ ("w", x) ] ]
+            ) );
+        ]
+        (fun (_, (by, f)) -> invalid ~by f);
+      test "union holds the entries of all" (fun () ->
+          equal archive
+            (Archive.of_list [ ("a", x); ("b", x) ])
+            (Archive.union
+               [ Archive.of_list [ ("a", x) ]; Archive.of_list [ ("b", x) ] ]));
+    ]
+
+let names_find =
+  group "Archive.names and find"
+    [
+      test "names are sorted, and an entry is found by its name" (fun () ->
+          equal (list string) [ "count"; "q"; "w" ] (Archive.names entries);
+          is_none ~pp:pp_packed (Archive.find "absent" entries));
+    ]
+
+let tensors =
+  group "Archive.tensor"
+    [
+      prop "tensor is the entry as stored, at its own shape"
+        ~examples:[ empty_case; scalar_case; strided_case; broadcast_case ]
+        (case safetensors_dtypes) (fun c ->
+          Io_support.covers c;
+          let x = value c in
+          let (Nx.P v) = x in
+          let a = Archive.of_list [ ("w", x) ] in
+          equal packed x (Nx.P (Archive.tensor (Nx.dtype v) "w" a)));
+      test "tensor at the stored shape and dtype is the entry as stored"
+        (fun () ->
+          equal packed
+            (Option.get (Archive.find "w" entries))
+            (Nx.P (Archive.tensor ~shape:[| 2 |] Nx.float16 "w" entries)));
+      (* The form nx_io.mli's tensor states. *)
+      cases "tensor refuses, naming the entry, with or without a shape" ~id:fst
+        [
+          ( "another shape",
+            ( "Nx_io.Archive.tensor: w: shape [2] in the archive, [3] asked for",
+              fun () ->
+                Nx.P (Archive.tensor ~shape:[| 3 |] Nx.float16 "w" entries) ) );
+          ( "another dtype",
+            ( "Nx_io.Archive.tensor: w: float16 in the archive, float32 asked \
+               for",
+              fun () ->
+                Nx.P (Archive.tensor ~shape:[| 2 |] Nx.float32 "w" entries) ) );
+          ( "another dtype, no shape",
+            ( "Nx_io.Archive.tensor: w: float16 in the archive, float32 asked \
+               for",
+              fun () -> Nx.P (Archive.tensor Nx.float32 "w" entries) ) );
+          ( "a missing entry",
+            ( "Nx_io.Archive.tensor: x: no entry in the archive",
+              fun () ->
+                Nx.P (Archive.tensor ~shape:[| 2 |] Nx.float16 "x" entries) ) );
+          ( "a missing entry, no shape",
+            ( "Nx_io.Archive.tensor: x: no entry in the archive",
+              fun () -> Nx.P (Archive.tensor Nx.float16 "x" entries) ) );
+        ]
+        (fun (_, (message, f)) -> fails_with message f);
+    ]
+
+(* Float casts *)
+
+type float_dtype = F : (float, 's) D.t -> float_dtype
+
+let float_dtypes = [ F D.Float16; F D.Bfloat16; F D.Float32; F D.Float64 ]
+let float_any = List.map (fun (F dt) -> D.Any dt) float_dtypes
+let pp_float_dtype ppf (F dt) = D.pp ppf dt
+
+(* An element of a float dtype, NaN, -0. or an infinity, each of the three often
+   enough that every run draws it: among [element]'s specials, NaN is too
+   rare. *)
+let cast_element dt =
+  Gen.frequency
+    [
+      (3, element dt);
+      (1, Gen.constant Float.nan);
+      (1, Gen.constant (-0.));
+      (1, Gen.of_list [ Float.infinity; Float.neg_infinity ]);
+    ]
+
+(* A vector of one of the four float dtypes, its elements drawn by
+   [cast_element]. *)
+let float_vector =
+  let open Gen in
+  let* (F dt) = of_list ~pp:pp_float_dtype float_dtypes in
+  let+ vs = array ~size:(int_range 1 8) (cast_element dt) in
+  Case (dt, [| Array.length vs |], vs, Plain)
+
+(* An entry drawn as [case] draws one, or a float vector, a dtype to read it at,
+   and whether the read states the entry's shape. *)
+let float_reads =
+  Gen.triple
+    (Gen.with_pp
+       (fun ppf (Case (dt, s, _, view)) ->
+         Format.fprintf ppf "%a %a %a" D.pp dt pp_shape s pp_view view)
+       (Gen.one_of [ drawn_cases float_any; float_vector ]))
+    (Gen.with_pp pp_float_dtype (Gen.of_list float_dtypes))
+    Gen.bool
+
+(* For each pair of the four, a vector of NaN, -0., both infinities and the
+   source's largest finite value, which a narrower dtype holds as infinity. *)
+let cast_examples =
+  List.concat_map
+    (fun (F src) ->
+      List.map
+        (fun dst ->
+          let f = D.float_format src in
+          ( Case
+              ( src,
+                [| 5 |],
+                [|
+                  Float.nan;
+                  -0.;
+                  Float.infinity;
+                  Float.neg_infinity;
+                  f.max_finite;
+                |],
+                Plain ),
+            dst,
+            true ))
+        float_dtypes)
+    float_dtypes
+
+let floats =
+  group "Archive.float"
+    [
+      prop "float is the entry at dt, cast when the dtypes differ"
+        ~examples:
+          (cast_examples
+          @ List.map
+              (fun c -> (c, F D.Float32, false))
+              [
+                empty_case;
+                scalar_case;
+                strided_case;
+                Case (D.Float32, [| 2 |], [| 1.; 2. |], Broadcast);
+              ])
+        float_reads
+        (fun ((Case (src, s, vs, view) as c), F dt, shaped) ->
+          let x = value c in
+          let (Nx.P v) = x in
+          let cast = Nx.cast dt v in
+          cover "no element" (Array.mem 0 s);
+          cover "0-d" (s = [||] && view <> Broadcast);
+          cover "broadcast" (view = Broadcast);
+          cover "NaN" (has_nan src vs);
+          cover "-0." (has_negative_zero src vs);
+          cover "the entry's dtype" (D.equal (Nx.dtype v) dt);
+          let as64 y = Nx.to_array (Nx.cast Nx.float64 y) in
+          cover "a finite value past the range"
+            (Array.exists2
+               (fun a b -> Float.is_finite a && not (Float.is_finite b))
+               (as64 v) (as64 cast));
+          cover "with a shape" shaped;
+          let expected = if D.equal (Nx.dtype v) dt then x else Nx.P cast in
+          let a = Archive.of_list [ ("w", x) ] in
+          let shape = if shaped then Some (Nx.shape v) else None in
+          equal packed expected (Nx.P (Archive.float ?shape dt "w" a)));
+      test
+        "float at the entry's dtype is the entry as stored, over the file's \
+         pages" (fun () ->
+          let a =
+            Nx_io.load_safetensors
+              (saved "" Nx_io.save_safetensors
+                 (Archive.of_list
+                    [ ("w", Nx.P (vec Nx.float32 [| 1.; -2. |])) ]))
+          in
+          let w = Nx.P (Archive.float ~shape:[| 2 |] Nx.float32 "w" a) in
+          equal packed (find a "w") w;
+          equal memory Over_file (memory_of w));
+      test "each float that casts makes a new value" (fun () ->
+          let a =
+            Archive.of_list [ ("w", Nx.P (vec Nx.float16 [| 1.5; -2. |])) ]
+          in
+          let first = Archive.float Nx.float32 "w" a in
+          let second = Archive.float Nx.float32 "w" a in
+          ignore (Nx.neg (Nx.donate first));
+          equal (array float_exact) [| 1.5; -2. |] (Nx.to_array second));
+      cases "float refuses, naming the entry, with or without a shape" ~id:fst
+        [
+          ( "an integer entry",
+            ( "count",
+              fun () -> Archive.float ~shape:[| 1 |] Nx.float32 "count" entries
+            ) );
+          ( "an integer entry, no shape",
+            ("count", fun () -> Archive.float Nx.float32 "count" entries) );
+          ( "an 8-bit float entry",
+            ("q", fun () -> Archive.float ~shape:[| 1 |] Nx.float32 "q" entries)
+          );
+          ( "a missing entry",
+            ( "absent",
+              fun () -> Archive.float ~shape:[| 1 |] Nx.float32 "absent" entries
+            ) );
+          ( "a missing entry, no shape",
+            ("absent", fun () -> Archive.float Nx.float32 "absent" entries) );
+          ( "another shape",
+            ("w", fun () -> Archive.float ~shape:[| 3 |] Nx.float32 "w" entries)
+          );
+        ]
+        (fun (_, (name, f)) ->
+          raises_match
+            (Exn.failure ~sub:("Nx_io.Archive.float: " ^ name ^ ": "))
+            (fun () -> ignore (f ())));
+      test "float to a dtype outside the four is refused" (fun () ->
+          invalid ~by:"Nx_io.Archive.float" (fun () ->
+              Archive.float Nx.float8_e4m3fn "q" entries));
+    ]
+
+let of_values =
+  group "Archive.of_value"
+    [
+      test "an array is named by its path" (fun () ->
+          let s, x = blocks 2 in
+          equal (list string)
+            [ "blocks.0.b"; "blocks.0.w"; "blocks.1.b"; "blocks.1.w" ]
+            (Archive.names (Archive.of_value s x)));
+      test "an array at the root is named by its prefix" (fun () ->
+          let x = Nx.create Nx.int8 [| 1 |] [| 3 |] in
+          let a = Archive.of_value ~prefix:"w" P.tensor x in
+          equal (list string) [ "w" ] (Archive.names a);
+          equal packed (Nx.P x)
+            (Nx.P (Archive.to_value ~prefix:"w" P.tensor ~like:x a)));
+      test "an entry is the value's array itself" (fun () ->
+          let x = Nx.create Nx.int8 [| 2 |] [| 3; 4 |] in
+          let buffer (Nx.P y) =
+            Nx_array.buffer (Option.get (Nx.Repr.array ~by:"test" y))
+          in
+          let entry = find (Archive.of_value ~prefix:"w" P.tensor x) "w" in
+          satisfies ~claim:"the array's own buffer" pass
+            (fun () -> buffer entry == buffer (Nx.P x))
+            ());
+      (* nx_io.mli states the first message. *)
+      cases
+        "two arrays of one name, or one at the root without a prefix, are \
+         refused"
+        ~id:fst
+        [
+          ( "of_value, two arrays of one name",
+            ( "Nx_io.Archive.of_value: a.b: two arrays have this name",
+              fun () -> ignore (Archive.of_value two (one, one)) ) );
+          ( "to_value, two arrays of one name",
+            ( "Nx_io.Archive.to_value: a.b: ",
+              fun () ->
+                ignore
+                  (Archive.to_value two ~like:(one, one)
+                     (Archive.of_list [ ("a.b", Nx.P one) ])) ) );
+          ( "of_value, an array at the root",
+            ( "Nx_io.Archive.of_value: ",
+              fun () -> ignore (Archive.of_value P.tensor one) ) );
+          ( "to_value, an array at the root",
+            ( "Nx_io.Archive.to_value: ",
+              fun () ->
+                ignore
+                  (Archive.to_value P.tensor ~like:one (Archive.of_list [])) )
+          );
+        ]
+        (fun (_, (sub, f)) -> raises_match (Exn.invalid_arg ~sub) f);
+    ]
+
+(* An absent option: drawn, some seeds reach none in a hundred values. *)
+let absent = S (record ("a", P.option P.tensor) ("b", P.tensor), (None, one))
+
+let to_values =
   let msg = ( ^ ) "Nx_io.Archive.to_value: " in
   let w = Nx.P (vec Nx.float32 [| 1. |]) in
-  group "ownership"
+  group "Archive.to_value"
     [
+      (* 500 cases: an array of a given dtype is in one case in twelve at least,
+         so each dtype is missed with probability below 10^-17, and an empty
+         list, in one in eight, below 10^-28. *)
+      prop ~count:500 "a value read back from its archive is the value"
+        ~examples:[ absent ] (samples safetensors_dtypes) (fun (S (s, x)) ->
+          covers s x;
+          Law.round_trip (value_of s) archive (Archive.of_value s)
+            (Archive.to_value s ~like:(like s x))
+            x);
+      prop
+        "a value read back from a SafeTensors file of its archive is the value"
+        ~count:40 (samples safetensors_dtypes) (fun (S (s, x)) ->
+          Law.round_trip (value_of s) string
+            (fun x ->
+              saved ".safetensors" Nx_io.save_safetensors (Archive.of_value s x))
+            (fun path ->
+              Archive.to_value s ~like:(like s x) (Nx_io.load_safetensors path))
+            x);
+      prop "a value read back from an npz file of its archive is the value"
+        ~count:40 (samples npy_dtypes) (fun (S (s, x)) ->
+          Law.round_trip (value_of s) string
+            (fun x -> saved ".npz" Nx_io.save_npz (Archive.of_value s x))
+            (fun path ->
+              Archive.to_value s ~like:(like s x) (Nx_io.load_npz path))
+            x);
+      test "a one-block model refuses a file of 24 blocks" (fun () ->
+          let s, x = blocks 1 and _, y = blocks 24 in
+          fails_with
+            "Nx_io.Archive.to_value: blocks.1.b: an entry in the archive, no \
+             array in the value" (fun () ->
+              Archive.to_value s ~like:x (Archive.of_value s y)));
+      test "values under two prefixes share a file, each owning its own"
+        (fun () ->
+          let s, x = blocks 1 and _, y = blocks 2 in
+          let path = temp_file () in
+          Nx_io.save_safetensors path
+            (Archive.union
+               [
+                 Archive.of_value ~prefix:"model" s x;
+                 Archive.of_value ~prefix:"ema" s y;
+               ]);
+          let a = Nx_io.load_safetensors path in
+          equal (list string)
+            [
+              "ema.blocks.0.b";
+              "ema.blocks.0.w";
+              "ema.blocks.1.b";
+              "ema.blocks.1.w";
+              "model.blocks.0.b";
+              "model.blocks.0.w";
+            ]
+            (Archive.names a);
+          equal (value_of s) x (Archive.to_value ~prefix:"model" s ~like:x a);
+          equal (value_of s) y (Archive.to_value ~prefix:"ema" s ~like:y a);
+          fails_with
+            "Nx_io.Archive.to_value: model.blocks.0.b: an entry in the \
+             archive, no array in the value" (fun () ->
+              Archive.to_value ~prefix:"model" s ~like:(snd (blocks 0)) a));
+      test "a missing entry, another shape or another dtype is named" (fun () ->
+          let s, x = blocks 1 in
+          let without =
+            Archive.of_list
+              [ ("blocks.0.w", Nx.P (Nx.zeros Nx.float32 [| 2 |])) ]
+          in
+          fails_with
+            "Nx_io.Archive.to_value: blocks.0.b: no entry in the archive, an \
+             array in the value" (fun () -> Archive.to_value s ~like:x without);
+          let shaped =
+            Archive.of_list
+              [
+                ("blocks.0.w", Nx.P (Nx.zeros Nx.float32 [| 3 |]));
+                ("blocks.0.b", Nx.P (Nx.zeros Nx.float32 [| 1 |]));
+              ]
+          in
+          fails_with
+            "Nx_io.Archive.to_value: blocks.0.w: shape [3] in the archive, [2] \
+             in the value" (fun () -> Archive.to_value s ~like:x shaped);
+          let typed =
+            Archive.of_list
+              [
+                ("blocks.0.w", Nx.P (Nx.zeros Nx.float64 [| 2 |]));
+                ("blocks.0.b", Nx.P (Nx.zeros Nx.float32 [| 1 |]));
+              ]
+          in
+          fails_with
+            "Nx_io.Archive.to_value: blocks.0.w: float64 in the archive, \
+             float32 in the value" (fun () -> Archive.to_value s ~like:x typed));
+      test "to_value places each entry where the value's array lies" (fun () ->
+          let module M = (val Nx.devices [ Nx_support.memory 1 ]) in
+          let s = record ("w", P.tensor) ("b", P.tensor) in
+          let w = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]
+          and b = Nx.create Nx.float32 [| 1 |] [| 3. |] in
+          let host = Archive.of_value s (w, b) in
+          let like =
+            ( Nx.place M.on (Nx.zeros_like w),
+              Nx.zeros_at M.on Nx.float32 [| 1 |] )
+          in
+          let w', b' =
+            Archive.to_value (record ("w", P.tensor) ("b", P.tensor)) ~like host
+          in
+          equal
+            (list (placement ()))
+            [ M.on; M.on ]
+            [ Nx.placement w'; Nx.placement b' ];
+          equal (array float_exact) [| 1.; 2. |] (Nx.to_array w');
+          equal (array float_exact) [| 3. |] (Nx.to_array b'));
       cases
         "an entry the value owns and none of its arrays names is refused, \
          naming it"
@@ -217,8 +609,8 @@ let ownership =
           let module M = (val Nx.devices [ device ]) in
           let blocks, scale = model_value in
           let like = (List.map (Nx.place M.on) blocks, Nx.place M.on scale) in
-          (* Donated host entries, which a placement consumes, and a failed
-             read leaves: the scale, read last, has another shape. *)
+          (* Donated host entries, which a placement consumes, and a failed read
+             leaves: the scale, read last, has another shape. *)
           let block () = Nx.donate (Nx.full Nx.float32 [| 2 |] 1.) in
           let entries b0 b1 scale =
             Archive.of_list
@@ -251,369 +643,14 @@ let ownership =
           in
           equal (array float_exact) [| 1.; 1. |]
             (Nx.to_array (List.nth (fst x) 1));
-          (* The placement consumed the entry's handle: a later use reads
-             its elements or raises naming the call that took them. *)
+          (* The placement consumed the entry's handle: a later use reads its
+             elements or raises naming the call that took them. *)
           match Nx.to_array b0 with
           | xs ->
               equal ~msg:"a placed entry" (array float_exact) [| 1.; 1. |] xs
           | exception (Invalid_argument _ as e) ->
               raises_match (Exn.invalid_arg ~sub:"was donated to") (fun () ->
                   raise e));
-    ]
-
-(* An absent option: drawn, some seeds reach none in a hundred values. *)
-let absent = S (record ("a", P.option P.tensor) ("b", P.tensor), (None, one))
-
-let values =
-  group "values"
-    [
-      prop "a value read back from its archive is the value"
-        ~examples:[ absent ] (samples safetensors_dtypes) (fun (S (s, x)) ->
-          covers s x;
-          Law.round_trip (value_of s) archive (Archive.of_value s)
-            (Archive.to_value s ~like:(like s x))
-            x);
-      prop
-        "a value read back from a SafeTensors file of its archive is the value"
-        ~count:40 (samples safetensors_dtypes) (fun (S (s, x)) ->
-          Law.round_trip (value_of s) string
-            (fun x ->
-              saved ".safetensors" Nx_io.save_safetensors (Archive.of_value s x))
-            (fun path ->
-              Archive.to_value s ~like:(like s x) (Nx_io.load_safetensors path))
-            x);
-      prop "a value read back from an npz file of its archive is the value"
-        ~count:40 (samples npy_dtypes) (fun (S (s, x)) ->
-          Law.round_trip (value_of s) string
-            (fun x -> saved ".npz" Nx_io.save_npz (Archive.of_value s x))
-            (fun path ->
-              Archive.to_value s ~like:(like s x) (Nx_io.load_npz path))
-            x);
-      test "an array is named by its path" (fun () ->
-          let s, x = blocks 2 in
-          equal (list string)
-            [ "blocks.0.b"; "blocks.0.w"; "blocks.1.b"; "blocks.1.w" ]
-            (Archive.names (Archive.of_value s x)));
-      test "a one-block model refuses a file of 24 blocks" (fun () ->
-          let s, x = blocks 1 and _, y = blocks 24 in
-          fails_with
-            "Nx_io.Archive.to_value: blocks.1.b: an entry in the archive, no \
-             array in the value" (fun () ->
-              Archive.to_value s ~like:x (Archive.of_value s y)));
-      test "values under two prefixes share a file, each owning its own"
-        (fun () ->
-          let s, x = blocks 1 and _, y = blocks 2 in
-          let path = temp_file () in
-          Nx_io.save_safetensors path
-            (Archive.union
-               [
-                 Archive.of_value ~prefix:"model" s x;
-                 Archive.of_value ~prefix:"ema" s y;
-               ]);
-          let a = Nx_io.load_safetensors path in
-          equal (list string)
-            [
-              "ema.blocks.0.b";
-              "ema.blocks.0.w";
-              "ema.blocks.1.b";
-              "ema.blocks.1.w";
-              "model.blocks.0.b";
-              "model.blocks.0.w";
-            ]
-            (Archive.names a);
-          equal (value_of s) x (Archive.to_value ~prefix:"model" s ~like:x a);
-          equal (value_of s) y (Archive.to_value ~prefix:"ema" s ~like:y a);
-          fails_with
-            "Nx_io.Archive.to_value: model.blocks.0.b: an entry in the \
-             archive, no array in the value" (fun () ->
-              Archive.to_value ~prefix:"model" s ~like:(snd (blocks 0)) a));
-      test "an array at the root is named by its prefix" (fun () ->
-          let x = Nx.create Nx.int8 [| 1 |] [| 3 |] in
-          let a = Archive.of_value ~prefix:"w" P.tensor x in
-          equal (list string) [ "w" ] (Archive.names a);
-          equal packed (Nx.P x)
-            (Nx.P (Archive.to_value ~prefix:"w" P.tensor ~like:x a)));
-      test "a missing entry, another shape or another dtype is named" (fun () ->
-          let s, x = blocks 1 in
-          let without =
-            Archive.of_list
-              [ ("blocks.0.w", Nx.P (Nx.zeros Nx.float32 [| 2 |])) ]
-          in
-          fails_with
-            "Nx_io.Archive.to_value: blocks.0.b: no entry in the archive, an \
-             array in the value" (fun () -> Archive.to_value s ~like:x without);
-          let shaped =
-            Archive.of_list
-              [
-                ("blocks.0.w", Nx.P (Nx.zeros Nx.float32 [| 3 |]));
-                ("blocks.0.b", Nx.P (Nx.zeros Nx.float32 [| 1 |]));
-              ]
-          in
-          fails_with
-            "Nx_io.Archive.to_value: blocks.0.w: shape [3] in the archive, [2] \
-             in the value" (fun () -> Archive.to_value s ~like:x shaped);
-          let typed =
-            Archive.of_list
-              [
-                ("blocks.0.w", Nx.P (Nx.zeros Nx.float64 [| 2 |]));
-                ("blocks.0.b", Nx.P (Nx.zeros Nx.float32 [| 1 |]));
-              ]
-          in
-          fails_with
-            "Nx_io.Archive.to_value: blocks.0.w: float64 in the archive, \
-             float32 in the value" (fun () -> Archive.to_value s ~like:x typed));
-      cases
-        "two arrays of one name, or one at the root without a prefix, are \
-         refused"
-        ~id:fst
-        [
-          ( "of_value, two arrays of one name",
-            ( "Nx_io.Archive.of_value: a.b: two arrays have this name",
-              fun () -> ignore (Archive.of_value two (one, one)) ) );
-          ( "to_value, two arrays of one name",
-            ( "Nx_io.Archive.to_value: a.b: two arrays have this name",
-              fun () ->
-                ignore
-                  (Archive.to_value two ~like:(one, one)
-                     (Archive.of_list [ ("a.b", Nx.P one) ])) ) );
-          ( "of_value, an array at the root",
-            ( "Nx_io.Archive.of_value: an array at the root has no name; give \
-               it a ~prefix",
-              fun () -> ignore (Archive.of_value P.tensor one) ) );
-          ( "to_value, an array at the root",
-            ( "Nx_io.Archive.to_value: an array at the root has no name; give \
-               it a ~prefix",
-              fun () ->
-                ignore
-                  (Archive.to_value P.tensor ~like:one (Archive.of_list [])) )
-          );
-        ]
-        (fun (_, (message, f)) -> refuses message f);
-    ]
-
-(* Float casts *)
-
-type float_dtype = F : (float, 's) D.t -> float_dtype
-
-let float_dtypes = [ F D.Float16; F D.Bfloat16; F D.Float32; F D.Float64 ]
-
-(* An element of a float dtype, NaN, -0. or an infinity, each of the three often
-   enough that every run draws it: among [element]'s specials, NaN is too rare. *)
-let cast_element dt =
-  Gen.frequency
-    [
-      (3, element dt);
-      (1, Gen.constant Float.nan);
-      (1, Gen.constant (-0.));
-      (1, Gen.of_list [ Float.infinity; Float.neg_infinity ]);
-    ]
-
-(* One law per pair of the four float dtypes, over drawn elements: NaN, -0., the
-   infinities and, from a wider dtype, finite values past the narrower's
-   range. *)
-let float_casts =
-  List.concat_map
-    (fun (F src) ->
-      List.map
-        (fun (F dst) ->
-          let narrows =
-            (D.float_format src).max_finite > (D.float_format dst).max_finite
-          in
-          let elements =
-            Gen.with_pp
-              (fun ppf vs ->
-                Format.pp_print_seq
-                  ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-                  (D.pp_value src) ppf (Array.to_seq vs))
-              (Gen.array ~size:(Gen.int_range 1 8) (cast_element src))
-          in
-          prop
-            (D.name src ^ " to " ^ D.name dst)
-            elements
-            (fun vs ->
-              let n = Array.length vs in
-              let x = Nx.create src [| n |] vs in
-              let cast = Nx.cast dst x in
-              cover "NaN" (Array.exists Float.is_nan vs);
-              cover "-0."
-                (Array.exists (fun v -> v = 0. && Float.sign_bit v) vs);
-              cover "an infinity"
-                (Array.exists (fun v -> Float.abs v = Float.infinity) vs);
-              if narrows then
-                cover "a finite value past the range"
-                  (Array.exists2
-                     (fun v w -> Float.is_finite v && not (Float.is_finite w))
-                     vs (Nx.to_array cast));
-              let a = Archive.of_list [ ("x", Nx.P x) ] in
-              equal packed (Nx.P cast)
-                (Nx.P (Archive.float ~shape:[| n |] dst "x" a))))
-        float_dtypes)
-    float_dtypes
-
-let entries =
-  let a =
-    Archive.of_list
-      [
-        ("w", Nx.P (vec Nx.float16 [| 1.5; -2. |]));
-        ("q", Nx.P (vec Nx.float8_e4m3fn [| 1. |]));
-        ("count", Nx.P (vec Nx.int32 [| 7l |]));
-      ]
-  in
-  group "entries"
-    [
-      test "names are sorted, and an entry is found by its name" (fun () ->
-          equal (list string) [ "count"; "q"; "w" ] (Archive.names a);
-          is_none ~pp:pp_packed (Archive.find "absent" a));
-      test "a name given twice or empty, or in two archives, is refused"
-        (fun () ->
-          let x = Nx.P (Nx.zeros Nx.int8 [| 1 |]) in
-          refuses "Nx_io.Archive.of_list: \"w\" is named twice" (fun () ->
-              Archive.of_list [ ("w", x); ("w", x) ]);
-          refuses "Nx_io.Archive.of_list: an empty name" (fun () ->
-              Archive.of_list [ ("", x) ]);
-          refuses "Nx_io.Archive.union: \"w\" is in two archives" (fun () ->
-              Archive.union
-                [ Archive.of_list [ ("w", x) ]; Archive.of_list [ ("w", x) ] ]));
-      test "tensor is an entry as stored, at its shape and dtype" (fun () ->
-          equal packed
-            (Option.get (Archive.find "w" a))
-            (Nx.P (Archive.tensor ~shape:[| 2 |] Nx.float16 "w" a));
-          fails_with
-            "Nx_io.Archive.tensor: w: shape [2] in the archive, [3] asked for"
-            (fun () -> Archive.tensor ~shape:[| 3 |] Nx.float16 "w" a);
-          fails_with
-            "Nx_io.Archive.tensor: w: float16 in the archive, float32 asked for"
-            (fun () -> Archive.tensor ~shape:[| 2 |] Nx.float32 "w" a);
-          fails_with "Nx_io.Archive.tensor: x: no entry in the archive"
-            (fun () -> Archive.tensor ~shape:[| 2 |] Nx.float16 "x" a));
-      cases "float refuses what it does not convert, naming it" ~id:fst
-        [
-          ( "an integer entry",
-            ( Failure
-                "Nx_io.Archive.float: count: int32 in the archive, not \
-                 float16, bfloat16, float32 or float64",
-              fun () -> Archive.float ~shape:[| 1 |] Nx.float32 "count" a ) );
-          ( "an 8-bit float entry",
-            ( Failure
-                "Nx_io.Archive.float: q: float8_e4m3fn in the archive, not \
-                 float16, bfloat16, float32 or float64",
-              fun () -> Archive.float ~shape:[| 1 |] Nx.float32 "q" a ) );
-          ( "a missing entry",
-            ( Failure "Nx_io.Archive.float: absent: no entry in the archive",
-              fun () -> Archive.float ~shape:[| 1 |] Nx.float32 "absent" a ) );
-          ( "another shape",
-            ( Failure
-                "Nx_io.Archive.float: w: shape [2] in the archive, [3] asked \
-                 for",
-              fun () -> Archive.float ~shape:[| 3 |] Nx.float32 "w" a ) );
-        ]
-        (fun (_, (e, f)) -> raises e (fun () -> ignore (f ())));
-      test "float to a dtype outside the four is refused" (fun () ->
-          refuses
-            "Nx_io.Archive.float: float8_e4m3fn is not float16, bfloat16, \
-             float32 or float64" (fun () ->
-              Archive.float ~shape:[| 1 |] Nx.float8_e4m3fn "q" a));
-      test
-        "float at the entry's dtype is the entry as stored, over the file's \
-         pages" (fun () ->
-          let a =
-            Nx_io.load_safetensors
-              (saved "" Nx_io.save_safetensors
-                 (Archive.of_list
-                    [ ("w", Nx.P (vec Nx.float32 [| 1.; -2. |])) ]))
-          in
-          let w = Nx.P (Archive.float ~shape:[| 2 |] Nx.float32 "w" a) in
-          equal packed (find a "w") w;
-          equal memory Over_file (memory_of w));
-      group "float agrees with Nx.cast" float_casts;
-      test "to_value places each entry where the value's array lies"
-        (fun () ->
-          let module M = (val Nx.devices [ Nx_support.memory 1 ]) in
-          let s = record ("w", P.tensor) ("b", P.tensor) in
-          let w = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]
-          and b = Nx.create Nx.float32 [| 1 |] [| 3. |] in
-          let host = Archive.of_value s (w, b) in
-          let like =
-            ( Nx.place M.on (Nx.zeros_like w),
-              Nx.zeros_at M.on Nx.float32 [| 1 |] )
-          in
-          let w', b' =
-            Archive.to_value (record ("w", P.tensor) ("b", P.tensor)) ~like host
-          in
-          equal
-            (list (placement ()))
-            [ M.on; M.on ]
-            [ Nx.placement w'; Nx.placement b' ];
-          equal (array float_exact) [| 1.; 2. |] (Nx.to_array w');
-          equal (array float_exact) [| 3. |] (Nx.to_array b'));
-    ]
-
-(* Reads without a shape *)
-
-let float_any = List.map (fun (F dt) -> D.Any dt) float_dtypes
-
-let float_dtype = Gen.of_list ~pp:(fun ppf (F dt) -> D.pp ppf dt) float_dtypes
-
-(* Without [~shape], a read takes the shape the archive stores: [tensor] is the
-   entry as stored, and [float] the entry, or its cast when the dtypes differ,
-   over drawn values of no element, 0-d and broadcast among others. *)
-let unshaped =
-  group "reads without a shape"
-    [
-      prop "tensor is the entry as stored, at its own shape"
-        (case safetensors_dtypes) (fun c ->
-          Io_support.covers c;
-          let x = value c in
-          let (Nx.P v) = x in
-          let a = Archive.of_list [ ("w", x) ] in
-          equal packed x (Nx.P (Archive.tensor (Nx.dtype v) "w" a)));
-      prop "float is the entry at dt, cast when the dtypes differ"
-        (Gen.pair (case float_any) float_dtype)
-        (fun ((Case (src, s, vs, view) as c), F dt) ->
-          cover "no element" (Array.mem 0 s);
-          cover "0-d" (s = [||] && view <> Broadcast);
-          cover "broadcast" (view = Broadcast);
-          cover "NaN" (has_nan src vs);
-          let x = value c in
-          let (Nx.P v) = x in
-          cover "the entry's dtype" (D.equal (Nx.dtype v) dt);
-          let expected =
-            if D.equal (Nx.dtype v) dt then x else Nx.P (Nx.cast dt v)
-          in
-          let a = Archive.of_list [ ("w", x) ] in
-          equal packed expected (Nx.P (Archive.float dt "w" a)));
-      cases "a read refuses, naming the entry, as with a shape" ~id:fst
-        (let a =
-           Archive.of_list
-             [
-               ("w", Nx.P (vec Nx.float16 [| 1.5; -2. |]));
-               ("count", Nx.P (vec Nx.int32 [| 7l |]));
-             ]
-         in
-         [
-           ( "tensor of a missing entry",
-             ( Failure "Nx_io.Archive.tensor: x: no entry in the archive",
-               fun () -> Nx.P (Archive.tensor Nx.float16 "x" a) ) );
-           ( "tensor at another dtype",
-             ( Failure
-                 "Nx_io.Archive.tensor: w: float16 in the archive, float32 \
-                  asked for",
-               fun () -> Nx.P (Archive.tensor Nx.float32 "w" a) ) );
-           ( "float of a missing entry",
-             ( Failure "Nx_io.Archive.float: x: no entry in the archive",
-               fun () -> Nx.P (Archive.float Nx.float32 "x" a) ) );
-           ( "float of an integer entry",
-             ( Failure
-                 "Nx_io.Archive.float: count: int32 in the archive, not \
-                  float16, bfloat16, float32 or float64",
-               fun () -> Nx.P (Archive.float Nx.float32 "count" a) ) );
-           ( "float to a dtype outside the four",
-             ( Invalid_argument
-                 "Nx_io.Archive.float: float8_e4m3fn is not float16, \
-                  bfloat16, float32 or float64",
-               fun () -> Nx.P (Archive.float Nx.float8_e4m3fn "w" a) ) );
-         ])
-        (fun (_, (e, f)) -> raises e (fun () -> ignore (f ())));
     ]
 
 (* Imports *)
@@ -642,9 +679,7 @@ let verdict read =
   | first :: _ as left -> Error (never_read first (List.length left))
 
 let outcome f a =
-  match Archive.import f a with
-  | () -> Ok ()
-  | exception Failure m -> Error m
+  match Archive.import f a with () -> Ok () | exception Failure m -> Error m
 
 let names_gen = Gen.subsequence ~pp:Format.pp_print_string four_names
 
@@ -697,7 +732,6 @@ type model = {
 
 let session = abstract "s"
 let name = Gen.of_list ~pp:Format.pp_print_string four_names
-
 let noted n m = m.read <- Read.add n m.read
 
 let ended m =
@@ -742,7 +776,8 @@ let imports =
           let ac n = n = "a" || n = "c" in
           Archive.import ~unread:ac (reads [ "b"; "d" ]) four;
           fails_with (never_read "c" 1) (fun () ->
-              Archive.import ~unread:(String.equal "a") (reads [ "b"; "d" ])
+              Archive.import ~unread:(String.equal "a")
+                (reads [ "b"; "d" ])
                 four));
       cases "find, tensor, float and to_value read an entry" ~id:fst
         [
@@ -758,8 +793,7 @@ let imports =
             fun a ->
               ignore
                 (Archive.to_value ~prefix:"a" P.tensor
-                   ~like:(vec Nx.float32 [| 0. |])
-                   a) );
+                   ~like:(vec Nx.float32 [| 0. |]) a) );
         ]
         (fun (_, r) -> Archive.import ~unread:(fun n -> n <> "a") r four);
       test "names reads no entry" (fun () ->
@@ -786,9 +820,7 @@ let imports =
       group "nesting"
         [
           test "an inner import's reads are noted by the outer" (fun () ->
-              Archive.import
-                (fun a -> Archive.import (reads four_names) a)
-                four);
+              Archive.import (fun a -> Archive.import (reads four_names) a) four);
           test "an inner import refuses by its own reads" (fun () ->
               let inner ?unread a =
                 read "a" a;
@@ -813,4 +845,6 @@ let imports =
     ]
 
 let () =
-  exit (run "nx.io archives" [ values; ownership; entries; unshaped; imports ])
+  exit
+    (run "nx.io archives"
+       [ lists; names_find; tensors; floats; imports; of_values; to_values ])
