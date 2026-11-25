@@ -215,33 +215,35 @@ let chebyshev cs t =
   done;
   Nx.add_s (Nx.sub (Nx.mul t !b1) !b2) cs.(0)
 
-(* [neutrino tb y] is F(y) = (120 / 7 pi^4) int_0^inf x^2 sqrt(x^2 + y^2) /
-   (e^x + 1) dx for y >= 0, a massive species' energy over its massless value.
-   Below [f_series_below] it is the series 1 + y^2 (P(y) + c y^2 log y), whose
-   log reads [max y f_log_floor] so that F(0) = 1 and F'(0) = 0 exactly; from
-   [f_asymptotic_from] the expansion y Q(1/y^2); between, a Chebyshev series in
-   log y. *)
+(* [neutrino tb y] is F(y) - 1 for y >= 0, with F(y) = (120 / 7 pi^4) int_0^inf
+   x^2 sqrt(x^2 + y^2) / (e^x + 1) dx a massive species' energy over its
+   massless value. Below [f_series_below] it is the series y^2 (P(y) + c y^2
+   log y), whose log reads [max y f_log_floor] so that F(0) - 1 = 0 and F'(0)
+   = 0 exactly; from [f_asymptotic_from] the expansion y Q(1/y^2) - 1;
+   between, y^2 times a Chebyshev series in log y. No piece subtracts 1 from
+   F where F is near 1: at y = 2^-7, F - 1 = 4.4e-6, and F less 1 would keep it
+   to 2^-35. *)
 let neutrino (tb : T.t) y =
   let small = Nx.less_equal_s y tb.f_series_below in
   let large = Nx.greater_equal_s y tb.f_asymptotic_from in
-  let ys = Nx.minimum_s y tb.f_series_below in
+  (* Each piece reads y where it is selected and its bound elsewhere. A clamp
+     would tie at the bound, where its derivative takes half of y's. *)
+  let ys = Nx.where small y (Nx.full_like y tb.f_series_below) in
   let ys2 = Nx.mul ys ys in
   let log_ys = Nx.log (Nx.maximum_s ys tb.f_log_floor) in
   let series =
-    Nx.add_s
-      (Nx.mul ys2
-         (Nx.add (horner tb.f_series ys)
-            (Nx.mul_s (Nx.mul ys2 log_ys) tb.f_series_log)))
-      1.
+    Nx.mul ys2
+      (Nx.add (horner tb.f_series ys)
+         (Nx.mul_s (Nx.mul ys2 log_ys) tb.f_series_log))
   in
   let ym =
     Nx.minimum_s (Nx.maximum_s y tb.f_series_below) tb.f_asymptotic_from
   in
   let t = Nx.mul_s (Nx.sub_s (Nx.log ym) tb.f_cheb_mid) tb.f_cheb_scale in
-  let middle = chebyshev tb.f_cheb t in
-  let yl = Nx.maximum_s y tb.f_asymptotic_from in
+  let middle = Nx.mul (Nx.mul ym ym) (chebyshev tb.f_cheb t) in
+  let yl = Nx.where large y (Nx.full_like y tb.f_asymptotic_from) in
   let asymptotic =
-    Nx.mul yl (horner tb.f_asymptotic (Nx.recip (Nx.mul yl yl)))
+    Nx.sub_s (Nx.mul yl (horner tb.f_asymptotic (Nx.recip (Nx.mul yl yl)))) 1.
   in
   Nx.where small series (Nx.where large asymptotic middle)
 
@@ -272,8 +274,7 @@ let neutrinos r a =
   | None -> Nx.mul r.omega_g r.ur
   | Some y ->
       let ya = Nx.mul y (Nx.unsqueeze ~axes:[ Nx.ndim a ] a) in
-      let f = Nx.sub_s (neutrino r.tables ya) 1. in
-      let massive = Nx.sum ~axes:[ Nx.ndim ya - 1 ] f in
+      let massive = Nx.sum ~axes:[ Nx.ndim ya - 1 ] (neutrino r.tables ya) in
       Nx.mul r.omega_g (Nx.add r.ur (Nx.mul_s massive r.c_nu))
 
 (* A model is a cosmology read for one call: its payloads in their own units,

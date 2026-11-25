@@ -232,6 +232,36 @@ let check_rows (type b) ?(compiled = false) ~rel (d : (float, b) Nx.dtype)
         (Nx.item [] (Nx.cast Nx.float64 got)))
     rows
 
+(* At N_eff = 0 the neutrinos' density parameter is the massive part alone,
+   Omega_g c_nu (F(y a) - 1) / (a^4 E^2). Over its redshifts model light's
+   y a falls from 0.016 to 1.5e-5, across float64's series and Chebyshev
+   pieces at 2^-7, where F - 1 is 4.4e-6; mild's from 0.24 to 2.2e-4, across
+   float32's at 2^-3. gen/cosmology.py checks F - 1 to 2^-48 of itself in
+   float64 and 2^-20 in float32. The rest adds about 20 roundings: y a
+   carries about 5, which F - 1, near (y a)^2, doubles, and c_nu, Omega_g,
+   their product and the quotient by a^4 E^2 about 10. So the value is within
+   2^-48 + 20 2^-53 < 2^-46 and 2^-20 + 20 2^-24 < 2^-18 of itself. *)
+let massive_part models rows =
+  let check (type b) ~rel (d : (float, b) Nx.dtype) names =
+    let light r =
+      List.mem r.model names && r.fn = "density_parameter:neutrinos"
+    in
+    List.iter
+      (fun r ->
+        let c = cosmology d (List.assoc r.model models) in
+        let got = evaluate r.fn c (Nx.scalar d r.z) in
+        equal ~msg:(row_name r) (float_rel ~rel ~abs:0.) r.value
+          (Nx.item [] (Nx.cast Nx.float64 got)))
+      (List.filter light rows)
+  in
+  group "the massive part, relative to itself"
+    [
+      test "in float64, to 2^-46" (fun () ->
+          check ~rel:0x1p-46 Nx.float64 [ "light"; "mild" ]);
+      test "in float32, to 2^-18" (fun () ->
+          check ~rel:0x1p-18 Nx.float32 [ "light/f32"; "mild/f32" ]);
+    ]
+
 let mpmath =
   let models, rows = read_golden "mpmath.golden" in
   let f32 r = String.ends_with ~suffix:"/f32" r.model in
@@ -245,6 +275,7 @@ let mpmath =
           check_rows ~rel:0x1p-20 Nx.float32 models rows32);
       test "every function compiled, in float64, to 2^-46" (fun () ->
           check_rows ~compiled:true ~rel:0x1p-46 Nx.float64 models rows64);
+      massive_part models rows;
     ]
 
 let class_ =
@@ -518,6 +549,35 @@ let t_ncdm = 0.71611
 let c_ur = 7. /. 8. *. ((4. /. 11.) ** (4. /. 3.))
 let c_nu = 7. /. 8. *. (t_ncdm ** 4.)
 
+(* The mass derivative of the neutrinos' density parameter at N_eff = 0, where
+   it is F'(y) alone up to the budget's response, at each of [masses]. *)
+let mass_derivatives (type b) (d : (float, b) Nx.dtype) masses =
+  let base = cosmology d { planck_like with n_eff = 0.; m_nu = [] } in
+  let omega m =
+    let m_nu = Quantity.v Unit.electronvolt (Nx.reshape [| 1 |] m) in
+    Cosmology.density_parameter { base with m_nu } Neutrinos (Nx.scalar d 0.)
+  in
+  List.map
+    (fun m ->
+      (m, Nx.item [] (Nx.cast Nx.float64 (Rune.grad' omega (Nx.scalar d m)))))
+    masses
+
+(* The 33 masses of a dtype around the one whose y = m c^2 / (k_B T_ncdm
+   T_CMB) is [y_b], at planck_like's T_CMB. y rounds a few times, so the
+   masses step y by about an ulp and reach [y_b] itself. *)
+let mass_of_y y_b = y_b *. (1.380649e-23 /. 1.602176634e-19) *. t_ncdm *. 2.7255
+
+let around64 y_b =
+  let rec walk f x n = if n = 0 then x else walk f (f x) (n - 1) in
+  let m = mass_of_y y_b in
+  List.init 33 (fun i ->
+      if i < 16 then walk Float.pred m (16 - i) else walk Float.succ m (i - 16))
+
+let around32 y_b =
+  let bits = Int32.bits_of_float (mass_of_y y_b) in
+  List.init 33 (fun i ->
+      Int32.float_of_bits (Int32.add bits (Int32.of_int (i - 16))))
+
 let derivatives =
   let point_gen =
     Gen.map
@@ -617,6 +677,27 @@ let derivatives =
                     (dot g e) (item d))
                 (axes x))
             functions);
+      (* Each piece of F - 1 is selected on its range and reads y there; at a
+         bound, a clamp's tie would give it half of y's tangent. From one mass
+         to the next the derivative changes by under 2^-17 where the pieces
+         meet (the float32 Chebyshev piece's derivative error at 24), and a
+         halved tangent by 1/2: 1e-4 separates the two. *)
+      test "the mass derivative is continuous where F's pieces meet" (fun () ->
+          let check (type b) (d : (float, b) Nx.dtype) y_b masses =
+            let rec pairs = function
+              | (m0, g0) :: ((m1, g1) :: _ as rest) ->
+                  equal
+                    ~msg:(Printf.sprintf "y = %h: m = %h and %h" y_b m0 m1)
+                    (float_rel ~rel:1e-4 ~abs:0.) g0 g1;
+                  pairs rest
+              | _ -> ()
+            in
+            pairs (mass_derivatives d masses)
+          in
+          check Nx.float64 0x1p-7 (around64 0x1p-7);
+          check Nx.float64 48. (around64 48.);
+          check Nx.float32 0x1p-3 (around32 0x1p-3);
+          check Nx.float32 24. (around32 24.));
       test "a compiled gradient equals the eager one" (fun () ->
           let x = (cosmology Nx.float64 planck_like, f64 1.5) in
           let g = Rune.grad point (value "distance_modulus") in

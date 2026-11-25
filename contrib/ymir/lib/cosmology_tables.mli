@@ -26,13 +26,13 @@ type t = {
 (** The type for a dtype's tables. [distance_*] and [age_*] are
     Gauss-Legendre rules on \[0, 1\], nodes ascending, weights summing to 1.
 
-    F, the neutrinos' energy function, is
-    [1 + y² (P(y) + f_series_log y² log (max y f_log_floor))] up to
-    [f_series_below], P's coefficients [f_series] from the leading one; the
-    Chebyshev sum [Σ_j f_cheb.(j) T_j(t)] with
-    [t = (log y - f_cheb_mid) f_cheb_scale] between; and [y Q(1/y²)] from
-    [f_asymptotic_from], Q's coefficients [f_asymptotic] from the leading
-    one.
+    F - 1, the excess of the neutrinos' energy function over 1, is
+    [y² (P(y) + f_series_log y² log (max y f_log_floor))] up to
+    [f_series_below], P's coefficients [f_series] from the leading one;
+    [y² Σ_j f_cheb.(j) T_j(t)] with [t = (log y - f_cheb_mid) f_cheb_scale]
+    between; and [y Q(1/y²) - 1] from [f_asymptotic_from], Q's coefficients
+    [f_asymptotic] from the leading one. Each piece sums F - 1 itself: near
+    0, F less 1 would cancel.
 
     [sinc_taylor] and [volume_taylor] are the Taylor polynomials of S and W
     ({!Ymir.Cosmology.transverse}, {!Ymir.Cosmology.comoving_volume}) on

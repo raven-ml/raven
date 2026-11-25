@@ -30,8 +30,9 @@ of models and of values computed for them:
 The mpmath values transcribe the library's model, so they are checked here
 against the independent codes: each CLASS value within 1e-6 and each
 astropy value within 1e-7 of the mpmath value of the same model, relative,
-and absolute for a density parameter. The mpmath model sparse, whose N_eff
-is below its massive species' share, is in neither code.
+and absolute for a density parameter. The mpmath models sparse, light and
+mild, whose N_eff is below their massive species' share, are in neither
+code.
 
 A model line is `model <name> codata=<year> h0=<km s^-1 Mpc^-1>
 omega_cb=... omega_k=... w0=... wa=... t_cmb=<K> n_eff=... m_nu=<eV,...>`,
@@ -95,7 +96,7 @@ def _set_table(table):
 
 def _piece(bounds):
     with mp.workdps(45):
-        return tables.chebyshev_coefficients(bounds[0], bounds[1], n=F_DEGREE)
+        return tables.chebyshev_coefficients(tables.f_exact, bounds[0], bounds[1], n=F_DEGREE)
 
 
 ASYM = [tables.asymptotic_coefficient(k) for k in range(40)]
@@ -184,6 +185,12 @@ MPMATH_MODELS = [
     Spec("dense", 50.0, 2.5, omega_k=-1.0, w0=-1.5, wa=0.3, t_cmb=3.0, n_eff=5.0, m_nu=[1.0]),
     Spec("sparse", 90.0, 0.02, omega_k=0.3, w0=-1.2, wa=0.5, t_cmb=1.0, n_eff=1.0, m_nu=[0.5, 0.001]),
     Spec("heavy", 60.0, 0.4, omega_k=0.0, w0=-0.9, wa=-1.0, m_nu=[0.9, 0.9, 0.9], codata=2018),
+    # N_eff = 0 leaves the neutrinos' density to the massive part, Omega_g
+    # c_nu (F(y a) - 1). Over the redshifts light's y a falls from 0.016 to
+    # 1.5e-5, across float64's series and Chebyshev pieces at 2^-7, where
+    # F - 1 is 4.4e-6; mild's from 0.24 to 2.2e-4, across float32's at 2^-3.
+    Spec("light", 70.0, 0.3, n_eff=0.0, m_nu=[2.7e-6]),
+    Spec("mild", 70.0, 0.3, n_eff=0.0, m_nu=[4e-5]),
 ]
 
 Z_MPMATH = [0.0, 0.01, 0.3, 1.0, 2.3, 10.0, 150.0, 1100.0]
@@ -332,9 +339,10 @@ Z_CLASS = [0.01, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 100.0, 1000.0]
 def class_models():
     """The mpmath models CLASS holds, at the mpmath redshifts: all but
     planck2018, already above; no_radiation, whose T_CMB = 0 CLASS refuses
-    (astropy holds it); and sparse, whose N_eff = 1 is below its two
-    massive species' share, which no reference here holds."""
-    skip = ("planck2018", "no_radiation", "sparse")
+    (astropy holds it); sparse, whose N_eff = 1 is below its two massive
+    species' share, and light and mild, whose N_eff = 0 is below their one's,
+    which no reference here holds."""
+    skip = ("planck2018", "no_radiation", "sparse", "light", "mild")
     return [_at(copy.copy(s), Z_MPMATH) for s in MPMATH_MODELS if s.name not in skip]
 
 

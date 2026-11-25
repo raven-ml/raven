@@ -4,6 +4,11 @@ All notable changes to Ymir are documented in this file.
 
 ## Unreleased
 
+- The massive neutrinos' part of `Cosmology.density_parameter Neutrinos` and
+  its derivative along `m_nu` keep their precision at small masses: at
+  y = m c²/(k_B T_ncdm T_CMB) = 0.016 the part held 2e-11 of itself in float64
+  and 3e-3 in float32, worse at smaller y, and now holds 2^-46 and 2^-18. Where
+  y met a bound of F's pieces, the derivative was half its value.
 - `Direction.reciprocal ~within a b` cross-matches two catalogues by reciprocal
   nearest rows: the triples of `Direction.pairs` whose rows are each other's
   nearest, the lowest row on ties.

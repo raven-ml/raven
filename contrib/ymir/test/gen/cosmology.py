@@ -7,17 +7,20 @@
     uv run contrib/ymir/test/gen/cosmology.py [--check]
 
 Writes contrib/ymir/lib/cosmology_tables.ml: per dtype, the Gauss-Legendre
-rules the distances and ages sum, the pieces of the neutrino function F, and
-the Taylor coefficients of the curvature functions S and W. With --check
-nothing is written, and the run fails if the file would change.
+rules the distances and ages sum, the pieces of F - 1, the excess of the
+neutrino function F over its massless value, and the Taylor coefficients of
+the curvature functions S and W. With --check nothing is written, and the run
+fails if the file would change.
 
 Every number is computed in mpmath and rounded once to the dtype. Before
 writing, the script checks each bound for the tables as rounded:
 
-- F, evaluated as the library evaluates it (the same operations, in the
-  dtype's arithmetic), against mpmath's quadrature of its integral, to
-  2^-48 relative in float64 and 2^-20 in float32, at points spread over
-  every region, the boundaries and their neighbours;
+- F - 1, evaluated as the library evaluates it (the same operations, in the
+  dtype's arithmetic), against mpmath's quadrature of F's integral less 1,
+  to 2^-48 relative in float64 and 2^-20 in float32, at points spread over
+  every region, the boundaries and their neighbours. Each piece sums F - 1
+  itself: F less 1 would leave an error of ulp(1) / (F - 1) relative,
+  about 2^-35 at y = 2^-7;
 - each rule, summed in mpmath with its rounded nodes and weights, against
   mpmath's quadrature of the same integrand, on the validation box's corners
   and cosmologies drawn from it, to a quarter of the library's bound (2^-46
@@ -94,15 +97,17 @@ def f_exact(y):
     return K * mp.quad(f, points + [mp.inf])
 
 
-# Small y: F = 1 + y^2 (c2 + c4 y^2 + c5 y^3 + c_log y^2 log y) + O(y^6). The
-# coefficients come from the Mellin transform of the integrand: c2 from
-# int x/(e^x+1) = pi^2/12, c_log from the Fermi function's value 1/2 at 0, c5
-# from its slope -1/4, and c4 from the double pole at y^4, here by Richardson
-# extrapolation of the remainder.
+# Small y: F - 1 = y^2 (c2 + c4 y^2 + c5 y^3 + c6 y^4 + c7 y^5 + c_log y^2 log
+# y) + O(y^8). The coefficients come from the Mellin transform of the
+# integrand: c2 from int x/(e^x+1) = pi^2/12, c_log from the Fermi function's
+# value 1/2 at 0, c5 from its slope -1/4, c6 and c7 as below, and c4 from the
+# double pole at y^4, here by Richardson extrapolation of the remainder.
 C2 = K * mp.pi**2 / 24
 C_LOG = K / 16
 C5 = -K / 30
-# The y^6 and y^7 terms, which the extrapolation of c4 removes.
+# The y^6 and y^7 terms, which the extrapolation of c4 removes. Relative to
+# F - 1 they are of order y^4 and y^5, above 2^-51 at y = 2^-7, so the series
+# sums them.
 C6 = K * mp.binomial(mpf(1) / 2, 3) * mp.diff(mp.altzeta, -2) / 2
 C7 = -K / 630
 
@@ -133,11 +138,19 @@ def asymptotic_coefficient(k):
     return K * mp.binomial(mpf(1) / 2, k) * mp.gamma(3 + 2 * k) * mp.altzeta(3 + 2 * k)
 
 
-# Chebyshev series in log y over [lo, hi].
-def chebyshev_coefficients(lo, hi, n=96):
+def g_exact(y):
+    """G(y) = (F(y) - 1) / y^2, which the Chebyshev piece sums: it falls from
+    c2 at 0 to about K Gamma(3) eta(3) / y at large y, with no cancellation
+    between, and y^2 G is F - 1 to two roundings."""
+    y = mpf(y)
+    return (f_exact(y) - 1) / (y * y)
+
+
+# [f]'s Chebyshev series in log y over [lo, hi].
+def chebyshev_coefficients(f, lo, hi, n=96):
     a, b = mp.log(lo), mp.log(hi)
     xs = [mp.cos(mp.pi * (k + mpf(1) / 2) / n) for k in range(n)]
-    fs = [f_exact(mp.exp((a + b) / 2 + (b - a) / 2 * x)) for x in xs]
+    fs = [f(mp.exp((a + b) / 2 + (b - a) / 2 * x)) for x in xs]
     cs = []
     for j in range(n):
         s = mp.fsum(fs[k] * mp.cos(mp.pi * j * (k + mpf(1) / 2) / n) for k in range(n))
@@ -146,7 +159,7 @@ def chebyshev_coefficients(lo, hi, n=96):
 
 
 class Neutrino:
-    """F's pieces for a format, as the library sums them."""
+    """The pieces of F - 1 for a format, as the library sums them."""
 
     def __init__(self, fmt, series_below, asymptotic_from, cheb, asym):
         r = fmt.round
@@ -154,7 +167,7 @@ class Neutrino:
         self.series_below = r(series_below)
         self.asymptotic_from = r(asymptotic_from)
         self.log_floor = fmt.min_normal
-        self.series = [r(C5), r(C4), 0.0, r(C2)]
+        self.series = [r(C7), r(C6), r(C5), r(C4), 0.0, r(C2)]
         self.series_log = r(C_LOG)
         lo, hi = mp.log(self.series_below), mp.log(self.asymptotic_from)
         self.cheb_mid = r((lo + hi) / 2)
@@ -180,30 +193,38 @@ class Neutrino:
             ys2 = t(ys * ys)
             lg = log(max(ys, lit(self.log_floor)))
             inner = t(horner(self.series, ys) + t(t(ys2 * lg) * lit(self.series_log)))
-            return t(t(ys2 * inner) + lit(1.0))
+            return t(ys2 * inner)
         if y >= lit(self.asymptotic_from):
             r = t(lit(1.0) / t(y * y))
-            return t(y * horner(self.asymptotic, r))
+            return t(t(y * horner(self.asymptotic, r)) - lit(1.0))
         x = t(t(log(y) - lit(self.cheb_mid)) * lit(self.cheb_scale))
         cs = self.cheb
         x2 = t(x * lit(2.0))
         b1, b2 = lit(cs[-1]), lit(0.0)
         for c in reversed(cs[1:-1]):
             b1, b2 = t(t(t(x2 * b1) - b2) + lit(c)), b1
-        return t(t(t(x * b1) - b2) + lit(cs[0]))
+        g = t(t(t(x * b1) - b2) + lit(cs[0]))
+        return t(t(y * y) * g)
+
+
+def series_excess(y):
+    y = mpf(y)
+    p = C2 + C4 * y**2 + C5 * y**3 + C6 * y**4 + C7 * y**5
+    return y**2 * (p + C_LOG * y**2 * mp.log(y))
 
 
 def choose_neutrino(fmt):
-    """The cheapest pieces of F that meet the format's bound: the series below
-    the largest power of two it reaches, then for each candidate start of the
-    asymptotic expansion, its fewest terms and the fewest Chebyshev
-    coefficients between, minimising their total."""
+    """The cheapest pieces of F - 1 that meet the format's bound, relative to
+    F - 1: the series below the largest power of two it reaches, then for each
+    candidate start of the asymptotic expansion, its fewest terms and the
+    fewest Chebyshev coefficients between, minimising their total. A
+    Chebyshev tail is absolute in G, so it is held to the target times G's
+    least value on the range."""
     target = F_BOUND[fmt.name] / 8
 
     def series_error(y):
         y = mpf(y)
-        approx = 1 + y**2 * (C2 + C4 * y**2 + C5 * y**3 + C_LOG * y**2 * mp.log(y))
-        return abs(approx / f_exact(y) - 1)
+        return abs(series_excess(y) / (f_exact(y) - 1) - 1)
 
     series_below = max(
         2.0**-k for k in range(1, 40) if series_error(2.0**-k) <= target
@@ -212,18 +233,22 @@ def choose_neutrino(fmt):
     best = None
     for start in [16, 20, 24, 32, 40, 48, 64]:
         y = mpf(start)
-        ref = f_exact(y)
+        ref = f_exact(y) - 1
         terms = None
         for n in range(1, 40):
-            s = y * mp.fsum(asym[k] * y ** (-2 * k) for k in range(n))
+            s = y * mp.fsum(asym[k] * y ** (-2 * k) for k in range(n)) - 1
             if abs(s / ref - 1) <= target:
                 terms = n
                 break
         if terms is None:
             continue
-        cs = chebyshev_coefficients(mpf(series_below), y)
+        lo = mpf(series_below)
+        cs = chebyshev_coefficients(g_exact, lo, y)
+        floor = min(g_exact(lo * (y / lo) ** (mpf(i) / 32)) for i in range(33))
         degree = next(
-            d for d in range(len(cs)) if mp.fsum(abs(c) for c in cs[d + 1 :]) <= target
+            d
+            for d in range(len(cs))
+            if mp.fsum(abs(c) for c in cs[d + 1 :]) <= target * floor
         )
         cost = terms + degree
         if best is None or cost < best[0]:
@@ -233,7 +258,8 @@ def choose_neutrino(fmt):
 
 
 def check_neutrino(nu):
-    """F's error, as the library evaluates it, at points over every region."""
+    """The error of F - 1 as the library evaluates it, relative to F - 1, at
+    points over every region; at 0, F - 1 must be 0 exactly."""
     fmt = nu.fmt
     points = {0.0}
     lo, hi = math.log(1e-6), math.log(1e5)
@@ -248,22 +274,25 @@ def check_neutrino(nu):
         for _ in range(3):
             x = np.nextafter(x, fmt.np(0))
             points.add(float(x))
+    if nu.eval(0.0) != 0:
+        sys.exit(f"F - 1 {fmt.name}: {nu.eval(0.0)} at 0")
+    points.discard(0.0)
     worst = (0.0, None)
     for y in sorted(points):
         got = nu.eval(y)
-        err = abs(mpf(float(got)) / f_exact(mpf(y)) - 1)
+        err = abs(mpf(float(got)) / (f_exact(mpf(y)) - 1) - 1)
         if err > worst[0]:
             worst = (float(err), y)
     bound = F_BOUND[fmt.name]
     print(
-        f"F {fmt.name}: series below {nu.series_below}, Chebyshev degree "
+        f"F - 1 {fmt.name}: series below {nu.series_below}, Chebyshev degree "
         f"{len(nu.cheb) - 1}, asymptotic from {nu.asymptotic_from} with "
         f"{len(nu.asymptotic)} terms; worst error 2^{math.log2(worst[0]):.1f} "
         f"at y = {worst[1]} (bound 2^{math.log2(bound):.0f})",
         file=sys.stderr,
     )
     if worst[0] > bound:
-        sys.exit(f"F {fmt.name}: error {worst[0]} above the bound {bound}")
+        sys.exit(f"F - 1 {fmt.name}: error {worst[0]} above the bound {bound}")
 
 
 # Curvature: S(x) = sum_n x^n / (2n+1)! and W(x) = sum_(n>=1) 4^n x^(n-1) /
@@ -320,21 +349,21 @@ def gauss_legendre(n):
 # The rules' check
 
 
-def f_fast(nu, y):
-    """F(y) from [nu]'s pieces in mpmath, unrounded coefficients: within
-    2^-51 of F, the integrand's F in the rules' check, where both sides of
-    each comparison read it."""
+def excess_fast(nu, y):
+    """F(y) - 1 from [nu]'s pieces in mpmath, unrounded coefficients: within
+    2^-51 of it, the integrand's F - 1 in the rules' check, where both sides
+    of each comparison read it."""
     y = abs(mpf(y))
     if y <= nu.series_below_mp:
         if y == 0:
-            return mpf(1)
-        return 1 + y**2 * (C2 + C4 * y**2 + C5 * y**3 + C_LOG * y**2 * mp.log(y))
+            return mpf(0)
+        return series_excess(y)
     if y >= nu.asymptotic_from_mp:
         r = 1 / (y * y)
-        return y * mp.fsum(a * r**k for k, a in enumerate(nu.asym_mp))
+        return y * mp.fsum(a * r**k for k, a in enumerate(nu.asym_mp)) - 1
     lo, hi = mp.log(nu.series_below_mp), mp.log(nu.asymptotic_from_mp)
     x = (2 * mp.log(y) - lo - hi) / (hi - lo)
-    return _cheb(nu.cheb_mp, x)
+    return y * y * _cheb(nu.cheb_mp, x)
 
 
 def _cheb(cs, x):
@@ -373,7 +402,7 @@ class Model:
         self.omega_de = 1 - self.omega_cb - self.omega_k - self.radiation(mpf(1))
 
     def radiation(self, a):
-        massive = mp.fsum(f_fast(self.nu, y * a) - 1 for y in self.y)
+        massive = mp.fsum(excess_fast(self.nu, y * a) for y in self.y)
         return self.omega_g + self.omega_g * (self.ur + C_NU * massive)
 
     def terms(self, a, ln_a, one_minus_a):
@@ -524,14 +553,14 @@ def measure(args):
 
 FIELDS = """\
 (* The tables of a compute dtype. [distance_*] and [age_*] are Gauss-Legendre
-   rules on [0, 1], nodes ascending, weights summing to 1. F, the neutrinos'
-   energy function, is 1 + y^2 (P(y) + [f_series_log] y^2 log (max y
-   [f_log_floor])) up to [f_series_below], P's coefficients [f_series] from
-   the leading one; sum_j [f_cheb].(j) T_j(t) with t = (log y - [f_cheb_mid])
-   [f_cheb_scale] between; and y Q(1/y^2) from [f_asymptotic_from], Q's
-   coefficients [f_asymptotic] from the leading one. [sinc_taylor] and
-   [volume_taylor] are the Taylor polynomials of S and W on [-1, 1], from the
-   leading coefficient. *)
+   rules on [0, 1], nodes ascending, weights summing to 1. F - 1, the excess
+   of the neutrinos' energy function over 1, is y^2 (P(y) + [f_series_log] y^2
+   log (max y [f_log_floor])) up to [f_series_below], P's coefficients
+   [f_series] from the leading one; y^2 sum_j [f_cheb].(j) T_j(t) with t =
+   (log y - [f_cheb_mid]) [f_cheb_scale] between; and y Q(1/y^2) - 1 from
+   [f_asymptotic_from], Q's coefficients [f_asymptotic] from the leading
+   one. [sinc_taylor] and [volume_taylor] are the Taylor polynomials of S and
+   W on [-1, 1], from the leading coefficient. *)
 type t = {
   distance_nodes : float array;
   distance_weights : float array;
@@ -651,7 +680,7 @@ COUNTS = {"float32": [16, 20, 24, 32], "float64": [48, 56, 64, 72, 80]}
 def prepare_fast(nu):
     nu.series_below_mp = mpf(nu.series_below)
     nu.asymptotic_from_mp = mpf(nu.asymptotic_from)
-    nu.cheb_mp = chebyshev_coefficients(nu.series_below_mp, nu.asymptotic_from_mp)[: len(nu.cheb) + 8]
+    nu.cheb_mp = chebyshev_coefficients(g_exact, nu.series_below_mp, nu.asymptotic_from_mp)[: len(nu.cheb) + 8]
     nu.asym_mp = [asymptotic_coefficient(k) for k in range(len(nu.asymptotic))]
 
 
