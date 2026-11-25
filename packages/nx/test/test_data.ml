@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Data in and out: values made from OCaml data, and the reads that give a
-   value's elements back, at every dtype and brand. *)
+(* nx.mli's values from OCaml data and the reads that give a value's elements
+   back, at every dtype and brand, with unpack, Host and Repr's reads, which
+   take and give the same data. *)
 
 open Windtrap
 open Nx_support
@@ -17,11 +18,17 @@ let m = Nx_support.memory
 module S2 = (val Nx.devices [ m 0; m 1 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
+let f32 = Nx.float32
+let floats s = Array.init (Array.fold_left ( * ) 1 s) float_of_int
+
+(* [by]'s raises, each row a reason and a call. *)
+let raises_naming by rows =
+  cases "raises naming itself" ~id:fst rows (fun (_, f) -> invalid ~by f)
+
+let r reason f = (reason, fun () -> ignore (f ()))
 
 (* Elements *)
 
-(* Two elements of [dt] are one value: floats by their bits, any two NaNs
-   alike. *)
 (* Values of [dt] at shape [s], from drawn bytes: every value of the format,
    NaNs, signed zeros and infinities among them. *)
 let drawn (type v s) (dt : (v, s) D.t) s : v array Gen.t =
@@ -34,79 +41,68 @@ let drawn (type v s) (dt : (v, s) D.t) s : v array Gen.t =
     | _ -> data
   in
   A.to_array
-    (A.v dt (L.contiguous (Iarray.of_array s))
+    (A.v dt
+       (L.contiguous (Iarray.of_array s))
        (Rig.Buffer.of_string (if data = "" then "\000" else data)))
 
-let shape =
+let shape ~min =
   Gen.array ~size:(Gen.int_range 0 3)
-    (Gen.frequency [ (1, Gen.constant 0); (1, Gen.constant 1); (4, Gen.int_range 2 4) ])
+    (Gen.frequency
+       [ (1, Gen.constant min); (1, Gen.constant 1); (4, Gen.int_range 2 4) ])
 
 type case = Case : ('v, 's) D.t * int array * 'v array -> case
 
-let cases_gen =
-  let open Gen in
-  let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) D.all in
-  let* s = shape in
-  let+ vs = drawn dt s in
-  Case (dt, s, vs)
+let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 
-let case =
+(* Values of [dtypes], of shapes whose extents are at least [min]. *)
+let case ?(min = 0) dtypes =
   Gen.with_pp
     (fun ppf (Case (dt, s, _)) -> Format.fprintf ppf "%a %a" D.pp dt pp_ints s)
-    cases_gen
-
-let floats s = Array.init (Array.fold_left ( * ) 1 s) float_of_int
-let f32 = Nx.float32
-
-(* From OCaml values *)
+    (let open Gen in
+     let* (D.Any dt) = of_list ~pp:pp_dtype dtypes in
+     let* s = shape ~min in
+     let+ vs = drawn dt s in
+     Case (dt, s, vs))
 
 (* A float is stored as [Dtype.of_float] says. *)
 let stored (type v s) (dt : (v, s) D.t) (v : v) : v =
   match D.kind dt with D.Float -> D.of_float dt v | _ -> v
 
-let law_round_trip (Case (dt, s, vs)) =
-  cover "no element" (Array.exists (( = ) 0) s);
-  cover "rank 0" (s = [||]);
-  let x = Nx.create dt s vs in
-  equal (array int) s (Nx.shape x);
-  equal_elements dt (Array.map (stored dt) vs) (Nx.to_array x)
+type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
 
-(* [item i x] is the element of [to_array x] at [i]'s position in C order,
-   written with positive or negative positions. *)
-let law_item (Case (dt, s, vs), (seed, negative)) =
-  assume (Array.length vs > 0);
-  let flat = seed mod Array.length vs in
-  let i = Array.make (Array.length s) 0 and j = ref flat in
-  for a = Array.length s - 1 downto 0 do
-    i.(a) <- !j mod s.(a);
-    j := !j / s.(a)
-  done;
-  let p = Array.mapi (fun a q -> if negative then q - s.(a) else q) i in
-  cover "negative" negative;
-  equal (elements dt) [ vs.(flat) ]
-    [ Nx.item (Array.to_list p) (Nx.create dt s vs) ]
+let mark i ~by op = Nx.Prim.results ~by (fun _ f -> Nx.Prim.traced i f Mark) op
 
-let test_init_order () =
-  let calls = ref [] in
-  let x =
-    Nx.init Nx.int32 [| 2; 3 |] (fun i ->
-        calls := Array.copy i :: !calls;
-        Int32.of_int ((10 * i.(0)) + i.(1)))
-  in
-  equal (list (array int))
-    [ [| 0; 0 |]; [| 0; 1 |]; [| 0; 2 |]; [| 1; 0 |]; [| 1; 1 |]; [| 1; 2 |] ]
-    (List.rev !calls);
-  equal (array int32) [| 0l; 1l; 2l; 10l; 11l; 12l |] (Nx.to_array x)
-
-let test_init_fresh_index () =
-  let kept = ref [] in
-  let _ = Nx.init Nx.int8 [| 3 |] (fun i -> kept := i :: !kept; 0) in
-  equal (list (array int)) [ [| 2 |]; [| 1 |]; [| 0 |] ] !kept
-
-let test_unpack () =
+(* [f] of a value traced by the interpretation [test.reads]. *)
+let traced f =
   let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
-  equal (array float_exact) [| 1.; 2. |] (Nx.to_array (Nx.unpack f32 (Nx.P x)));
-  invalid ~by:"Nx.unpack" (fun () -> Nx.unpack Nx.int32 (Nx.P x))
+  Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
+      f (Nx.Prim.traced i (Nx.Prim.form x) Mark))
+
+(* A value another operation consumed: dead. *)
+let dead () =
+  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
+  ignore (Nx.neg (Nx.donate x));
+  x
+
+(* unpack *)
+
+let unpack =
+  group "unpack"
+    [
+      test "is the value at its own dtype, and names both dtypes otherwise"
+        (fun () ->
+          let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
+          equal (array float_exact) [| 1.; 2. |]
+            (Nx.to_array (Nx.unpack f32 (Nx.P x)));
+          match Nx.unpack Nx.int32 (Nx.P x) with
+          | _ -> fail "Nx.unpack raised nothing"
+          | exception Invalid_argument m ->
+              starts_with ~prefix:"Nx.unpack: " m;
+              contains ~sub:"float32" m;
+              contains ~sub:"int32" m);
+    ]
+
+(* Host *)
 
 (* A fresh flat bigarray of [n] elements of [k]. *)
 let vector k n = Bigarray.Array1.create k Bigarray.c_layout n
@@ -119,268 +115,392 @@ let misaligned () =
       output_string oc (String.make 9 'a'));
   let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
   Fun.protect
-    ~finally:(fun () -> Unix.close fd; Sys.remove path)
+    ~finally:(fun () ->
+      Unix.close fd;
+      Sys.remove path)
     (fun () ->
       Bigarray.array1_of_genarray
         (Unix.map_file fd ~pos:1L Bigarray.float32 Bigarray.c_layout false
            [| 2 |]))
 
-let refusals =
-  [
-    ( "create: too few values",
-      fun () -> ignore (Nx.create f32 [| 2; 2 |] [| 1.; 2.; 3. |]) );
-    ( "create: a negative extent",
-      fun () -> ignore (Nx.create f32 [| -1 |] [||]) );
-    ( "create: an int outside the dtype",
-      fun () -> ignore (Nx.create Nx.uint8 [| 1 |] [| 256 |]) );
-    ( "create: an int below the dtype",
-      fun () -> ignore (Nx.create Nx.int4 [| 1 |] [| -9 |]) );
-    ("init: a negative extent", fun () -> ignore (Nx.init f32 [| -2 |] (fun _ -> 0.)));
-    ( "item: too few positions",
-      fun () -> ignore (Nx.item [ 0 ] (Nx.zeros f32 [| 2; 2 |])) );
-    ( "item: a position past the axis",
-      fun () -> ignore (Nx.item [ 2 ] (Nx.zeros f32 [| 2 |])) );
-    ( "item: a position before the axis",
-      fun () -> ignore (Nx.item [ -3 ] (Nx.zeros f32 [| 2 |])) );
-    ( "item: an empty axis",
-      fun () -> ignore (Nx.item [ 0 ] (Nx.zeros f32 [| 0 |])) );
-    ( "of_bigarray: a char bigarray",
-      fun () ->
-        ignore
-          (Nx.of_bigarray (Bigarray.Genarray.create Bigarray.char Bigarray.c_layout [| 2 |]))
-    );
-    ( "Host.wrap: a shape of other elements",
-      fun () ->
-        ignore (Nx.Host.wrap [| 2; 2 |] (vector Bigarray.float32 3))
-    );
-    ( "Host.wrap: a negative extent",
-      fun () ->
-        ignore (Nx.Host.wrap [| -1; -2 |] (vector Bigarray.float32 2))
-    );
-    ( "Host.wrap: a char bigarray",
-      fun () ->
-        ignore (Nx.Host.wrap [| 2 |] (vector Bigarray.char 2))
-    );
-    ( "Host.wrap: data not aligned for its elements",
-      fun () -> ignore (Nx.Host.wrap [| 2 |] (misaligned ())) );
-    ( "Host.read: a dtype with no Bigarray kind",
-      fun () -> Nx.Host.read (Nx.zeros Nx.bfloat16 [| 2 |]) ignore );
-    ( "Host.read: a dead value",
-      fun () ->
-        let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
-        ignore (Nx.neg (Nx.donate x));
-        Nx.Host.read x ignore );
-  ]
-
-let name_of label = "Nx." ^ String.sub label 0 (String.index label ':')
-
-let ocaml =
-  group "from OCaml values"
-    [
-      prop "to_array (create dt s vs) is vs as dt stores them" case law_round_trip;
-      prop "item reads to_array's element at its index"
-        (Gen.pair case (Gen.pair Gen.nat Gen.bool))
-        law_item;
-      test "init calls f once per index, in C order" test_init_order;
-      test "init gives f a fresh index each call" test_init_fresh_index;
-      test "unpack fixes the dtype or names both" test_unpack;
-      cases "refusals name the function" ~id:fst refusals (fun (label, f) ->
-          invalid ~by:(name_of label) f);
-    ]
-
-(* Bigarrays *)
-
-let test_bigarray_round_trip () =
-  let b = Bigarray.Genarray.create Bigarray.float64 Bigarray.c_layout [| 2; 3 |] in
-  for i = 0 to 1 do
-    for j = 0 to 2 do
-      Bigarray.Genarray.set b [| i; j |] (float_of_int ((3 * i) + j))
-    done
-  done;
-  let x = Nx.of_bigarray b in
-  equal (array int) [| 2; 3 |] (Nx.shape x);
-  Bigarray.Genarray.set b [| 0; 0 |] 99.;
-  equal (array float_exact) [| 0.; 1.; 2.; 3.; 4.; 5. |] (Nx.to_array x);
-  let c = Nx.to_bigarray Bigarray.float64 x in
-  equal (array int) [| 2; 3 |] (Bigarray.Genarray.dims c);
-  Bigarray.Genarray.set c [| 1; 2 |] 77.;
-  equal float_exact 5. (Nx.item [ 1; 2 ] x)
-
-let test_bigarray_kinds () =
-  let ints = Nx.to_bigarray Bigarray.int8_unsigned (Nx.create Nx.uint8 [| 2 |] [| 0; 255 |]) in
-  equal int 255 (Bigarray.Genarray.get ints [| 1 |]);
-  let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 1.5; im = -0. } |] in
-  let back = Nx.of_bigarray (Nx.to_bigarray Bigarray.complex32 z) in
-  equal_elements Nx.complex64 (Nx.to_array z) (Nx.to_array back);
-  let h = Nx.to_bigarray Bigarray.float16 (Nx.create Nx.float16 [||] [| 0.5 |]) in
-  equal float_exact 0.5 (Bigarray.Genarray.get h [||])
-
-(* A host value of [s] holding [vs], read through a view that is not
-   C-contiguous where [view] asks for one: [x]'s elements are [vs] in C order
-   either way. *)
-let viewed (type v s) (dt : (v, s) D.t) s vs view =
-  let x = Nx.create dt s vs in
-  match view with
-  | `Whole -> (x, Array.map (stored dt) vs)
-  | `Flipped ->
-      let y = Nx.flip x in
-      (y, Nx.to_array y)
-  | `Broadcast ->
-      let y = Nx.broadcast_to (Array.append [| 2 |] s) x in
-      (y, Nx.to_array y)
-  | `Row ->
-      (* The second of two copies: C-contiguous, at an offset. *)
-      let y = Nx.get [ 1 ] (Nx.stack [ x; x ]) in
-      (y, Array.map (stored dt) vs)
-
-let views =
-  Gen.of_list
-    ~pp:(fun ppf v ->
-      Format.pp_print_string ppf
-        (match v with
-        | `Whole -> "whole"
-        | `Flipped -> "flipped"
-        | `Broadcast -> "broadcast"
-        | `Row -> "a row at an offset"))
-    [ `Whole; `Flipped; `Broadcast; `Row ]
-
-(* [Host.read] gives a host value's elements in C order, at every dtype a
-   bigarray holds, through views of any strides. *)
-let law_host_read (Case (dt, s, vs), view) =
-  assume (D.to_bigarray_kind dt <> None);
+(* The layouts Host.read reads through, of a value of [Case]'s shape: in place
+   where C-contiguous, at an offset among them, else a copy. *)
+let law_host_read (Case (dt, s, vs), l) =
   cover "no element" (Array.exists (( = ) 0) s);
   cover "rank 0" (s = [||]);
-  cover "a view" (view <> `Whole);
-  let x, want = viewed dt s vs view in
+  cover "C-contiguous at an offset"
+    (l = At_offset && not (Array.exists (( = ) 0) s));
+  cover "a view" (l <> C_order && l <> At_offset);
+  let x, want = laid l dt s (Array.map (stored dt) vs) in
   let got =
     Nx.Host.read x (fun b ->
         Array.init (Bigarray.Array1.dim b) (Bigarray.Array1.get b))
   in
   equal_elements dt want got
 
-let test_host_wrap () =
-  let c = Bigarray.c_layout in
-  let b = Bigarray.Array1.init Bigarray.float32 c 6 float_of_int in
-  let x = Nx.Host.wrap [| 2; 3 |] b in
-  equal (array int) [| 2; 3 |] (Nx.shape x);
-  equal (array float_exact) [| 0.; 1.; 2.; 3.; 4.; 5. |] (Nx.to_array x);
-  equal (array float_exact) [| 3.; 4.; 5. |] (Nx.to_array (Nx.get [ 1 ] x));
-  let one = Bigarray.Array1.init Bigarray.int64 c 1 Int64.of_int in
-  equal (array int) [||] (Nx.shape (Nx.Host.wrap [||] one));
-  let none = vector Bigarray.int8_unsigned 0 in
-  equal (array int) [| 0; 3 |] (Nx.shape (Nx.Host.wrap [| 0; 3 |] none))
+let held_by_bigarray =
+  List.filter (fun (D.Any dt) -> D.to_bigarray_kind dt <> None) D.all
 
-let test_host_wrap_not_donated () =
-  let c = Bigarray.c_layout in
-  let b = Bigarray.Array1.init Bigarray.float32 c 3 Float.of_int in
-  ignore (Nx.to_array (Nx.neg (Nx.donate (Nx.Host.wrap [| 3 |] b))));
-  equal (array float_exact) [| 0.; 1.; 2. |]
-    (Array.init 3 (Bigarray.Array1.get b))
-
-let test_host_round_trip () =
-  let b =
-    Bigarray.Array1.init Bigarray.int32 Bigarray.c_layout 4 Int32.of_int
-  in
-  let x = Nx.Host.wrap [| 2; 2 |] b in
-  Nx.Host.read x (fun b' ->
-      equal (array int32) [| 0l; 1l; 2l; 3l |]
-        (Array.init (Bigarray.Array1.dim b') (Bigarray.Array1.get b')))
-
-let bigarrays =
-  group "bigarrays"
+let host_read =
+  group "Host.read"
     [
-      test "of_bigarray copies; to_bigarray is fresh" test_bigarray_round_trip;
-      test "kinds carry their dtypes" test_bigarray_kinds;
-      prop "Host.read gives a host value's elements in C order"
-        (Gen.pair case views) law_host_read;
-      test "Host.wrap is the value of a shape over a bigarray's elements"
-        test_host_wrap;
-      test "Host.read of Host.wrap gives the bigarray's elements"
-        test_host_round_trip;
-      test "a donation of Host.wrap's value leaves the bigarray"
-        test_host_wrap_not_donated;
+      prop "gives a host value's elements in C order, through any layout"
+        ~examples:
+          [
+            ( Case (D.Float32, [| 2; 3 |], [| 1.; 2.; 3.; 4.; 5.; 6. |]),
+              At_offset );
+          ]
+        (Gen.pair (case held_by_bigarray) layouts)
+        law_host_read;
+      test "of wrap's value gives the bigarray's elements" (fun () ->
+          let b =
+            Bigarray.Array1.init Bigarray.int32 Bigarray.c_layout 4 Int32.of_int
+          in
+          Nx.Host.read
+            (Nx.Host.wrap [| 2; 2 |] b)
+            (fun b' ->
+              equal (array int32) [| 0l; 1l; 2l; 3l |]
+                (Array.init (Bigarray.Array1.dim b') (Bigarray.Array1.get b'))));
+      raises_naming "Nx.Host.read"
+        [
+          r "a dtype with no Bigarray kind" (fun () ->
+              Nx.Host.read (Nx.zeros Nx.bfloat16 [| 2 |]) ignore);
+          r "a dead value" (fun () -> Nx.Host.read (dead ()) ignore);
+        ];
     ]
 
-(* Reads at every brand *)
+let host_wrap =
+  group "Host.wrap"
+    [
+      test "is the value of a shape over a bigarray's elements" (fun () ->
+          let c = Bigarray.c_layout in
+          let b = Bigarray.Array1.init Bigarray.float32 c 6 float_of_int in
+          let x = Nx.Host.wrap [| 2; 3 |] b in
+          equal (array int) [| 2; 3 |] (Nx.shape x);
+          equal (array float_exact) [| 0.; 1.; 2.; 3.; 4.; 5. |] (Nx.to_array x);
+          equal (array float_exact) [| 3.; 4.; 5. |]
+            (Nx.to_array (Nx.get [ 1 ] x));
+          let one = Bigarray.Array1.init Bigarray.int64 c 1 Int64.of_int in
+          equal (array int) [||] (Nx.shape (Nx.Host.wrap [||] one));
+          let none = vector Bigarray.int8_unsigned 0 in
+          equal (array int) [| 0; 3 |] (Nx.shape (Nx.Host.wrap [| 0; 3 |] none)));
+      test "a donation of its value leaves the bigarray" (fun () ->
+          let c = Bigarray.c_layout in
+          let b = Bigarray.Array1.init Bigarray.float32 c 3 Float.of_int in
+          ignore (Nx.to_array (Nx.neg (Nx.donate (Nx.Host.wrap [| 3 |] b))));
+          equal (array float_exact) [| 0.; 1.; 2. |]
+            (Array.init 3 (Bigarray.Array1.get b)));
+      raises_naming "Nx.Host.wrap"
+        [
+          r "a shape of other elements" (fun () ->
+              Nx.Host.wrap [| 2; 2 |] (vector Bigarray.float32 3));
+          r "a negative extent" (fun () ->
+              Nx.Host.wrap [| -1; -2 |] (vector Bigarray.float32 2));
+          r "a char bigarray" (fun () ->
+              Nx.Host.wrap [| 2 |] (vector Bigarray.char 2));
+          r "data not aligned for its elements" (fun () ->
+              Nx.Host.wrap [| 2 |] (misaligned ()));
+        ];
+    ]
 
-let test_read_split () =
-  let s = [| 4; 3 |] in
-  let x = Nx.place (S2.split ~axis:0) (Nx.create f32 s (floats s)) in
-  equal (array float_exact) (floats s) (Nx.to_array x);
-  equal float_exact 10. (Nx.item [ 3; 1 ] x);
-  equal (array float_exact) (floats s)
-    (let b = Nx.to_bigarray Bigarray.float32 x in
-     Array.init 12 (fun j -> Bigarray.Genarray.get b [| j / 3; j mod 3 |]));
-  equal bool true
-    (Nx.Placement.equal (S2.split ~axis:0) (Nx.placement x))
+(* create *)
 
-let test_read_created () =
-  let x = Nx.add (Nx.zeros f32 [| 3 |]) (Nx.scalar f32 2.) in
-  equal (array float_exact) [| 2.; 2.; 2. |] (Nx.to_array x);
-  equal float_exact 2. (Nx.item [ -1 ] x);
-  equal bool true (Nx.Placement.equal Nx.Host.on (Nx.placement x))
+let law_round_trip (Case (dt, s, vs)) =
+  cover "no element" (Array.exists (( = ) 0) s);
+  cover "rank 0" (s = [||]);
+  let x = Nx.create dt s vs in
+  equal (array int) s (Nx.shape x);
+  equal_elements dt (Array.map (stored dt) vs) (Nx.to_array x)
 
-let test_read_view () =
-  let x = Nx.transpose (Nx.create Nx.int16 [| 2; 3 |] [| 1; 2; 3; 4; 5; 6 |]) in
-  equal (array int) [| 1; 4; 2; 5; 3; 6 |] (Nx.to_array x);
-  equal int 6 (Nx.item [ 2; 1 ] x)
+let create =
+  group "create"
+    [
+      prop "holds vs in C order as dt stores them" (case D.all) law_round_trip;
+      raises_naming "Nx.create"
+        [
+          r "too few values" (fun () ->
+              Nx.create f32 [| 2; 2 |] [| 1.; 2.; 3. |]);
+          r "a negative extent" (fun () -> Nx.create f32 [| -1 |] [||]);
+          r "an int above the dtype" (fun () ->
+              Nx.create Nx.uint8 [| 1 |] [| 256 |]);
+          r "an int below the dtype" (fun () ->
+              Nx.create Nx.int4 [| 1 |] [| -9 |]);
+        ];
+    ]
 
-let test_read_dead () =
-  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
-  let _ = Nx.add (Nx.donate x) (Nx.create f32 [| 2 |] [| 0.; 0. |]) in
-  invalid ~by:"Nx.to_array" (fun () -> Nx.to_array x);
-  invalid ~by:"Nx.item" (fun () -> Nx.item [ 0 ] x)
+(* init *)
 
-type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
+let init =
+  group "init"
+    [
+      test "calls f once per index, in C order" (fun () ->
+          let calls = ref [] in
+          let x =
+            Nx.init Nx.int32 [| 2; 3 |] (fun i ->
+                calls := Array.copy i :: !calls;
+                Int32.of_int ((10 * i.(0)) + i.(1)))
+          in
+          equal
+            (list (array int))
+            [
+              [| 0; 0 |];
+              [| 0; 1 |];
+              [| 0; 2 |];
+              [| 1; 0 |];
+              [| 1; 1 |];
+              [| 1; 2 |];
+            ]
+            (List.rev !calls);
+          equal (array int32) [| 0l; 1l; 2l; 10l; 11l; 12l |] (Nx.to_array x));
+      test "gives f a fresh index each call" (fun () ->
+          let kept = ref [] in
+          let _ =
+            Nx.init Nx.int8 [| 3 |] (fun i ->
+                kept := i :: !kept;
+                0)
+          in
+          equal (list (array int)) [ [| 2 |]; [| 1 |]; [| 0 |] ] !kept);
+      test "passes on what f raises" (fun () ->
+          raises Exit (fun () -> Nx.init f32 [| 2 |] (fun _ -> raise Exit)));
+      raises_naming "Nx.init"
+        [
+          r "a negative extent" (fun () -> Nx.init f32 [| -2 |] (fun _ -> 0.));
+          r "an int outside the dtype" (fun () ->
+              Nx.init Nx.uint8 [| 1 |] (fun _ -> 300));
+        ];
+    ]
 
-let mark i ~by op = Nx.Prim.results ~by (fun _ f -> Nx.Prim.traced i f Mark) op
+(* map_item *)
 
-let test_read_traced () =
-  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
-  Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
-      let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
-      raises_match
-        (Exn.invalid_arg ~sub:"Nx.to_array: the value is traced by test.reads")
-        (fun () -> Nx.to_array t);
-      raises_match
-        (Exn.invalid_arg ~sub:"Nx.item: the value is traced by test.reads")
-        (fun () -> Nx.item [ 0 ] t))
+(* An element's image under [f], at each dtype a function of that dtype: [f] is
+   applied to the element, and the store rounds a float once. *)
+let test_map_values () =
+  let x = Nx.create f32 [| 2; 2 |] [| 1.; -0.; nan; 0.1 |] in
+  equal_elements Nx.float32
+    (Nx.to_array (Nx.create f32 [| 4 |] [| -1.; 0.; nan; -0.1 |]))
+    (Nx.to_array (Nx.map_item Float.neg x));
+  let i = Nx.create Nx.int8 [| 3 |] [| -128; 0; 127 |] in
+  equal (array int) [| 127; -1; -128 |]
+    (Nx.to_array (Nx.map_item (fun v -> -v - 1) i));
+  let b = Nx.create Nx.bool [| 2 |] [| true; false |] in
+  equal (array bool) [| false; true |] (Nx.to_array (Nx.map_item not b))
+
+let map_item =
+  group "map_item"
+    [
+      prop "of the identity gives the value back" (case D.all)
+        (fun (Case (dt, s, vs)) ->
+          let x = Nx.create dt s vs in
+          let y = Nx.map_item Fun.id x in
+          equal (array int) s (Nx.shape y);
+          equal_elements dt (Nx.to_array x) (Nx.to_array y));
+      test "is f of each element, stored in the dtype" test_map_values;
+      test "runs f once per element in C order" (fun () ->
+          let seen = ref [] in
+          let x =
+            Nx.transpose
+              (Nx.create Nx.int32 [| 2; 3 |] [| 0l; 1l; 2l; 3l; 4l; 5l |])
+          in
+          let _ =
+            Nx.map_item
+              (fun v ->
+                seen := v :: !seen;
+                v)
+              x
+          in
+          equal (list int32) [ 0l; 3l; 1l; 4l; 2l; 5l ] (List.rev !seen));
+      test "of a value on a device set gives a host value" (fun () ->
+          let s = [| 4; 3 |] in
+          let x = Nx.place (S2.split ~axis:0) (Nx.create f32 s (floats s)) in
+          let y : Nx.host Nx.float32_t = Nx.map_item Float.neg x in
+          equal (array float_exact)
+            (Array.map Float.neg (floats s))
+            (Nx.to_array y);
+          equal (array float_exact) (floats s) (Nx.to_array x));
+      test "passes on what f raises" (fun () ->
+          raises Exit (fun () ->
+              Nx.map_item (fun _ -> raise Exit) (Nx.zeros f32 [| 2 |])));
+      raises_naming "Nx.map_item"
+        [
+          r "an int outside the dtype" (fun () ->
+              Nx.map_item (fun _ -> 300) (Nx.zeros Nx.uint8 [| 2 |]));
+        ];
+    ]
+
+(* of_bigarray and to_bigarray *)
+
+let bigarrays =
+  group "of_bigarray and to_bigarray"
+    [
+      test "of_bigarray copies, to_bigarray is fresh" (fun () ->
+          let b =
+            Bigarray.Genarray.create Bigarray.float64 Bigarray.c_layout
+              [| 2; 3 |]
+          in
+          for i = 0 to 1 do
+            for j = 0 to 2 do
+              Bigarray.Genarray.set b [| i; j |] (float_of_int ((3 * i) + j))
+            done
+          done;
+          let x = Nx.of_bigarray b in
+          equal (array int) [| 2; 3 |] (Nx.shape x);
+          Bigarray.Genarray.set b [| 0; 0 |] 99.;
+          equal (array float_exact) [| 0.; 1.; 2.; 3.; 4.; 5. |] (Nx.to_array x);
+          let c = Nx.to_bigarray Bigarray.float64 x in
+          equal (array int) [| 2; 3 |] (Bigarray.Genarray.dims c);
+          Bigarray.Genarray.set c [| 1; 2 |] 77.;
+          equal float_exact 5. (Nx.item [ 1; 2 ] x));
+      test "kinds carry their dtypes" (fun () ->
+          let ints =
+            Nx.to_bigarray Bigarray.int8_unsigned
+              (Nx.create Nx.uint8 [| 2 |] [| 0; 255 |])
+          in
+          equal int 255 (Bigarray.Genarray.get ints [| 1 |]);
+          let z =
+            Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 1.5; im = -0. } |]
+          in
+          let back = Nx.of_bigarray (Nx.to_bigarray Bigarray.complex32 z) in
+          equal_elements Nx.complex64 (Nx.to_array z) (Nx.to_array back);
+          let h =
+            Nx.to_bigarray Bigarray.float16
+              (Nx.create Nx.float16 [||] [| 0.5 |])
+          in
+          equal float_exact 0.5 (Bigarray.Genarray.get h [||]));
+      raises_naming "Nx.of_bigarray"
+        [
+          r "a char bigarray" (fun () ->
+              Nx.of_bigarray
+                (Bigarray.Genarray.create Bigarray.char Bigarray.c_layout
+                   [| 2 |]));
+        ];
+    ]
+
+(* Reads *)
+
+(* [a b] over two devices, the contracted axis cut: asked for its sum, a partial
+   value whose terms each device holds. *)
+let partial_product () =
+  let a = Nx.create f32 [| 2; 4 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] in
+  let b = Nx.create f32 [| 4; 1 |] [| 1.; -1.; 2.; 3. |] in
+  let a' = Nx.place (S2.split ~axis:1) a
+  and b' = Nx.place (S2.split ~axis:0) b in
+  (Nx.matmul a b, Nx.matmul ~sum:true a' b')
+
+(* Each read of a dead value and of a traced one, by the name it raises with. *)
+let read_raises =
+  let reads =
+    [
+      ("Nx.to_array", fun x -> ignore (Nx.to_array x));
+      ("Nx.item", fun x -> ignore (Nx.item [ 0 ] x));
+      ("Nx.to_bigarray", fun x -> ignore (Nx.to_bigarray Bigarray.float32 x));
+      ("Nx.map_item", fun x -> ignore (Nx.map_item Fun.id x));
+      ("Nx.Host.read", fun x -> Nx.Host.read x ignore);
+    ]
+  in
+  List.concat_map
+    (fun (by, f) ->
+      [
+        (by ^ ", dead", fun () -> invalid ~by (fun () -> f (dead ())));
+        ( by ^ ", traced",
+          fun () ->
+            traced (fun t ->
+                raises_match
+                  (Exn.invalid_arg
+                     ~sub:(by ^ ": the value is traced by test.reads"))
+                  (fun () -> f t)) );
+      ])
+    reads
+
+let reads =
+  group "reads"
+    [
+      test "read a split value whole and leave it split" (fun () ->
+          let s = [| 4; 3 |] in
+          let x = Nx.place (S2.split ~axis:0) (Nx.create f32 s (floats s)) in
+          equal ~msg:"to_array" (array float_exact) (floats s) (Nx.to_array x);
+          equal ~msg:"item" float_exact 10. (Nx.item [ 3; 1 ] x);
+          equal ~msg:"to_bigarray" (array float_exact) (floats s)
+            (let b = Nx.to_bigarray Bigarray.float32 x in
+             Array.init 12 (fun j ->
+                 Bigarray.Genarray.get b [| j / 3; j mod 3 |]));
+          equal ~msg:"placement" (placement ()) (S2.split ~axis:0)
+            (Nx.placement x));
+      test "read a computed host value's elements" (fun () ->
+          let x = Nx.add (Nx.zeros f32 [| 3 |]) (Nx.scalar f32 2.) in
+          equal (array float_exact) [| 2.; 2.; 2. |] (Nx.to_array x);
+          equal float_exact 2. (Nx.item [ -1 ] x);
+          equal ~msg:"placement" (placement ()) Nx.Host.on (Nx.placement x));
+      test "read a view in its own C order" (fun () ->
+          let x =
+            Nx.transpose (Nx.create Nx.int16 [| 2; 3 |] [| 1; 2; 3; 4; 5; 6 |])
+          in
+          equal (array int) [| 1; 4; 2; 5; 3; 6 |] (Nx.to_array x);
+          equal int 6 (Nx.item [ 2; 1 ] x));
+      test "read a partial value's terms' sums and leave it partial" (fun () ->
+          let closed, partial = partial_product () in
+          let at = Nx.placement partial in
+          equal ~msg:"to_array" (array float_exact) (Nx.to_array closed)
+            (Nx.to_array partial);
+          equal ~msg:"item" float_exact
+            (Nx.item [ 1; 0 ] closed)
+            (Nx.item [ 1; 0 ] partial);
+          equal ~msg:"placement" (placement ()) at (Nx.placement partial));
+      test "reach no interpretation" (fun () ->
+          let x = Nx.create f32 [| 2 |] [| 1.; 2. |]
+          and c = Nx.zeros f32 [| 1 |] in
+          let a, v, z =
+            Nx.Prim.interpret ~name:"test.extent" Extent mark (fun _ ->
+                (Nx.to_array x, Nx.item [ 1 ] x, Nx.to_array c))
+          in
+          equal (array float_exact) [| 1.; 2. |] a;
+          equal float_exact 2. v;
+          equal (array float_exact) [| 0. |] z);
+      cases "raise naming themselves for a dead and a traced value" ~id:fst
+        read_raises (fun (_, f) -> f ());
+    ]
+
+(* item *)
+
+(* [item i x] is the element of [to_array x] at [i]'s position in C order,
+   written with positive or negative positions. *)
+let law_item (Case (dt, s, vs), (seed, negative)) =
+  let flat = seed mod Array.length vs in
+  cover "0-d" (s = [||]);
+  cover "negative" negative;
+  let i = index s flat in
+  let p = Array.mapi (fun a q -> if negative then q - s.(a) else q) i in
+  equal (elements dt)
+    [ vs.(flat) ]
+    [ Nx.item (Array.to_list p) (Nx.create dt s vs) ]
+
+let item =
+  group "item"
+    [
+      prop "reads to_array's element at its index, from the start or the end"
+        (Gen.pair (case ~min:1 D.all) (Gen.pair Gen.nat Gen.bool))
+        law_item;
+      raises_naming "Nx.item"
+        [
+          r "too few positions" (fun () ->
+              Nx.item [ 0 ] (Nx.zeros f32 [| 2; 2 |]));
+          r "a position past the axis" (fun () ->
+              Nx.item [ 2 ] (Nx.zeros f32 [| 2 |]));
+          r "a position before the axis" (fun () ->
+              Nx.item [ -3 ] (Nx.zeros f32 [| 2 |]));
+          r "an empty axis" (fun () -> Nx.item [ 0 ] (Nx.zeros f32 [| 0 |]));
+        ];
+    ]
+
+(* Repr *)
 
 (* [Nx.Repr.read ~by] names [by] where it refuses. *)
 let test_repr_read_by () =
-  let dead = Nx.create f32 [| 2 |] [| 1.; 2. |] in
-  ignore (Nx.neg (Nx.donate dead));
   invalid ~by:"test.reader" (fun () ->
-      Nx.Repr.read ~by:"test.reader" dead A.to_array);
-  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
-  Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
-      let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
+      Nx.Repr.read ~by:"test.reader" (dead ()) A.to_array);
+  traced (fun t ->
       raises_match
         (Exn.invalid_arg ~sub:"test.reader: the value is traced by test.reads")
         (fun () -> Nx.Repr.read ~by:"test.reader" t A.to_array))
-
-(* [Nx.Repr.array ~by] and [Nx.Repr.shards ~by] name [by] where they refuse: a
-   dead value, on one device or several, and a traced one. *)
-let test_repr_crossing_by () =
-  let by = "test.crosser" in
-  let refused why f = raises_match (Exn.invalid_arg ~sub:(by ^ ": " ^ why)) f in
-  let dead x =
-    ignore (Nx.donate x);
-    x
-  in
-  let one = dead (Nx.create f32 [| 2 |] [| 1.; 2. |]) in
-  let four = Nx.create f32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
-  let cut = dead (Nx.place (S2.split ~axis:0) four) in
-  refused "float32 [2] was donated" (fun () -> Nx.Repr.array ~by one);
-  refused "float32 [2] was donated" (fun () -> Nx.Repr.shards ~by one);
-  refused "float32 [4] was donated" (fun () -> Nx.Repr.array ~by cut);
-  refused "float32 [4] was donated" (fun () -> Nx.Repr.shards ~by cut);
-  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
-  Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
-      let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
-      let traced = "a value traced by test.reads has no bytes" in
-      refused traced (fun () -> Nx.Repr.array ~by t);
-      refused traced (fun () -> Nx.Repr.shards ~by t))
 
 (* What a read raises that it did not refuse, a pending check's failure or its
    function's own error, passes on as raised, whatever [~by] names. *)
@@ -394,105 +514,47 @@ let test_repr_read_passes () =
   let own = Invalid_argument "test.f: its own error" in
   raises own (fun () -> Nx.Repr.read ~by:"test.reader" x (fun _ -> raise own))
 
-(* An extent reaches every operation on its fiber; a read is none. *)
-let test_read_under_extent () =
-  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] and c = Nx.zeros f32 [| 1 |] in
-  let got =
-    Nx.Prim.interpret ~name:"test.extent" Extent mark (fun _ ->
-        (Nx.to_array x, Nx.item [ 1 ] x, Nx.to_array c))
+(* [Nx.Repr.array ~by] and [Nx.Repr.shards ~by] name [by] where they refuse: a
+   dead value, on one device or several, and a traced one. *)
+let test_repr_crossing_by () =
+  let by = "test.crosser" in
+  let refused why f = raises_match (Exn.invalid_arg ~sub:(by ^ ": " ^ why)) f in
+  let gone x =
+    ignore (Nx.donate x);
+    x
   in
-  let a, v, z = got in
-  equal (array float_exact) [| 1.; 2. |] a;
-  equal float_exact 2. v;
-  equal (array float_exact) [| 0. |] z
+  let one = gone (Nx.create f32 [| 2 |] [| 1.; 2. |]) in
+  let four = Nx.create f32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let cut = gone (Nx.place (S2.split ~axis:0) four) in
+  refused "float32 [2] was donated" (fun () -> Nx.Repr.array ~by one);
+  refused "float32 [2] was donated" (fun () -> Nx.Repr.shards ~by one);
+  refused "float32 [4] was donated" (fun () -> Nx.Repr.array ~by cut);
+  refused "float32 [4] was donated" (fun () -> Nx.Repr.shards ~by cut);
+  traced (fun t ->
+      let traced = "a value traced by test.reads has no bytes" in
+      refused traced (fun () -> Nx.Repr.array ~by t);
+      refused traced (fun () -> Nx.Repr.shards ~by t))
 
-let reads =
-  group "reads"
+let repr =
+  group "Repr"
     [
-      test "a split value reads whole and stays split" test_read_split;
-      test "a host creation reads its elements" test_read_created;
-      test "a view reads in its own C order" test_read_view;
-      test "a dead value raises naming the read" test_read_dead;
-      test "a traced value raises naming the read" test_read_traced;
-      test "Repr.read refuses naming its ~by" test_repr_read_by;
-      test "Repr.read passes on what it did not refuse" test_repr_read_passes;
-      test "Repr.array and Repr.shards refuse naming their ~by"
-        test_repr_crossing_by;
-      test "an extent receives no read" test_read_under_extent;
+      test "read raises naming its ~by" test_repr_read_by;
+      test "read passes on what it did not refuse" test_repr_read_passes;
+      test "array and shards raise naming their ~by" test_repr_crossing_by;
     ]
 
-(* Maps on the host *)
-
-(* [map_item f] is [create] of [f] over the elements: with [f] the identity, a
-   round trip, NaN payloads, signed zeros and every dtype included. *)
-let law_map_identity (Case (dt, s, vs)) =
-  let x = Nx.create dt s vs in
-  let y = Nx.map_item Fun.id x in
-  equal (array int) s (Nx.shape y);
-  equal_elements dt (Nx.to_array x) (Nx.to_array y)
-
-(* An element's image under [f], at each dtype a function of that dtype: [f]
-   is applied to the element, and the store rounds a float once. *)
-let test_map_values () =
-  let x = Nx.create f32 [| 2; 2 |] [| 1.; -0.; nan; 0.1 |] in
-  equal_elements Nx.float32
-    (Nx.to_array (Nx.create f32 [| 4 |] [| -1.; 0.; nan; -0.1 |]))
-    (Nx.to_array (Nx.map_item Float.neg x));
-  let i = Nx.create Nx.int8 [| 3 |] [| -128; 0; 127 |] in
-  equal (array int) [| 127; -1; -128 |]
-    (Nx.to_array (Nx.map_item (fun v -> -v - 1) i));
-  let b = Nx.create Nx.bool [| 2 |] [| true; false |] in
-  equal (array bool) [| false; true |] (Nx.to_array (Nx.map_item not b))
-
-let test_map_order () =
-  let seen = ref [] in
-  let x = Nx.transpose (Nx.create Nx.int32 [| 2; 3 |] [| 0l; 1l; 2l; 3l; 4l; 5l |]) in
-  let _ = Nx.map_item (fun v -> seen := v :: !seen; v) x in
-  equal (list int32) [ 0l; 3l; 1l; 4l; 2l; 5l ] (List.rev !seen)
-
-let test_map_range () =
-  invalid ~by:"Nx.map_item" (fun () ->
-      Nx.map_item (fun _ -> 300) (Nx.zeros Nx.uint8 [| 2 |]))
-
-let test_map_creation () =
-  let x = Nx.add (Nx.zeros f32 [| 3 |]) (Nx.scalar f32 2.) in
-  equal (array float_exact) [| 4.; 4.; 4. |]
-    (Nx.to_array (Nx.map_item (fun v -> v *. 2.) x))
-
-(* A value on a device set is read as [to_array] reads it, and the result
-   lies on the host. *)
-let test_map_device () =
-  let s = [| 4; 3 |] in
-  let x = Nx.place (S2.split ~axis:0) (Nx.create f32 s (floats s)) in
-  let y : Nx.host Nx.float32_t = Nx.map_item Float.neg x in
-  equal (array float_exact) (Array.map Float.neg (floats s)) (Nx.to_array y);
-  equal (array float_exact) (floats s) (Nx.to_array x)
-
-let test_map_dead () =
-  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
-  let _ = Nx.add (Nx.donate x) (Nx.create f32 [| 2 |] [| 0.; 0. |]) in
-  invalid ~by:"Nx.map_item" (fun () -> Nx.map_item Fun.id x)
-
-let test_map_traced () =
-  let x = Nx.create f32 [| 2 |] [| 1.; 2. |] in
-  Nx.Prim.interpret ~name:"test.reads" Values mark (fun i ->
-      let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
-      raises_match
-        (Exn.invalid_arg ~sub:"Nx.map_item: the value is traced by test.reads")
-        (fun () -> Nx.map_item Fun.id t))
-
-let maps =
-  group "map_item"
-    [
-      prop "the identity gives the value back" case law_map_identity;
-      test "each element is f of the element, stored in the dtype"
-        test_map_values;
-      test "f runs once per element in C order" test_map_order;
-      test "an int outside the dtype raises" test_map_range;
-      test "a host creation maps as any host value" test_map_creation;
-      test "a value on a device set gives a host value" test_map_device;
-      test "a dead value raises" test_map_dead;
-      test "a traced value raises" test_map_traced;
-    ]
-
-let () = exit (run "nx data" [ ocaml; bigarrays; reads; maps ])
+let () =
+  exit
+    (run "nx data"
+       [
+         unpack;
+         host_read;
+         host_wrap;
+         create;
+         init;
+         map_item;
+         bigarrays;
+         reads;
+         item;
+         repr;
+       ])
