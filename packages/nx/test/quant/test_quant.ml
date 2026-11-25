@@ -78,8 +78,12 @@ let weight_of ?scales format shape b =
 
 (* The references *)
 
-(* MXFP4: a code's magnitude, signed, times [2 ^ (s - 127)] for its group's
-   scale byte [s], NaN for [255], rounded once to float32. *)
+(* MXFP4, as OCP Microscaling Formats (MX) Specification v1.0 (2023) defines it:
+   a code is E2M1, a sign bit over magnitudes 0 to 6 (§5.3.3, Table 5); its
+   group's scale byte [s] is E8M0, [2 ^ (s - 127)], NaN at [255] (§5.4.1, Table
+   7); a value is their product, every value NaN where the scale is (§5.1), here
+   rounded once to float32. A product past float32's largest is left to the
+   implementation (§5.1): nx_quant.mli makes it infinite. *)
 
 let e2m1 = [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6. |]
 
@@ -108,9 +112,11 @@ let gguf_blocks codes scales =
       if j < 0 then scales.(g)
       else codes.((32 * g) + j) lor (codes.((32 * g) + j + 16) lsl 4))
 
-(* The GGUF formats, as ggml's dequantize_row_q8_0, _q4_K and _q6_K compute them
-   at float32, over a block's bytes [b]. Each product of a float16 scale and
-   integers is exact, so one rounding to float32 is ggml's. *)
+(* The GGUF formats, as ggml's dequantize_row_mxfp4, _q8_0, _q4_K and _q6_K
+   (ggml-quants.c) compute them at float32, over a block's bytes [b] laid out as
+   ggml-common.h's block_mxfp4, block_q8_0, block_q4_K and block_q6_K. Each
+   product of a float16 scale and integers is exact, so one rounding to float32
+   is ggml's. *)
 
 (* The binary16 of bits [h]. *)
 let binary16 h =
@@ -615,7 +621,7 @@ let q4_k_values d dmin =
 (* A Q6_K block of float16 [d] and scales [-8] to [7], whose quarters of each
    half hold the quants 1, 19, 34 and 52: low nibbles 1 and 3 from the first and
    second 32 bytes, high nibbles 2 and 4, and high pairs 0 to 3. *)
-let q6_k_quarters =
+let q6_k_quarters () =
   block Q6_K
     (repeat 2 (repeat 32 [ 0x21 ] @ repeat 32 [ 0x43 ])
     @ repeat 64 [ 0xE4 ]
@@ -624,43 +630,44 @@ let q6_k_quarters =
 
 (* An MXFP4 GGUF block of scale byte 128, 2: the codes 0 to 15 in bytes 0 to 7's
    low nibbles and 15 down to 0 in their high ones. *)
-let mxfp4_block_of =
+let mxfp4_block_of () =
   block Mxfp4_blocks
     (128 :: List.init 16 (fun j -> j land 15 lor ((15 - j) lsl 4)))
 
 let known =
   let zeros n = List.init n (fun _ -> 0.) in
   let code c = (if c < 8 then 1. else -1.) *. e2m1.(c land 7) in
-  cases "a known block's values"
+  cases "a known block has the values its format defines"
     ~id:(fun (n, _, _) -> n)
     [
-      ("a zero Q8_0 block", q8_0_of 0 (repeat 32 [ 0 ]), zeros 32);
-      ("a zero Q4_K block", block Q4_K (repeat 144 [ 0 ]), zeros 256);
+      ("a zero Q8_0 block", (fun () -> q8_0_of 0 (repeat 32 [ 0 ])), zeros 32);
+      ("a zero Q4_K block", (fun () -> block Q4_K (repeat 144 [ 0 ])), zeros 256);
       (* A zero quant is -32, and 0 * 0 * -32 is -0. *)
       ( "a zero Q6_K block",
-        block Q6_K (repeat 210 [ 0 ]),
+        (fun () -> block Q6_K (repeat 210 [ 0 ])),
         List.init 256 (fun _ -> -0.) );
       ( "an MXFP4 GGUF block of every code, both ways",
         mxfp4_block_of,
         List.init 16 (fun j -> 2. *. code j)
         @ List.init 16 (fun j -> 2. *. code (15 - j)) );
       ( "Q8_0 at the largest scale, the int8 extremes",
-        q8_0_of 0x7BFF (repeat 8 [ 127; -128; 0; 1 ]),
+        (fun () -> q8_0_of 0x7BFF (repeat 8 [ 127; -128; 0; 1 ])),
         repeat 8 [ 65504. *. 127.; 65504. *. -128.; 0.; 65504. ] );
       ( "Q8_0 at a negative scale",
-        q8_0_of 0xB800 (repeat 16 [ -2; 3 ]),
+        (fun () -> q8_0_of 0xB800 (repeat 16 [ -2; 3 ])),
         repeat 16 [ 1.; -1.5 ] );
       ( "Q4_K's packed scales and mins",
-        q4_k_of 0x3C00 0x3800,
+        (fun () -> q4_k_of 0x3C00 0x3800),
         q4_k_values 1. 0.5 );
       ( "Q4_K at a negative scale and min",
-        q4_k_of 0xC000 0xBC00,
+        (fun () -> q4_k_of 0xC000 0xBC00),
         q4_k_values (-2.) (-1.) );
       ( "Q4_K at the largest scales",
-        q4_k_of 0x7BFF 0x7BFF,
+        (fun () -> q4_k_of 0x7BFF 0x7BFF),
         List.map to_f32 (q4_k_values 65504. 65504.) );
       ( "Q6_K at the largest scale, the extreme scale and quant",
-        block Q6_K (repeat 192 [ 0 ] @ repeat 16 [ 0x80 ] @ le16 0x7BFF),
+        (fun () ->
+          block Q6_K (repeat 192 [ 0 ] @ repeat 16 [ 0x80 ] @ le16 0x7BFF)),
         repeat 256 [ 65504. *. -128. *. -32. ] );
       ( "Q6_K's quarters, at negative and positive scales",
         q6_k_quarters,
@@ -671,12 +678,13 @@ let known =
     ]
     (fun (_, w, expected) ->
       equal (array float_exact) (Array.of_list expected)
-        (Nx.to_array (Nx_quant.dequant Nx.float32 w)))
+        (Nx.to_array (Nx_quant.dequant Nx.float32 (w ()))))
 
-(* ggml's own values. golden/<format>.blocks holds a tensor of each format of 4
-   rows of 512 values, and golden/<format>.values the float32 values gguf-py,
-   llama.cpp's Python package, dequantises from it; gen/generate.py writes
-   them. *)
+(* ggml's values. golden/<format>.blocks holds a tensor of each format of 4 rows
+   of 512 values, and golden/<format>.values the float32 values gguf-py 0.19.0,
+   llama.cpp's Python package, dequantises from it; gen/generate.py writes them.
+   gguf-py ports ggml's C dequantisation: a datapoint beside the references
+   above. *)
 let ggml =
   let read name = In_channel.with_open_bin name In_channel.input_all in
   cases "values are ggml's" ~id:format_name [ Mxfp4_blocks; Q8_0; Q4_K; Q6_K ]
@@ -722,6 +730,139 @@ let decoded w =
          else Printf.sprintf "%h" v)
        (Nx.to_array (Nx.cast Nx.float64 (Nx_quant.dequant Nx.float32 w))))
 
+(* The stated quantisation, nx_quant.mli's [quantize_q8_0], of one block of 32
+   float32 values: its 34 bytes. Each float32 operation is its float64 result
+   rounded once to float32, which is the float32 operation for a sum, product or
+   quotient of float32s (53 >= 2 * 24 + 2 bits). Only the float16 rounding of
+   [d] goes through nx, as a cast of the scalar. *)
+let q8_0_reference v =
+  let amax =
+    if Array.exists Float.is_nan v then Float.nan
+    else Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. v
+  in
+  let d = to_f32 (amax /. 127.) in
+  let id = if d = 0. then 0. else to_f32 (1. /. d) in
+  let quant x =
+    let p = to_f32 (x *. id) in
+    if Float.is_finite p then Float.to_int (Float.round p) land 255 else 0
+  in
+  let h =
+    Nx.item []
+      (Nx.bitcast Nx.uint16 (Nx.cast Nx.float16 (Nx.scalar Nx.float32 d)))
+  in
+  le16 h @ Array.to_list (Array.map quant v)
+
+(* A block's 32 values, drawn at float32 six ways: mixed magnitudes; ties, [127
+   s] beside [(j + 1/2) s] for a power of two [s], whose products by [1 / d = 1
+   / s] are halves; a greatest magnitude about [127 * 2^-128], where [1 / d]
+   leaves float32's range; one about [127 * 65504], where [d] leaves float16's;
+   a NaN, or an infinity half as often, last half the time; and signed zeros. *)
+let q8_0_block =
+  let open Gen in
+  let of_f32 = map (fun x -> to_f32 x) in
+  let within amax =
+    let+ fr = array ~size:(constant 31) (float_range (-1.) 1.) in
+    Array.init 32 (fun j -> if j = 0 then amax else to_f32 (fr.(j - 1) *. amax))
+  in
+  let mixed =
+    array ~size:(constant 32)
+      (of_f32
+         (map
+            (fun (m, e) -> Float.ldexp m e)
+            (pair (float_range (-1.) 1.) (int_range (-12) 12))))
+  in
+  let ties =
+    let* e = int_range (-20) 20 in
+    let* neg = bool in
+    let s = Float.ldexp 1. e in
+    let+ js = array ~size:(constant 31) (int_range (-127) 126) in
+    Array.init 32 (fun j ->
+        if j = 0 then if neg then -127. *. s else 127. *. s
+        else (Float.of_int js.(j - 1) +. 0.5) *. s)
+  in
+  let edge base spread =
+    let* u = float_range (-.spread) spread in
+    within (to_f32 (base *. Float.pow 2. u))
+  in
+  let special =
+    let* b = mixed in
+    let+ at = frequency [ (1, constant 31); (1, int_range 0 31) ]
+    and+ x =
+      of_list ~pp:Format.pp_print_float
+        [ Float.nan; Float.nan; Float.infinity; Float.neg_infinity ]
+    in
+    Array.mapi (fun j v -> if j = at then x else v) b
+  in
+  frequency
+    [
+      (1, mixed);
+      (1, ties);
+      (1, edge (127. *. Float.ldexp 1. (-128)) 1.);
+      (1, edge (127. *. 65504.) (1. /. 64.));
+      (1, special);
+      ( 1,
+        array ~size:(constant 32)
+          (of_list ~pp:Format.pp_print_float [ 0.; -0. ]) );
+    ]
+
+(* A weight to quantise: leading axes, [n] rows and its blocks, at a float
+   dtype, laid out as drawn. *)
+let to_quantise =
+  let open Gen in
+  let pp ppf (F d, l, shape, xs) =
+    Format.fprintf ppf "%s %a, %a: [%s]" (D.name d.dtype) pp_shape shape
+      pp_layout l
+      (String.concat "; " (Array.to_list (Array.map (Printf.sprintf "%h") xs)))
+  in
+  with_pp pp
+    (let* lead = list ~size:(int_range 0 2) (int_range 1 2) in
+     let* n = frequency [ (1, constant 0); (4, int_range 1 3) ] in
+     let* b = frequency [ (1, constant 0); (4, int_range 1 3) ] in
+     let count = List.fold_left ( * ) 1 lead * n * b in
+     let+ blocks = list ~size:(constant count) q8_0_block
+     and+ at = fdt
+     and+ l = layouts in
+     (at, l, Array.of_list (lead @ [ n; 32 * b ]), Array.concat blocks))
+
+let quantize_law (F d, l, shape, xs) =
+  let x, _ = laid l d.dtype shape (Array.map d.round xs) in
+  let v = Nx.to_array (Nx.cast Nx.float32 x) in
+  let blocks =
+    List.init (Array.length v / 32) (fun i -> Array.sub v (32 * i) 32)
+  in
+  let amax b = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. b in
+  let tiny = 127. *. Float.ldexp 1. (-128) and huge = 127. *. 65520. in
+  let some p = List.exists p blocks in
+  let finite b = Array.for_all Float.is_finite b in
+  List.iter
+    (fun (F e) ->
+      cover ("a " ^ D.name e.dtype ^ " weight") (D.name e.dtype = D.name d.dtype))
+    fdts;
+  cover "a quant at a tie"
+    (some (fun b ->
+         let d = to_f32 (amax b /. 127.) in
+         d > 0.
+         && Array.exists
+              (fun x ->
+                let p = to_f32 (x *. to_f32 (1. /. d)) in
+                Float.is_finite p && Float.abs (p -. Float.trunc p) = 0.5)
+              b));
+  cover "a greatest magnitude below 127 * 2^-128, not zero"
+    (some (fun b -> finite b && amax b > 0. && amax b < tiny));
+  cover "a greatest magnitude from 127 * 2^-128 to twice it"
+    (some (fun b -> finite b && amax b >= tiny && amax b < 2. *. tiny));
+  cover "a scale past float16's largest"
+    (some (fun b -> finite b && amax b >= huge && amax b < 2. *. huge));
+  cover "a scale below float16's largest, past half of it"
+    (some (fun b -> amax b < huge && amax b >= huge /. 2.));
+  cover "a NaN last in its block" (some (fun b -> Float.is_nan b.(31)));
+  cover "an infinity"
+    (some (Array.exists (fun x -> Float.abs x = Float.infinity)));
+  cover "a layout other than C order" (l <> C_order && Array.length v > 32);
+  equal (array int)
+    (Array.of_list (List.concat_map q8_0_reference blocks))
+    (blocks_of (Nx_quant.quantize_q8_0 x))
+
 let quantising =
   let read name = In_channel.with_open_bin name In_channel.input_all in
   let golden_floats () =
@@ -735,7 +876,7 @@ let quantising =
     let b = read "golden/q8_0.quantized" in
     Array.init (String.length b) (fun i -> Char.code b.[i])
   in
-  group "quantising"
+  group "quantize_q8_0"
     [
       test "Q8_0's bytes are ggml's" (fun () ->
           equal (array int) (golden_blocks ())
@@ -755,8 +896,13 @@ let quantising =
           let x = Nx.create Nx.float32 [| 1; 32 |] zeros in
           equal (array int) (Array.make 34 0)
             (blocks_of (Nx_quant.quantize_q8_0 x)));
-      test "a bfloat16 weight is read at float32" (fun () ->
-          let x = Nx.cast Nx.bfloat16 (golden_floats ()) in
+      prop ~count:500 "its bytes are the stated quantisation's" to_quantise
+        quantize_law;
+      cases "reads every float dtype at float32"
+        ~id:(fun (F d) -> D.name d.dtype)
+        (List.tl fdts)
+        (fun (F d) ->
+          let x = Nx.cast d.dtype (golden_floats ()) in
           equal (array int)
             (blocks_of (Nx_quant.quantize_q8_0 (Nx.cast Nx.float32 x)))
             (blocks_of (Nx_quant.quantize_q8_0 x)));
@@ -815,13 +961,14 @@ let quantising =
 (* Takes *)
 
 (* A weight, an axis other than its last, counted from either end, and positions
-   in range along it. *)
+   in range along it, of no axis (the first alone), one or two. *)
 let takes =
   let open Gen in
-  let pp ppf ((view, w), axis, p) =
-    Format.fprintf ppf "@[<v>%a@,axis %d, positions [%s]@]" pp_weight (view, w)
-      axis
+  let pp ppf ((view, w), axis, p, axes) =
+    Format.fprintf ppf "@[<v>%a@,axis %d, positions [%s] of %d axes@]" pp_weight
+      (view, w) axis
       (String.concat "; " (List.map string_of_int p))
+      axes
   in
   with_pp pp
     (let* ((_, w) as vw) =
@@ -832,20 +979,28 @@ let takes =
      let s = Nx_quant.shape w in
      let r = Array.length s in
      let* a, negative = pair (int_range 0 (r - 2)) bool in
-     let+ p = list ~size:(int_range 0 4) (int_range 0 (s.(a) - 1)) in
-     (vw, (if negative then a - r else a), p))
+     let+ p = list ~size:(int_range 0 4) (int_range 0 (s.(a) - 1))
+     and+ axes = int_range 0 2 in
+     (vw, (if negative then a - r else a), p, axes))
 
 let positions p =
   Nx.create Nx.int64
     [| List.length p |]
     (Array.of_list (List.map Int64.of_int p))
 
-let take_law ((_, w), axis, p) =
+let take_law ((_, w), axis, p, axes) =
   cover "an axis counted from the end" (axis < 0);
   cover "no position" (p = []);
   cover "a repeated position"
     (List.length (List.sort_uniq compare p) < List.length p);
-  let p = positions p in
+  cover "positions of no axis" (axes = 0 && p <> []);
+  cover "positions of two axes" (axes = 2);
+  let p =
+    match (axes, p) with
+    | 0, q :: _ -> Nx.reshape [||] (positions [ q ])
+    | 2, _ -> Nx.reshape [| 1; List.length p |] (positions p)
+    | _ -> positions p
+  in
   let taken = Nx_quant.take ~axis p w in
   List.iter
     (fun (F d) ->
@@ -854,108 +1009,6 @@ let take_law ((_, w), axis, p) =
         (bits (Nx_quant.dequant d.dtype taken)))
     fdts
 
-let values_and_products =
-  group "values and products"
-    [
-      prop ~count:300
-        "dequant gives each value of the format, computed at float32, at its \
-         dtype"
-        (Gen.pair (weight ()) fdt)
-        (fun ((_, w), F d) ->
-          let exact = values w in
-          List.iter
-            (fun f ->
-              cover ("a " ^ format_name f ^ " weight") (format_of w = f))
-            formats;
-          cover "no value" (Array.length exact = 0);
-          cover "an infinite value"
-            (Array.exists (fun v -> Float.abs v = Float.infinity) exact);
-          cover "a NaN value" (Array.exists Float.is_nan exact);
-          cover "a -0. value"
-            (Array.exists (fun v -> 1. /. v = Float.neg_infinity) exact);
-          let got = Nx_quant.dequant d.dtype w in
-          equal (array int) (Nx_quant.shape w) (Nx.shape got);
-          equal (array float_exact) (Array.map d.round exact)
-            (Nx.to_array (Nx.cast Nx.float64 got)));
-      prop ~count:300 "apply is the product with the dequantised weight"
-        (Gen.with_pp pp_product products)
-        product_law;
-      prop "apply is its equation, bit for bit up to a NaN's sign and payload"
-        (Gen.with_pp pp_product products) (fun (_, w, X { x; _ }) ->
-          equal (array int64)
-            (product_bits (equation w x))
-            (product_bits (Nx_quant.apply w x)));
-      (* The drawn products have at most 3 rows and 4 columns, which nx.cpu
-         sums in lane order; these take chain order, more than 4 of each
-         and 64 outputs or more, over two blocks of each format. *)
-      cases "apply is its equation, bit for bit, over many rows and columns"
-        ~id:(fun (f, F d, lead) ->
-          Printf.sprintf "%s, %s, %d leading axes" (format_name f)
-            (D.name d.dtype) (List.length lead))
-        (List.concat_map
-           (fun f ->
-             List.concat_map (fun d -> [ (f, d, []); (f, d, [ 2 ]) ]) fdts)
-           formats)
-        (fun (format, F d, lead) ->
-          let lead = Array.of_list lead in
-          let w = random_weight ~format (Array.append lead [| 12; 512 |]) in
-          let x =
-            Nx.cast d.dtype (random_floats (Array.append lead [| 8; 512 |]))
-          in
-          equal (array int64)
-            (product_bits (equation w x))
-            (product_bits (Nx_quant.apply w x)));
-      test "a float64 input accumulates at float64" (fun () ->
-          (* Every value of this weight is 1: each output sums the input. *)
-          let w =
-            Nx_quant.q8_0
-              (u8 [| 1; 34 |]
-                 (Array.init 34 (fun i ->
-                      match i with 0 -> 0x00 | 1 -> 0x3C | _ -> 1)))
-          in
-          let tiny = Float.ldexp 1. (-40) in
-          let x =
-            Nx.create Nx.float64 [| 32 |]
-              (Array.init 32 (fun i -> if i = 0 then 1. else tiny))
-          in
-          equal (array float_exact)
-            [| 1. +. (31. *. tiny) |]
-            (Nx.to_array (Nx_quant.apply w x)));
-      test "an MXFP4 value past float32's range is infinite at float64"
-        (fun () ->
-          (* Code 7, of magnitude 6, at scale byte 254 is 6 * 2^127, past
-             float32's range: dequant makes it infinite at every dtype. *)
-          let w =
-            Nx_quant.mxfp4
-              ~scales:(u8 [| 1; 1 |] [| 254 |])
-              (u8 [| 1; 16 |] (Array.init 16 (fun i -> if i = 0 then 7 else 0)))
-          in
-          let x =
-            Nx.create Nx.float64 [| 32 |]
-              (Array.init 32 (fun i -> if i = 0 then 1. else 0.))
-          in
-          equal (array float_exact) [| Float.infinity |]
-            (Nx.to_array (Nx_quant.apply w x)));
-      prop "take is the gather of the dequantised weight at positions in range"
-        takes take_law;
-      cases "a position out of range gathers zero bytes, which decode to zeros"
-        ~id:format_name formats (fun format ->
-          let w = random_weight ~format [| 3; 4; 256 |] in
-          let taken = Nx_quant.take ~axis:0 (positions [ -1; 1; 3 ]) w in
-          let zero = if format = Q6_K then -0. else 0. in
-          let row i t = Nx.to_array (Nx.slice [ Nx.I i ] t) in
-          List.iter
-            (fun t ->
-              let none = Array.map (fun _ -> 0) (row 0 t) in
-              equal ~msg:"part"
-                (pair (array int) (array int))
-                (none, none)
-                (row 0 t, row 2 t))
-            (parts taken);
-          let got = Nx_quant.dequant Nx.float32 taken in
-          equal (array float_exact) (Array.make (4 * 256) zero) (row 0 got);
-          equal (array float_exact) (Array.make (4 * 256) zero) (row 2 got));
-    ]
 
 (* File layouts *)
 
@@ -970,128 +1023,7 @@ let codes_and_scales =
      and+ scales = array ~size:(constant (rows * groups)) (int_range 0 255) in
      (rows, groups, codes, scales))
 
-let file_layouts =
-  group "file layouts"
-    [
-      prop "both MXFP4 layouts of one weight decode alike, bit for bit"
-        codes_and_scales (fun (rows, groups, codes, scales) ->
-          let w =
-            Nx_quant.mxfp4
-              ~scales:(u8 [| rows; groups |] scales)
-              (u8 [| rows; groups * 16 |] (checkpoint_bytes codes))
-          in
-          let g =
-            Nx_quant.mxfp4_blocks
-              (u8 [| rows; groups * 17 |] (gguf_blocks codes scales))
-          in
-          equal (array int64)
-            (bits (Nx_quant.dequant Nx.float32 w))
-            (bits (Nx_quant.dequant Nx.float32 g)));
-      test "a constructor holds its bytes and allocates nothing" (fun () ->
-          let rows = 64 and k = 4096 in
-          let codes = Nx.copy (Nx.zeros Nx.uint8 [| rows; k / 2 |]) in
-          let scales = Nx.copy (Nx.zeros Nx.uint8 [| rows; k / 32 |]) in
-          let blocks = Nx.copy (Nx.zeros Nx.uint8 [| rows; k / 32 * 34 |]) in
-          let before = Rig.allocated Rig.host in
-          let w = Nx_quant.mxfp4 ~scales codes and q = Nx_quant.q8_0 blocks in
-          equal ~msg:"allocated" int 0 (Rig.allocated Rig.host - before);
-          equal ~msg:"its parts are the bytes" (pair bool bool) (true, true)
-            ( (match w with
-              | Mxfp4 r -> r.codes == codes && r.scales == scales
-              | _ -> false),
-              match q with Q8_0 r -> r.blocks == blocks | _ -> false ));
-    ]
-
 (* Construction *)
-
-let errors =
-  let w = random_weight [| 2; 5; 64 |] in
-  let x = random_floats in
-  let mxfp4 scales codes () =
-    ignore
-      (Nx_quant.mxfp4 ~scales:(Nx.zeros Nx.uint8 scales)
-         (Nx.zeros Nx.uint8 codes))
-  in
-  let blocks f shape () = ignore (f (Nx.zeros Nx.uint8 shape)) in
-  let halve t =
-    if Nx.dim (-1) t = 2 then Nx.slice [ Nx.A; Nx.A; Nx.R (0, 1) ] t else t
-  in
-  let apply w x () = ignore (Nx_quant.apply w x) in
-  let take axis () = ignore (Nx_quant.take ~axis (positions [ 0 ]) w) in
-  let experts w ids xs () =
-    ignore (Nx_quant.apply_experts ~ids:(Nx.zeros Nx.int64 ids) w (x xs))
-  in
-  cases "refuse, naming what is wrong"
-    ~id:(fun (n, _, _) -> n)
-    [
-      ("mxfp4 codes of one axis", "codes", mxfp4 [| 2 |] [| 32 |]);
-      ("mxfp4 k not a multiple of 32", "codes", mxfp4 [| 4; 1 |] [| 4; 8 |]);
-      ("mxfp4 a scale per 16 values", "scales", mxfp4 [| 4; 4 |] [| 4; 32 |]);
-      ( "mxfp4 scales without a leading axis",
-        "scales",
-        mxfp4 [| 4; 1 |] [| 2; 4; 16 |] );
-      ("q8_0 blocks of one axis", "blocks", blocks Nx_quant.q8_0 [| 34 |]);
-      ( "mxfp4_blocks blocks of one axis",
-        "blocks",
-        blocks Nx_quant.mxfp4_blocks [| 17 |] );
-      ( "mxfp4_blocks a row of a part of a block",
-        "blocks",
-        blocks Nx_quant.mxfp4_blocks [| 2; 18 |] );
-      ( "q8_0 a row of a part of a block",
-        "blocks",
-        blocks Nx_quant.q8_0 [| 2; 68 + 32 |] );
-      ( "q4_k a row of a part of a block",
-        "blocks",
-        blocks Nx_quant.q4_k [| 2; 145 |] );
-      ( "q6_k a row of Q4_K's blocks",
-        "blocks",
-        blocks Nx_quant.q6_k [| 2; 144 |] );
-      ( "a map that changes a part's shape",
-        "Nx_quant.walk",
-        fun () -> ignore (Nx.Ptree.map description (fun _ t -> halve t) w) );
-      ( "apply to a 0-d value",
-        "at least one axis",
-        apply w (Nx.scalar Nx.float32 1.) );
-      ( "apply to a last axis of another size",
-        "last axis",
-        apply w (x [| 3; 32 |]) );
-      ( "apply over batch axes that do not broadcast",
-        "broadcast",
-        apply w (x [| 3; 1; 64 |]) );
-      ( "apply from an init that does not broadcast to the result",
-        "~init",
-        fun () ->
-          ignore (Nx_quant.apply ~init:(x [| 2; 4 |]) w (x [| 3; 64 |])) );
-      ( "experts from an init that does not broadcast to the result",
-        "~init",
-        fun () ->
-          ignore
-            (Nx_quant.apply_experts ~init:(x [| 3; 4 |])
-               ~ids:(Nx.zeros Nx.int64 [| 3 |])
-               w (x [| 3; 64 |])) );
-      ( "experts of two axes",
-        "[e; n; k]",
-        experts (random_weight [| 5; 64 |]) [| 3 |] [| 3; 64 |] );
-      ( "experts' input without its row axis",
-        "one axis",
-        experts w [| 3 |] [| 64 |] );
-      ( "experts' input of other inputs",
-        "last axis",
-        experts w [| 3 |] [| 3; 32 |] );
-      ( "experts' input whose positions do not broadcast to the ids'",
-        "broadcast",
-        experts w [| 3 |] [| 2; 64 |] );
-      ( "quantize a value of one axis",
-        "[...; n; k]",
-        fun () -> ignore (Nx_quant.quantize_q8_0 (x [| 32 |])) );
-      ( "quantize k not a multiple of 32",
-        "multiple of 32",
-        fun () -> ignore (Nx_quant.quantize_q8_0 (x [| 2; 48 |])) );
-      ("take along the last axis", "last axis", take 2);
-      ("take along the last axis, counted from the end", "last axis", take (-1));
-      ("take along an axis past the weight's", "out of bounds", take 3);
-    ]
-    (fun (_, part, f) -> raises_match (Exn.invalid_arg ~sub:part) f)
 
 (* Placement *)
 
@@ -1214,6 +1146,11 @@ let placement_law ((_, w), c) =
   cover "an MXFP4 weight cut along k at its blocks' boundaries, read in place"
     (in_place && along_k (fun t -> blocks > 0 && blocks mod t = 0));
   let wp = Nx_quant.place (at c) w in
+  List.iter
+    (fun t ->
+      equal ~msg:"where place puts a part" (placement ()) (at c)
+        (Nx.placement t))
+    (parts wp);
   let _, _, k = dims w in
   let x = random_floats [| 3; k |] in
   let run () = Nx_quant.apply wp (Nx.place Mem.on x) in
@@ -1261,7 +1198,7 @@ let placement_law ((_, w), c) =
 
 (* Work. Kernels that count the positions their maps compute, over four software
    devices and over one, show where a weight decodes: each device all of [k], or
-   its own blocks alone. *)
+   its own blocks alone; cut along [n], its own rows alone. *)
 
 module C = Nx_support.Counting
 
@@ -1286,10 +1223,12 @@ let decoding p w =
 let work =
   let open Gen in
   with_pp
-    (fun ppf (f, n, b, t) ->
-      Format.fprintf ppf "%a, %d rows of %d blocks, over %d devices" pp_format f
-        n b t)
-    (quad format (int_range 1 3) (int_range 2 6) (of_list [ 2; 4 ]))
+    (fun ppf ((f, n, b, t), along) ->
+      Format.fprintf ppf "%a, %d rows of %d blocks, over %d devices along %s"
+        pp_format f n b t along)
+    (pair
+       (quad format (int_range 1 3) (int_range 2 6) (of_list [ 2; 4 ]))
+       (of_list ~pp:Format.pp_print_string [ "k"; "n" ]))
 
 (* The positions per row of a weight of [n] rows: the difference between [2 n]
    rows and [n] leaves out the constants each device computes. *)
@@ -1297,19 +1236,22 @@ let per_row f n b p =
   let row n = random_weight ~format:f [| n; b * block_values f |] in
   decoding p (row (2 * n)) - decoding p (row n)
 
-let work_law (f, n, b, t) =
+let work_law ((f, n, b, t), along) =
   List.iter
     (fun f' -> cover ("a " ^ format_name f' ^ " weight") (f = f'))
     formats;
-  cover "tiles that divide the blocks" (b mod t = 0);
-  cover "tiles that do not divide the blocks" (b mod t <> 0);
+  let k = along = "k" in
+  cover "a cut along n" (not k);
+  cover "tiles that divide the blocks" (k && b mod t = 0);
+  cover "tiles that do not divide the blocks" (k && b mod t <> 0);
   cover "an MXFP4 weight's tiles that do not divide its groups"
-    (f = Mxfp4 && b mod t <> 0);
+    (k && f = Mxfp4 && b mod t <> 0);
+  let axis = if k then 1 else 0 in
   let cut () =
-    if t = 4 then per_row f n b (Counted.split ~axis:1)
-    else per_row f n b (Counted_two.split ~axis:1)
+    if t = 4 then per_row f n b (Counted.split ~axis)
+    else per_row f n b (Counted_two.split ~axis)
   in
-  if b mod t <> 0 then read_whole cut
+  if k && b mod t <> 0 then read_whole cut
   else
     let one = per_row f n b Counted_one.on and cut = cut () in
     equal ~msg:"the positions per row over one device's" (pair int int) (1, 0)
@@ -1319,37 +1261,53 @@ let work_law (f, n, b, t) =
 let applies =
   let open Gen in
   with_pp
-    (fun ppf (f, n, b) ->
-      Format.fprintf ppf "%a, %d rows of %d blocks" pp_format f n b)
-    (triple format (int_range 1 3) (int_range 1 4))
+    (fun ppf ((f, n, b), cut) ->
+      Format.fprintf ppf "%a, %d rows of %d blocks, %s" pp_format f n b cut)
+    (let* ((_, _, b) as w) = triple format (int_range 1 3) (int_range 1 4) in
+     let+ cut =
+       of_list ~pp:Format.pp_print_string
+         ([ "whole"; "cut along n" ]
+         @ if b mod 2 = 0 then [ "cut along k" ] else [])
+     in
+     (w, cut))
 
-(* A float32 product reads an MXFP4 or Q8_0 weight where it lies and decodes
-   none of its values; it unpacks a Q6_K weight's quants and computes none of
-   its values, fewer positions than [dequant]'s; any other weight it decodes
-   as [dequant] does. The positions of [2 n] rows less those of [n] are the
-   decoding's alone. *)
-let applies_law (f, n, b) =
+(* A float32 product reads an MXFP4 or Q8_0 weight where it lies, whole or cut
+   along [n] or at [k]'s blocks, and decodes none of its values; it unpacks a
+   Q6_K weight's quants and computes none of its values, fewer positions than
+   [dequant]'s; any other weight it decodes as [dequant] does. The positions of
+   [2 n] rows less those of [n] are the decoding's alone. *)
+let applies_law ((f, n, b), cut) =
   List.iter
     (fun f' -> cover ("a " ^ format_name f' ^ " weight") (f = f'))
     formats;
+  cover "a cut along n" (cut = "cut along n");
+  cover "a cut along k" (cut = "cut along k");
+  let p =
+    match cut with
+    | "cut along n" -> Counted_two.split ~axis:0
+    | "cut along k" -> Counted_two.split ~axis:1
+    | _ -> Counted_two.on
+  in
   let k = b * block_values f in
-  let x = Nx.place Counted_one.on (random_floats [| 2; k |]) in
+  let x = Nx.place Counted_two.on (random_floats [| 2; k |]) in
   let rows n = random_weight ~format:f [| n; k |] in
   let applying n =
-    let w = Nx_quant.place Counted_one.on (rows n) in
+    let w = Nx_quant.place p (rows n) in
     C.reset ();
     ignore (Nx.to_array (Nx_quant.apply w x));
     C.positions ()
   in
-  let decoded =
-    decoding Counted_one.on (rows (2 * n)) - decoding Counted_one.on (rows n)
-  in
+  let decoded = decoding p (rows (2 * n)) - decoding p (rows n) in
   let got = applying (2 * n) - applying n in
+  (* Cut along [k], the two devices' partial products close: one sum for each of
+     the [n] rows' outputs at each of [x]'s two rows. *)
+  let closing = if cut = "cut along k" then 2 * n else 0 in
   match f with
-  | Mxfp4 | Q8_0 -> equal ~msg:"the positions of n rows" int 0 got
-  | Q6_K -> less ~msg:"the positions of n rows" int ~than:decoded got
+  | Mxfp4 | Q8_0 -> equal ~msg:"the positions of n rows" int closing got
+  | Q6_K ->
+      less ~msg:"the positions of n rows" int ~than:(decoded + closing) got
   | Mxfp4_blocks | Q4_K ->
-      equal ~msg:"the positions of n rows" int decoded got
+      equal ~msg:"the positions of n rows" int (decoded + closing) got
 
 (* An expert product's format, input dtype, experts, rows and ids, in range,
    repeated or not, and out of range. *)
@@ -1459,7 +1417,7 @@ let draw_experts ?(format = Gen.frequency [ (3, mxfp4); (1, format) ]) () =
           array ~size:(constant count) (frequency [ (8, in_range); (1, past) ])
         );
         (1, map (Array.make count) in_range);
-        (1, map distinct in_range);
+        (2, map distinct in_range);
       ]
   and+ one = frequency [ (4, constant false); (1, constant true) ]
   and+ at = fdt
@@ -1552,22 +1510,28 @@ let experts_law (_, w, ids, X { at; x }) =
     (Nx.shape y);
   routed_rows ~at w ids x (flat64 y)
 
-(* An expert product and, for each position, whether its id is kept, and the
-   id that replaces it otherwise. Half the products, of three experts or more,
-   take two positions or more but fewer than the experts, one input row for
-   all, so that a product gathers matrices beside a kept row's. *)
+(* An expert product, MXFP4 three times in five, and, for each position, whether
+   its id is kept, and the id that replaces it otherwise. Half the products, of
+   three experts or more, take two positions or more but fewer than the experts,
+   one input row for all, at float64 half the time, so that a product gathers
+   matrices beside a kept row's, of each kind. *)
 let rerouted =
   let open Gen in
-  let* ((view, w, _, X { at; x }) as c) = experts in
+  let* ((view, w, _, X { at; x }) as c) =
+    draw_experts ~format:(frequency [ (1, mxfp4); (1, format) ]) ()
+  in
   let lead, _, k = dims w in
   let e = lead.(0) in
   let in_range = map Int64.of_int (int_range 0 (e - 1)) in
   let* few = bool in
   let* c =
     if few && e >= 3 then
-      let+ ids = array ~size:(int_range 2 (e - 1)) in_range in
-      let x = Nx.cast (Nx.dtype x) (random_floats [| 1; k |]) in
-      (view, w, Nx.create Nx.int64 [| Array.length ids |] ids, X { at; x })
+      let+ ids = array ~size:(int_range 2 (e - 1)) in_range and+ wide = bool in
+      let ids = Nx.create Nx.int64 [| Array.length ids |] ids in
+      let row = random_floats [| 1; k |] in
+      if wide then
+        (view, w, ids, X { at = List.nth fdts 3; x = Nx.cast Nx.float64 row })
+      else (view, w, ids, X { at; x = Nx.cast (Nx.dtype x) row })
     else constant c
   in
   let _, _, ids, _ = c in
@@ -1678,27 +1642,6 @@ let crowded =
         fdts)
     formats
 
-let expert_products =
-  group "experts"
-    [
-      prop ~count:1000
-        "a row's bits do not depend on the other positions' experts"
-        (Gen.with_pp pp_rerouted rerouted)
-        rerouted_law;
-      test "a row keeps its bits when more positions name its expert"
-        test_more_named;
-      cases
-        "an expert of more than 64 positions beside an expert of none is \
-         within the bound, at every format and float dtype"
-        ~id:(fun (f, F d) ->
-          Format.asprintf "%a, %s" pp_format f (D.name d.dtype))
-        crowded test_crowded;
-      prop ~count:300
-        "apply_experts is the routed product within the error of a float32 \
-         sum at every format and dtype, and zeros for ids out of range"
-        (Gen.with_pp pp_experts experts)
-        experts_law;
-    ]
 
 (* [e] experts of [format], four by default, twelve positions' ids in range
    and past both bounds, and their rows. *)
@@ -2144,7 +2087,75 @@ let composites_law (f, c, at) =
   cover "the ids refused" (c = Experts && !calls > 1);
   cover "a product refused" (c = Apply && !calls > 1)
 
-let placements =
+(* Structure *)
+
+(* Biased products *)
+
+(* [x] at [dt] by [w] from [init], as Nx.contract sums from an init over the
+   decoded weight: at float32, rounded once to [dt]. [x] has [w]'s leading axes,
+   its batch axes, or none, when they are [w]'s own free axes. *)
+let biased_product dt w x init =
+  let f32 = Nx.float32 in
+  let lead = Nx.ndim (Nx_quant.dequant f32 w) - 2 in
+  let names = String.concat " " (List.init lead (Printf.sprintf "w%d")) in
+  let xs = if Nx.ndim x = 2 then "" else names in
+  Nx.cast dt
+    (Nx.contract f32 ~init:(Nx.cast f32 init)
+       (Nx.Pattern.v
+          (Printf.sprintf "%s m k, %s n k -> %s m n | k" xs names names))
+       (Nx.cast f32 x) (Nx_quant.dequant f32 w))
+
+(* The dtypes below the accumulator's, where a second rounding shows. *)
+let narrow =
+  let at dtype = F { dtype; round = D.of_float dtype } in
+  [ at Nx.bfloat16; at Nx.float16 ]
+
+(* Asked for their sum, [apply] and [apply_experts] over a weight cut along [k],
+   or the experts, keep it; closed, it has the bits of the product closed by
+   default at float32, whose terms round nothing. *)
+
+(* Refusals *)
+
+(* [refused ~by f] checks that [f ()] raises [Invalid_argument] naming [by]. *)
+let refused ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
+let ignored f () = ignore (f ())
+let zeros = Nx.zeros Nx.uint8
+
+(* Kernels that decline what the products need: nx.cpu, declining a contraction
+   with a block scale, or a segmented one. *)
+module No_scales = struct
+  include Nx_cpu
+
+  let name = "nx.test"
+
+  let contract ~batch ~contracting ~segments ~acc ~dst ~init
+      (a : Nx_kernel.operand) (b : Nx_kernel.operand) =
+    match (a.scale, b.scale) with
+    | None, None ->
+        Nx_cpu.contract ~batch ~contracting ~segments ~acc ~dst ~init a b
+    | _ -> Nx_array.Declined
+end
+
+module No_segments = struct
+  include Nx_cpu
+
+  let name = "nx.test"
+
+  let contract ~batch ~contracting ~segments ~acc ~dst ~init a b =
+    match segments with
+    | None -> Nx_cpu.contract ~batch ~contracting ~segments ~acc ~dst ~init a b
+    | Some _ -> Nx_array.Declined
+end
+
+module Unscaled =
+  (val Nx.devices ~kernels:(module No_scales) [ Nx_support.memory 0 ])
+
+module Unsegmented =
+  (val Nx.devices ~kernels:(module No_segments) [ Nx_support.memory 0 ])
+
+(* Groups *)
+
+let placement_group =
   group "placement"
     [
       prop ~count:300
@@ -2189,16 +2200,24 @@ let placements =
          one block of each format over two devices, three over two, and two
          over four. *)
       cases "a cut along k inside the blocks raises at the call"
-        ~id:(fun (f, blocks, c, _) ->
-          Format.asprintf "%s of %d blocks at %a" (format_name f) blocks pp_cut
-            c)
+        ~id:(fun (f, blocks, c, call) ->
+          Format.asprintf "%s of %d blocks at %a, %s" (format_name f) blocks
+            pp_cut c
+            (match call with
+            | `Dequant -> "dequant"
+            | `Apply -> "apply at float64"
+            | `Apply_in_place -> "apply at float32"
+            | `Experts -> "apply_experts"))
         (List.concat_map
            (fun f ->
              List.map
                (fun (blocks, tiles, call) ->
                  (f, blocks, Cut { axis = 1; tiles }, call))
                [ (1, 2, `Dequant); (3, 2, `Apply); (2, 4, `Experts) ])
-           formats)
+           formats
+        (* MXFP4 read where it lies, at float32: each of four devices holds half
+           a block's codes, and the scales are read whole. *)
+        @ [ (Mxfp4, 2, Cut { axis = 1; tiles = 4 }, `Apply_in_place) ])
         (fun (f, blocks, c, call) ->
           let k = blocks * block_values f in
           let w = random_weight ~format:f [| 2; k |] in
@@ -2211,6 +2230,9 @@ let placements =
           | `Apply ->
               let x = Nx.place Mem.on (random_floats [| 3; k |]) in
               let x = Nx.cast Nx.float64 x in
+              raises (named "Nx_quant.apply") (fun () -> Nx_quant.apply wp x)
+          | `Apply_in_place ->
+              let x = Nx.place Mem.on (random_floats [| 3; k |]) in
               raises (named "Nx_quant.apply") (fun () -> Nx_quant.apply wp x)
           | `Experts ->
               let e = random_weight ~format:f [| 2; 2; k |] in
@@ -2276,7 +2298,7 @@ let placements =
           raises
             (split_blocks "Nx_quant.apply" (Mem.split ~axis:1))
             (fun () -> Nx_quant.apply w x));
-      prop
+      prop ~count:200
         "a composite's refusal names the caller's argument and the place \
          that resolves it"
         composites composites_law;
@@ -2298,17 +2320,9 @@ let placements =
             (blocks_of (Nx_quant.quantize_q8_0 x))
             (blocks_of w));
       prop ~count:300
-        "a cut along k decodes each block once where its tiles divide the \
-         blocks, and raises otherwise"
+        "a cut along n, or along k where its tiles divide the blocks, decodes \
+         each block once, and a cut along k raises otherwise"
         work work_law;
-      prop
-        "a float32 product decodes no value of an MXFP4, Q8_0 or Q6_K weight, \
-         and any other weight as dequant does"
-        applies applies_law;
-      prop ~count:300
-        "an expert product decodes a matrix per slot, min (positions, \
-         experts), or none read where it lies"
-        decodes decodes_law;
       prop ~count:600
         "experts at any placement give rows within their bound, the same on \
          every run, or raise where an operation reads a cut axis whole"
@@ -2337,8 +2351,8 @@ let placements =
             let y = run (S.split ~axis:0) in
             equal ~msg:"the bits" (array int64) (product_bits (run S.on))
               (product_bits y);
-            equal ~msg:"where the result lies" bool true
-              (Nx.Placement.equal S.on (Nx.placement y))
+            equal ~msg:"where the result lies" (placement ()) S.on
+              (Nx.placement y)
           in
           if t = 4 then at (module Mem) else at (module Mem_two));
       (* The experts over the mesh's axis [a] and [n] over its axis [b]: each
@@ -2359,8 +2373,8 @@ let placements =
           let y = run (Nx.Placement.mesh mesh [ (0, [ "a" ]); (1, [ "b" ]) ]) in
           equal ~msg:"the bits" (array int64) (product_bits whole)
             (product_bits y);
-          equal ~msg:"where the result lies" bool true
-            (Nx.Placement.equal (Nx.placement whole) (Nx.placement y)));
+          equal ~msg:"where the result lies" (placement ()) (Nx.placement whole)
+            (Nx.placement y));
       cases
         "experts cut along k at their blocks give rows within their bound, the \
          same on every run, whole on each device"
@@ -2388,17 +2402,19 @@ let placements =
         ~id:format_name formats
         (fun format ->
           cut_along_k (module Mem) Mem.on (Mem.split ~axis:1) format);
-      (* One block of codes over two and four devices, its scales whole on
-         each: decoded at float64, each device decodes its own codes. *)
+      (* One block of codes over two and four devices, its scales whole on each:
+         at any dtype, each device decodes its own codes. *)
       cases
         "an MXFP4 weight of one block, its codes cut along k and its scales \
-         whole, decodes where it lies at float64"
-        ~id:(fun t -> Printf.sprintf "over %d" t)
-        [ 2; 4 ]
-        (fun t ->
+         whole, decodes where it lies at any dtype"
+        ~id:(fun (t, F d) -> Printf.sprintf "over %d, %s" t (D.name d.dtype))
+        (List.concat_map
+           (fun t -> List.map (fun i -> (t, List.nth fdts i)) [ 0; 1; 3 ])
+           [ 2; 4 ])
+        (fun (t, (F d as at)) ->
           let w = random_weight [| 3; 2; 32 |] in
           let ids = Nx.create Nx.int64 [| 4 |] [| 2L; 0L; 3L; 2L |] in
-          let x = Nx.cast Nx.float64 (random_floats [| 4; 32 |]) in
+          let x = Nx.cast d.dtype (random_floats [| 4; 32 |]) in
           let at (module S : Nx.Devices) =
             let wp =
               match w with
@@ -2407,18 +2423,18 @@ let placements =
                     (Nx.place (S.split ~axis:2) codes)
               | _ -> fail "an MXFP4 weight"
             in
-            let d = Nx_quant.dequant Nx.float64 wp in
+            let v = Nx_quant.dequant d.dtype wp in
             equal ~msg:"its values" (array int64)
-              (bits (Nx_quant.dequant Nx.float64 w))
-              (bits d);
-            equal ~msg:"where its values lie" bool true
-              (Nx.Placement.equal (S.split ~axis:2) (Nx.placement d));
+              (bits (Nx_quant.dequant d.dtype w))
+              (bits v);
+            equal ~msg:"where its values lie" (placement ()) (S.split ~axis:2)
+              (Nx.placement v);
             let run () =
               Nx_quant.apply_experts ~ids:(Nx.place S.on ids) wp
                 (Nx.place S.on x)
             in
             let y = run () in
-            routed_rows ~at:(List.nth fdts 3) w ids x (flat64 y);
+            routed_rows ~at w ids x (flat64 y);
             equal ~msg:"a second run" (array int64) (product_bits y)
               (product_bits (run ()))
           in
@@ -2443,64 +2459,240 @@ let placements =
         "experts whole on each device give rows within their bound, the same \
          on every run"
         ~id:format_name formats (placed_experts Mem.on);
+      (* Three blocks over two devices split one; a fourth of zeros, beside zero
+         inputs, adds nothing to the product. *)
+      cases
+        "padding k and the input with zero blocks keeps each block on one \
+         device"
+        ~id:format_name formats (fun format ->
+          let bv = block_values format in
+          let w = random_weight ~format [| 2; 3 * bv |] in
+          let x = random_floats [| 3; 3 * bv |] in
+          let at = Mem_two.split ~axis:1 in
+          read_whole (fun () ->
+              Nx_quant.apply (Nx_quant.place at w) (Nx.place Mem_two.on x));
+          let pad n t = Nx.pad [| (0, 0); (0, n) |] 0 t in
+          let padded =
+            match w with
+            | Mxfp4 { codes; scales } ->
+                Nx_quant.mxfp4 ~scales:(pad 1 scales) (pad 16 codes)
+            | Mxfp4_blocks { blocks } -> Nx_quant.mxfp4_blocks (pad 17 blocks)
+            | Q8_0 { blocks } -> Nx_quant.q8_0 (pad 34 blocks)
+            | Q4_K { blocks } -> Nx_quant.q4_k (pad 144 blocks)
+            | Q6_K { blocks } -> Nx_quant.q6_k (pad 210 blocks)
+          in
+          let x' = Nx.pad [| (0, 0); (0, bv) |] 0. x in
+          let y =
+            Nx_quant.apply (Nx_quant.place at padded) (Nx.place Mem_two.on x')
+          in
+          applied ~at:f32 w x y);
+      cases "a product asked for its sum keeps it where its terms lie"
+        ~id:(fun (f, format) -> f ^ ", " ^ format_name format)
+        (List.concat_map
+           (fun format -> [ ("apply", format); ("apply_experts", format) ])
+           formats)
+        (fun (f, format) ->
+          let sum =
+            Nx.Placement.partial (Nx.Mesh.v Mem.v [ ("x", 4) ]) [ "x" ] []
+          in
+          let closed, asked =
+            if f = "apply" then
+              (* Four blocks of every format's along [k], one per device. *)
+              let w = random_weight ~format [| 12; 1024 |] in
+              let wp = Nx_quant.place (Mem.split ~axis:1) w in
+              let x = Nx.place Mem.on (random_floats [| 3; 1024 |]) in
+              (Nx_quant.apply wp x, Nx_quant.apply ~sum:true wp x)
+            else
+              let w, ids, x = experts_of format in
+              let wp = Nx_quant.place (Mem.split ~axis:0) w in
+              let on v = Nx.place Mem.on v in
+              ( Nx_quant.apply_experts ~ids:(on ids) wp (on x),
+                Nx_quant.apply_experts ~sum:true ~ids:(on ids) wp (on x) )
+          in
+          equal ~msg:"where" (placement ()) sum (Nx.placement asked);
+          (* Closed, it has the bits of the product closed by default at
+             float32, whose terms round nothing. *)
+          equal ~msg:"closed" (array int64) (bits closed)
+            (bits (Nx.place (Nx.Placement.closed sum) asked)));
     ]
 
-(* Structure *)
-
-let structure =
-  group "structure"
+let formats_group =
+  group "type t"
     [
-      test "visits the case, then codes before scales" (fun () ->
-          equal (list string)
-            [ "the root: case \"mxfp4\""; "codes: a leaf"; "scales: a leaf" ]
-            (List.map
-               (Format.asprintf "%a" Nx.Ptree.pp_visit)
-               (Nx.Ptree.visits description (random_weight [| 3; 4; 64 |]))));
-      cases "visits a block format's case, then its blocks" ~id:format_name
-        [ Mxfp4_blocks; Q8_0; Q4_K; Q6_K ] (fun format ->
-          equal (list string)
-            [
-              Printf.sprintf "the root: case %S" (format_name format);
-              "blocks: a leaf";
-            ]
-            (List.map
-               (Format.asprintf "%a" Nx.Ptree.pp_visit)
-               (Nx.Ptree.visits description
-                  (random_weight ~format [| 3; 256 |]))));
-      test "a walk that keeps each part rebuilds the same parts" (fun () ->
-          let w = random_weight [| 3; 4; 64 |] in
-          let w' = Nx.Ptree.map description (fun _ t -> t) w in
-          equal bool true (List.for_all2 ( == ) (parts w) (parts w')));
+      known;
+      ggml;
+      prop "both MXFP4 layouts of one weight decode alike, bit for bit"
+        codes_and_scales (fun (rows, groups, codes, scales) ->
+          let w =
+            Nx_quant.mxfp4
+              ~scales:(u8 [| rows; groups |] scales)
+              (u8 [| rows; groups * 16 |] (checkpoint_bytes codes))
+          in
+          let g =
+            Nx_quant.mxfp4_blocks
+              (u8 [| rows; groups * 17 |] (gguf_blocks codes scales))
+          in
+          equal (array int64)
+            (bits (Nx_quant.dequant Nx.float32 w))
+            (bits (Nx_quant.dequant Nx.float32 g)));
     ]
 
-(* Biased products *)
-
-(* [x] at [dt] by [w] from [init], as Nx.contract sums from an init over the
-   decoded weight: at float32, rounded once to [dt]. [x] has [w]'s leading
-   axes, its batch axes, or none, when they are [w]'s own free axes. *)
-let biased_product dt w x init =
-  let f32 = Nx.float32 in
-  let lead = Nx.ndim (Nx_quant.dequant f32 w) - 2 in
-  let names = String.concat " " (List.init lead (Printf.sprintf "w%d")) in
-  let xs = if Nx.ndim x = 2 then "" else names in
-  Nx.cast dt
-    (Nx.contract f32 ~init:(Nx.cast f32 init)
-       (Nx.Pattern.v
-          (Printf.sprintf "%s m k, %s n k -> %s m n | k" xs names names))
-       (Nx.cast f32 x) (Nx_quant.dequant f32 w))
-
-(* Whether [a] and [b] differ at some element: the bias added after the
-   product, rounded twice, is not the product from the bias. *)
-let differ a b = Array.exists2 ( <> ) (product_bits a) (product_bits b)
-
-(* The dtypes below the accumulator's, where a second rounding shows. *)
-let narrow =
-  let at dtype = F { dtype; round = D.of_float dtype } in
-  [ at Nx.bfloat16; at Nx.float16 ]
-
-let biased =
-  group "biased products"
+let constructors =
+  group "constructors"
     [
+      cases "hold their bytes and allocate nothing" ~id:format_name formats
+        (fun format ->
+          let rows = 64 and k = 4096 in
+          let part last = Nx.copy (Nx.zeros Nx.uint8 [| rows; last |]) in
+          let given, make =
+            match format with
+            | Mxfp4 ->
+                let codes = part (k / 2) and scales = part (k / 32) in
+                ([ codes; scales ], fun () -> Nx_quant.mxfp4 ~scales codes)
+            | f -> (
+                let blocks = part (k / block_values f * block_bytes f) in
+                ( [ blocks ],
+                  fun () ->
+                    match f with
+                    | Mxfp4_blocks -> Nx_quant.mxfp4_blocks blocks
+                    | Q8_0 -> Nx_quant.q8_0 blocks
+                    | Q4_K -> Nx_quant.q4_k blocks
+                    | Q6_K | Mxfp4 -> Nx_quant.q6_k blocks ))
+          in
+          let before = Rig.allocated Rig.host in
+          let w = make () in
+          equal ~msg:"allocated" int 0 (Rig.allocated Rig.host - before);
+          equal ~msg:"its parts are the bytes"
+            (list (Testable.make ~pp:Nx.pp ~equal:( == )))
+            given (parts w));
+      cases "refuse a part of the wrong shape, naming it"
+        ~id:(fun (n, _, _) -> n)
+        (let mxfp4 scales codes () =
+           ignore (Nx_quant.mxfp4 ~scales:(zeros scales) (zeros codes))
+         in
+         let blocks f shape () = ignore (f (zeros shape)) in
+         [
+           ( "mxfp4 codes of one axis",
+             "Nx_quant.mxfp4: codes",
+             mxfp4 [| 2 |] [| 32 |] );
+           ( "mxfp4 k not a multiple of 32",
+             "Nx_quant.mxfp4: codes",
+             mxfp4 [| 4; 1 |] [| 4; 8 |] );
+           ( "mxfp4 a scale per 16 values",
+             "Nx_quant.mxfp4: scales",
+             mxfp4 [| 4; 4 |] [| 4; 32 |] );
+           ( "mxfp4 scales without a leading axis",
+             "Nx_quant.mxfp4: scales",
+             mxfp4 [| 4; 1 |] [| 2; 4; 16 |] );
+           ( "q8_0 blocks of one axis",
+             "Nx_quant.q8_0: blocks",
+             blocks Nx_quant.q8_0 [| 34 |] );
+           ( "mxfp4_blocks blocks of one axis",
+             "Nx_quant.mxfp4_blocks: blocks",
+             blocks Nx_quant.mxfp4_blocks [| 17 |] );
+           ( "mxfp4_blocks a row of a part of a block",
+             "Nx_quant.mxfp4_blocks: blocks",
+             blocks Nx_quant.mxfp4_blocks [| 2; 18 |] );
+           ( "q8_0 a row of a part of a block",
+             "Nx_quant.q8_0: blocks",
+             blocks Nx_quant.q8_0 [| 2; 68 + 32 |] );
+           ( "q4_k a row of a part of a block",
+             "Nx_quant.q4_k: blocks",
+             blocks Nx_quant.q4_k [| 2; 145 |] );
+           ( "q6_k a row of Q4_K's blocks",
+             "Nx_quant.q6_k: blocks",
+             blocks Nx_quant.q6_k [| 2; 144 |] );
+         ])
+        (fun (_, sub, f) -> raises_match (Exn.invalid_arg ~sub) f);
+    ]
+
+let dequant_group =
+  group "dequant"
+    [
+      prop ~count:300
+        "dequant gives each value of the format, computed at float32, at its \
+         dtype"
+        (Gen.pair (weight ()) fdt)
+        (fun ((_, w), F d) ->
+          let exact = values w in
+          List.iter
+            (fun f ->
+              cover ("a " ^ format_name f ^ " weight") (format_of w = f))
+            formats;
+          cover "no value" (Array.length exact = 0);
+          cover "an infinite value"
+            (Array.exists (fun v -> Float.abs v = Float.infinity) exact);
+          cover "a NaN value" (Array.exists Float.is_nan exact);
+          cover "a -0. value"
+            (Array.exists (fun v -> 1. /. v = Float.neg_infinity) exact);
+          let got = Nx_quant.dequant d.dtype w in
+          equal (array int) (Nx_quant.shape w) (Nx.shape got);
+          equal (array float_exact) (Array.map d.round exact)
+            (Nx.to_array (Nx.cast Nx.float64 got)));
+    ]
+
+let apply_group =
+  group "apply"
+    [
+      prop ~count:300 "apply is the product with the dequantised weight"
+        (Gen.with_pp pp_product products)
+        product_law;
+      prop "apply is its equation, bit for bit up to a NaN's sign and payload"
+        (Gen.with_pp pp_product products) (fun (_, w, X { x; _ }) ->
+          equal (array int64)
+            (product_bits (equation w x))
+            (product_bits (Nx_quant.apply w x)));
+      (* The drawn products have at most 3 rows and 4 columns, which nx.cpu sums
+         in lane order; these take chain order, more than 4 of each and 64
+         outputs or more, over two blocks of each format. *)
+      cases "apply is its equation, bit for bit, over many rows and columns"
+        ~id:(fun (f, F d, lead) ->
+          Printf.sprintf "%s, %s, %d leading axes" (format_name f)
+            (D.name d.dtype) (List.length lead))
+        (List.concat_map
+           (fun f ->
+             List.concat_map (fun d -> [ (f, d, []); (f, d, [ 2 ]) ]) fdts)
+           formats)
+        (fun (format, F d, lead) ->
+          let lead = Array.of_list lead in
+          let w = random_weight ~format (Array.append lead [| 12; 512 |]) in
+          let x =
+            Nx.cast d.dtype (random_floats (Array.append lead [| 8; 512 |]))
+          in
+          equal (array int64)
+            (product_bits (equation w x))
+            (product_bits (Nx_quant.apply w x)));
+      test "a float64 input accumulates at float64" (fun () ->
+          (* Every value of this weight is 1: each output sums the input. *)
+          let w =
+            Nx_quant.q8_0
+              (u8 [| 1; 34 |]
+                 (Array.init 34 (fun i ->
+                      match i with 0 -> 0x00 | 1 -> 0x3C | _ -> 1)))
+          in
+          let tiny = Float.ldexp 1. (-40) in
+          let x =
+            Nx.create Nx.float64 [| 32 |]
+              (Array.init 32 (fun i -> if i = 0 then 1. else tiny))
+          in
+          equal (array float_exact)
+            [| 1. +. (31. *. tiny) |]
+            (Nx.to_array (Nx_quant.apply w x)));
+      test "an MXFP4 value past float32's range is infinite at float64"
+        (fun () ->
+          (* Code 7, of magnitude 6, at scale byte 254 is 6 * 2^127, past
+             float32's range: dequant makes it infinite at every dtype. *)
+          let w =
+            Nx_quant.mxfp4
+              ~scales:(u8 [| 1; 1 |] [| 254 |])
+              (u8 [| 1; 16 |] (Array.init 16 (fun i -> if i = 0 then 7 else 0)))
+          in
+          let x =
+            Nx.create Nx.float64 [| 32 |]
+              (Array.init 32 (fun i -> if i = 0 then 1. else 0.))
+          in
+          equal (array float_exact) [| Float.infinity |]
+            (Nx.to_array (Nx_quant.apply w x)));
       (* With [w]'s leading axes its own, [3; 3], against an [x] of [3]
          rows, the kernel's axes are the row, then [w]'s: a cycle of three
          axes of one extent, which an init read in the result's order would
@@ -2533,13 +2725,92 @@ let biased =
           equal (array int64)
             (product_bits (biased_product dt w x init))
             (product_bits got);
-          equal ~msg:"the product, then the bias, rounds twice" bool true
-            (differ got (Nx.add (Nx_quant.apply w x) init)));
+          not_equal ~msg:"the product, then the bias, rounds twice"
+            (array int64) (product_bits got)
+            (product_bits (Nx.add (Nx_quant.apply w x) init)));
+      prop ~count:150
+        "a float32 product decodes no value of an MXFP4, Q8_0 or Q6_K weight, \
+         whole or cut, and any other weight as dequant does"
+        applies applies_law;
+      (* nx.mli: after a kernel declines, nx raises. A weight decoded at float32
+         first is a plain contraction, which the kernels take. *)
+      cases
+        "on kernels that decline a block-scaled contraction, refuses a weight \
+         read where it lies or unpacked, and computes any other"
+        ~id:(fun (f, wide) ->
+          format_name f ^ if wide then " at float64" else " at float32")
+        (List.concat_map (fun f -> [ (f, false); (f, true) ]) formats)
+        (fun (format, wide) ->
+          let w = random_weight ~format [| 3; 256 |] in
+          let x = random_floats [| 2; 256 |] in
+          let run x =
+            Nx_quant.apply
+              (Nx_quant.place Unscaled.on w)
+              (Nx.place Unscaled.on x)
+          in
+          let scaled =
+            match format with
+            | Q8_0 | Q6_K -> true
+            | Mxfp4 -> not wide
+            | _ -> false
+          in
+          let check x =
+            if scaled then
+              raises_match (Exn.invalid_arg ?sub:None) (fun () -> run x)
+            else
+              equal (array int64)
+                (product_bits (Nx_quant.apply w x))
+                (product_bits (run x))
+          in
+          if wide then check (Nx.cast Nx.float64 x) else check x);
+      cases "refuses an input or init that does not fit" ~id:fst
+        (let w () = random_weight [| 2; 5; 64 |] and x = random_floats in
+         let apply x () = ignore (Nx_quant.apply (w ()) (x ())) in
+         [
+           ("a 0-d value", apply (fun () -> Nx.scalar Nx.float32 1.));
+           ("a last axis of another size", apply (fun () -> x [| 3; 32 |]));
+           ( "batch axes that do not broadcast",
+             apply (fun () -> x [| 3; 1; 64 |]) );
+           ( "an init that does not broadcast to the result",
+             ignored (fun () ->
+                 Nx_quant.apply ~init:(x [| 2; 4 |]) (w ()) (x [| 3; 64 |])) );
+         ])
+        (fun (_, f) -> refused ~by:"Nx_quant.apply" f);
+    ]
+
+let experts_group =
+  group "apply_experts"
+    [
+      prop ~count:700
+        "a row's bits do not depend on the other positions' experts"
+        (Gen.with_pp pp_rerouted rerouted)
+        rerouted_law;
+      test "a row keeps its bits when more positions name its expert"
+        test_more_named;
+      cases
+        "an expert of more than 64 positions beside an expert of none is \
+         within the bound, at every format and float dtype"
+        ~id:(fun (f, F d) ->
+          Format.asprintf "%a, %s" pp_format f (D.name d.dtype))
+        crowded test_crowded;
+      prop ~count:400
+        "apply_experts is the routed product within the error of a float32 sum \
+         at every format and dtype, and zeros for ids out of range"
+        (Gen.with_pp pp_experts experts)
+        experts_law;
       cases "apply_experts from an init sums each row from its own"
         ~id:format_name [ Q8_0; Mxfp4 ] (fun format ->
           let w, ids, x = experts_of format in
           let bf16 = Nx.bfloat16 and f32 = Nx.float32 in
-          let x = Nx.cast bf16 x in
+          (* Position 0's id, [-1], is out of range: its row of [x], NaN,
+             reaches nothing. *)
+          let x =
+            Nx.concatenate ~axis:0
+              [
+                Nx.full bf16 [| 1; Nx.dim 1 x |] Float.nan;
+                Nx.cast bf16 (Nx.slice [ Nx.R (1, 12) ] x);
+              ]
+          in
           let init = Nx.cast bf16 (Nx.mul_s (random_floats [| 12; 3 |]) 8.) in
           (* At float32 the product's sum is the accumulator's, so adding the
              init there rounds as the kernel does; a position out of range
@@ -2552,53 +2823,169 @@ let biased =
           in
           let got = Nx_quant.apply_experts ~init ~ids w x in
           equal (array int64) (product_bits want) (product_bits got);
-          equal ~msg:"the product, then the bias, rounds twice" bool true
-            (differ got (Nx.add (Nx_quant.apply_experts ~ids w x) init)));
+          not_equal ~msg:"the product, then the bias, rounds twice"
+            (array int64) (product_bits got)
+            (product_bits (Nx.add (Nx_quant.apply_experts ~ids w x) init)));
+      prop ~count:300
+        "an expert product decodes a matrix per slot, min (positions, \
+         experts), or none read where it lies"
+        decodes decodes_law;
+      (* A weight cut inside its blocks is read whole whatever the ids: no
+         position, or none in range, names a block. *)
+      cases "raises over a cut inside a block whatever its ids" ~id:fst
+        [
+          ("no position", [||]);
+          ("ids all out of range", [| -1L; 2L; Int64.max_int |]);
+        ]
+        (fun (_, id) ->
+          let c = Cut { axis = 2; tiles = 4 } in
+          let w = Nx_quant.place (at c) (random_weight [| 2; 2; 64 |]) in
+          let p = Array.length id in
+          let ids = Nx.place Mem.on (Nx.create Nx.int64 [| p |] id) in
+          let x = Nx.place Mem.on (random_floats [| p; 64 |]) in
+          raises
+            (split_blocks "Nx_quant.apply_experts" (at c))
+            (fun () -> Nx_quant.apply_experts ~ids w x));
+      cases "refuses a set whose kernels decline its segmented sum"
+        ~id:format_name formats (fun format ->
+          let w, ids, x = experts_of format in
+          let on t = Nx.place Unsegmented.on t in
+          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
+              Nx_quant.apply_experts ~ids:(on ids)
+                (Nx_quant.place Unsegmented.on w)
+                (on x)));
+      cases "refuses ids, an input or an init that do not fit" ~id:fst
+        (let w () = random_weight [| 2; 5; 64 |] and x = random_floats in
+         let experts w ids xs () =
+           ignore
+             (Nx_quant.apply_experts ~ids:(Nx.zeros Nx.int64 ids) (w ()) (x xs))
+         in
+         [
+           ( "an init that does not broadcast to the result",
+             ignored (fun () ->
+                 Nx_quant.apply_experts
+                   ~init:(x [| 3; 4 |])
+                   ~ids:(Nx.zeros Nx.int64 [| 3 |])
+                   (w ())
+                   (x [| 3; 64 |])) );
+           ( "experts of two axes",
+             experts (fun () -> random_weight [| 5; 64 |]) [| 3 |] [| 3; 64 |]
+           );
+           ("an input without its row axis", experts w [| 3 |] [| 64 |]);
+           ("an input of other inputs", experts w [| 3 |] [| 3; 32 |]);
+           ( "an input whose positions do not broadcast to the ids'",
+             experts w [| 3 |] [| 2; 64 |] );
+         ])
+        (fun (_, f) -> refused ~by:"Nx_quant.apply_experts" f);
     ]
 
-(* Asked for their sum, [apply] and [apply_experts] over a weight cut along
-   [k], or the experts, keep it; closed, it has the bits of the product
-   closed by default at float32, whose terms round nothing. *)
-let test_asked_sums () =
-  let sum = Nx.Placement.partial (Nx.Mesh.v Mem.v [ ("x", 4) ]) [ "x" ] [] in
-  let check ~msg closed asked =
-    equal (placement ()) ~msg:(msg ^ ": where") sum (Nx.placement asked);
-    let asked = Nx.place (Nx.Placement.closed sum) asked in
-    equal ~msg (array int64) (bits closed) (bits asked)
-  in
-  List.iter
-    (fun format ->
-      (* Four blocks of every format's along [k], one per device. *)
-      let w = random_weight ~format [| 12; 1024 |] in
-      let wp = Nx_quant.place (Mem.split ~axis:1) w in
-      let x = Nx.place Mem.on (random_floats [| 3; 1024 |]) in
-      check ~msg:("apply, " ^ format_name format) (Nx_quant.apply wp x)
-        (Nx_quant.apply ~sum:true wp x))
-    formats;
-  List.iter
-    (fun format ->
-      let w, ids, x = experts_of format in
-      let wp = Nx_quant.place (Mem.split ~axis:0) w in
-      let on v = Nx.place Mem.on v in
-      check ~msg:("apply_experts, " ^ format_name format)
-        (Nx_quant.apply_experts ~ids:(on ids) wp (on x))
-        (Nx_quant.apply_experts ~sum:true ~ids:(on ids) wp (on x)))
-    formats
+let take_group =
+  group "take"
+    [
+      prop "take is the gather of the dequantised weight at positions in range"
+        takes take_law;
+      cases "a position out of range gathers zero bytes, which decode to zeros"
+        ~id:format_name formats (fun format ->
+          let w = random_weight ~format [| 3; 4; 256 |] in
+          let taken = Nx_quant.take ~axis:0 (positions [ -1; 1; 3 ]) w in
+          let zero = if format = Q6_K then -0. else 0. in
+          let row i t = Nx.to_array (Nx.slice [ Nx.I i ] t) in
+          List.iter
+            (fun t ->
+              let none = Array.map (fun _ -> 0) (row 0 t) in
+              equal ~msg:"part"
+                (pair (array int) (array int))
+                (none, none)
+                (row 0 t, row 2 t))
+            (parts taken);
+          let got = Nx_quant.dequant Nx.float32 taken in
+          equal (array float_exact) (Array.make (4 * 256) zero) (row 0 got);
+          equal (array float_exact) (Array.make (4 * 256) zero) (row 2 got));
+      cases "decodes no value" ~id:format_name formats (fun format ->
+          let taking n =
+            let w =
+              Nx_quant.place Counted_one.on
+                (random_weight ~format [| n; 2; 256 |])
+            in
+            let p = Nx.place Counted_one.on (positions [ 0; n - 1 ]) in
+            C.reset ();
+            List.iter
+              (fun t -> ignore (Nx.to_array t))
+              (parts (Nx_quant.take ~axis:0 p w));
+            C.positions ()
+          in
+          (* The positions of [2 n] rows less those of [n]: a decode's. *)
+          equal int 0 (taking 8 - taking 4));
+      cases "refuses its weight's last axis, or an axis it lacks" ~id:fst
+        [
+          ("the last axis", 2);
+          ("the last axis, counted from the end", -1);
+          ("an axis past the weight's", 3);
+          ("an axis before the weight's first", -4);
+        ]
+        (fun (_, axis) ->
+          refused ~by:"Nx_quant.take" (fun () ->
+              Nx_quant.take ~axis (positions [ 0 ])
+                (random_weight [| 2; 5; 64 |])));
+    ]
+
+let walk_group =
+  group "walk"
+    [
+      test "visits the case, then codes before scales" (fun () ->
+          equal (list string)
+            [ "the root: case \"mxfp4\""; "codes: a leaf"; "scales: a leaf" ]
+            (List.map
+               (Format.asprintf "%a" Nx.Ptree.pp_visit)
+               (Nx.Ptree.visits description (random_weight [| 3; 4; 64 |]))));
+      cases "visits a block format's case, then its blocks" ~id:format_name
+        [ Mxfp4_blocks; Q8_0; Q4_K; Q6_K ] (fun format ->
+          equal (list string)
+            [
+              Printf.sprintf "the root: case %S" (format_name format);
+              "blocks: a leaf";
+            ]
+            (List.map
+               (Format.asprintf "%a" Nx.Ptree.pp_visit)
+               (Nx.Ptree.visits description
+                  (random_weight ~format [| 3; 256 |]))));
+      test "a walk that keeps each part rebuilds the same parts" (fun () ->
+          let w = random_weight [| 3; 4; 64 |] in
+          let w' = Nx.Ptree.map description (fun _ t -> t) w in
+          equal
+            (list (Testable.make ~pp:Nx.pp ~equal:( == )))
+            (parts w) (parts w'));
+      test "a structure walks a weight at its field's path" (fun () ->
+          let s =
+            Nx.Ptree.v (fun c w -> Nx.Ptree.Walk.field c "w" Nx_quant.walk w)
+          in
+          equal (list string)
+            [ "w: case \"mxfp4\""; "w.codes: a leaf"; "w.scales: a leaf" ]
+            (List.map
+               (Format.asprintf "%a" Nx.Ptree.pp_visit)
+               (Nx.Ptree.visits s (random_weight [| 3; 4; 64 |]))));
+      test "refuses parts of other shapes, naming Nx_quant.walk" (fun () ->
+          let halve t =
+            if Nx.dim (-1) t = 2 then Nx.slice [ Nx.A; Nx.A; Nx.R (0, 1) ] t
+            else t
+          in
+          refused ~by:"Nx_quant.walk" (fun () ->
+              Nx.Ptree.map description
+                (fun _ t -> halve t)
+                (random_weight [| 2; 5; 64 |])));
+    ]
 
 let () =
   exit
     (run "nx quant"
        [
-         known;
-         ggml;
+         placement_group;
+         formats_group;
+         constructors;
          quantising;
-         values_and_products;
-         biased;
-         file_layouts;
-         errors;
-         placements;
-         expert_products;
-         structure;
-         group "sums"
-           [ test "a product asked for its sum keeps it" test_asked_sums ];
+         dequant_group;
+         apply_group;
+         experts_group;
+         take_group;
+         walk_group;
        ])

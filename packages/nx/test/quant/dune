@@ -3,6 +3,6 @@
 (test
  (package nx)
  (name test_quant)
- (libraries nx nx_array nx_quant nx_support rig windtrap)
+ (libraries nx nx_array nx_cpu nx_kernel nx_quant nx_support rig windtrap)
  (deps
   (glob_files golden/*)))

@@ -24,32 +24,31 @@
     {!apply}'s and {!apply_experts}' results are within {!Nx.contract}'s bound,
     the same on every run for a given placement. Cut along [n] or a leading
     axis, each device decodes its own rows. Cut along a stack's experts,
-    {!apply_experts} sums each device's experts' rows, and the devices'
-    sums close where the result would lie with the experts whole. A row
-    then has the bits it has with the experts whole, on kernels whose
-    segmented order does not depend on the count of experts, as nx.cpu's.
-    Cut along [k] over [t] devices, a weight of [b] blocks along [k] is cut
-    at its blocks' boundaries where [t] divides [b]: each device decodes
-    its own blocks, {!dequant}'s result is cut along [k] as the parts are,
-    and {!apply} and {!apply_experts} sum the devices' partial products,
-    which close. With [~sum:true], both keep the sum where its terms lie,
-    as {!Nx.matmul} does ({!Nx.section-contraction}). Their
-    product of an [Mxfp4] or [Q8_0] weight read where it lies reads the
-    bytes where they lie, at either cut, each device decoding its own blocks
-    as it sums them. Any other cut along [k] splits a block, which each
-    device would read whole, and a cut that leaves [Mxfp4] codes on a device
-    without their blocks' scales is read whole too. Either way {!dequant},
-    {!apply} and {!apply_experts} raise as the operation reading the part
-    whole does, naming [w], where that part lies, and the {!place} of [w]
-    that puts it whole along [k] ({!Nx.section-routing}); {!apply_experts} where
-    a position names a block. {!apply} and {!apply_experts} of an [Mxfp4]
-    weight read where it lies read its scales so: with them whole on each
-    device, and the weight rebuilt by {!mxfp4}, they read the codes where
-    they lie where [t] divides [k / 2], their bytes, each device holding
-    every scale, and raise on the codes otherwise. Of one block, such a weight decodes so too, at
-    any dtype: {!dequant}'s result is cut along [k] as its codes are.
-    Padding [k] and the input with zero blocks to a multiple of [t] blocks
-    keeps each block on one device instead.
+    {!apply_experts} sums each device's experts' rows, and the devices' sums
+    close where the result would lie with the experts whole. A row then has the
+    bits it has with the experts whole, on kernels whose segmented order does
+    not depend on the count of experts, as nx.cpu's. Cut along [k] over [t]
+    devices, a weight of [b] blocks along [k] is cut at its blocks' boundaries
+    where [t] divides [b]: each device decodes its own blocks, {!dequant}'s
+    result is cut along [k] as the parts are, and {!apply} and {!apply_experts}
+    sum the devices' partial products, which close. With [~sum:true], both keep
+    the sum where its terms lie, as {!Nx.matmul} does
+    ({!Nx.section-contraction}). Their product of an [Mxfp4] or [Q8_0] weight
+    read where it lies reads the bytes where they lie, at either cut, each
+    device decoding its own blocks as it sums them. Any other cut along [k]
+    splits a block, which each device would read whole, and a cut that leaves
+    [Mxfp4] codes on a device without their blocks' scales is read whole too.
+    Either way {!dequant}, {!apply} and {!apply_experts} raise as the operation
+    reading the part whole does, naming [w], where that part lies, and the
+    {!place} of [w] that puts it whole along [k] ({!Nx.section-routing}).
+    {!apply} and {!apply_experts} of an [Mxfp4] weight read where it lies read
+    its scales so: with them whole on each device, and the weight rebuilt by
+    {!mxfp4}, they read the codes where they lie where [t] divides [k / 2],
+    their bytes, each device holding every scale, and raise on the codes
+    otherwise. Of one block, such a weight decodes so too, at any dtype:
+    {!dequant}'s result is cut along [k] as its codes are. Padding [k] and the
+    input with zero blocks to a multiple of [t] blocks keeps each block on one
+    device instead.
 
     {!take} gathers before decoding, so a caller reads a large table's rows
     without decoding the table. Routing positions to a stack of weights, as a
@@ -150,11 +149,11 @@ val q6_k : 'd Nx.uint8_t -> 'd t
     [[| …; n; k / 256 * 210 |]]. *)
 
 val quantize_q8_0 : (float, 'b, 'd) Nx.t -> 'd t
-(** [quantize_q8_0 x] is the float weight [x], [[| …; n; k |]], stored as
-    Q8_0, [x] read at float32. A block of 32 values [v] has
-    [d = amax / 127] for its greatest magnitude [amax], stored at float16,
-    rounded to nearest, and the quants [round (v * (1 / d))], halves away
-    from zero, the products at float32, [0] where [d] is [0].
+(** [quantize_q8_0 x] is the float weight [x], [[| …; n; k |]], stored as Q8_0,
+    [x] read at float32. A block of 32 values [v] has [d = amax / 127] at
+    float32 for its greatest magnitude [amax], stored at float16, rounded to
+    nearest, and the quants [round (v * (1 / d))] of that float32 [d], halves
+    away from zero, the quotient and products at float32, [0] where [d] is [0].
 
     Outside a block holding a NaN, its bytes are those of ggml's
     [quantize_row_q8_0_ref] (ggml-quants.c) wherever ggml's conversion of a
