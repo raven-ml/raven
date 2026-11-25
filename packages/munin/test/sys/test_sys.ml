@@ -3,28 +3,34 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* The readings read the live machine, whose values no test can know: they are
+   held to their keys and ranges. The formulas of the rates are held to their
+   values through the (**/**) section. *)
+
 open Windtrap
 
 let pairs = list (pair string float_exact)
-let keys pairs = List.map fst pairs
+let keys pairs = List.sort String.compare (List.map fst pairs)
 let value key pairs = List.assoc key pairs
+let by_key pairs = List.sort (fun (a, _) (b, _) -> String.compare a b) pairs
 
 (* The kernel's name, as [uname -s] prints it. *)
 let kernel =
-  if Sys.win32 then "Windows"
-  else
-    let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
-    let name = input_line ic in
-    match Unix.close_process_in ic with
-    | WEXITED 0 -> name
-    | _ -> failwith "uname -s failed"
+  lazy
+    (if Sys.win32 then "Windows"
+     else
+       let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
+       let name = input_line ic in
+       match Unix.close_process_in ic with
+       | WEXITED 0 -> name
+       | _ -> failwith "uname -s failed")
 
-let linux = kernel = "Linux"
-let macos = kernel = "Darwin"
+let linux () = Lazy.force kernel = "Linux"
+let macos () = Lazy.force kernel = "Darwin"
 
 (* Linux, macOS and Windows: the systems munin.sys reads beyond the load
    average. *)
-let read_whole = linux || macos || Sys.win32
+let read_whole () = linux () || macos () || Sys.win32
 
 let in_range ~low ~high key pairs =
   let v = value key pairs in
@@ -34,112 +40,79 @@ let in_range ~low ~high key pairs =
 let non_negative key pairs =
   at_least ~msg:key float_exact ~than:0. (value key pairs)
 
+(* [second_call read] calls the new reading [read] until a call gives its pairs,
+   with [sys/cpu_busy_pct] where the system reads it: Linux counts CPU time in
+   ticks, and a window that saw none lacks the key. *)
+let second_call read =
+  ignore (read ());
+  eventually ~within:5. (fun () ->
+      let got = read () in
+      mem string "sys/interval_s" (keys got);
+      if read_whole () then mem string "sys/cpu_busy_pct" (keys got);
+      got)
+
+(* Readings *)
+
+let test_first_call () = equal pairs [] (Munin_sys.host () ())
+
+let test_own_window () =
+  let a = Munin_sys.host () in
+  ignore (a ());
+  let b = Munin_sys.host () in
+  equal pairs [] (b ())
+
 (* The machine *)
 
-let host_keys =
-  [
-    "sys/cpu_busy_pct";
-    "sys/load_per_core";
-    "sys/mem_used_bytes";
-    "sys/mem_total_bytes";
-    "sys/swap_used_bytes";
-    "sys/disk_read_bytes_per_s";
-    "sys/disk_write_bytes_per_s";
-    "sys/disk_busy_pct";
-    "sys/interval_s";
-  ]
+(* The keys of a system munin.sys reads whole. Windows keeps no load average; a
+   Linux machine or a Windows VM may have no physical disk that gives counters,
+   and macOS always has one. *)
+let host_keys ~disks =
+  let disk_keys =
+    if not disks then []
+    else
+      [ "sys/disk_read_bytes_per_s"; "sys/disk_write_bytes_per_s" ]
+      @ if linux () then [ "sys/disk_busy_pct" ] else []
+  in
+  List.sort String.compare
+    ([
+       "sys/cpu_busy_pct";
+       "sys/mem_used_bytes";
+       "sys/mem_total_bytes";
+       "sys/swap_used_bytes";
+       "sys/interval_s";
+     ]
+    @ (if Sys.win32 then [] else [ "sys/load_per_core" ])
+    @ disk_keys)
 
-(* What Linux, macOS and Windows read. Windows keeps no load average; a Linux
-   machine or a Windows VM may have no physical disk that gives counters. *)
-let host_required =
-  [
-    "sys/cpu_busy_pct";
-    "sys/mem_used_bytes";
-    "sys/mem_total_bytes";
-    "sys/swap_used_bytes";
-    "sys/interval_s";
-  ]
-  @ (if Sys.win32 then [] else [ "sys/load_per_core" ])
-  @
-  if macos then [ "sys/disk_read_bytes_per_s"; "sys/disk_write_bytes_per_s" ]
-  else []
+let test_host_keys () =
+  let got = second_call (Munin_sys.host ()) in
+  if not (read_whole ()) then
+    equal (list string) [ "sys/interval_s"; "sys/load_per_core" ] (keys got)
+  else
+    let disks = macos () || List.mem_assoc "sys/disk_read_bytes_per_s" got in
+    equal (list string) (host_keys ~disks) (keys got)
 
-let window = 0.05
-
-let test_host_first () =
-  let read = Munin_sys.host () in
-  equal pairs [] (read ())
-
-(* The pairs of a system munin.sys reads whole. *)
-let host_whole got =
-  let ks = keys got in
-  equal (list string) (List.sort_uniq compare ks) (List.sort compare ks);
-  List.iter (fun k -> mem string k host_keys) ks;
-  List.iter (fun k -> mem string k ks) host_required;
-  in_range ~low:0. ~high:100. "sys/cpu_busy_pct" got;
-  if List.mem_assoc "sys/load_per_core" got then
-    non_negative "sys/load_per_core" got;
-  in_range ~low:0.
-    ~high:(value "sys/mem_total_bytes" got)
-    "sys/mem_used_bytes" got;
-  non_negative "sys/swap_used_bytes" got;
-  let disks = List.mem_assoc "sys/disk_read_bytes_per_s" got in
-  equal bool disks (List.mem_assoc "sys/disk_write_bytes_per_s" got);
-  equal bool (linux && disks) (List.mem_assoc "sys/disk_busy_pct" got);
-  if disks then begin
+let test_host_ranges () =
+  let got = second_call (Munin_sys.host ()) in
+  let have k = List.mem_assoc k got in
+  greater ~msg:"sys/interval_s" float_exact ~than:0.
+    (value "sys/interval_s" got);
+  if have "sys/load_per_core" then non_negative "sys/load_per_core" got;
+  if read_whole () then begin
+    in_range ~low:0. ~high:100. "sys/cpu_busy_pct" got;
+    greater ~msg:"sys/mem_total_bytes" float_exact ~than:0.
+      (value "sys/mem_total_bytes" got);
+    in_range ~low:0.
+      ~high:(value "sys/mem_total_bytes" got)
+      "sys/mem_used_bytes" got;
+    non_negative "sys/swap_used_bytes" got
+  end;
+  if have "sys/disk_read_bytes_per_s" then begin
     non_negative "sys/disk_read_bytes_per_s" got;
     non_negative "sys/disk_write_bytes_per_s" got
   end;
-  if List.mem_assoc "sys/disk_busy_pct" got then
+  if have "sys/disk_busy_pct" then
     in_range ~low:0. ~high:100. "sys/disk_busy_pct" got
-
-let test_host_second () =
-  let read = Munin_sys.host () in
-  ignore (read ());
-  Unix.sleepf window;
-  let got = read () in
-  if read_whole then host_whole got
-  else equal (list string) [ "sys/load_per_core"; "sys/interval_s" ] (keys got);
-  at_least float_exact ~than:window (value "sys/interval_s" got)
-
-(* This process *)
-
-let test_process_first () =
-  let read = Munin_sys.process () in
-  equal pairs [] (read ())
-
-let cpu_seconds () =
-  let t = Unix.times () in
-  t.Unix.tms_utime +. t.Unix.tms_stime
-
-(* Computes until the process spent [s] seconds of CPU. *)
-let burn s =
-  let start = cpu_seconds () in
-  while cpu_seconds () -. start < s do
-    ignore (Sys.opaque_identity (Array.make 64 0))
-  done
-
-let block_bytes = 32 * 1024 * 1024
-
-let test_process_second () =
-  let read = Munin_sys.process () in
-  ignore (read ());
-  (* Written, so resident. *)
-  let block = Bytes.make block_bytes 'x' in
-  burn 0.02;
-  let got = read () in
-  ignore (Sys.opaque_identity block);
-  let rss = if read_whole then [ "sys/proc_rss_bytes" ] else [] in
-  equal (list string)
-    (("sys/proc_cpu_cores" :: rss) @ [ "sys/proc_interval_s" ])
-    (keys got);
-  greater float_exact ~than:0. (value "sys/proc_cpu_cores" got);
-  if read_whole then
-    at_least float_exact ~than:(Float.of_int block_bytes)
-      (value "sys/proc_rss_bytes" got);
-  greater float_exact ~than:0. (value "sys/proc_interval_s" got)
-
-(* CPU busy on Linux *)
 
 (* A /proc/stat text whose aggregate line holds [fields]: user, nice, system,
    idle, iowait, irq, softirq, steal, guest, guest_nice, or a prefix. *)
@@ -155,8 +128,10 @@ let proc_stat fields =
 let zero = proc_stat [ 0; 0; 0; 0; 0; 0; 0; 0; 0; 0 ]
 let busy = option (float 1e-9)
 
-(* Linux counts guest time in user (guest_nice in nice) as well: a window half
-   running a virtual machine and half idle is 50% busy. *)
+(* From the key's sentence and proc(5)'s fields. Linux counts guest time in user
+   (guest_nice in nice) as well: a window half running a virtual machine and
+   half idle is 50% busy. A window that counted no time gives no percent, and
+   kernels before 2.6.11 write four fields. *)
 let busy_cases =
   [
     ("guest once in user", [ 50; 0; 0; 50; 0; 0; 0; 0; 50; 0 ], Some 50.);
@@ -168,7 +143,7 @@ let busy_cases =
   ]
 
 let test_busy_cases =
-  cases "/proc/stat windows"
+  cases "sys/cpu_busy_pct over a /proc/stat window is the stated percent"
     ~id:(fun (n, _, _) -> n)
     busy_cases
     (fun (_, next, expected) ->
@@ -187,7 +162,7 @@ let counters =
 let add = List.map2 ( + )
 
 let test_guest_ignored =
-  prop "guest time leaves busy unchanged"
+  prop "sys/cpu_busy_pct is the same whatever guest time ran"
     Gen.(pair counters counters)
     (fun (prev, delta) ->
       let f (prev, next) =
@@ -208,7 +183,14 @@ let test_guest_ignored =
         busy f all_guest
         (prev, add prev delta))
 
-(* Disk rates *)
+let test_busy_percent =
+  prop "sys/cpu_busy_pct is a percent for any two texts"
+    Gen.(pair counters counters)
+    (fun (prev, next) ->
+      cover "a counter stepped back" (List.exists2 ( > ) prev next);
+      satisfies ~claim:"is none or from 0 to 100" busy
+        (function None -> true | Some b -> b >= 0. && b <= 100.)
+        (Munin_sys.proc_stat_busy (proc_stat prev) (proc_stat next)))
 
 let disk name (read_bytes, written_bytes, busy_ms) =
   { Munin_sys.name; read_bytes; written_bytes; busy_ms }
@@ -216,21 +198,25 @@ let disk name (read_bytes, written_bytes, busy_ms) =
 let counter = Gen.int_range 0 (1 lsl 40)
 let change = Gen.int_range 0 (1 lsl 30)
 
-(* Disks d0, d1, ... and their counters at the start and end of a window. *)
+(* Disks d0, d1, ... and their counters at the start and end of a window of [dt]
+   seconds, busy for up to twice the window, as Linux can count. *)
 let window_gen =
   let open Gen in
-  let+ dt = float_range 0.001 100.
-  and+ linux = bool
+  let* dt = float_range 0.001 100. in
+  let+ linux = bool
   and+ ds =
     list ~size:(int_range 1 4)
-      (pair (triple counter counter counter) (triple change change change))
+      (pair
+         (triple counter counter counter)
+         (triple change change (float_range 0. 2.)))
   in
   let busy b = if linux then Some b else None in
   let prev, next =
     List.split
       (List.mapi
-         (fun i ((r, w, b), (dr, dw, db)) ->
+         (fun i ((r, w, b), (dr, dw, share)) ->
            let name = "d" ^ string_of_int i in
+           let db = Float.to_int (share *. dt *. 1000.) in
            (disk name (r, w, busy b), disk name (r + dr, w + dw, busy (b + db))))
          ds)
   in
@@ -239,22 +225,51 @@ let window_gen =
 let rate = float_rel ~rel:1e-12 ~abs:0.
 let sum f l = List.fold_left (fun acc d -> acc + f d) 0 l
 
-let test_disk_sums =
-  prop "disk rates sum each disk's change" window_gen (fun (dt, prev, next) ->
-      cover "busy" (List.for_all (fun d -> d.Munin_sys.busy_ms <> None) next);
+(* The pairs of the key's sentence: each sum of changes over the window, and the
+   mean over the disks of each one's busy percent, capped at 100. *)
+let disk_reference ~dt prev next =
+  let per_s f = Float.of_int (sum f next - sum f prev) /. dt in
+  let pct p n =
+    match (p.Munin_sys.busy_ms, n.Munin_sys.busy_ms) with
+    | Some p, Some n ->
+        Float.min 100. (100. *. Float.of_int (n - p) /. (dt *. 1000.))
+    | _ -> Float.nan
+  in
+  let busy =
+    match (List.hd next).Munin_sys.busy_ms with
+    | None -> []
+    | Some _ ->
+        let pcts = List.map2 pct prev next in
+        [
+          ( "sys/disk_busy_pct",
+            List.fold_left ( +. ) 0. pcts /. Float.of_int (List.length pcts) );
+        ]
+  in
+  ("sys/disk_read_bytes_per_s", per_s (fun d -> d.read_bytes))
+  :: ("sys/disk_write_bytes_per_s", per_s (fun d -> d.written_bytes))
+  :: busy
+
+let test_disk_rates =
+  prop ~count:300
+    "disk rates sum each disk's change, busy its mean capped percent" window_gen
+    (fun (dt, prev, next) ->
+      let capped d p =
+        match (d.Munin_sys.busy_ms, p.Munin_sys.busy_ms) with
+        | Some n, Some p -> Float.of_int (n - p) > dt *. 1000.
+        | _ -> false
+      in
+      let linux = (List.hd next).Munin_sys.busy_ms <> None in
+      cover "a disk busy past the window"
+        (linux && List.exists2 capped next prev);
+      cover "a disk busy within the window"
+        (linux && List.exists2 (fun n p -> not (capped n p)) next prev);
       cover "several disks" (List.length next > 1);
       (* The order of the disks does not matter. *)
       let got = Munin_sys.disk_rates ~dt ~prev (List.rev next) in
-      let per_s f = Float.of_int (sum f next - sum f prev) /. dt in
-      equal rate
-        (per_s (fun d -> d.read_bytes))
-        (value "sys/disk_read_bytes_per_s" got);
-      equal rate
-        (per_s (fun d -> d.written_bytes))
-        (value "sys/disk_write_bytes_per_s" got);
-      match (List.hd next).busy_ms with
-      | None -> equal bool false (List.mem_assoc "sys/disk_busy_pct" got)
-      | Some _ -> in_range ~low:0. ~high:100. "sys/disk_busy_pct" got)
+      equal
+        (list (pair string rate))
+        (by_key (disk_reference ~dt prev next))
+        (by_key got))
 
 let test_disk_set_changes =
   prop "a disk that appears or leaves gives no disk rates"
@@ -269,6 +284,7 @@ let test_disk_set_changes =
       in
       equal pairs [] got)
 
+(* From the keys' sentences, over a window of 2 s. *)
 let disk_cases =
   let d name r w b = disk name (r, w, b) in
   [
@@ -304,11 +320,75 @@ let disk_cases =
   ]
 
 let test_disk_cases =
-  cases "disk windows of 2 s"
+  cases "disk rates over a window are the stated pairs"
     ~id:(fun (n, _, _, _) -> n)
     disk_cases
     (fun (_, prev, next, expected) ->
-      equal pairs expected (Munin_sys.disk_rates ~dt:2. ~prev next))
+      equal pairs (by_key expected)
+        (by_key (Munin_sys.disk_rates ~dt:2. ~prev next)))
+
+(* This process *)
+
+let cpu_seconds () =
+  let t = Unix.times () in
+  t.Unix.tms_utime +. t.Unix.tms_stime
+
+(* Computes until the process's CPU time has advanced. *)
+let burn () =
+  let start = cpu_seconds () in
+  while cpu_seconds () = start do
+    ignore (Sys.opaque_identity (Array.make 64 0))
+  done
+
+let test_process_keys () =
+  let read = Munin_sys.process () in
+  ignore (read ());
+  burn ();
+  let got = read () in
+  let rss = if read_whole () then [ "sys/proc_rss_bytes" ] else [] in
+  equal (list string)
+    (List.sort String.compare
+       ([ "sys/proc_cpu_cores"; "sys/proc_interval_s" ] @ rss))
+    (keys got)
+
+(* The reading takes the process's CPU time once in each call: between the
+   readings [t0] and [a] around the first call, and [b] and [t1] around the
+   second. So the CPU seconds of its window, cores times interval, lie from [b -
+   a] to [t1 - t0]. The product of a quotient and its divisor is within two
+   units in the last place of the CPU seconds, well inside 1e-12. *)
+let test_process_cores () =
+  let read = Munin_sys.process () in
+  let t0 = cpu_seconds () in
+  ignore (read ());
+  let a = cpu_seconds () in
+  burn ();
+  let b = cpu_seconds () in
+  let got = read () in
+  let t1 = cpu_seconds () in
+  let spent =
+    value "sys/proc_cpu_cores" got *. value "sys/proc_interval_s" got
+  in
+  at_least ~msg:"cores times interval" float_exact
+    ~than:((b -. a) *. (1. -. 1e-12))
+    spent;
+  at_most ~msg:"cores times interval" float_exact
+    ~than:((t1 -. t0) *. (1. +. 1e-12))
+    spent
+
+let block_bytes = 32 * 1024 * 1024
+
+let test_process_rss () =
+  if not (read_whole ()) then
+    skip ~reason:"this system gives no resident memory" ();
+  let read = Munin_sys.process () in
+  ignore (read ());
+  (* Written, so resident. *)
+  let block = Bytes.make block_bytes 'x' in
+  burn ();
+  let got = read () in
+  ignore (Sys.opaque_identity block);
+  at_least float_exact ~than:(Float.of_int block_bytes)
+    (value "sys/proc_rss_bytes" got)
 
 (* Devices *)
 
@@ -335,7 +415,7 @@ let device_gen =
   }
 
 let test_device_fields =
-  prop "device gives its Some fields" device_gen (fun d ->
+  prop "device gives its Some fields under their keys" device_gen (fun d ->
       let size k v =
         Option.map (fun v -> ("dev/gpu0/" ^ k, Float.of_int v)) v
       in
@@ -353,7 +433,11 @@ let test_device_fields =
             level "power_w" d.power;
           ]
       in
-      equal pairs expected (Munin_sys.device "gpu0" (fun () -> d) ()))
+      equal pairs (by_key expected)
+        (by_key (Munin_sys.device "gpu0" (fun () -> d) ())))
+
+let test_device_unknown () =
+  equal pairs [] (Munin_sys.device "gpu0" (fun () -> Munin_sys.unknown) ())
 
 let name_char =
   Gen.of_list
@@ -388,8 +472,20 @@ let full =
     power = Some 8.;
   }
 
+let field_keys =
+  [
+    "activity_pct";
+    "allocated_bytes";
+    "budget_bytes";
+    "busy_pct";
+    "memory_bytes";
+    "power_w";
+    "temperature_c";
+    "used_bytes";
+  ]
+
 let test_device_names =
-  prop ~count:500 "device validates its name"
+  prop ~count:500 "device refuses a name that is not one key segment"
     Gen.(string_of ~size:(int_range 0 5) name_char)
     (fun name ->
       let empty = name = "" in
@@ -407,15 +503,10 @@ let test_device_names =
       if invalid then
         raises_match Exn.invalid_arg (fun () ->
             Munin_sys.device name (fun () -> full))
-      else begin
-        let prefix = "dev/" ^ name ^ "/" in
-        let got = Munin_sys.device name (fun () -> full) () in
-        equal int 8 (List.length got);
-        List.iter (fun (k, _) -> starts_with ~prefix k) got
-      end)
-
-let test_device_unknown () =
-  equal pairs [] (Munin_sys.device "gpu0" (fun () -> Munin_sys.unknown) ())
+      else
+        equal (list string)
+          (List.map (fun k -> "dev/" ^ name ^ "/" ^ k) field_keys)
+          (keys (Munin_sys.device name (fun () -> full) ())))
 
 let test_device_raises () =
   let read () = raise (Sys_error "lost") in
@@ -425,24 +516,35 @@ let () =
   exit
     (run "Munin_sys"
        [
+         group "readings"
+           [
+             test "a first call gives nothing" test_first_call;
+             test "a new reading starts its own window" test_own_window;
+           ];
          group "host"
            [
-             test "first call gives nothing" test_host_first;
-             test "second call" test_host_second;
+             test "a second call gives the system's keys" test_host_keys;
+             test "its levels and rates lie in their ranges" test_host_ranges;
+             test_busy_cases;
+             test_guest_ignored;
+             test_busy_percent;
+             test_disk_rates;
+             test_disk_set_changes;
+             test_disk_cases;
            ];
          group "process"
            [
-             test "first call gives nothing" test_process_first;
-             test "second call" test_process_second;
+             test "a second call gives the process's keys" test_process_keys;
+             test "proc_cpu_cores times the window is the CPU time it spent"
+               test_process_cores;
+             test "proc_rss_bytes counts memory the process wrote"
+               test_process_rss;
            ];
-         group "cpu busy" [ test_busy_cases; test_guest_ignored ];
-         group "disk rates"
-           [ test_disk_sums; test_disk_set_changes; test_disk_cases ];
          group "device"
            [
              test_device_fields;
-             test_device_names;
              test "unknown gives nothing" test_device_unknown;
+             test_device_names;
              test "raises what read raises" test_device_raises;
            ];
        ])

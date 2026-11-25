@@ -17,9 +17,10 @@
     window's length in seconds under a key of its own. Its first call
     starts the window and gives nothing, so every pair a reading gives
     comes with its rates, and a sampler logs the first pairs of such a
-    reading one period after it starts. A reading keeps its own counters,
-    so it must be called from one thread at a time, and given to one
-    sampler. The monotonic clock counts time asleep on macOS and not on
+    reading one period after it starts. A call at the same reading of the
+    clock as the previous gives nothing, and the window goes on. A reading
+    keeps its own counters, so it must be called from one thread at a time,
+    and given to one sampler. The monotonic clock counts time asleep on macOS and not on
     Linux, so a window across a suspend is longer on macOS.
 
     Keys start with [sys/] for the machine and this process, and with
@@ -53,7 +54,9 @@ val host : unit -> unit -> (string * float) list
 (** [host ()] is a new reading of the machine. Its keys:
     - [sys/cpu_busy_pct], a rate: the percent of all CPUs' time spent
       neither idle nor waiting for I/O. On Linux, time that a CPU ran a
-      virtual machine counts once, as user time.
+      virtual machine counts once, as user time. It is absent from a window
+      in which the system counted no CPU time, as one shorter than Linux's
+      tick of 1/100 s can be.
     - [sys/load_per_core], a level: the one-minute load average over the
       number of logical CPUs. Windows keeps no load average.
     - [sys/mem_used_bytes], a level: total memory less available memory,
