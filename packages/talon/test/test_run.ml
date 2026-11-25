@@ -1013,7 +1013,7 @@ let agreeing expected actual =
 (* [allowed os] is the outcomes talon allows, {!R.outcomes}, a function's [Boom]
    as {!attempt} gives it. *)
 let allowed os =
-  List.map
+  Seq.map
     (function Ok r -> Ok r | Error (Boom b) -> Error b | Error e -> raise e)
     os
 
@@ -1026,7 +1026,7 @@ let failure_of = function
 (* [one_of expected allowed actual] checks that the run's [actual] is one of the
    outcomes [allowed], reported against the reference's [expected]. *)
 let one_of expected allowed actual =
-  if not (List.exists (fun o -> agreeing o actual) allowed) then
+  if not (Seq.exists (fun o -> agreeing o actual) allowed) then
     same_failure expected actual
 
 let success = function Ok (Ok v) -> Some v | _ -> None
@@ -1132,7 +1132,7 @@ let agrees p =
      choice matters. *)
   cover "another allowed outcome fails otherwise"
     ((fails || raises)
-    && List.exists
+    && Seq.exists
          (fun o -> failure_of o <> failure_of expected)
          (allowed (R.outcomes p)));
   cover "a kept plan that aggregates fails"
@@ -1154,8 +1154,11 @@ let agrees p =
   | Ok (Ok _), Error (label, _) -> failf "the run raises Boom %d" label
   | expected, actual when kept && not (agreeing expected actual) -> (
       let allowed = allowed (R.outcomes p) in
-      match (actual, List.find_map success allowed) with
-      | Ok (Ok t), Some cs -> List.iter (column_holds t) cs
+      match actual with
+      | Ok (Ok t) -> (
+          match Seq.find_map success allowed with
+          | Some cs -> List.iter (column_holds t) cs
+          | None -> same_failure expected actual)
       | _ -> one_of expected allowed actual)
   | _ -> ()
 
@@ -1287,8 +1290,11 @@ let values_agree (p, E e) =
   | Ok (Ok _), Error (label, _) -> failf "values raised Boom %d" label
   | expected, actual when not (agreeing expected actual) -> (
       let allowed = allowed (R.value_outcomes e p) in
-      match (actual, List.find_map success allowed) with
-      | Ok (Ok vs), Some ws -> equal (array (G.witness (R.type_of e))) ws vs
+      match actual with
+      | Ok (Ok vs) -> (
+          match Seq.find_map success allowed with
+          | Some ws -> equal (array (G.witness (R.type_of e))) ws vs
+          | None -> same_failure expected actual)
       | _ -> one_of expected allowed actual)
   | _ -> ()
 

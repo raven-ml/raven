@@ -1295,23 +1295,76 @@ let rec joins = function
   | Append (p, r) -> joins p + joins r
   | Join { left; right; _ } -> 1 + joins left + joins right
 
-(* Every choice for a plan of [k] joins, [computed] first. The joins are
-   numbered as {!rows} reaches them, which no order changes, so the bits of [0]
-   to [2{^ k} - 1] give each join either order, a plan read twice having each
-   read numbered apart. *)
-let choices k =
+(* The operators of a plan's expressions that leave an operand open. *)
+let rec ops : type a s. (a, s) term -> string list = function
+  | Col _ | Lit _ | Null _ | Rows -> []
+  | Int (_, a, b) -> ops a @ ops b
+  | Float (_, a, b) -> ops a @ ops b
+  | Cmp (_, a, b) -> ops a @ ops b
+  | And (a, b) -> ("and" :: ops a) @ ops b
+  | Or (a, b) -> ("or" :: ops a) @ ops b
+  | If (c, a, b) -> ("if" :: ops c) @ ops a @ ops b
+  | Coalesce es -> "coalesce" :: List.concat_map ops es
+  | Not a -> ops a
+  | Is_null a -> ops a
+  | Is_in (_, a) -> ops a
+  | Store (_, a) -> ops a
+  | Map (_, _, a) -> ops a
+  | Bind (_, _, a) -> ops a
+  | Cast (_, a) -> ops a
+  | Length a -> ops a
+  | Substring (_, _, a) -> ops a
+  | Parse (_, a) -> ops a
+  | Field (_, a) -> ops a
+  | Reduce (_, a) -> ops a
+  | Over (_, _, a) -> ops a
+  | Shift (_, a) -> ops a
+  | Rank a -> ops a
+
+let out_ops : type s. s out -> string list = function
+  | Out (_, e) -> ops e
+  | Keep _ -> []
+
+let rec plan_ops = function
+  | Table _ | Source _ -> []
+  | Select (os, p) | Derive (os, p) -> List.concat_map out_ops os @ plan_ops p
+  | Filter (e, p) -> ops e @ plan_ops p
+  | Aggregate (_, os, p) -> List.concat_map out_ops os @ plan_ops p
+  | Slice { plan = p; _ } | Sort (_, p) -> plan_ops p
+  | Append (p, r) -> plan_ops p @ plan_ops r
+  | Join { left; right; _ } -> plan_ops left @ plan_ops right
+
+(* Every choice for the operators [ops] and [k] joins, [computed] first, as a
+   sequence built when read. A join is numbered when {!rows} reaches it, which
+   depends only on the choices for the joins numbered before it (a flipped join
+   reads its right input first): so for any order wanted of each join the bits
+   can be set in turn, and the masks of [0] to [2{^ k} - 1] give every
+   assignment, a plan read twice having each read numbered apart. *)
+let choices ops k =
+  let open_ =
+    List.filter (fun o -> List.mem o ops) [ "if"; "coalesce"; "and"; "or" ]
+  in
   let bit m i = m land (1 lsl i) <> 0 in
-  List.concat_map
+  let set masks o =
+    let rec at i = function
+      | [] -> false
+      | o' :: os -> if o = o' then bit masks i else at (i + 1) os
+    in
+    at 0 open_
+  in
+  Seq.concat_map
     (fun masks ->
-      List.init (1 lsl k) (fun m ->
+      Seq.map
+        (fun m ->
           {
-            if_ = bit masks 0;
-            coalesce = bit masks 1;
-            and_ = bit masks 2;
-            or_ = bit masks 3;
+            if_ = set masks "if";
+            coalesce = set masks "coalesce";
+            and_ = set masks "and";
+            or_ = set masks "or";
             flipped = bit m;
-          }))
-    (List.init 16 Fun.id)
+          })
+        (Seq.init (1 lsl k) Fun.id))
+    (Seq.init (1 lsl List.length open_) Fun.id)
 
 let under c f =
   let was = !choice in
@@ -1321,7 +1374,9 @@ let under c f =
   match f () with v -> Ok v | exception exn -> Error exn
 
 let outcomes p =
-  List.map (fun c -> under c (fun () -> run p)) (choices (joins p))
+  Seq.map (fun c -> under c (fun () -> run p)) (choices (plan_ops p) (joins p))
 
 let value_outcomes e p =
-  List.map (fun c -> under c (fun () -> values e p)) (choices (joins p))
+  Seq.map
+    (fun c -> under c (fun () -> values e p))
+    (choices (ops e @ plan_ops p) (joins p))
