@@ -3914,6 +3914,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.combine_patches` and `Nx.istft` add each position's sum from `+0`, as
+  nx.mli states, where a sum that was one `-0.` term stayed `-0.`; among
+  them `istft`'s samples that no taper holds.
 - `Nx_wide.v` holds words near the largest float as their sum exactly, where
   `max_float` with a low word of `-0.375 max_float` lost the low word.
 - `Nx_io.load_image` refuses a PNG whose scanlines take more than 1032 times

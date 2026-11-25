@@ -5675,7 +5675,10 @@ let combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
   let shape = Iarray.of_array (Array.append lead output_size) in
   let (D.Any w) = Nx_kernel.carrier (D.Any dt) in
   let y = cast_by ~by w y in
-  cast_by ~by dt (Eval.eval ~by (Value.Fold { shape; pad; x = y }))
+  let folded = Eval.eval ~by (Value.Fold { shape; pad; x = y }) in
+  (* The fold keeps a lone [-0]'s sign; a sum adds from [+0]. *)
+  elementwise ~by dt [ Any folded ]
+    (at dt E.(operand 0 folded + const w (D.zero w)))
 
 let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
   combine_patches_by ~by:"Nx.combine_patches" ~output_size ~kernel_size ~stride

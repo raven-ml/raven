@@ -230,6 +230,23 @@ let law_adjoint (g, x, y) =
     (dot (Nx.to_array (extract g x)) (Nx.to_array y))
     (dot (Nx.to_array x) (Nx.to_array (combine g y)))
 
+(* A position one -0. reaches, or two, holds +0.: each sum adds from +0. *)
+let test_combine_zero () =
+  let ones = [| 1 |] in
+  let combined k p =
+    Nx.to_array
+      (Nx.combine_patches ~output_size:[| 3 |] ~kernel_size:[| k |] ~stride:ones
+         ~dilation:ones
+         ~padding:[| (0, 0) |]
+         p)
+  in
+  equal ~msg:"one tap" (array float_exact) [| 0.; 0.; 2. |]
+    (combined 1 (Nx.create Nx.float64 [| 1; 3 |] [| -0.; -0.; 2. |]));
+  equal ~msg:"two taps" (array float_exact) [| 0.; 0.; 0. |]
+    (combined 2 (Nx.create Nx.float64 [| 2; 2 |] [| -0.; -0.; -0.; -0. |]));
+  equal ~msg:"float16" (array float_exact) [| 0.; 0.; 2. |]
+    (combined 1 (Nx.create Nx.float16 [| 1; 3 |] [| -0.; -0.; 2. |]))
+
 (* Three taps reach element 2: 2048 then 1 and 1 at float16 is 2048, but
    2050 at float32, which float16 holds. *)
 let test_combine_narrow () =
@@ -340,6 +357,7 @@ let patches =
       prop "a float combine is within a sum's bound of the exact sum" float_sums
         law_float_sum;
       test "narrow floats combine at float32" test_combine_narrow;
+      test "sums add from +0, so lone -0. terms give +0." test_combine_zero;
       cases "extract_patches raises on each clause of its geometry" ~id:fst
         extract_refusals extract_refused;
       cases "combine_patches raises on each clause of its geometry" ~id:fst
