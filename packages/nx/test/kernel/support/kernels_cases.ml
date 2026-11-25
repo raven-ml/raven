@@ -718,6 +718,38 @@ let low_bytes w v =
   List.init w (fun i ->
       Int64.to_int (Int64.logand (Int64.shift_right_logical v (8 * i)) 0xFFL))
 
+(* [a]'s elements, bits unchanged, as one C-contiguous vector on the host. *)
+let vector a =
+  Option.get (A.move (M.Reshape [| L.numel (A.layout a) |]) (A.copy a))
+
+(* nx_kinds.h's kind [name] of one or two float32 or float64 operands, read as
+   bits, by one call over all their elements: the bits {!expected} gives,
+   without a call and an index walk per element. *)
+let run_vector (type s) (dt : (float, s) D.t) (k : (float, s) Bigarray.kind)
+    name ~compare ops =
+  let n = L.numel (A.layout ops.(0)) in
+  if n = 0 then [||]
+  else
+    let y = Bigarray.Array1.create k Bigarray.c_layout n in
+    let x = vector ops.(0) and z = vector ops.(Array.length ops - 1) in
+    A.read x (fun x ->
+        A.read z (fun z ->
+            Nx_kinds_support.run name
+              (Bigarray.array1_of_genarray x)
+              (Bigarray.array1_of_genarray z)
+              y));
+    if compare then Array.init n (fun i -> Bool.to_int (y.{i} <> 0.))
+    else bits_of (A.of_bigarray dt (Bigarray.genarray_of_array1 y))
+
+(* {!run_vector} at [dt], float32 or float64. *)
+let vectored : type v s.
+    string -> (v, s) D.t -> compare:bool -> (v, s) A.t array -> int array =
+ fun name dt ~compare ops ->
+  match dt with
+  | D.Float32 -> run_vector dt Bigarray.float32 name ~compare ops
+  | D.Float64 -> run_vector dt Bigarray.float64 name ~compare ops
+  | _ -> invalid_arg "vectored: not float32 or float64"
+
 (* The bits of nx_kinds.h's kind [name] at each index of [ops], all of the
    dtype [dt], in C order, as [bits_of] gives them: as [dt] for a kind of
    [dt], as a boolean for a comparison. A narrow float computes in float32 and
@@ -729,6 +761,8 @@ let rec expected : type v s.
  fun name dt ~compare ops ->
   let shape = L.shape (A.layout ops.(0)) in
   match D.kind dt with
+  | D.Float when D.bits dt >= 32 && Array.length ops <= 2 ->
+      vectored name dt ~compare ops
   | D.Float when D.bits dt < 32 && name = "fma" ->
       let f = Exact.format dt in
       let v = Array.map (fun a -> A.to_array (reference a D.Float64)) ops in
