@@ -617,15 +617,21 @@ let drained_until_bound () =
     ~than:(bound -. skew)
     (refused_after t0 s.p)
 
+(* The silence bound of [drained_until_silent], whose close returns half of it
+   before the bound after the failure would end it: a process stalled for that
+   half, as a loaded host stalls it, no longer tells the two apart. [bound]'s
+   half, 0.25 s, is within such a stall. *)
+let silent_bound = 2.
+
 (* After the abort the link reads a peer that sends nothing, as a stopped
    process does, only until the bound from its last byte: the job fails of
    another cause half the bound in, and its close returns at the bound. *)
 let drained_until_silent () =
   let d, p = connected () in
-  let job = Link.job ~silence:bound () in
+  let job = Link.job ~silence:silent_bound () in
   let t0 = Unix.gettimeofday () in
   ignore (Link.make job d ~name:"peer" ~peer:(Wire.Agent 1));
-  Thread.delay (bound /. 2.);
+  Thread.delay (silent_bound /. 2.);
   let t_fail = Unix.gettimeofday () in
   Link.fail job why;
   Link.close job;
@@ -636,10 +642,10 @@ let drained_until_silent () =
     (frames p);
   Unix.close p;
   at_least ~msg:"the seconds until the close returned" float_exact
-    ~than:(bound -. skew)
+    ~than:(silent_bound -. skew)
     t;
   less ~msg:"the seconds until the close returned" float_exact
-    ~than:(t_fail -. t0 +. bound -. skew)
+    ~than:(t_fail -. t0 +. silent_bound -. skew)
     t
 
 (* A peer quiet until the job fails, then beating a while, as a peer that has
