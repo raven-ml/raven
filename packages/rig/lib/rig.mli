@@ -664,6 +664,8 @@ val word : int
     {- another exception escapes its driver while the driver changes the
        device's memory or code ({!section-errors});}
     {- its progress stands still past its hang bound ({!section-hangs});}
+    {- its next value would pass [2]{^ 47}[ - 1], the last a point holds
+       ({!submit});}
     {- its queue waits for a value that a lost device never reached;}
     {- {!lose} loses it;}
     {- {!close} ends it;}
@@ -818,7 +820,11 @@ val word : int
     child, which runs no stop of it and frees none of its memory, since that
     stop is the parent's. The host's staging memory that a thread of the
     parent was copying through at the fork ({!Buffer.section-copying}) stays
-    in the child for good. A device the child opens is its own. *)
+    in the child for good. A device the child opens is its own. The child
+    waits for none of the calls in flight in the parent. A child forked
+    inside a driver call ({!section-domains}) other than a driver's stop,
+    such as from {!Buffer.write}'s function, is outside it, and its
+    {!close} of a device it opened runs as any close does. *)
 
 (** {2:errors Errors and failure}
 
@@ -894,8 +900,10 @@ exception Lost of t * string
     {ul
     {- the driver's message for a fault or a failed [submit] or [commit];}
     {- for another exception that escaped the driver ({!section-errors}),
-       its constructor's name and its integer and string arguments, such as
-       ["Stdlib.Sys.Break"], ["Out_of_memory"] or ["Failure(\"no queue\")"];}
+       its constructor's name and its arguments, each immediate one, such as
+       an [int], as its integer, each string quoted and any other as [_],
+       such as ["Stdlib.Sys.Break"], ["Out_of_memory"],
+       ["Failure(\"no queue\")"] or ["E(3, \"x\", _)"];}
     {- ["no progress for n ms"] for a hang ({!section-hangs});}
     {- ["NAME lost"] for a device lost because its queue waited for the lost
        device named [NAME];}
