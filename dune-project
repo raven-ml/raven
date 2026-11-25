@@ -107,9 +107,9 @@
    (>= 1.14.0))
   jsont
   bytesrw
+  ; brot.mli states uunf's and uucp's Unicode version
   (uunf
-   (>= 15.1.0))
-  ; brot.mli states uucp's Unicode version
+   (>= 18.0.0))
   (uucp
    (>= 18.0.0))
   (windtrap

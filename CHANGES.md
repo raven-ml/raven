@@ -5747,8 +5747,8 @@ its lock and from samples the dashboard saw arrive.
   such as s390x. The scan of eight bytes at a time took a word's highest byte
   for its first.
 - brot needs re 1.14.0, from which a compiled regex is safe to share
-  between domains, as a tokenizer's are, and uucp 18.0.0, the Unicode
-  version of the general categories `Brot` states.
+  between domains, as a tokenizer's are, and uunf and uucp 18.0.0, the
+  Unicode version of the decompositions and general categories `Brot` states.
 - **Breaking:** `Brot.export_tiktoken` is removed. It wrote the `vocab.json`
   and `merges.txt` that `save_model_files` writes, not a tiktoken rank file,
   and raised `Invalid_argument` where its doc said `Failure`.

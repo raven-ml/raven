@@ -19,7 +19,7 @@ depends: [
   "re" {>= "1.14.0"}
   "jsont"
   "bytesrw"
-  "uunf" {>= "15.1.0"}
+  "uunf" {>= "18.0.0"}
   "uucp" {>= "18.0.0"}
   "windtrap" {with-test & >= "0.3.1"}
   "mdx" {with-test}

@@ -523,7 +523,7 @@ let compose a o =
 (* Unicode normalization *)
 
 (* Hangul composition is arithmetic. It is done here rather than left to
-   [Uunf.composite], whose trailing jamo bound in uunf 17.0.0 is one too high
+   [Uunf.composite], whose trailing jamo bound in uunf 18.0.0 is one too high
    (U+11C3, a plain starter, composes as a T). *)
 let hangul_l = 0x1100
 let hangul_v = 0x1161
