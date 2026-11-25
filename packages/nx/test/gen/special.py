@@ -1087,12 +1087,46 @@ def lse_points(fmt):
     return lanes + [(1.0,) * LSE_TERMS, (-0.0,) + (-math.inf,) * (LSE_TERMS - 1)]
 
 
+# sigmoid and softplus: sweeps from far below 0, where both underflow
+# through the subnormals to 0, to far above, where sigmoid rounds to 1 and
+# softplus to x; the points where each first rounds to a subnormal and to 0,
+# and where sigmoid first rounds to 1, with their neighbours.
+
+def sigmoid_reference(fmt, x):
+    if math.isnan(x):
+        return math.nan
+    if math.isinf(x):
+        return 1.0 if x > 0 else 0.0
+    return correctly_rounded(fmt, oracle.sigmoid, x)
+
+
+def softplus_reference(fmt, x):
+    if math.isnan(x):
+        return math.nan
+    if math.isinf(x):
+        return x if x > 0 else 0.0
+    return correctly_rounded(fmt, lambda t: mpmath.log1p(mpmath.exp(t)), x)
+
+
+def activation_points(f, saturates):
+    def points(fmt):
+        rng = random.Random(f"{f.__name__} {fmt.name}")
+        far = 120.0 if fmt.p == 24 else 800.0
+        below = [-t for t in thresholds(fmt, lambda t: f(-t), 1.0, far)]
+        edges = below + ([saturation(fmt, f, 1.0, far, 1.0)] if saturates else [])
+        return standard(fmt, rng, 2.0 ** -60, far) + [x for c in edges for x in neighbours(fmt, c)]
+    return points
+
+
 FUNCTIONS = [
     Function("asinh", ["x"], asinh_reference, asinh_points),
     Function("acosh", ["x"], acosh_reference, acosh_points),
     Function("atanh", ["x"], atanh_reference, atanh_points),
     Function("hypot", ["x", "y"], hypot_reference, hypot_points),
     Function("sinc", ["x"], sinc_reference, sinc_points),
+    Function("sigmoid", ["x"], sigmoid_reference, activation_points(oracle.sigmoid, True)),
+    Function("softplus", ["x"], softplus_reference,
+             activation_points(lambda t: mpmath.log1p(mpmath.exp(t)), False)),
     Function("logsumexp", [f"x{i}" for i in range(LSE_TERMS)], lse_reference(False), lse_points),
     Function("logmeanexp", [f"x{i}" for i in range(LSE_TERMS)], lse_reference(True), lse_points),
     Function("erf", ["x"], erf_reference, erf_points),
