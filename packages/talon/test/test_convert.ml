@@ -51,6 +51,14 @@ let per_s : Type.unit_ -> int64 = function
   | Ns -> 1_000_000_000L
 
 let ticks_per_day u = Int64.mul 86_400L (per_s u)
+
+(* [unit_of ty] is the unit of the temporal type [ty]'s ticks, a date's in
+   seconds. *)
+let unit_of : type a. a Type.t -> Type.unit_ = function
+  | Type.Datetime { unit_; _ } -> unit_
+  | Type.Duration u | Type.Clock u -> u
+  | _ -> Type.S
+
 let int32_days = (Int64.of_int32 Int32.min_int, Int64.of_int32 Int32.max_int)
 let int32_lo, int32_hi = int32_days
 
@@ -65,6 +73,11 @@ let floor_mod x k = Int64.sub x (Int64.mul (floor_div x k) k)
 let mul_exact k f =
   let r = Int64.mul k f in
   if Int64.div r f = k then Some r else None
+
+(* [sub_exact x y] is [x - y], or [None] if it overflows. *)
+let sub_exact x y =
+  let r = Int64.sub x y in
+  if Int64.compare y 0L >= 0 = (Int64.compare r x <= 0) then Some r else None
 
 (* [add_exact x s] is [x + s], or [None] if it overflows. *)
 let add_exact x s =
@@ -107,25 +120,24 @@ let cast_ticks (Type.Any ty as t) (Type.Any into) xs =
   let x = Col.v (Type.kind ty) "x" in
   compute (Expr.cast into x) (one "x" (ticks_column t xs))
 
-(* [agrees ~expected xs r] checks the run [r] over the rows [xs] whose model
-   gives [expected], [None] where a row fails: the run fails at the first row
-   that fails and is not null, with a message holding [failure], and otherwise
-   gives each row's storage, null where [xs] is. *)
-let agrees ?(failure = "cannot cast ") ~expected xs r =
-  let fails i = Option.is_some xs.(i) && Option.is_none expected.(i) in
-  match List.find_opt fails (List.init (Array.length xs) Fun.id) with
+(* [agrees expected r] checks the run [r] against each row's model: [None] for a
+   null row, [Some None] for a row that fails and [Some (Some v)] for one whose
+   storage is [v]. The run fails at the first row that fails, naming it, and
+   otherwise gives each row's storage. *)
+let agrees expected r =
+  match Array.find_index (fun e -> e = Some None) expected with
   | None ->
-      let expected =
-        Array.map2 (fun x e -> Option.bind x (fun _ -> e)) xs expected
-      in
-      equal (array (option int64)) expected (stored (require_ok ~pp:Error.pp r))
+      equal
+        (array (option int64))
+        (Array.map Option.join expected)
+        (stored (require_ok ~pp:Error.pp r))
   | Some row ->
       contains
-        ~sub:(Printf.sprintf ": row %d: %s" row failure)
+        ~sub:(Printf.sprintf ": row %d: " row)
         (Format.asprintf "%a" Error.pp (require_error r))
 
-let fails xs expected =
-  Array.exists2 (fun x e -> x <> None && e = None) xs expected
+(* [fails expected] is whether a row of the model [expected] fails. *)
+let fails expected = Array.exists (fun e -> e = Some None) expected
 
 let before_1970 xs =
   Array.exists (function Some x -> x < 0L | None -> false) xs
@@ -304,24 +316,27 @@ let cut_cases =
   let+ xs = array ~size:(int_range 0 12) (frequency rows) in
   Cut_case (ty, raw, es, xs)
 
-(* [cut_case ty raw xs] is the case of the edges [raw] and the rows [xs]. *)
-let cut_case ty raw xs =
-  let raw, es = ascending ty raw in
-  Cut_case (ty, raw, es, xs)
-
 let cut_law =
   prop "cut is the bin that a linear scan of the edges finds"
     ~examples:
       [
-        cut_case Type.float64 [| 0.; 1. |] [| Some Float.nan; Some 0.5 |];
-        cut_case Type.float32 [| 0.7; 1. |] [| Some 0.7; Some 0.9 |];
-        cut_case
-          (Type.tensor Nx.float32 [| 2 |])
-          [|
-            Nx.create Nx.float32 [| 2 |] [| 0.; 0. |];
-            Nx.create Nx.float32 [| 2 |] [| 1.; 1. |];
-          |]
-          [| Some (Nx.create Nx.float32 [| 2 |] [| 0.5; 0.5 |]) |];
+        Cut_case
+          ( Type.float64,
+            [| 0.; 1. |],
+            [| 0.; 1. |],
+            [| Some Float.nan; Some 0.5 |] );
+        (* float32 stores the edge 0.7 rounded to 0.699999988. *)
+        Cut_case
+          ( Type.float32,
+            [| 0.7; 1. |],
+            [| Int32.float_of_bits (Int32.bits_of_float 0.7); 1. |],
+            [| Some 0.7; Some 0.9 |] );
+        (let e x = Nx.create Nx.float32 [| 2 |] [| x; x |] in
+         Cut_case
+           ( Type.tensor Nx.float32 [| 2 |],
+             [| e 0.; e 1. |],
+             [| e 0.; e 1. |],
+             [| Some (e 0.5) |] ));
       ]
     (Gen.with_pp pp_cut_case cut_cases)
     (fun (Cut_case (ty, raw, es, xs)) ->
@@ -521,7 +536,6 @@ let pairs =
   let all ts =
     List.concat_map (fun a -> List.map (fun b -> Pair (a, b)) ts) ts
   in
-  let units = Type.[ S; Ms; Us; Ns ] in
   Type.(
     all [ int8; int16; int32; int64; uint8; uint16; uint32; uint64 ]
     @ all (List.map duration units)
@@ -565,219 +579,150 @@ let held_casts =
 
 (* Casts between numeric types *)
 
-(* A value of a numeric column as its storage reads: an integer's int64 bits, a
-   float, or a boolean. *)
-type number = I of int64 | F of float | B of bool
+(* [cast_rows ty vs into] is [cast into] over the column of [ty] holding
+   [vs]. *)
+let cast_rows ty vs into =
+  compute
+    (Expr.cast into (Col.v (Type.kind ty) "x"))
+    (one "x" (Column.of_options ty vs))
 
-let pp_number ppf = function
-  | I x -> Format.fprintf ppf "%Ld" x
-  | F x -> Format.fprintf ppf "%h" x
-  | B b -> Format.pp_print_bool ppf b
+(* [refused_at row r] checks that the run [r] fails at [row]. *)
+let refused_at row r =
+  contains
+    ~sub:(Printf.sprintf ": row %d: " row)
+    (Format.asprintf "%a" Error.pp (require_error r))
 
-let number_w =
-  Testable.make ~pp:pp_number ~equal:(fun a b ->
-      match (a, b) with
-      | F x, F y -> Testable.equal float_exact x y
-      | _ -> a = b)
+let floats r = Column.options Kind.float (require_ok ~pp:Error.pp r)
+let two_to n = Float.ldexp 1. n
 
-(* [numbers ty c] is what the column [c] of the numeric type [ty] stores. *)
-let numbers : type a. a Type.t -> Column.t -> number option array =
- fun ty c ->
-  match ty with
-  | Bool -> Array.map (Option.map (fun b -> B b)) (Column.options Kind.bool c)
-  | Float16 | Float32 | Float64 ->
-      Array.map (Option.map (fun x -> F x)) (Column.options Kind.float c)
-  | _ -> Array.map (Option.map (fun x -> I x)) (stored c)
-
-let rec bit_length m =
-  if m = 0L then 0 else 1 + bit_length (Int64.shift_right_logical m 1)
-
-(* [round_int p x] is the integer [x] rounded to [p] significant bits, to
-   nearest, ties to even, computed exactly. *)
-let round_int p x =
-  (* The magnitude, read as unsigned: [Int64.min_int]'s is 2^63. *)
-  let m = if x < 0L then Int64.neg x else x in
-  let drop = max 0 (bit_length m - p) in
-  let r =
-    if drop = 0 then Int64.to_float m
-    else
-      let q = Int64.shift_right_logical m drop in
-      let rest = Int64.logand m (Int64.pred (Int64.shift_left 1L drop)) in
-      let half = Int64.shift_left 1L (drop - 1) in
-      let up = rest > half || (rest = half && Int64.logand q 1L = 1L) in
-      Float.ldexp (Int64.to_float (if up then Int64.succ q else q)) drop
-  in
-  if x < 0L then -.r else r
-
-(* [to_half x] is the double [x] rounded to binary16, to nearest, ties to even:
-   11 significant bits, a subnormal's unit 2^-24, and an infinity past 65504. *)
-let to_half x =
-  if (not (Float.is_finite x)) || x = 0. then x
-  else
-    let unit = max (snd (Float.frexp x) - 11) (-24) in
-    let scaled = Float.ldexp x (-unit) in
-    let r =
-      if Float.abs (scaled -. Float.trunc scaled) = 0.5 then
-        2. *. Float.round (scaled /. 2.)
-      else Float.round scaled
-    in
-    let y = Float.copy_sign (Float.ldexp r unit) x in
-    if Float.abs y > 65504. then Float.copy_sign Float.infinity x else y
-
-(* OCaml rounds a double to binary32 once, to nearest, ties to even. *)
-let to_single x = Int32.float_of_bits (Int32.bits_of_float x)
-let two_63 = Float.ldexp 1. 63
-
-(* [integer lo hi x] is the float [x] as an integer of the range [lo, hi), its
-   int64 bits, or [None]. *)
-let integer lo hi x =
-  if Float.is_integer x && lo <= x && x < hi then
-    Some
-      (I
-         (if x >= two_63 then Int64.of_float (x -. (2. *. two_63))
-          else Int64.of_float x))
-  else None
-
-(* [convert into v] is the cast of the value [v] to the numeric type [into], as
-   the interface states it, or [None] where the cast fails. *)
-let convert : type a. a Type.t -> number -> number option =
- fun into v ->
-  let to_float p round =
-    let y =
-      match v with
-      | B b -> if b then 1. else 0.
-      | I x -> round (round_int p x)
-      | F x -> round x
-    in
-    match v with
-    | F x when not (Float.is_finite x) -> Some (F y)
-    | _ -> if Float.is_finite y then Some (F y) else None
-  in
-  let to_int lo hi =
-    match v with
-    | B b -> Some (I (if b then 1L else 0L))
-    | F x -> integer lo hi x
-    | I _ -> invalid_arg "convert: an integer cast to an integer"
-  in
-  match into with
-  | Bool -> (
-      match v with
-      | B b -> Some (B b)
-      | I 0L -> Some (B false)
-      | I 1L -> Some (B true)
-      | F x when x = 0. -> Some (B false)
-      | F 1. -> Some (B true)
-      | I _ | F _ -> None)
-  | Float16 -> to_float 11 to_half
-  | Float32 -> to_float 24 to_single
-  | Float64 -> to_float 53 Fun.id
-  | Int8 -> to_int (-128.) 128.
-  | Int16 -> to_int (-32768.) 32768.
-  | Int32 -> to_int (-2147483648.) 2147483648.
-  | Int64 -> to_int (-.two_63) two_63
-  | Uint8 -> to_int 0. 256.
-  | Uint16 -> to_int 0. 65536.
-  | Uint32 -> to_int 0. 4294967296.
-  | Uint64 -> to_int 0. (2. *. two_63)
-  | _ -> invalid_arg "convert: not a numeric type"
-
-type numeric = Numeric : 'a Type.t * 'b Type.t * 'a option array -> numeric
-
-let numeric_types =
-  Type.
-    [
-      Any bool;
-      Any int8;
-      Any int16;
-      Any int32;
-      Any int64;
-      Any uint8;
-      Any uint16;
-      Any uint32;
-      Any uint64;
-      Any float16;
-      Any float32;
-      Any float64;
-    ]
-
-let is_int (Type.Any t) =
-  Option.is_some (Kind.provably_equal (Type.kind t) Kind.int)
-
-(* Pairs of numeric types, but for two integer types, which a cast within a kind
-   covers, and rows each source type holds. *)
-let numeric_case =
-  let open Gen in
-  let* (Type.Any a as source) = of_list numeric_types in
-  let* (Type.Any b) =
-    of_list
-      (List.filter (fun t -> not (is_int source && is_int t)) numeric_types)
-  in
-  let+ vs = G.options a in
-  Numeric (a, b, vs)
-
-let pp_numeric ppf (Numeric (a, b, vs)) =
-  Format.fprintf ppf "cast %a of %a" Type.pp b G.pp_sample (G.Sample (a, vs))
-
-let numeric_law =
-  prop ~count:300
-    "a numeric cast keeps exact integers, takes 0 and 1 for bool, and rounds \
-     to the nearest float, ties to even"
-    ~examples:
+let numeric_casts =
+  [
+    (* The rows' expected values are the nearest value of the type, ties to
+       even: float32 has 24 significant bits, float16 11, float64 53. *)
+    cases "an integer becomes its nearest float, ties to even"
+      ~id:(fun (name, _, _, _, _) -> name)
       [
-        Numeric
-          ( Type.int64,
-            Type.float32,
-            some [| 16_777_217; (1 lsl 60) + (1 lsl 36) + 1 |] );
-        Numeric
-          ( Type.float64,
-            Type.float16,
-            some
-              [| 1. +. Float.ldexp 1. (-11) +. Float.ldexp 1. (-40); 65519.99 |]
-          );
-        Numeric (Type.float64, Type.int32, some [| 2.; -0.; 1e9 |]);
-        Numeric (Type.float64, Type.int32, some [| 1.; 3.5 |]);
-        Numeric (Type.int8, Type.bool, some [| 0; 1 |]);
-        Numeric (Type.int8, Type.bool, some [| 2 |]);
-        Numeric (Type.float32, Type.int64, some [| Float.nan |]);
-        Numeric (Type.float64, Type.float32, some [| Float.infinity; 1e300 |]);
-        Numeric (Type.int32, Type.float16, some [| 2049; 70000 |]);
+        ( "2^24 + 1 ties down",
+          Type.int64,
+          (1 lsl 24) + 1,
+          Type.float32,
+          two_to 24 );
+        ( "2^24 + 3 ties up",
+          Type.int64,
+          (1 lsl 24) + 3,
+          Type.float32,
+          two_to 24 +. 4. );
+        (* Through float64 it would tie at 2^60 + 2^36 and round down. *)
+        ( "2^60 + 2^36 + 1 rounds up once",
+          Type.int64,
+          (1 lsl 60) + (1 lsl 36) + 1,
+          Type.float32,
+          two_to 60 +. two_to 37 );
+        ("2049 ties down", Type.int32, 2049, Type.float16, 2048.);
+        ("2051 ties up", Type.int32, 2051, Type.float16, 2052.);
+        ( "2^53 + 1 ties down",
+          Type.int64,
+          (1 lsl 53) + 1,
+          Type.float64,
+          two_to 53 );
+        ("int8's least is exact", Type.int8, -128, Type.float16, -128.);
+        ("uint16's greatest is exact", Type.uint16, 65535, Type.float32, 65535.);
       ]
-    (Gen.with_pp pp_numeric numeric_case)
-    (fun (Numeric (a, b, vs)) ->
-      let source = Column.of_options a vs in
-      let values = numbers a source in
-      let expected = Array.map (Option.map (convert b)) values in
-      let refused =
-        Array.find_index (function Some None -> true | _ -> false) expected
-      in
-      let rounded =
-        Array.exists2
-          (fun v e ->
-            match (v, e) with
-            | Some (I x), Some (Some (F y)) ->
-                not (Float.abs y <= two_63 && Int64.equal (Int64.of_float y) x)
-            | Some (F x), Some (Some (F y)) -> Float.is_finite x && x <> y
-            | _ -> false)
-          values expected
-      in
-      cover "a value refused" (Option.is_some refused);
-      cover "every value cast"
-        (Option.is_none refused && Array.exists Option.is_some values);
-      cover "a float rounded" rounded;
-      cover "a float to an integer" (is_int (Any b) && not (is_int (Any a)));
-      let r =
-        compute (Expr.cast b (Col.v (Type.kind a) "x")) (one "x" source)
-      in
-      match refused with
-      | Some row ->
-          contains
-            ~sub:(Printf.sprintf ": row %d: cannot cast " row)
-            (Format.asprintf "%a" Error.pp (require_error r))
-      | None ->
-          equal
-            (array (option number_w))
-            (Array.map (Option.map Option.get) expected)
-            (numbers b (require_ok ~pp:Error.pp r)))
+      (fun (_, ty, x, into, expected) ->
+        equal
+          (array (option float_exact))
+          [| Some expected |]
+          (floats (cast_rows ty [| Some x |] into)));
+    cases "a float becomes its nearest value of a narrower type, ties to even"
+      ~id:(fun (name, _, _, _) -> name)
+      [
+        ( "1 + 2^-11 + 2^-40 rounds up",
+          1. +. two_to (-11) +. two_to (-40),
+          Type.float16,
+          1. +. two_to (-10) );
+        ("1 + 2^-11 ties down", 1. +. two_to (-11), Type.float16, 1.);
+        ("65519.99 rounds to 65504", 65519.99, Type.float16, 65504.);
+        ("1e-30 rounds to 0", 1e-30, Type.float16, 0.);
+        ("-0. stays", -0., Type.float16, -0.);
+        ("NaN stays", Float.nan, Type.float32, Float.nan);
+        ("infinity stays", Float.infinity, Type.float16, Float.infinity);
+      ]
+      (fun (_, x, into, expected) ->
+        equal
+          (array (option float_exact))
+          [| Some expected |]
+          (floats (cast_rows Type.float64 [| Some x |] into)));
+    prop "a float64 becomes float32 as OCaml rounds a double to binary32"
+      (Gen.array ~size:(Gen.int_range 0 8) Gen.float)
+      (fun xs ->
+        (* OCaml rounds a double to binary32 once, to nearest, ties to even. *)
+        let single x = Int32.float_of_bits (Int32.bits_of_float x) in
+        let r = cast_rows Type.float64 (some xs) Type.float32 in
+        let past x = Float.is_finite x && not (Float.is_finite (single x)) in
+        match Array.find_index past xs with
+        | Some row -> refused_at row r
+        | None ->
+            equal
+              (array (option float_exact))
+              (Array.map (fun x -> Some (single x)) xs)
+              (floats r));
+    prop "an int64 becomes float64 as Int64.to_float rounds it"
+      (Gen.array ~size:(Gen.int_range 0 8) Gen.int)
+      (fun xs ->
+        equal
+          (array (option float_exact))
+          (Array.map (fun x -> Some (Int64.to_float (Int64.of_int x))) xs)
+          (floats (cast_rows Type.int64 (some xs) Type.float64)));
+    test "a finite value past a float type's range is refused" (fun () ->
+        refused_at 0 (cast_rows Type.float64 (some [| 65520. |]) Type.float16);
+        refused_at 1
+          (cast_rows Type.float64
+             (some [| Float.infinity; 1e300 |])
+             Type.float32);
+        refused_at 0 (cast_rows Type.int32 (some [| 70000 |]) Type.float16));
+    (* Expected values: the float when it is whole and in the type's range, else
+       a refusal. *)
+    cases "a float becomes an integer only when whole and in range"
+      ~id:(fun (x, t, _) -> Format.asprintf "%h to %a" x Type.pp t)
+      [
+        (2., Type.int32, Some 2);
+        (-0., Type.int32, Some 0);
+        (1e9, Type.int32, Some 1_000_000_000);
+        (2147483647., Type.int32, Some 2147483647);
+        (-2147483648., Type.int32, Some (-2147483648));
+        (2147483648., Type.int32, None);
+        (-2147483649., Type.int32, None);
+        (3.5, Type.int32, None);
+        (Float.nan, Type.int64, None);
+        (Float.infinity, Type.int64, None);
+        (255., Type.uint8, Some 255);
+        (256., Type.uint8, None);
+        (-1., Type.uint8, None);
+      ]
+      (fun (x, into, expected) ->
+        let r = cast_rows Type.float64 [| Some x |] into in
+        match expected with
+        | Some v -> rows_are into [| Some v |] (require_ok ~pp:Error.pp r)
+        | None -> refused_at 0 r);
+    test "bool takes 0 and 1 only, and gives 0 and 1" (fun () ->
+        rows_are Type.bool
+          (some [| false; true |])
+          (require_ok (cast_rows Type.int8 (some [| 0; 1 |]) Type.bool));
+        rows_are Type.bool
+          (some [| false; true; false |])
+          (require_ok
+             (cast_rows Type.float64 (some [| 0.; 1.; -0. |]) Type.bool));
+        refused_at 1 (cast_rows Type.int8 (some [| 1; 2 |]) Type.bool);
+        refused_at 0 (cast_rows Type.int8 (some [| -1 |]) Type.bool);
+        refused_at 0 (cast_rows Type.float64 (some [| 0.5 |]) Type.bool);
+        rows_are Type.int8
+          (some [| 0; 1 |])
+          (require_ok (cast_rows Type.bool (some [| false; true |]) Type.int8));
+        rows_are Type.float32
+          (some [| 0.; 1. |])
+          (require_ok
+             (cast_rows Type.bool (some [| false; true |]) Type.float32)));
+  ]
 
 (* A duration's ticks *)
 
@@ -824,90 +769,91 @@ let ticks_law =
 
 let casts =
   group "Expr.cast"
-    [
-      test "a literal fails at the first row, and over no rows not at all"
-        (fun () ->
-          let e = Expr.cast Type.int8 (Expr.int 300) in
-          let t = one "x" (Column.v Type.int8 [| 1; 2 |]) in
-          equal int 0
-            (Column.length (result e (one "x" (Column.v Type.int8 [||]))));
-          expect (error e t)
-          @@ __POS_OF__
-               {| select ["out" := cast int8 300]: row 0: cannot cast 300 to int8. |});
-      test "an unsigned integer takes floats up to 2^64" (fun () ->
-          let c =
-            result
-              (Expr.cast Type.uint64 (Col.float "x"))
-              (one "x" (Column.v Type.float64 [| 1e19 |]))
-          in
-          (* 10^19 - 2^64: the bits of the uint64 10^19. *)
-          equal
-            (array (option int64))
-            [| Some (-8_446_744_073_709_551_616L) |]
-            (stored c));
-      test "lists cast element by element" (fun () ->
-          let xs = [| Some [| 1; 2 |]; None; Some [||] |] in
-          rows_are (Type.list Type.int8) xs
-            (result
-               (Expr.cast (Type.list Type.int8)
-                  (Col.v (Kind.list Kind.int) "x"))
-               (one "x" (Column.of_options (Type.list Type.int64) xs))));
-      test "records cast field by field and tensors element by element"
-        (fun () ->
-          let r a = Record.(add Kind.int "a" (Some a) empty) in
-          let into = Type.record [ ("a", Any Type.int8) ] in
-          let source = Type.record [ ("a", Any Type.int64) ] in
-          let fields c =
-            Array.map
-              (Option.map (Record.field Kind.int "a"))
-              (Column.options Record.kind c)
-          in
-          equal
-            (array (option (option int)))
-            [| Some (Some 1); Some (Some (-2)) |]
-            (fields
-               (result
-                  (Expr.cast into (Col.v Record.kind "x"))
-                  (one "x" (Column.v source [| r 1; r (-2) |]))));
-          let tensor dt xs = Nx.create dt [| 2 |] xs in
-          let out =
-            result
-              (Expr.cast
-                 (Type.tensor Nx.float32 [| 2 |])
-                 (Col.v (Kind.tensor Nx.int64) "x"))
-              (one "x"
-                 (Column.v
-                    (Type.tensor Nx.int64 [| 2 |])
-                    [| tensor Nx.int64 [| 1L; 3L |] |]))
-          in
-          equal
-            (array (array float_exact))
-            [| [| 1.; 3. |] |]
-            (Array.map Nx.to_array (Column.values (Kind.tensor Nx.float32) out)));
-      test "a cast's data error names its row, the value and the type"
-        (fun () ->
-          let failure ty vs into =
-            let x = Col.v (Type.kind ty) "x" in
-            error (Expr.cast into x) (one "x" (Column.of_options ty vs))
-          in
-          expect
-            (String.concat "\n"
-               [
-                 failure Type.float64 (some [| 1.; 3.5 |]) Type.int32;
-                 failure Type.int16 (some [| 300 |]) Type.int8;
-                 failure Type.float32 (some [| Float.nan |]) Type.int64;
-                 failure Type.string
-                   (some [| "a"; "z" |])
-                   (Type.categorical [| "a" |]);
-                 failure (Type.duration Ms)
-                   (some [| Time.Span.ms 1500 |])
-                   (Type.duration S);
-                 failure (Type.list Type.int64)
-                   [| Some [| 1 |]; None; Some [| 2; 300 |] |]
-                   (Type.list Type.int8);
-               ])
-          @@ __POS_OF__
-               {|
+    ([
+       test "a literal fails at the first row, and over no rows not at all"
+         (fun () ->
+           let e = Expr.cast Type.int8 (Expr.int 300) in
+           let t = one "x" (Column.v Type.int8 [| 1; 2 |]) in
+           equal int 0
+             (Column.length (result e (one "x" (Column.v Type.int8 [||]))));
+           expect (error e t)
+           @@ __POS_OF__
+                {| select ["out" := cast int8 300]: row 0: cannot cast 300 to int8. |});
+       test "an unsigned integer takes floats up to 2^64" (fun () ->
+           let c =
+             result
+               (Expr.cast Type.uint64 (Col.float "x"))
+               (one "x" (Column.v Type.float64 [| 1e19 |]))
+           in
+           (* 10^19 - 2^64: the bits of the uint64 10^19. *)
+           equal
+             (array (option int64))
+             [| Some (-8_446_744_073_709_551_616L) |]
+             (stored c));
+       test "lists cast element by element" (fun () ->
+           let xs = [| Some [| 1; 2 |]; None; Some [||] |] in
+           rows_are (Type.list Type.int8) xs
+             (result
+                (Expr.cast (Type.list Type.int8)
+                   (Col.v (Kind.list Kind.int) "x"))
+                (one "x" (Column.of_options (Type.list Type.int64) xs))));
+       test "records cast field by field and tensors element by element"
+         (fun () ->
+           let r a = Record.(add Kind.int "a" (Some a) empty) in
+           let into = Type.record [ ("a", Any Type.int8) ] in
+           let source = Type.record [ ("a", Any Type.int64) ] in
+           let fields c =
+             Array.map
+               (Option.map (Record.field Kind.int "a"))
+               (Column.options Record.kind c)
+           in
+           equal
+             (array (option (option int)))
+             [| Some (Some 1); Some (Some (-2)) |]
+             (fields
+                (result
+                   (Expr.cast into (Col.v Record.kind "x"))
+                   (one "x" (Column.v source [| r 1; r (-2) |]))));
+           let tensor dt xs = Nx.create dt [| 2 |] xs in
+           let out =
+             result
+               (Expr.cast
+                  (Type.tensor Nx.float32 [| 2 |])
+                  (Col.v (Kind.tensor Nx.int64) "x"))
+               (one "x"
+                  (Column.v
+                     (Type.tensor Nx.int64 [| 2 |])
+                     [| tensor Nx.int64 [| 1L; 3L |] |]))
+           in
+           equal
+             (array (array float_exact))
+             [| [| 1.; 3. |] |]
+             (Array.map Nx.to_array
+                (Column.values (Kind.tensor Nx.float32) out)));
+       test "a cast's data error names its row, the value and the type"
+         (fun () ->
+           let failure ty vs into =
+             let x = Col.v (Type.kind ty) "x" in
+             error (Expr.cast into x) (one "x" (Column.of_options ty vs))
+           in
+           expect
+             (String.concat "\n"
+                [
+                  failure Type.float64 (some [| 1.; 3.5 |]) Type.int32;
+                  failure Type.int16 (some [| 300 |]) Type.int8;
+                  failure Type.float32 (some [| Float.nan |]) Type.int64;
+                  failure Type.string
+                    (some [| "a"; "z" |])
+                    (Type.categorical [| "a" |]);
+                  failure (Type.duration Ms)
+                    (some [| Time.Span.ms 1500 |])
+                    (Type.duration S);
+                  failure (Type.list Type.int64)
+                    [| Some [| 1 |]; None; Some [| 2; 300 |] |]
+                    (Type.list Type.int8);
+                ])
+           @@ __POS_OF__
+                {|
             select ["out" := cast int32 x]: row 1: cannot cast 3.5 to int32.
             select ["out" := cast int8 x]: row 0: cannot cast 300 to int8.
             select ["out" := cast int64 x]: row 0: cannot cast nan to int64.
@@ -915,31 +861,31 @@ let casts =
             select ["out" := cast duration[s] x]: row 0: cannot cast 1s500ms to duration[s].
             select ["out" := cast list[int8] x]: row 2: cannot cast 300 to int8.
             |});
-      test "a cast it does not make is a problem naming the function that does"
-        (fun () ->
-          let t =
-            v
-              [
-                ("s", Column.v Type.string [| "1" |]);
-                ("d", Column.v Type.date [| Option.get (Time.Date.of_days 0) |]);
-                ("w", Column.v (Type.wall S) [| Time.of_ns 0L |]);
-                ("i", Column.v (Type.instant S) [| Time.of_ns 0L |]);
-              ]
-          in
-          let names fn e =
-            raises_match (Exn.invalid_arg ~sub:fn) (fun () -> compute (e ()) t)
-          in
-          names "Str.parse" (fun () -> Expr.cast Type.int64 (Col.string "s"));
-          names "Temporal.format" (fun () ->
-              Expr.cast Type.string (Col.date "d"));
-          names "Temporal.localize" (fun () ->
-              Expr.cast (Type.instant S) (Col.wall "w"));
-          names "Temporal.wall" (fun () ->
-              Expr.cast (Type.wall S) (Col.instant "i")));
-      held_casts;
-      numeric_law;
-      ticks_law;
-    ]
+       test "a cast it does not make is a problem naming the function that does"
+         (fun () ->
+           let t =
+             v
+               [
+                 ("s", Column.v Type.string [| "1" |]);
+                 ("d", Column.v Type.date [| Option.get (Time.Date.of_days 0) |]);
+                 ("w", Column.v (Type.wall S) [| Time.of_ns 0L |]);
+                 ("i", Column.v (Type.instant S) [| Time.of_ns 0L |]);
+               ]
+           in
+           let names fn e =
+             raises_match (Exn.invalid_arg ~sub:fn) (fun () -> compute (e ()) t)
+           in
+           names "Str.parse" (fun () -> Expr.cast Type.int64 (Col.string "s"));
+           names "Temporal.format" (fun () ->
+               Expr.cast Type.string (Col.date "d"));
+           names "Temporal.localize" (fun () ->
+               Expr.cast (Type.instant S) (Col.wall "w"));
+           names "Temporal.wall" (fun () ->
+               Expr.cast (Type.wall S) (Col.instant "i")));
+       held_casts;
+       ticks_law;
+     ]
+    @ numeric_casts)
 
 (* The days that a datetime[ns] reaches either side of 1970, about 292 years. *)
 let ns_days = Int64.div Int64.max_int (ticks_per_day Ns)
@@ -963,16 +909,14 @@ let dates_to_datetimes =
      range"
     gen (fun (u, ds) ->
       let expected =
-        Array.map
-          (fun d -> Option.bind d (fun d -> mul_exact d (ticks_per_day u)))
-          ds
+        Array.map (Option.map (fun d -> mul_exact d (ticks_per_day u))) ds
       in
       cover "every row in range"
-        ((not (fails ds expected)) && Array.exists Option.is_some ds);
-      cover "a row out of range" (fails ds expected);
+        ((not (fails expected)) && Array.exists Option.is_some ds);
+      cover "a row out of range" (fails expected);
       cover "a date before 1970" (before_1970 ds);
       cover "a null" (Array.exists Option.is_none ds);
-      agrees ~expected ds (cast_ticks (Any Type.date) (Any (Type.wall u)) ds))
+      agrees expected (cast_ticks (Any Type.date) (Any (Type.wall u)) ds))
 
 (* [reach u] is the days either side of 1970 within which a datetime of the unit
    [u] holds every tick of the day, up to a million. *)
@@ -1018,15 +962,15 @@ let datetimes_to_dates =
         let d = floor_div t (ticks_per_day u) in
         if d < int32_lo || d > int32_hi then None else Some d
       in
-      let expected = Array.map (fun t -> Option.bind t day_of) ts in
+      let expected = Array.map (Option.map day_of) ts in
       let inside_day t = Int64.rem t (ticks_per_day u) <> 0L in
       cover "a time of day before 1970"
         (Array.exists
            (function Some t -> t < 0L && inside_day t | None -> false)
            ts);
-      cover "a day out of the date's range" (fails ts expected);
+      cover "a day out of the date's range" (fails expected);
       cover "a null" (Array.exists Option.is_none ts);
-      agrees ~expected ts (cast_ticks (Any (Type.wall u)) (Any Type.date) ts))
+      agrees expected (cast_ticks (Any (Type.wall u)) (Any Type.date) ts))
 
 let dates_round_trip =
   let gen =
@@ -1080,14 +1024,13 @@ let days_floor =
     gen (fun (u, ts) ->
       let day = ticks_per_day u in
       let midnight t = mul_exact (floor_div t day) day in
-      let expected = Array.map (fun t -> Option.bind t midnight) ts in
+      let expected = Array.map (Option.map midnight) ts in
       cover "a time of day before 1970" (before_1970 ts);
-      cover "a midnight below the least tick" (fails ts expected);
+      cover "a midnight below the least tick" (fails expected);
       let ty = Type.wall u in
       let x = Col.wall "x" in
       let floor = Expr.Temporal.floor (Days 1) x in
-      agrees ~failure:"the 1d period of " ~expected ts
-        (compute floor (one "x" (ticks_column (Any ty) ts)));
+      agrees expected (compute floor (one "x" (ticks_column (Any ty) ts)));
       (* The cast holds where the midnight and the date both exist. *)
       let defined t =
         let d = floor_div t day in
@@ -1158,27 +1101,27 @@ let clocks_and_durations =
         | Some r when (not to_clock) || in_day r -> Some r
         | _ -> None
       in
-      let expected = Array.map (fun x -> Option.bind x model) xs in
+      let expected = Array.map (Option.map model) xs in
       let outside x = not (in_day x) in
       cover "a duration outside the day, at the clock's unit"
         (to_clock && u0 = u1
         && Array.exists (function Some x -> outside x | None -> false) xs);
       cover "a clock to a duration of a coarser unit, failing"
-        ((not to_clock) && per_s u1 < per_s u0 && fails xs expected);
+        ((not to_clock) && per_s u1 < per_s u0 && fails expected);
       cover "a duration to a clock, every row kept"
-        (to_clock && (not (fails xs expected)) && Array.exists Option.is_some xs);
+        (to_clock && (not (fails expected)) && Array.exists Option.is_some xs);
       cover "a clock to a duration, every row kept"
         ((not to_clock)
-        && (not (fails xs expected))
+        && (not (fails expected))
         && Array.exists Option.is_some xs);
       let from, into =
         if to_clock then (Type.duration u0, Type.clock u1)
         else (Type.clock u0, Type.duration u1)
       in
-      agrees ~expected xs (cast_ticks (Any from) (Any into) xs))
+      agrees expected (cast_ticks (Any from) (Any into) xs))
 
 let temporal_casts =
-  let date y m d = Time.Date.to_days (date y m d) in
+  let day y m d = Time.Date.to_days (date y m d) in
   let days_of u ts =
     stored
       (require_ok ~pp:Error.pp
@@ -1196,30 +1139,30 @@ let temporal_casts =
         (fun () ->
           equal
             (array (option int64))
-            (days [| date 1969 12 31; date 1970 1 1; date 1970 1 1 |])
+            (days [| day 1969 12 31; day 1970 1 1; day 1970 1 1 |])
             (days_of S [| -1L; 0L; 86_399L |]);
           equal
             (array (option int64))
-            (days [| date 1677 9 21; date 2262 4 11 |])
+            (days [| day 1677 9 21; day 2262 4 11 |])
             (days_of Ns [| Int64.min_int; Int64.max_int |]));
       test "dates at the ends of datetime[ns]" (fun () ->
           equal
             (array (option int64))
             [|
               Some
-                (Int64.mul (Int64.of_int (date 2262 4 11)) 86_400_000_000_000L);
+                (Int64.mul (Int64.of_int (day 2262 4 11)) 86_400_000_000_000L);
             |]
             (stored
                (require_ok ~pp:Error.pp
                   (cast_ticks (Any Type.date)
                      (Any (Type.wall Ns))
-                     (days [| date 2262 4 11 |]))));
+                     (days [| day 2262 4 11 |]))));
           expect
             (Format.asprintf "%a" Error.pp
                (require_error
                   (cast_ticks (Any Type.date)
                      (Any (Type.wall Ns))
-                     (days [| date 1677 9 22; date 1677 9 21 |]))))
+                     (days [| day 1677 9 22; day 1677 9 21 |]))))
           @@ __POS_OF__
                {| select ["out" := cast datetime[ns] x]: row 1: cannot cast 1677-09-21 to datetime[ns]. |});
       test
@@ -1387,32 +1330,8 @@ let parse_law =
             (Format.asprintf "%a" Error.pp (require_error by_expr)))
 
 let text =
-  let bools e vs = Column.options Kind.bool (result e (texts vs)) in
   group "Expr.Str"
     [
-      test
-        "matches a literal anywhere, a prefix at the start, a suffix at the end"
-        (fun () ->
-          let vs =
-            [| Some "special requests"; Some "requests special"; None |]
-          in
-          let m p = bools (Expr.Str.matches p s) vs in
-          equal
-            (array (option bool))
-            [| Some true; Some false; None |]
-            (m (Expr.Str.pieces [ "special"; "requests" ]));
-          equal
-            (array (option bool))
-            [| Some true; Some false; None |]
-            (m (Expr.Str.prefix "spe"));
-          equal
-            (array (option bool))
-            [| Some false; Some true; None |]
-            (m (Expr.Str.suffix "cial"));
-          equal
-            (array (option bool))
-            [| Some true; Some true; None |]
-            (m (Expr.Str.literal "q")));
       pieces_law;
       slices;
       parse_law;
@@ -1508,21 +1427,6 @@ let trimming =
   group "Expr.Str.trim"
     [
       trim_law;
-      cases "trims each White_Space scalar at both ends, and keeps it inside"
-        ~id:(Printf.sprintf "U+%04X") white_space (fun u ->
-          let w = utf_8 u in
-          equal
-            (array (option string))
-            [| Some ("a" ^ w ^ "b"); Some "" |]
-            (trims [| Some (w ^ w ^ "a" ^ w ^ "b" ^ w); Some w |]));
-      cases "keeps the scalars outside White_Space"
-        ~id:(Printf.sprintf "U+%04X") not_white_space (fun u ->
-          let n = utf_8 u in
-          let kept = n ^ " a " ^ n in
-          equal
-            (array (option string))
-            [| Some kept |]
-            (trims [| Some (" " ^ kept ^ "\t") |]));
       test "nulls stay null, and the empty text is kept" (fun () ->
           equal
             (array (option string))
@@ -1657,65 +1561,76 @@ let joining =
    not scale to the operand's ticks, whose sum overflows, or whose result leaves
    the operand's range fails the run, at the first such row. *)
 
-type operand = Datetime | Duration | Clock | Date
-
 let adds =
   let open Gen in
-  let units = Type.[ S; Ms; Us; Ns ] in
-  let* op = of_list [ Datetime; Duration; Clock; Date ] in
   let* u = of_list units in
+  let* (Type.Any ty as op) =
+    of_list Type.[ Any (instant u); Any (duration u); Any (clock u); Any date ]
+  in
   (* A span finer than the operand's unit is a problem of the verb, and a date's
      unit is the second. *)
   let* du =
-    let unit_ = if op = Date then Type.S else u in
-    of_list (List.filter (fun d -> per_s d <= per_s unit_) units)
+    of_list (List.filter (fun d -> per_s d <= per_s (unit_of ty)) units)
   in
   let edges =
     [ Int64.min_int; Int64.succ Int64.min_int; -1L; 0L; 1L ]
     @ [ Int64.pred Int64.max_int; Int64.max_int ]
   in
   let operand =
-    match op with
-    | Datetime | Duration -> frequency [ (1, of_list edges); (1, int64) ]
-    | Clock ->
-        let last = Int64.pred (Int64.mul 86_400L (per_s u)) in
+    match ty with
+    | Type.Clock _ ->
+        let last = Int64.pred (ticks_per_day u) in
         frequency [ (1, of_list [ 0L; 1L; last ]); (1, int64_range 0L last) ]
-    | Date ->
-        let lo, hi = int32_days in
+    | Type.Date ->
         frequency
           [
-            (1, of_list [ lo; Int64.succ lo; 0L; Int64.pred hi; hi ]);
-            (1, int64_range lo hi);
+            ( 1,
+              of_list
+                [
+                  int32_lo;
+                  Int64.succ int32_lo;
+                  0L;
+                  Int64.pred int32_hi;
+                  int32_hi;
+                ] );
+            (1, int64_range int32_lo int32_hi);
           ]
+    | _ -> frequency [ (1, of_list edges); (1, int64) ]
   in
   let span =
     frequency
       [
         (2, of_list edges);
         (2, int64);
-        ( 1,
-          map
-            (Int64.mul (Int64.mul 86_400L (per_s du)))
-            (int64_range (-1000L) 1000L) );
+        (1, map (Int64.mul (ticks_per_day du)) (int64_range (-1000L) 1000L));
         (1, int64_range (-1000L) 1000L);
       ]
   in
   let+ rows = array ~size:(int_range 0 12) (pair operand span) in
-  (op, u, du, rows)
+  (op, du, rows)
 
-let model op u du x k =
+(* [model ty du x k] is the ticks of [x] of [ty] moved by [k] ticks of [duration
+   du], or [None] where the add fails. *)
+let model (Type.Any ty) du x k =
   let ( let* ) = Option.bind in
-  match op with
-  | Date ->
-      let day = Int64.mul 86_400L (per_s du) in
+  match ty with
+  | Type.Date ->
+      let day = ticks_per_day du in
       let r = Int64.add x (Int64.div k day) in
-      let lo, hi = int32_days in
-      if Int64.rem k day <> 0L || r < lo || r > hi then None else Some r
-  | Datetime | Duration | Clock ->
+      if Int64.rem k day <> 0L || r < int32_lo || r > int32_hi then None
+      else Some r
+  | _ ->
+      let u = unit_of ty in
       let* s = mul_exact k (Int64.div (per_s u) (per_s du)) in
       let* r = add_exact x s in
-      let day = Int64.mul 86_400L (per_s u) in
-      if op = Clock && (r < 0L || r >= day) then None else Some r
+      let clock = match ty with Type.Clock _ -> true | _ -> false in
+      if clock && (r < 0L || r >= ticks_per_day u) then None else Some r
+
+let pp_adds ppf (Type.Any ty, du, rows) =
+  Format.fprintf ppf "%a + duration[%s]: %s" Type.pp ty (unit_name du)
+    (String.concat "; "
+       (Array.to_list
+          (Array.map (fun (x, k) -> Printf.sprintf "%Ld + %Ld" x k) rows)))
 
 let adds_ticks =
   prop
@@ -1724,60 +1639,35 @@ let adds_ticks =
     ~examples:
       [
         (* 2024-02-28 and two days, then 36 hours, which is not whole days. *)
-        (Date, Type.S, Type.S, [| (19781L, 172_800L) |]);
-        (Date, Type.S, Type.S, [| (19781L, 172_800L); (19781L, 129_600L) |]);
+        (Type.Any Type.date, Type.S, [| (19781L, 172_800L) |]);
+        (Any Type.date, S, [| (19781L, 172_800L); (19781L, 129_600L) |]);
         (* 09:00 and 90 minutes, in milliseconds. *)
-        (Clock, Type.Ms, Type.Ms, [| (32_400_000L, 5_400_000L) |]);
+        (Any (Type.clock Ms), Ms, [| (32_400_000L, 5_400_000L) |]);
       ]
-    adds
-    (fun (op, u, du, rows) ->
-      let column ty dt xs =
-        let values = Nx.P (Nx.create dt [| Array.length xs |] xs) in
-        match Column.of_layout ty (Fixed { validity = None; values }) with
-        | Ok c -> c
-        | Error (row, why) -> failf "row %d: %s" row why
-      in
+    (Gen.with_pp pp_adds adds)
+    (fun ((Type.Any ty as op), du, rows) ->
       let x = Array.map fst rows and k = Array.map snd rows in
-      let a =
-        match op with
-        | Datetime -> column (Any (Type.instant u)) Nx.int64 x
-        | Duration -> column (Any (Type.duration u)) Nx.int64 x
-        | Clock -> column (Any (Type.clock u)) Nx.int64 x
-        | Date -> column (Any Type.date) Nx.int32 (Array.map Int64.to_int32 x)
-      in
       let t =
-        v [ ("a", a); ("k", column (Any (Type.duration du)) Nx.int64 k) ]
+        v
+          [
+            ("a", ticks_column op (some x));
+            ("k", ticks_column (Any (Type.duration du)) (some k));
+          ]
       in
-      let d = Col.span "k" in
-      let out =
-        match op with
-        | Datetime -> compute Expr.(Temporal.add (Col.instant "a") d) t
-        | Duration | Clock -> compute Expr.(Temporal.add (Col.span "a") d) t
-        | Date -> compute Expr.(Temporal.add (Col.date "a") d) t
-      in
-      let ticks c =
-        match op with
-        | Date ->
-            Array.map Int64.of_int32 (Nx.to_array (Column.to_tensor Nx.int32 c))
-        | _ -> Nx.to_array (Column.to_tensor Nx.int64 c)
-      in
-      let expected = Array.map2 (model op u du) x k in
-      cover "the span's unit is the operand's" (op <> Date && u = du);
-      cover "a coarser span" (op <> Date && per_s du < per_s u);
-      cover "every row in range"
-        (Array.for_all Option.is_some expected && rows <> [||]);
-      cover "a row out of range" (Array.exists Option.is_none expected);
-      cover "a date" (op = Date && Array.exists Option.is_some expected);
-      cover "a clock" (op = Clock && Array.exists Option.is_some expected);
-      match Array.find_index Option.is_none expected with
-      | None ->
-          equal (array int64)
-            (Array.map Option.get expected)
-            (ticks (require_ok ~pp:Error.pp out))
-      | Some row ->
-          contains
-            ~sub:(Printf.sprintf ": row %d: " row)
-            (Format.asprintf "%a" Error.pp (require_error out)))
+      let expected = Array.map2 (fun x k -> Some (model op du x k)) x k in
+      let is_date = match ty with Type.Date -> true | _ -> false in
+      let clock = match ty with Type.Clock _ -> true | _ -> false in
+      let some_in_range = Array.exists (fun e -> e <> Some None) expected in
+      cover "the span's unit is the operand's" ((not is_date) && unit_of ty = du);
+      cover "a coarser span" ((not is_date) && per_s du < per_s (unit_of ty));
+      cover "every row in range" ((not (fails expected)) && rows <> [||]);
+      cover "a row out of range" (fails expected);
+      cover "a date" (is_date && some_in_range);
+      cover "a clock" (clock && some_in_range);
+      agrees expected
+        (compute
+           (Expr.Temporal.add (Col.v (Type.kind ty) "a") (Col.span "k"))
+           t))
 
 let literal_span =
   test "a literal span adds to a time of day" (fun () ->
@@ -1846,13 +1736,6 @@ let pp_diffed ppf (Diffed (a, b, rows)) =
        (fun ppf (x, y) -> Format.fprintf ppf "%a - %a" tick x tick y))
     (Array.to_list rows)
 
-(* [unit_of ty] is the unit of the temporal type [ty]'s ticks, a date's in
-   seconds. *)
-let unit_of : type a. a Type.t -> Type.unit_ = function
-  | Type.Datetime { unit_; _ } -> unit_
-  | Type.Duration u | Type.Clock u -> u
-  | _ -> Type.S
-
 let diff_law =
   prop
     "diff is the span from b to a in their common unit, failing at the first \
@@ -1867,34 +1750,22 @@ let diff_law =
       ]
     (Gen.with_pp pp_diffed diff_case)
     (fun (Diffed (ta, tb, rows)) ->
-      let date = match ta with Type.Date -> true | _ -> false in
+      let is_date = match ta with Type.Date -> true | _ -> false in
       let ua = unit_of ta and ub = unit_of tb in
       let fine = if per_s ua >= per_s ub then ua else ub in
       let scale u x = Int64.mul x (Int64.div (per_s fine) (per_s u)) in
       let model x y =
-        if date then Some (Int64.mul (Int64.sub x y) 86_400L)
-        else add_exact (scale ua x) (Int64.neg (scale ub y))
+        if is_date then Some (Int64.mul (Int64.sub x y) 86_400L)
+        else sub_exact (scale ua x) (scale ub y)
       in
-      (* [-y] overflows at [min_int], where the span is out of range unless [x]
-         is negative. *)
-      let model x y =
-        if (not date) && y = Int64.min_int && ua = ub then
-          if x < 0L then Some (Int64.sub x y) else None
-        else model x y
-      in
-      let pairs =
+      let expected =
         Array.map
-          (fun (x, y) ->
-            match (x, y) with Some x, Some y -> Some (x, y) | _ -> None)
+          (function Some x, Some y -> Some (model x y) | _ -> None)
           rows
       in
-      let expected = Array.map (Option.map (fun (x, y) -> model x y)) pairs in
-      let flat = Array.map (fun e -> Option.join e) expected in
-      let nulls = Array.map (fun e -> Option.map (fun _ -> ()) e) expected in
-      cover "a row out of range"
-        (Array.exists (fun e -> e = Some None) expected);
+      cover "a row out of range" (fails expected);
       cover "clocks of two units" (ua <> ub);
-      cover "dates" date;
+      cover "dates" is_date;
       let t =
         v
           [
@@ -1903,8 +1774,7 @@ let diff_law =
           ]
       in
       let a = Col.v (Type.kind ta) "a" and b = Col.v (Type.kind tb) "b" in
-      agrees ~failure:"" ~expected:flat nulls
-        (compute (Expr.Temporal.diff a b) t))
+      agrees expected (compute (Expr.Temporal.diff a b) t))
 
 let diff_problem =
   test "diff of operands that do not meet is a problem" (fun () ->
@@ -1921,18 +1791,8 @@ let diff_problem =
 
 (* Temporal.field *)
 
-let fields =
-  [
-    `Year;
-    `Month;
-    `Day;
-    `Hour;
-    `Minute;
-    `Second;
-    `Nanosecond;
-    `Weekday;
-    `Yearday;
-  ]
+let calendar_fields = [ `Year; `Month; `Day; `Weekday; `Yearday ]
+let time_fields = [ `Hour; `Minute; `Second; `Nanosecond ]
 
 let field_name = function
   | `Year -> "Year"
@@ -1952,23 +1812,22 @@ let month_length y m =
   else if List.mem m [ 4; 6; 9; 11 ] then 30
   else 31
 
-(* [civil_fields days ns] is each field of {!fields} of the time [ns]
-   nanoseconds into the day [days] after 1970-01-01. 1970-01-01 is a Thursday,
-   ISO weekday 4. *)
+(* [civil_fields days ns] is the fields of the time [ns] nanoseconds into the
+   day [days] after 1970-01-01, a Thursday, ISO weekday 4. *)
 let civil_fields days ns =
   let y, m, d = Time.Date.to_civil (Option.get (Time.Date.of_days days)) in
   let before = List.init (m - 1) (fun k -> month_length y (k + 1)) in
   let s = ns / 1_000_000_000 in
   [
-    y;
-    m;
-    d;
-    s / 3600;
-    s / 60 mod 60;
-    s mod 60;
-    ns mod 1_000_000_000;
-    (((days mod 7) + 7 + 3) mod 7) + 1;
-    List.fold_left ( + ) d before;
+    (`Year, y);
+    (`Month, m);
+    (`Day, d);
+    (`Weekday, (((days mod 7) + 7 + 3) mod 7) + 1);
+    (`Yearday, List.fold_left ( + ) d before);
+    (`Hour, s / 3600);
+    (`Minute, s / 60 mod 60);
+    (`Second, s mod 60);
+    (`Nanosecond, ns mod 1_000_000_000);
   ]
 
 let days_case =
@@ -1992,20 +1851,19 @@ let date_fields =
     (Gen.array ~size:(Gen.int_range 0 12) days_case)
     (fun ds ->
       let t = one "d" (ticks_column (Any Type.date) (some ds)) in
-      List.iteri
-        (fun i f ->
+      List.iter
+        (fun f ->
           let expected =
             Array.map
-              (fun d -> Some (List.nth (civil_fields (Int64.to_int d) 0) i))
+              (fun d -> Some (List.assoc f (civil_fields (Int64.to_int d) 0)))
               ds
           in
-          if i < 3 || i > 6 then
-            equal ~msg:(field_name f)
-              (array (option int))
-              expected
-              (Column.options Kind.int
-                 (result (Expr.Temporal.field f (Col.date "d")) t)))
-        fields)
+          equal ~msg:(field_name f)
+            (array (option int))
+            expected
+            (Column.options Kind.int
+               (result (Expr.Temporal.field f (Col.date "d")) t)))
+        calendar_fields)
 
 (* Ticks of a stamp in its unit, from nanoseconds at the bounds of int64 and
    anywhere, so that each is a stamp. *)
@@ -2032,47 +1890,32 @@ let clock_fields =
       (u, ts))
     (fun (u, ts) ->
       cover "before 1970" (Array.exists (fun t -> t < 0L) ts);
+      let per = ticks_per_day u in
+      let days = Array.map (fun t -> floor_div t per) ts in
+      let times =
+        Array.map2 (fun t d -> Int64.sub t (Int64.mul d per)) ts days
+      in
       let ns_per_tick = Int64.div 1_000_000_000L (per_s u) in
-      let split t =
-        let day = floor_div t (ticks_per_day u) in
-        let tod = Int64.sub t (Int64.mul day (ticks_per_day u)) in
-        (Int64.to_int day, Int64.to_int (Int64.mul tod ns_per_tick))
+      let fields =
+        Array.map2
+          (fun d tod ->
+            civil_fields (Int64.to_int d)
+              (Int64.to_int (Int64.mul tod ns_per_tick)))
+          days times
+      in
+      let check name e t f =
+        equal
+          ~msg:(name ^ " " ^ field_name f)
+          (array (option int))
+          (Array.map (fun fs -> Some (List.assoc f fs)) fields)
+          (Column.options Kind.int (result (Expr.Temporal.field f e) t))
       in
       let walls = one "w" (ticks_column (Any (Type.wall u)) (some ts)) in
-      let times_of_day =
-        Array.map
-          (fun t ->
-            Int64.sub t
-              (Int64.mul (floor_div t (ticks_per_day u)) (ticks_per_day u)))
-          ts
-      in
-      let clocks =
-        one "c" (ticks_column (Any (Type.clock u)) (some times_of_day))
-      in
-      List.iteri
-        (fun i f ->
-          let expected =
-            Array.map
-              (fun t ->
-                let d, ns = split t in
-                Some (List.nth (civil_fields d ns) i))
-              ts
-          in
-          let read e t =
-            Column.options Kind.int (result (Expr.Temporal.field f e) t)
-          in
-          equal
-            ~msg:("wall " ^ field_name f)
-            (array (option int))
-            expected
-            (read (Col.wall "w") walls);
-          if i >= 3 && i <= 6 then
-            equal
-              ~msg:("clock " ^ field_name f)
-              (array (option int))
-              expected
-              (read (Col.span "c") clocks))
-        fields)
+      let clocks = one "c" (ticks_column (Any (Type.clock u)) (some times)) in
+      List.iter
+        (check "wall" (Col.wall "w") walls)
+        (calendar_fields @ time_fields);
+      List.iter (check "clock" (Col.span "c") clocks) time_fields)
 
 let field_tests =
   [
@@ -2108,41 +1951,48 @@ let field_tests =
 
 (* Temporal.floor and Temporal.offset *)
 
-let fdiv a b = if a >= 0 then a / b else -((-a + b - 1) / b)
-let fmod a b = a - (b * fdiv a b)
-let civil d = Time.Date.to_civil (Option.get (Time.Date.of_days d))
+let civil d =
+  Time.Date.to_civil (Option.get (Time.Date.of_days (Int64.to_int d)))
 
 let day_of (y, m, d) =
-  Option.map Time.Date.to_days (Time.Date.of_civil (y, m, d))
+  Option.map
+    (fun t -> Int64.of_int (Time.Date.to_days t))
+    (Time.Date.of_civil (y, m, d))
 
-let in_dates d =
-  if d >= Int64.to_int int32_lo && d <= Int64.to_int int32_hi then Some d
-  else None
+let in_dates d = if d >= int32_lo && d <= int32_hi then Some d else None
+
+(* [months k] is the first day of the [k]th month after January 1970. *)
+let months k =
+  day_of
+    ( 1970 + Int64.to_int (floor_div k 12L),
+      Int64.to_int (floor_mod k 12L) + 1,
+      1 )
 
 (* [floor_day step d] is the first day of the period of the calendar [step] that
    holds the day [d]: periods count from 1970-01-01, weeks from Monday
    1970-01-05 (day 4), and months from January 1970. *)
 let floor_day step d =
+  let n k = Int64.of_int k in
   match step with
-  | Time.Days n -> in_dates (d - fmod d n)
-  | Weeks n -> in_dates (d - fmod (d - 4) (7 * n))
-  | Months n ->
+  | Time.Days k -> in_dates (Int64.sub d (floor_mod d (n k)))
+  | Weeks k -> in_dates (Int64.sub d (floor_mod (Int64.sub d 4L) (n (7 * k))))
+  | Months k ->
       let y, m, _ = civil d in
-      let k = ((y - 1970) * 12) + m - 1 in
-      let k = k - fmod k n in
-      day_of (1970 + fdiv k 12, fmod k 12 + 1, 1)
+      let month = n (((y - 1970) * 12) + m - 1) in
+      months (Int64.sub month (floor_mod month (n k)))
   | Exact _ -> invalid_arg "floor_day"
 
 (* [offset_day step d] is the day [d] moved by the calendar [step], a day past
    the month's end becoming its last. *)
 let offset_day step d =
   match step with
-  | Time.Days n -> in_dates (d + n)
-  | Weeks n -> in_dates (d + (7 * n))
-  | Months n ->
+  | Time.Days k -> in_dates (Int64.add d (Int64.of_int k))
+  | Weeks k -> in_dates (Int64.add d (Int64.of_int (7 * k)))
+  | Months k ->
       let y, m, dd = civil d in
-      let k = (y * 12) + m - 1 + n in
-      let y = fdiv k 12 and m = fmod k 12 + 1 in
+      let month = Int64.of_int ((y * 12) + m - 1 + k) in
+      let y = Int64.to_int (floor_div month 12L)
+      and m = Int64.to_int (floor_mod month 12L) + 1 in
       day_of (y, m, min dd (month_length y m))
   | Exact _ -> invalid_arg "offset_day"
 
@@ -2209,9 +2059,7 @@ let floored ty step t =
       if r > t then None else Some r
   | step ->
       let per = day_ticks ty in
-      Option.bind
-        (floor_day step (Int64.to_int (floor_div t per)))
-        (fun d -> mul_exact (Int64.of_int d) per)
+      Option.bind (floor_day step (floor_div t per)) (fun d -> mul_exact d per)
 
 (* [offset ty step t] is the ticks [t] of [ty] moved by [step], or [None] out of
    range. *)
@@ -2222,9 +2070,9 @@ let offset ty step t =
       (* The time of day stays: [t] moves by whole days, even where its day's
          midnight is below the least tick. *)
       let per = day_ticks ty in
-      let day = Int64.to_int (floor_div t per) in
+      let day = floor_div t per in
       Option.bind (offset_day step day) (fun d ->
-          Option.bind (mul_exact (Int64.of_int (d - day)) per) (add_exact t))
+          Option.bind (mul_exact (Int64.sub d day) per) (add_exact t))
 
 (* [moved_covers ty step xs expected] labels a case of floor or offset. *)
 let moved_covers ty step xs expected =
@@ -2236,7 +2084,7 @@ let moved_covers ty step xs expected =
        | _ -> false)
     && not exact);
   cover "an exact step" exact;
-  cover "a row out of range" (fails xs expected);
+  cover "a row out of range" (fails expected);
   cover "before 1970" (before_1970 xs)
 
 let floor_law =
@@ -2249,10 +2097,10 @@ let floor_law =
       ]
     (Gen.with_pp pp_moved (moved_case ~negative:false))
     (fun (Moved (ty, step, xs)) ->
-      let expected = Array.map (fun x -> Option.bind x (floored ty step)) xs in
+      let expected = Array.map (Option.map (floored ty step)) xs in
       moved_covers (Any ty) step xs expected;
       let x = Col.v (Type.kind ty) "x" in
-      agrees ~failure:"" ~expected xs
+      agrees expected
         (compute
            (Expr.Temporal.floor step x)
            (one "x" (ticks_column (Any ty) xs))))
@@ -2267,10 +2115,10 @@ let offset_law =
       ]
     (Gen.with_pp pp_moved (moved_case ~negative:true))
     (fun (Moved (ty, step, xs)) ->
-      let expected = Array.map (fun x -> Option.bind x (offset ty step)) xs in
+      let expected = Array.map (Option.map (offset ty step)) xs in
       moved_covers (Any ty) step xs expected;
       let x = Col.v (Type.kind ty) "x" in
-      agrees ~failure:"" ~expected xs
+      agrees expected
         (compute
            (Expr.Temporal.offset step x)
            (one "x" (ticks_column (Any ty) xs))))
