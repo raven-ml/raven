@@ -774,11 +774,11 @@ let fix tol (st : Solution.status) facts =
         (Num.text (fact "largest lag"))
         (fact "pieces") (fact "pieces needed")
   | Stalled ->
-      "The step fell below the time's resolution near t: the solution may blow \
-       up there." ^ Tol.zero_hint tol
+      "The step fell below the time's resolution, or below eps times the first \
+       step, near t: the solution may blow up there." ^ Tol.zero_hint tol
   | Not_finite ->
       "The field is not finite near t, where the steps fell below the time's \
-       resolution."
+       resolution, or below eps times the first step."
   | Converged | Not_bracketed -> ""
 
 (* The index of the first time of [at] that does not continue its direction, or
