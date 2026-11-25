@@ -23,10 +23,10 @@ let seen =
       Format.pp_print_string ppf
         (match s with Runs -> "runs" | Waits -> "waits" | Unseen -> "unseen"))
 
-(* [await_socket t ms] waits until the thread [t] waits for its socket, for at
-   most [ms] milliseconds: [Waits] once it does, [Runs] if it did not, [Unseen]
+(* [await_socket t] waits until the thread [t] waits for its socket, for at most
+   half the test's limit: [Waits] once it does, [Runs] if it did not, [Unseen]
    at once if the system does not show it. *)
-external await_socket : int -> int -> seen = "rig_dial_probe_await_socket"
+external await_socket : int -> seen = "rig_dial_probe_await_socket"
 
 (* The most connections [full] makes. A backlog of one holds two on Linux and
    one on macOS before the next connection waits; macOS takes a backlog of 0 for
@@ -86,7 +86,7 @@ let interrupted () =
     Thread.create
       (fun () ->
         ignore (Thread.sigmask Unix.SIG_BLOCK [ Sys.sigusr1 ]);
-        let s = await_socket dialer 5_000 in
+        let s = await_socket dialer in
         Atomic.set waited s;
         match s with
         | Waits -> Unix.kill (Unix.getpid ()) Sys.sigusr1

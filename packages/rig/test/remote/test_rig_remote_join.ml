@@ -98,11 +98,9 @@ let unjoined () =
 module Wire = Rig_remote_proxy.Wire
 
 (* A connection to the agent at [port] of the loopback, and the handshake's
-   answer to [self] dialing it as [peer]. Each read gives up after
-   [patience]. *)
+   answer to [self] dialing it as [peer]. *)
 let dial port self peer =
   let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
-  Rig_support.recv_timeout fd patience;
   Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
   (fd, Wire.dial fd ~key ~self ~peer)
 

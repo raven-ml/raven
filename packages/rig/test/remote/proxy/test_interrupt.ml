@@ -313,8 +313,9 @@ let next_of_request_raise () =
 
 (* Answers out of memory *)
 
-(* [in_child f] is [f ()], run in a forked child, so that a limit it sets
-   never reaches the next attempt. It fails with the child's failure. *)
+(* [in_child f] is [f ()], run in a forked child, so that a limit it sets never
+   reaches the next attempt. It fails with the child's failure. A wait for the
+   answer that the test's timeout ends kills the child. *)
 let in_child f =
   Rig_support.needs_fork ();
   let r, w = Unix.pipe ~cloexec:true () in
@@ -331,9 +332,13 @@ let in_child f =
   | pid -> (
       Unix.close w;
       let ic = Unix.in_channel_of_descr r in
-      let answer = In_channel.input_all ic in
-      close_in ic;
-      match (answer, snd (Unix.waitpid [] pid)) with
+      let answer, status =
+        Fun.protect ~finally:(fun () -> close_in ic) @@ fun () ->
+        Rig_support.reaping pid @@ fun () ->
+        let answer = In_channel.input_all ic in
+        (answer, snd (Unix.waitpid [] pid))
+      in
+      match (answer, status) with
       | "", (WEXITED n | WSIGNALED n | WSTOPPED n) ->
           failf "the child ended (%d) without answering" n
       | answer, _ -> (
@@ -463,7 +468,6 @@ let in_child_break f =
   Sys.catch_break true;
   let fd, peer = connected () in
   Unix.setsockopt_int fd Unix.SO_SNDBUF 4096;
-  Rig_support.recv_timeout peer patience;
   let j = Link.job () in
   let l = Link.make j fd ~name:"peer" ~peer:(Wire.Agent 1) in
   f j l peer

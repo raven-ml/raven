@@ -15,9 +15,6 @@ module Proxy = Rig_remote_proxy
 module B = Rig.Buffer
 module Sub = Rig.Submission
 
-(* The most anything the test awaits may take. *)
-let patience = 5.
-
 (* Sockets and threads *)
 
 (* A connected pair of loopback TCP sockets. The accepted socket takes the
@@ -56,13 +53,22 @@ let spawn f =
       Thread.join t;
       match Option.get !r with Ok v -> v | Error e -> raise e )
 
+(* Waits until [cond ()] holds. A wait that the test's timeout ends prints
+   [what]. *)
 let until ~what cond =
-  let t0 = Unix.gettimeofday () in
+  Rig_support.naming ("waiting for " ^ what) @@ fun () ->
   while not (cond ()) do
-    if Unix.gettimeofday () -. t0 > patience then
-      failf "%s: not within %.0f s" what patience;
     Thread.delay 0.001
   done
+
+(* [j]'s state once it is no longer [Open]. Each wait returns to OCaml, so the
+   test's timeout can end it; one that does prints that [j] stayed open. *)
+let outcome j =
+  Rig_support.naming "waiting for the job to end" @@ fun () ->
+  let rec go () =
+    match Link.wait j ~ms:200 with Link.Open -> go () | s -> s
+  in
+  go ()
 
 (* The agent *)
 

@@ -713,9 +713,8 @@ let handover_sends () =
   let returned, submitted =
     spawn (fun () -> submit (copy_submission host ~src ~dst))
   in
-  (match Unix.select [ p ] [] [] patience with
-  | [], _, _ -> fail "the hand-over did not start"
-  | _ -> ());
+  (* Waits for the hand-over's first byte. *)
+  ignore (Unix.select [ p ] [] [] (-1.));
   Thread.delay 0.2;
   let early = returned () in
   let h = read_n p 9 in

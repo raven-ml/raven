@@ -9,14 +9,22 @@
 open Windtrap
 module B = Rig.Buffer
 
-(* The most anything the test awaits may take. *)
-let patience = 5.
+(* The pipe on which a child of [in_child] notes each wait of [until] as it
+   starts; [None] outside one. Its writes never block: a full pipe drops the
+   note. *)
+let notes = ref None
 
+(* Waits until [cond ()] holds. A wait that the test's timeout ends prints
+   [what]. In a child of [in_child], it notes [what] first. *)
 let until ~what cond =
-  let t0 = Unix.gettimeofday () in
+  (match !notes with
+  | None -> ()
+  | Some fd -> (
+      let line = what ^ "\n" in
+      try ignore (Unix.write_substring fd line 0 (String.length line))
+      with Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) -> ()));
+  Rig_support.naming ("waiting for " ^ what) @@ fun () ->
   while not (cond ()) do
-    if Unix.gettimeofday () -. t0 > patience then
-      failf "%s: not within %.0f s" what patience;
     Thread.delay 0.01
   done
 
@@ -352,8 +360,8 @@ let u64 n =
 let str s = u32 (String.length s) ^ s
 let frame kind payload = u64 (String.length payload) ^ u8 kind ^ payload
 
-(* A connection to agent [a] as its controller, once the handshake proved [key].
-   A read gives up after [patience]. *)
+(* A connection to agent [a] as its controller, once the handshake proved
+   [key]. *)
 let raw_controller a =
   let module Wire = Rig_remote_proxy.Wire in
   let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
@@ -362,9 +370,7 @@ let raw_controller a =
   | Error why ->
       Unix.close fd;
       failf "dial: %s" why
-  | Ok () ->
-      Rig_support.recv_timeout fd patience;
-      fd
+  | Ok () -> fd
 
 let send fd s = ignore (Unix.write_substring fd s 0 (String.length s))
 
@@ -378,10 +384,6 @@ let read_n fd n =
       | 0 -> off
       | k -> go (off + k)
       | exception Unix.Unix_error (Unix.ECONNRESET, _, _) -> off
-      | exception
-          Unix.Unix_error
-            ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.ETIMEDOUT), _, _) ->
-          failf "no byte within %.0f s" patience
   in
   Bytes.sub_string b 0 (go 0)
 
@@ -442,18 +444,24 @@ let copy_on_host ~value ~bytes (src, src_at) (dst, dst_at) =
 
 (* Forked children *)
 
-(* [in_child what f] is [f ()], run in a forked child, so that what one
-   attempt leaves, a failed job of the process among it, never changes the
-   next one. It fails with the child's failure. Every job reaches its agents
-   through the loopback: it skips where the system refuses it, before the
-   fork, since a skip in the child would be its failure. *)
+(* [in_child what f] is [f ()], run in a forked child, so that what one attempt
+   leaves, a failed job of the process among it, never changes the next one. It
+   fails with the child's failure. Every job reaches its agents through the
+   loopback: it skips where the system refuses it, before the fork, since a skip
+   in the child would be its failure. A failure adds the child's last wait in
+   [until] to [what]. A wait for the answer that the test's timeout ends kills
+   the child and prints [what] with that last wait. *)
 let in_child what f =
   Rig_support.needs_fork ();
   Rig_support.needs_loopback ();
   let r, w = Unix.pipe ~cloexec:true () in
+  let noted, noting = Unix.pipe ~cloexec:true () in
   match Unix.fork () with
   | 0 ->
       Unix.close r;
+      Unix.close noted;
+      Unix.set_nonblock noting;
+      notes := Some noting;
       let answer =
         match f () with v -> Ok v | exception e -> Error (Printexc.to_string e)
       in
@@ -463,10 +471,32 @@ let in_child what f =
       Unix._exit 0
   | pid -> (
       Unix.close w;
+      Unix.close noting;
+      (* Read once the child is gone, so that its notes have ended. *)
+      let last () =
+        let ic = Unix.in_channel_of_descr noted in
+        let lines = In_channel.input_lines ic in
+        close_in ic;
+        match List.rev lines with
+        | last :: _ -> what ^ ", its last wait for " ^ last
+        | [] -> what
+      in
       let ic = Unix.in_channel_of_descr r in
-      let answer = In_channel.input_all ic in
-      close_in ic;
-      match (answer, snd (Unix.waitpid [] pid)) with
+      let answer, status =
+        Fun.protect ~finally:(fun () -> close_in ic) @@ fun () ->
+        match
+          Rig_support.reaping pid @@ fun () ->
+          let answer = In_channel.input_all ic in
+          (answer, snd (Unix.waitpid [] pid))
+        with
+        | ended -> ended
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            prerr_endline ("waiting for the child" ^ last ());
+            Printexc.raise_with_backtrace e bt
+      in
+      let what = last () in
+      match (answer, status) with
       | "", (WEXITED n | WSIGNALED n | WSTOPPED n) ->
           failf "the child ended (%d) without answering%s" n what
       | answer, _ -> (

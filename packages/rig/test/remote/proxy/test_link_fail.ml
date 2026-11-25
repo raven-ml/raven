@@ -36,10 +36,6 @@ let severed_bound = Link.default_silence
 (* The seconds this suite's clock may run apart from the link's. *)
 let skew = 0.01
 
-(* The seconds a peer waits for a frame's first byte, which a thread of the
-   test may send late under load. *)
-let patience = 5.
-
 (* The seconds without a byte that end a read of what the link sent, which
    comes at once on loopback. *)
 let quiet = 1.
@@ -159,9 +155,11 @@ let beat =
   Bytes.to_string b
 
 (* The kind and payload length of the next frame of [fd] other than a beat, or
-   [None] once its stream ends. Its first byte may take [wait] seconds. *)
-let rec header ?(wait = patience) fd =
-  ignore (Unix.select [ fd ] [] [] wait);
+   [None] once its stream ends. With [wait], its first byte may take any time,
+   since a thread of the test may send it late under load; without, [quiet] at
+   most. *)
+let rec header ?(wait = true) fd =
+  if wait then ignore (Unix.select [ fd ] [] [] (-1.));
   let h = read_n fd 9 in
   if String.length h < 9 then None
   else
@@ -169,15 +167,16 @@ let rec header ?(wait = patience) fd =
     if k = k_beat then header ~wait fd else Some (k, n)
 
 (* The frames of [fd] other than beats, until its stream ends or no byte comes
-   within [quiet]. The first frame's first byte may take [wait] seconds. *)
-let frames ?(wait = 0.) fd =
+   within [quiet]. With [wait], the first frame's first byte may take any
+   time. *)
+let frames ?(wait = false) fd =
   let rec go wait acc =
     match header ~wait fd with
     | None -> List.rev acc
     | Some (k, n) ->
         let p = read_n fd n in
         if String.length p < n then failf "a frame of kind %d cut" k;
-        go 0. ((k, p) :: acc)
+        go false ((k, p) :: acc)
   in
   go wait []
 
@@ -221,18 +220,14 @@ let spawn f =
     match Option.get !r with Ok v -> v | Error e -> raise e
 
 (* The seconds from [t0] until a write of a beat to [fd], one every 50 ms, is
-   refused: its link has closed. Fails if the link takes every write for the
-   bound and [patience] more. *)
+   refused: its link has closed. *)
 let refused_after t0 fd =
   let rec go () =
-    let t = Unix.gettimeofday () -. t0 in
-    if t > bound +. patience then fail "the link took every write"
-    else
-      match write fd beat with
-      | () ->
-          Thread.delay 0.05;
-          go ()
-      | exception Unix.Unix_error _ -> t
+    match write fd beat with
+    | () ->
+        Thread.delay 0.05;
+        go ()
+    | exception Unix.Unix_error _ -> Unix.gettimeofday () -. t0
   in
   go ()
 
@@ -322,7 +317,7 @@ let with_scene ?(role = Wire.Agent 1) ?(silence = bound) f =
 let waiters s =
   let el = Link.rail s.l ~id:1 ~send:[| t5 |] ~receive:[| t5 |] in
   let eh = Link.rail s.h ~id:1 ~send:[| t5 |] ~receive:[| t5 |] in
-  let waited = spawn (fun () -> Link.wait s.job ~ms:30_000) in
+  let waited = spawn (fun () -> Proxy_machine.outcome s.job) in
   let requested = spawn (fun () -> Link.request s.h (Wire.Open "MEM")) in
   (match header s.q with
   | Some (k, n) when k = k_request -> ignore (read_n s.q n)
@@ -461,7 +456,7 @@ let stalled_mid_frame () =
   Probe.arm Cut;
   let returned = mid_frame s in
   equal ~msg:"the failed sender is held" bool true (Probe.held ());
-  let received = spawn (fun () -> frames ~wait:patience s.q) in
+  let received = spawn (fun () -> frames ~wait:true s.q) in
   let rest = read_all s.p in
   Probe.resume ();
   equal ~msg:"the bytes after the copy's" (option string) None (stray 'x' rest);
@@ -511,7 +506,7 @@ let stalled_rail () =
   e.ready 1;
   let dropped = spawn (fun () -> Link.drop s.l 7) in
   equal ~msg:"the failed sender is held" bool true (Probe.held ());
-  let received = spawn (fun () -> frames ~wait:patience s.q) in
+  let received = spawn (fun () -> frames ~wait:true s.q) in
   let n, held =
     match header s.p with
     | Some (k, n) when k = k_rail -> (n, read_all s.p)
@@ -546,7 +541,7 @@ let stalled_release () =
   Probe.resume ();
   List.iter (fun join -> join ()) released;
   equal ~msg:"the job" state (Link.Failed stalled_cause)
-    (Link.wait s.job ~ms:30_000)
+    (Proxy_machine.outcome s.job)
 
 (* During the abort: the job fails, and the faulted link's abort is held as it
    starts. A fault then leaves the root cause as it was, and [fail] returns,
@@ -584,7 +579,7 @@ let stalled_abort () =
   fill s.d;
   let t0 = Unix.gettimeofday () in
   Probe.resume ();
-  let received = frames ~wait:patience s.q in
+  let received = frames ~wait:true s.q in
   Unix.shutdown s.q Unix.SHUTDOWN_SEND;
   failed ();
   woke ~received why;

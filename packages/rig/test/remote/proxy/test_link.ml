@@ -57,12 +57,6 @@ let k_beat = 8
 let k_abort = 9
 let k_close = 10
 
-(* The most a raw peer waits for a byte, and for anything the test awaits. *)
-let patience = 5.
-
-(* The most a call that answers at once over loopback may take. *)
-let prompt = 2.
-
 (* Bytes *)
 
 let u32 n =
@@ -104,10 +98,9 @@ let loopback () =
   | Unix.ADDR_INET (_, p) -> (l, p)
   | Unix.ADDR_UNIX _ -> assert false
 
-(* A connected pair of loopback TCP sockets. A read on either gives up after
-   [patience]. The accepted socket takes the listener's small receive buffer,
-   which Windows' loopback otherwise grows to megabytes its peer has not
-   read. *)
+(* A connected pair of loopback TCP sockets. The accepted socket takes the
+   listener's small receive buffer, which Windows' loopback otherwise grows to
+   megabytes its peer has not read. *)
 let connected () =
   let l, port = loopback () in
   Unix.setsockopt_int l Unix.SO_RCVBUF 4096;
@@ -117,9 +110,6 @@ let connected () =
       let d = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
       Unix.connect d (Unix.ADDR_INET (Unix.inet_addr_loopback, port));
       let a, _ = Unix.accept ~cloexec:true l in
-      List.iter
-        (fun fd -> Rig_support.recv_timeout fd patience)
-        [ d; a ];
       (d, a))
 
 (* The next [n] bytes of [fd], fewer if its stream ends first. *)
@@ -132,10 +122,6 @@ let read_n fd n =
       | 0 -> off
       | k -> go (off + k)
       | exception Unix.Unix_error (Unix.ECONNRESET, _, _) -> off
-      | exception
-          Unix.Unix_error
-            ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.ETIMEDOUT), _, _) ->
-          failf "no byte within %.0f s" patience
   in
   Bytes.sub_string b 0 (go 0)
 
@@ -173,32 +159,32 @@ let spawn f =
     Thread.join t;
     match Option.get !r with Ok v -> v | Error e -> raise e
 
-(* Waits until [cond ()] holds, for at most [patience]. *)
+(* Waits until [cond ()] holds. A wait that the test's timeout ends prints
+   [what]. *)
 let until ~what cond =
-  let t0 = Unix.gettimeofday () in
+  Rig_support.naming ("waiting for " ^ what) @@ fun () ->
   while not (cond ()) do
-    if Unix.gettimeofday () -. t0 > patience then
-      failf "%s: not within %.0f s" what patience;
     Thread.yield ()
   done
 
-(* Runs [f], failing [j] if it has not returned within [prompt], which ends any
-   wait of [f] on [j]: a call that would hang fails the test. *)
+(* Runs [f] on a thread and waits for it, where the test's timeout can end the
+   wait. A wait that ends before [f] returned fails [j], which ends any wait of
+   [f] on [j], and prints [what]. *)
 let within j ~what f =
   let finished = Atomic.make false in
   let r =
     spawn (fun () ->
         Fun.protect ~finally:(fun () -> Atomic.set finished true) f)
   in
-  let t0 = Unix.gettimeofday () in
-  while (not (Atomic.get finished)) && Unix.gettimeofday () -. t0 < prompt do
-    Thread.delay 0.01
-  done;
-  let late = not (Atomic.get finished) in
-  if late then Link.fail j (what ^ " did not return");
-  let v = r () in
-  if late then failf "%s did not return within %.0f s" what prompt;
-  v
+  let late = what ^ " did not return" in
+  Fun.protect
+    ~finally:(fun () -> if not (Atomic.get finished) then Link.fail j late)
+    (fun () ->
+      Rig_support.naming late @@ fun () ->
+      while not (Atomic.get finished) do
+        Thread.delay 0.01
+      done);
+  r ()
 
 (* Raw frames *)
 
@@ -494,7 +480,7 @@ let malformed_at_controller (_, f) =
   with_raw @@ fun j _ p ->
   write p f;
   equal ~msg:"what the sender received" (list int) [ k_abort ] (kinds p);
-  equal state (Link.Failed "peer: a malformed frame") (Link.wait j ~ms:2000)
+  equal state (Link.Failed "peer: a malformed frame") (Proxy_machine.outcome j)
 
 (* An agent's end decodes a command when next reads it. *)
 let malformed_at_agent (_, f) =
@@ -512,14 +498,14 @@ let too_long n =
   Bytes.set_int64_le b 0 n;
   Bytes.set b 8 (Char.chr k_beat);
   write p (Bytes.to_string b);
-  match Link.wait j ~ms:2000 with
+  match Proxy_machine.outcome j with
   | Link.Failed _ -> ()
   | s -> failf "the job is %a" (Testable.pp state) s
 
 let no_object (_, f) =
   with_raw @@ fun j _ p ->
   write p f;
-  match Link.wait j ~ms:2000 with
+  match Proxy_machine.outcome j with
   | Link.Failed _ -> ()
   | s -> failf "the job is %a" (Testable.pp state) s
 
@@ -553,7 +539,7 @@ let why_layout () =
   with_raw (fun j _ p ->
       write p (frame k_abort (str "lost"));
       equal ~msg:"an abort read" state (Link.Failed "peer aborted: lost")
-        (Link.wait j ~ms:2000));
+        (Proxy_machine.outcome j));
   with_raw (fun _ l p ->
       let peer =
         spawn (fun () ->
@@ -568,7 +554,7 @@ let why_layout () =
   with_raw (fun j _ p ->
       write p (frame k_abort (u32 100 ^ "why"));
       equal ~msg:"an abort whose reason runs past it" state
-        (Link.Failed "peer: a malformed frame") (Link.wait j ~ms:2000))
+        (Link.Failed "peer: a malformed frame") (Proxy_machine.outcome j))
 
 let causes =
   group "cause"
@@ -621,7 +607,7 @@ let every_link_aborts () =
       Unix.shutdown p1 Unix.SHUTDOWN_SEND;
       equal (list int) [ k_abort ] (kinds p2);
       equal state (Link.Failed "one: closed its connection")
-        (Link.wait j ~ms:2000))
+        (Proxy_machine.outcome j))
 
 let after_failure () =
   with_raw @@ fun j l p ->
@@ -1326,7 +1312,8 @@ let closed_job handover =
   | Ok (Wire.Handover _) -> ()
   | _ -> fail "next gave no hand-over");
   equal (result command_w string) (Ok Wire.Close) (next ());
-  within j ~what:"close" (fun () -> Link.close j)
+  within j ~what:"close" (fun () -> Link.close j);
+  equal state Link.Closed (Link.wait j ~ms:0)
 
 (* A link keeps a hand-over's memory for later ones until next gave the close:
    jobs one after another, each with a large hand-over, hold no more memory
@@ -1613,7 +1600,7 @@ let rail_wrong_length () =
   with_raw @@ fun j l p ->
   ignore (Link.rail l ~id:4 ~send:[||] ~receive:[| t5 |]);
   write p (frame k_rail (u64 4 ^ u64 1 ^ "abc"));
-  match Link.wait j ~ms:2000 with
+  match Proxy_machine.outcome j with
   | Link.Failed _ -> ()
   | s -> failf "the job is %a" (Testable.pp state) s
 
@@ -1700,7 +1687,7 @@ let ready_receive_only () =
         Printf.eprintf "receive-only child: %s\n%!" (Printexc.to_string e);
         Unix._exit 1)
   | pid ->
-      let _, status = Unix.waitpid [] pid in
+      let _, status = Rig_support.reaping pid (fun () -> Unix.waitpid [] pid) in
       let process_status =
         Testable.structural ~pp:(fun ppf -> function
           | Unix.WEXITED n -> Format.fprintf ppf "exit %d" n
@@ -1861,7 +1848,7 @@ let forked () =
   (match Unix.fork () with
   | 0 -> run_child checks
   | pid -> (
-      match Unix.waitpid [] pid with
+      match Rig_support.reaping pid (fun () -> Unix.waitpid [] pid) with
       | _, Unix.WEXITED 0 -> ()
       | _, Unix.WEXITED k when k <= List.length checks ->
           failf "in the child, false: %s" (fst (List.nth checks (k - 1)))
@@ -2143,8 +2130,6 @@ let round_trip () =
       Unix.close a;
       Unix.close b)
   @@ fun () ->
-  Rig_support.recv_timeout a patience;
-  Rig_support.recv_timeout b patience;
   ignore (Unix.write_substring a "a" 0 1);
   ignore (Unix.write_substring b "b" 0 1);
   read_byte b ^ read_byte a

@@ -158,8 +158,8 @@ let status = function
   | Unix.WSIGNALED n -> Printf.sprintf "killed by signal %d" n
   | Unix.WSTOPPED n -> Printf.sprintf "stopped by signal %d" n
 
-(* Runs [f] in a child and is the lines it returned, or the exception it
-   raised. *)
+(* Runs [f] in a child and is the lines it returned, or the exception it raised.
+   A wait for the child that the test's timeout ends kills it. *)
 let in_child f =
   Rig_support.needs_fork ();
   let r, w = Unix.pipe ~cloexec:true () in
@@ -174,9 +174,12 @@ let in_child f =
   | pid ->
       Unix.close w;
       let ic = Unix.in_channel_of_descr r in
-      let lines = In_channel.input_lines ic in
-      close_in ic;
-      let _, ended = Unix.waitpid [] pid in
+      let lines, ended =
+        Fun.protect ~finally:(fun () -> close_in ic) @@ fun () ->
+        Rig_support.reaping pid @@ fun () ->
+        let lines = In_channel.input_lines ic in
+        (lines, snd (Unix.waitpid [] pid))
+      in
       equal ~msg:"the child" string "exited 0" (status ended);
       lines
 

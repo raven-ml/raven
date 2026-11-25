@@ -62,7 +62,6 @@ let connected () =
   Unix.setsockopt_int fd Unix.SO_SNDBUF 4096;
   Unix.connect fd (Unix.getsockname listener);
   let peer, _ = Unix.accept ~cloexec:true listener in
-  Rig_support.recv_timeout peer 5.;
   (fd, peer)
 
 (* The silence bound of a job whose ready function must find the send claim

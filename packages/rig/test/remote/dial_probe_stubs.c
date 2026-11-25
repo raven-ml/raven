@@ -13,6 +13,7 @@
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
+#include <stdlib.h>
 #include <time.h>
 
 #if defined(__APPLE__)
@@ -134,12 +135,25 @@ value rig_dial_probe_self(value unit) {
   return Val_long((long)self());
 }
 
-/* Waits until the thread [t] waits for its socket, for at most [ms]
-   milliseconds: [WAITS] once it does, [RUNS] if it did not, [UNSEEN] if the
+/* windtrap's limit of a test's attempt where WINDTRAP_TIMEOUT is unset, in
+   seconds. */
+static const double default_limit_s = 600.;
+
+/* The milliseconds the probe waits at most: half the test's limit,
+   WINDTRAP_TIMEOUT seconds, so that its answer comes before the limit ends
+   the test. */
+static long patience_ms(void) {
+  const char *limit = getenv("WINDTRAP_TIMEOUT");
+  double s = limit == NULL ? 0. : strtod(limit, NULL);
+  return (long)((s > 0. ? s : default_limit_s) * 500.);
+}
+
+/* Waits until the thread [t] waits for its socket, for at most half the
+   test's limit: [WAITS] once it does, [RUNS] if it did not, [UNSEEN] if the
    system does not show it. Releases the runtime. */
-value rig_dial_probe_await_socket(value t, value ms) {
+value rig_dial_probe_await_socket(value t) {
   thread_id id = (thread_id)Long_val(t);
-  long left = Long_val(ms);
+  long left = patience_ms();
   struct timespec tick = {0, 1000000};
   caml_release_runtime_system();
   enum seen s = waits(id);

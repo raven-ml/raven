@@ -111,7 +111,6 @@ let two_controllers () =
   in
   contains ~sub:"another job" refused;
   Fun.protect ~finally:(fun () -> Unix.close admitted) @@ fun () ->
-  Rig_support.recv_timeout admitted patience;
   is_ok ~msg:"the join" ~pp:Format.pp_print_string (join_alone admitted a);
   send admitted (frame k_close "");
   equal ~msg:"the agent's close" (option int) (Some k_close)
@@ -215,7 +214,6 @@ let many_waiting () =
   let dial () =
     let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
     Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, a.port));
-    Rig_support.recv_timeout fd patience;
     fd
   in
   let fds = ref [] in
@@ -284,7 +282,6 @@ let crowded () =
     equal string "freed" (input_line a.out)
   in
   Unix.connect probe (Unix.ADDR_INET (Unix.inet_addr_loopback, a.port));
-  Rig_support.recv_timeout probe patience;
   equal ~msg:"the probe's greeting" int greeting_bytes
     (String.length (read_n probe greeting_bytes));
   tell "fill";
@@ -950,7 +947,7 @@ let forked () =
   (match Unix.fork () with
   | 0 -> child j d
   | pid -> (
-      match Unix.waitpid [] pid with
+      match Rig_support.reaping pid (fun () -> Unix.waitpid [] pid) with
       | _, Unix.WEXITED 0 -> ()
       | _ -> fail "the child used the job, or its job did not read as failed"));
   equal (option string) None (Rig_remote.failed j);
@@ -1396,7 +1393,7 @@ let refused_size n =
   Fun.protect ~finally:(fun () -> Sys.remove file) (fun () -> refused file)
 
 (* A FIFO opened for reading waits for a writer: read_key must answer without
-   one. If it waits, the test opens a writer to end the wait. *)
+   one. A read_key that waits hangs the test until its timeout. *)
 let fifo () =
   if Sys.win32 then skip ~reason:"Windows has no FIFO" ();
   let file =
@@ -1406,26 +1403,7 @@ let fifo () =
   in
   (try Sys.remove file with Sys_error _ -> ());
   Unix.mkfifo file 0o600;
-  Fun.protect
-    ~finally:(fun () -> Sys.remove file)
-    (fun () ->
-      let r = ref None in
-      let t =
-        Thread.create (fun () -> r := Some (Rig_remote.read_key file)) ()
-      in
-      let t0 = Unix.gettimeofday () in
-      while !r = None && Unix.gettimeofday () -. t0 < 2. do
-        Thread.delay 0.01
-      done;
-      let waited = !r = None in
-      if waited then begin
-        let w = Unix.openfile file [ Unix.O_WRONLY; Unix.O_NONBLOCK ] 0 in
-        Thread.join t;
-        Unix.close w
-      end
-      else Thread.join t;
-      equal ~msg:"read_key waited for a writer" bool false waited;
-      refused file)
+  Fun.protect ~finally:(fun () -> Sys.remove file) (fun () -> refused file)
 
 let keys =
   group "keys"
@@ -1523,7 +1501,7 @@ let served_together () =
   equal exit_w (0, [ "serve raised"; "closed" ]) (finish (List.hd agents))
 
 (* A kind named twice raises before serve waits for a controller; a serve that
-   waited instead fails the test after 5 s. *)
+   waited instead hangs the test until its timeout. *)
 let kind_twice () =
   Rig_support.needs_loopback ();
   match Rig_remote.listen ~key:(as_key key) "127.0.0.1" 0 with

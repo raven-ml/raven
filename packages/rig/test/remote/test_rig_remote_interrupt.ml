@@ -470,11 +470,9 @@ let serving a =
     Thread.join t;
     Option.get !r
 
-(* A connection to the agent at [port], or [None] if it listens no more. Each
-   read gives up after [patience]. *)
+(* A connection to the agent at [port], or [None] if it listens no more. *)
 let connected port =
   let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
-  Rig_support.recv_timeout fd patience;
   match Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, port)) with
   | exception Unix.Unix_error ((Unix.ECONNREFUSED | Unix.ECONNRESET), _, _) ->
       Unix.close fd;
@@ -546,22 +544,20 @@ let cut_handshake n =
   in
   (* A job given back ends once its connection has: a controller that comes
      before is refused, and dials again. *)
-  let rec second t0 =
+  let rec second () =
     match dial port with
     | Some fd when joins fd port -> fd
-    | fd when Unix.gettimeofday () -. t0 < patience ->
+    | fd ->
         Option.iter Unix.close fd;
         Thread.delay 0.01;
-        second t0
-    | Some _ -> fail "a second controller is refused"
-    | None -> fail "a second controller's handshake failed"
+        second ()
   in
   let fd =
     match !first with
     | Some (fd, true) -> fd
     | first ->
         Option.iter (fun (fd, _) -> Unix.close fd) first;
-        second (Unix.gettimeofday ())
+        second ()
   in
   ends fd;
   (match served () with
@@ -684,28 +680,6 @@ let quiet f x =
   ignore (Thread.sigmask Unix.SIG_SETMASK mask);
   t
 
-(* [rescue act] starts a thread that runs [act ()] unless [ended ()] comes
-   within [patience]: [ended ()] waits for the thread and is whether [act]
-   ran. A wait that never ends otherwise thus fails the test in place of
-   hanging it. *)
-let rescue act =
-  let r, w = Unix.pipe ~cloexec:true () in
-  let ran = ref false in
-  let wait () =
-    match Unix.select [ r ] [] [] patience with
-    | [], _, _ ->
-        ran := true;
-        act ()
-    | _ -> ()
-  in
-  let t = quiet wait () in
-  fun () ->
-    ignore (Unix.write_substring w "x" 0 1);
-    Thread.join t;
-    Unix.close r;
-    Unix.close w;
-    !ran
-
 (* The frames [fd] receives until its stream ends: the first, then the rest
    once this end has ended its own. *)
 let rest fd =
@@ -719,30 +693,26 @@ let rest fd =
   fs
 
 (* A Ctrl-C while serve waits for a controller ends serve with [Sys.Break]
-   without one: a controller comes only if serve has not ended within
-   [patience], and the agent then listens no more. SIGINT comes once serve
+   without one, and the agent then listens no more. SIGINT comes once serve
    blocks in a timed wait that takes it: the wait for a controller. *)
 let break_idle () =
   Rig_support.needs_fork ();
   if not Rig_support.sees_waits then
     skip ~reason:"the system does not show a thread's waits" ();
-  let served, controlled =
+  let served =
     in_child ", a Ctrl-C in the wait for a controller" @@ fun () ->
     child_start ();
     Sys.catch_break true;
     let a = agent_here () in
     let port = Rig_remote.port a in
-    let ended = rescue (fun () -> Option.iter Unix.close (dial port)) in
     let served, _ =
       Rig_support.interrupt_in_wait ~timed:true (fun () ->
           outcome (fun () -> Rig_remote.serve a []))
     in
-    let controlled = ended () in
     equal ~msg:"the port listens" bool false (listens port);
-    (served, controlled)
+    served
   in
-  equal ~msg:"serve" string raised_break served;
-  equal ~msg:"a controller came" bool false controlled
+  equal ~msg:"serve" string raised_break served
 
 (* A Ctrl-C inside a command, an opener's, ends serve with [Sys.Break], and
    the job fails with it: the controller receives its text as the abort's
@@ -780,47 +750,40 @@ let break_in_command () =
     [ (k_abort, str (Printexc.to_string Sys.Break)) ]
     frames
 
-(* A Ctrl-C while serve waits for its controller's next command ends serve
-   with [Sys.Break] without one: the controller sends its close only if
-   nothing came within [patience], and receives the abort. SIGINT comes once
-   serve blocks in a timed wait that takes it, after the join: the wait for
-   a command, never the wait for the runtime at the end of the join's
-   answer, whose SIGINT would land in serve's commands. *)
+(* A Ctrl-C while serve waits for its controller's next command ends serve with
+   [Sys.Break] without one: the controller sends nothing after its join, and
+   receives the abort. SIGINT comes once serve blocks in a timed wait that takes
+   it, after the join: the wait for a command, never the wait for the runtime at
+   the end of the join's answer, whose SIGINT would land in serve's commands. *)
 let break_between_commands () =
   Rig_support.needs_fork ();
   if not Rig_support.sees_waits then
     skip ~reason:"the system does not show a thread's waits" ();
-  let served, controlled, frames =
+  let served, frames =
     in_child ", a Ctrl-C in the wait for a command" @@ fun () ->
     child_start ();
     Sys.catch_break true;
     let a = agent_here () in
     let port = Rig_remote.port a in
     let serving = Rig_support.self () in
-    let controlled = ref false and frames = ref [] in
+    let frames = ref [] in
     let controller () =
       match dial port with
       | Some fd when joins fd port ->
-          let close () =
-            try send fd (frame k_close "") with Unix.Unix_error _ -> ()
-          in
-          let ended = rescue close in
           let fs, _ =
             Rig_support.interrupt_in_wait ~thread:serving ~timed:true
               (fun () -> rest fd)
           in
-          frames := fs;
-          controlled := ended ()
+          frames := fs
       | Some fd -> Unix.close fd
       | None -> ()
     in
     let t = quiet controller () in
     let served = outcome (fun () -> Rig_remote.serve a []) in
     Thread.join t;
-    (served, !controlled, !frames)
+    (served, !frames)
   in
   equal ~msg:"serve" string raised_break served;
-  equal ~msg:"a command came" bool false controlled;
   equal ~msg:"the controller's frames"
     (list (pair int string))
     [ (k_abort, str (Printexc.to_string Sys.Break)) ]
@@ -862,7 +825,7 @@ let break_in_join () =
             agent (strf "127.0.0.1:%d" port) port ^ agent "deaf" deaf_port
           in
           send fd (frame k_request (u8 1 ^ u32 2 ^ agents ^ silence_ns));
-          ignore (Unix.select [ l ] [] [] patience);
+          ignore (Unix.select [ l ] [] [] (-1.));
           let fs, _ =
             Rig_support.interrupt_in_wait ~thread:serving ~timed:true
               (fun () -> rest fd)
