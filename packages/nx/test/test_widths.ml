@@ -22,14 +22,16 @@ let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 let extends =
   group "extend"
     [
-      test "widths whose sum wraps an int raise naming them" (fun () ->
-          raises
-            (Invalid_argument
-               (Printf.sprintf
-                  "Nx.extend: widths (%d, %d) of int32 [2] count past an int"
-                  max_int max_int))
-            (fun () -> Nx.extend `Symmetric_half (max_int, max_int) x));
-      test "widths past an array's extent raise" (fun () ->
+      test "widths whose sum passes an int raise before allocating" (fun () ->
+          let m =
+            match Nx.extend `Symmetric_half (max_int, max_int) x with
+            | _ -> "no exception"
+            | exception Invalid_argument m -> m
+          in
+          expect m
+          @@ __POS_OF__
+               {|Nx.extend: widths (4611686018427387903, 4611686018427387903) of int32 [2] count past an int|});
+      test "widths past max_numel raise before allocating" (fun () ->
           invalid ~by:"Nx.extend" (fun () ->
               Nx.extend `Periodic (1 lsl 60, 0) x));
     ]
