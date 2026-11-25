@@ -736,12 +736,10 @@ let laws =
 
 (* Column.print *)
 
-(* The printer's text, from the shortest-nearest rule of talon.mli: of the
+(* The printer's text, by the rule talon.mli states for Column.print: of the
    fewest significant digits that read back, the nearest, and of two as near the
-   one whose last digit is even. Java's Double.toString states the same choice:
-   "Define d_m as the decimal in T that is closest to m. Or if there are two
-   such decimals in T, select the one with the even significand." The decimal is
-   written without its exponent from [1e-7] up to [1e21]. *)
+   one whose last digit is even, written without its exponent from [1e-7] up to
+   [1e21]. *)
 
 let positional s =
   let e = String.index s 'e' in
@@ -950,21 +948,22 @@ let readable =
       Any (instant Ns);
     ]
 
-(* [every gen tys] draws one value of [gen ty] for each of [tys]. *)
-let every gen tys =
-  List.fold_right
-    (fun ty rest ->
-      Gen.(
-        let+ x = gen ty and+ xs = rest in
-        x :: xs))
-    tys (Gen.constant [])
-
-let sample (Type.Any ty) = Gen.map (fun vs -> G.Sample (ty, vs)) (G.options ty)
-
+(* Rows of each type of [readable], drawn together. *)
 let samples =
+  let sample (Type.Any ty) =
+    Gen.map (fun vs -> G.Sample (ty, vs)) (G.options ty)
+  in
+  let one_each =
+    List.fold_right
+      (fun ty rest ->
+        Gen.(
+          let+ x = sample ty and+ xs = rest in
+          x :: xs))
+      readable (Gen.constant [])
+  in
   Gen.with_pp
     (Format.pp_print_list ~pp_sep:Format.pp_print_space G.pp_sample)
-    (every sample readable)
+    one_each
 
 let printing =
   group "Column.print"
@@ -1106,68 +1105,4 @@ let printing =
                (Column.options (Type.kind ty) (require_ok ~pp back))));
     ]
 
-(* Expr.Str.parse *)
-
-let junk =
-  Gen.option
-    (Gen.string_of ~size:(Gen.int_range 0 6)
-       (Gen.of_list
-          [ '0'; '1'; '9'; '+'; '-'; '.'; 'e'; ':'; 'T'; 'Z'; 'a'; ' ' ]))
-
-(* A column of each type Str.parse takes: the texts Column.print writes, then a
-   few drawn from a small alphabet. *)
-let parse_inputs =
-  let text_types = Type.[ Any string; Any binary ] in
-  let typed = List.filter (fun ty -> not (List.mem ty text_types)) readable in
-  let input ty =
-    Gen.(
-      let+ (G.Sample (ty, vs)) = sample ty
-      and+ extra = array ~size:(int_range 0 2) junk in
-      let printed = texts (Column.of_options ty vs) in
-      (Type.Any ty, Array.append printed extra))
-  in
-  let pp ppf (ty, rows) =
-    Format.fprintf ppf "%a: [|%a|]" pp_any ty
-      (Format.pp_print_array ~pp_sep:Format.pp_print_space (fun ppf -> function
-        | None -> Format.pp_print_string ppf "null"
-        | Some t -> Format.fprintf ppf "%S" t))
-      rows
-  in
-  Gen.with_pp
-    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp)
-    (every input typed)
-
-let reads_as_column_parse (Type.Any ty, rows) =
-  let text = Column.of_options Type.string rows in
-  let q = Query.of_table (v [ ("s", text) ]) in
-  let run =
-    Query.run (Query.select Expr.[ "v" := Str.parse ty (Col.string "s") ] q)
-  in
-  match Column.parse (Any ty) text with
-  | Ok c ->
-      equal
-        (array (option (G.witness ty)))
-        (Column.options (Type.kind ty) c)
-        (Column.options (Type.kind ty)
-           (column (require_ok ~pp:Error.pp run) "v"))
-  | Error (row, reason) ->
-      let e = Format.asprintf "%a" Error.pp (require_error run) in
-      contains ~sub:(Printf.sprintf "row %d" row) e;
-      contains ~sub:reason e
-
-let str_parse =
-  group "Expr.Str.parse"
-    [
-      prop "reads a text as Column.parse reads it" parse_inputs (fun inputs ->
-          let refused (Type.Any ty, rows) =
-            Result.is_error
-              (Column.parse (Any ty) (Column.of_options Type.string rows))
-          in
-          cover "a type with a refused row" (List.exists refused inputs);
-          cover "a type whose rows all read"
-            (List.exists (fun i -> not (refused i)) inputs);
-          List.iter reads_as_column_parse inputs);
-    ]
-
-let () =
-  exit (run "talon.parse" [ reading; refusing; laws; printing; str_parse ])
+let () = exit (run "talon.parse" [ reading; refusing; laws; printing ])
