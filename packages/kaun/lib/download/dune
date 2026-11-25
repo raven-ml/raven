@@ -1,0 +1,7 @@
+; Private to kaun: kaun.hf and kaun.datasets share it, and it is not part of
+; kaun's interface.
+
+(library
+ (name kaun_download)
+ (package kaun)
+ (libraries unix))

@@ -64,7 +64,7 @@ let read_int32_be s pos =
 
 let ensure_dataset config =
   let dataset_dir = get_cache_dir config.Config.cache_subdir in
-  mkdir_p dataset_dir;
+  Kaun_download.mkdir_p dataset_dir;
   let files_to_process =
     [
       ("train-images-idx3-ubyte", config.Config.train_images_url);

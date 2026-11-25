@@ -7,36 +7,6 @@ let src = Logs.Src.create "kaun.datasets" ~doc:"Kaun datasets"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-(* Parents first, through [Filename.dirname], which knows each system's roots:
-   ["/"] on Unix, ["C:\\"] and ["\\\\server\\share"] on Windows. A root is its
-   own [dirname], which ends the recursion. *)
-(* [trim path] drops [path]'s trailing separators, keeping a root whole. Older
-   Windows C runtimes fail to stat a directory named with one, and
-   [get_cache_dir]'s paths end with one. *)
-let rec trim path =
-  let n = String.length path in
-  let sep c = c = '/' || c = Filename.dir_sep.[0] in
-  if n > 1 && sep path.[n - 1] && Filename.dirname path <> path then
-    trim (String.sub path 0 (n - 1))
-  else path
-
-let rec mkdir_p path =
-  let path = trim path in
-  if path = "" then ()
-  else if Sys.file_exists path then (
-    if not (Sys.is_directory path) then
-      failwith
-        (Printf.sprintf "mkdir_p: '%s' exists but is not a directory" path))
-  else
-    let parent = Filename.dirname path in
-    if parent <> path then mkdir_p parent;
-    try Unix.mkdir path 0o755
-    with Unix.Unix_error (Unix.EEXIST, _, _) ->
-      if not (Sys.is_directory path) then
-        failwith
-          (Printf.sprintf "mkdir_p: '%s' appeared as non-directory after EEXIST"
-             path)
-
 let get_cache_dir ?(getenv = Sys.getenv_opt) dataset_name =
   let root =
     match getenv "RAVEN_CACHE_ROOT" with
@@ -65,25 +35,11 @@ let get_cache_dir ?(getenv = Sys.getenv_opt) dataset_name =
   if path <> "" && path.[String.length path - 1] = sep then path
   else path ^ Filename.dir_sep
 
-(* [create_beside dst] is a file created exclusively beside [dst], under a
-   random name, and its descriptor: a name a crashed run left behind is skipped
-   for another. *)
-let create_beside dst =
-  let flags = Unix.[ O_WRONLY; O_CREAT; O_EXCL; O_CLOEXEC ] in
-  let rec go tries =
-    let tmp = Printf.sprintf "%s.%08x.tmp" dst (Random.State.bits rng) in
-    match Unix.openfile tmp flags 0o644 with
-    | fd -> (tmp, fd)
-    | exception Unix.Unix_error (Unix.EEXIST, _, _) when tries > 1 ->
-        go (tries - 1)
-  and rng = Random.State.make_self_init () in
-  go 16
-
 (* [run prog args] runs [prog] without a shell, so no argument needs quoting and
-   the lookup on [PATH] is the same on every system, its output to [out]. It is
-   [None] when [prog] is missing: exit code 127 from the forked child on Unix,
-   [ENOENT] from process creation on Windows. *)
-let run ?(out = Unix.stdout) prog args =
+   the lookup on [PATH] is the same on every system. It is [None] when [prog] is
+   missing: exit code 127 from the forked child on Unix, [ENOENT] from process
+   creation on Windows. *)
+let run prog args =
   let rec wait pid =
     try snd (Unix.waitpid [] pid)
     with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
@@ -92,51 +48,15 @@ let run ?(out = Unix.stdout) prog args =
     wait
       (Unix.create_process prog
          (Array.of_list (prog :: args))
-         Unix.stdin out Unix.stderr)
+         Unix.stdin Unix.stdout Unix.stderr)
   with
   | Unix.WEXITED 127 -> None
   | status -> Some status
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> None
 
-(* curl writes to the file created beside [dest], through the descriptor that
-   made it, which is synced and then renamed to [dest]: [dest] holds a whole
-   download or nothing, even when the process dies midway, and [ensure_file]
-   never takes a partial file for the download. A failure removes the
-   temporary file. A rename onto a [dest] another process completed meanwhile
-   keeps that one, as Windows refuses to replace it. *)
-let curl_download ~url ~dest () =
-  mkdir_p (Filename.dirname dest);
-  let tmp, fd = create_beside dest in
-  let remove () = try Sys.remove tmp with Sys_error _ -> () in
-  let fetch () =
-    (* [-q] first: curl reads no ~/.curlrc, whose options, such as [-o], would
-       act on the download. *)
-    let status = run ~out:fd "curl" [ "-q"; "-L"; "--fail"; "-s"; url ] in
-    if status = Some (Unix.WEXITED 0) then Unix.fsync fd;
-    status
-  in
-  match Fun.protect ~finally:(fun () -> Unix.close fd) fetch with
-  | Some (Unix.WEXITED 0) -> (
-      try Unix.rename tmp dest with
-      | Unix.Unix_error _ when Sys.file_exists dest -> remove ()
-      | Unix.Unix_error (e, _, _) ->
-          remove ();
-          failwith
-            (Printf.sprintf "%s: cannot rename the download to %s: %s" url
-               dest (Unix.error_message e)))
-  | None ->
-      remove ();
-      failwith "curl not found on PATH"
-  | Some _ ->
-      remove ();
-      failwith (Printf.sprintf "Failed to download %s" url)
-  | exception e ->
-      remove ();
-      raise e
-
 let download_file url dest_path =
   Log.info (fun m -> m "Downloading %s to %s" (Filename.basename url) dest_path);
-  curl_download ~url ~dest:dest_path ();
+  Kaun_download.file ~url dest_path;
   Log.info (fun m -> m "Downloaded %s" (Filename.basename dest_path))
 
 let ensure_file url dest_path =
@@ -149,11 +69,10 @@ let rec write_all fd b off n =
     write_all fd b (off + k) (n - k)
 
 (* [gunzip ~src ~dst] writes the data of the gzip file [src] to [dst] as it
-   decodes it, in bounded memory, through a file created beside [dst], synced,
-   then renamed: [dst] holds the whole data or is as it was, and a failure
-   removes the partial file. *)
+   decodes it, in bounded memory, through Kaun_download.write: [dst] holds the
+   whole data or is as it was. *)
 let gunzip ~src ~dst =
-  let tmp, fd = create_beside dst in
+  Kaun_download.write dst @@ fun fd ->
   let decode fd_in =
     let d = Lz.Gzip.decoder () in
     let input = Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout 65536 in
@@ -173,19 +92,8 @@ let gunzip ~src ~dst =
     in
     read ()
   in
-  match
-    Fun.protect
-      ~finally:(fun () -> Unix.close fd)
-      (fun () ->
-        let fd_in = Unix.openfile src [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 in
-        Fun.protect ~finally:(fun () -> Unix.close fd_in) (fun () -> decode fd_in);
-        Unix.fsync fd);
-    Unix.rename tmp dst
-  with
-  | () -> ()
-  | exception e ->
-      (try Sys.remove tmp with Sys_error _ -> ());
-      raise e
+  let fd_in = Unix.openfile src [ Unix.O_RDONLY; Unix.O_CLOEXEC ] 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd_in) (fun () -> decode fd_in)
 
 let ensure_decompressed_gz ~gz_path ~target_path =
   if Sys.file_exists target_path then (
@@ -206,7 +114,7 @@ let ensure_extracted_tar_gz ~tar_gz_path ~target_dir ~check_file =
     true)
   else if Sys.file_exists tar_gz_path then (
     Log.info (fun m -> m "Extracting %s..." tar_gz_path);
-    mkdir_p target_dir;
+    Kaun_download.mkdir_p target_dir;
     match run "tar" [ "-xzf"; tar_gz_path; "-C"; target_dir ] with
     | Some (Unix.WEXITED 0) ->
         Log.info (fun m -> m "Extracted to %s" target_dir);

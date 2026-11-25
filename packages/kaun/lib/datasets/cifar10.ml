@@ -36,7 +36,7 @@ end
 
 let ensure_dataset () =
   let dataset_dir = get_cache_dir Config.cache_subdir in
-  mkdir_p dataset_dir;
+  Kaun_download.mkdir_p dataset_dir;
   let archive_path = dataset_dir ^ Config.archive_name in
   let extracted_dir = dataset_dir ^ Config.extracted_subdir in
   let check_file = extracted_dir ^ "test_batch.bin" in

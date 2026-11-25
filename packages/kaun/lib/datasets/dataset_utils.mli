@@ -10,13 +10,6 @@
     Each blocks until its program exits. Progress is logged to
     the [kaun.datasets] source. *)
 
-val mkdir_p : string -> unit
-(** [mkdir_p path] creates the directory [path] and its missing parents, with
-    permissions [0o755].
-
-    Raises [Failure] if a component of [path] exists and is not a directory, and
-    [Unix.Unix_error] if one cannot be created. *)
-
 val get_cache_dir : ?getenv:(string -> string option) -> string -> string
 (** [get_cache_dir name] is the directory of the dataset [name], with a trailing
     separator. It is [datasets/name] under [$RAVEN_CACHE_ROOT], else under
@@ -27,14 +20,12 @@ val get_cache_dir : ?getenv:(string -> string option) -> string -> string
     Raises [Failure] if the four variables are unset. *)
 
 val ensure_file : string -> string -> unit
-(** [ensure_file url dest] downloads [url] to [dest], creating [dest]'s
-    directory, unless [dest] exists. The download is written to a file beside
-    [dest] and renamed to [dest] once complete: [dest] holds a whole download
-    or nothing, even when the process dies midway.
+(** [ensure_file url dest] downloads [url] to [dest] unless [dest] exists, as
+    {!Kaun_download.file} downloads: [dest] holds a whole download or
+    nothing, even when the process dies midway.
 
-    Raises [Failure] if [curl] is missing, the download fails or its file
-    cannot be renamed to [dest], leaving [dest] as it was. Raises as
-    {!mkdir_p} does. *)
+    Raises [Failure] naming [url] as {!Kaun_download.file} does, leaving [dest]
+    as it was. *)
 
 val ensure_decompressed_gz : gz_path:string -> target_path:string -> bool
 (** [ensure_decompressed_gz ~gz_path ~target_path] is [true] if [target_path]
@@ -53,4 +44,4 @@ val ensure_extracted_tar_gz :
     the archive is missing, [tar] is missing or [tar] fails. It does not check
     that [check_file] exists after extraction.
 
-    Raises as {!mkdir_p} does. *)
+    Raises as {!Kaun_download.mkdir_p} does. *)

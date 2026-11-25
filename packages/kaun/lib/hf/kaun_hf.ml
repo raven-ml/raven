@@ -5,15 +5,6 @@
 
 (* Error messages *)
 
-let err_no_curl = "curl not found on PATH"
-let err_download url = Printf.sprintf "Failed to download %s" url
-
-let err_spawn url e =
-  Printf.sprintf "%s: curl could not run: %s" url (Unix.error_message e)
-
-let err_nul url =
-  Printf.sprintf "%s: holds a NUL, which no command line can carry" url
-
 let err_offline repo_id file =
   Printf.sprintf "Not cached (offline): %s/%s" repo_id file
 
@@ -62,13 +53,6 @@ let cache_path ?cache_dir ?(revision = "main") ~file repo_id =
 
 (* Filesystem *)
 
-let rec mkdir_p path =
-  if path = "" || path = "." || path = Filename.dir_sep then ()
-  else if not (Sys.file_exists path) then begin
-    mkdir_p (Filename.dirname path);
-    try Unix.mkdir path 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
-  end
-
 let rec rm_rf path =
   if Sys.is_directory path then begin
     Array.iter (fun e -> rm_rf (Filename.concat path e)) (Sys.readdir path);
@@ -91,153 +75,12 @@ let clear_cache ?cache_dir ?repo_id () =
       Gc.full_major ();
       if Sys.file_exists path then rm_rf path)
 
-(* HTTP via curl *)
-
-(* [curl] runs without a shell, so no argument needs quoting and the lookup on
-   [PATH] is the same on every system. A missing program is exit code 127 from
-   the forked child on Unix and [ENOENT] from process creation on Windows.
-   Any other failure to make the process, such as a program on [PATH] that
-   cannot be executed, fails the request for [url]. *)
-let spawn ~url ~stdin args out =
-  try
-    Unix.create_process "curl"
-      (Array.of_list ("curl" :: args))
-      stdin out Unix.stderr
-  with
-  | Unix.Unix_error (Unix.ENOENT, _, _) -> failwith err_no_curl
-  | Unix.Unix_error (e, _, _) -> failwith (err_spawn url e)
-
-let rec wait pid =
-  try snd (Unix.waitpid [] pid)
-  with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
-
-let succeeded = function
-  | Unix.WEXITED 0 -> true
-  | Unix.WEXITED 127 -> failwith err_no_curl
-  | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> false
-
-let curl ~url ~stdin args ~out = succeeded (wait (spawn ~url ~stdin args out))
-
-(* [curl args] with its output read through a pipe, each chunk given to [f]
-   as it arrives. *)
-let curl_read ~url ~stdin args ~f =
-  let r, w = Unix.pipe ~cloexec:true () in
-  let pid =
-    Fun.protect
-      ~finally:(fun () -> Unix.close w)
-      (fun () ->
-        try spawn ~url ~stdin args w
-        with e ->
-          Unix.close r;
-          raise e)
-  in
-  let buf = Bytes.create 65536 in
-  let rec copy () =
-    match Unix.read r buf 0 (Bytes.length buf) with
-    | 0 -> ()
-    | n ->
-        f buf n;
-        copy ()
-    | exception Unix.Unix_error (Unix.EINTR, _, _) -> copy ()
-  in
-  match copy () with
-  | () ->
-      Unix.close r;
-      succeeded (wait pid)
-  | exception e ->
-      (* curl, writing to a closed pipe, ends. *)
-      Unix.close r;
-      ignore (wait pid);
-      raise e
-
-(* The headers curl reads on its standard input ([-H @-]), so that none, a
-   token's above all, appears on its command line, which every user of the
-   machine can read. They are written to the pipe before curl starts: at most
-   1024 bytes, well under the 4096 a pipe is made with on Windows and the page a
-   Linux pipe keeps at least, so the write cannot block with no reader, and it
-   cannot raise SIGPIPE while this process holds the read end. *)
-let max_header_bytes = 1024
-
-let header_input headers =
-  let lines = List.map (fun (k, v) -> k ^ ": " ^ v ^ "\n") headers in
-  let text = String.concat "" lines in
-  if String.length text > max_header_bytes then
-    invalid_arg
-      (Printf.sprintf "Kaun_hf: the headers %s exceed %d bytes"
-         (String.concat ", " (List.map fst headers))
-         max_header_bytes);
-  let r, w = Unix.pipe ~cloexec:true () in
-  Fun.protect
-    ~finally:(fun () -> Unix.close w)
-    (fun () ->
-      try ignore (Unix.write_substring w text 0 (String.length text))
-      with e ->
-        Unix.close r;
-        raise e);
-  r
-
-let with_headers headers f =
-  match headers with
-  | [] -> f ~stdin:Unix.stdin []
-  | _ ->
-      let r = header_input headers in
-      Fun.protect
-        ~finally:(fun () -> Unix.close r)
-        (fun () -> f ~stdin:r [ "-H"; "@-" ])
-
-(* With [sha256], the download is hashed as it is written and refused unless
-   its digest is [sha256]. *)
-let curl_download ?sha256 ~headers ~url ~dest () =
-  (* A NUL ends a command line, and a path where the URL's parts name the
-     cache path: refused before either is made. *)
-  if String.contains url '\000' then failwith (err_nul url);
-  mkdir_p (Filename.dirname dest);
-  (* The download is written to the descriptor that created the file: a name
-     reopened would follow a link put there meanwhile. *)
-  let temp, oc =
-    Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o644
-      ~temp_dir:(Filename.dirname dest)
-      (Filename.basename dest ^ ".")
-      ".part"
-  in
-  let remove_temp () = try Sys.remove temp with Sys_error _ -> () in
-  let fetch () =
-    with_headers headers @@ fun ~stdin header_args ->
-    (* [-q] first: curl reads no ~/.curlrc, whose options, such as
-       [--location-trusted], would act on the download. *)
-    let args = [ "-q"; "-L"; "--fail"; "-s" ] @ header_args @ [ url ] in
-    match sha256 with
-    | None -> curl ~url ~stdin ~out:(Unix.descr_of_out_channel oc) args
-    | Some want ->
-        let h = Sha256.init () in
-        let f b n =
-          Sha256.feed h b 0 n;
-          output oc b 0 n
-        in
-        let ok = curl_read ~url ~stdin args ~f in
-        flush oc;
-        let got = Sha256.hex h in
-        if ok && got <> want then
-          failwith (Printf.sprintf "%s: SHA-256 %s, expected %s" url got want);
-        ok
-  in
-  match Fun.protect ~finally:(fun () -> close_out_noerr oc) fetch with
-  | true -> (
-      try Unix.rename temp dest with
-      | Unix.Unix_error _ when Sys.file_exists dest -> remove_temp ()
-      | Unix.Unix_error (e, _, _) ->
-          remove_temp ();
-          failwith
-            (Printf.sprintf "%s: cannot rename the download to %s: %s" url
-               dest (Unix.error_message e)))
-  | false ->
-      remove_temp ();
-      failwith (err_download url)
-  | exception e ->
-      remove_temp ();
-      raise e
-
 (* Downloading *)
+
+(* The longest token whose header line, ["Authorization: Bearer "], the token
+   and a newline, fits the headers Kaun_download.file sends. *)
+let max_token_bytes =
+  Kaun_download.max_header_bytes - String.length "Authorization: Bearer \n"
 
 let download_file ?token ?cache_dir ?(offline = false) ?(revision = "main")
     ~file repo_id =
@@ -254,6 +97,10 @@ let download_file ?token ?cache_dir ?(offline = false) ?(revision = "main")
         when String.exists (fun c -> c = '\r' || c = '\n' || c = '\000') t ->
           invalid_arg
             "Kaun_hf.download_file: the token holds a CR, an LF or a NUL"
+      | Some t when String.length t > max_token_bytes ->
+          Printf.ksprintf invalid_arg
+            "Kaun_hf.download_file: the token is longer than %d bytes"
+            max_token_bytes
       | Some t -> [ ("Authorization", "Bearer " ^ t) ]
       | None -> []
     in
@@ -261,7 +108,7 @@ let download_file ?token ?cache_dir ?(offline = false) ?(revision = "main")
       Printf.sprintf "https://huggingface.co/%s/resolve/%s/%s" repo_id revision
         file
     in
-    curl_download ~headers ~url ~dest:local ();
+    Kaun_download.file ~headers ~url local;
     local
   end
 
@@ -317,7 +164,7 @@ let download_url ?cache_dir ?(offline = false) ~sha256 url =
   else if offline then
     failwith (Printf.sprintf "Not cached (offline): %s" url)
   else begin
-    curl_download ~sha256 ~headers:[] ~url ~dest:local ();
+    Kaun_download.file ~sha256 ~url local;
     local
   end
 

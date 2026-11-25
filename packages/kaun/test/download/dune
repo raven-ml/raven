@@ -1,0 +1,4 @@
+(test
+ (name test_download)
+ (package kaun)
+ (libraries kaun_download unix windtrap))

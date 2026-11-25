@@ -5006,6 +5006,16 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun_hf` syncs a download before renaming it into its cache path, so a
+  crash or a power loss leaves no empty or partial file there that later
+  calls take as cached. A file in the cache path's directories raises
+  `Failure` naming the URL, not `Sys_error` or `Unix_error`.
+- `Kaun_datasets` raises `Failure` naming the URL when curl cannot be run
+  for a reason other than its absence, or the download's file cannot be
+  made or synced, where `Unix_error` escaped. Decompressing keeps a file
+  another process completed meanwhile when the rename fails, as Windows's
+  does while that process holds the file open, where `Unix_error`
+  escaped.
 - `Kaun_hf` raises `Failure` naming the URL when curl cannot be run, as for
   a repo id, revision, file or URL holding a NUL, or a `curl` on `PATH`
   that cannot be executed, and when a download cannot be renamed into

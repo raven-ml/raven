@@ -38,9 +38,9 @@ val download_file :
     repository [repo_id] (e.g. ["gpt2"] or ["openai-community/gpt2"]), that is
     [cache_path ~file repo_id]. The file is downloaded on first access and
     served from the cache afterwards. A download is written to a temporary file
-    beside the cache path and renamed once complete, so the cache path never
-    holds a partial file, and two processes that fetch the same file each write
-    their own. Optional arguments:
+    beside the cache path, synced, and renamed once complete, so the cache
+    path never holds a partial file, even after a crash or a power loss, and
+    two processes that fetch the same file each write their own. Optional arguments:
 
     - [token], a HuggingFace API token sent as a bearer token, for private
       repositories. Defaults to the value of [HF_TOKEN], if set. curl is given
@@ -55,9 +55,10 @@ val download_file :
 
     Raises [Invalid_argument] if the token it would send holds a CR, an LF or a
     NUL, which would end its header, or is longer than 1001 bytes, and [Failure]
-    if the download fails, if curl cannot be run, naming the URL, as for a
-    [repo_id], [revision] or [file] holding a NUL, which no command line
-    carries, or if [offline] is [true] and the file is not cached. *)
+    if the download fails, if curl cannot be run, or if the cache path's
+    directory or file cannot be made, synced or renamed, each naming the URL,
+    as for a [repo_id], [revision] or [file] holding a NUL, which no command
+    line carries, or if [offline] is [true] and the file is not cached. *)
 
 val download_url :
   ?cache_dir:string -> ?offline:bool -> sha256:string -> string -> string
@@ -82,8 +83,9 @@ val download_url :
 
     Raises [Invalid_argument] if [sha256] is not 64 hexadecimal digits, or
     [url]'s path ends in no name or in one holding a backslash; [Failure] if
-    the download fails, curl cannot be run, naming [url], as for one holding
-    a NUL, its digest is another, naming both, or [offline] is [true] and the
+    the download fails, curl cannot be run, or the cache path's directory or
+    file cannot be made, synced or renamed, naming [url], as for one holding a
+    NUL, its digest is another, naming both, or [offline] is [true] and the
     file is not cached. *)
 
 (** {1:loading Loading models} *)
