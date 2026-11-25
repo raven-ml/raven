@@ -1450,11 +1450,11 @@ let pp_format =
 
 (* Reading *)
 
-(* [first_batch name column] is the first batch a query of [column] of the file
-   [name] folds over: its first row group, as decoded. *)
-let first_batch name column =
+(* [first_batch f b column] is the first batch a query of [column] of the file
+   [b], read as [f], folds over: its first row group, as decoded. *)
+let first_batch f b column =
   let q =
-    Query.of_source (P.source (sniff name) (buffer name))
+    Query.of_source (P.source f b)
     |> Query.select Expr.[ keep (Sel.names [ column ]) ]
   in
   let first acc t = match acc with None -> Some t | some -> some in
@@ -1469,6 +1469,34 @@ let written ?(compression = P.Uncompressed) ?row_group t =
        q
        (Bytesrw.Bytes.Writer.of_buffer w));
   Buffer.contents w
+
+(* A file of a list, a record and a tensor column, three rows, no null. *)
+let nested_written =
+  lazy
+    (let record =
+       Column.of_layout
+         (any (Type.record [ ("a", any Type.int32) ]))
+         (Children
+            {
+              validity = None;
+              length = 3;
+              fields = [ ("a", Column.v Type.int32 [| 1; 2; 3 |]) ];
+            })
+       |> Result.get_ok
+     in
+     Rig.Buffer.of_string
+       (written
+          (Talon.v
+             [
+               ( "list",
+                 Column.v (Type.list Type.int32) [| [| 1; 2 |]; [||]; [| 3 |] |]
+               );
+               ("record", record);
+               ( "tensor",
+                 Column.of_tensor
+                   (Nx.create Nx.float32 [| 3; 2 |]
+                      [| 1.; 2.; 3.; 4.; 5.; 6. |]) );
+             ])))
 
 (* G1: an optional boolean column, its definition levels and its values (RLE)
    cut into hybrid runs by drawn choices, in pages cut at drawn rows, so that a
@@ -1733,7 +1761,24 @@ let reading =
                [ "b"; "b_full"; "b_none"; "b_req"; "f"; "s" ])
            [ "bits_v1.parquet"; "bits_v2_rle.parquet"; "bits_dict.parquet" ])
         (fun (file, column) ->
-          let t = first_batch file column in
+          let t = first_batch (sniff file) (buffer file) column in
+          satisfies ~claim:"Talon.column takes the batch's own column" pass
+            (fun c -> c == Talon.column t column)
+            (Talon.column t column));
+      cases "a batch's nested columns with no null are canonical"
+        ~id:(fun (c, _) -> c)
+        [
+          ("list", None);
+          ("record", None);
+          ("tensor", Some (any (Type.tensor Nx.float32 [| 2 |])));
+        ]
+        (fun (column, ty) ->
+          let b = Lazy.force nested_written in
+          let f = Error.get_ok (P.sniff b) in
+          let f =
+            match ty with Some ty -> P.with_type column ty f | None -> f
+          in
+          let t = first_batch f b column in
           satisfies ~claim:"Talon.column takes the batch's own column" pass
             (fun c -> c == Talon.column t column)
             (Talon.column t column));

@@ -772,7 +772,12 @@ let named name f =
 let structure ~row_group ~name lv s ~elem =
   named name @@ fun () ->
   let mask, offsets, slots = walk ~row_group lv s ~elem in
-  (Option.map (fun m -> bits m slots) mask, Option.map value offsets, slots)
+  (* A node with no null slot has no validity, as canonical columns need. *)
+  let validity m =
+    if peek m (fun b -> count_bits b 0 slots) = slots then None
+    else Some (bits m slots)
+  in
+  (Option.bind mask validity, Option.map value offsets, slots)
 
 (* [row_start ~row_group lv ~rep r] is the entry of [lv], a leaf's levels of
    at most [rep] repetition, that begins row [r]: the rows are walked as a

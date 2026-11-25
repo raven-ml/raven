@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A Parquet read's list, record or tensor column with no null row in a row
+  group has no validity, so `Talon.column` takes the batch's column as it is.
+  It carried an all-valid validity, which `Talon.column` copied away.
 - `Talon_json.file ~format` on a path where no file is gives an `Error` at the
   call, as without a format, where the error came at the first read. The call
   opens nothing, so a named pipe is still read once.

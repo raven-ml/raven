@@ -145,7 +145,7 @@ val structure :
   elem:(int * int) option ->
   Nx.host Nx.bit_t option * Nx.host Nx.int64_t option * int
 (** [structure ~row_group ~name lv s ~elem] walks the entries of [lv] for the node of
-    slots [s]: its validity ([None] when it is never null), its offsets when
+    slots [s]: its validity ([None] when no slot is null), its offsets when
     [elem], its element [(repetition, definition)] levels, is given, and its
     number of slots.
 
