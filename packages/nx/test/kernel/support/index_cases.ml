@@ -79,17 +79,20 @@ let gather_gen ?(dtypes = all_dtypes) ?(shapes = shape_gen) ?axis
 
 (* Gathers *)
 
-(* The gather by [b]'s kernels, on its device, into a fresh destination;
-   [None] where [b] may decline it. *)
-let gather_on (b : Support.backend) ~axis idx x =
+(* The gather by [b]'s kernels, on its device, into a fresh destination; a
+   failure where [b] declines it. *)
+let gathered (b : Support.backend) ~axis idx x =
   let module K = (val b.kernels) in
   let (A.Any x) = x in
   let x = Support.on b x and idx = Support.on b (A.expect D.Int64 idx) in
   let dst = A.create b.device (A.dtype x) (L.shape (A.layout idx)) in
   match K.gather ~axis ~dst idx x with
-  | A.Done -> Some (A.Any dst)
+  | A.Done -> A.Any dst
   | A.Declined -> failf "%s declined a gather" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+
+(* As {!gathered}, as an option, never [None]. *)
+let gather_on b ~axis idx x = Some (gathered b ~axis idx x)
 
 (* Scatters *)
 
@@ -170,9 +173,9 @@ let scatter_gen ?(dtypes = all_dtypes) ?combines ?(draw = element)
   }
 
 (* The scatter by [b]'s kernels, on its device, into a fresh destination or,
-   [in_place], into a copy of [into] it also reads; [None] where [b] may
-   decline it. *)
-let scatter_on (b : Support.backend) ?(in_place = false) ?(unique = false) c =
+   [in_place], into a copy of [into] it also reads; a failure where [b] declines
+   it. *)
+let scattered (b : Support.backend) ?(in_place = false) ?(unique = false) c =
   let module K = (val b.kernels) in
   let (A.Any into) = c.into in
   let into = Support.on b into in
@@ -186,9 +189,12 @@ let scatter_on (b : Support.backend) ?(in_place = false) ?(unique = false) c =
     else (A.create b.device (A.dtype into) (L.shape (A.layout into)), into)
   in
   match K.scatter c.combine ~unique ~axis:c.saxis ~dst ~into idx u with
-  | A.Done -> Some (A.Any dst)
+  | A.Done -> A.Any dst
   | A.Declined -> failf "%s declined a scatter" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+
+(* As {!scattered}, as an option, never [None]. *)
+let scatter_on b ?in_place ?unique c = Some (scattered b ?in_place ?unique c)
 
 (* [c] with its arrays on [b]'s device, through their views. *)
 let scatter_placed (b : Support.backend) c =
@@ -317,34 +323,34 @@ let scatter_expected c =
       (fun e -> if moved then Bits e else Value e)
       (fold (step d c.combine) (Array.copy xs))
 
+(* An element's bytes in hexadecimal, first byte first. *)
+let hex e =
+  String.concat ""
+    (List.init (String.length e) (fun i ->
+         Printf.sprintf "%02x" (Char.code e.[i])))
+
+(* [y]'s elements against [want], each where [fits w e] holds of its [w]: the
+   first five that do not shown, with their positions in C order. *)
+let check_elements fits want y =
+  let got = elements y in
+  let wrong = ref [] in
+  Array.iteri
+    (fun t w ->
+      if (not (fits w got.(t))) && List.length !wrong < 5 then
+        let (Bits e | Value e) = w in
+        wrong :=
+          Printf.sprintf "%d: %s, not %s" t (hex got.(t)) (hex e) :: !wrong)
+    want;
+  equal (list string) [] (List.rev !wrong)
+
+(* [y] is [c]'s result: each element's bits where {!scatter_expected} gives
+   them, else its value, any NaN for a NaN. *)
 let check_scatter c y =
   let d = dtype_of c.into in
-  let got = elements y in
-  let want = scatter_expected c in
-  let wrong =
-    List.filter_map Fun.id
-      (List.mapi
-         (fun t w ->
-           match w with
-           | Bits b when b = got.(t) -> None
-           | Value v when Testable.equal (same d) v got.(t) -> None
-           | _ -> Some t)
-         (Array.to_list want))
-  in
-  let show t =
-    Printf.sprintf "%d: %s, not %s" t
-      (String.concat ""
-         (List.map
-            (fun ch -> Printf.sprintf "%02x" (Char.code ch))
-            (List.of_seq (String.to_seq got.(t)))))
-      (match want.(t) with
-      | Bits b | Value b ->
-          String.concat ""
-            (List.map
-               (fun ch -> Printf.sprintf "%02x" (Char.code ch))
-               (List.of_seq (String.to_seq b))))
-  in
-  equal (list string) [] (List.map show (List.filteri (fun i _ -> i < 5) wrong))
+  check_elements
+    (fun w e ->
+      match w with Bits b -> b = e | Value v -> Testable.equal (same d) v e)
+    (scatter_expected c) y
 
 (* Whether two of [c]'s updates share a target, and whether one lands outside
    the axis. *)
