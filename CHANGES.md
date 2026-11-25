@@ -85,6 +85,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Norn_model.reparam` and `Norn_model.noncentre` no longer raise on a model
+  whose parameter leaves its domain at zero coordinates, and
+  `Norn_model.constrain` and `Norn_model.unconstrain` name the site where a
+  parameter is outside its domain.
 - `Dist.sample` keeps a draw of `uniform`, `exponential`, `half_normal`,
   `half_cauchy`, `lognormal`, `gamma`, `inverse_gamma`, `beta` and
   `truncated` inside the open support: a draw that rounded onto a bound, as

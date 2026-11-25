@@ -151,14 +151,23 @@ type seen = {
   s_support : unit -> Norn.Support.t;
 }
 
+(* A site's coordinates map through its distribution with the checks its
+   caller settled, once per evaluation, so [Dist.coords] and a reparam's
+   bijector run none of their own. [waived d] waives them, for a run at
+   coordinates no caller chose: learning a model, naming a reparam's
+   bijector, and a log likelihood, which reads no latent site's density.
+   There zero coordinates may give a parameter outside its domain, as a
+   scale of [0], and nothing reads it. [named context site d] runs them
+   now, its refusal naming the site. *)
+let waived d = D.check ~unless:(Nx.scalar_at (D.placement d) Nx.bool true) "" d
+let named context site d = D.check (Printf.sprintf "%s: site %s" context site) d
+
 (* [learn d] answers a site at [v]: a continuous site with its bijector's image
    of zero coordinates, a discrete one with zeros. *)
 let learn : type x f d. (x, f, d) D.t -> x * seen =
  fun d ->
   let shape = D.shape d in
-  (* Zero coordinates may give a parameter outside its domain, as a scale of
-     [0]: what is learnt reads no value of it. *)
-  let d = D.check ~unless:(Nx.scalar_at (D.placement d) Nx.bool true) "" d in
+  let d = waived d in
   let points x =
     let f = D.factors d x in
     if Nx.ndim f = 0 then 1 else (Nx.shape f).(0)
@@ -414,7 +423,9 @@ let run (type d) (m : (_, _, _, d) t) context (a : d answer) ~(factor : d factor
 let reparam_of m i = List.assoc_opt i m.reparams
 let fixed_of m i = List.assoc_opt i m.fixed
 
-(* [bijector m i d] is the coordinates' bijector of the continuous site [i]. *)
+(* [bijector m i d] is the coordinates' bijector of the continuous site [i],
+   [d] settled by its caller ([waived], [named] or the interpreter's
+   checks). *)
 let bijector (type f g) (m : (_, _, f, 'd) t) i
     (d : ((float, g, 'd) Nx.t, g, 'd) D.t) : (g, 'd) Bij.t =
   match reparam_of m i with
@@ -582,20 +593,19 @@ let score m context params parts latent data =
     | (Latent | Fixed), None -> (
         match latent with
         | Coords cs ->
-            (* The site's coordinates map through the distribution its
-               parameters' checks have already read. *)
-            let d, valid = checked name d in
-            let x, ld = forward m i d cs.(l.leaf) in
             if parts.prior || parts.jacobian then begin
+              let d, valid = checked name d in
+              let x, ld = forward m i d cs.(l.leaf) in
               let f =
                 if parts.prior then D.factors d x
                 else Nx.zeros_at m.at (D.dtype d) [||]
               in
               let t = Nx.sum f in
               let t = if parts.jacobian then Nx.add t (Nx.sum ld) else t in
-              add name valid d f t
-            end;
-            x
+              add name valid d f t;
+              x
+            end
+            else fst (forward m i (waived d) cs.(l.leaf))
         | Values vs ->
             let x = fresh d (unpack d vs.(l.leaf)) vs.(l.leaf) in
             if parts.prior then begin
@@ -806,10 +816,10 @@ let prior_draw m context ~data k =
       match (fixed_of m i, l.site.role, data) with
       | Some v, _, _ -> fresh d (unpack d v) v
       | None, Observed, Some ys -> fresh d (unpack d ys.(l.leaf)) ys.(l.leaf)
-      | None, _, _ -> draw context l.site.name d (Nx.Rng.fold_in k i)
+      | None, _, _ -> D.sample (Nx.Rng.fold_in k i) (named context l.site.name d)
     in
     (match l.site.role with
-    | Latent -> us.(l.leaf) <- inverse m i d x
+    | Latent -> us.(l.leaf) <- inverse m i (named context l.site.name d) x
     | Fixed -> us.(l.leaf) <- empty_coords (pack d x)
     | Observed -> ());
     x
@@ -852,7 +862,8 @@ let constrain m c =
   let answer i l d =
     match (l.site.role, fixed_of m i) with
     | _, Some v -> fresh d (unpack d v) v
-    | (Latent | Fixed), None -> fst (forward m i d cs.(l.leaf))
+    | (Latent | Fixed), None ->
+        fst (forward m i (named context l.site.name d) cs.(l.leaf))
     | Observed, None -> zeros_of d l.site.shape
   in
   fst (run m context { answer = (fun i l d -> answer i l d) } ~factor:no_factor)
@@ -869,7 +880,7 @@ let unconstrain m p =
         fresh d (unpack d v) v
     | (Latent | Fixed), None ->
         let x = fresh d (unpack d vs.(l.leaf)) vs.(l.leaf) in
-        us.(l.leaf) <- inverse m i d x;
+        us.(l.leaf) <- inverse m i (named context l.site.name d) x;
         x
     | Observed, None -> zeros_of d l.site.shape
   in
@@ -1111,7 +1122,11 @@ let reparam sel b m =
     match (l.site.role, fixed_of m j) with
     | _, Some v -> fresh d (unpack d v) v
     | (Latent | Fixed), None ->
-        if j = i then name := bijector_name m j d;
+        let d = waived d in
+        (if j = i then
+           try name := bijector_name m j d
+           with Invalid_argument msg ->
+             invalid_argf "%s: site %s: %s" context l.site.name msg);
         fst (forward m j d cs.(l.leaf))
     | Observed, None -> zeros_of d l.site.shape
   in
