@@ -30,22 +30,52 @@ let any_w =
   Testable.make ~pp:pp_any ~equal:(fun (Type.Any a) (Type.Any b) ->
       Type.equal a b)
 
+let binary_w = Testable.make ~pp:Binary.pp ~equal:( = )
+
+(* [by t w] is [w] ordered by talon's order on the values of [t]. *)
+let by t w = Testable.with_compare (Type.compare_value t) w
+
+(* [ordered t pp] is the witness of [t]'s values under talon's order, two values
+   being equal when that order says so. *)
+let ordered t pp =
+  Testable.make ~pp ~equal:(fun a b -> Type.compare_value t a b = 0)
+  |> Testable.with_compare (Type.compare_value t)
+
+(* [held t vs] is the values of [vs] that [t] holds. *)
+let held t vs = List.filter (Type.holds t) vs
+
+(* [mul_exact n u] is [n * u], or [None] if it leaves [int64]. *)
+let mul_exact n u =
+  let r = Int64.mul n u in
+  if Int64.equal (Int64.div r u) n then Some r else None
+
+(* [floor_div x k] is [x / k] rounded toward negative infinity, for [k > 0]. *)
+let floor_div x k =
+  let q = Int64.div x k in
+  if Int64.compare (Int64.rem x k) 0L < 0 then Int64.pred q else q
+
 (* The spec's float identity: [-0.] is [0.] and every NaN is every other. *)
 let same_float a b = (Float.is_nan a && Float.is_nan b) || a = b
 
 (* Binary *)
 
+let hex s =
+  let byte c = Printf.sprintf "%02x" (Char.code c) in
+  "0x" ^ String.concat "" (List.map byte (List.of_seq (String.to_seq s)))
+
 let binary =
   group "Binary"
     [
-      test "keeps the bytes it is made of" (fun () ->
+      test "of_string keeps the bytes it is made of" (fun () ->
           let s = "\x00\xff\n" in
           equal string s (Binary.of_string s :> string));
-      cases "pp"
-        ~id:(fun (s, _) -> Printf.sprintf "formats %S in hexadecimal" s)
-        [ ("Hi\n", "0x48690a"); ("", "0x"); ("\x00\xff", "0x00ff") ]
+      cases "pp formats" ~id:snd
+        [ ("Hi\n", "0x48690a"); ("", "0x") ]
         (fun (s, expected) ->
           equal string expected (str Binary.pp (Binary.of_string s)));
+      prop "pp writes two lowercase hexadecimal digits per byte"
+        ~examples:[ "\x00\xff" ] Gen.string (fun s ->
+          equal string (hex s) (str Binary.pp (Binary.of_string s)));
     ]
 
 (* Instants *)
@@ -75,50 +105,13 @@ let units =
     ("s", 1_000_000_000L, Time.of_s, Time.to_s);
   ]
 
-let instant_conversions =
-  group "instant conversions"
-    [
-      test "of_ns is the identity on nanoseconds" (fun () ->
-          equal int64 Int64.min_int (Time.to_ns (Time.of_ns Int64.min_int)));
-      cases "floor"
-        ~id:(fun (n, _, _, _) ->
-          Printf.sprintf "to_%s rounds toward negative infinity" n)
-        units
-        (fun (_, u, _, to_u) ->
-          equal int64 (-1L) (to_u (Time.of_ns (-1L)));
-          let t = Time.of_ns (Int64.add (Int64.mul 5L u) (Int64.pred u)) in
-          equal int64 5L (to_u t));
-      prop "to_* is the floor of the nanoseconds" ns_range (fun n ->
-          List.iter
-            (fun (name, u, _, to_u) ->
-              let r = Int64.sub n (Int64.mul (to_u (Time.of_ns n)) u) in
-              at_least ~msg:name int64 ~than:0L r;
-              less ~msg:name int64 ~than:u r)
-            units);
-      prop "of_* inverts to_* on whole units" ns_range (fun n ->
-          List.iter
-            (fun (name, u, of_u, to_u) ->
-              let whole = Int64.mul (Int64.div n u) u in
-              let t = Time.of_ns whole in
-              equal ~msg:name (option instant_w) (Some t) (of_u (to_u t)))
-            units);
-      cases "overflow"
-        ~id:(fun (n, _, _, _) ->
-          Printf.sprintf "of_%s is None exactly past the range" n)
-        units
-        (fun (_, u, of_u, _) ->
-          let hi = Int64.div Int64.max_int u
-          and lo = Int64.div Int64.min_int u in
-          is_some (of_u hi);
-          is_some (of_u lo);
-          is_none ~pp:Time.pp (of_u (Int64.succ hi));
-          is_none ~pp:Time.pp (of_u (Int64.pred lo)));
-      prop "order is chronological" (Gen.triple ns_range ns_range ns_range)
-        (fun (a, b, c) ->
-          Law.order instant_w (Time.of_ns a, Time.of_ns b, Time.of_ns c);
-          equal int (Int64.compare a b)
-            (Time.compare (Time.of_ns a) (Time.of_ns b)));
-    ]
+(* The last whole unit at each end of the range, and the unit past it. *)
+let unit_edges =
+  List.concat_map
+    (fun (_, u, _, _) ->
+      let hi = Int64.div Int64.max_int u and lo = Int64.div Int64.min_int u in
+      [ hi; lo; Int64.succ hi; Int64.pred lo ])
+    units
 
 (* Seconds in 400 Gregorian years, 146097 days. *)
 let cycle = 12_622_780_800L
@@ -133,126 +126,164 @@ let gmtime_string s =
     (tm.tm_year + 1900 - years)
     (tm.tm_mon + 1) tm.tm_mday tm.tm_hour tm.tm_min tm.tm_sec
 
-let instant_pp =
-  group "Time.pp"
+(* [fraction ns] is the [ns] nanoseconds of a second as a point and nine digits,
+   less each trailing group of three zeros: the fewest of 3, 6 or 9 digits that
+   are exact, and nothing for a whole second. *)
+let fraction ns =
+  let rec trim s =
+    if String.ends_with ~suffix:"000" s then
+      trim (String.sub s 0 (String.length s - 3))
+    else s
+  in
+  match trim (Printf.sprintf "%09Ld" ns) with "" -> "" | s -> "." ^ s
+
+let instants =
+  group "Time"
     [
-      cases "spec"
-        ~id:(fun (_, s) -> Printf.sprintf "formats %s" s)
+      prop "to_ns inverts of_ns"
+        ~examples:[ Int64.min_int; Int64.max_int ]
+        ns_range
+        (Law.round_trip int64 instant_w Time.of_ns Time.to_ns);
+      prop "to_us, to_ms and to_s round toward negative infinity"
+        ~examples:[ -1L; 5_999L ] ns_range (fun n ->
+          List.iter
+            (fun (name, u, _, to_u) ->
+              equal ~msg:name int64 (floor_div n u) (to_u (Time.of_ns n)))
+            units);
+      prop "of_us, of_ms and of_s are None exactly past the range"
+        ~examples:unit_edges ns_range (fun n ->
+          List.iter
+            (fun (name, u, of_u, _) ->
+              equal ~msg:name (option int64) (mul_exact n u)
+                (Option.map Time.to_ns (of_u n)))
+            units);
+      prop "of_us, of_ms and of_s invert to_us, to_ms and to_s on whole units"
+        ns_range (fun n ->
+          List.iter
+            (fun (name, u, of_u, to_u) ->
+              let whole = Time.of_ns (Int64.mul (Int64.div n u) u) in
+              equal ~msg:name (option instant_w) (Some whole)
+                (of_u (to_u whole)))
+            units);
+      prop "compare orders chronologically"
+        (Gen.triple ns_range ns_range ns_range) (fun (a, b, c) ->
+          Law.order instant_w (Time.of_ns a, Time.of_ns b, Time.of_ns c);
+          equal (list int64)
+            (List.sort Int64.compare [ a; b; c ])
+            (List.map Time.to_ns
+               (List.sort Time.compare (List.map Time.of_ns [ a; b; c ]))));
+      cases "pp formats" ~id:snd
         [
-          (Time.of_ns 1710495000_000_000_000L, "2024-03-15T09:30:00");
-          (Time.of_ns (-1L), "1969-12-31T23:59:59.999999999");
-          (Time.of_ns 500_000_000L, "1970-01-01T00:00:00.500");
-          (Time.of_ns 1_000L, "1970-01-01T00:00:00.000001");
-          (Time.of_ns 1_001_000L, "1970-01-01T00:00:00.001001");
+          (1710495000_000_000_000L, "2024-03-15T09:30:00");
+          (-1L, "1969-12-31T23:59:59.999999999");
         ]
-        (fun (t, expected) -> equal string expected (str Time.pp t));
-      test "formats the ends of the range" (fun () ->
-          expect
-            (str Time.pp (Time.of_ns Int64.min_int)
-            ^ "\n"
-            ^ str Time.pp (Time.of_ns Int64.max_int))
-          @@ __POS_OF__
-               {|
-                 1677-09-21T00:12:43.145224192
-                 2262-04-11T23:47:16.854775807
-               |});
-      prop "agrees with gmtime on whole seconds"
-        (Gen.int_range (-9_223_372_036) 9_223_372_035) (fun s ->
-          let s = Int64.of_int s in
-          equal string (gmtime_string s)
-            (str Time.pp (Option.get (Time.of_s s))));
+        (fun (ns, expected) ->
+          equal string expected (str Time.pp (Time.of_ns ns)));
+      prop "pp writes gmtime's time and the fewest exact digits of a fraction"
+        ~examples:
+          [ 500_000_000L; 1_000L; 1_001_000L; Int64.min_int; Int64.max_int ]
+        ns_range (fun ns ->
+          let s = floor_div ns 1_000_000_000L in
+          let part = Int64.sub ns (Int64.mul s 1_000_000_000L) in
+          equal string
+            (gmtime_string s ^ fraction part)
+            (str Time.pp (Time.of_ns ns)));
     ]
 
 (* Spans *)
 
-let span_constructors =
-  let ns_per =
-    [
-      ("us", Time.Span.us, 1_000L);
-      ("ms", Time.Span.ms, 1_000_000L);
-      ("s", Time.Span.s, 1_000_000_000L);
-      ("minutes", Time.Span.minutes, 60_000_000_000L);
-      ("hours", Time.Span.hours, 3_600_000_000_000L);
-      ("days", Time.Span.days, 86_400_000_000_000L);
-    ]
+let constructors =
+  [
+    ("ns", Time.Span.ns, 1L);
+    ("us", Time.Span.us, 1_000L);
+    ("ms", Time.Span.ms, 1_000_000L);
+    ("s", Time.Span.s, 1_000_000_000L);
+    ("minutes", Time.Span.minutes, 60_000_000_000L);
+    ("hours", Time.Span.hours, 3_600_000_000_000L);
+    ("days", Time.Span.days, 86_400_000_000_000L);
+  ]
+
+(* A constructor and a count: at the ends of the span's range in its unit and
+   one past them, at the ends of [int], and anywhere. *)
+let constructor_case =
+  let open Gen in
+  let* name, make, u = of_list constructors in
+  let fits v =
+    Int64.compare v (Int64.of_int min_int) >= 0
+    && Int64.compare v (Int64.of_int max_int) <= 0
   in
-  group "Span constructors"
+  let hi = Int64.div Int64.max_int u and lo = Int64.div Int64.min_int u in
+  let edges =
+    List.map Int64.to_int
+      (List.filter fits [ hi; lo; Int64.succ hi; Int64.pred lo ])
+    @ [ max_int; min_int ]
+  in
+  let+ n = frequency [ (2, of_list edges); (1, int); (1, small_int) ] in
+  (name, make, u, n)
+
+let span_units =
+  [
+    ("us", 1_000L, Time.Span.of_us, Time.Span.to_us);
+    ("ms", 1_000_000L, Time.Span.of_ms, Time.Span.to_ms);
+    ("s", 1_000_000_000L, Time.Span.of_s, Time.Span.to_s);
+  ]
+
+let spans =
+  group "Time.Span"
     [
-      cases "units"
-        ~id:(fun (n, _, _) ->
-          Printf.sprintf "%s scales to nanoseconds and raises past the range" n)
-        ns_per
-        (fun (_, make, u) ->
-          equal span_w (Time.Span.of_ns (Int64.mul 3L u)) (make 3);
-          equal span_w (Time.Span.of_ns (Int64.mul (-3L) u)) (make (-3));
-          let hi = Int64.to_int (Int64.div Int64.max_int u) in
-          let lo = Int64.to_int (Int64.div Int64.min_int u) in
-          equal int64
-            (Int64.mul (Int64.of_int hi) u)
-            (Time.Span.to_ns (make hi));
-          equal int64
-            (Int64.mul (Int64.of_int lo) u)
-            (Time.Span.to_ns (make lo));
-          rejects (fun () -> make (hi + 1));
-          rejects (fun () -> make (lo - 1));
-          rejects (fun () -> make max_int));
-      test "ns takes any int" (fun () ->
-          equal int64 (Int64.of_int min_int)
-            (Time.Span.to_ns (Time.Span.ns min_int)));
-      test "to_us rounds toward negative infinity" (fun () ->
-          equal int64 (-1L) (Time.Span.to_us (Time.Span.ns (-1))));
-      prop "to_* is the floor and of_* its inverse on whole units" ns_range
-        (fun n ->
-          let d = Time.Span.of_ns n in
+      prop "a constructor is n of its unit, and raises past the range"
+        (Gen.with_pp
+           (fun ppf (name, _, _, n) -> Format.fprintf ppf "%s %d" name n)
+           constructor_case)
+        (fun (_, make, u, n) ->
+          let expected = mul_exact (Int64.of_int n) u in
+          cover "in the range" (Option.is_some expected);
+          cover "past the range" (Option.is_none expected);
+          match expected with
+          | Some ns -> equal int64 ns (Time.Span.to_ns (make n))
+          | None -> rejects (fun () -> make n));
+      prop "to_us, to_ms and to_s round toward negative infinity"
+        ~examples:[ -1L ] ns_range (fun n ->
+          List.iter
+            (fun (name, u, _, to_u) ->
+              equal ~msg:name int64 (floor_div n u) (to_u (Time.Span.of_ns n)))
+            span_units);
+      prop "of_us, of_ms and of_s are None exactly past the range"
+        ~examples:unit_edges ns_range (fun n ->
+          List.iter
+            (fun (name, u, of_u, _) ->
+              equal ~msg:name (option int64) (mul_exact n u)
+                (Option.map Time.Span.to_ns (of_u n)))
+            span_units);
+      prop "of_us, of_ms and of_s invert to_us, to_ms and to_s on whole units"
+        ns_range (fun n ->
           List.iter
             (fun (name, u, of_u, to_u) ->
-              let r = Int64.sub n (Int64.mul (to_u d) u) in
-              at_least ~msg:name int64 ~than:0L r;
-              less ~msg:name int64 ~than:u r;
               let whole = Time.Span.of_ns (Int64.mul (Int64.div n u) u) in
               equal ~msg:name (option span_w) (Some whole) (of_u (to_u whole)))
-            [
-              ("us", 1_000L, Time.Span.of_us, Time.Span.to_us);
-              ("ms", 1_000_000L, Time.Span.of_ms, Time.Span.to_ms);
-              ("s", 1_000_000_000L, Time.Span.of_s, Time.Span.to_s);
-            ]);
-      test "of_s is None past the range" (fun () ->
-          is_none ~pp:Time.Span.pp
-            (Time.Span.of_s
-               (Int64.succ (Int64.div Int64.max_int 1_000_000_000L)));
-          is_none ~pp:Time.Span.pp (Time.Span.of_us Int64.min_int));
-      prop "order is numeric" (Gen.triple ns_range ns_range ns_range)
-        (fun (a, b, c) ->
-          Law.order span_w
-            (Time.Span.of_ns a, Time.Span.of_ns b, Time.Span.of_ns c));
+            span_units);
+      prop "compare orders from the most negative to the most positive"
+        (Gen.triple ns_range ns_range ns_range) (fun (a, b, c) ->
+          let d = Time.Span.of_ns in
+          Law.order span_w (d a, d b, d c);
+          equal (list int64)
+            (List.sort Int64.compare [ a; b; c ])
+            (List.map Time.Span.to_ns
+               (List.sort Time.Span.compare (List.map d [ a; b; c ]))));
+      cases "pp formats" ~id:snd
+        [
+          (Time.Span.days 7, "168h");
+          (Time.Span.minutes 90, "1h30m");
+          (Time.Span.ms 1500, "1s500ms");
+          (Time.Span.us (-250), "-250us");
+          (Time.Span.ns 0, "0s");
+          (Time.Span.ns 1, "1ns");
+          (Time.Span.of_ns 3_723_004_005_006L, "1h2m3s4ms5us6ns");
+          (Time.Span.of_ns Int64.min_int, "-2562047h47m16s854ms775us808ns");
+          (Time.Span.of_ns Int64.max_int, "2562047h47m16s854ms775us807ns");
+        ]
+        (fun (d, expected) -> equal string expected (str Time.Span.pp d));
     ]
-
-let span_pp =
-  cases "Span.pp"
-    ~id:(fun (_, s) -> Printf.sprintf "Span.pp formats %s" s)
-    [
-      (Time.Span.days 7, "168h");
-      (Time.Span.minutes 90, "1h30m");
-      (Time.Span.ms 1500, "1s500ms");
-      (Time.Span.us (-250), "-250us");
-      (Time.Span.ns 0, "0s");
-      (Time.Span.ns 1, "1ns");
-      (Time.Span.of_ns 3_723_004_005_006L, "1h2m3s4ms5us6ns");
-      (Time.Span.of_ns Int64.min_int, "-2562047h47m16s854ms775us808ns");
-      (Time.Span.of_ns Int64.max_int, "2562047h47m16s854ms775us807ns");
-    ]
-    (fun (d, expected) -> equal string expected (str Time.Span.pp d))
-
-let step_pp =
-  cases "pp_step"
-    ~id:(fun (_, s) -> Printf.sprintf "pp_step formats %s" s)
-    [
-      (Time.Months 1, "1mo");
-      (Time.Weeks 2, "2w");
-      (Time.Days (-1), "-1d");
-      (Time.Exact (Time.Span.minutes 15), "15m");
-    ]
-    (fun (s, expected) -> equal string expected (str Time.pp_step s))
 
 (* Dates *)
 
@@ -283,13 +314,31 @@ let next_civil (y, m, d) =
 
 let date n = Option.get (Time.Date.of_days n)
 
+(* Civil dates of the years within the range, century years among them, and
+   months and days on both sides of their bounds. *)
+let civil_gen =
+  let open Gen in
+  let year =
+    frequency
+      [
+        (2, int_range (-5_877_640) 5_881_579);
+        (2, int_range (-500) 2500);
+        (1, of_list [ 1900; 2000; 2100; 1600; 0; -100; -400 ]);
+      ]
+  in
+  let month = frequency [ (2, int_range (-1) 14); (1, constant 2) ] in
+  let day =
+    frequency [ (2, int_range (-1) 32); (1, of_list [ 0; 28; 29; 30; 31; 32 ]) ]
+  in
+  with_pp
+    (fun ppf (y, m, d) -> Format.fprintf ppf "(%d, %d, %d)" y m d)
+    (triple year month day)
+
 let dates =
   group "Time.Date"
     [
-      cases "anchors"
-        ~id:(fun (c, _) ->
-          let y, m, d = c in
-          Printf.sprintf "places %d-%d-%d" y m d)
+      cases "of_civil places"
+        ~id:(fun ((y, m, d), n) -> Printf.sprintf "%d-%d-%d at %d" y m d n)
         [
           ((1970, 1, 1), 0);
           ((1969, 12, 31), -1);
@@ -301,43 +350,51 @@ let dates =
         ]
         (fun (civil, days) ->
           equal (option int) (Some days)
-            (Option.map Time.Date.to_days (Time.Date.of_civil civil));
-          equal civil_w civil (Time.Date.to_civil (date days)));
-      cases "invalid"
-        ~id:(fun (y, m, d) -> Printf.sprintf "refuses %d-%d-%d" y m d)
+            (Option.map Time.Date.to_days (Time.Date.of_civil civil)));
+      prop "of_civil takes exactly the days of the proleptic Gregorian calendar"
+        ~examples:
+          [
+            (2024, 2, 29);
+            (2023, 2, 29);
+            (1900, 2, 29);
+            (2000, 2, 29);
+            (2024, 0, 1);
+            (2024, 13, 1);
+            (2024, 4, 31);
+            (2024, 1, 0);
+            (2024, 1, 32);
+          ]
+        civil_gen
+        (fun ((y, m, d) as c) ->
+          let valid = m >= 1 && m <= 12 && d >= 1 && d <= month_length y m in
+          cover "a date" valid;
+          cover "not a date" (not valid);
+          match (valid, Time.Date.of_civil c) with
+          | true, Some t -> equal civil_w c (Time.Date.to_civil t)
+          | false, None -> ()
+          | true, None -> fail "of_civil refuses a date"
+          | false, Some t -> failf "of_civil takes it as %a" Time.Date.pp t);
+      cases "of_civil is None past the range"
+        ~id:(fun (y, m, d) -> Printf.sprintf "%d-%d-%d" y m d)
         [
-          (2023, 2, 29);
-          (1900, 2, 29);
-          (2024, 0, 1);
-          (2024, 13, 1);
-          (2024, 4, 31);
-          (2024, 1, 0);
-          (2024, 1, 32);
+          (5_881_580, 7, 12);
+          (-5_877_641, 6, 22);
           (10_000_000, 1, 1);
           (-10_000_000, 1, 1);
           (max_int, 1, 1);
           (min_int, 1, 1);
+          (* A year whose day count wraps into the range. *)
+          (3_535_382_889_881_440_000, 3, 1);
         ]
         (fun civil -> is_none ~pp:Time.Date.pp (Time.Date.of_civil civil));
-      test "refuses a year whose day count wraps into the range" (fun () ->
-          is_none ~pp:Time.Date.pp
-            (Time.Date.of_civil (3_535_382_889_881_440_000, 3, 1)));
-      test "spans the years the interface states" (fun () ->
-          let y0, _, _ = Time.Date.to_civil (date min_days) in
-          let y1, _, _ = Time.Date.to_civil (date max_days) in
-          equal (pair int int) (-5_877_641, 5_881_580) (y0, y1));
-      test "of_days refuses days past the int32 range" (fun () ->
+      test "dates span -5877641-06-23 to 5881580-07-11" (fun () ->
+          equal (pair civil_w civil_w)
+            ((-5_877_641, 6, 23), (5_881_580, 7, 11))
+            ( Time.Date.to_civil (date min_days),
+              Time.Date.to_civil (date max_days) ));
+      test "of_days is None past the int32 range" (fun () ->
           is_none ~pp:Time.Date.pp (Time.Date.of_days (max_days + 1));
           is_none ~pp:Time.Date.pp (Time.Date.of_days (min_days - 1)));
-      test "of_civil refuses the day after the last date" (fun () ->
-          let last = Time.Date.to_civil (date max_days) in
-          let first = Time.Date.to_civil (date min_days) in
-          is_none ~pp:Time.Date.pp (Time.Date.of_civil (next_civil last));
-          let y, m, d = first in
-          let before =
-            if d > 1 then (y, m, d - 1) else (y, m - 1, month_length y (m - 1))
-          in
-          is_none ~pp:Time.Date.pp (Time.Date.of_civil before));
       prop "of_civil inverts to_civil" ~examples:[ min_days; max_days; 11016 ]
         days_gen (fun n ->
           Law.round_trip date_w civil_w Time.Date.to_civil
@@ -345,67 +402,106 @@ let dates =
             (date n));
       prop "of_days inverts to_days" days_gen (fun n ->
           equal int n (Time.Date.to_days (date n)));
-      prop "the next day is the next civil date" days_gen (fun n ->
-          assume (n < max_days);
+      prop "the day after is the next civil date"
+        ~examples:[ min_days; max_days - 1; -1; 59; 60 ]
+        (Gen.int_range min_days (max_days - 1))
+        (fun n ->
           equal civil_w
             (next_civil (Time.Date.to_civil (date n)))
             (Time.Date.to_civil (date (n + 1))));
-      prop "order is chronological" (Gen.triple days_gen days_gen days_gen)
-        (fun (a, b, c) ->
+      prop "compare orders chronologically"
+        (Gen.triple days_gen days_gen days_gen) (fun (a, b, c) ->
           Law.order date_w (date a, date b, date c);
-          equal int (Int.compare a b) (Time.Date.compare (date a) (date b)));
-      cases "pp"
-        ~id:(fun (_, s) -> Printf.sprintf "pp formats %s" s)
-        [
-          ((1970, 1, 1), "1970-01-01");
-          ((-44, 3, 15), "-0044-03-15");
-          ((12345, 1, 1), "+12345-01-01");
-          ((0, 1, 1), "0000-01-01");
-          ((9999, 12, 31), "9999-12-31");
-          ((10000, 1, 1), "+10000-01-01");
-          ((-1, 12, 31), "-0001-12-31");
-        ]
+          equal (list int)
+            (List.sort Int.compare [ a; b; c ])
+            (List.map Time.Date.to_days
+               (List.sort Time.Date.compare (List.map date [ a; b; c ]))));
+      cases "pp formats" ~id:snd
+        [ ((-44, 3, 15), "-0044-03-15"); ((12345, 1, 1), "+12345-01-01") ]
         (fun (civil, expected) ->
           equal string expected
             (str Time.Date.pp (Option.get (Time.Date.of_civil civil))));
+      prop "pp writes YYYY-MM-DD, a year outside 0 to 9999 signed"
+        ~examples:[ 0; -719528; 2932896; 2932897; -719529 ] days_gen (fun n ->
+          let y, m, d = Time.Date.to_civil (date n) in
+          let year =
+            if y >= 0 && y <= 9999 then Printf.sprintf "%04d" y
+            else Printf.sprintf "%c%04d" (if y < 0 then '-' else '+') (abs y)
+          in
+          equal string
+            (Printf.sprintf "%s-%02d-%02d" year m d)
+            (str Time.Date.pp (date n)));
     ]
+
+let step_pp =
+  cases "pp_step formats" ~id:snd
+    [
+      (Time.Months 1, "1mo");
+      (Time.Weeks 2, "2w");
+      (Time.Days (-1), "-1d");
+      (Time.Exact (Time.Span.minutes 15), "15m");
+    ]
+    (fun (s, expected) -> equal string expected (str Time.pp_step s))
 
 (* Kinds *)
 
 let ext_type = Type.ext ~name:"units.mass" ~metadata:"kg" Type.float64
+let ext_kind = Type.kind ext_type
+
+type kind = K : 'a Kind.t -> kind
+
+let all_kinds =
+  [
+    K Kind.bool;
+    K Kind.int;
+    K Kind.float;
+    K Kind.string;
+    K Kind.binary;
+    K Kind.date;
+    K Kind.instant;
+    K Kind.wall;
+    K Kind.span;
+    K Record.kind;
+    K (Kind.list Kind.string);
+    K (Kind.list Kind.float);
+    K (Kind.list (Kind.list Kind.int));
+    K (Kind.tensor Nx.float32);
+    K (Kind.tensor Nx.float64);
+    K ext_kind;
+    K (Kind.list ext_kind);
+  ]
+
+let kind_name (K k) = str Kind.pp k
+
+(* [ticks ty xs] is the column of the temporal type [ty] that stores the int64
+   ticks [xs], whatever their range. *)
+let ticks ty xs =
+  let values = Nx.P (Nx.create Nx.int64 [| Array.length xs |] xs) in
+  Result.get_ok (Column.of_layout ty (Fixed { validity = None; values }))
 
 let kinds =
   group "Kind"
     [
-      test "proves a kind equal to itself" (fun () ->
-          is_some (Kind.provably_equal Kind.bool Kind.bool);
-          is_some (Kind.provably_equal Kind.int Kind.int);
-          is_some (Kind.provably_equal Kind.float Kind.float);
-          is_some (Kind.provably_equal Kind.string Kind.string);
-          is_some (Kind.provably_equal Kind.binary Kind.binary);
-          is_some (Kind.provably_equal Kind.date Kind.date);
-          is_some (Kind.provably_equal Kind.instant Kind.instant);
-          is_some (Kind.provably_equal Kind.span Kind.span);
-          is_some
-            (Kind.provably_equal (Kind.list Kind.string) (Kind.list Kind.string));
-          is_some
-            (Kind.provably_equal (Kind.tensor Nx.float32)
-               (Kind.tensor Nx.float32));
-          is_some (Kind.provably_equal Record.kind Record.kind));
-      test "does not prove different kinds equal" (fun () ->
-          is_none (Kind.provably_equal Kind.int Kind.float);
-          is_none (Kind.provably_equal Kind.span Kind.instant);
-          is_none
-            (Kind.provably_equal (Kind.list Kind.int) (Kind.list Kind.float));
-          is_none
-            (Kind.provably_equal (Kind.tensor Nx.float32)
-               (Kind.tensor Nx.float64)));
-      test "never proves the extension kind equal, even to itself" (fun () ->
-          let k = Type.kind ext_type in
-          is_none (Kind.provably_equal k k);
-          is_none (Kind.provably_equal (Kind.list k) (Kind.list k)));
-      cases "pp"
-        ~id:(fun (_, s) -> Printf.sprintf "pp formats %s" s)
+      test "provably_equal proves a kind equal to itself, unless it holds ext"
+        (fun () ->
+          let proven (K k0 as a) =
+            List.filter_map
+              (fun (K k1 as b) ->
+                match Kind.provably_equal k0 k1 with
+                | Some _ -> Some (kind_name a, kind_name b)
+                | None -> None)
+              all_kinds
+          in
+          let free =
+            List.filter
+              (fun n -> n <> "ext" && n <> "list[ext]")
+              (List.map kind_name all_kinds)
+          in
+          equal
+            (list (pair string string))
+            (List.map (fun n -> (n, n)) free)
+            (List.concat_map proven all_kinds));
+      cases "pp formats" ~id:snd
         [
           (str Kind.pp Kind.bool, "bool");
           (str Kind.pp Kind.int, "int");
@@ -414,18 +510,46 @@ let kinds =
           (str Kind.pp Kind.binary, "binary");
           (str Kind.pp Kind.date, "date");
           (str Kind.pp Kind.instant, "instant");
+          (str Kind.pp Kind.wall, "wall");
           (str Kind.pp Kind.span, "span");
           (str Kind.pp Record.kind, "record");
           (str Kind.pp (Kind.list Kind.float), "list[float]");
           (str Kind.pp (Kind.tensor Nx.float32), "tensor[float32]");
-          (str Kind.pp (Type.kind ext_type), "ext");
+          (str Kind.pp ext_kind, "ext");
         ]
         (fun (actual, expected) -> equal string expected actual);
+      test "instant, wall and span fail to read a value outside their range"
+        (fun () ->
+          let past = [| Int64.max_int |] in
+          rejects (fun () ->
+              Column.values Kind.instant (ticks (Any (Type.instant S)) past));
+          rejects (fun () ->
+              Column.values Kind.wall (ticks (Any (Type.wall S)) past));
+          rejects (fun () ->
+              Column.values Kind.span (ticks (Any (Type.duration S)) past)));
     ]
 
 (* Records *)
 
 let ab = Record.(empty |> add Kind.int "a" (Some 1) |> add Kind.string "b" None)
+
+(* The record type of one extension field, and its cells [{m = 1.}] and [{m =
+   2.}], read from a column: no public constructor puts a value in an extension
+   field. *)
+let mass_type = Type.record [ ("m", Any ext_type) ]
+
+let masses () =
+  let stored = Column.layout (Column.v Type.float64 [| 1.; 2. |]) in
+  let m = Result.get_ok (Column.of_layout (Any ext_type) stored) in
+  let fields = [ ("m", m) ] in
+  let l = Column.Children { validity = None; length = 2; fields } in
+  let c = Result.get_ok (Column.of_layout (Any mass_type) l) in
+  match Column.values Record.kind c with
+  | [| r1; r2 |] -> (r1, r2)
+  | _ -> fail "a column of two rows reads as two records"
+
+let pp_names ppf r =
+  Format.fprintf ppf "{%s}" (String.concat ", " (Record.names r))
 
 let records =
   group "Record"
@@ -434,31 +558,6 @@ let records =
           equal (list string) [] (Record.names Record.empty));
       test "add appends a last field" (fun () ->
           equal (list string) [ "a"; "b" ] (Record.names ab));
-      test "field reads a value and a null" (fun () ->
-          equal (option int) (Some 1) (Record.field Kind.int "a" ab);
-          equal (option string) None (Record.field Kind.string "b" ab));
-      test "field reads a list field through the list kind" (fun () ->
-          let r =
-            Record.(add (Kind.list Kind.int) "l" (Some [| 1; 2 |]) empty)
-          in
-          equal
-            (option (array int))
-            (Some [| 1; 2 |])
-            (Record.field (Kind.list Kind.int) "l" r);
-          rejects (fun () -> Record.field (Kind.list Kind.float) "l" r));
-      test "field refuses a missing name" (fun () ->
-          rejects (fun () -> Record.field Kind.int "c" ab));
-      test "field refuses another kind, even on a null" (fun () ->
-          rejects (fun () -> Record.field Kind.float "a" ab);
-          rejects (fun () -> Record.field Kind.int "b" ab));
-      test "add refuses a duplicate name" (fun () ->
-          rejects (fun () -> Record.add Kind.int "a" None ab));
-      test "add refuses a name that is not UTF-8" (fun () ->
-          rejects (fun () -> Record.add Kind.int "\xff" None Record.empty));
-      test "add refuses the extension kind and lists of it" (fun () ->
-          let k = Type.kind ext_type in
-          rejects (fun () -> Record.add k "e" None Record.empty);
-          rejects (fun () -> Record.add (Kind.list k) "e" None Record.empty));
       prop "names lists the added fields in order"
         (Gen.list ~size:(Gen.int_range 0 6)
            (Gen.string_of ~size:(Gen.int_range 0 3) (Gen.char_range 'a' 'c')))
@@ -475,9 +574,43 @@ let records =
               Record.empty names
           in
           equal (list string) names (Record.names r));
+      test "field reads a value and a null" (fun () ->
+          equal (option int) (Some 1) (Record.field Kind.int "a" ab);
+          equal (option string) None (Record.field Kind.string "b" ab));
+      test "field reads a list through the list kind" (fun () ->
+          let r =
+            Record.(add (Kind.list Kind.int) "l" (Some [| 1; 2 |]) empty)
+          in
+          equal
+            (option (array int))
+            (Some [| 1; 2 |])
+            (Record.field (Kind.list Kind.int) "l" r);
+          rejects (fun () -> Record.field (Kind.list Kind.float) "l" r));
+      test "field reads a record through Record.kind" (fun () ->
+          let r = Record.(add Record.kind "r" (Some ab) empty) in
+          equal
+            (option (list string))
+            (Some [ "a"; "b" ])
+            (Option.map Record.names (Record.field Record.kind "r" r)));
+      test "field refuses a missing name" (fun () ->
+          rejects (fun () -> Record.field Kind.int "c" ab));
+      test "field refuses another kind, even on a null" (fun () ->
+          rejects (fun () -> Record.field Kind.float "a" ab);
+          rejects (fun () -> Record.field Kind.int "b" ab));
+      test "field refuses a field of an extension type" (fun () ->
+          let r1, _ = masses () in
+          rejects (fun () -> Record.field Kind.float "m" r1));
+      test "add refuses a duplicate name" (fun () ->
+          rejects (fun () -> Record.add Kind.int "a" None ab));
+      test "add refuses a name that is not UTF-8" (fun () ->
+          rejects (fun () -> Record.add Kind.int "\xff" None Record.empty));
+      test "add refuses the extension kind and lists of it" (fun () ->
+          rejects (fun () -> Record.add ext_kind "e" None Record.empty);
+          rejects (fun () ->
+              Record.add (Kind.list ext_kind) "e" None Record.empty));
     ]
 
-(* Types *)
+(* Type constructors *)
 
 let type_constructors =
   group "Type constructors"
@@ -513,20 +646,10 @@ let type_constructors =
           rejects (fun () -> Type.ext ~name:"" Type.float64);
           rejects (fun () -> Type.ext ~name:"\xff" Type.float64);
           rejects (fun () -> Type.ext ~name:"x" ext_type));
-      test "extensions are equal only with equal names, metadata and storage"
-        (fun () ->
-          let x = Type.ext ~name:"x" ~metadata:"m" Type.float64 in
-          is_false
-            (Type.equal x (Type.ext ~name:"y" ~metadata:"m" Type.float64));
-          is_false
-            (Type.equal x (Type.ext ~name:"x" ~metadata:"n" Type.float64));
-          is_false
-            (Type.equal x (Type.ext ~name:"x" ~metadata:"m" Type.float32)));
-      test "ext metadata defaults to empty" (fun () ->
-          is_true
-            (Type.equal
-               (Type.ext ~name:"x" Type.int8)
-               (Type.ext ~name:"x" ~metadata:"" Type.int8)));
+      test "ext's metadata defaults to the empty string" (fun () ->
+          equal any_w
+            (Any (Type.ext ~name:"x" ~metadata:"" Type.int8))
+            (Any (Type.ext ~name:"x" Type.int8)));
     ]
 
 let kind_of (Type.Any t) = str Kind.pp (Type.kind t)
@@ -537,8 +660,10 @@ let type_kind =
     [
       (Any Type.bool, "bool");
       (Any Type.int8, "int");
+      (Any Type.int32, "int");
       (Any Type.uint64, "int");
       (Any Type.float16, "float");
+      (Any Type.float32, "float");
       (Any Type.float64, "float");
       (Any Type.string, "string");
       (Any (Type.categorical [| "a" |]), "string");
@@ -547,6 +672,7 @@ let type_kind =
       (Any (Type.clock Type.Ms), "span");
       (Any (Type.duration Type.Ns), "span");
       (Any (Type.instant Type.Us), "instant");
+      (Any (Type.wall Type.S), "wall");
       (Any (Type.list (Type.list Type.int16)), "list[list[int]]");
       (Any (Type.record [ ("a", Any Type.bool) ]), "record");
       (Any (Type.tensor Nx.int32 [| 2 |]), "tensor[int32]");
@@ -554,7 +680,11 @@ let type_kind =
     ]
     (fun (t, expected) -> equal string expected (kind_of t))
 
+(* Values *)
+
 let float32_max = Int32.float_of_bits 0x7f7f_ffffl
+
+(* The midpoint between float32's largest value and 2^128. *)
 let float32_mid = ldexp 1. 128 -. ldexp 1. 103
 
 let int_bounds : (string * int Type.t * int * int) list =
@@ -562,123 +692,195 @@ let int_bounds : (string * int Type.t * int * int) list =
     ("int8", Type.int8, -128, 127);
     ("int16", Type.int16, -32768, 32767);
     ("int32", Type.int32, -2147483648, 2147483647);
+    ("int64", Type.int64, min_int, max_int);
     ("uint8", Type.uint8, 0, 255);
     ("uint16", Type.uint16, 0, 65535);
     ("uint32", Type.uint32, 0, 4294967295);
+    ("uint64", Type.uint64, 0, max_int);
   ]
 
-let holds_scalars =
-  group "Type.holds scalars"
+(* Each integer type's bounds and their neighbours, and [int]'s ends. *)
+let int_candidates =
+  let around (_, _, lo, hi) =
+    [ lo; hi ]
+    @ (if lo > min_int then [ lo - 1 ] else [])
+    @ if hi < max_int then [ hi + 1 ] else []
+  in
+  List.sort_uniq Int.compare (List.concat_map around int_bounds)
+
+let float_candidates =
+  [
+    65504.;
+    65519.99;
+    65520.;
+    -65520.;
+    0.1;
+    1e-30;
+    5e-324;
+    -0.;
+    Float.nan;
+    Float.infinity;
+    Float.neg_infinity;
+    float32_max;
+    Float.pred float32_mid;
+    float32_mid;
+    -.Float.max_float;
+    Float.max_float;
+  ]
+
+(* A float rounds to a finite binary16 iff its magnitude is below 65520, the
+   midpoint between 65504 and 2^16, which rounds to infinity, ties to even. *)
+let finite16 x = Float.abs x < 65520.
+
+(* OCaml rounds a double to binary32 once, to nearest, ties to even. *)
+let finite32 x = Float.is_finite (Int32.float_of_bits (Int32.bits_of_float x))
+
+(* Stamps and spans of each unit: multiples of the unit near zero and near a
+   day, a day's bounds, and anywhere. *)
+let tick_case =
+  let open Gen in
+  let* u, per =
+    of_list
+      Type.[ (S, 1_000_000_000L); (Ms, 1_000_000L); (Us, 1_000L); (Ns, 1L) ]
+  in
+  let day = 86_400_000_000_000L in
+  let multiple base lo hi =
+    map
+      (fun k -> Int64.add base (Int64.mul (Int64.of_int k) per))
+      (int_range lo hi)
+  in
+  let tick =
+    frequency
+      [
+        (2, multiple 0L (-3) 3);
+        (2, multiple day (-2) 1);
+        (1, of_list [ 0L; -1L; 1L; Int64.pred day; day ]);
+        (2, ns_range);
+      ]
+  in
+  let+ ts = list ~size:(int_range 0 8) tick in
+  (u, per, ts)
+
+let pp_tick_case ppf (_, per, ts) =
+  Format.fprintf ppf "unit of %Ldns, ticks [%s]" per
+    (String.concat "; " (List.map Int64.to_string ts))
+
+(* [labels t rs] is the labels of the records of [rs] that [t] holds. *)
+let labels t rs = List.map fst (List.filter (fun (_, r) -> Type.holds t r) rs)
+
+let holds =
+  let rt = Type.record [ ("a", Any Type.int8); ("b", Any Type.string) ] in
+  let r a b = Record.(empty |> add Kind.int "a" a |> add Kind.string "b" b) in
+  let r_float a =
+    Record.(empty |> add Kind.float "a" a |> add Kind.string "b" None)
+  in
+  group "Type.holds"
     [
-      cases "integers"
-        ~id:(fun (n, _, _, _) -> Printf.sprintf "%s holds exactly its range" n)
+      cases "an integer type holds exactly its range"
+        ~id:(fun (n, _, _, _) -> n)
         int_bounds
         (fun (_, t, lo, hi) ->
-          is_true (Type.holds t lo);
-          is_true (Type.holds t hi);
-          is_false (Type.holds t (lo - 1));
-          is_false (Type.holds t (hi + 1)));
-      test "int64 holds every int and uint64 every natural" (fun () ->
-          is_true (Type.holds Type.int64 min_int);
-          is_true (Type.holds Type.int64 max_int);
-          is_true (Type.holds Type.uint64 max_int);
-          is_true (Type.holds Type.uint64 0);
-          is_false (Type.holds Type.uint64 (-1)));
-      cases "floats"
-        ~id:(fun (n, _, v, b) ->
-          Printf.sprintf "%s %s %h" n (if b then "holds" else "does not hold") v)
-        [
-          ("float16", Type.float16, 65504., true);
-          ("float16", Type.float16, 65519.99, true);
-          ("float16", Type.float16, 65520., false);
-          ("float16", Type.float16, -65520., false);
-          ("float16", Type.float16, 0.1, true);
-          ("float16", Type.float16, Float.nan, true);
-          ("float16", Type.float16, Float.neg_infinity, true);
-          ("float32", Type.float32, float32_max, true);
-          ("float32", Type.float32, Float.pred float32_mid, true);
-          ("float32", Type.float32, float32_mid, false);
-          ("float32", Type.float32, -.Float.max_float, false);
-          ("float32", Type.float32, Float.infinity, true);
-          ("float64", Type.float64, Float.max_float, true);
-        ]
-        (fun (_, t, v, expected) -> equal bool expected (Type.holds t v));
-      test "strings must be UTF-8 and categories in the dictionary" (fun () ->
-          is_true (Type.holds Type.string "é");
-          is_false (Type.holds Type.string "\xe9");
-          let c = Type.categorical [| "AA"; "B6" |] in
-          is_true (Type.holds c "B6");
-          is_false (Type.holds c "C"));
+          equal (list int)
+            (List.filter (fun v -> lo <= v && v <= hi) int_candidates)
+            (held t int_candidates));
+      test
+        "a float type holds NaN, the infinities and what rounds to a finite \
+         value" (fun () ->
+          let check name t finite =
+            let expected =
+              List.filter
+                (fun x -> (not (Float.is_finite x)) || finite x)
+                float_candidates
+            in
+            equal ~msg:name (list float_exact) expected
+              (held t float_candidates)
+          in
+          check "float16" Type.float16 finite16;
+          check "float32" Type.float32 finite32;
+          check "float64" Type.float64 Float.is_finite);
+      test "text holds valid UTF-8, a categorical its dictionary's strings"
+        (fun () ->
+          let texts =
+            [ "é"; "\xe9"; ""; "\xc0\x80"; "\xed\xa0\x80"; "AA"; "B6"; "C" ]
+          in
+          equal (list string)
+            [ "é"; ""; "AA"; "B6"; "C" ]
+            (held Type.string texts);
+          equal (list string) [ "AA"; "B6" ]
+            (held (Type.categorical [| "AA"; "B6" |]) texts));
       test "booleans, byte strings and dates are always held" (fun () ->
-          is_true (Type.holds Type.bool false);
-          is_true (Type.holds Type.binary (Binary.of_string "\xff"));
-          is_true (Type.holds Type.date (date min_days)));
-      test "datetimes hold whole units" (fun () ->
-          let t = Type.instant Type.S in
-          is_true (Type.holds t (Option.get (Time.of_s (-5L))));
-          is_false (Type.holds t (Time.of_ns 5_000_000_001L));
-          is_true
-            (Type.holds (Type.wall Type.Ns) (Time.of_ns Int64.max_int)));
-      test "durations hold whole units of either sign" (fun () ->
-          is_true (Type.holds (Type.duration Type.Us) (Time.Span.us (-3)));
-          is_false (Type.holds (Type.duration Type.Ms) (Time.Span.us 1500)));
-      test "clocks hold whole units in one day" (fun () ->
-          let t = Type.clock Type.Ms in
-          is_true (Type.holds t (Time.Span.ns 0));
-          is_true (Type.holds t (Time.Span.of_ns 86_399_999_000_000L));
-          is_false (Type.holds t (Time.Span.days 1));
-          is_false (Type.holds t (Time.Span.ms (-1)));
-          is_false (Type.holds t (Time.Span.us 1)));
-    ]
-
-let tensor2 dt a = Nx.create dt [| Array.length a |] a
-
-let holds_structures =
-  let rt = Type.record [ ("a", Any Type.int8); ("b", Any Type.string) ] in
-  group "Type.holds structures"
-    [
-      test "lists hold when every element is held" (fun () ->
-          is_true (Type.holds (Type.list Type.uint8) [| 0; 255 |]);
-          is_true (Type.holds (Type.list Type.uint8) [||]);
-          is_false (Type.holds (Type.list Type.uint8) [| 0; 256 |]));
-      test "records hold their fields' values in order" (fun () ->
-          let r a b =
-            Record.(empty |> add Kind.int "a" a |> add Kind.string "b" b)
+          equal (list bool) [ false; true ] (held Type.bool [ false; true ]);
+          let bytes = List.map Binary.of_string [ ""; "\xff"; "\xc0\x80" ] in
+          equal (list binary_w) bytes (held Type.binary bytes);
+          let ds = [ date min_days; date max_days ] in
+          equal (list date_w) ds (held Type.date ds));
+      prop "stamps and durations hold whole units, clocks whole units in a day"
+        (Gen.with_pp pp_tick_case tick_case) (fun (u, per, ts) ->
+          let whole t = Int64.equal (Int64.rem t per) 0L in
+          let in_day t = t >= 0L && t < 86_400_000_000_000L in
+          cover "a whole unit" (List.exists whole ts);
+          cover "a tick that is not a whole unit"
+            (List.exists (fun t -> not (whole t)) ts);
+          cover "a whole unit outside the day"
+            (List.exists (fun t -> whole t && not (in_day t)) ts);
+          let stamps t =
+            List.map Time.to_ns (held t (List.map Time.of_ns ts))
           in
-          is_true (Type.holds rt (r (Some 3) (Some "x")));
-          is_true (Type.holds rt (r None None));
-          is_false (Type.holds rt (r (Some 300) None));
-          is_false (Type.holds rt (r None (Some "\xff"))));
-      test "records need the type's names in order" (fun () ->
-          let ba =
-            Record.(empty |> add Kind.string "b" None |> add Kind.int "a" None)
+          let spans t =
+            List.map Time.Span.to_ns (held t (List.map Time.Span.of_ns ts))
           in
-          is_false (Type.holds rt ba);
-          is_false (Type.holds rt Record.(add Kind.int "a" None empty)));
-      test "a non-null field must have its type's kind" (fun () ->
-          let r =
-            Record.(
-              empty |> add Kind.float "a" (Some 1.) |> add Kind.string "b" None)
+          let wholes = List.filter whole ts in
+          equal ~msg:"instant" (list int64) wholes (stamps (Type.instant u));
+          equal ~msg:"wall" (list int64) wholes (stamps (Type.wall u));
+          equal ~msg:"duration" (list int64) wholes (spans (Type.duration u));
+          equal ~msg:"clock" (list int64)
+            (List.filter in_day wholes)
+            (spans (Type.clock u)));
+      test "a list is held when every element is" (fun () ->
+          equal
+            (list (array int))
+            [ [| 0; 255 |]; [||] ]
+            (held (Type.list Type.uint8) [ [| 0; 255 |]; [||]; [| 0; 256 |] ]));
+      test "a record holds its type's names in order, each non-null field held"
+        (fun () ->
+          let candidates =
+            [
+              ({|a=3 b="x"|}, r (Some 3) (Some "x"));
+              ("a=null b=null", r None None);
+              ("a=300 b=null", r (Some 300) None);
+              ({|a=null b="\xff"|}, r None (Some "\xff"));
+              ( "b=null a=null",
+                Record.(
+                  empty |> add Kind.string "b" None |> add Kind.int "a" None) );
+              ("a=null", Record.(add Kind.int "a" None empty));
+              ("a=1.0 b=null", r_float (Some 1.));
+              ("a=null:float b=null", r_float None);
+            ]
           in
-          is_false (Type.holds rt r));
-      test "a null field is held whatever its kind" (fun () ->
-          let r =
-            Record.(
-              empty |> add Kind.float "a" None |> add Kind.string "b" None)
+          equal (list string)
+            [ {|a=3 b="x"|}; "a=null b=null"; "a=null:float b=null" ]
+            (labels rt candidates));
+      test "an extension field is held when null or by its storage value"
+        (fun () ->
+          let r1, r2 = masses () in
+          let candidates =
+            [
+              ("m=null", Record.(add Kind.float "m" None empty));
+              ("m=1.0 plain", Record.(add Kind.float "m" (Some 1.) empty));
+              ("m=1.0 stored", r1);
+              ("m=2.0 stored", r2);
+            ]
           in
-          is_true (Type.holds rt r));
-      test "a null extension field is held" (fun () ->
-          let t = Type.record [ ("m", Any ext_type) ] in
-          is_true (Type.holds t Record.(add Kind.float "m" None empty)));
-      test "a plain value never stands for an extension field" (fun () ->
-          let t = Type.record [ ("m", Any ext_type) ] in
-          let r = Record.(add Kind.float "m" (Some 1.) empty) in
-          is_false (Type.holds t r);
-          rejects (fun () -> Type.compare_value t r r));
-      test "tensors hold the type's shape" (fun () ->
-          let t = Type.tensor Nx.float32 [| 2 |] in
-          is_true (Type.holds t (tensor2 Nx.float32 [| 1.; 2. |]));
-          is_false (Type.holds t (tensor2 Nx.float32 [| 1.; 2.; 3. |])));
+          equal (list string)
+            [ "m=null"; "m=1.0 stored"; "m=2.0 stored" ]
+            (labels mass_type candidates));
+      test "a tensor is held with the type's shape" (fun () ->
+          let v n = Nx.create Nx.float32 [| n |] (Array.make n 1.) in
+          equal
+            (list (array int))
+            [ [| 2 |] ]
+            (List.map Nx.shape
+               (held (Type.tensor Nx.float32 [| 2 |]) [ v 2; v 3 ])));
     ]
 
 (* Order *)
@@ -702,10 +904,18 @@ let special_float =
             -0.;
             Float.infinity;
             Float.neg_infinity;
+            -.Float.max_float;
             1.;
             -1.;
           ] );
     ]
+
+(* The reference order of floats: NaN last, [-0.] as [0.]. *)
+let float_key x = if Float.is_nan x then (1, 0.) else (0, x +. 0.)
+let float_order a b = compare (float_key a) (float_key b)
+
+let float_type =
+  Gen.of_list ~pp:Type.pp [ Type.float16; Type.float32; Type.float64 ]
 
 let int_array = Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 2)
 
@@ -714,54 +924,35 @@ let optional g =
 
 let record_type = Type.record [ ("a", Any Type.int64); ("b", Any Type.string) ]
 
+let ab_record a b =
+  Record.(empty |> add Kind.int "a" a |> add Kind.string "b" b)
+
+(* [pp_ab] formats a record cell of [record_type]. *)
+let pp_ab ppf r =
+  let field pp ppf = function
+    | None -> Format.pp_print_string ppf "null"
+    | Some v -> pp ppf v
+  in
+  Format.fprintf ppf "{a=%a; b=%a}"
+    (field Format.pp_print_int)
+    (Record.field Kind.int "a" r)
+    (field (fun ppf -> Format.fprintf ppf "%S"))
+    (Record.field Kind.string "b" r)
+
 let record_gen =
   Gen.map
-    (fun (a, b) ->
-      Record.(empty |> add Kind.int "a" a |> add Kind.string "b" b))
+    (fun (a, b) -> ab_record a b)
     (Gen.pair
        (optional (Gen.int_range 0 2))
        (optional (Gen.of_list [ "a"; "b" ])))
-  |> Gen.with_pp (fun ppf r ->
-      Format.fprintf ppf "{a=%a; b=%a}"
-        (Format.pp_print_option
-           ~none:(fun ppf () -> Format.pp_print_string ppf "null")
-           Format.pp_print_int)
-        (Record.field Kind.int "a" r)
-        (Format.pp_print_option
-           ~none:(fun ppf () -> Format.pp_print_string ppf "null")
-           Format.pp_print_string)
-        (Record.field Kind.string "b" r))
+  |> Gen.with_pp pp_ab
 
 let record_w =
   let fields r =
     (Record.field Kind.int "a" r, Record.field Kind.string "b" r)
   in
-  Testable.make
-    ~pp:(fun ppf r ->
-      Format.pp_print_string ppf (String.concat "," (Record.names r)))
-    ~equal:(fun r0 r1 -> fields r0 = fields r1)
+  Testable.make ~pp:pp_ab ~equal:(fun r0 r1 -> fields r0 = fields r1)
   |> Testable.with_compare (Type.compare_value record_type)
-
-let tensor_type = Type.tensor Nx.float32 [| 2 |]
-
-let tensor_gen =
-  Gen.map
-    (fun (a, b) -> tensor2 Nx.float32 [| a; b |])
-    (Gen.pair
-       (Gen.of_list [ 0.; -0.; 1.; Float.nan ])
-       (Gen.of_list [ 0.; 1.; Float.nan ]))
-  |> Gen.with_pp (fun ppf t ->
-      Format.fprintf ppf "[%h; %h]" (Nx.item [ 0 ] t) (Nx.item [ 1 ] t))
-
-let tensor_w =
-  Testable.make
-    ~pp:(fun ppf t ->
-      Format.fprintf ppf "[%h; %h]" (Nx.item [ 0 ] t) (Nx.item [ 1 ] t))
-    ~equal:(fun t0 t1 ->
-      Array.for_all2 same_float (Nx.to_array t0) (Nx.to_array t1))
-  |> Testable.with_compare (Type.compare_value tensor_type)
-
-let sign c = Int.compare c 0
 
 let null_last cmp a b =
   match (a, b) with
@@ -770,148 +961,221 @@ let null_last cmp a b =
   | Some _, None -> -1
   | Some a, Some b -> cmp a b
 
+(* The reference order of [record_type]'s cells: by [a], then [b], a null after
+   every value. *)
+let record_order r0 r1 =
+  let a = Record.field Kind.int "a" and b = Record.field Kind.string "b" in
+  match null_last Int.compare (a r0) (a r1) with
+  | 0 -> null_last String.compare (b r0) (b r1)
+  | c -> c
+
+let tensor_type = Type.tensor Nx.float32 [| 2 |]
+let vector dt a = Nx.create dt [| Array.length a |] a
+
+let tensor_gen =
+  Gen.map
+    (fun (a, b) -> vector Nx.float32 [| a; b |])
+    (Gen.pair
+       (Gen.of_list [ 0.; -0.; 1.; Float.nan ])
+       (Gen.of_list [ 0.; 1.; Float.nan ]))
+  |> Gen.with_pp Nx.pp
+
+let tensor_w =
+  Testable.make ~pp:Nx.pp ~equal:(fun t0 t1 ->
+      Array.for_all2 same_float (Nx.to_array t0) (Nx.to_array t1))
+  |> Testable.with_compare (Type.compare_value tensor_type)
+
+(* [code_points s] is the code points of the UTF-8 text [s]. *)
+let code_points s =
+  let rec go i acc =
+    if i >= String.length s then List.rev acc
+    else
+      let d = String.get_utf_8_uchar s i in
+      let u = Uchar.to_int (Uchar.utf_decode_uchar d) in
+      go (i + Uchar.utf_decode_length d) (u :: acc)
+  in
+  go 0 []
+
+let utf_8_text =
+  Gen.map (String.concat "")
+    (Gen.list ~size:(Gen.int_range 0 3)
+       (Gen.of_list [ "a"; "z"; "\x7f"; "é"; "€"; "\u{FFFF}"; "😀" ]))
+
+let int_values =
+  let open Gen in
+  let* name, t, lo, hi =
+    of_list
+      ~pp:(fun ppf (n, _, _, _) -> Format.pp_print_string ppf n)
+      int_bounds
+  in
+  let+ vs =
+    list ~size:(int_range 0 6)
+      (frequency
+         [ (2, int_range lo hi); (1, of_list [ lo; lo + 1; 0; hi - 1; hi ]) ])
+  in
+  (name, t, vs)
+
+let pp_int_values ppf (name, _, vs) =
+  Format.fprintf ppf "%s [%s]" name
+    (String.concat "; " (List.map string_of_int vs))
+
+(* A dictionary in any order, and values drawn from it. *)
+let dictionary_case =
+  let open Gen in
+  let* d =
+    permutation ~pp:(fun ppf -> Format.fprintf ppf "%S") [ "a"; "b"; "é"; "" ]
+  in
+  let+ vs = list ~size:(int_range 0 6) (of_list d) in
+  (d, vs)
+
+let position d s =
+  let rec go i = function
+    | [] -> invalid_arg "position"
+    | x :: rest -> if x = s then i else go (i + 1) rest
+  in
+  go 0 d
+
 let compare_values =
   group "Type.compare_value"
     [
-      prop "floats are totally ordered, -0 equal to 0 and NaN equal to NaN"
-        (Gen.triple special_float special_float special_float)
-        (Law.order (float_w Type.float64));
-      test "NaN comes after infinity and -0 equals 0" (fun () ->
-          let c = Type.compare_value Type.float32 in
-          greater int ~than:0 (c Float.nan Float.infinity);
-          less int ~than:0 (c Float.neg_infinity (-.Float.max_float));
-          equal int 0 (c (-0.) 0.);
-          equal int 0 (c Float.nan (-.Float.nan)));
-      prop "lists order lexicographically, a prefix first"
-        (Gen.triple int_array int_array int_array)
-        (Law.order
-           (Testable.with_compare
-              (Type.compare_value (Type.list Type.int8))
-              (array int)));
-      prop "lists order as Stdlib orders lists" (Gen.pair int_array int_array)
-        (fun (a0, a1) ->
-          equal int
-            (sign
-               (List.compare Int.compare (Array.to_list a0) (Array.to_list a1)))
-            (sign (Type.compare_value (Type.list Type.int8) a0 a1)));
-      test "a proper prefix comes first" (fun () ->
-          less int ~than:0
-            (Type.compare_value (Type.list Type.int8) [| 1 |] [| 1; 0 |]);
-          greater int ~than:0
-            (Type.compare_value (Type.list Type.int8) [| 2 |] [| 1; 9 |]));
-      prop "records order by their fields, nulls last"
-        (Gen.triple record_gen record_gen record_gen)
-        (Law.order record_w);
-      prop "records order by a, then b, in the type's order, nulls last"
-        (Gen.pair record_gen record_gen) (fun (r0, r1) ->
-          let a = Record.field Kind.int "a"
-          and b = Record.field Kind.string "b" in
-          let expected =
-            match null_last Int.compare (a r0) (a r1) with
-            | 0 -> null_last String.compare (b r0) (b r1)
-            | c -> c
-          in
-          equal int (sign expected)
-            (sign (Type.compare_value record_type r0 r1)));
-      test "a null field comes after every value" (fun () ->
-          let r a =
-            Record.(empty |> add Kind.int "a" a |> add Kind.string "b" None)
-          in
-          greater int ~than:0
-            (Type.compare_value record_type (r None) (r (Some max_int)));
-          equal int 0 (Type.compare_value record_type (r None) (r None)));
-      prop "tensors order by their elements in row-major order"
-        (Gen.triple tensor_gen tensor_gen tensor_gen)
-        (Law.order tensor_w);
-      prop "tensors order as the lists of their elements, NaN last, -0 as 0"
-        (Gen.pair tensor_gen tensor_gen) (fun (t0, t1) ->
-          let key x = if Float.is_nan x then (1, 0.) else (0, x +. 0.) in
-          let elements t = List.map key (Array.to_list (Nx.to_array t)) in
-          equal int
-            (sign (compare (elements t0) (elements t1)))
-            (sign (Type.compare_value tensor_type t0 t1)));
-      test "tensors of unsigned integers order as unsigned" (fun () ->
-          let t = Type.tensor Nx.uint32 [| 1 |] in
-          let v x = Nx.create Nx.uint32 [| 1 |] [| x |] in
-          greater int ~than:0 (Type.compare_value t (v (-1l)) (v 1l)));
-      test "complex tensors order by real then imaginary part" (fun () ->
-          let t = Type.tensor Nx.complex64 [| 1 |] in
-          let v re im =
-            Nx.create Nx.complex64 [| 1 |] [| { Complex.re; im } |]
-          in
-          less int ~than:0 (Type.compare_value t (v 1. 5.) (v 2. 0.));
-          less int ~than:0 (Type.compare_value t (v 1. 0.) (v 1. Float.nan)));
-      test "categoricals order by the dictionary" (fun () ->
-          let t = Type.categorical [| "b"; "a" |] in
-          less int ~than:0 (Type.compare_value t "b" "a"));
-      test "strings and byte strings order by unsigned bytes" (fun () ->
-          less int ~than:0 (Type.compare_value Type.string "z" "é");
-          less int ~than:0
-            (Type.compare_value Type.binary (Binary.of_string "\x7f")
-               (Binary.of_string "\x80")));
+      prop "floats order from -inf to inf then NaN, -0. as 0."
+        ~examples:
+          [
+            (Type.float64, (Float.nan, Float.infinity, -.Float.nan));
+            (Type.float32, (Float.neg_infinity, -.Float.max_float, -0.));
+            (Type.float16, (-0., 0., Float.nan));
+          ]
+        (Gen.pair float_type
+           (Gen.triple special_float special_float special_float))
+        (fun (t, (a, b, c)) ->
+          Law.order (float_w t) (a, b, c);
+          equal
+            (list (float_w t))
+            (List.sort float_order [ a; b; c ])
+            (List.sort (Type.compare_value t) [ a; b; c ]));
+      prop "integers order by value" (Gen.with_pp pp_int_values int_values)
+        (fun (_, t, vs) ->
+          equal (list int) (List.sort Int.compare vs)
+            (List.sort (Type.compare_value t) vs));
       test "false comes before true" (fun () ->
-          less int ~than:0 (Type.compare_value Type.bool false true));
-      test "integers, dates, spans and instants order by value" (fun () ->
-          List.iter
-            (fun t -> less int ~than:0 (Type.compare_value t (-1) 1))
-            [
-              Type.int8;
-              Type.int16;
-              Type.int32;
-              Type.int64;
-              Type.uint8;
-              Type.uint16;
-              Type.uint32;
-              Type.uint64;
-            ];
-          less int ~than:0 (Type.compare_value Type.float16 1. Float.nan);
-          less int ~than:0 (Type.compare_value Type.date (date (-1)) (date 0));
-          List.iter
-            (fun t ->
-              less int ~than:0
-                (Type.compare_value t (Time.Span.ns (-1)) (Time.Span.ns 0)))
-            [ Type.clock Type.Ns; Type.duration Type.Ns ];
-          less int ~than:0
-            (Type.compare_value (Type.wall Type.Ns) (Time.of_ns (-1L))
-               (Time.of_ns 0L)));
-      cases "tensor dtypes"
-        ~id:(fun (n, _) -> Printf.sprintf "tensors of %s order by value" n)
-        [
-          ( "int64",
-            fun () ->
-              let v x = Nx.create Nx.int64 [| 1 |] [| x |] in
-              Type.compare_value (Type.tensor Nx.int64 [| 1 |]) (v (-1L)) (v 1L)
-          );
-          ( "uint64",
-            fun () ->
-              let v x = Nx.create Nx.uint64 [| 1 |] [| x |] in
-              -Type.compare_value
-                 (Type.tensor Nx.uint64 [| 1 |])
-                 (v (-1L)) (v 1L) );
-          ( "int8",
-            fun () ->
-              let v x = Nx.create Nx.int8 [| 1 |] [| x |] in
-              Type.compare_value (Type.tensor Nx.int8 [| 1 |]) (v (-1)) (v 1) );
-          ( "float64",
-            fun () ->
-              let v x = Nx.create Nx.float64 [| 1 |] [| x |] in
-              Type.compare_value
-                (Type.tensor Nx.float64 [| 1 |])
-                (v 1.) (v Float.nan) );
-          ( "bool",
-            fun () ->
-              let v x = Nx.create Nx.bool [| 1 |] [| x |] in
-              Type.compare_value
-                (Type.tensor Nx.bool [| 1 |])
-                (v false) (v true) );
-        ]
-        (fun (_, c) -> less int ~than:0 (c ()));
+          less (by Type.bool bool) ~than:true false);
+      prop "text orders by its code points, byte strings by their bytes"
+        (Gen.pair
+           (Gen.list ~size:(Gen.int_range 0 6) utf_8_text)
+           (Gen.list ~size:(Gen.int_range 0 6) Gen.string))
+        (fun (texts, bytes) ->
+          let by_code_points a b =
+            List.compare Int.compare (code_points a) (code_points b)
+          in
+          equal (list string)
+            (List.sort by_code_points texts)
+            (List.sort (Type.compare_value Type.string) texts);
+          let bytes = List.map Binary.of_string bytes in
+          equal (list binary_w) (List.sort compare bytes)
+            (List.sort (Type.compare_value Type.binary) bytes));
+      prop "categoricals order by their position in the dictionary"
+        dictionary_case (fun (d, vs) ->
+          let t = Type.categorical (Array.of_list d) in
+          let by_position a b = Int.compare (position d a) (position d b) in
+          equal (list string)
+            (List.stable_sort by_position vs)
+            (List.stable_sort (Type.compare_value t) vs));
+      prop "dates, spans and stamps order by value"
+        (Gen.pair
+           (Gen.list ~size:(Gen.int_range 0 6) days_gen)
+           (Gen.list ~size:(Gen.int_range 0 6) ns_range))
+        (fun (days, ns) ->
+          equal ~msg:"date" (list int)
+            (List.sort Int.compare days)
+            (List.map Time.Date.to_days
+               (List.sort (Type.compare_value Type.date) (List.map date days)));
+          let sorted t of_ns to_ns =
+            List.map to_ns
+              (List.sort (Type.compare_value t) (List.map of_ns ns))
+          in
+          let expected = List.sort Int64.compare ns in
+          equal ~msg:"duration" (list int64) expected
+            (sorted (Type.duration Ns) Time.Span.of_ns Time.Span.to_ns);
+          equal ~msg:"clock" (list int64) expected
+            (sorted (Type.clock Ns) Time.Span.of_ns Time.Span.to_ns);
+          equal ~msg:"instant" (list int64) expected
+            (sorted (Type.instant Ns) Time.of_ns Time.to_ns);
+          equal ~msg:"wall" (list int64) expected
+            (sorted (Type.wall Ns) Time.of_ns Time.to_ns));
+      prop "lists order lexicographically, a proper prefix first"
+        ~examples:
+          [ ([| 1 |], [| 1; 0 |], [||]); ([| 2 |], [| 1; 9 |], [| 2 |]) ]
+        (Gen.triple int_array int_array int_array)
+        (fun (a, b, c) ->
+          let prefix x y =
+            Array.length x < Array.length y
+            && Array.sub y 0 (Array.length x) = x
+          in
+          cover "a proper prefix"
+            (List.exists
+               (fun (x, y) -> prefix x y || prefix y x)
+               [ (a, b); (b, c); (a, c) ]);
+          let t = Type.list Type.int8 in
+          Law.order (by t (array int)) (a, b, c);
+          let lexicographic x y =
+            List.compare Int.compare (Array.to_list x) (Array.to_list y)
+          in
+          equal
+            (list (array int))
+            (List.sort lexicographic [ a; b; c ])
+            (List.sort (Type.compare_value t) [ a; b; c ]));
+      prop "records order by their fields in the type's order, a null last"
+        ~examples:
+          [
+            ( ab_record None None,
+              ab_record (Some max_int) None,
+              ab_record None None );
+          ]
+        (Gen.triple record_gen record_gen record_gen)
+        (fun (a, b, c) ->
+          Law.order record_w (a, b, c);
+          equal (list record_w)
+            (List.sort record_order [ a; b; c ])
+            (List.sort (Type.compare_value record_type) [ a; b; c ]));
+      test "an extension field orders by its storage value" (fun () ->
+          let r1, r2 = masses () in
+          less (ordered mass_type pp_names) ~than:r2 r1;
+          equal (ordered mass_type pp_names) r1 r1);
+      prop "float tensors order by their elements in row-major order"
+        (Gen.triple tensor_gen tensor_gen tensor_gen) (fun (a, b, c) ->
+          Law.order tensor_w (a, b, c);
+          let key t = List.map float_key (Array.to_list (Nx.to_array t)) in
+          equal (list tensor_w)
+            (List.sort (fun x y -> compare (key x) (key y)) [ a; b; c ])
+            (List.sort (Type.compare_value tensor_type) [ a; b; c ]));
+      test "tensors of other dtypes order by element, unsigned as unsigned"
+        (fun () ->
+          let before dt a b =
+            let w = ordered (Type.tensor dt [| 1 |]) Nx.pp in
+            less w ~than:(vector dt [| b |]) (vector dt [| a |])
+          in
+          before Nx.int8 (-1) 1;
+          before Nx.int64 (-1L) 1L;
+          before Nx.uint32 1l (-1l);
+          before Nx.uint64 1L (-1L);
+          before Nx.bool false true;
+          before Nx.float64 Float.infinity Float.nan;
+          let c re im = { Complex.re; im } in
+          before Nx.complex64 (c 1. 5.) (c 2. 0.);
+          before Nx.complex64 (c 1. 0.) (c 1. Float.nan));
+      test "a transposed view orders by its elements in row-major order"
+        (fun () ->
+          let w = ordered (Type.tensor Nx.int32 [| 2; 2 |]) Nx.pp in
+          let m a = Nx.create Nx.int32 [| 2; 2 |] a in
+          let view = Nx.transpose (m [| 1l; 2l; 3l; 4l |]) in
+          equal w (m [| 1l; 3l; 2l; 4l |]) view;
+          less w ~than:view (m [| 1l; 2l; 3l; 4l |]));
       test "a null list-of-extension field is held and orders as null"
         (fun () ->
           let t = Type.record [ ("l", Any (Type.list ext_type)) ] in
           let r = Record.(add (Kind.list Kind.float) "l" None empty) in
-          is_true (Type.holds t r);
-          equal int 0 (Type.compare_value t r r));
+          equal (list string) [ "l=null" ] (labels t [ ("l=null", r) ]);
+          equal (ordered t pp_names) r r);
       test "refuses a category outside the dictionary" (fun () ->
           rejects (fun () ->
               Type.compare_value (Type.categorical [| "a" |]) "a" "b"));
@@ -924,24 +1188,17 @@ let compare_values =
               empty |> add Kind.float "a" (Some 1.) |> add Kind.string "b" None)
           in
           rejects (fun () -> Type.compare_value record_type r r));
+      test "refuses a plain value in an extension field" (fun () ->
+          let r = Record.(add Kind.float "m" (Some 1.) empty) in
+          rejects (fun () -> Type.compare_value mass_type r r));
       test "refuses a tensor of another shape" (fun () ->
-          let v = tensor2 Nx.float32 [| 1. |] in
+          let v = vector Nx.float32 [| 1. |] in
           rejects (fun () -> Type.compare_value tensor_type v v));
     ]
 
 (* Operands *)
 
-let int_types =
-  [
-    Type.int8;
-    Type.int16;
-    Type.int32;
-    Type.int64;
-    Type.uint8;
-    Type.uint16;
-    Type.uint32;
-    Type.uint64;
-  ]
+let int_types = List.map (fun (_, t, _, _) -> t) int_bounds
 
 (* Each integer type's range, as floats: every bound is exact, or a distinct
    power of two. *)
@@ -965,12 +1222,53 @@ let reference_common ts =
   in
   List.find_opt (fun t -> List.for_all (fun u -> within u t) ts) ts
 
-let int_type_gen = Gen.of_list ~pp:Type.pp int_types
+let cat d = Type.categorical d
+
+(* Types of one kind, a list of them and a permutation of it. *)
+type meeting = Meeting : 'a Type.t list * 'a Type.t list -> meeting
+
+let meeting ts =
+  let open Gen in
+  let* l = list ~size:(int_range 0 5) (of_list ts) in
+  let+ p = permutation l in
+  Meeting (l, p)
+
+let pp_meeting ppf (Meeting (l, p)) =
+  let types =
+    Format.pp_print_list
+      ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
+      Type.pp
+  in
+  Format.fprintf ppf "[%a] and [%a]" types l types p
+
+(* Integers; text and dictionaries that begin with each other; clocks of every
+   unit and durations. *)
+let meetings =
+  Gen.with_pp pp_meeting
+    (Gen.one_of
+       [
+         meeting int_types;
+         meeting
+           [
+             Type.string;
+             cat [| "a" |];
+             cat [| "a"; "b" |];
+             cat [| "a"; "b"; "c" |];
+             cat [| "b" |];
+             cat [| "b"; "a" |];
+           ];
+         meeting
+           Type.
+             [ clock S; clock Ms; clock Us; clock Ns; duration S; duration Ns ];
+       ])
+
+let dictionary : type a. a Type.t -> string list option = function
+  | Type.Categorical d -> Some (Array.to_list (Iarray.to_array d))
+  | _ -> None
 
 let common_cases =
   let some t = Some (Type.Any t) and none = None in
   let common ts = Option.map (fun t -> Type.Any t) (Type.common ts) in
-  let cat d = Type.categorical d in
   group "Type.common"
     [
       test "nothing meets in an empty list" (fun () ->
@@ -978,18 +1276,44 @@ let common_cases =
       test "a type meets itself" (fun () ->
           equal (option any_w) (some Type.date)
             (common [ Type.date; Type.date ]));
-      test "int8 and uint8 do not meet, but meet with int16" (fun () ->
-          equal (option any_w) none (common [ Type.int8; Type.uint8 ]);
-          equal (option any_w) (some Type.int16)
-            (common [ Type.int8; Type.uint8; Type.int16 ]);
-          equal (option any_w) (some Type.int16)
-            (common [ Type.int16; Type.int8; Type.uint8 ]));
-      test "uint8 meets int16 and uint32 meets int64" (fun () ->
-          equal (option any_w) (some Type.int16)
-            (common [ Type.uint8; Type.int16 ]);
-          equal (option any_w) (some Type.int64)
-            (common [ Type.uint32; Type.int64 ]);
-          equal (option any_w) none (common [ Type.uint64; Type.int64 ]));
+      prop "integer types meet at the one whose range holds the others"
+        ~examples:
+          Type.
+            [
+              [ int8; uint8 ];
+              [ int8; uint8; int16 ];
+              [ int16; int8; uint8 ];
+              [ uint8; int16 ];
+              [ uint32; int64 ];
+              [ uint64; int64 ];
+            ]
+        (Gen.list ~size:(Gen.int_range 1 5) (Gen.of_list ~pp:Type.pp int_types))
+        (fun ts ->
+          equal (option any_w)
+            (Option.map (fun t -> Type.Any t) (reference_common ts))
+            (common ts));
+      prop "does not depend on the order of the types"
+        ~examples:
+          [
+            Meeting
+              ( [ cat [| "a"; "b" |]; cat [| "a" |] ],
+                [ cat [| "a" |]; cat [| "a"; "b" |] ] );
+          ]
+        meetings
+        (fun (Meeting (ts, p)) ->
+          let met = Type.common ts in
+          let dictionaries =
+            List.sort_uniq compare (List.filter_map dictionary ts)
+          in
+          cover "meets" (Option.is_some met);
+          cover "does not meet" (ts <> [] && Option.is_none met);
+          cover "a categorical extending another"
+            (List.length dictionaries >= 2
+            &&
+            match met with
+            | Some t -> Option.is_some (dictionary t)
+            | None -> false);
+          equal (option any_w) (common ts) (common p));
       test "floats meet at the wider" (fun () ->
           equal (option any_w) (some Type.float32)
             (common [ Type.float16; Type.float32 ]));
@@ -1037,8 +1361,8 @@ let common_cases =
             (some (Type.record []))
             (common [ Type.record []; Type.record [] ]));
       test "record fields of extension type meet when equal" (fun () ->
-          let r = Type.record [ ("m", Any ext_type) ] in
-          equal (option any_w) (some r) (common [ r; r ]));
+          equal (option any_w) (some mass_type)
+            (common [ mass_type; mass_type ]));
       test "extensions and tensors meet only when equal" (fun () ->
           equal (option any_w) (some ext_type) (common [ ext_type; ext_type ]);
           equal (option any_w) none
@@ -1048,21 +1372,6 @@ let common_cases =
                [
                  Type.tensor Nx.float32 [| 2 |]; Type.tensor Nx.float32 [| 3 |];
                ]));
-      prop "does not depend on the order of the types"
-        (Gen.bind
-           (Gen.list ~size:(Gen.int_range 0 5) int_type_gen)
-           (fun ts ->
-             Gen.map (fun p -> (ts, p)) (Gen.permutation ~pp:Type.pp ts)))
-        (fun (ts, p) ->
-          cover "meets" (Option.is_some (Type.common ts));
-          cover "does not meet" (ts <> [] && Option.is_none (Type.common ts));
-          equal (option any_w) (common ts) (common p));
-      prop "integer types meet at the one whose range holds the others"
-        (Gen.list ~size:(Gen.int_range 1 5) int_type_gen)
-        (fun ts ->
-          equal (option any_w)
-            (Option.map (fun t -> Type.Any t) (reference_common ts))
-            (common ts));
     ]
 
 let type_gen =
@@ -1108,23 +1417,29 @@ let type_equal =
         (Gen.pair type_gen type_gen)
         (Law.equivalence any_w);
       test "compares dictionaries, clocks and fields in order" (fun () ->
-          is_false
-            (Type.equal
-               (Type.categorical [| "a"; "b" |])
-               (Type.categorical [| "b"; "a" |]));
-          is_false (Type.equal (Type.instant Type.S) (Type.wall Type.S));
-          is_false
-            (Type.equal
-               (Type.record [ ("a", Any Type.int8); ("b", Any Type.int8) ])
-               (Type.record [ ("b", Any Type.int8); ("a", Any Type.int8) ])));
+          not_equal any_w
+            (Any (Type.categorical [| "a"; "b" |]))
+            (Any (Type.categorical [| "b"; "a" |]));
+          not_equal any_w (Any (Type.instant Type.S)) (Any (Type.wall Type.S));
+          not_equal any_w
+            (Any (Type.record [ ("a", Any Type.int8); ("b", Any Type.int8) ]))
+            (Any (Type.record [ ("b", Any Type.int8); ("a", Any Type.int8) ])));
       test "types of different kinds are not equal" (fun () ->
-          is_false (Type.equal Type.int8 Type.float32));
+          not_equal any_w (Any Type.int8) (Any Type.float32));
+      test "extensions are equal only with equal names, metadata and storage"
+        (fun () ->
+          let x = Type.Any (Type.ext ~name:"x" ~metadata:"m" Type.float64) in
+          not_equal any_w x
+            (Any (Type.ext ~name:"y" ~metadata:"m" Type.float64));
+          not_equal any_w x
+            (Any (Type.ext ~name:"x" ~metadata:"n" Type.float64));
+          not_equal any_w x
+            (Any (Type.ext ~name:"x" ~metadata:"m" Type.float32)));
     ]
 
 let type_pp =
   let alphabet = Array.init 26 (fun i -> String.make 1 (Char.chr (97 + i))) in
-  cases "Type.pp"
-    ~id:(fun (_, s) -> Printf.sprintf "pp formats %s" s)
+  cases "Type.pp formats" ~id:snd
     [
       (Type.Any Type.bool, "bool");
       (Any Type.int8, "int8");
@@ -1180,170 +1495,6 @@ let type_pp =
     ]
     (fun (t, expected) -> equal string expected (str pp_any t))
 
-(* Schemas *)
-
-let columns = [ ("carrier", Type.Any Type.string); ("delay", Any Type.float64) ]
-let schema_w = Testable.make ~pp:Schema.pp ~equal:Schema.equal
-
-let pp_change ppf = function
-  | Schema.Added (n, t) -> Format.fprintf ppf "+%s %a" n pp_any t
-  | Removed (n, t) -> Format.fprintf ppf "-%s %a" n pp_any t
-  | Retyped (n, t0, t1) ->
-      Format.fprintf ppf "~%s %a -> %a" n pp_any t0 pp_any t1
-
-let diff s0 s1 =
-  List.map (str pp_change) (Schema.diff (Schema.v s0) (Schema.v s1))
-
-let schemas =
-  group "Schema"
-    [
-      test "v refuses a duplicate or non-UTF-8 name" (fun () ->
-          rejects (fun () ->
-              Schema.v [ ("a", Any Type.bool); ("a", Any Type.bool) ]);
-          rejects (fun () -> Schema.v [ ("\xff", Any Type.bool) ]));
-      test "columns gives back the columns in order" (fun () ->
-          equal
-            (list (pair string any_w))
-            columns
-            (Schema.columns (Schema.v columns)));
-      test "find looks a column up by name" (fun () ->
-          let s = Schema.v columns in
-          equal (option any_w) (Some (Any Type.float64)) (Schema.find s "delay");
-          equal (option any_w) None (Schema.find s "origin"));
-      test "equal needs the same names and types" (fun () ->
-          let s cs = Schema.v cs in
-          is_false
-            (Schema.equal
-               (s [ ("a", Any Type.int8) ])
-               (s [ ("a", Any Type.int16) ]));
-          is_false
-            (Schema.equal
-               (s [ ("a", Any Type.int8) ])
-               (s [ ("b", Any Type.int8) ])));
-      test "equal needs the same order" (fun () ->
-          equal schema_w (Schema.v columns) (Schema.v columns);
-          is_false
-            (Schema.equal (Schema.v columns) (Schema.v (List.rev columns))));
-      test "diff ignores order" (fun () ->
-          equal (list string) [] (diff columns (List.rev columns)));
-      test "diff lists removed and retyped columns, then added ones" (fun () ->
-          equal (list string)
-            [
-              "-carrier string";
-              "~delay float64 -> float32";
-              "+origin string";
-              "+dest string";
-            ]
-            (diff columns
-               [
-                 ("origin", Any Type.string);
-                 ("delay", Any Type.float32);
-                 ("dest", Any Type.string);
-               ]));
-      cases "pp"
-        ~id:(fun (_, s) -> Printf.sprintf "pp formats %S" s)
-        [
-          (columns, "carrier string, delay float64");
-          ([], "");
-          ( [ ("a b", Any Type.int8); ("", Any Type.bool) ],
-            {|"a b" int8, "" bool|} );
-        ]
-        (fun (cs, expected) ->
-          equal string expected (str Schema.pp (Schema.v cs)));
-    ]
-
-(* Errors *)
-
-let message f =
-  match f () with () -> "no exception" | exception Invalid_argument m -> m
-
-let errors =
-  let ext_record = Type.record [ ("m", Any ext_type) ] in
-  group "errors"
-    [
-      test "Invalid_argument messages" (fun () ->
-          let messages =
-            List.map message
-              [
-                (fun () -> ignore (Type.categorical [| "a"; "a" |]));
-                (fun () -> ignore (Type.categorical [| "\xc3" |]));
-                (fun () ->
-                  ignore
-                    (Type.record [ ("a", Any Type.bool); ("a", Any Type.int8) ]));
-                (fun () -> ignore (Type.record [ ("\xff", Any Type.bool) ]));
-                (fun () -> ignore (Type.tensor Nx.float32 [||]));
-                (fun () -> ignore (Type.tensor Nx.float32 [| 2; -1 |]));
-                (fun () -> ignore (Type.ext ~name:"" Type.float64));
-                (fun () -> ignore (Type.ext ~name:"\xff" Type.float64));
-                (fun () -> ignore (Type.ext ~name:"a b" ext_type));
-                (fun () -> ignore (Record.add Kind.int "a" None ab));
-                (fun () ->
-                  ignore (Record.add Kind.int "\xff" None Record.empty));
-                (fun () ->
-                  ignore
-                    (Record.add
-                       (Kind.list (Type.kind ext_type))
-                       "e" None Record.empty));
-                (fun () -> ignore (Record.field Kind.int "c" ab));
-                (fun () -> ignore (Record.field Kind.float "a" ab));
-                (fun () ->
-                  ignore
-                    (Schema.v [ ("a", Any Type.bool); ("a", Any Type.bool) ]));
-                (fun () -> ignore (Schema.v [ ("\xff", Any Type.bool) ]));
-                (fun () -> ignore (Time.Span.hours max_int));
-                (fun () ->
-                  ignore
-                    (Type.compare_value (Type.categorical [| "a" |]) "a" "b"));
-                (fun () ->
-                  let r = Record.(add Kind.int "a" None empty) in
-                  ignore (Type.compare_value record_type r r));
-                (fun () ->
-                  ignore (Type.compare_value (Type.record []) ab Record.empty));
-                (fun () ->
-                  let r =
-                    Record.(
-                      empty
-                      |> add Kind.float "a" (Some 1.)
-                      |> add Kind.string "b" None)
-                  in
-                  ignore (Type.compare_value record_type r r));
-                (fun () ->
-                  let r = Record.(add Kind.float "m" (Some 1.) empty) in
-                  ignore (Type.compare_value ext_record r r));
-                (fun () ->
-                  let v = tensor2 Nx.float32 [| 1. |] in
-                  ignore (Type.compare_value tensor_type v v));
-              ]
-          in
-          expect (String.concat "\n" messages)
-          @@ __POS_OF__
-               {|
-            Type.categorical: "a" appears twice
-            Type.categorical: "\195" is not UTF-8
-            Type.record: duplicate field "a"
-            Type.record: field name "\255" is not UTF-8
-            Type.tensor: empty shape
-            Type.tensor: dimension -1 is negative
-            Type.ext: empty name
-            Type.ext: name "\255" is not UTF-8
-            Type.ext: "a b" is stored as an extension type
-            Record.add: duplicate field "a"
-            Record.add: field name "\255" is not UTF-8
-            Record.add: field "e" has the kind list[ext]
-            Record.field: no field "c"
-            Record.field: field "a" is int, not float
-            Schema.v: duplicate column "a"
-            Schema.v: column name "\255" is not UTF-8
-            Time.Span.hours: 4611686018427387903 is out of range
-            Type.compare_value: "b" is not in the dictionary
-            Type.compare_value: the record's fields are not [a, b]
-            Type.compare_value: the record's fields are not []
-            Type.compare_value: field "a" is float, not int
-            Type.compare_value: field "m" has an extension type, which no plain value holds
-            Type.compare_value: a tensor does not have the type's shape
-            |});
-    ]
-
 (* Quoted strings *)
 
 (* [by_code_point ppf s] is the quoting written one code point at a time: a
@@ -1352,7 +1503,7 @@ let errors =
 let by_code_point ppf s =
   let hex c = Format.fprintf ppf "\\x%02x" (Char.code c) in
   let rec loop i =
-    if i < String.length s then
+    if i < String.length s then (
       let d = String.get_utf_8_uchar s i in
       if not (Uchar.utf_decode_is_valid d) then (
         hex s.[i];
@@ -1363,7 +1514,7 @@ let by_code_point ppf s =
         | ('"' | '\\') as c -> Format.fprintf ppf "\\%c" c
         | c when Char.code c < 0x20 || Char.code c = 0x7f -> hex c
         | _ -> Format.pp_print_string ppf (String.sub s i n));
-        loop (i + n)
+        loop (i + n))
   in
   Format.pp_print_char ppf '"';
   loop 0;
@@ -1412,6 +1563,23 @@ let law_quoted s =
   cover "no byte to escape" (s <> "" && not (String.exists special s));
   equal string (boxed by_code_point s) (boxed Type.pp_quoted s)
 
+(* Names of letters, the bytes that make a name quoted, and UTF-8. *)
+let name_gen =
+  let piece =
+    Gen.frequency
+      [
+        (8, Gen.map (String.make 1) (Gen.char_range 'a' 'z'));
+        (1, Gen.of_list [ " "; ","; "["; "]"; "\""; "\\"; "\x01"; "\x7f" ]);
+        (1, Gen.constant "é");
+      ]
+  in
+  Gen.map (String.concat "") (Gen.list ~size:(Gen.int_range 0 6) piece)
+
+(* A name byte that leaves a name bare: no ASCII space, comma, bracket, double
+   quote, backslash or control byte. *)
+let bare c =
+  Char.code c > 0x20 && c <> '\x7f' && not (String.contains ",[]\"\\" c)
+
 let quoted =
   group "Type.pp_quoted"
     [
@@ -1422,28 +1590,195 @@ let quoted =
         law_quoted;
     ]
 
+let pp_name =
+  prop "Type.pp_name writes a name as is, or quoted when it must be"
+    ~examples:[ ""; "a b"; "é" ] name_gen (fun s ->
+      let is_bare = s <> "" && String.for_all bare s in
+      cover "as is" is_bare;
+      cover "quoted" (not is_bare);
+      let expected = if is_bare then s else str Type.pp_quoted s in
+      equal string expected (str Type.pp_name s))
+
+(* Schemas *)
+
+let columns = [ ("carrier", Type.Any Type.string); ("delay", Any Type.float64) ]
+let schema_w = Testable.make ~pp:Schema.pp ~equal:Schema.equal
+let column_names = [ "a"; "b"; "c"; ""; "é" ]
+
+let column_type =
+  Gen.of_list ~pp:pp_any Type.[ Any int8; Any int16; Any string; Any float64 ]
+
+(* Columns of distinct names, in any order. *)
+let columns_gen =
+  let open Gen in
+  let* names = subsequence column_names in
+  let* names = permutation names in
+  let+ ts = list ~size:(constant (List.length names)) column_type in
+  List.combine names ts
+
+let retyped (Type.Any t) =
+  if Type.equal t Type.int8 then Type.Any Type.int16 else Any Type.int8
+
+(* [changed cs] is [cs] with columns dropped, reordered and retyped, and new
+   columns added. *)
+let changed cs =
+  let open Gen in
+  let* kept = subsequence cs in
+  let* kept = permutation kept in
+  let* flags = list ~size:(constant (List.length kept)) bool in
+  let+ added = columns_gen in
+  List.map2 (fun (n, t) f -> if f then (n, retyped t) else (n, t)) kept flags
+  @ List.filter (fun (n, _) -> not (List.mem_assoc n kept)) added
+
+let pp_columns ppf cs = Schema.pp ppf (Schema.v cs)
+
+(* Two schemas' columns: the second the first changed, equal, or unrelated. *)
+let schema_pair =
+  let open Gen in
+  let pp ppf (a, b) =
+    Format.fprintf ppf "[%a] to [%a]" pp_columns a pp_columns b
+  in
+  with_pp pp
+    (let* cs0 = columns_gen in
+     let+ cs1 =
+       frequency [ (3, changed cs0); (1, columns_gen); (1, constant cs0) ]
+     in
+     (cs0, cs1))
+
+let same_column (n0, Type.Any t0) (n1, Type.Any t1) =
+  n0 = n1 && Type.equal t0 t1
+
+let pp_change ppf = function
+  | Schema.Added (n, t) -> Format.fprintf ppf "+%s %a" n pp_any t
+  | Removed (n, t) -> Format.fprintf ppf "-%s %a" n pp_any t
+  | Retyped (n, t0, t1) ->
+      Format.fprintf ppf "~%s %a -> %a" n pp_any t0 pp_any t1
+
+(* The changes from [cs0] to [cs1], as the interface orders them. *)
+let reference_diff cs0 cs1 =
+  let removed_or_retyped (n, (Type.Any t0 as a)) =
+    match List.assoc_opt n cs1 with
+    | None -> Some (Schema.Removed (n, a))
+    | Some (Type.Any t1 as b) ->
+        if Type.equal t0 t1 then None else Some (Retyped (n, a, b))
+  in
+  let added (n, t) =
+    if List.mem_assoc n cs0 then None else Some (Schema.Added (n, t))
+  in
+  List.filter_map removed_or_retyped cs0 @ List.filter_map added cs1
+
+let schemas =
+  group "Schema"
+    [
+      test "v refuses a duplicate or non-UTF-8 name" (fun () ->
+          rejects (fun () ->
+              Schema.v [ ("a", Any Type.bool); ("a", Any Type.bool) ]);
+          rejects (fun () -> Schema.v [ ("\xff", Any Type.bool) ]));
+      prop "columns gives back v's columns, and find looks one up by name"
+        (Gen.with_pp pp_columns columns_gen) (fun cs ->
+          let s = Schema.v cs in
+          equal (list (pair string any_w)) cs (Schema.columns s);
+          List.iter
+            (fun n ->
+              equal ~msg:n (option any_w) (List.assoc_opt n cs)
+                (Schema.find s n))
+            ("z" :: column_names));
+      prop "equal needs the same names with equal types in the same order"
+        schema_pair (fun (cs0, cs1) ->
+          let same = List.equal same_column cs0 cs1 in
+          cover "equal" same;
+          cover "not equal" (not same);
+          if same then equal schema_w (Schema.v cs0) (Schema.v cs1)
+          else not_equal schema_w (Schema.v cs0) (Schema.v cs1));
+      prop "diff lists removed and retyped columns, then added ones"
+        ~examples:
+          [
+            ( columns,
+              [
+                ("origin", Type.Any Type.string);
+                ("delay", Any Type.float32);
+                ("dest", Any Type.string);
+              ] );
+            (columns, List.rev columns);
+          ]
+        schema_pair
+        (fun (cs0, cs1) ->
+          let expected = reference_diff cs0 cs1 in
+          cover "a column removed or retyped"
+            (List.exists
+               (function Schema.Added _ -> false | _ -> true)
+               expected);
+          cover "a column added"
+            (List.exists
+               (function Schema.Added _ -> true | _ -> false)
+               expected);
+          cover "the same columns in another order"
+            (expected = [] && not (List.equal same_column cs0 cs1));
+          equal (list string)
+            (List.map (str pp_change) expected)
+            (List.map (str pp_change)
+               (Schema.diff (Schema.v cs0) (Schema.v cs1))));
+      cases "pp formats" ~id:snd
+        [
+          (columns, "carrier string, delay float64");
+          ([], "");
+          ( [ ("a b", Any Type.int8); ("", Any Type.bool) ],
+            {|"a b" int8, "" bool|} );
+        ]
+        (fun (cs, expected) ->
+          equal string expected (str Schema.pp (Schema.v cs)));
+    ]
+
+(* Messages *)
+
+let message f =
+  match f () with () -> "no exception" | exception Invalid_argument m -> m
+
+let messages =
+  test "a refusal names its function and the value at fault" (fun () ->
+      let messages =
+        List.map message
+          [
+            (fun () -> ignore (Type.categorical [| "a"; "a" |]));
+            (fun () -> ignore (Type.tensor Nx.float32 [| 2; -1 |]));
+            (fun () -> ignore (Record.field Kind.float "a" ab));
+            (fun () -> ignore (Schema.v [ ("\xff", Any Type.bool) ]));
+            (fun () -> ignore (Time.Span.hours max_int));
+            (fun () ->
+              ignore (Type.compare_value (Type.categorical [| "a" |]) "a" "b"));
+          ]
+      in
+      expect (String.concat "\n" messages)
+      @@ __POS_OF__
+           {|
+            Type.categorical: "a" appears twice
+            Type.tensor: dimension -1 is negative
+            Record.field: field "a" is int, not float
+            Schema.v: column name "\255" is not UTF-8
+            Time.Span.hours: 4611686018427387903 is out of range
+            Type.compare_value: "b" is not in the dictionary
+            |})
+
 let () =
   exit
-    (run "types"
+    (run "talon types"
        [
          binary;
-         instant_conversions;
-         instant_pp;
-         span_constructors;
-         span_pp;
-         step_pp;
+         instants;
+         spans;
          dates;
+         step_pp;
          kinds;
          records;
          type_constructors;
          type_kind;
-         holds_scalars;
-         holds_structures;
+         holds;
          compare_values;
          common_cases;
          type_equal;
          type_pp;
          quoted;
+         pp_name;
          schemas;
-         errors;
+         messages;
        ])
