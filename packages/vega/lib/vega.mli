@@ -1219,9 +1219,10 @@ val lbfgs_step :
     where the objective's gradient is [grads]. It completes the newest pair with
     [grads - st.grads], computes the direction [d] by the two-loop recursion of
     Nocedal (1980) applied to the negated gradient, with the initial inverse
-    Hessian scaled by [(s . y) / (y . y)] of the newest pair, moves to
-    [st.params + lr * d], and pushes the move as the newest pair, dropping the
-    oldest. With no pair of positive curvature, [d] is [-grads].
+    Hessian scaled by [(s . y) / (y . y)] of the newest pair of positive
+    curvature, moves to [st.params + lr * d], and pushes the move as the newest
+    pair, dropping the oldest. With no pair of positive curvature, [d] is
+    [-grads].
 
     Raises [Invalid_argument] as {!section-structures} states if [grads],
     [st.grads], [st.s] or [st.y] does not have [st.params]' skeleton. *)

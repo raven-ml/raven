@@ -951,6 +951,28 @@ let test_lbfgs_rejects_negative_curvature () =
   let st' = step st in
   check_vec ~msg:"second step is plain descent" [| 1.44 |] st'.params
 
+(* Where the newest pair has no positive curvature, the initial inverse Hessian
+   is scaled by the newest pair that has: the older pair [s = e1], [y = 1000 e1]
+   gives [1e-3], so the direction along [e2], which no accepted pair spans, is a
+   thousandth of the gradient's. With a gradient [2 e1 + 3 e2], the two-loop
+   recursion gives [r = 2e-3 e1 + 3e-3 e2]. *)
+let test_lbfgs_scales_by_an_accepted_pair () =
+  let s = Nx.create Nx.float64 [| 2; 2 |] [| 0.0; 1.0; 1.0; 0.0 |]
+  and y = Nx.create Nx.float64 [| 2; 2 |] [| 0.0; 0.0; 1000.0; 0.0 |] in
+  let st =
+    {
+      Vega.params = vec [| 0.0; 0.0 |];
+      grads = vec [| 2.0; 4.0 |];
+      s;
+      y;
+      step = Nx.scalar Nx.int32 2l;
+    }
+  in
+  let st' =
+    Vega.lbfgs_step Vec.ptree ~lr:(rate64 1.0) (vec [| 2.0; 3.0 |]) st
+  in
+  check_vec ~eps:1e-15 [| -0.002; -0.003 |] st'.params
+
 let test_lbfgs_memory_evicts () =
   (* Two slots, three steps: the newest move sits on top, the second newest
      below it, and the first is gone. *)
@@ -2246,6 +2268,8 @@ let tests =
         test "a pair without positive curvature gets no weight"
           test_lbfgs_rejects_negative_curvature;
         test "the memory evicts its oldest pair" test_lbfgs_memory_evicts;
+        test "the newest accepted pair scales the inverse Hessian"
+          test_lbfgs_scales_by_an_accepted_pair;
         test "the step carries a non-parameter leaf"
           test_lbfgs_carries_a_non_parameter_leaf;
         test "gradients of another skeleton raise"

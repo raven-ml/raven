@@ -1343,8 +1343,8 @@ let leaves () =
    recursion (Nocedal, 1980) over the pairs with [rho = 1 / (y . s)], a pair
    whose curvature is not positive (an empty slot, a rejected pair) entering
    neither loop, and the initial inverse Hessian scaled by [(s . y) / (y . y)]
-   of the newest pair. Its scalars are at the compute dtype every float leaf
-   shares, so the step traces under jit. *)
+   of the newest pair that enters. Its scalars are at the compute dtype every
+   float leaf shares, so the step traces under jit. *)
 let lbfgs_step p ~lr grads st =
   let fn = "Vega.lbfgs_step" in
   let lr = lr st.step in
@@ -1402,13 +1402,16 @@ let lbfgs_step p ~lr grads st =
       alphas.(i) <- Nx.mul rho (dot s !q);
       q := Nx.Ptree.axpy flat (Nx.neg alphas.(i)) y !q
     done;
-    let _, y0, rho0 = pairs.(0) in
-    let gamma =
-      Nx.where (Nx.greater_s rho0 0.0)
-        (Nx.recip (Nx.mul rho0 (dot y0 y0)))
-        (Nx.ones_like rho0)
-    in
-    let r = ref (Nx.Ptree.scale flat gamma !q) in
+    (* The initial scaling is [(s . y) / (y . y)] of the newest pair that
+       enters, [1] if none does: a rejected newest pair leaves the scale of the
+       curvature the older pairs measured. *)
+    let gamma = ref (Nx.ones_like alphas.(0)) in
+    for i = history - 1 downto 0 do
+      let _, y, rho = pairs.(i) in
+      gamma :=
+        Nx.where (Nx.greater_s rho 0.0) (Nx.recip (Nx.mul rho (dot y y))) !gamma
+    done;
+    let r = ref (Nx.Ptree.scale flat !gamma !q) in
     for i = history - 1 downto 0 do
       let s, y, rho = pairs.(i) in
       let beta = Nx.mul rho (dot y !r) in
