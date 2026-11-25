@@ -44,10 +44,14 @@ python3 -m http.server -d _build/default/www/site
      library has;
    - `posts N`: the latest N posts. `posts all`: every post.
    - `gpt-oss PART`: gpt-oss's figures from `docs/performance.md`, so a
-     new measurement is written once: `goal`, the goal post's rows;
-     `bars` and `runs`, the measured runs as bars and as a table; `stat`,
-     the landing page's figure; `date`, the day the runs were measured.
-     The goal post's NVIDIA figures must be the runs' cells.
+     new measurement's figures are written once; the prose around them
+     on `performance.html` stays the page's, held by its digest. `goal`,
+     the goal post's rows; `bars` and `runs`, the measured runs as bars
+     and as a table; `stat`, the landing page's figure; `baselines`, the
+     goal post's count of baselines in words; `date`, the goal post's
+     date for the NVIDIA columns. Each NVIDIA cell of the goal post must
+     give the runs' cells, a clause for decode and for prefill where both
+     runs exist.
 4. **Posts and docs are Markdown, rendered** (`gen/markdown.ml`).
    - A link to a file of the repository goes where the file is on the site,
      or to it on GitHub when the site doesn't show it, so the Markdown reads
@@ -96,8 +100,8 @@ python3 -m http.server -d _build/default/www/site
    - a tab without a tested block;
    - a missing definition;
    - an unknown slot;
-   - a gpt-oss figure missing, malformed, or differing between the goal
-     post and the runs, named by its line;
+   - a gpt-oss figure missing, malformed, given twice, or differing
+     between the goal post and the runs, named by its line;
    - a malformed source tag.
 
    The check fills every slot but `index`, which needs the API reference,
@@ -121,8 +125,7 @@ python3 -m http.server -d _build/default/www/site
 
 - `dune`: the site rule, and the `check` alias. The site rule depends on
   the files Markdown may link to, so that links can be checked; the check
-  on the same files but odoc's JSON and the static files, so that it can
-  fill the slots.
+  on what the slots and the pages' source tags read.
 - `pages/`: the hand-written pages:
   - `index.html`, `docs.html`, `blog.html`;
   - `roadmap.html`, `performance.html`, `sponsor.html`.

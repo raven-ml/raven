@@ -28,24 +28,21 @@
   (run gen/www.exe .. . site)))
 
 ;; The check: stale pages, and every slot but the index filled, so its
-;; dependencies are the site's but odoc's JSON and the static files.
+;; dependencies are what the slots and the pages' source tags read: the
+;; Markdown, the dune files that make its directories, contrib's dune
+;; projects, CHANGES.md and the excerpt's source.
 
 (rule
  (alias check)
  (deps
-  ../dune-project
   ../CHANGES.md
   (source_tree ../docs)
   (glob_files_rec ../packages/*.md)
-  (glob_files_rec ../packages/*.mli)
-  (glob_files_rec ../packages/*.csv)
   (glob_files_rec ../packages/dune)
   (glob_files_rec ../contrib/dune-project)
   (glob_files_rec ../contrib/*.md)
-  (glob_files_rec ../contrib/*.mli)
   (glob_files_rec ../contrib/dune)
   ../apps/gpt-oss/lib/gpt_oss.ml
-  (glob_files_rec ../apps/*.md)
   (source_tree pages))
  (action
   (run gen/www.exe --check .. .)))

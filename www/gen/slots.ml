@@ -18,9 +18,11 @@
      linked to its docs.
    - [gpt-oss PART]: gpt-oss's figures from docs/performance.md: [goal],
      the goal post's rows; [bars] and [runs], the measured runs as bars
-     and as a table; [stat], the landing page's figure; [date], the day
-     the runs were measured. A figure missing, malformed, or differing
-     between the goal post and the runs fails, naming its line. *)
+     and as a table; [stat], the landing page's figure; [baselines], the
+     goal post's count of baselines, in words; [date], the goal post's
+     date for the NVIDIA columns. A figure missing, malformed, given
+     twice, or differing between the goal post and the runs fails,
+     naming its line. *)
 
 open Html
 
@@ -204,7 +206,12 @@ let uses ~page libs =
    WHAT, A against B" joined by "; ", each optionally followed by ", NOTE",
    which the page doesn't show. In the NVIDIA columns each clause's A and B
    must be the runs' cells for that column, baseline and measure, so the
-   two tables can't disagree. *)
+   two tables can't disagree, and a cell whose runs exist gives one clause
+   for each measure.
+   - WHAT is one word, a measure: decode or prefill.
+   - An "ahead" or "behind" clause must agree with its figures. A "level"
+     clause is a judgement of the runs' ranges, which the Markdown doesn't
+     hold, so its verdict isn't checked against its figures. *)
 
 let perf = "docs/performance.md"
 let goal_heading = "The goal post"
@@ -212,8 +219,7 @@ let runs_heading = "gpt-oss-20b on an NVIDIA RTX 5000 Ada"
 let goal_header = [ "As fast as"; "NVIDIA, CUDA"; "NVIDIA, NV"; "AMD" ]
 let runs_header = [ ""; "Attention, head"; "Decode"; "Prefill, 512 tokens"; "First token" ]
 
-(* The sentence of the goal post that dates the NVIDIA columns, and so
-   the runs. *)
+(* The sentence of the goal post that dates its NVIDIA columns. *)
 let dated = "The NVIDIA columns are from "
 
 (* The goal post's NVIDIA columns, by their raven run; each baseline it
@@ -263,13 +269,27 @@ let date blocks =
   | Some d -> d
   | None -> Repo.fail "%s: no paragraph under %s says %S" perf goal_heading dated
 
+(* A second run of the same system and storage fails at its line. *)
+let distinct runs =
+  let key r = (List.nth r.cells 0, List.nth r.cells 1) in
+  ignore
+    (List.fold_left
+       (fun seen r ->
+         match List.assoc_opt (key r) seen with
+         | Some first -> Repo.fail "%s:%d: a second run of %s with %s, after line %d" perf r.line (fst (key r)) (snd (key r)) first
+         | None -> (key r, r.line) :: seen)
+       [] runs)
+
 let figures ~root =
   let blocks, _, goal = rows ~root ~header:goal_header goal_heading in
   let _, runs_line, runs = rows ~root ~header:runs_header runs_heading in
+  distinct runs;
   { goal; runs; runs_line; date = date blocks }
 
+let find_run f (system, head) = List.find_opt (fun r -> List.nth r.cells 0 = system && List.nth r.cells 1 = head) f.runs
+
 let run f (system, head) =
-  match List.find_opt (fun r -> List.nth r.cells 0 = system && List.nth r.cells 1 = head) f.runs with
+  match find_run f (system, head) with
   | Some r -> r
   | None -> Repo.fail "%s:%d: no run of %s with %s" perf f.runs_line system head
 
@@ -299,19 +319,28 @@ let cell ~line s =
   else if String.starts_with ~prefix:blocked s then Blocked (String.sub s (String.length blocked) (String.length s - String.length blocked))
   else Clauses (List.map (clause ~line) (split "; " s))
 
-(* Each clause of an NVIDIA column against the runs' cells. *)
+(* A cell of an NVIDIA column against the runs: one clause for each
+   measure where both runs exist, each clause's figures the runs' cells. *)
 let agree f (r : run) col c =
-  match (List.assoc_opt col columns, c) with
-  | None, _ | _, (Blocked _ | Unmeasured) -> ()
-  | Some system, Clauses cs ->
-      let name = List.nth r.cells 0 in
-      let base, head =
-        match List.assoc_opt name baselines with Some b -> b | None -> Repo.fail "%s:%d: no runs for %s" perf r.line name
-      in
+  let name = List.nth r.cells 0 in
+  match (List.assoc_opt col columns, List.assoc_opt name baselines, c) with
+  | None, _, _ | Some _, None, (Blocked _ | Unmeasured) -> ()
+  | Some _, None, Clauses _ -> Repo.fail "%s:%d: no runs for %s" perf r.line name
+  | Some system, Some (base, head), (Blocked _ | Unmeasured) -> (
+      match (find_run f (system, head), find_run f (base, head)) with
+      | Some ours, Some theirs ->
+          Repo.fail "%s:%d: no figures for %s in %s, where lines %d and %d hold its runs" perf r.line name (List.nth goal_header col)
+            ours.line theirs.line
+      | _ -> ())
+  | Some system, Some (base, head), Clauses cs ->
       let ours = run f (system, head) and theirs = run f (base, head) in
+      let whats = List.sort compare (List.map (fun c -> c.what) cs) in
+      if whats <> List.sort compare (List.map fst measures) then
+        Repo.fail "%s:%d: %s in %s gives %s, where it must give each of %s once" perf r.line name (List.nth goal_header col)
+          (String.concat ", " whats) (String.concat ", " (List.map fst measures));
       List.iter
         (fun c ->
-          let m = match List.assoc_opt c.what measures with Some m -> m | None -> Repo.fail "%s:%d: no measure %s" perf r.line c.what in
+          let m = List.assoc c.what measures in
           let o = List.nth ours.cells m and t = List.nth theirs.cells m in
           if (c.ours, c.theirs) <> (o, t) then
             Repo.fail "%s:%d: %s %s against %s, where lines %d and %d give %s against %s" perf r.line c.what c.ours c.theirs ours.line
@@ -407,6 +436,9 @@ let runs f =
   in
   String.concat "\n" (List.map tr f.runs)
 
+(* The goal post's count of baselines, its rows, in words. *)
+let baselines_word f = String.lowercase_ascii (number_word (List.length f.goal))
+
 (* The landing page's figure: raven's decode through CUDA at Q8_0 against
    llama.cpp's, and at bfloat16 against vLLM's, on the runs' machine, and
    the goal post's count of baselines. *)
@@ -418,8 +450,7 @@ let stat f =
     (decode (raven_cuda, snd llama))
     (esc runs_heading) (decode llama)
     (decode (raven_cuda, snd vllm))
-    (decode vllm)
-    (String.lowercase_ascii (number_word (List.length f.goal)))
+    (decode vllm) (baselines_word f)
 
 let gpt_oss ~root ~page part =
   let f = figures ~root in
@@ -428,8 +459,9 @@ let gpt_oss ~root ~page part =
   | "bars" -> bars f
   | "runs" -> runs f
   | "stat" -> stat f
+  | "baselines" -> baselines_word f
   | "date" -> esc f.date
-  | _ -> Repo.fail "%s: gpt-oss takes goal, bars, runs, stat or date" page
+  | _ -> Repo.fail "%s: gpt-oss takes goal, bars, runs, stat, baselines or date" page
 
 let fill ~root ~page name args =
   match (name, args) with
