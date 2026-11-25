@@ -1824,6 +1824,12 @@ let cut_by_the_page =
       stroke
         (Stroke.v ~cap:`Butt ~join:`Round ~dash:[ 3.; 1. ] 1.)
         (Path.polyline [| 0.; 10.5; 0. |] [| 0.; 1e-231; 0. |]);
+      (* A dash from 20.97, whose round cap reaches back onto the page, starts
+         within a twentieth of a pixel of 21, which is no point of its path: the
+         page of 20 walks its dashes only that far, a pixel past its edge. *)
+      stroke
+        (Stroke.v ~cap:`Round ~dash:[ 3.; 3. ] ~dash_offset:3.03 2.2)
+        (segment 0. 5. 30. 5.);
       stroke (butt ~w:0.4 [ 2.; 2. ]) (segment 0.3 0. 0.3 20.);
       stroke (butt ~w:0.4 [ 2.; 2. ]) (segment 19.7 0. 19.7 20.);
       stroke (butt ~w:0.4 [ 2.; 2. ]) (segment 0. 19.7 20. 19.7);
@@ -2119,6 +2125,21 @@ let render_group =
           area ~arc:16. ~box:(3., 10.)
             ((25. *. Float.acos 0.4) -. (2. *. Float.sqrt 21.))
             (coverage (render 40. 10. p)));
+      cases
+        "a dash within a twentieth of a pixel of a pixel into its line keeps"
+        ~id:(fun (n, _, _, _) -> n)
+        [
+          (* From 5.97 to 8.97 and from 5 to 6.03: 6 is no point of the path. *)
+          ("its start", [ 3.; 100. ], 102.03, (5.97, 8.97));
+          ("its end", [ 1.03; 100. ], 0., (5., 6.03));
+        ]
+        (fun (_, dash, dash_offset, (a, b)) ->
+          let dashed = Stroke.v ~cap:`Round ~dash ~dash_offset 2.2 in
+          same_image ~within:1
+            (render 20. 10.
+               (Picture.stroke (Stroke.v ~cap:`Round 2.2) red
+                  (segment a 5. b 5.)))
+            (render 20. 10. (Picture.stroke dashed red (segment 5. 5. 15. 5.))));
       test "a segment back across the page keeps the phase of its path"
         (fun () ->
           (* From (40.5, 5) out and back along y = 7, a butt line 1 wide with

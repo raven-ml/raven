@@ -560,8 +560,9 @@ let[@inline] skip s d ~page ~ux ~uy ~gap nx ny nl =
    along the segment from the origin [(ox, oy)], which lies [zo] from [z],
    skipping first to its start what the walk has not reached; [hi] is the end of
    the page's run, from [z]. A run the walk has gone past is left out. The piece
-   of a dash still in progress at its end stays open there, to go on in a run
-   that follows on. *)
+   of a dash still in progress at its end stays open, with no point there: what
+   walks on gives its next one, so that stripping a piece moves none of its
+   dash's ends to a run's edge. *)
 let[@inline] run s d ~ox ~oy ~zo ~l0 ~l1 ~ux ~uy ~hi =
   let cur = s.walked.(0) in
   if cur <= zo +. l1 then begin
@@ -594,7 +595,6 @@ let[@inline] run s d ~ox ~oy ~zo ~l0 ~l1 ~ux ~uy ~hi =
       end
       else begin
         d.rest <- d.rest -. (l1 -. !pos);
-        if is_dash d then push s.piece (ox +. (ux *. l1)) (oy +. (uy *. l1));
         continue := false
       end
     done
@@ -711,10 +711,13 @@ let dash_segment s d ax ay bx by =
       if Float.max lo pz < Float.min hi qz then
         run s d ~ox:zx ~oy:zy ~zo:0. ~l0:(Float.max lo pz) ~l1:(Float.min hi qz)
           ~ux ~uy ~hi;
-      if ends then
+      if ends then begin
         run s d ~ox:qx ~oy:qy ~zo:qz
           ~l0:(Float.max (-.dd) (pz -. qz))
-          ~l1:0. ~ux ~uy ~hi
+          ~l1:0. ~ux ~uy ~hi;
+        (* A dash in progress goes on through the segment's end. *)
+        if is_dash d then push s.piece bx by
+      end
       else begin
         let gap = qz -. s.walked.(0) in
         if gap > 0. then begin
