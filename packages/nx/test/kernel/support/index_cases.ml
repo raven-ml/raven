@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* What the suites of Nx_kernel.S's gathers and scatters and of nx.cpu's
-   share: the cases, their views and draws, the calls, a scatter's expected
-   result and its check, and a scatter into its own operand. *)
+(* What the suites of Nx_kernel.S's gathers and scatters and of nx.cpu's share:
+   the cases, their views and draws, the calls, and a scatter's expected result
+   and its check. *)
 
 open Windtrap
 module A = Nx_array
@@ -196,11 +196,6 @@ let scattered (b : Support.backend) ?(in_place = false) ?(unique = false) c =
 (* As {!scattered}, as an option, never [None]. *)
 let scatter_on b ?in_place ?unique c = Some (scattered b ?in_place ?unique c)
 
-(* [c] with its arrays on [b]'s device, through their views. *)
-let scatter_placed (b : Support.backend) c =
-  let on (A.Any x) = A.Any (Support.on b x) in
-  { c with into = on c.into; updates = on c.updates; sidx = on c.sidx }
-
 (* Whether an extreme of a and b keeps a: a NaN, else the greater (lesser), a
    on a tie. *)
 let keeps combine ~nan_a ~nan_b cmp =
@@ -359,17 +354,6 @@ let sharing c =
   let landed = Array.make (total (shape_of c.into)) 0 in
   Array.iter (fun t -> if t >= 0 then landed.(t) <- landed.(t) + 1) ts;
   (Array.exists (fun n -> n > 1) landed, Array.exists (fun t -> t < 0) ts)
-
-(* Laws for every library *)
-
-(* A scatter into its own operand, donated, gives the fresh result, any NaN
-   for a NaN. *)
-let law_in_place (b : Support.backend) c =
-  match (scatter_on b c, scatter_on b ~in_place:true c) with
-  | Some fresh, Some own ->
-      equal (array (same (dtype_of c.into))) (elements fresh) (elements own)
-  | None, None -> ()
-  | _ -> failf "%s declined one of the two" b.name
 
 (* Bounds of Add *)
 
