@@ -25,7 +25,30 @@ let pp_hex ppf x = Format.fprintf ppf "0x%x" x
 let hex =
   Testable.with_compare Int.compare (Testable.make ~pp:pp_hex ~equal:Int.equal)
 
-let free_base = 0x100_0000_0000
+(* The end of the main thread's stack, which Linux places at the top of the
+   process's addresses, less a random gap: from /proc/self/maps, whose lines
+   start [START-END ] in hexadecimal. *)
+let stack_end () =
+  match In_channel.with_open_bin "/proc/self/maps" In_channel.input_all with
+  | exception Sys_error _ -> None
+  | maps ->
+      String.split_on_char '\n' maps
+      |> List.find_map (fun line ->
+          if not (String.ends_with ~suffix:"[stack]" line) then None
+          else
+            match (String.index_opt line '-', String.index_opt line ' ') with
+            | Some dash, Some space when dash < space ->
+                int_of_string_opt
+                  ("0x" ^ String.sub line (dash + 1) (space - dash - 1))
+            | _ -> None)
+
+(* 1 TiB, or an eighth of the addresses where that is less, as on riscv64's Sv39
+   and arm64's 39-bit layouts, whose 256 or 512 GiB end below 1 TiB. *)
+let free_base =
+  let tib = 0x100_0000_0000 in
+  match stack_end () with
+  | Some top -> min tib (top / 8 / gib * gib)
+  | None -> tib
 
 let largest_gap lo hi live =
   let sorted = List.sort compare live in

@@ -76,8 +76,9 @@ val reserve : t -> base:int -> int -> (unit, string) result
     {!Function.alloc_dma} maps memory there. A range stays reserved while that
     process runs, and reserving it again does nothing.
 
-    [Error why] if part of the range is in use, or if [m] is reached without a
-    transport and its system is not Linux. *)
+    [Error why] if part of the range is in use or lies past the process's
+    addresses, or if [m] is reached without a transport and its system is not
+    Linux. *)
 
 (** {1:routes Routes}
 

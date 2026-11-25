@@ -31,9 +31,12 @@ val hex : int Windtrap.Testable.t
 (** [hex] is integers printed in hexadecimal and ordered as numbers. *)
 
 val free_base : int
-(** [free_base] starts a range of this process's addresses, at 1 TiB, far from
-    what the runtime maps and left to the program under AddressSanitizer and
-    ThreadSanitizer, which a test may reserve. *)
+(** [free_base] starts a range of this process's addresses, which a test may
+    reserve: 1 TiB, far from what the runtime maps and left to the program under
+    AddressSanitizer and ThreadSanitizer. Where the process has fewer than 8 TiB
+    of addresses, as under riscv64's Sv39, it is an eighth of them, below the
+    top third where Linux places position-independent programs and mappings; the
+    sanitizers' layouts there are not considered. *)
 
 val largest_gap : int -> int -> (int * int) list -> int
 (** [largest_gap lo hi live] is the length of the longest run of addresses from
