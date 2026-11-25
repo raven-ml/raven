@@ -3914,6 +3914,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_ragged.concat` refuses parts whose rows hold more than `max_int` cells,
+  naming itself, where the count wrapped and `Nx.concatenate` refused a
+  negative extent.
 - `Nx_ragged.unique` and `Nx_ragged.rank` order rows of cells with no element
   by their number of cells, where every such row compared equal, so a group
   held rows of different lengths.

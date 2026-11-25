@@ -240,6 +240,15 @@ let concat = function
                 (fun r -> [ bound (first r.offsets); bound (last r.offsets) ])
                 rs))
       in
+      (* The parts' cells, each [hi - lo], summed short of [max_int] before any
+         part is moved. *)
+      let total = ref 0 in
+      for i = 0 to List.length rs - 1 do
+        let cells = bounds.((2 * i) + 1) - bounds.(2 * i) in
+        if cells > max_int - !total then
+          err "concat" "the rows hold more than max_int cells";
+        total := !total + cells
+      done;
       let rebase (i, base, parts) r =
         let lo = bounds.(2 * i) and hi = bounds.((2 * i) + 1) in
         let o = Nx.add_s r.offsets (Int64.of_int (base - lo)) in

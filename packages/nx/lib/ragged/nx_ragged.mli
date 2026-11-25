@@ -113,8 +113,8 @@ val concat : ('v, 's, 'd) t list -> ('v, 's, 'd) t
 
     Cost: one read, of the first and last offsets of [rs].
 
-    Raises [Invalid_argument] if [rs] is empty, or if the cells of [rs] differ
-    in shape. *)
+    Raises [Invalid_argument] if [rs] is empty, if the cells of [rs] differ in
+    shape, or if the rows of [rs] hold more than [max_int] cells. *)
 
 val map :
   (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) -> ('v, 's, 'd) t -> ('w, 'r, 'd) t

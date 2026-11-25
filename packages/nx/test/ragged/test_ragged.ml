@@ -577,6 +577,16 @@ let transforming =
       cases "concat refuses what has no rows in common" ~id:fst
         [
           ("no ragged array", fun () -> Nx_ragged.concat []);
+          (* 512 rows of 2^53 cells, the most an array holds, are 2^62. *)
+          ( "rows of more than max_int cells",
+            fun () ->
+              let most = Int.shift_left 1 53 in
+              let r =
+                Nx_ragged.v
+                  ~offsets:(int64s [| 0L; Int64.of_int most |])
+                  (Nx.zeros Nx.int32 [| most; 0 |])
+              in
+              Nx_ragged.concat (List.init 512 (fun _ -> r)) );
           ( "cells of different shapes",
             fun () ->
               Nx_ragged.concat
