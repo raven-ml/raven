@@ -15,7 +15,12 @@
    - [posts N] and [posts all]: the latest N posts, or all of them.
    - [index]: the index, A to Z, of the docs and the API.
    - [uses LIB...]: the libraries a project uses, each its glyph and name,
-     linked to its docs. *)
+     linked to its docs.
+   - [gpt-oss PART]: gpt-oss's figures from docs/performance.md: [goal],
+     the goal post's rows; [bars] and [runs], the measured runs as bars
+     and as a table; [stat], the landing page's figure; [date], the day
+     the runs were measured. A figure missing, malformed, or differing
+     between the goal post and the runs fails, naming its line. *)
 
 open Html
 
@@ -193,6 +198,239 @@ let uses ~page libs =
   in
   sprintf {|<ul class="uses" aria-label="Raven libraries it uses">%s</ul>|} (concat_map lib libs)
 
+(* gpt-oss's figures, from docs/performance.md: the goal post's table, and
+   the table of runs under the measured section's heading. A cell of the
+   goal post is "blocked: REASON", "not measured", or clauses "VERDICT on
+   WHAT, A against B" joined by "; ", each optionally followed by ", NOTE",
+   which the page doesn't show. In the NVIDIA columns each clause's A and B
+   must be the runs' cells for that column, baseline and measure, so the
+   two tables can't disagree. *)
+
+let perf = "docs/performance.md"
+let goal_heading = "The goal post"
+let runs_heading = "gpt-oss-20b on an NVIDIA RTX 5000 Ada"
+let goal_header = [ "As fast as"; "NVIDIA, CUDA"; "NVIDIA, NV"; "AMD" ]
+let runs_header = [ ""; "Attention, head"; "Decode"; "Prefill, 512 tokens"; "First token" ]
+
+(* The sentence of the goal post that dates the NVIDIA columns, and so
+   the runs. *)
+let dated = "The NVIDIA columns are from "
+
+(* The goal post's NVIDIA columns, by their raven run; each baseline it
+   names, by its run and the storage raven matches it in; each measure, by
+   its column among the runs. *)
+let raven_cuda = "Raven, CUDA"
+let llama = ("llama.cpp, CUDA", "Q8_0")
+let vllm = ("vLLM", "bfloat16")
+let columns = [ (1, raven_cuda); (2, "Raven, NV") ]
+let baselines = [ ("llama.cpp", llama); ("vLLM", vllm) ]
+let measures = [ ("decode", 2); ("prefill", 3) ]
+
+type run = { line : int; cells : string list }
+type figures = { goal : run list; runs : run list; runs_line : int; date : string }
+
+(* [s] cut at each [sep]. *)
+let split sep s =
+  let n = String.length sep in
+  let rec go acc i j =
+    if j + n > String.length s then List.rev (String.sub s i (String.length s - i) :: acc)
+    else if String.sub s j n = sep then go (String.sub s i (j - i) :: acc) (j + n) (j + n)
+    else go acc i (j + 1)
+  in
+  go [] 0 0
+
+(* The rows of the first table under [heading], its header checked. *)
+let rows ~root ~header heading =
+  let blocks = Repo.under ~file:perf (root / perf) heading in
+  match Repo.table ~file:perf blocks with
+  | (line, cells) :: rows ->
+      if cells <> header then Repo.fail "%s:%d: the table's header is not | %s |" perf line (String.concat " | " header);
+      (blocks, line, List.map (fun (line, cells) -> { line; cells }) rows)
+  | [] -> Repo.fail "%s: an empty table under %s" perf heading
+
+(* The YYYY-MM-DD after [dated] in the goal post's paragraphs. *)
+let date blocks =
+  let at (line, s) =
+    match Repo.find s dated with
+    | None -> None
+    | Some i ->
+        let i = i + String.length dated in
+        let digits i n = i + n <= String.length s && String.for_all Repo.is_digit (String.sub s i n) in
+        if digits i 4 && digits (i + 5) 2 && digits (i + 8) 2 && s.[i + 4] = '-' && s.[i + 7] = '-' then Some (String.sub s i 10)
+        else Repo.fail "%s:%d: no YYYY-MM-DD after %S" perf line dated
+  in
+  match List.find_map at (Repo.paragraphs blocks) with
+  | Some d -> d
+  | None -> Repo.fail "%s: no paragraph under %s says %S" perf goal_heading dated
+
+let figures ~root =
+  let blocks, _, goal = rows ~root ~header:goal_header goal_heading in
+  let _, runs_line, runs = rows ~root ~header:runs_header runs_heading in
+  { goal; runs; runs_line; date = date blocks }
+
+let run f (system, head) =
+  match List.find_opt (fun r -> List.nth r.cells 0 = system && List.nth r.cells 1 = head) f.runs with
+  | Some r -> r
+  | None -> Repo.fail "%s:%d: no run of %s with %s" perf f.runs_line system head
+
+let number r col =
+  let s = List.nth r.cells col in
+  match float_of_string_opt (String.concat "" (String.split_on_char ',' s)) with
+  | Some x -> x
+  | None -> Repo.fail "%s:%d: %S is not a number" perf r.line s
+
+type clause = { verdict : string; what : string; ours : string; theirs : string }
+type cell = Blocked of string | Unmeasured | Clauses of clause list
+
+let clause ~line s =
+  let bad () = Repo.fail "%s:%d: %S is not VERDICT on WHAT, A against B" perf line s in
+  match split ", " s with
+  | head :: figures :: _ -> (
+      match (String.split_on_char ' ' head, split " against " figures) with
+      | [ verdict; "on"; what ], [ ours; theirs ] when List.mem verdict [ "ahead"; "level"; "behind" ] ->
+          { verdict; what; ours; theirs }
+      | _ -> bad ())
+  | _ -> bad ()
+
+let blocked = "blocked: "
+
+let cell ~line s =
+  if s = "not measured" then Unmeasured
+  else if String.starts_with ~prefix:blocked s then Blocked (String.sub s (String.length blocked) (String.length s - String.length blocked))
+  else Clauses (List.map (clause ~line) (split "; " s))
+
+(* Each clause of an NVIDIA column against the runs' cells. *)
+let agree f (r : run) col c =
+  match (List.assoc_opt col columns, c) with
+  | None, _ | _, (Blocked _ | Unmeasured) -> ()
+  | Some system, Clauses cs ->
+      let name = List.nth r.cells 0 in
+      let base, head =
+        match List.assoc_opt name baselines with Some b -> b | None -> Repo.fail "%s:%d: no runs for %s" perf r.line name
+      in
+      let ours = run f (system, head) and theirs = run f (base, head) in
+      List.iter
+        (fun c ->
+          let m = match List.assoc_opt c.what measures with Some m -> m | None -> Repo.fail "%s:%d: no measure %s" perf r.line c.what in
+          let o = List.nth ours.cells m and t = List.nth theirs.cells m in
+          if (c.ours, c.theirs) <> (o, t) then
+            Repo.fail "%s:%d: %s %s against %s, where lines %d and %d give %s against %s" perf r.line c.what c.ours c.theirs ours.line
+              theirs.line o t;
+          (* Tokens a second: ahead is more, behind less; level is a
+             judgement of the runs' ranges, so either. *)
+          let a = number ours m and b = number theirs m in
+          if (c.verdict = "ahead" && a <= b) || (c.verdict = "behind" && a >= b) then
+            Repo.fail "%s:%d: %s on %s, at %s against %s" perf r.line c.verdict c.what c.ours c.theirs)
+        cs
+
+let goal f =
+  let td (r : run) col =
+    let c = cell ~line:r.line (List.nth r.cells col) in
+    agree f r col c;
+    let dot, state, text =
+      match c with
+      | Blocked why -> ("border: 1px dashed var(--dim)", "blocked", why)
+      | Unmeasured -> ("border: 1px solid var(--dim)", "not measured", "—")
+      | Clauses cs ->
+          let text = String.concat "; " (List.map (fun c -> sprintf "%s %s against %s, %s" c.what c.ours c.theirs c.verdict) cs) in
+          if List.exists (fun c -> c.verdict = "behind") cs then ("background: var(--text-1)", "behind", text)
+          else ("background: var(--raven)", "as fast", text)
+    in
+    sprintf
+      {|<td style="text-align: left"><span class="stack" style="gap: 4px"><span class="state"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%%; flex: none; %s"></span>%s</span><span style="font-size: 14px">%s</span></span></td>|}
+      dot state (esc text)
+  in
+  let tr (r : run) =
+    sprintf {|<tr><th scope="row" class="mono" style="color: var(--text-0); font-size: 14px">%s</th>%s%s%s</tr>|}
+      (esc (List.nth r.cells 0)) (td r 1) (td r 2) (td r 3)
+  in
+  String.concat "\n" (List.map tr f.goal)
+
+(* The bars: a group per measure and baseline, each raven run named for
+   its bar and for the label that states its difference. *)
+let groups =
+  let cuda = ("raven", "raven") and nv = ("raven · NV", "NV") in
+  let q8 = snd llama and bf16 = snd vllm in
+  let by_llama = ("llama.cpp", llama) and by_vllm = ("vLLM", vllm) in
+  [
+    ("Decode, Q8_0 attention and head", 2, [ (cuda, (raven_cuda, q8)); (nv, ("Raven, NV", q8)) ], by_llama);
+    ("Decode, bfloat16", 2, [ (cuda, (raven_cuda, bf16)) ], by_vllm);
+    ("Prefill, 512 tokens, Q8_0", 3, [ (cuda, (raven_cuda, q8)) ], by_llama);
+    ("Prefill, 512 tokens, bfloat16", 3, [ (cuda, (raven_cuda, bf16)) ], by_vllm);
+  ]
+
+(* Tokens a second [a] against [b]: "equal", or [a / b]'s distance from 1
+   in percent: "within 0.1%" where one decimal rounds it to 0, an integer
+   where one decimal rounds it to 2 or more, else one decimal. *)
+let difference a b =
+  let pct = Float.abs ((a /. b) -. 1.) *. 100. in
+  let tenths = Float.round (pct *. 10.) /. 10. in
+  let way = if a > b then "faster" else "slower" in
+  if a = b then "equal"
+  else if tenths = 0. then "within 0.1%"
+  else if tenths >= 2. then sprintf "%.0f%% %s" pct way
+  else sprintf "%.1f%% %s" pct way
+
+let bars f =
+  let group (title, m, ours, (base_name, base)) =
+    let ours = List.map (fun ((who, short), key) -> (who, short, run f key)) ours and base = run f base in
+    let top = List.fold_left (fun acc (_, _, r) -> Float.max acc (number r m)) (number base m) ours in
+    let label = String.concat ", " (List.map (fun (_, short, r) -> short ^ " " ^ difference (number r m) (number base m)) ours) in
+    let bar colour (who, r) =
+      sprintf
+        {|<div class="bar"><span class="who">%s</span><span class="track"><span class="fill" style="display: block; width: %.1f%%; background: var(%s)"></span></span><span class="v">%s tok/s</span></div>|}
+        (esc who) (number r m /. top *. 100.) colour (esc (List.nth r.cells m))
+    in
+    let ours = List.map (fun (who, _, r) -> (who, r)) ours in
+    let all = String.concat ", " (List.map (fun (who, r) -> sprintf "%s %s tok/s" who (List.nth r.cells m)) (ours @ [ (base_name, base) ])) in
+    sprintf
+      {|<li aria-label="%s: %s; %s">
+<div style="display: flex; justify-content: space-between; gap: 12px"><span style="font-size: 15px; color: var(--text-0)">%s</span><span class="caption" style="color: var(--text-3); white-space: nowrap">%s</span></div>
+%s</li>|}
+      (esc title) (esc all) (esc label) (esc title) (esc label)
+      (String.concat "\n" (List.map (bar "--raven") ours @ [ bar "--ref" (base_name, base) ]))
+  in
+  String.concat "\n" (List.map group groups)
+
+(* The runs' table: "Raven, CUDA" as "raven · CUDA", raven's decode
+   highlighted. *)
+let runs f =
+  let tr (r : run) =
+    match r.cells with
+    | [ system; head; decode; prefill; first ] ->
+        let raven = String.starts_with ~prefix:"Raven, " system in
+        let system = String.concat " · " (split ", " (if raven then "r" ^ String.sub system 1 (String.length system - 1) else system)) in
+        sprintf {|<tr><th scope="row">%s</th><td>%s</td><td%s>%s</td><td>%s</td><td>%s</td></tr>|} (esc system) (esc head)
+          (if raven then {| class="hi"|} else "")
+          (esc decode) (esc prefill) (esc first)
+    | _ -> Repo.fail "%s:%d: a run is not five cells" perf r.line
+  in
+  String.concat "\n" (List.map tr f.runs)
+
+(* The landing page's figure: raven's decode through CUDA at Q8_0 against
+   llama.cpp's, and at bfloat16 against vLLM's, on the runs' machine, and
+   the goal post's count of baselines. *)
+let stat f =
+  let decode key = esc (List.nth (run f key).cells 2) in
+  sprintf
+    {|<p class="stat-big">%s tok/s</p>
+<p class="small">decoding %s through CUDA, jitted, with attention and head in Q8_0 as llama.cpp stores them, against llama.cpp's %s; at the checkpoint's bfloat16, %s against vLLM's %s. The goal post on the road to 1.0: at least as fast as %s baselines.</p>|}
+    (decode (raven_cuda, snd llama))
+    (esc runs_heading) (decode llama)
+    (decode (raven_cuda, snd vllm))
+    (decode vllm)
+    (String.lowercase_ascii (number_word (List.length f.goal)))
+
+let gpt_oss ~root ~page part =
+  let f = figures ~root in
+  match part with
+  | "goal" -> goal f
+  | "bars" -> bars f
+  | "runs" -> runs f
+  | "stat" -> stat f
+  | "date" -> esc f.date
+  | _ -> Repo.fail "%s: gpt-oss takes goal, bars, runs, stat or date" page
+
 let fill ~root ~page name args =
   match (name, args) with
   | "release", [] -> esc (Repo.release root)
@@ -206,4 +444,5 @@ let fill ~root ~page name args =
   | "posts", [ "all" ] -> posts ~root None
   | "posts", [ n ] -> (
       match int_of_string_opt n with Some n -> posts ~root (Some n) | None -> Repo.fail "%s: posts takes a number or all" page)
+  | "gpt-oss", [ part ] -> gpt_oss ~root ~page part
   | _ -> Repo.fail "%s: no slot %s %s" page name (String.concat " " args)

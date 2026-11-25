@@ -6,10 +6,13 @@ let fail fmt = Printf.ksprintf failwith fmt
 let ( / ) = Filename.concat
 let read path = In_channel.with_open_bin path In_channel.input_all
 
-let contains s sub =
+(* The first index of [sub] in [s]. *)
+let find s sub =
   let n = String.length s and m = String.length sub in
-  let rec at i = i + m <= n && (String.sub s i m = sub || at (i + 1)) in
+  let rec at i = if i + m > n then None else if String.sub s i m = sub then Some i else at (i + 1) in
   at 0
+
+let contains s sub = Option.is_some (find s sub)
 
 (* dune-project *)
 
@@ -182,6 +185,52 @@ let rec first_link is =
           first_link (inlines (Cmarkit.Inline.Emphasis.inline e))
       | _ -> None)
     is
+
+(* The blocks under the heading [title] in [path], up to the next heading,
+   each with its source location, so that a fact read from them can name
+   its line. [file] is [path] as messages name it. *)
+let under ~file path title =
+  let blocks =
+    match Cmarkit.Doc.block (Cmarkit.Doc.of_string ~locs:true ~strict:false (read path)) with
+    | Cmarkit.Block.Blocks (bs, _) -> bs
+    | b -> [ b ]
+  in
+  let rec find = function
+    | b :: rest when heading b = Some title -> take [] rest
+    | _ :: rest -> find rest
+    | [] -> fail "%s: no heading %s" file title
+  and take acc = function
+    | [] | Cmarkit.Block.Heading _ :: _ -> List.rev acc
+    | b :: rest -> take (b :: acc) rest
+  in
+  find blocks
+
+let line meta = fst (Cmarkit.Textloc.first_line (Cmarkit.Meta.textloc meta))
+
+(* The first table among [blocks]: each row but the separator as its line
+   and its cells' text, the header first. A row with another number of
+   cells than the header fails. *)
+let table ~file blocks =
+  match List.find_map (function Cmarkit.Block.Ext_table (t, _) -> Some t | _ -> None) blocks with
+  | None -> fail "%s: no table where one is expected" file
+  | Some t ->
+      let rows =
+        List.filter_map
+          (fun ((row, meta), _) ->
+            match row with `Header cs | `Data cs -> Some (line meta, List.map (fun (c, _) -> plain c) cs) | `Sep _ -> None)
+          (Cmarkit.Block.Table.rows t)
+      in
+      let cols = match rows with (_, header) :: _ -> List.length header | [] -> 0 in
+      List.iter
+        (fun (line, cs) -> if List.length cs <> cols then fail "%s:%d: %d cells where the header has %d" file line (List.length cs) cols)
+        rows;
+      rows
+
+(* The paragraphs among [blocks], each as its line and its text. *)
+let paragraphs blocks =
+  List.filter_map
+    (function Cmarkit.Block.Paragraph (p, meta) -> Some (line meta, plain (Cmarkit.Block.Paragraph.inline p)) | _ -> None)
+    blocks
 
 (* The title of a document: its first heading. *)
 let title path =

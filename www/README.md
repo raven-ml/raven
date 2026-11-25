@@ -4,7 +4,7 @@ raven-ml.dev, built by one small OCaml program.
 
 ```sh
 dune build www/site          # build; warns about stale pages
-dune build @www/check        # fails on a stale page; run before a release
+dune build @www/check        # fails on a stale page or slot; run before a release
 python3 -m http.server -d _build/default/www/site
 ```
 
@@ -43,6 +43,11 @@ python3 -m http.server -d _build/default/www/site
      is the docs landing's compact index, with the guides and examples each
      library has;
    - `posts N`: the latest N posts. `posts all`: every post.
+   - `gpt-oss PART`: gpt-oss's figures from `docs/performance.md`, so a
+     new measurement is written once: `goal`, the goal post's rows;
+     `bars` and `runs`, the measured runs as bars and as a table; `stat`,
+     the landing page's figure; `date`, the day the runs were measured.
+     The goal post's NVIDIA figures must be the runs' cells.
 4. **Posts and docs are Markdown, rendered** (`gen/markdown.ml`).
    - A link to a file of the repository goes where the file is on the site,
      or to it on GitHub when the site doesn't show it, so the Markdown reads
@@ -91,7 +96,12 @@ python3 -m http.server -d _build/default/www/site
    - a tab without a tested block;
    - a missing definition;
    - an unknown slot;
+   - a gpt-oss figure missing, malformed, or differing between the goal
+     post and the runs, named by its line;
    - a malformed source tag.
+
+   The check fills every slot but `index`, which needs the API reference,
+   so a slot that can't be filled fails it too.
 
 ## What a change keeps
 
@@ -110,7 +120,9 @@ python3 -m http.server -d _build/default/www/site
 ## Files
 
 - `dune`: the site rule, and the `check` alias. The site rule depends on
-  the files Markdown may link to, so that links can be checked.
+  the files Markdown may link to, so that links can be checked; the check
+  on the same files but odoc's JSON and the static files, so that it can
+  fill the slots.
 - `pages/`: the hand-written pages:
   - `index.html`, `docs.html`, `blog.html`;
   - `roadmap.html`, `performance.html`, `sponsor.html`.

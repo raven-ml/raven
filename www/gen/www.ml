@@ -4,7 +4,9 @@
    It warns about pages whose sources changed since they were written,
    and fails on a broken link.
 
-   www --check ROOT SITE fails if any page is stale; releases run it. *)
+   www --check ROOT SITE fails if any page is stale or a slot can't be
+   filled; releases run it. It fills every slot but the index, which reads
+   the API reference that only the site rule builds. *)
 
 let ( / ) = Filename.concat
 
@@ -145,7 +147,10 @@ let () =
   try
     match Sys.argv with
     | [| _; "--check"; root; site |] -> (
-        match stale_messages ~root (pages site) with
+        let pages = pages site in
+        let fill ~page name args = if name = "index" then "" else Slots.fill ~root ~page name args in
+        List.iter (fun (_, page) -> ignore (Page.fill page fill)) pages;
+        match stale_messages ~root pages with
         | [] -> ()
         | ms ->
             List.iter (fun m -> prerr_endline ("www: " ^ m)) ms;
