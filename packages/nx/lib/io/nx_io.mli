@@ -812,7 +812,8 @@ val load_image : string -> Nx.host Nx.uint8_t
     file's bit depth, and 255 elsewhere. A grey JPEG file loads with one
     channel, and any other with three, CMYK and YCCK converted. Bytes after the
     image's end, a PNG file's [IEND] chunk or a JPEG file's EOI marker, are
-    ignored.
+    ignored, as are bytes after the zlib stream of a PNG file's image data,
+    which PNG-3 tells decoders to ignore.
 
     Raises [Failure] as {!section-errors} states, and if the file is neither a
     PNG nor a JPEG stream, or if a checksum does not match. *)
@@ -870,8 +871,8 @@ val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
     {- Compression (259) 1 (none), 5 (LZW, as {!Lz.Lzw} decodes it), or 8
        or its obsolete code 32946 (Deflate, a zlib stream a chunk);}
     {- Predictor (317) 1 (none), 2 (horizontal differencing) on samples of
-       8, 16 or 32 bits or, for float samples, 3 (floating point), and 1
-       with Compression 1;}
+       8, 16, 32 or 64 bits or, for float samples, 3 (floating point), and
+       1 with Compression 1;}
     {- BitsPerSample (258) and SampleFormat (339), the same for every
        sample: 1 to 32 bits but 24 unsigned (SampleFormat 1), read as the
        narrowest of [uint8], [uint16] and [uint32] that holds them; 16 or
@@ -885,6 +886,14 @@ val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
        RowsPerStrip (278), or tiles, with TileWidth (322), TileLength (323),
        TileOffsets (324) and TileByteCounts (325), each chunk of a byte or
        more.}}
+    Each of these tags may be of BYTE, SHORT or LONG, as TIFF 6.0 tells
+    readers to accept for an unsigned integer field, or LONG8, and
+    BitsPerSample and SampleFormat may hold one value for every sample. A
+    missing tag takes the default TIFF 6.0 states: 1 for SamplesPerPixel,
+    BitsPerSample, SampleFormat, Compression, Predictor, PlanarConfiguration
+    and FillOrder, and the whole raster for RowsPerStrip. ImageWidth,
+    ImageLength, TileWidth, TileLength and the chunks' offsets and counts
+    have none. Photometric may be missing, and is read only to refuse 6.
     Any other value of these tags is refused, naming the tag. 24-bit
     unsigned samples are refused because TIFF 6.0 stores them as bytes,
     most significant first, while libtiff swaps them as integers in the
@@ -922,8 +931,9 @@ module Tiff : sig
   type value =
     | Byte of int array  (** BYTE (1): unsigned 8-bit integers. *)
     | Ascii of string
-        (** ASCII (2): the field's bytes without its last NUL. A field of
-            several strings keeps the NULs between them. *)
+        (** ASCII (2): the field's bytes without its last NUL, or all of
+            them where the field ends in none. A field of several strings
+            keeps the NULs between them. *)
     | Short of int array  (** SHORT (3): unsigned 16-bit integers. *)
     | Long of int array  (** LONG (4): unsigned 32-bit integers. *)
     | Rational of (int * int) array
@@ -965,7 +975,7 @@ module Tiff : sig
       raster, in memory of its own.
 
       Raises [Failure] as {!section-errors} states, naming the tag, if a
-      tag the section lists is missing, of another type, or of a value or
+      tag without a default is missing, of another type, or of a value or
       count the section does not read, or if a chunk lies past the file's
       end, has too few bytes or does not decode to its rows, as in
       ["l.tif: Compression (259) 5: tile 3 at byte 1024: malformed at

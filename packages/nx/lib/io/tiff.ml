@@ -450,8 +450,8 @@ let check_values t ~spp ~bits ~format ~codec =
   | 2 when packed bits ->
       refuse predictor_tag 2
         (Printf.sprintf
-           "on samples of %d bits; read is 1 for samples not of 8, 16 or 32 \
-            bits"
+           "on samples of %d bits; read is 1 for samples not of 8, 16, 32 or \
+            64 bits"
            bits)
   | 3 when format <> 3 -> refuse predictor_tag predictor "on integer samples"
   | 2 | 3 -> ()
