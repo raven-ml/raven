@@ -2056,7 +2056,7 @@ val of_tiktoken :
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a tokenizer for inspection. Shows algorithm type, vocabulary
-    size, and configured pipeline stages. *)
+    size ({!vocab_size}), and configured pipeline stages. *)
 
 (**/**)
 

@@ -839,6 +839,15 @@ let test_pp () =
     <brot Chars vocab=256 normalizer=no pre=no post=no decoder=yes>
     |}
 
+(* [vocab_size] counts the added tokens. *)
+let test_pp_vocab_size () =
+  let t =
+    word_level ~vocab:[ ("a", 0) ] ~added_tokens:[ added_token "<x>" ] ()
+  in
+  equal string
+    "<brot WordLevel vocab=2 normalizer=no pre=yes post=no decoder=no>"
+    (Format.asprintf "%a" pp t)
+
 let () =
   exit
     (run "HuggingFace compatibility"
@@ -928,5 +937,6 @@ let () =
                "shows the model type, its vocabulary size and which stages it \
                 has"
                test_pp;
+             test "shows vocab_size, added tokens included" test_pp_vocab_size;
            ];
        ])

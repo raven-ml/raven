@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.pp` shows `vocab_size`, added tokens included, where it showed the
+  model's vocabulary alone.
 - `Brot.encode` and the other encoders take a `pair` on a tokenizer without a
   post-processor, as Hugging Face does: the pair's tokens follow the text's,
   with type ID 1. They raised `Invalid_argument`.

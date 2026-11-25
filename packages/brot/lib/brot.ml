@@ -2638,10 +2638,8 @@ let pp ppf t =
   let yes_no = function Some _ -> "yes" | None -> "no" in
   Format.fprintf ppf
     "@[<1><brot %s@ vocab=%d@ normalizer=%s@ pre=%s@ post=%s@ decoder=%s>@]"
-    (alg_name t.algorithm)
-    (alg_vocab_size t.algorithm)
-    (yes_no t.normalizer) (yes_no t.pre_tokenizer) (yes_no t.post_processor)
-    (yes_no t.decoder)
+    (alg_name t.algorithm) (vocab_size t) (yes_no t.normalizer)
+    (yes_no t.pre_tokenizer) (yes_no t.post_processor) (yes_no t.decoder)
 
 (* Testing *)
 
