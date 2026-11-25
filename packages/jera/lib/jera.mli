@@ -1879,18 +1879,18 @@ module Ode : sig
       derivative of order [Σ_j k_j] can jump, or of order [1 + Σ_j k_j] when
       [y0 = history at.(0)]. The order of a delay solve is [min(p, q + 1)], [q]
       its extension's order (Bellen and Zennaro, 2003). {b Error.} As
-      {!sample}'s. A lag that is not positive, or the largest lag reaching back
-      past the last [pieces] accepted steps, ends the lane [Stalled], and its
-      report names the count that would hold it. Times of [at] that do not
-      increase end the lane [Stalled] too. {b Stability.} As {!solve}'s.
-      {b Cost.} Each attempt costs one evaluation more than a solve's, its
-      first stage, since the field may jump where one step ends and the next
-      starts. Each stage reads [lags] delayed states, each a binary search of
-      the [pieces] pieces and a series of the extension's degree; the carry
-      holds [pieces] pieces, so a compiled reverse keeps [budget × pieces].
-      {b Derivative.} The answer reads its own tracked pieces, so the derivative
-      reaches the delayed states, [history], the lags and every tracked value
-      [f] reads.
+      {!sample}'s. A lag that is not finite and positive, or the largest lag
+      reaching back past the last [pieces] accepted steps, ends the lane
+      [Stalled], and its report names the count that would hold it. Times of
+      [at] that do not increase end the lane [Stalled] too. {b Stability.} As
+      {!solve}'s. {b Cost.} Each attempt costs one evaluation more than a
+      solve's, its first stage, since the field may jump where one step ends and
+      the next starts. Each stage reads [lags] delayed states, each a binary
+      search of the [pieces] pieces and a series of the extension's degree; the
+      carry holds [pieces] pieces, so a compiled reverse keeps
+      [budget × pieces]. {b Derivative.} The answer reads its own tracked
+      pieces, so the derivative reaches the delayed states, [history], the lags
+      and every tracked value [f] reads.
 
       Raises [Invalid_argument] if [budget < 1], if [pieces < 1], if [at] is not
       a non-empty 1-D tensor, if [lags] is not a non-empty 1-D tensor, if
