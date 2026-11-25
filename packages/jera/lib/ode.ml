@@ -618,13 +618,6 @@ let safety = 0.9
 let shrink = 0.2
 let grow = 10.
 
-(* [true] when every element of every leaf of [v] is finite. *)
-let finite y at v =
-  Nx.Ptree.fold y
-    (fun _ x acc -> Nx.logical_and acc (Nx.all (Nx.isfinite x)))
-    v
-    (Nx.scalar_at at Nx.bool true)
-
 (* What a search carries besides its state: the history a delay reads, or the
    signs an event watches. [start t v] is the memory at the first time; [field
    m] the field the steps see; [first m], if any, the field a step's first stage
@@ -938,11 +931,13 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
             emb.e;
           !acc
     in
-    (* A failed stage solve rejects the attempt. *)
+    (* A failed stage solve rejects the attempt. A non-finite stage makes the
+       estimate's norm non-finite, which rejects it too. *)
+    let norm = error_norm y tol (Nx.beside at) dtype e s.v v' in
     let r =
       Nx.where stepped.failed
         (Nx.full_at (Nx.beside at) dtype [||] Float.infinity)
-        (error_norm y tol (Nx.beside at) dtype e s.v v')
+        norm
     in
     let k' = ks.(stages - 1) in
     let running = Elementwise.searching s.status in
@@ -1016,16 +1011,10 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     (* A step below the time's resolution ends the lane, [Not_finite] when the
        last rejected attempt had a non-finite stage: the steps shrank to stay
        where the field is finite. *)
-    let stages_finite =
-      Array.fold_left
-        (fun acc k -> Nx.logical_and acc (finite y (Nx.beside at) k))
-        (finite y (Nx.beside at) stepped.next)
-        ks
-    in
     let unfinite =
       Nx.where
         (Nx.logical_and stepping (Nx.logical_not ok))
-        (Nx.logical_not stages_finite)
+        (Nx.logical_not (Nx.isfinite norm))
         s.unfinite
     in
     let stalled = Nx.logical_and stepping (Nx.equal t_end t) in
