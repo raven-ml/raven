@@ -19,10 +19,10 @@
         weights
     ]}
 
-    Downloading requires [curl] on the [PATH], which runs without reading the
-    user's curl configuration files. Fetched files are cached under
-    {!cache_path} and served from the cache on subsequent calls, so only the
-    first access of a given file touches the network. *)
+    Downloading requires [curl] on the [PATH], 7.55 or later to send a token,
+    and curl runs without reading the user's curl configuration files. Fetched
+    files are cached under {!cache_path} and served from the cache on subsequent
+    calls, so only the first access of a given file touches the network. *)
 
 (** {1:fetching Fetching files} *)
 
@@ -54,8 +54,9 @@ val download_file :
       to ["main"].
 
     Raises [Invalid_argument] if the token it would send holds a CR, an LF or a
-    NUL, which would end its header, and [Failure] if the download fails or if
-    [offline] is [true] and the file is not cached. *)
+    NUL, which would end its header, or is longer than 1001 bytes, and [Failure]
+    if the download fails or if [offline] is [true] and the file is not cached.
+*)
 
 val download_url :
   ?cache_dir:string -> ?offline:bool -> sha256:string -> string -> string
@@ -95,7 +96,8 @@ val load_config :
 (** [load_config repo_id] is the parsed [config.json] of [repo_id]. Optional
     arguments are those of {!download_file}.
 
-    Raises [Failure] on download or JSON parse errors. *)
+    Raises [Invalid_argument] as {!download_file}, and [Failure] on download or
+    JSON parse errors. *)
 
 val load_safetensors :
   ?token:string ->
@@ -113,9 +115,10 @@ val load_safetensors :
     the cached files (see {!Nx_io.load_safetensors}). Optional arguments are
     those of {!download_file}.
 
-    Raises [Failure] if the repository has neither an index nor a
-    [model.safetensors] file, if the index names a tensor twice or a tensor its
-    shard lacks, or on download or parse errors. *)
+    Raises [Invalid_argument] as {!download_file}, and [Failure] if the
+    repository has neither an index nor a [model.safetensors] file, if the index
+    names a tensor twice or a tensor its shard lacks, or on download or parse
+    errors. *)
 
 (** {1:cache The cache} *)
 

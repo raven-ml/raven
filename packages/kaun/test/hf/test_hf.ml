@@ -274,6 +274,17 @@ let sends_token (_, (token, hf_token), header) =
     (list string)
     (List.for_all (fun a -> not (holds ~sub:secret a)))
     args;
+  (match header with
+  | Some _ ->
+      satisfies ~claim:"holds the adjacent arguments -H @-" (list string)
+        (let rec adjacent = function
+           | "-H" :: "@-" :: _ -> true
+           | _ :: rest -> adjacent rest
+           | [] -> false
+         in
+         adjacent)
+        args
+  | None -> ());
   equal ~msg:"curl's standard input" (option string)
     (Option.map (fun h -> h ^ "\n") header)
     (given log)
@@ -281,12 +292,13 @@ let sends_token (_, (token, hf_token), header) =
 (* A line break in a token would end its header and start another; a NUL would
    end it. The token is refused before curl runs, and the message does not print
    it. *)
-let refuses_token (_, token) =
+let refuses_token (_, (token, hf_token)) =
   let log = curl_stand_in () in
+  setenv "HF_TOKEN" hf_token;
   raises_match
     (function Invalid_argument m -> not (holds ~sub:"s3cret" m) | _ -> false)
     (fun () ->
-      Hf.download_file ~token ~cache_dir:(temp_dir ()) ~file:"f.json"
+      Hf.download_file ?token ~cache_dir:(temp_dir ()) ~file:"f.json"
         "acme/tiny");
   curl_never_ran log
 
@@ -569,13 +581,18 @@ let () =
              cases "sends the token, else HF_TOKEN, as a bearer token"
                ~id:(fun (id, _, _) -> id)
                tokens sends_token;
-             cases "raises on a token holding a CR, an LF or a NUL" ~id:fst
+             cases
+               "raises on a token holding a CR, an LF or a NUL, or longer than \
+                1001 bytes"
+               ~id:fst
                [
-                 ("a trailing LF", "s3cret\n");
-                 ("a trailing CRLF", "s3cret\r\n");
-                 ("an LF inside", "s3c\nret");
-                 ("a CR inside", "s3c\rret");
-                 ("a NUL", "s3c\000ret");
+                 ("a trailing LF", (Some "s3cret\n", None));
+                 ("a trailing CRLF", (Some "s3cret\r\n", None));
+                 ("an LF inside", (Some "s3c\nret", None));
+                 ("a CR inside", (Some "s3c\rret", None));
+                 ("a NUL", (Some "s3c\000ret", None));
+                 ("HF_TOKEN with a trailing CRLF", (None, Some "s3cret\r\n"));
+                 ("1002 bytes", (Some ("s3cret" ^ String.make 996 'a'), None));
                ]
                refuses_token;
              test "fetches the revision" fetches_revision;
