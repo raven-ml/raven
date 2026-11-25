@@ -437,13 +437,16 @@ let filter =
       ("sweep failed", [ "eager-hawk" ]);
       ("mlp crashed", [ "mlp-base" ]);
       ("20261031", [ "mlp-wide"; "mlp-base" ]);
+      ("lr<0.002", [ "tidy-otter"; "amber-fox"; "brisk-wren" ]);
+      ( "lr>2e-3",
+        [ "calm-lynx"; "dusty-mole"; "eager-hawk"; "mlp-wide"; "mlp-base" ] );
       ("nothing", []);
     ]
     (fun (f, expected) ->
       if List.mem "mlp-base" expected then needs_crashed ();
       let store = Lazy.force filter_store in
       let screen =
-        show ~cols:160 ~rows:48 store Munin_tui.Runs
+        show ~cols:100 ~rows:30 store Munin_tui.Runs
           [ char '/'; Text f; Key Enter ]
       in
       equal (list string) expected (List.map fst (shown screen)))
