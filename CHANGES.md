@@ -5615,6 +5615,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- **Breaking:** `train_unigram` is removed. It ran no EM training: it kept the
+  most frequent whole words, so its model covered no word it had not seen.
+  Train a Unigram model with Hugging Face's tokenizers and load it with
+  `from_file`.
 - A model other than BPE behind a byte-level pre-tokenizer places each token
   at its own bytes, as Hugging Face does: WordPiece's `Ġab` and `##b` in "abb"
   span (0, 2) and (2, 3), where both spanned the whole word.
@@ -5655,9 +5659,6 @@ its lock and from samples the dashboard saw arrive.
 - A trainer's `~init` carries its added tokens with their flags, and its
   `bos_token`, `eos_token`, `pad_token` and `unk_token` where the call gives
   none. Every token came back special, and the roles were dropped.
-- `train_unigram` scores each piece by the log of its frequency, as `unigram`
-  reads scores. It wrote the frequency itself, so a model preferred more
-  pieces: `"ab"` trained whole encoded as `a`, `b`.
 - `Post_processor.template` and `of_json` keep the last of several special
   tokens of the same text, as tokenizers does. `process` used the first,
   `added_tokens` counted the last, and `to_json` wrote both.
@@ -5941,8 +5942,7 @@ its lock and from samples the dashboard saw arrive.
   takes a list, replacing `concat_list`; `save_model_files` is
   `?prefix -> t -> folder:string -> string list`, dropping its `unit`.
 - **Breaking:** Remove the trainer options that did nothing: `?show_progress`
-  on all four trainers, and `?shrinking_factor`, `?max_piece_length` and
-  `?n_sub_iterations` on `train_unigram`.
+  on every trainer.
 - `Encoding.create` now validates that its seven arrays share one length and
   raises `Invalid_argument`, instead of crashing later on mismatched arrays.
 - Add `Encoding.pp`, formatting an encoding as a table of tokens, ids,
@@ -6115,7 +6115,7 @@ its lock and from samples the dashboard saw arrive.
   `~add_special_tokens:false`, dropping only the special pieces, so the order
   and type IDs a pair template assigns to `$A` and `$B` are honoured. Building
   the processed encoding is 8× faster.
-- `train_bpe`, `train_wordpiece`, `train_wordlevel` and `train_unigram` count
+- `train_bpe`, `train_wordpiece` and `train_wordlevel` count
   the pre-tokens their own pipeline produces: every text goes through
   `?normalizer` then `?pre`, and each piece is one word, as in HuggingFace.
   Training used to split on spaces whatever the pipeline was, so a byte-level
@@ -6137,8 +6137,7 @@ its lock and from samples the dashboard saw arrive.
 - The `train_*` documentation now matches the code: `init` carries added and
   special tokens but never the model, `show_progress` displays nothing,
   `max_token_length` counts characters and holds a merge back once the joined
-  run reaches it, and `train_unigram` states that its EM training is not
-  implemented.
+  run reaches it.
 - `save_pretrained` writes a post-processor HuggingFace can read. The
   `ByteLevel` post-processor was missing `add_prefix_space`, which HuggingFace
   requires alongside `trim_offsets`, so a saved GPT-2 tokenizer failed to load

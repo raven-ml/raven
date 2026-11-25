@@ -53,12 +53,6 @@ let () =
   in
   show_trained "Word-level" wl_tok test_texts;
 
-  (* Train Unigram: probabilistic subword segmentation *)
-  let uni_tok =
-    train_unigram data ~vocab_size:100 ~pre:Pre_tokenizer.whitespace
-  in
-  show_trained "Unigram" uni_tok test_texts;
-
   (* Training with special tokens *)
   Printf.printf "=== Training with Special Tokens ===\n\n";
   let wp_with_specials =

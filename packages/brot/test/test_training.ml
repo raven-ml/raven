@@ -5,8 +5,7 @@
 
 (* Training. A vocabulary or merge list of train_bpe, train_wordpiece or
    train_word_level written out below is what the tokenizers wheel's trainer for
-   the same model learns from the same words. train_unigram's are brot's own: it
-   runs no EM. *)
+   the same model learns from the same words. *)
 
 open Windtrap
 open Brot
@@ -81,7 +80,6 @@ let trainers =
     ("train_wordpiece", fun ?init data -> train_wordpiece ?init ~pre:split data);
     ( "train_word_level",
       fun ?init data -> train_word_level ?init ~pre:split data );
-    ("train_unigram", fun ?init data -> train_unigram ?init ~pre:split data);
   ]
 
 (* data *)
@@ -669,53 +667,6 @@ let test_word_level_most_frequent =
             int ~than:n least_kept)
         dropped)
 
-(* train_unigram *)
-
-let test_unigram_words () =
-  let t =
-    train_unigram ~pre:(byte_level ()) ~vocab_size:20
-      (texts [ "low lower low" ])
-  in
-  equal (list string) [ "low"; "Ġlow"; "Ġlower" ] (sorted_vocabulary t)
-
-(* [unigram]'s scores are log-probabilities, so the cut of [ab] whole (log 1/3)
-   beats [a] + [b] (2 log 1/3) when the three occur equally often. *)
-let test_unigram_trained_word () =
-  let t = train_unigram ~pre:split (texts [ "ab ab ab a a a b b b" ]) in
-  equal (list string) [ "ab" ] (tokens t "ab")
-
-let unk = added_token "<unk>"
-
-let test_unigram_unk =
-  cases
-    "spells an unseen word as unk_token when added_tokens or init carries it"
-    ~id:fst
-    [
-      ( "added_tokens",
-        fun data ->
-          train_unigram ~pre:split ~unk_token:"<unk>" ~added_tokens:[ unk ] data
-      );
-      ( "init",
-        fun data ->
-          train_unigram ~pre:split ~unk_token:"<unk>"
-            ~init:(bpe ~added_tokens:[ unk ] ())
-            data );
-    ]
-    (fun (_, train) ->
-      let t = train (texts [ "ab ab c" ]) in
-      equal (list string) [ "<unk>"; "ab" ] (tokens t "zz ab"))
-
-let test_unigram_no_unk =
-  cases "raises Failure on an unseen word without an unknown entry" ~id:fst
-    [
-      ("no unk_token", fun data -> train_unigram ~pre:split data);
-      ( "unk_token not carried",
-        fun data -> train_unigram ~pre:split ~unk_token:"<unk>" data );
-    ]
-    (fun (_, train) ->
-      let t = train (texts [ "ab ab c" ]) in
-      raises_match (Exn.failure ~sub:"") (fun () -> encode t "zz ab"))
-
 let () =
   exit
     (run "Training"
@@ -793,12 +744,5 @@ let () =
              test "keeps the first of equally frequent words in byte order"
                test_word_level_ties;
              test_word_level_most_frequent;
-           ];
-         group "train_unigram"
-           [
-             test "keeps the most frequent words whole" test_unigram_words;
-             test "encodes a trained word as itself" test_unigram_trained_word;
-             test_unigram_unk;
-             test_unigram_no_unk;
            ];
        ])

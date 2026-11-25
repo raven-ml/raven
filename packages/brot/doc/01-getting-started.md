@@ -154,7 +154,7 @@ stage.
 ## Training
 
 Train a tokenizer from a text corpus. Brot supports training BPE,
-WordPiece, Unigram, and word-level tokenizers:
+WordPiece and word-level tokenizers:
 
 ```ocaml
 open Brot

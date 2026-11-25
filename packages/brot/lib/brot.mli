@@ -1872,38 +1872,6 @@ val train_word_level :
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
 
-val train_unigram :
-  ?init:t ->
-  ?normalizer:Normalizer.t ->
-  ?pre:Pre_tokenizer.t ->
-  ?post:Post_processor.t ->
-  ?decoder:Decoder.t ->
-  ?added_tokens:added_token list ->
-  ?bos_token:string ->
-  ?eos_token:string ->
-  ?pad_token:string ->
-  ?unk_token:string ->
-  ?vocab_size:int ->
-  data ->
-  t
-(** [train_unigram data] trains a Unigram tokenizer from [data].
-
-    {b Warning.} The EM training of the unigram model is not implemented: the
-    vocabulary is the most frequent of the words counted as in {!train_bpe},
-    each scored by the log of its share of the words counted, and no subword
-    piece is ever proposed. A special token scores [0.].
-
-    - [init]: as in {!train_bpe}. Default: create new.
-    - [vocab_size]: target vocabulary size including special tokens. Default:
-      [8000].
-    - [unk_token]: names the model's unknown entry when [added_tokens] or [init]
-      carries it, since a trained vocabulary of whole words covers no character
-      on its own. Without one, the trained tokenizer raises [Failure] on any
-      word it was not trained on. Default: none.
-
-    Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
-    [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
-
 (** {1:model_files Model files} *)
 
 val save_model_files : ?prefix:string -> t -> folder:string -> string list

@@ -9,7 +9,7 @@ dune exec brot/examples/09-training/main.exe
 
 ## What You'll Learn
 
-- Training BPE, WordPiece, word-level, and Unigram tokenizers
+- Training BPE, WordPiece and word-level tokenizers
 - Controlling vocabulary size with `~vocab_size`
 - Adding special tokens during training
 - Inspecting the learned vocabulary
@@ -21,7 +21,6 @@ dune exec brot/examples/09-training/main.exe
 | `Brot.train_bpe`       | Train a BPE tokenizer (learns merge rules)       |
 | `Brot.train_wordpiece` | Train a WordPiece tokenizer (learns subwords)    |
 | `Brot.train_word_level` | Train a word-level tokenizer (collects words)    |
-| `Brot.train_unigram`   | Train a Unigram tokenizer (learns probabilities) |
 | `Brot.vocab_size`      | Check learned vocabulary size                    |
 | `Brot.token_to_id`     | Look up a token's ID                             |
 

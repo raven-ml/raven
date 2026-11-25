@@ -422,45 +422,6 @@ let save model ~folder ?prefix () =
   Out_channel.with_open_bin path (fun oc -> Out_channel.output_string oc text);
   [ path ]
 
-(* Training *)
-
-let train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
-    ~unk_token ~max_piece_length ~n_sub_iterations word_counts =
-  let _ =
-    (show_progress, shrinking_factor, max_piece_length, n_sub_iterations)
-  in
-  let total =
-    List.fold_left (fun acc (_, count) -> acc + count) 0 word_counts
-    |> float_of_int
-  in
-  let sorted = List.sort (fun (_, c1) (_, c2) -> compare c2 c1) word_counts in
-
-  let take_first n lst =
-    let rec aux i = function
-      | [] -> []
-      | _ when i = 0 -> []
-      | x :: xs -> x :: aux (i - 1) xs
-    in
-    aux n lst
-  in
-
-  let selected = take_first vocab_size sorted in
-  (* A piece scores the log of its frequency, and a special token 0, as
-     tokenizers' trainer writes it. *)
-  let vocab_with_scores =
-    List.map (fun token -> (token, 0.)) special_tokens
-    @ List.map
-        (fun (token, count) -> (token, log (float_of_int count /. total)))
-        selected
-  in
-  let unk_id =
-    match unk_token with
-    | None -> None
-    | Some unk ->
-        List.find_index (fun (token, _) -> token = unk) vocab_with_scores
-  in
-  create ?unk_id vocab_with_scores
-
 let cached_encoder model =
   Pretoken_cache.cached
     (Pretoken_cache.create model.cache_capacity)

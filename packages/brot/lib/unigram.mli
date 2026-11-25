@@ -119,30 +119,3 @@ val to_json : t -> Jsont.json
 val save : t -> folder:string -> ?prefix:string -> unit -> string list
 (** [save t ~folder ()] writes {!to_json} to [unigram.json] in [folder] and
     returns its path. With [prefix], the file is [<prefix>-unigram.json]. *)
-
-(** {1:training Training} *)
-
-val train :
-  vocab_size:int ->
-  show_progress:bool ->
-  special_tokens:string list ->
-  shrinking_factor:float ->
-  unk_token:string option ->
-  max_piece_length:int ->
-  n_sub_iterations:int ->
-  (string * int) list ->
-  t
-(** [train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
-     ~unk_token ~max_piece_length ~n_sub_iterations word_counts] learns a
-    unigram model from [word_counts], each word paired with the number of times
-    it occurs.
-
-    - [vocab_size] is the target vocabulary size.
-    - [show_progress] is ignored.
-    - [special_tokens] are added to the vocabulary first.
-    - [unk_token] names the entry the model spends on a character it does not
-      hold; it is not added to the vocabulary, so it only takes effect when
-      [special_tokens] already carries it.
-    - [shrinking_factor], [max_piece_length] and [n_sub_iterations] are ignored:
-      no EM training is run. The vocabulary is the most frequent words, each
-      scored by how often it occurs. *)

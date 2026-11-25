@@ -17,8 +17,7 @@ tokenizers on most benchmarks.
   — each stage independently configurable
 - Rich encoding output: token IDs, string tokens, byte offsets, attention
   masks, type IDs, word IDs, special token masks
-- Training: train BPE, WordPiece, Unigram, and word-level tokenizers from
-  scratch
+- Training: train BPE, WordPiece and word-level tokenizers from scratch
 - Performance: 1.3-6x faster than HuggingFace tokenizers (Rust native) on
   most benchmarks — see [bench/](bench/) for details
 

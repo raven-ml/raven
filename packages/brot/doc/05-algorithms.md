@@ -122,13 +122,8 @@ Unigram uses probabilistic segmentation: given a vocabulary of subwords
 with log-probabilities, it finds the segmentation that maximizes the
 total likelihood. Used by T5, ALBERT, mBART, and XLNet.
 
-Constructor: `Brot.unigram`. Trainer: `Brot.train_unigram` — note that the
-EM training of the unigram model is not implemented: the trainer keeps the
-most frequent whole words, scored by how often they occur, and never
-proposes a subword piece.
-
-Key parameters:
-- `vocab_size` — target vocabulary size (default: 8000)
+Constructor: `Brot.unigram`. Brot has no Unigram trainer: load a model
+trained elsewhere with `Brot.from_file`.
 
 Vocabulary entries are `(token, score)` pairs where scores are
 log-probabilities (negative numbers). An entry is identified by its
@@ -155,26 +150,6 @@ let enc = encode tokenizer "the cat sat on"
 The segmentation maximizes the total score rather than taking the longest
 match at each position: `"the"` comes out as `"th"` plus `"e"` at `-4.5`,
 not as the whole entry at `-5.0`.
-
-Training Unigram. The unknown token has to be among the special tokens so
-that the trained vocabulary holds it: the model needs one for any character
-its pieces do not cover on their own.
-
-```ocaml
-open Brot
-
-let tokenizer =
-  train_unigram ~vocab_size:60
-    ~pre:(Pre_tokenizer.whitespace)
-    ~added_tokens:[ added_token "<unk>" ] ~unk_token:"<unk>"
-    (`Seq (List.to_seq
-       [ "The quick brown fox jumps over the lazy dog";
-         "The dog barked at the brown fox";
-         "Quick brown foxes are rare and beautiful" ]))
-
-let size = vocab_size tokenizer
-let enc = encode tokenizer "The brown fox"
-```
 
 ## Word-level
 
@@ -234,6 +209,6 @@ let ids = Encoding.ids enc       (* [| 72; 105; 33 |] *)
 | --------------- | ----------------------------------------- | ------------- | ------------------------- | ------------ | ----------------- |
 | BPE             | Iterative merge of frequent pairs         | 30K-50K       | GPT-2, RoBERTa, LLaMA     | `bpe`        | `train_bpe`       |
 | WordPiece       | Greedy longest-match with `##` prefix     | 30K           | BERT, DistilBERT, Electra | `wordpiece`  | `train_wordpiece` |
-| Unigram         | Probabilistic max-likelihood segmentation | 8K-32K        | T5, ALBERT, mBART, XLNet  | `unigram`    | `train_unigram`   |
+| Unigram         | Probabilistic max-likelihood segmentation | 8K-32K        | T5, ALBERT, mBART, XLNet  | `unigram`    | —                 |
 | Word-level      | Whole words, no splitting                 | Varies        | Simple models             | `word_level` | `train_word_level` |
 | Character-level | Each byte is a token                      | 256           | Byte-level models         | `chars`      | —                 |

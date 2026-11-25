@@ -15,7 +15,7 @@ and work through the numbered examples in order.
 | [`06-special-tokens`](./06-special-tokens/) | Special tokens and post-processing | `Post_processor.bert`, `.template`, `encode ~pair` |
 | [`07-padding-truncation`](./07-padding-truncation/) | Batch preparation | `padding`, `truncation`, `encode_batch` |
 | [`08-decoders`](./08-decoders/) | Tokens back to text | `Decoder.wordpiece`, `.bpe`, `.fuse`, `.sequence` |
-| [`09-training`](./09-training/) | Train from scratch | `train_bpe`, `train_wordpiece`, `train_unigram` |
+| [`09-training`](./09-training/) | Train from scratch | `train_bpe`, `train_wordpiece`, `train_word_level` |
 | [`10-bert-pipeline`](./10-bert-pipeline/) | Full BERT pipeline | All stages assembled end-to-end |
 
 Advanced:

@@ -804,17 +804,8 @@ tokenizer.train(["corpus.txt"], trainer)
 
 **Brot**
 
-<!-- $MDX skip -->
-```ocaml
-let tokenizer =
-  Brot.train_unigram
-    (`Files [ "corpus.txt" ])
-    ~vocab_size:8000
-    ~pre:(Brot.Pre_tokenizer.whitespace)
-    ~unk_token:"<unk>"
-    ~added_tokens:[ Brot.added_token "<unk>"; Brot.added_token "<pad>" ]
-    ~pad_token:"<pad>"
-```
+Brot has no Unigram trainer. Train with tokenizers, save the result with
+`tokenizer.save("tokenizer.json")` and load it with `Brot.from_file`.
 
 ### 10.4 Training from in-memory data
 
@@ -920,7 +911,7 @@ let token = Brot.id_to_token tokenizer 101       (* string option *)
 | ID to token         | `tokenizer.id_to_token(101)`                                | `Brot.id_to_token tokenizer 101`                                 |
 | Train BPE           | `tokenizer.train(files, BpeTrainer(...))`                   | `Brot.train_bpe (`Files files) ~vocab_size:30000`                |
 | Train WordPiece     | `tokenizer.train(files, WordPieceTrainer(...))`             | `Brot.train_wordpiece (`Files files) ~vocab_size:30000`          |
-| Train Unigram       | `tokenizer.train(files, UnigramTrainer(...))`               | `Brot.train_unigram (`Files files) ~vocab_size:8000`             |
+| Train Unigram       | `tokenizer.train(files, UnigramTrainer(...))`               | none; load the trained file with `Brot.from_file`                |
 | Train from iterator | `tokenizer.train_from_iterator(iter, trainer)`              | `Brot.train_bpe (`Seq seq) ~vocab_size:1000`                     |
 | Set normalizer      | `tokenizer.normalizer = normalizers.Lowercase()`            | `Brot.bpe ~normalizer:Normalizer.lowercase ()`                   |
 | Set pre-tokenizer   | `tokenizer.pre_tokenizer = pre_tokenizers.ByteLevel()`      | `Brot.bpe ~pre:(Pre_tokenizer.byte_level ()) ()`                 |
