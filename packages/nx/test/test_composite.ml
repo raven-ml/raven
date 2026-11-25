@@ -329,6 +329,37 @@ let test_together () =
   check "parts" whole [ Nx.Parts ("w", "f", [ Nx.P whole; P whole ]) ];
   check "on the host" host [ Nx.Arg ("a", host); Arg ("b", host) ]
 
+(* A structure's part refused names the structure, where the part lies, and the
+   structure's own placing function. *)
+let test_parts () =
+  let v = split () in
+  let m =
+    message (fun () ->
+        Nx.composite ~by:"c0"
+          [ Nx.Parts ("w", "Example.place", [ Nx.P v ]) ]
+          (fun () -> sorted (Nx.neg v)))
+  in
+  starts_with
+    ~prefix:"c0: w lies at split ~axis:0 [m0; m1] and is read at on [m0; m1]; "
+    m;
+  contains ~sub:"Example.place (" m;
+  ends_with ~suffix:" w" m
+
+(* A value made from an argument inside [f] and dropped, which a frame that held
+   what it noted would keep. *)
+let[@inline never] [@local never] derive_dropped v slot =
+  Weak.set slot 0 (Some (Nx.neg v))
+
+let test_collectable () =
+  let v = split () in
+  let slot = Weak.create 1 in
+  Nx.composite ~by:"c0"
+    [ Nx.Arg ("x", v) ]
+    (fun () ->
+      derive_dropped v slot;
+      Gc.full_major ();
+      is_none (Weak.get slot 0))
+
 let () =
   exit
     (run "nx composites"
@@ -343,6 +374,13 @@ let () =
                "Nx.composite names the outermost frame's argument, \
                 passes over one the remedy leaves, and leaves no state"
                commands;
+           ];
+         group "noting"
+           [
+             test "a structure's refusal names it, its part and its place"
+               test_parts;
+             test "an operation inside a composite holds no value alive"
+               test_collectable;
            ];
          group "together"
            [ test "a composite over values whole together is its body"
