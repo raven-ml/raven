@@ -195,14 +195,10 @@ val run : plan -> ((string * column) list, int * string) result
 val outcomes :
   plan -> (((string * column) list, int * string) result, exn) result Seq.t
 (** [outcomes p] is every outcome talon allows for a run of [p], computed as it
-    is read, the first being {!run}'s: what {!run} gives under one of the
-    choices below, or [Error] of the exception a function raises. Talon leaves
-    open, and so the outcomes vary: for each of [If], [Coalesce], [And] and [Or]
-    apart, whether an operand that no row reads is computed (the untaken branch,
-    the operands after the first value, the right operand under [false] or under
-    [true]), and for each join, which input it reads first and which side's
-    counts it checks first. Only the operators and joins that [p] has vary. They
-    change only which failure a run meets. *)
+    is read, the first being {!run}'s: what {!run} gives under one choice of
+    order for each join of [p], or [Error] of the exception a function raises.
+    Talon leaves open which input a join reads first and which side's counts it
+    checks first. The outcomes differ only in which failure a run meets. *)
 
 val beyond : plan -> exn list * string list
 (** [beyond p] is the exceptions that functions of [p]'s expressions raise and

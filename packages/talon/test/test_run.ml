@@ -1125,11 +1125,10 @@ let agrees p =
     | _ -> false);
   cover "a kept plan fails at a row" fails;
   cover "a kept plan raises" raises;
-  (* The outcomes talon allows differ where an operand that no row reads, or a
-     join's read order, decides the failure. Talon computes every operand and
-     reads each join in the reference's order today, so no run can agree with
-     another outcome alone; the cover shows the law meets the plans where the
-     choice matters. *)
+  (* The outcomes talon allows differ where a join's read order decides the
+     failure. Talon reads each join in the reference's order today, so no run
+     can agree with another outcome alone; the cover shows the law meets the
+     plans where the order matters. *)
   cover "another allowed outcome fails otherwise"
     ((fails || raises)
     && Seq.exists
@@ -1398,19 +1397,18 @@ let text_compare_layouts () =
   same_outcome (q one) (q two)
 
 (* Plans that meet the rarest covers of [agrees]: joins to distinct and to
-   repeated right keys, a failing assertion and a range join, and kept plans
-   that fail in an aggregate, at a cast, at a text, in a function and in an
-   expression that reads other rows, and an if_ whose untaken branch fails,
-   which talon may leave uncomputed. *)
+   repeated right keys, a failing assertion, assertions on both sides whose
+   order decides the failure and a range join, and kept plans that fail in an
+   aggregate, at a cast, at a text, in a function and in an expression that
+   reads other rows, and an if_ whose untaken branch fails. *)
 let raises_at_2 x = if x = 2 then raise (Boom (0, x)) else 0
 
 let rare_plans =
   let t cols =
     R.Table (v (List.map (fun (n, xs) -> (n, Column.v Type.int64 xs)) cols))
   in
-  let join ?(each_left = Join.Any) on l r =
-    R.Join
-      { kind = Inner; each_left; each_right = Any; on; left = t l; right = t r }
+  let join ?(each_left = Join.Any) ?(each_right = Join.Any) on l r =
+    R.Join { kind = Inner; each_left; each_right; on; left = t l; right = t r }
   in
   let keys = R.Keys [ ("k", "rk") ] in
   let only = R.Reduce (Only, R.Col (Type.int64, "x")) in
@@ -1420,6 +1418,9 @@ let rare_plans =
     join keys [ ("k", [| 1; 2 |]) ] [ ("rk", [| 1; 2; 3 |]) ];
     join keys [ ("k", [| 1 |]) ] [ ("rk", [| 1; 1; 2 |]) ];
     join ~each_left:One keys [ ("k", [| 1; 2 |]) ] [ ("rk", [| 1 |]) ];
+    join ~each_left:One ~each_right:One keys
+      [ ("k", [| 1; 1 |]) ]
+      [ ("rk", [| 1; 1 |]) ];
     join
       (R.Range ([], [ R.Compare (`Lt, "a", "c") ]))
       [ ("a", [| 0 |]) ]

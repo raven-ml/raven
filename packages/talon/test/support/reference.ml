@@ -410,53 +410,19 @@ type beyond = { mutable past : bool; mutable met : failure list }
 
 let beyond_limits = ref None
 
-(* The choices talon leaves open ({!outcomes}): for each of [If], [Coalesce],
-   [And] and [Or], whether an operand that no row reads is computed, and for
-   each join a run reads, counted from [0] in the order {!rows} reaches them,
-   whether it reads its right input first and checks its right rows first. *)
-type choice = {
-  if_ : bool;
-  coalesce : bool;
-  and_ : bool;
-  or_ : bool;
-  flipped : int -> bool;
-}
-
-let computed =
-  {
-    if_ = false;
-    coalesce = false;
-    and_ = false;
-    or_ = false;
-    flipped = (fun _ -> false);
-  }
-
-let choice = ref computed
-
-(* Where an operand is not computed, it is computed all the same, and its
-   failures at the rows that do not read it are dropped: [unread] holds those
-   rows of the step's input. *)
-let unread = ref []
+(* The choice talon leaves open ({!outcomes}): for each join a run reads,
+   counted from [0] in the order {!rows} reaches them, whether it reads its
+   right input first and checks its right rows first. *)
+let flipped = ref (fun _ -> false)
 
 let record fr row why =
   match (!beyond_limits, !(fr.failed)) with
   | Some b, _ -> if b.past then b.met <- why :: b.met
-  | None, _ when List.mem row !unread -> ()
   | None, Some (r, _) when r <= row -> ()
   | None, _ -> fr.failed := Some (row, why)
 
 let row_of fr i = if fr.one then start fr else fr.at.(i)
 let fail fr i why = record fr (row_of fr i) why
-
-(* [unread_at masked fr skip f] is [f ()], whose failures at the values [i] of
-   [fr] where [skip i] are dropped if [masked]. *)
-let unread_at masked fr skip f =
-  if not masked then f ()
-  else
-    let rows = List.filter skip (List.init (size fr) Fun.id) in
-    let was = !unread in
-    unread := List.map (row_of fr) rows @ was;
-    Fun.protect ~finally:(fun () -> unread := was) f
 
 (* [Failed (row, reason)] is a step's failure at its input's row [row]. *)
 exception Failed of int * string
@@ -688,10 +654,7 @@ let rec eval : type a s. frame -> (a, s) term -> a option array =
           | Some false, _ | _, Some false -> Some false
           | Some true, Some true -> Some true
           | _ -> None)
-        x
-        (unread_at !choice.and_ fr
-           (fun i -> x.(i) = Some false)
-           (fun () -> eval fr b))
+        x (eval fr b)
   | Or (a, b) ->
       let x = eval fr a in
       Array.map2
@@ -700,41 +663,19 @@ let rec eval : type a s. frame -> (a, s) term -> a option array =
           | Some true, _ | _, Some true -> Some true
           | Some false, Some false -> Some false
           | _ -> None)
-        x
-        (unread_at !choice.or_ fr
-           (fun i -> x.(i) = Some true)
-           (fun () -> eval fr b))
+        x (eval fr b)
   | Not a -> Array.map (Option.map not) (eval fr a)
   | If (c, a, b) ->
       let c = eval fr c in
-      let a =
-        unread_at !choice.if_ fr
-          (fun i -> c.(i) <> Some true)
-          (fun () -> eval fr a)
-      in
-      let b =
-        unread_at !choice.if_ fr
-          (fun i -> c.(i) = Some true)
-          (fun () -> eval fr b)
-      in
+      let a = eval fr a in
+      let b = eval fr b in
       let at = stored (type_of e) in
       Array.mapi
         (fun i c -> Option.map at (if c = Some true then a.(i) else b.(i)))
         c
   | Is_null a -> Array.map (fun v -> Some (Option.is_none v)) (eval fr a)
   | Coalesce es ->
-      let value i vs = List.exists (fun v -> Option.is_some v.(i)) vs in
-      let vs =
-        List.fold_left
-          (fun vs e ->
-            vs
-            @ [
-                unread_at !choice.coalesce fr
-                  (fun i -> value i vs)
-                  (fun () -> eval fr e);
-              ])
-          [] es
-      and at = stored (type_of e) in
+      let vs = List.map (eval fr) es and at = stored (type_of e) in
       Array.init (size fr) (fun i ->
           Option.map at (List.find_map (fun v -> v.(i)) vs))
   | Store (ty, a) -> Array.map (Option.map (stored ty)) (eval fr a)
@@ -1237,7 +1178,7 @@ let rec rows ~past : plan -> row Seq.t = function
   | Append (p, rest) -> Seq.append (rows ~past p) (rows ~past rest)
   | Aggregate (by, os, p) -> aggregate by os (rows ~past p)
   | Join { kind; each_left; each_right; on; left; right } ->
-      let flip = !choice.flipped !joins_read in
+      let flip = !flipped !joins_read in
       incr joins_read;
       join ~flip kind (each_left, each_right) on
         (schema left, schema right)
@@ -1295,88 +1236,23 @@ let rec joins = function
   | Append (p, r) -> joins p + joins r
   | Join { left; right; _ } -> 1 + joins left + joins right
 
-(* The operators of a plan's expressions that leave an operand open. *)
-let rec ops : type a s. (a, s) term -> string list = function
-  | Col _ | Lit _ | Null _ | Rows -> []
-  | Int (_, a, b) -> ops a @ ops b
-  | Float (_, a, b) -> ops a @ ops b
-  | Cmp (_, a, b) -> ops a @ ops b
-  | And (a, b) -> ("and" :: ops a) @ ops b
-  | Or (a, b) -> ("or" :: ops a) @ ops b
-  | If (c, a, b) -> ("if" :: ops c) @ ops a @ ops b
-  | Coalesce es -> "coalesce" :: List.concat_map ops es
-  | Not a -> ops a
-  | Is_null a -> ops a
-  | Is_in (_, a) -> ops a
-  | Store (_, a) -> ops a
-  | Map (_, _, a) -> ops a
-  | Bind (_, _, a) -> ops a
-  | Cast (_, a) -> ops a
-  | Length a -> ops a
-  | Substring (_, _, a) -> ops a
-  | Parse (_, a) -> ops a
-  | Field (_, a) -> ops a
-  | Reduce (_, a) -> ops a
-  | Over (_, _, a) -> ops a
-  | Shift (_, a) -> ops a
-  | Rank a -> ops a
-
-let out_ops : type s. s out -> string list = function
-  | Out (_, e) -> ops e
-  | Keep _ -> []
-
-let rec plan_ops = function
-  | Table _ | Source _ -> []
-  | Select (os, p) | Derive (os, p) -> List.concat_map out_ops os @ plan_ops p
-  | Filter (e, p) -> ops e @ plan_ops p
-  | Aggregate (_, os, p) -> List.concat_map out_ops os @ plan_ops p
-  | Slice { plan = p; _ } | Sort (_, p) -> plan_ops p
-  | Append (p, r) -> plan_ops p @ plan_ops r
-  | Join { left; right; _ } -> plan_ops left @ plan_ops right
-
-(* Every choice for the operators [ops] and [k] joins, [computed] first, as a
-   sequence built when read. A join is numbered when {!rows} reaches it, which
-   depends only on the choices for the joins numbered before it (a flipped join
-   reads its right input first): so for any order wanted of each join the bits
-   can be set in turn, and the masks of [0] to [2{^ k} - 1] give every
-   assignment, a plan read twice having each read numbered apart. *)
-let choices ops k =
-  let open_ =
-    List.filter (fun o -> List.mem o ops) [ "if"; "coalesce"; "and"; "or" ]
-  in
-  let bit m i = m land (1 lsl i) <> 0 in
-  let set masks o =
-    let rec at i = function
-      | [] -> false
-      | o' :: os -> if o = o' then bit masks i else at (i + 1) os
-    in
-    at 0 open_
-  in
-  Seq.concat_map
-    (fun masks ->
-      Seq.map
-        (fun m ->
-          {
-            if_ = set masks "if";
-            coalesce = set masks "coalesce";
-            and_ = set masks "and";
-            or_ = set masks "or";
-            flipped = bit m;
-          })
-        (Seq.init (1 lsl k) Fun.id))
-    (Seq.init (1 lsl List.length open_) Fun.id)
+(* Every choice for [k] joins, none flipped first, as a sequence built when
+   read. A join is numbered when {!rows} reaches it, which depends only on the
+   choices for the joins numbered before it (a flipped join reads its right
+   input first): so for any order wanted of each join the bits can be set in
+   turn, and the masks of [0] to [2{^ k} - 1] give every assignment, a plan read
+   twice having each read numbered apart. *)
+let choices k = Seq.init (1 lsl k) (fun m i -> m land (1 lsl i) <> 0)
 
 let under c f =
-  let was = !choice in
-  choice := c;
+  let was = !flipped in
+  flipped := c;
   joins_read := 0;
-  Fun.protect ~finally:(fun () -> choice := was) @@ fun () ->
+  Fun.protect ~finally:(fun () -> flipped := was) @@ fun () ->
   match f () with v -> Ok v | exception exn -> Error exn
 
 let outcomes p =
-  Seq.map (fun c -> under c (fun () -> run p)) (choices (plan_ops p) (joins p))
+  Seq.map (fun c -> under c (fun () -> run p)) (choices (joins p))
 
 let value_outcomes e p =
-  Seq.map
-    (fun c -> under c (fun () -> values e p))
-    (choices (ops e @ plan_ops p) (joins p))
+  Seq.map (fun c -> under c (fun () -> values e p)) (choices (joins p))
