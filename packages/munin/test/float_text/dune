@@ -1,4 +1,4 @@
 (tests
- (names test_float_text test_float_print)
+ (names test_float_text test_float_print test_float_read)
  (package munin)
  (libraries munin_float_text windtrap))
