@@ -45,7 +45,9 @@ val line_to : P2.t -> t -> t
 
 val quad_to : P2.t -> P2.t -> t -> t
 (** [quad_to c pt p] is [p] with a quadratic Bézier from the current point to
-    [pt] with control point [c], stored as the cubic of the same curve. *)
+    [pt] with control point [c], stored as the cubic of the same curve. A
+    control point [c] equal to the current point or to [pt] gives the cubic a
+    control point equal to that end point. *)
 
 val cubic_to : P2.t -> P2.t -> P2.t -> t -> t
 (** [cubic_to c c' pt p] is [p] with a cubic Bézier from the current point to
@@ -82,11 +84,12 @@ val crop : Box2.t -> t -> t
     - An open subpath keeps its pieces within [b], each an open subpath of its
       own. A segment that crosses an edge of [b] is cut where it crosses, a
       curve into the cubic of its part within [b].
-    - A closed subpath becomes a closed subpath whose region under either fill
-      rule is its own region within [b]: its pieces outside [b] are replaced by
-      segments along the edges of [b], where a stroke of the result runs. It
-      ends with its close, with no line back to its start, and it is dropped if
-      what remains of it has no area, its points on one line.
+    - A closed subpath whose points, control points included, lie within [b] is
+      kept as it is. Any other becomes a closed subpath whose region under
+      either fill rule is its own region within [b]: its pieces outside [b] are
+      replaced by segments along the edges of [b], where a stroke of the result
+      runs. It ends with its close, with no line back to its start, and it is
+      dropped if what remains of it has no area, its points on one line.
 
     A cut adds no segment of zero length. So cropping before filling draws what
     filling then clipping to [b] draws, and cropping an open path before
