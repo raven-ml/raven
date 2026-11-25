@@ -5049,9 +5049,10 @@ module Ptree : sig
   (** [place (module U) p x] is [x] with each array, fixed ones included, at
       [p], as {!Nx.place}.
 
-      Raises what a walk of [x] raises: {!Rng.walk} refuses a key at a [p]
-      that cuts its words' axis. Place such keys apart, at
-      [Placement.uncut p] by {!Rng.place}. *)
+      Raises what a walk of [x] raises: {!Rng.walk} refuses a key at a [p] that
+      cuts its words' axis. Place such keys apart, at [Placement.uncut p] by
+      {!Rng.place}. Raises [Invalid_argument] naming [Nx.Ptree.place] if an
+      array of [x] is dead, before any array moves. *)
 
   val place_fixed :
     ('a 'b. ('a, 'b, 'd, 'e) Walk.cursor -> 's -> 't) ->
