@@ -776,7 +776,7 @@ module Minimize : sig
       evaluation of [r] per trial. {b Derivative.} The minimum is the zero of
       rune's gradient of [|r|² / 2]; at a rank-deficient minimum the derivative
       does not exist, and raises where its solve misses the solver's bound, as
-      the other methods' does. *)
+      the other methods' derivatives do. *)
 
   val nelder_mead : ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
   (** [nelder_mead] is the Nelder–Mead simplex, for an objective with no useful
