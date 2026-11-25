@@ -298,7 +298,7 @@ let of_precision (type f) u (dtype : (float, f) Nx.dtype) ?low_rank ~mean p :
           (fun i v ->
             Invalid_argument
               (Printf.sprintf "%s: %s at [%s] is %s, not in (0, inf)" context
-                 (Nx.Ptree.Path.to_string path)
+                 (Rows.path ~root:"the precision" path)
                  (shape_string i) (Rows.element v))))
     p ();
   let scale = Nx.Ptree.map u (fun _ x -> Nx.rsqrt x) p in

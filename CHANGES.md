@@ -85,6 +85,14 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- A refusal that names a tensor at the root of the structure names it as
+  "the draws", "the ranks", "the values" or "the precision", where
+  `Diag`, `Draws.v`, `Draws.append`, `Summary.of_weighted` and
+  `Gaussian.of_precision` wrote an empty field, as in
+  `Norn.Diag.rank: : 2400 draws`. `Draws.append` refuses draws of other
+  visits naming itself, where `Nx.Ptree.map2` raised. `Summary.v` refuses
+  `~superchains:1` as fewer than 2, where it said 1 does not divide the
+  chains.
 - `Gaussian.sample`, `Gaussian.log_density`, `Gaussian.variance` and
   `Gaussian.pp` refuse Gaussians stacked on a leading axis, as a fit holds
   them, naming themselves. They read the stack's axis as the directions':

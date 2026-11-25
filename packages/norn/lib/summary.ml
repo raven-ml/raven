@@ -162,7 +162,10 @@ let v (type u) (u : (u, 'd) Nx.Ptree.t) ?stats ?superchains (d : u Draws.t) =
          "Norn.Summary.v: chains of %d draws; a summary needs at least %d" draws
          minimum_draws);
   (match superchains with
-  | Some k when k < 2 || chains mod k <> 0 ->
+  | Some k when k < 2 ->
+      invalid_arg
+        (Printf.sprintf "Norn.Summary.v: superchains = %d is fewer than 2" k)
+  | Some k when chains mod k <> 0 ->
       invalid_arg
         (Printf.sprintf "Norn.Summary.v: %d superchains do not divide %d chains"
            k chains)
@@ -272,7 +275,7 @@ let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
       invalid_arg
         (Printf.sprintf
            "Norn.Summary.of_weighted: %s: %s draws for %d weights"
-           (Nx.Ptree.Path.to_string path)
+           (Rows.path ~root:"the values" path)
            (if Array.length s = 0 then "no axis of" else string_of_int s.(0))
            n);
     let x = Nx.reshape (Array.append [| 1 |] s) x in

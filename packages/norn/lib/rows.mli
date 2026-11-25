@@ -18,6 +18,10 @@ val element : ('a, 'b, 'd) Nx.t -> string
 (** [element v] is the one element of [v], printed as {!Nx.Dtype.pp_value}
     prints it. *)
 
+val path : root:string -> Nx.Ptree.Path.t -> string
+(** [path ~root p] is [p] as {!Nx.Ptree.Path.to_string} writes it, or [root] at
+    the root path, which it writes as nothing. *)
+
 val number : float -> string
 (** [number x] is [x] as {!Nx.Dtype.pp_value} prints a [float64]: the shortest
     decimal that reads as it, the same on every system, where [Printf]'s [%g]

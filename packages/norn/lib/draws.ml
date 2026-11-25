@@ -13,7 +13,7 @@ let v u x =
     let s = Nx.shape t in
     if Array.length s < 2 then
       invalid_argf "Norn.Draws.v: %s: shape [%s] has no [chain; draw] axes"
-        (Nx.Ptree.Path.to_string p)
+        (Rows.path ~root:"the draws" p)
         (String.concat "; " (Array.to_list (Array.map string_of_int s)));
     match !lead with
     | None -> lead := Some (p, s.(0), s.(1))
@@ -21,9 +21,9 @@ let v u x =
         if s.(0) <> c || s.(1) <> n then
           invalid_argf
             "Norn.Draws.v: %s: %d chains of %d draws, %s: %d chains of %d draws"
-            (Nx.Ptree.Path.to_string p)
+            (Rows.path ~root:"the draws" p)
             s.(0) s.(1)
-            (Nx.Ptree.Path.to_string q)
+            (Rows.path ~root:"the draws" q)
             c n
   in
   Nx.Ptree.fold u (fun p t () -> check p t) x ();
@@ -59,13 +59,15 @@ let append u d d' =
   let shape_s s =
     String.concat "; " (Array.to_list (Array.map string_of_int s))
   in
+  if Nx.Ptree.visits u d <> Nx.Ptree.visits u d' then
+    invalid_arg "Norn.Draws.append: the draws differ in their visits";
   Nx.Ptree.map2 u
     (fun p x y ->
       let sx = Nx.shape x and sy = Nx.shape y in
       let rest s = Array.sub s 2 (Array.length s - 2) in
       if sx.(0) <> sy.(0) || rest sx <> rest sy then
         invalid_argf "Norn.Draws.append: %s: draws of shape [%s] and [%s]"
-          (Nx.Ptree.Path.to_string p)
+          (Rows.path ~root:"the draws" p)
           (shape_s sx) (shape_s sy);
       Nx.concatenate ~axis:1 [ x; y ])
     d d'

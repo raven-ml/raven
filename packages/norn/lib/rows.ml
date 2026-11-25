@@ -68,6 +68,8 @@ let beside context ~what u x =
   | Some at -> at
   | None -> invalid_argf "%s: %s holds no tensor" context what
 
+let path ~root p = match P.Path.to_string p with "" -> root | s -> s
+
 let whole_chains context ~reads u x =
   P.fold u
     (fun p t () ->
@@ -76,7 +78,7 @@ let whole_chains context ~reads u x =
           "%s: %s is cut across devices; %s, so each device must hold \
            whole chains: Nx.place (Nx.beside x) x"
           context
-          (match P.Path.to_string p with "" -> "the position" | s -> s)
+          (path ~root:"the position" p)
           reads)
     x ()
 
@@ -197,7 +199,7 @@ let check_floats context u x =
     (fun p t () ->
       if not (float_leaf t) then
         invalid_argf "%s: %s is %s; a sampler moves float tensors only" context
-          (match P.Path.to_string p with "" -> "the position" | s -> s)
+          (path ~root:"the position" p)
           (Nx.Dtype.name (Nx.dtype t)))
     x ()
 
@@ -209,9 +211,7 @@ let check_dtypes context u x =
     (fun p t () ->
       if float_leaf t then
         let name = Nx.Dtype.name (Nx.dtype t) in
-        let path =
-          match P.Path.to_string p with "" -> "the position" | s -> s
-        in
+        let path = path ~root:"the position" p in
         match !first with
         | None -> first := Some (path, name)
         | Some (at, dtype) ->

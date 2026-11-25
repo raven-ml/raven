@@ -11,7 +11,7 @@ open Chains
 
 let not_float fn p x =
   invalid_argf "Norn.Diag.%s: %s: %s draws; diagnostics take float draws" fn
-    (Nx.Ptree.Path.to_string p)
+    (Rows.path ~root:"the draws" p)
     (Nx.Dtype.name (Nx.dtype x))
 
 let float_leaf fn p x =
@@ -72,7 +72,7 @@ let divergent_shift (type u f) (u : (u, 'd) Nx.Ptree.t) (s : (f, 'd) Stats.t Dra
         invalid_argf
           "Norn.Diag.divergent_shift: %s: draws of [%s] chains and draws, \
            statistics of [%s]"
-          (Nx.Ptree.Path.to_string p)
+          (Rows.path ~root:"the draws" p)
           (String.concat "; "
              (Array.to_list (Array.map string_of_int (Array.sub s 0 2))))
           (String.concat "; "
@@ -120,7 +120,7 @@ let rank (type u) (u : (u, 'd) Nx.Ptree.t) ~truth (d : u Draws.t) =
       | Some m when draws > m ->
           invalid_argf
             "Norn.Diag.rank: %s: %d draws exceed %s's exact integers, %d"
-            (Nx.Ptree.Path.to_string p)
+            (Rows.path ~root:"the draws" p)
             draws
             (Nx.Dtype.name (Nx.dtype x))
             m
@@ -267,7 +267,7 @@ let rank_uniformity u ~draws ranks =
             then
               invalid_argf
                 "Norn.Diag.rank_uniformity: %s: rank %s is not in 0, ..., %d"
-                (Nx.Ptree.Path.to_string p)
+                (Rows.path ~root:"the ranks" p)
                 (Rows.number r) draws;
             for i = int_of_float r + 1 to draws do
               counts.(i - 1) <- counts.(i - 1) + 1

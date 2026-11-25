@@ -71,14 +71,14 @@ let v =
   group "v"
     [
       test "raises naming a tensor with fewer than two axes" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"a: ") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Draws.v: a: ") (fun () ->
               D.v pos
                 {
                   a = Nx.zeros Nx.float64 [| 3 |];
                   b = Nx.zeros Nx.float64 [| 2; 3; 2 |];
                 }));
       test "raises naming a tensor of other chains or draws" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"b: ") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Draws.v: b: ") (fun () ->
               D.v pos
                 {
                   a = Nx.zeros Nx.float64 [| 2; 3 |];
@@ -149,7 +149,7 @@ let append =
           raises_match (Exn.invalid_arg ~sub:"Norn.Draws.append") (fun () ->
               D.append l (D.v l [ x ]) (D.v l [ y ])));
       test "raises for other visits" (fun () ->
-          raises_match Exn.invalid_arg (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Draws.append") (fun () ->
               D.append l (D.v l [ x ]) (D.v l [ x; x ])));
       test "raises for a tensor of another element shape" (fun () ->
           let d = D.v t (Nx.zeros Nx.float64 [| 2; 3; 2 |]) in

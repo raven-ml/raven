@@ -294,10 +294,15 @@ let rank =
         (fun (truth, expected) ->
           let d = chains 2 3 [| 1.; 5.; 3.; 2.; 4.; 0. |] in
           equal float_exact expected (item (Diag.rank t ~truth:(f64 truth) d)));
-      test "raises past float16's 2048 exact integers" (fun () ->
+      test "raises naming the draws past float16's 2048 exact integers"
+        (fun () ->
           let d = Draws.v t (Nx.zeros Nx.float16 [| 4; 600 |]) in
-          raises_match (Exn.invalid_arg ~sub:"Norn.Diag.rank") (fun () ->
-              Diag.rank t ~truth:(Nx.scalar Nx.float16 0.) d));
+          match Diag.rank t ~truth:(Nx.scalar Nx.float16 0.) d with
+          | _ -> fail "no exception"
+          | exception Invalid_argument m ->
+              expect m
+              @@ __POS_OF__
+                   {|Norn.Diag.rank: the draws: 2400 draws exceed float16's exact integers, 2048|});
       test "raises past float4's 4 exact integers" (fun () ->
           let d = Draws.v t (Nx.zeros Nx.float4_e2m1fn [| 1; 5 |]) in
           raises_match (Exn.invalid_arg ~sub:"Norn.Diag.rank") (fun () ->
