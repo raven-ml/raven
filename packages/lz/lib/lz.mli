@@ -93,8 +93,8 @@
     encode's work is its input, counted before it is compressed. A
     whole-buffer encode counts all of its input at its start. A deflate, zlib
     or gzip encoder step counts the input it compresses, which includes input
-    that earlier steps took ({!Encoder}), and compresses a byte only once
-    8 KiB of input follow it or the step has [~last:true]. A Zstandard encoder
+    that earlier steps took ({!Encoder}), and compresses each byte once
+    8 KiB of input follow it, or with [~last:true]. A Zstandard encoder
     step counts all the input it holds that no block has compressed yet, once
     that passes 128 KiB or the step has [~last:true], so input it keeps counts
     again in the step that compresses it. It also counts the bytes of its
