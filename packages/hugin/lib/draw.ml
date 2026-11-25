@@ -535,34 +535,37 @@ type target = {
    selects none, as it does in a mark of no rows. The mask is read only along
    the leading axes it varies along: along the others it selects blocks of
    consecutive rows, as a facet on a leading axis does. *)
-let selection m = function
-  | `All -> if Array.mem 0 m.shape then None else Some Read.All
-  | `Mask k -> (
-      let shape = m.shape and ks = Nx.shape k in
-      let rank = Array.length shape and r = Array.length ks in
-      let varies a = a >= rank - r && ks.(a - rank + r) <> 1 in
-      let lead = ref rank in
-      while !lead > 0 && not (varies (!lead - 1)) do
-        decr lead
-      done;
-      let lead = !lead in
-      let block =
-        Array.fold_left ( * ) 1 (Array.sub shape lead (rank - lead))
-      in
-      let ends = Array.mapi (fun a d -> if a < lead then d else 1) shape in
-      let k = Nx.flatten (Nx.broadcast_to ends k) in
-      match Nx.to_array (Nx.positions k) with
-      | [||] -> None
-      | ids ->
-          let rows = Array.make (Array.length ids * block) 0 in
-          Array.iteri
-            (fun b id ->
-              let first = Int64.to_int id * block in
-              for i = 0 to block - 1 do
-                rows.((b * block) + i) <- first + i
-              done)
-            ids;
-          Some (Read.Rows rows))
+let selection m mask =
+  if Array.mem 0 m.shape then None
+  else
+    match mask with
+    | `All -> Some Read.All
+    | `Mask k -> (
+        let shape = m.shape and ks = Nx.shape k in
+        let rank = Array.length shape and r = Array.length ks in
+        let varies a = a >= rank - r && ks.(a - rank + r) <> 1 in
+        let lead = ref rank in
+        while !lead > 0 && not (varies (!lead - 1)) do
+          decr lead
+        done;
+        let lead = !lead in
+        let block =
+          Array.fold_left ( * ) 1 (Array.sub shape lead (rank - lead))
+        in
+        let ends = Array.mapi (fun a d -> if a < lead then d else 1) shape in
+        let k = Nx.flatten (Nx.broadcast_to ends k) in
+        match Nx.to_array (Nx.positions k) with
+        | [||] -> None
+        | ids ->
+            let rows = Array.make (Array.length ids * block) 0 in
+            Array.iteri
+              (fun b id ->
+                let first = Int64.to_int id * block in
+                for i = 0 to block - 1 do
+                  rows.((b * block) + i) <- first + i
+                done)
+              ids;
+            Some (Read.Rows rows))
 
 (* [draw_occ cx occ part targets] draws [occ], whose rows go among the panels of
    its cell by [part], in each panel of [targets] it has rows in. *)

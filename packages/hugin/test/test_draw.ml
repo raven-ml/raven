@@ -3217,10 +3217,17 @@ let marks_v =
             (pair (array int) int)
             (expected, numel expected)
             (rows_of ~shape bindings (fun r -> (Mark.shape r, Mark.length r))));
-      test "a mark without rows is drawn in no panel" (fun () ->
-          let m, seen =
-            probe [ Mark.bind Role.x (num (f64 [||])) ] Mark.index
-          in
+      cases "a mark without rows is drawn in no panel" ~id:fst
+        [
+          ("unfaceted", [ Mark.bind Role.x (num (f64 [||])) ]);
+          ( "faceted along an axis it lacks",
+            [
+              Mark.bind Role.x (num (f64 [||]));
+              Mark.bind Role.fx (strings [| "a" |]);
+            ] );
+        ]
+        (fun (_, bindings) ->
+          let m, seen = probe bindings Mark.index in
           ignore (drawn m);
           equal (list (array int)) [] !seen);
       test "a stamp of one instance per row is tagged instance by instance"
