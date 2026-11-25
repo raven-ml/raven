@@ -85,6 +85,8 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Support.pp` prints an empty integer interval as `{}`: one whose upper bound
+  lies two or more below its lower raised `Invalid_argument "List.init"`.
 - `Dist.coords` and `Dist.standardize` check the parameters, as the other
   eliminators do: `Dist.standardize (Dist.normal ~loc ~scale:(-1.))` raised
   nothing and returned a bijector of negative scale.

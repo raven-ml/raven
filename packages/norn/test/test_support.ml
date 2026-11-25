@@ -44,6 +44,11 @@ let printing =
     ]
     (fun (expected, s) -> equal string expected (to_string s))
 
+let empty =
+  test "an empty integer interval prints as {}" (fun () ->
+      equal (list string) [ "{}"; "{}" ]
+        [ to_string (S.Integer_interval (5, 4)); to_string (S.Integer_interval (5, 3)) ])
+
 let equality =
   group "equal"
     [
@@ -61,4 +66,4 @@ let equality =
           equal bool false (S.equal (S.Interval (0., 1.)) (S.Interval (0., 2.))));
     ]
 
-let () = exit (run "Norn.Support" [ printing; equality ])
+let () = exit (run "Norn.Support" [ printing; empty; equality ])

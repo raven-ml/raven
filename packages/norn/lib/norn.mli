@@ -76,9 +76,10 @@ module Support : sig
 
   val pp : Format.formatter -> t -> unit
   (** [pp ppf s] formats [s] as a set: [(-inf, inf)], [(0, inf)], [(-inf, 0)],
-      [(0, 1)],
-      [{0, 1, 2, ...}], [{0, 1, ..., 10}], [{false, true}], or a phrase such as
-      [simplex of 3]. *)
+      [(0, 1)], [{0, 1, 2, ...}], [{0, 1, ..., 10}], [{false, true}], or a
+      phrase such as [simplex of 3]. An interval of at most three integers
+      lists them, as [{0, 1}], and an empty one is [{}]. A bound is the
+      shortest decimal that reads back as it ({!Nx.Dtype.pp_value}). *)
 end
 
 module Bij : sig
@@ -1352,7 +1353,9 @@ module Nuts : sig
       gradient at the start; its step size is [1].
 
       Raises [Invalid_argument] if [max_depth < 1], [accept] is not in [(0, 1)],
-      [rank < 0], or if [lp] does not return one log density per chain, as in
+      [rank < 0], if a tensor of [start] is not of a float dtype, naming its
+      path, if [lp] is [-inf] at a chain, naming it, or if [lp] does not return
+      one log density per chain, as in
       [Norn.Nuts.init: the density returned shape [4; 8] for a position of 4
        chains; a density returns one log density per chain, shape [4]]. With
       several chains it evaluates [lp] again on the chains reversed, and raises
@@ -1480,8 +1483,10 @@ module Hmc : sig
       mean whose variance is the inverse of the gradient's root mean square over
       the chains at the start. The step size and the length are [1].
 
-      Raises [Invalid_argument] if [accept] is not in [(0, 1)], [rank < 0], or
-      if [lp] does not return one log density per chain, as in
+      Raises [Invalid_argument] if [accept] is not in [(0, 1)], [rank < 0], if
+      a tensor of [start] is not of a float dtype, naming its path, if [lp] is
+      [-inf] at a chain, naming it, or if [lp] does not return one log density
+      per chain, as in
       [Norn.Hmc.init: the density returned shape [4; 8] for a position of 4
        chains; a density returns one log density per chain, shape [4]]. With
       several chains it evaluates [lp] again on the chains reversed, and raises
@@ -1620,8 +1625,10 @@ module Ensemble : sig
 
       Raises [Invalid_argument] if [ensembles < 1], if the walkers do not split
       into [ensembles] ensembles of equal size, if an ensemble has fewer walkers
-      than twice a walker's float elements, or if [lp] does not return one log
-      density per walker, each read from its own row. *)
+      than twice a walker's float elements, if a tensor of [start] is not of a
+      float dtype, naming its path, if [lp] is [-inf] at a walker, naming it,
+      or if [lp] does not return one log density per walker, each read from its
+      own row. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->

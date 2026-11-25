@@ -49,6 +49,7 @@ let pp ppf = function
       Format.fprintf ppf "Cholesky factors of %d x %d correlations" n n
   | Sum_to_zero -> Format.pp_print_string ppf "vectors summing to zero"
   | Integers_from a -> Format.fprintf ppf "{%d, %d, %d, ...}" a (a + 1) (a + 2)
+  | Integer_interval (a, b) when b < a -> Format.pp_print_string ppf "{}"
   | Integer_interval (a, b) when b - a <= 2 ->
       let xs = List.init (b - a + 1) (fun i -> string_of_int (a + i)) in
       Format.fprintf ppf "{%s}" (String.concat ", " xs)
