@@ -2499,7 +2499,10 @@ val var :
     deviations [d = x - c] and of their squares, each summed as {!sum}
     sums, and [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative:
     on one device the kernels' moments, which every kernel library
-    computes so, and over axes cut across devices these sums. Barring
+    computes so, and over axes cut across devices these sums. A lane whose
+    squares or sums would overflow takes these moments of its elements
+    times a power of two and scales the result back; {!std} also scales a
+    lane whose squares underflow. Barring
     overflow and underflow, to first order in the unit roundoff [u], the
     mean is within [E = b u M + u|μ|] of the exact [μ], [M] the mean of
     the elements' magnitudes, and the variance within
@@ -2646,7 +2649,9 @@ val softmax :
 
     It takes [d = scale (x - e)], [e] the lane's element of greatest
     [scale x], then [exp d], their sum as {!sum} sums, and [exp d] over the
-    sum, each step rounded once. Barring overflow and underflow, to first
+    sum, each step rounded once. At every float dtype it holds, beside its
+    operand, its result and each lane's greatest element and sum: no other
+    array of the operand's size. Barring overflow and underflow, to first
     order in the unit roundoff [u] of the format it computes in, and before
     a narrow float's rounding, an element is within a relative
     [(b + |d| + ln n + 11) u] of its exact value, where [n] counts the
@@ -5267,7 +5272,8 @@ val associative_scan :
     elements at its index alone, whatever their slices' extents. For a float [f]
     these are not the left fold's bits. [f] is called at most [2⌈log₂ n⌉] times
     for [n] elements, each time over slices of every array, and combines fewer
-    than [2n] pairs of elements in all; [f] needs no identity. The circuit
+    than [2n] pairs of elements in all; [f] needs no identity. A structure
+    without arrays is itself, and [f] is not called. The circuit
     also combines elements past [i] in runs that element [i] does not read,
     so a derivative of element [i], as rune takes one, can be NaN where [f]'s
     partial derivatives at such a run are not finite.
@@ -5891,7 +5897,9 @@ val pp_dtype : Format.formatter -> ('v, 's) dtype -> unit
     Every misuse raises [Invalid_argument] whose message is the function the
     user called, a colon, the reason and, where they matter, the operands as
     [dtype shape on set], as in
-    [Nx.add: shapes [2; 3] and [4] do not broadcast]. The function is the one
+    [Nx.add: shapes [2; 3] and [4] do not broadcast]. An axis the message
+    names is the one the caller passed, a negative one as negative, as in
+    [Nx.sum: -5 is not an axis of float32 [2; 3; 4]]. The function is the one
     the user called whatever functions it computes through. A function the
     user gives, as {!init}'s [f] or an interpretation's rule, keeps its own
     errors: what it raises reaches the caller as raised. A lost device
