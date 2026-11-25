@@ -754,6 +754,20 @@ let path_tests =
             (scalar 2.)
         in
         equal (Oracle.tensor ~abs:1e-8 ()) (scalar 0.) g);
+    test "raises at once if a leaf of the state is not a float tensor"
+      (fun () ->
+        let calls = ref 0 in
+        let field _ (y, n) =
+          incr calls;
+          (Nx.neg y, n)
+        in
+        raises_match (Exn.invalid_arg ~sub:"Jera.Ode.path") (fun () ->
+            Ode.path
+              Nx.Ptree.(pair tensor tensor)
+              Ode.tsit5 ~tol:(Tol.rel 1e-6) ~budget:20 field
+              ~t0:(scalar 0.) ~t1:(scalar 1.)
+              (scalar 1., Nx.scalar Nx.int32 5l));
+        equal int 0 !calls);
     test "compiled equals eager to rounding for a polynomial field" (fun () ->
         Compiled.here ();
         let f k =

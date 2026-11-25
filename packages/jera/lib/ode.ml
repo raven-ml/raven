@@ -1340,6 +1340,16 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
   let fn = "Jera.Ode.path" in
   let at = endpoints fn t0 t1 in
   check fn ~at ~budget;
+  (* A path's pieces are series in each leaf, so every leaf is a float. *)
+  let float_leaf (type v r) _ (x : (v, r, 'd) Nx.t) () =
+    match Nx.Dtype.kind (Nx.dtype x) with
+    | Float -> ()
+    | _ ->
+        invalid_arg
+          (Printf.sprintf "%s: a %s leaf; the leaves must be float tensors" fn
+             (Nx.Dtype.name (Nx.dtype x)))
+  in
+  Nx.Ptree.fold y float_leaf y0 ();
   let emb = embedded fn m in
   let dtype = Nx.dtype at in
   let s, disorder = search fn `Allowed y m ~tol ~budget (plain f) ~at y0 in

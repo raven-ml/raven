@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Ode.path` raises `Invalid_argument` at the call for a state with a leaf
+  that is not a float tensor, as `jera.mli`'s conventions state for static
+  preconditions. It raised only after the whole solve.
 - `Solution.evaluations` of `Ode.solve`, `sample`, `path`, `event` and
   `delay` counts the answer's pass, one evaluation at the start and each
   accepted step's again, as well as the search: a budget-3 `tsit5` solve
