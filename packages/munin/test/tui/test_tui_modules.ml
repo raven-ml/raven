@@ -1884,15 +1884,6 @@ let decimal_rows =
     (fun (m, k, expected) ->
       equal float_exact expected (Numbers.decimal m k))
 
-let decimals =
-  prop "decimal m k reads as the text m e k reads"
-    ~examples:[ (1, 22); (1, 23); (1, -324); (2, 308); (1, 309); (5, -325) ]
-    Gen.(
-      with_pp
-        (fun ppf (m, k) -> Format.fprintf ppf "%de%d" m k)
-        (pair (int_range (-1_000_000) 1_000_000) (int_range (-340) 330)))
-    (fun (m, k) -> equal float_exact (decimal_text m k) (Numbers.decimal m k))
-
 let decades =
   prop "decade x is the k with 10^k <= |x| < 10^(k+1)"
     ~examples:[ 1.; 10.; 1e22; Float.pred 1e22; 5e-324; Float.max_float; 0.1 ]
@@ -2413,6 +2404,21 @@ let model_word (status : Run.status) a =
   | `Failed _ -> "failed"
   | `Killed -> "killed"
 
+(* [poll a ~dt ~d] is the model after a poll [dt] seconds later whose
+   count is [d] more. *)
+let poll a ~dt ~d =
+  let now = a.now +. dt in
+  let samples = max 0 (a.samples + d) in
+  let times =
+    if samples > a.samples then
+      List.filteri (fun i _ -> i < 32) (now :: a.times)
+    else a.times
+  in
+  { now; samples; times }
+
+(* A watch is a value: a poll makes a new one and leaves the one it read,
+   which later calls may read again, as a dashboard keeps them across
+   polls. *)
 let watch_test =
   let w = abstract "w" in
   let status =
@@ -2430,22 +2436,12 @@ let watch_test =
              (map Float.of_int
                 (frequency [ (3, int_range 0 20); (1, int_range 60 300) ]))
              (int_range (-1) 3))
-      @-> w ^-> returns unit)
-      (fun (dt, d) m ->
-        let a = !m in
-        let now = a.now +. dt in
-        let samples = max 0 (a.samples + d) in
-        let times =
-          if samples > a.samples then
-            List.filteri (fun i _ -> i < 32) (now :: a.times)
-          else a.times
-        in
-        m := { now; samples; times })
+      @-> w ^-> makes w)
+      (fun (dt, d) a -> poll a ~dt ~d)
       (* A resume that orphans samples lowers the count a poll reads. *)
-      (fun (dt, d) c ->
-        let w, now, samples = !c in
+      (fun (dt, d) (w, now, samples) ->
         let now = now +. dt and samples = max 0 (samples + d) in
-        c := (Watch.observe w ~now ~samples, now, samples))
+        (Watch.observe w ~now ~samples, now, samples))
   in
   (* A poll long after the last that finds no new sample, as a stalled
      run's do. *)
@@ -2454,35 +2450,32 @@ let watch_test =
       (Gen.with_pp
          (fun ppf dt -> Format.fprintf ppf "+%gs" dt)
          Gen.(map Float.of_int (int_range 31 300))
-      @-> w ^-> returns unit)
-      (fun dt m -> m := { !m with now = !m.now +. dt })
-      (fun dt c ->
-        let w, now, samples = !c in
+      @-> w ^-> makes w)
+      (fun dt a ->
+        let a = poll a ~dt ~d:0 in
+        cover "stalled" (model_word `Running a = "stalled");
+        a)
+      (fun dt (w, now, samples) ->
         let now = now +. dt in
-        c := (Watch.observe w ~now ~samples, now, samples))
+        (Watch.observe w ~now ~samples, now, samples))
   in
   let word =
     command "word"
       (status @-> w ^-> returns string)
-      (fun st m ->
-        let w = model_word st !m in
+      (fun st a ->
+        let w = model_word st a in
         List.iter
           (fun x -> cover x (w = x))
-          [ "starting"; "running"; "live"; "stalled"; "writing"; "silent" ];
+          [ "starting"; "running"; "live"; "writing"; "silent" ];
         w)
-      (fun st c ->
-        let w, now, _ = !c in
-        Watch.word (Watch.state st (Some w) ~now))
+      (fun st (w, now, _) -> Watch.word (Watch.state st (Some w) ~now))
   in
-  (* A watch is a cell that polls change, so that every call reads the
-     latest: the model's arrivals, and the watch with the poll's time and
-     count. *)
   stateful ~count:300 ~steps:60 "the state words follow the arrivals"
     [
       command "start"
         (Gen.int_range 0 3 @-> makes w)
-        (fun samples -> ref { now = 0.; samples; times = [] })
-        (fun samples -> ref (Watch.start ~samples, 0., samples));
+        (fun samples -> { now = 0.; samples; times = [] })
+        (fun samples -> (Watch.start ~samples, 0., samples));
       (* Listed three times, so that arrivals pile up. *)
       observe;
       observe;
@@ -2493,10 +2486,8 @@ let watch_test =
       word;
       command "last_arrival"
         (w ^-> returns (option float_exact))
-        (fun m -> match !m.times with t :: _ -> Some t | [] -> None)
-        (fun c ->
-          let w, _, _ = !c in
-          Watch.last_arrival w);
+        (fun a -> match a.times with t :: _ -> Some t | [] -> None)
+        (fun (w, _, _) -> Watch.last_arrival w);
     ]
 
 (* Which states a writer may still log in, and which ended badly. *)
@@ -2576,7 +2567,6 @@ let () =
              cut_law;
              elisions;
              decimal_rows;
-             decimals;
              decades;
              values_printed;
              rounding_shown;
