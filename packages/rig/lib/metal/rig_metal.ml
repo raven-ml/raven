@@ -36,13 +36,9 @@ external start : nativeint -> string -> string -> int = "caml_rig_metal_start"
 [@@noalloc]
 external wait_build : int -> int -> bool = "caml_rig_metal_wait"
 external take_build : int -> int = "caml_rig_metal_take"
-external entry_code : nativeint -> int = "caml_rig_metal_entry_code" [@@noalloc]
-
-external entry_threads : nativeint -> int = "caml_rig_metal_entry_threads"
-[@@noalloc]
-
-external entry_params : nativeint -> int = "caml_rig_metal_entry_params"
-[@@noalloc]
+external entry_code : int -> int = "caml_rig_metal_entry_code" [@@noalloc]
+external entry_threads : int -> int = "caml_rig_metal_entry_threads" [@@noalloc]
+external entry_params : int -> int = "caml_rig_metal_entry_params" [@@noalloc]
 
 external release_image : Rig_edge.entry array -> int array -> nativeint -> unit
   = "caml_rig_metal_unload"
@@ -624,13 +620,11 @@ let entry_held (i : image) f =
           f
     | made -> (
         match
-          let launch = Nativeint.of_int made in
-          let params = entry_params launch
-          and threads = entry_threads launch in
+          let params = entry_params made and threads = entry_threads made in
           let e =
             {
-              Rig_edge.code = entry_code launch;
-              launch;
+              Rig_edge.code = entry_code made;
+              launch = Nativeint.of_int made;
               params = (if params < 0 then None else Some params);
               threads = Some threads;
             }

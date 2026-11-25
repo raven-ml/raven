@@ -840,20 +840,21 @@ value caml_rig_metal_hold(value v_held) {
   return Val_unit;
 }
 
-/* An entry's pipeline, as an int, and its most threads per threadgroup. */
+/* An entry, as the int [caml_rig_metal_take] answered: its pipeline, as an
+   int, and its most threads per threadgroup. */
 value caml_rig_metal_entry_code(value v_e) {
-  struct rig_metal_entry *e = (struct rig_metal_entry *)Nativeint_val(v_e);
+  struct rig_metal_entry *e = (struct rig_metal_entry *)Long_val(v_e);
   return Val_long((intnat)e->pipeline);
 }
 
 value caml_rig_metal_entry_threads(value v_e) {
-  struct rig_metal_entry *e = (struct rig_metal_entry *)Nativeint_val(v_e);
+  struct rig_metal_entry *e = (struct rig_metal_entry *)Long_val(v_e);
   return Val_long(e->threads);
 }
 
 /* An entry's bytes of parameters, or -1. */
 value caml_rig_metal_entry_params(value v_e) {
-  struct rig_metal_entry *e = (struct rig_metal_entry *)Nativeint_val(v_e);
+  struct rig_metal_entry *e = (struct rig_metal_entry *)Long_val(v_e);
   return Val_long((intnat)e->params);
 }
 
