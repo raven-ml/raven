@@ -30,8 +30,9 @@
     its donation may write its result. A compressed npz entry takes twice its
     bytes while it loads: its inflated bytes and their copy. The arrays of a
     file the system cannot map are read at load into memory. An entry of a dtype
-    nx lacks loads as its bytes at [uint8], at the shape its format's section
-    states, and an entry with no elements is an empty array of that shape.
+    nx lacks loads as its bytes at [uint8], where its format's section says so
+    and at the shape it states, and an entry with no elements is an empty array
+    of that shape.
 
     An npz file and a PyTorch checkpoint are zip archives. A load checks each
     zip entry it reads against the CRC-32 the archive states for it, as
@@ -244,7 +245,8 @@ end
     float64, the signed and unsigned integers of 8 to 64 bits, complex64,
     complex128 and bool. A save writes the format's version 1.0. A load reads
     its versions 1.0, 2.0 and 3.0, in either byte order and either axis order,
-    and an npz entry stored or compressed with DEFLATE.
+    and an npz entry stored or compressed with DEFLATE. A load raises [Failure]
+    for any other dtype, such as numpy's strings or structured dtypes.
 
     Versions 1.0 and 2.0 are NumPy's NEP 1,
     {{:https://numpy.org/neps/nep-0001-npy-format.html}A simple file format for
@@ -341,8 +343,9 @@ val save_npz : string -> 'd Archive.t -> unit
     and complex64 ([C64]). The format's other dtypes load as bytes: [F8_E8M0],
     [F8_E4M3FNUZ] and [F8_E5M2FNUZ] at the entry's shape, and [F4], [F6_E2M3]
     and [F6_E3M2], whose elements are narrower than a byte, at shape [[|n|]] for
-    an entry of [n] bytes. The header may hold the file's {e metadata}, string
-    key-values such as a model's configuration. *)
+    an entry of [n] bytes; such an entry whose elements do not fill whole bytes
+    is refused. The header may hold the file's {e metadata}, string key-values
+    such as a model's configuration. *)
 
 val load_safetensors : string -> Nx.host Archive.t
 (** [load_safetensors path] is the entries of the SafeTensors file [path].
@@ -351,7 +354,10 @@ val load_safetensors : string -> Nx.host Archive.t
     - if the header is malformed or longer than 100 MB;
     - if it is not UTF-8, names an array twice or gives one an empty name;
     - if the file's length differs from the one its header states, as a partial
-      download's does. *)
+      download's does;
+    - if the entries, ordered by offset, do not each start where the one before
+      ends, since the format's byte buffer "needs to be entirely indexed, and
+      cannot contain holes" and "addresses in the file do not overlap". *)
 
 val load_safetensors_metadata : string -> (string * string) list
 (** [load_safetensors_metadata path] is the metadata of the SafeTensors file
@@ -1135,12 +1141,17 @@ module Hdf5 : sig
       For a dataset decoded from a partial file, it is {!window} of the
       whole array, in memory of its own.
 
-      Raises [Failure] as {!section-errors} states, naming [d]'s path, for
-      a datatype, layout or filter {!section-hdf5} does not read, for a
-      chunk or contiguous block past the file's end, a chunk that does not
-      decode to its bytes or fails its checksum, as in
-      ["f.h5: /x: chunk at [8], byte 2091: filter 3 (Fletcher-32): the
-       checksum does not match the data"], and naming the first range a
+      It allocates the whole array, also where the file stores none of its
+      chunks, so a small file may name an array of any size up to 2{^ 53}
+      elements. Read {!shape} first, or use {!window}.
+
+      Raises [Failure] as {!section-errors} states, naming [d]'s path, for a
+      datatype, layout or filter {!section-hdf5} does not read, for a chunk or
+      contiguous block past the file's end, a chunk that does not decode to its
+      bytes or fails its checksum, as in
+      ["f.h5: /x: chunk at [8], byte 2091: filter 3 (Fletcher-32): the checksum
+       does not match the data"], for a chunk B-tree that is malformed, such as
+      a node not one level below its parent, and naming the first range a
       partial file lacks. *)
 
   val window :
@@ -1559,7 +1570,10 @@ val decode_tiff : Partial.t -> (Tiff.t list, (int * int) list) result
     A load or a save raises [Failure] when its file cannot be read or written or
     breaks its format, and a load also when its path names no regular file, such
     as a directory or a FIFO. The message starts with the path, as in
-    ["w.npy: the file ends inside its header"].
+    ["w.npy: the file ends inside its header"]. A load also raises it for an
+    array of a shape no layout holds: more than 32 axes, a negative extent, or
+    extents other than 0 whose product exceeds 2{^ 53}
+    ({!Nx_array.Layout.max_numel}).
 
     A function raises [Invalid_argument] naming it for a value, a name or an
     argument its format cannot store, as in
