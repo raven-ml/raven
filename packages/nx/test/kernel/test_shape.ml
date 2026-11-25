@@ -3,415 +3,55 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Shapes: each function of Nx_kernel.Shape against the rule its doc states,
-   at its bounds and their neighbours; Nx_kernel's dtype rules against their
-   tables; and a kernel library's name and the devices it computes on. *)
+(* Nx_kernel's dtype rules against their tables, each function of
+   Nx_kernel.Shape against the rule its doc states, at its bounds and their
+   neighbours, and nx.cpu's name and the devices it computes on. *)
 
 open Windtrap
-open Nx_array_gen
-module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module M = Nx_array.Move
 module Shape = Nx_kernel.Shape
 
-(* Shape's results, their messages dropped. *)
+let pp_ints = Nx_array_gen.pp_ints
+let ints = array int
+let big = L.max_numel
 
-let shape_t = result (list int) unit
-let shapes_t = result (list (list int)) unit
-let misfit = Error ()
-let of_shape = function Ok y -> Ok (Array.to_list y) | Error _ -> misfit
+(* Dtypes *)
 
-let of_shapes = function
-  | Ok ys -> Ok (List.map Array.to_list ys)
-  | Error _ -> misfit
+let name (D.Any dt) = D.name dt
+let boolean (D.Any dt) = D.is D.Boolean dt
+let float (D.Any dt) = D.is D.Float dt
+let narrow_float (D.Any dt) = D.is D.Float dt && D.bits dt < 32
 
-let fits ~msg want got = equal ~msg shape_t (Ok want) (of_shape got)
-let refuses ~msg got = equal ~msg shape_t misfit (of_shape got)
+(* The names of the dtypes where [p] holds, in D.all's order. *)
+let where p = List.map name (List.filter p D.all)
 
-(* Contractions *)
+(* The doc's table: float32 for a float narrower than it, int8 and uint8 for
+   int4 and uint4, bool for bit, else the dtype itself. *)
+let carrier_name (D.Any dt as d) =
+  match dt with
+  | _ when narrow_float d -> "float32"
+  | D.Int4 -> "int8"
+  | D.Uint4 -> "uint8"
+  | D.Bit -> "bool"
+  | _ -> D.name dt
 
-(* A contraction drawn by its groups' extents. [a] is laid out in memory as
-   batch, rows, contracted axes and [b] as batch, contracted, columns, each
-   C-contiguous or over drawn strides, then permuted: [pa.(i)] is the memory
-   axis of [a]'s axis [i]. *)
-type case = {
-  batch : int array;
-  rows : int array;
-  contracted : int array;
-  columns : int array;
-  pa : int array;
-  pb : int array;
-  la : L.t;
-  lb : L.t;
-  ly : L.t;
-  li : L.t option;
-}
+let test_carrier d = equal string (carrier_name d) (name (Nx_kernel.carrier d))
 
-let pp_case ppf c =
-  Format.fprintf ppf
-    "batch %a rows %a contracted %a columns %a pa %a pb %a a %a b %a y %a%s"
-    pp_ints c.batch pp_ints c.rows pp_ints c.contracted pp_ints c.columns
-    pp_ints c.pa pp_ints c.pb L.pp c.la L.pp c.lb L.pp c.ly
-    (match c.li with None -> "" | Some l -> Format.asprintf " init %a" L.pp l)
-
-let inverse p =
-  let q = Array.make (Array.length p) 0 in
-  Array.iteri (fun i m -> q.(m) <- i) p;
-  q
-
-(* The pairs of [c]: each group's memory axis, as an axis of [a] and [b]. *)
-let pairs_of c =
-  let nb = Array.length c.batch and nr = Array.length c.rows in
-  let ia = inverse c.pa and ib = inverse c.pb in
-  let batch = Iarray.init nb (fun k -> (ia.(k), ib.(k))) in
-  let contracting =
-    Iarray.init (Array.length c.contracted) (fun k ->
-        (ia.(nb + nr + k), ib.(nb + k)))
-  in
-  (batch, contracting)
-
-(* The axes no pair names, in axis order. *)
-let free r named =
-  List.filter (fun ax -> not (List.mem ax named)) (List.init r Fun.id)
-
-(* The result's shape by the rule: the batch extents in pair order, then [a]'s
-   free extents, then [b]'s, each in axis order. *)
-let result_shape a b batch contracting =
-  let named side ps = Array.to_list (Array.map side ps) in
-  let fa = free (Array.length a) (named fst batch @ named fst contracting) in
-  let fb = free (Array.length b) (named snd batch @ named snd contracting) in
-  Array.concat
-    [
-      Array.map (fun (i, _) -> a.(i)) batch;
-      Array.of_list (List.map (fun ax -> a.(ax)) fa);
-      Array.of_list (List.map (fun ax -> b.(ax)) fb);
-    ]
-
-let extents = Gen.array ~size:(Gen.int_range 0 2) extent
-let axis_order n = Gen.map Array.of_list (Gen.permutation (List.init n Fun.id))
-
-(* A layout of shape [s]: C-contiguous or over drawn strides. *)
-let layout_of s =
-  let l = L.contiguous (Iarray.of_array s) in
-  Gen.one_of [ Gen.constant l; strided_of s ]
-
-let permuted l p = Option.get (L.move (M.Permute (Iarray.of_array p)) l)
-
-let case =
-  let open Gen in
-  let* batch = extents in
-  let* rows = extents in
-  let* contracted = extents in
-  let* columns = extents in
-  let ma = Array.concat [ batch; rows; contracted ] in
-  let mb = Array.concat [ batch; contracted; columns ] in
-  let* pa = axis_order (Array.length ma) in
-  let* pb = axis_order (Array.length mb) in
-  let* la = layout_of ma in
-  let* lb = layout_of mb in
-  let la = permuted la pa and lb = permuted lb pb in
-  let c =
-    { batch; rows; contracted; columns; pa; pb; la; lb; ly = la; li = None }
-  in
-  let b, k = pairs_of c in
-  let b = Iarray.to_array b and k = Iarray.to_array k in
-  let shape l = Iarray.to_array (L.shape l) in
-  let y = result_shape (shape la) (shape lb) b k in
-  let* ly = layout_of y in
-  let+ li = option (layout_of y) in
-  { c with ly; li }
-
-let any_case = Gen.with_pp pp_case case
-
-let law_contract c =
-  let batch, contracting = pairs_of c in
-  fits ~msg:"fits" (Iarray.to_list (L.shape c.ly))
-    (Shape.contract ~batch ~contracting ~segments:None
-       (Iarray.to_array (L.shape c.la), None)
-       (Iarray.to_array (L.shape c.lb), None))
-
-let test_contract_refuses () =
-  let a = [| 2; 3; 4 |] and b = [| 2; 4; 5 |] in
-  let contract ?(batch : _ iarray = [| (0, 0) |])
-        ?(contracting : _ iarray = [| (2, 1) |]) a b =
-    Shape.contract ~batch ~contracting ~segments:None (a, None) (b, None)
-  in
-  fits ~msg:"fits" [ 2; 3; 5 ] (contract a b);
-  refuses ~msg:"a contracting extent" (contract a [| 2; 3; 5 |]);
-  refuses ~msg:"a batch extent" (contract a [| 3; 4; 5 |]);
-  refuses ~msg:"a pair past b's rank" (contract a [| 2 |]);
-  refuses ~msg:"a pair past a's rank" (contract ~contracting:[| (3, 1) |] a b);
-  refuses ~msg:"a negative axis" (contract ~batch:[| (-1, 0) |] a b);
-  refuses ~msg:"a negative axis of b" (contract ~batch:[| (0, -1) |] a b);
-  let sq = [| 4; 4 |] in
-  fits ~msg:"distinct axes" [ 4 ]
-    (contract ~batch:[| (0, 0) |] ~contracting:[| (1, 1) |] sq sq);
-  refuses ~msg:"an axis of a in two pairs"
-    (contract ~batch:[| (0, 0) |] ~contracting:[| (0, 1) |] sq sq);
-  refuses ~msg:"an axis of b in two pairs"
-    (contract ~batch:[| (0, 1); (1, 1) |] ~contracting:[||] sq sq);
-  refuses ~msg:"an axis in two contracting pairs"
-    (contract ~batch:[||] ~contracting:[| (1, 0); (1, 1) |] sq sq);
-  let ones = Array.make L.max_rank 1 in
-  fits ~msg:"a result of the most rank" (Array.to_list ones)
-    (contract ~batch:[||] ~contracting:[||] ones [||]);
-  refuses ~msg:"a result past the most rank"
-    (contract ~batch:[||] ~contracting:[||] ones [| 1 |])
-
-(* A scale has its operand's rank, each extent dividing the operand's, 0 only
-   along an empty axis. *)
-let test_contract_scales () =
-  let mm ?sa ?sb a b =
-    Shape.contract ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
-      (a, sa) (b, sb)
-  in
-  let a = [| 4; 8 |] and b = [| 8; 6 |] in
-  fits ~msg:"blocks of 4 by 2" [ 4; 6 ] (mm ~sb:[| 2; 3 |] a b);
-  fits ~msg:"a block of a whole axis" [ 4; 6 ] (mm ~sb:[| 8; 1 |] a b);
-  fits ~msg:"a ratio of 1" [ 4; 6 ] (mm ~sa:a ~sb:b a b);
-  refuses ~msg:"an extent that does not divide" (mm ~sb:[| 3; 6 |] a b);
-  refuses ~msg:"an extent past the operand's" (mm ~sa:[| 8; 8 |] a b);
-  refuses ~msg:"a lower rank" (mm ~sa:[| 4 |] a b);
-  refuses ~msg:"a higher rank" (mm ~sa:[| 4; 8; 1 |] a b);
-  let e = [| 0; 8 |] in
-  fits ~msg:"0 along an empty axis" [ 0; 6 ] (mm ~sa:[| 0; 2 |] e b);
-  fits ~msg:"1 along an empty axis" [ 0; 6 ] (mm ~sa:[| 1; 2 |] e b);
-  refuses ~msg:"0 along a full axis" (mm ~sa:[| 0; 2 |] a b);
-  refuses ~msg:"a negative extent" (mm ~sa:[| -4; 2 |] a b)
-
-(* Rows drops b's group axis from the result; Contracting puts the group axis
-   first; ids have the batch extents, then the cut axis's. *)
-let test_contract_segments () =
-  let contract ?(batch : _ iarray = [||])
-      ?(contracting : _ iarray = [| (1, 1) |]) segments a b =
-    Shape.contract ~batch ~contracting ~segments:(Some segments) (a, None)
-      (b, None)
-  in
-  let rows ?(a_axis = 0) ?(b_axis = 0) ids =
-    Nx_kernel.Rows { ids; a_axis; b_axis }
-  in
-  let a = [| 10; 8 |] and b = [| 3; 8; 6 |] in
-  fits ~msg:"rows" [ 10; 6 ] (contract (rows [| 10 |]) a b);
-  fits ~msg:"rows of no group" [ 10; 6 ]
-    (contract (rows [| 10 |]) a [| 0; 8; 6 |]);
-  refuses ~msg:"ids of another extent" (contract (rows [| 3 |]) a b);
-  refuses ~msg:"ids of another rank" (contract (rows [| 10; 1 |]) a b);
-  refuses ~msg:"no ids" (contract (rows [||]) a b);
-  refuses ~msg:"an a_axis in a pair" (contract (rows ~a_axis:1 [| 8 |]) a b);
-  refuses ~msg:"a b_axis in a pair" (contract (rows ~b_axis:1 [| 10 |]) a b);
-  refuses ~msg:"an a_axis past a's rank"
-    (contract (rows ~a_axis:2 [| 10 |]) a b);
-  refuses ~msg:"a negative b_axis" (contract (rows ~b_axis:(-1) [| 10 |]) a b);
-  let a2 = [| 2; 10; 8 |] and b2 = [| 2; 3; 8; 6 |] in
-  let batched ids =
-    contract ~batch:[| (0, 0) |] ~contracting:[| (2, 2) |]
-      (rows ~a_axis:1 ~b_axis:1 ids) a2 b2
-  in
-  fits ~msg:"rows per batch" [ 2; 10; 6 ] (batched [| 2; 10 |]);
-  refuses ~msg:"ids without the batch" (batched [| 10 |]);
-  refuses ~msg:"ids of another batch" (batched [| 3; 10 |]);
-  let k ?(groups = 4) ids pair =
-    contract ~contracting:[| (1, 0) |]
-      (Nx_kernel.Contracting { ids; groups; pair })
-      [| 4; 8 |] [| 8; 6 |]
-  in
-  fits ~msg:"contracting" [ 4; 4; 6 ] (k [| 8 |] 0);
-  fits ~msg:"contracting into no group" [ 0; 4; 6 ] (k ~groups:0 [| 8 |] 0);
-  refuses ~msg:"no ids" (k [||] 0);
-  refuses ~msg:"ids of another extent" (k [| 4 |] 0);
-  refuses ~msg:"ids of another rank" (k [| 2; 8 |] 0);
-  refuses ~msg:"negative groups" (k ~groups:(-1) [| 8 |] 0);
-  refuses ~msg:"a pair past the contracting ones" (k [| 8 |] 1);
-  refuses ~msg:"a negative pair" (k [| 8 |] (-1));
-  let ones = Array.make (L.max_rank - 1) 1 in
-  let deep b =
-    contract ~contracting:[| (0, 0) |]
-      (Nx_kernel.Contracting { ids = [| 1 |]; groups = 1; pair = 0 })
-      ones b
-  in
-  fits ~msg:"a result of the most rank"
-    (Array.to_list (Array.make L.max_rank 1))
-    (deep [| 1; 1 |]);
-  refuses ~msg:"a result past the most rank" (deep [| 1; 1; 1 |])
-
-(* The doc's table: a contraction computes in every dtype but booleans and
-   floats narrower than float32. *)
-let test_accumulates () =
-  List.iter
+let floats =
+  List.filter_map
     (fun (D.Any dt) ->
-      let want =
-        match dt with
-        | D.Bool | D.Bit | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn
-        | D.Float8_e5m2 | D.Float4_e2m1fn ->
-            false
-        | _ -> true
-      in
-      equal ~msg:(D.name dt) bool want (Nx_kernel.accumulates dt))
+      match D.kind dt with
+      | Float -> Some (Nx_kernel.Any_float dt)
+      | Complex | Signed | Unsigned | Boolean -> None)
     D.all
 
-(* Every shape Shape derives, at max_numel and past it. *)
-let test_admits () =
-  let big = L.max_numel and z : int iarray = [| 0 |] in
-  let pad ?(interior : int iarray = [| 0 |]) lo hi =
-    { Nx_kernel.lo; hi; interior; windows = [||] }
-  in
-  fits ~msg:"padded to max_numel" [ big ]
-    (Shape.padded (pad [| big - 2 |] z) [| 2 |]);
-  refuses ~msg:"padded past max_numel"
-    (Shape.padded (pad [| big - 1 |] z) [| 2 |]);
-  refuses ~msg:"lo + hi wraps"
-    (Shape.padded (pad [| max_int |] [| max_int |]) [| 2 |]);
-  refuses ~msg:"lo + hi wraps below"
-    (Shape.padded (pad [| min_int |] [| min_int |]) [| 2 |]);
-  refuses ~msg:"interior times extent wraps"
-    (Shape.padded (pad ~interior:[| max_int |] z z) [| 3 |]);
-  refuses ~msg:"interior times extent past max_numel"
-    (Shape.padded (pad ~interior:[| big / 2 |] z z) [| 3 |]);
-  let pad2 lo hi =
-    { Nx_kernel.lo; hi; interior = [| 0; 0 |]; windows = [||] }
-  in
-  fits ~msg:"no element, other extents at max_numel" [ 0; big ]
-    (Shape.padded (pad2 [| 0; 0 |] [| 0; big - 1 |]) [| 0; 1 |]);
-  refuses ~msg:"no element, other extents past max_numel"
-    (Shape.padded (pad2 [| 0; 0 |] [| 0; big |]) [| 0; 1 |]);
-  let k = 1 lsl 27 in
-  let mm a b =
-    Shape.contract ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
-      (a, None) (b, None)
-  in
-  fits ~msg:"a contraction to max_numel" [ k / 2; k ]
-    (mm [| k / 2; 0 |] [| 0; k |]);
-  refuses ~msg:"a contraction past max_numel" (mm [| k; 0 |] [| 0; k |]);
-  fits ~msg:"a transform to max_numel points" [ big ]
-    (Shape.c2r ~axes:[| 0 |] ~n:big [| (big / 2) + 1 |]);
-  refuses ~msg:"a transform past max_numel points"
-    (Shape.c2r ~axes:[| 0 |] ~n:(big + 2) [| (big / 2) + 2 |]);
-  let svd a =
-    of_shapes
-      (Result.map (fun (s, u, vh) -> [ s; u; vh ]) (Shape.svd Complete a))
-  in
-  equal ~msg:"square vectors within max_numel" shapes_t
-    (Ok [ [ 0 ]; [ k / 2; k / 2 ]; [ 0; 0 ] ])
-    (svd [| k / 2; 0 |]);
-  equal ~msg:"square vectors past max_numel" shapes_t misfit
-    (svd [| 0; k |]);
-  let qr a =
-    of_shapes (Result.map (fun (q, r) -> [ q; r ]) (Shape.qr Complete a))
-  in
-  equal ~msg:"square factors within max_numel" shapes_t
-    (Ok [ [ k / 2; k / 2 ]; [ k / 2; 0 ] ])
-    (qr [| k / 2; 0 |]);
-  equal ~msg:"square factors past max_numel" shapes_t misfit (qr [| k; 0 |])
+let test_float_carrier (Nx_kernel.Any_float dt) =
+  let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+  equal string (name (Nx_kernel.carrier (D.Any dt))) (D.name c)
 
-(* Paddings *)
-
-let pp_pad ppf (pad : Nx_kernel.pad) =
-  Format.fprintf ppf "padded lo %a hi %a interior %a, %d windows" pp_ints
-    (Iarray.to_array pad.lo) pp_ints (Iarray.to_array pad.hi) pp_ints
-    (Iarray.to_array pad.interior)
-    (Iarray.length pad.windows)
-
-(* A padding of a rank [r]: crops and pads of a few elements, interiors of
-   up to two, and at most one window. *)
-let pad_of r =
-  let open Gen in
-  let small = int_range (-2) 3 in
-  let* lo = array ~size:(constant r) small in
-  let* hi = array ~size:(constant r) small in
-  let* interior = array ~size:(constant r) (int_range 0 2) in
-  let+ window = option (pair (int_range 0 (max 0 (r - 1))) (int_range 1 3)) in
-  let windows =
-    match window with
-    | Some (axis, size) when r > 0 ->
-        [| { M.axis; size; step = 1 + (size mod 2); dilation = 1 } |]
-    | _ -> [||]
-  in
-  let lo = Iarray.of_array lo and hi = Iarray.of_array hi in
-  let interior = Iarray.of_array interior in
-  { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
-
-(* Whether the extents of [s] other than 0 multiply to at most max_numel. *)
-let admitted s =
-  let n =
-    Array.fold_left
-      (fun n d ->
-        match n with
-        | Some n when d = 0 -> Some n
-        | Some n when d <= L.max_numel / n -> Some (n * d)
-        | _ -> None)
-      (Some 1) s
-  in
-  n <> None
-
-(* The shape an operand of shape [x] has once loaded, by the rule: the padded
-   extents, computed in floats, exact for the small ones the generators draw
-   and past max_numel for the large, then the windows as Move.Window takes
-   them. *)
-let loaded x = function
-  | None -> Some x
-  | Some (pad : Nx_kernel.pad) ->
-      let extent i d =
-        let f = Float.of_int in
-        f (Iarray.get pad.lo i) +. f (Iarray.get pad.hi i) +. f d
-        +. (f (Iarray.get pad.interior i) *. Float.of_int (max 0 (d - 1)))
-      in
-      let padded = Array.mapi extent x in
-      if Array.exists (fun d -> d < 0. || d > Float.of_int L.max_numel) padded
-      then None
-      else
-        let padded = Array.map Float.to_int padded in
-        if not (admitted padded) then None
-        else if pad.windows = [||] then Some padded
-        else
-          match M.shape (Window pad.windows) (Iarray.of_array padded) with
-          | y -> Some (Iarray.to_array y)
-          | exception Invalid_argument _ -> None
-
-(* A padding of an operand of any shape. *)
-type padded = { x : int array; pad : Nx_kernel.pad }
-
-let padded_case =
-  Gen.with_pp
-    (fun ppf c -> Format.fprintf ppf "shape %a, %a" pp_ints c.x pp_pad c.pad)
-    (let open Gen in
-     let* x = Nx_array_gen.shape in
-     let+ pad = pad_of (Array.length x) in
-     { x; pad })
-
-let law_padded c =
-  let want = Option.to_result ~none:() (loaded c.x (Some c.pad)) in
-  cover "refused" (Result.is_error want);
-  cover "windowed" (Result.is_ok want && c.pad.windows <> [||]);
-  equal shape_t (Result.map Array.to_list want)
-    (of_shape (Shape.padded c.pad c.x))
-
-let test_padded_refuses () =
-  let z = { Nx_kernel.lo = [| 0 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] } in
-  let window axis size : _ iarray =
-    [| { M.axis; size; step = 1; dilation = 1 } |]
-  in
-  refuses ~msg:"hi of another rank"
-    (Shape.padded { z with hi = [| 0; 0 |] } [| 2 |]);
-  refuses ~msg:"a pad of another rank" (Shape.padded z [| 2; 2 |]);
-  refuses ~msg:"negative interior"
-    (Shape.padded { z with interior = [| -1 |] } [| 2 |]);
-  fits ~msg:"cropped to nothing" [ 0 ] (Shape.padded { z with lo = [| -2 |] } [| 2 |]);
-  refuses ~msg:"a negative padded extent"
-    (Shape.padded { z with lo = [| -3 |] } [| 2 |]);
-  refuses ~msg:"a negative extent" (Shape.padded z [| -1 |]);
-  refuses ~msg:"a window past the rank"
-    (Shape.padded { z with windows = window 1 1 } [| 2 |]);
-  refuses ~msg:"an empty window"
-    (Shape.padded { z with windows = window 0 0 } [| 2 |]);
-  fits ~msg:"a window of the padded axis" [ 1; 2 ]
-    (Shape.padded { z with windows = window 0 2 } [| 2 |]);
-  fits ~msg:"a window past the padded axis is no window" [ 0; 3 ]
-    (Shape.padded { z with windows = window 0 3 } [| 2 |])
-
-(* Reductions and scans *)
-
-let reductions_all : Nx_kernel.reduction list =
+let reductions : Nx_kernel.reduction list =
   [
     Monoid Sum;
     Monoid Prod;
@@ -433,7 +73,202 @@ let reduction_name : Nx_kernel.reduction -> string = function
   | Arg Max -> "Arg Max"
   | Arg Min -> "Arg Min"
 
-let pp_reduction ppf r = Format.pp_print_string ppf (reduction_name r)
+let test_accepts (r : Nx_kernel.reduction) =
+  let takes =
+    match r with
+    | Monoid (Sum | Prod) -> fun d -> not (boolean d)
+    | Monoid (Max | Min) | Arg _ -> fun _ -> true
+    | Logsumexp | Moments -> float
+  in
+  equal (list string) (where takes)
+    (where (fun (D.Any dt) -> Nx_kernel.accepts r dt))
+
+let test_accumulates () =
+  equal (list string)
+    (where (fun d -> not (boolean d || narrow_float d)))
+    (where (fun (D.Any dt) -> Nx_kernel.accumulates dt))
+
+let precision (D.Any dt) =
+  match dt with
+  | D.Float32 | D.Complex64 -> Some 32
+  | D.Float64 | D.Complex128 -> Some 64
+  | _ -> None
+
+let test_same_precision () =
+  let pairs p =
+    List.concat_map
+      (fun x ->
+        List.filter_map
+          (fun y -> if p x y then Some (name x, name y) else None)
+          D.all)
+      D.all
+  in
+  equal
+    (list (pair string string))
+    (pairs (fun x y -> precision x <> None && precision x = precision y))
+    (pairs (fun (D.Any x) (D.Any y) -> Nx_kernel.same_precision x y))
+
+let test_full_precision () =
+  equal (list string)
+    (where (fun d -> precision d <> None))
+    (where (fun (D.Any dt) -> Nx_kernel.full_precision dt))
+
+(* Shape's results *)
+
+(* An Error's message is no part of a claim: [reason] equals any, and prints it
+   where a shape was expected. *)
+let reason = Testable.make ~pp:Format.pp_print_string ~equal:(fun _ _ -> true)
+let shape = result ints reason
+let misfit = Error "a misfit"
+
+(* Whether a layout admits each of [shapes], as every shape Shape derives must
+   be. *)
+let admits shapes = List.for_all (fun s -> L.fits (Iarray.of_array s)) shapes
+
+(* Shape.padded *)
+
+let pad ?interior ?(windows = [||]) lo hi : Nx_kernel.pad =
+  let interior =
+    Option.value interior ~default:(Array.make (Array.length lo) 0)
+  in
+  {
+    lo = Iarray.of_array lo;
+    hi = Iarray.of_array hi;
+    interior = Iarray.of_array interior;
+    windows = Iarray.of_array windows;
+  }
+
+let window ?(step = 1) ?(dilation = 1) axis size =
+  { M.axis; size; step; dilation }
+
+type padded = { x : int array; pad : Nx_kernel.pad }
+
+let pp_padded ppf (c : padded) =
+  Format.fprintf ppf "%a padded lo %a hi %a interior %a, then %a" pp_ints c.x
+    pp_ints (Iarray.to_array c.pad.lo) pp_ints (Iarray.to_array c.pad.hi)
+    pp_ints
+    (Iarray.to_array c.pad.interior)
+    Nx_array_gen.pp_move (M.Window c.pad.windows)
+
+(* An operand's padding: crops and pads of a few elements, interiors of up to
+   two, and windows on a drawn subset of the axes, of up to three taps, one or
+   two apart, steps of one or two. *)
+let padded_case =
+  Gen.with_pp pp_padded
+    (let open Gen in
+     let* x = Nx_array_gen.shape in
+     let r = Array.length x in
+     let small = array ~size:(constant r) (int_range (-2) 3) in
+     let* lo = small in
+     let* hi = small in
+     let* interior = array ~size:(constant r) (int_range 0 2) in
+     let* axes = subsequence (List.init r Fun.id) in
+     let tap = triple (int_range 1 3) (int_range 1 2) (int_range 1 2) in
+     let+ taps = list ~size:(constant (List.length axes)) tap in
+     let windows =
+       List.map2
+         (fun axis (size, step, dilation) -> window ~step ~dilation axis size)
+         axes taps
+     in
+     { x; pad = pad ~interior ~windows:(Array.of_list windows) lo hi })
+
+(* The padded extents by the doc's rule: [lo] elements before the operand's,
+   [hi] after and [interior] between neighbours. *)
+let padded_extents (p : Nx_kernel.pad) x =
+  Array.mapi
+    (fun i d ->
+      Iarray.get p.lo i + Iarray.get p.hi i + d
+      + (Iarray.get p.interior i * max 0 (d - 1)))
+    x
+
+(* The padded shape, then the windows Move.Window takes of it, or an Error where
+   Move.shape refuses them or the padded shape. *)
+let law_padded (c : padded) =
+  let padded = padded_extents c.pad c.x in
+  let want =
+    match M.shape (Window c.pad.windows) (Iarray.of_array padded) with
+    | y -> Ok (Iarray.to_array y)
+    | exception Invalid_argument _ -> misfit
+  in
+  let longer (w : M.window) =
+    (w.dilation * (w.size - 1)) + 1 > padded.(w.axis)
+  in
+  cover "refused" (Result.is_error want);
+  cover "two windows" (Iarray.length c.pad.windows >= 2);
+  cover "a dilated window"
+    (Iarray.exists
+       (fun (w : M.window) -> w.dilation > 1 && w.size > 1)
+       c.pad.windows);
+  cover "a window longer than its axis"
+    (Result.is_ok want && Iarray.exists longer c.pad.windows);
+  equal shape want (Shape.padded c.pad c.x)
+
+let padded_examples =
+  [
+    { x = [| 2 |]; pad = pad [| -2 |] [| 0 |] };
+    { x = [| 2 |]; pad = pad [| -2 |] [| -1 |] };
+    { x = [| 2 |]; pad = pad ~windows:[| window 0 2 |] [| 0 |] [| 0 |] };
+    { x = [| 2 |]; pad = pad ~windows:[| window 0 3 |] [| 0 |] [| 0 |] };
+    { x = [||]; pad = pad [||] [||] };
+  ]
+
+let padded_errors =
+  let z = pad [| 0 |] [| 0 |] in
+  let ws windows = pad ~windows [| 0; 0 |] [| 0; 0 |] in
+  let ones = Array.make L.max_rank 1 in
+  let zeros = Array.make L.max_rank 0 in
+  [
+    ("lo of another rank", pad [| 0; 0 |] [| 0 |], [| 2 |]);
+    ("hi of another rank", pad [| 0 |] [| 0; 0 |], [| 2 |]);
+    ( "interior of another rank",
+      pad ~interior:[| 0; 0 |] [| 0 |] [| 0 |],
+      [| 2 |] );
+    ("a pad of another rank than x", z, [| 2; 2 |]);
+    ("a negative interior", pad ~interior:[| -1 |] [| 0 |] [| 0 |], [| 2 |]);
+    ("a negative padded extent", pad [| -3 |] [| 0 |], [| 2 |]);
+    ("windows out of order", ws [| window 1 1; window 0 1 |], [| 2; 2 |]);
+    ("two windows of one axis", ws [| window 0 1; window 0 1 |], [| 2; 2 |]);
+    ( "a window past the rank",
+      pad ~windows:[| window 1 1 |] [| 0 |] [| 0 |],
+      [| 2 |] );
+    ("a window of size 0", ws [| window 0 0 |], [| 2; 2 |]);
+    ("a window of step 0", ws [| window ~step:0 0 1 |], [| 2; 2 |]);
+    ("a window of dilation 0", ws [| window ~dilation:0 0 1 |], [| 2; 2 |]);
+    ( "a window past the most axes",
+      pad ~windows:[| window 0 1 |] zeros zeros,
+      ones );
+  ]
+
+let test_padded_error (_, p, x) = is_error ~pp:pp_ints (Shape.padded p x)
+
+let padded_bounds =
+  let z = [| 0 |] in
+  [
+    ("padded to max_numel", pad [| big - 2 |] z, [| 2 |], Ok [| big |]);
+    ("padded past max_numel", pad [| big - 1 |] z, [| 2 |], misfit);
+    ("lo + hi past every int", pad [| max_int |] [| max_int |], [| 2 |], misfit);
+    ("lo + hi below every int", pad [| min_int |] [| min_int |], [| 2 |], misfit);
+    ( "interior times extent past every int",
+      pad ~interior:[| max_int |] z z,
+      [| 3 |],
+      misfit );
+    ( "interior times extent past max_numel",
+      pad ~interior:[| big / 2 |] z z,
+      [| 3 |],
+      misfit );
+    ( "no element, another extent of max_numel",
+      pad [| 0; 0 |] [| 0; big - 1 |],
+      [| 0; 1 |],
+      Ok [| 0; big |] );
+    ( "no element, another extent past max_numel",
+      pad [| 0; 0 |] [| 0; big |],
+      [| 0; 1 |],
+      misfit );
+  ]
+
+let test_padded_bound (_, p, x, want) = equal shape want (Shape.padded p x)
+
+(* Shape.reduce *)
 
 let extreme : Nx_kernel.reduction -> bool = function
   | Monoid (Max | Min) | Arg _ -> true
@@ -445,233 +280,239 @@ type reduce_case = {
   rs : Nx_kernel.reduction array;
 }
 
-let pp_reduce_case ppf c =
-  Format.fprintf ppf "%a along %a of %a"
-    (Format.pp_print_list pp_reduction)
-    (Array.to_list c.rs) pp_ints c.axes pp_ints c.y
+let pp_reduce_case ppf (c : reduce_case) =
+  Format.fprintf ppf "%s along %a of %a"
+    (String.concat ", " (Array.to_list (Array.map reduction_name c.rs)))
+    pp_ints c.axes pp_ints c.y
 
-(* Reductions along a subset of a shape's axes. One case in three empties
-   the first reduced axis, so that an extreme of no term, which a drawn
-   shape alone gives in one case in eighteen, comes in one in seven and
-   every run of 100 cases reaches it. *)
+(* Reductions along a subset of a shape's axes. One case in three empties the
+   first reduced axis, so that an extreme of no term, which a drawn shape alone
+   gives in one case in eighteen, comes in one in seven. *)
 let reduce_case =
   Gen.with_pp pp_reduce_case
     (let open Gen in
      let* y = Nx_array_gen.shape in
      let rank = Array.length y in
-     let* keep = array ~size:(constant rank) bool in
-     let axes =
-       Array.of_list (List.filter (fun i -> keep.(i)) (List.init rank Fun.id))
-     in
+     let* axes = subsequence (List.init rank Fun.id) in
+     let axes = Array.of_list axes in
      let* empty = frequency [ (2, constant false); (1, constant true) ] in
      let y =
        if empty && axes <> [||] then
          Array.mapi (fun i n -> if i = axes.(0) then 0 else n) y
        else y
      in
-     let+ rs = array ~size:(int_range 1 2) (of_list ~pp:pp_reduction reductions_all) in
+     let+ rs = array ~size:(int_range 1 2) (of_list reductions) in
      { y; axes; rs })
 
-(* The destinations' shape by the rule: the loop's without the axes, and no
-   shape for an extreme with a destination element and no term. *)
-let law_reduce c =
+(* The destinations' shape by the rule: the loop's without the axes, and an
+   Error for an extreme with a destination element and no term. *)
+let law_reduce (c : reduce_case) =
   let kept =
     List.filteri (fun i _ -> not (Array.mem i c.axes)) (Array.to_list c.y)
   in
   let terms = Array.fold_left (fun n a -> n * c.y.(a)) 1 c.axes in
   let no_term = terms = 0 && List.fold_left ( * ) 1 kept > 0 in
-  let want = if no_term && Array.exists extreme c.rs then misfit else Ok kept in
+  let want =
+    if no_term && Array.exists extreme c.rs then misfit
+    else Ok (Array.of_list kept)
+  in
   cover "fits" (Result.is_ok want);
   cover "no term" no_term;
   cover "an extreme of no term" (Result.is_error want);
-  let axes = Iarray.of_array c.axes in
-  equal shape_t want (of_shape (Shape.reduce ~axes c.rs c.y))
+  equal shape want (Shape.reduce ~axes:(Iarray.of_array c.axes) c.rs c.y)
 
-let test_reduce_refuses () =
-  let y = [| 2; 3 |] and sum = [| Nx_kernel.Monoid Sum |] in
-  let reduce ?(rs = sum) ?(y = y) axes = Shape.reduce ~axes rs y in
-  fits ~msg:"along no axis" [ 2; 3 ] (reduce [||]);
-  fits ~msg:"along every axis" [] (reduce [| 0; 1 |]);
-  refuses ~msg:"axes out of order" (reduce [| 1; 0 |]);
-  refuses ~msg:"a repeated axis" (reduce [| 0; 0 |]);
-  refuses ~msg:"a negative axis" (reduce [| -1 |]);
-  fits ~msg:"the last axis" [ 2 ] (reduce [| 1 |]);
-  refuses ~msg:"an axis past the rank" (reduce [| 2 |]);
-  let empty = [| 2; 0 |] in
-  fits ~msg:"a sum of no term" [ 2 ] (reduce ~y:empty [| 1 |]);
-  fits ~msg:"moments of no term" [ 2 ] (reduce ~rs:[| Moments |] ~y:empty [| 1 |]);
-  refuses ~msg:"a maximum of no term"
-    (reduce ~rs:[| Monoid Max |] ~y:empty [| 1 |]);
-  refuses ~msg:"a minimum of no term beside a sum"
-    (reduce ~rs:[| Monoid Sum; Monoid Min |] ~y:empty [| 1 |]);
-  refuses ~msg:"an Arg of no term" (reduce ~rs:[| Arg Min |] ~y:empty [| 1 |]);
-  fits ~msg:"a maximum with no output" [ 0 ]
-    (reduce ~rs:[| Monoid Max |] ~y:[| 0; 0 |] [| 1 |]);
-  fits ~msg:"a scan keeps the shape" [ 2; 3 ] (Shape.scan ~axis:1 y);
-  fits ~msg:"a scan of no term" [ 2; 0 ] (Shape.scan ~axis:1 empty);
-  refuses ~msg:"a scan along an axis past the rank" (Shape.scan ~axis:2 y);
-  refuses ~msg:"a scan along a negative axis" (Shape.scan ~axis:(-1) y);
-  refuses ~msg:"a scan of rank 0" (Shape.scan ~axis:0 [||])
+let reduce_examples =
+  let empty = [| 2; 0 |] and sum = Nx_kernel.Monoid Sum in
+  [
+    { y = [| 2; 3 |]; axes = [||]; rs = [| sum |] };
+    { y = [| 2; 3 |]; axes = [| 0; 1 |]; rs = [| sum |] };
+    { y = empty; axes = [| 1 |]; rs = [| sum |] };
+    { y = empty; axes = [| 1 |]; rs = [| Moments |] };
+    { y = empty; axes = [| 1 |]; rs = [| Monoid Max |] };
+    { y = empty; axes = [| 1 |]; rs = [| sum; Monoid Min |] };
+    { y = empty; axes = [| 1 |]; rs = [| Arg Min |] };
+    { y = [| 0; 0 |]; axes = [| 1 |]; rs = [| Monoid Max |] };
+  ]
 
-(* The doc's table: Sum and Prod take every dtype but booleans, Max, Min and
-   Arg every dtype, Logsumexp and Moments floats. *)
-let test_accepts () =
-  List.iter
-    (fun (D.Any dt) ->
-      let boolean = match dt with D.Bool | D.Bit -> true | _ -> false in
-      let float =
-        match dt with
-        | D.Float64 | D.Float32 | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn
-        | D.Float8_e5m2 | D.Float4_e2m1fn ->
-            true
-        | _ -> false
-      in
-      List.iter
-        (fun r ->
-          let want : bool =
-            match (r : Nx_kernel.reduction) with
-            | Monoid (Sum | Prod) -> not boolean
-            | Monoid (Max | Min) | Arg _ -> true
-            | Logsumexp | Moments -> float
-          in
-          equal
-            ~msg:(Format.asprintf "%s of %a" (reduction_name r) D.pp dt)
-            bool want (Nx_kernel.accepts r dt))
-        reductions_all)
-    D.all
+let reduce_errors =
+  [
+    ("axes out of order", [| 1; 0 |]);
+    ("a repeated axis", [| 0; 0 |]);
+    ("a negative axis", [| -1 |]);
+    ("an axis past the rank", [| 2 |]);
+  ]
 
-(* The doc's table: float32 for a float narrower than it, int8 and uint8 for
-   int4 and uint4, bool for bit, else the dtype itself. *)
-let carrier_name (D.Any dt) =
-  match dt with
-  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2 | D.Float4_e2m1fn
-    ->
-      "float32"
-  | D.Int4 -> "int8"
-  | D.Uint4 -> "uint8"
-  | D.Bit -> "bool"
-  | _ -> D.name dt
+let test_reduce_error (_, axes) =
+  is_error ~pp:pp_ints
+    (Shape.reduce ~axes:(Iarray.of_array axes) [| Monoid Sum |] [| 2; 3 |])
 
-let test_carrier d =
-  let (D.Any c) = Nx_kernel.carrier d in
-  equal string (carrier_name d) (D.name c)
+(* Shape.scan and Shape.carry *)
 
-let floats =
-  List.filter_map
-    (fun (D.Any dt) ->
-      match D.kind dt with
-      | Float -> Some (Nx_kernel.Any_float dt)
-      | Complex | Signed | Unsigned | Boolean -> None)
-    D.all
+let scans =
+  [
+    ("[2; 3] along 1", 1, [| 2; 3 |]);
+    ("[2; 0] along 1", 1, [| 2; 0 |]);
+    ("[5] along 0", 0, [| 5 |]);
+  ]
 
-let test_float_carrier (Nx_kernel.Any_float dt) =
-  let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-  equal string (carrier_name (D.Any dt)) (D.name c)
+let test_scan (_, axis, y) = equal shape (Ok y) (Shape.scan ~axis y)
 
-(* Attention *)
+let axis_errors =
+  [
+    ("an axis past the rank", 2, [| 2; 3 |]);
+    ("a negative axis", -1, [| 2; 3 |]);
+    ("rank 0", 0, [||]);
+  ]
 
-let test_attention () =
-  let both = function
-    | Ok (o, lse) -> Ok [ Array.to_list o; Array.to_list lse ]
-    | Error _ -> misfit
-  in
-  let a ?lengths ?(loads = [||]) q kv =
-    both (Shape.attention q kv ~lengths loads)
-  in
-  let fits ~msg want got = equal ~msg shapes_t (Ok want) got in
-  let refuses ~msg got = equal ~msg shapes_t misfit got in
-  let dense k v : _ Nx_kernel.kv = Dense { k; v } in
-  let q = [| 2; 4; 3; 5 |] in
-  fits ~msg:"dense, grouped heads" [ [ 2; 4; 3; 6 ]; [ 2; 4; 3 ] ]
-    (a q (dense [| 2; 2; 7; 5 |] [| 2; 2; 7; 6 |]));
-  fits ~msg:"lengths and a load" [ [ 2; 4; 3; 6 ]; [ 2; 4; 3 ] ]
-    (a ~lengths:[| 2 |] ~loads:[| [| 2; 4; 3; 7 |] |] q
-       (dense [| 2; 2; 7; 5 |] [| 2; 2; 7; 6 |]));
-  fits ~msg:"paged" [ [ 2; 4; 3; 6 ]; [ 2; 4; 3 ] ]
-    (a ~loads:[| [| 2; 4; 3; 12 |] |] q
-       (Paged { k = [| 5; 1; 4; 5 |]; v = [| 5; 1; 4; 6 |]; table = [| 2; 3 |] }));
-  fits ~msg:"no heads" [ [ 0; 3; 6 ]; [ 0; 3 ] ]
-    (a [| 0; 3; 5 |] (dense [| 0; 7; 5 |] [| 0; 7; 6 |]));
-  refuses ~msg:"two axes" (a [| 3; 5 |] (dense [| 7; 5 |] [| 7; 6 |]));
-  refuses ~msg:"heads that do not divide"
-    (a q (dense [| 2; 3; 7; 5 |] [| 2; 3; 7; 6 |]));
-  refuses ~msg:"keys of another dimension"
-    (a q (dense [| 2; 2; 7; 4 |] [| 2; 2; 7; 6 |]));
-  refuses ~msg:"values of other keys"
-    (a q (dense [| 2; 2; 7; 5 |] [| 2; 2; 8; 6 |]));
-  refuses ~msg:"lengths of another shape"
-    (a ~lengths:[| 3 |] q (dense [| 2; 2; 7; 5 |] [| 2; 2; 7; 6 |]));
-  refuses ~msg:"a load of another shape"
-    (a ~loads:[| [| 2; 4; 3; 6 |] |] q
-       (dense [| 2; 2; 7; 5 |] [| 2; 2; 7; 6 |]));
-  refuses ~msg:"a table of another rank"
-    (a q (Paged { k = [| 5; 1; 4; 5 |]; v = [| 5; 1; 4; 6 |]; table = [| 3 |] }));
-  refuses ~msg:"pools of other pages"
-    (a q (Paged { k = [| 5; 1; 4; 5 |]; v = [| 4; 1; 4; 6 |]; table = [| 2; 3 |] }))
+let test_scan_error (_, axis, y) = is_error ~pp:pp_ints (Shape.scan ~axis y)
 
-(* Gathers, scatters and sorts *)
+let carries =
+  [
+    ("[2; 3] along 1", 1, [| 2; 3 |], [| 2; 1 |]);
+    ("[0; 3] along 0", 0, [| 0; 3 |], [| 1; 3 |]);
+    ("[2; 0] along 1", 1, [| 2; 0 |], [| 2; 1 |]);
+    ("[5] along 0", 0, [| 5 |], [| 1 |]);
+  ]
 
-let test_index_refuses () =
-  refuses ~msg:"a gather along a negative axis"
-    (Shape.gather ~axis:(-1) [| 2 |] [| 2 |]);
-  refuses ~msg:"a scatter along a negative axis"
-    (Shape.scatter ~axis:(-1) [| 2 |] [| 2 |] [| 2 |]);
-  fits ~msg:"a scatter along the last axis" [ 2 ]
-    (Shape.scatter ~axis:0 [| 2 |] [| 3 |] [| 3 |]);
-  refuses ~msg:"a scatter along an axis past the rank"
-    (Shape.scatter ~axis:1 [| 2 |] [| 2 |] [| 2 |]);
-  refuses ~msg:"a sort along a negative axis"
-    (Shape.sort ~axis:(-1) ~k:None [| 2 |]);
-  refuses ~msg:"a negative k" (Shape.sort ~axis:0 ~k:(Some (-1)) [| 2 |]);
-  fits ~msg:"a k of 0" [ 0 ] (Shape.sort ~axis:0 ~k:(Some 0) [| 2 |])
+let test_carry (_, axis, y, want) = equal shape (Ok want) (Shape.carry ~axis y)
+let test_carry_error (_, axis, y) = is_error ~pp:pp_ints (Shape.carry ~axis y)
 
-(* Each family's shapes, at a fit and at each way to miss it. *)
-let test_index_shapes () =
-  let g idx x = Shape.gather ~axis:1 idx x in
-  fits ~msg:"gather: positions' shape" [ 2; 5; 4 ]
-    (g [| 2; 5; 4 |] [| 2; 3; 4 |]);
-  fits ~msg:"gather: from an empty axis" [ 2; 5; 4 ]
-    (g [| 2; 5; 4 |] [| 2; 0; 4 |]);
-  refuses ~msg:"gather: another extent off the axis"
-    (g [| 2; 5; 3 |] [| 2; 3; 4 |]);
-  refuses ~msg:"gather: another rank" (g [| 2; 5 |] [| 2; 3; 4 |]);
-  fits ~msg:"gather: along the last axis" [ 2; 5 ] (g [| 2; 5 |] [| 2; 3 |]);
-  refuses ~msg:"gather: an axis past the rank" (g [| 2 |] [| 2 |]);
-  let sc into idx u = Shape.scatter ~axis:0 into idx u in
-  fits ~msg:"scatter: into's shape" [ 7; 4 ]
-    (sc [| 7; 4 |] [| 9; 4 |] [| 9; 4 |]);
-  refuses ~msg:"scatter: positions and updates differ"
-    (sc [| 7; 4 |] [| 9; 4 |] [| 8; 4 |]);
-  refuses ~msg:"scatter: another extent off the axis"
-    (sc [| 7; 4 |] [| 9; 3 |] [| 9; 3 |]);
-  refuses ~msg:"scatter: another rank" (sc [| 7; 4 |] [| 9 |] [| 9 |]);
-  let so k x = Shape.sort ~axis:1 ~k x in
-  fits ~msg:"sort: the operand's shape" [ 2; 5 ] (so None [| 2; 5 |]);
-  fits ~msg:"sort: k along the axis" [ 2; 3 ] (so (Some 3) [| 2; 5 |]);
-  fits ~msg:"sort: k of the whole axis" [ 2; 5 ] (so (Some 5) [| 2; 5 |]);
-  refuses ~msg:"sort: k past the axis" (so (Some 6) [| 2; 5 |]);
-  refuses ~msg:"sort: an axis past the rank" (so None [| 2 |])
+(* Shape.gather, gather_ranges, scatter and sort *)
 
-(* A range gather's shape: [x] with [size] elements along the runs' axis. *)
-let test_ranges_shapes () =
-  let r ?(size = 6) s e x = Shape.gather_ranges ~size s e x in
-  fits ~msg:"ranges: size along the axis" [ 6 ] (r [| 3 |] [| 3 |] [| 4 |]);
-  fits ~msg:"ranges: cells kept" [ 2; 6; 3; 0 ]
-    (r [| 2; 5 |] [| 2; 5 |] [| 2; 4; 3; 0 |]);
-  fits ~msg:"ranges: no run, no element" [ 0 ]
-    (r ~size:0 [| 0 |] [| 0 |] [| 0 |]);
-  refuses ~msg:"ranges: 0-d runs" (r [||] [||] [| 4 |]);
-  refuses ~msg:"ranges: starts and ends differ" (r [| 3 |] [| 4 |] [| 4 |]);
-  refuses ~msg:"ranges: another lead extent"
-    (r [| 2; 3 |] [| 2; 3 |] [| 3; 4 |]);
-  refuses ~msg:"ranges: no ranged axis in x" (r [| 2; 3 |] [| 2; 3 |] [| 2 |]);
-  refuses ~msg:"ranges: a negative size" (r ~size:(-1) [| 3 |] [| 3 |] [| 4 |]);
-  refuses ~msg:"ranges: more elements than a layout admits"
-    (r ~size:max_int [| 3 |] [| 3 |] [| 4; 2 |])
+let gathers =
+  [
+    ("positions of x's extents off the axis", 1, [| 2; 5; 4 |], [| 2; 3; 4 |]);
+    ("positions from an empty axis", 1, [| 2; 5; 4 |], [| 2; 0; 4 |]);
+    ("positions along the last axis", 1, [| 2; 5 |], [| 2; 3 |]);
+    ("no position", 0, [| 0 |], [| 3 |]);
+  ]
 
-(* Assemblies *)
+let test_gather (_, axis, idx, x) =
+  equal shape (Ok idx) (Shape.gather ~axis idx x)
 
-type assemble_case = { shape : int array; regions : M.range array array }
+let gather_errors =
+  [
+    ("a negative axis", -1, [| 2 |], [| 2 |]);
+    ("an axis past the rank", 1, [| 2 |], [| 2 |]);
+    ("another extent off the axis", 1, [| 2; 5; 3 |], [| 2; 3; 4 |]);
+    ("another rank", 1, [| 2; 5 |], [| 2; 3; 4 |]);
+  ]
+
+let test_gather_error (_, axis, idx, x) =
+  is_error ~pp:pp_ints (Shape.gather ~axis idx x)
+
+let ranges =
+  [
+    ("size along the runs' axis", 6, [| 3 |], [| 3 |], [| 4 |], [| 6 |]);
+    ( "the cells kept",
+      6,
+      [| 2; 5 |],
+      [| 2; 5 |],
+      [| 2; 4; 3; 0 |],
+      [| 2; 6; 3; 0 |] );
+    ("no run, no element", 0, [| 0 |], [| 0 |], [| 0 |], [| 0 |]);
+    ( "max_numel elements",
+      big / 4,
+      [| 3 |],
+      [| 3 |],
+      [| 4; 4 |],
+      [| big / 4; 4 |] );
+  ]
+
+let test_ranges (_, size, s, e, x, want) =
+  equal shape (Ok want) (Shape.gather_ranges ~size s e x)
+
+let range_errors =
+  [
+    ("0-d runs", 6, [||], [||], [| 4 |]);
+    ("starts and ends of other shapes", 6, [| 3 |], [| 4 |], [| 4 |]);
+    ("another lead extent", 6, [| 2; 3 |], [| 2; 3 |], [| 3; 4 |]);
+    ("no runs' axis in x", 6, [| 2; 3 |], [| 2; 3 |], [| 2 |]);
+    ("a negative size", -1, [| 3 |], [| 3 |], [| 4 |]);
+    ("past max_numel elements", (big / 4) + 1, [| 3 |], [| 3 |], [| 4; 4 |]);
+    ("a size past every int's elements", max_int, [| 3 |], [| 3 |], [| 4; 2 |]);
+  ]
+
+let test_ranges_error (_, size, s, e, x) =
+  is_error ~pp:pp_ints (Shape.gather_ranges ~size s e x)
+
+let scatters =
+  [
+    ("into's shape", 0, [| 7; 4 |], [| 9; 4 |]);
+    ("along the last axis", 0, [| 2 |], [| 3 |]);
+    ("no update", 1, [| 2; 3 |], [| 2; 0 |]);
+  ]
+
+let test_scatter (_, axis, into, idx) =
+  equal shape (Ok into) (Shape.scatter ~axis into idx idx)
+
+let scatter_errors =
+  [
+    ( "positions and updates of other shapes",
+      0,
+      [| 7; 4 |],
+      [| 9; 4 |],
+      [| 8; 4 |] );
+    ("another extent off the axis", 0, [| 7; 4 |], [| 9; 3 |], [| 9; 3 |]);
+    ("another rank", 0, [| 7; 4 |], [| 9 |], [| 9 |]);
+    ("a negative axis", -1, [| 2 |], [| 2 |], [| 2 |]);
+    ("an axis past the rank", 1, [| 2 |], [| 2 |], [| 2 |]);
+  ]
+
+let test_scatter_error (_, axis, into, idx, u) =
+  is_error ~pp:pp_ints (Shape.scatter ~axis into idx u)
+
+let sorts =
+  [
+    ("x without k", 1, None, [| 2; 5 |], [| 2; 5 |]);
+    ("k along the axis", 1, Some 3, [| 2; 5 |], [| 2; 3 |]);
+    ("k of the whole axis", 1, Some 5, [| 2; 5 |], [| 2; 5 |]);
+    ("a k of 0", 0, Some 0, [| 2 |], [| 0 |]);
+  ]
+
+let test_sort (_, axis, k, x, want) =
+  equal shape (Ok want) (Shape.sort ~axis ~k x)
+
+let sort_errors =
+  [
+    ("k past the axis's extent", 1, Some 6, [| 2; 5 |]);
+    ("a negative k", 0, Some (-1), [| 2 |]);
+    ("a negative axis", -1, None, [| 2 |]);
+    ("an axis past the rank", 1, None, [| 2 |]);
+  ]
+
+let test_sort_error (_, axis, k, x) =
+  is_error ~pp:pp_ints (Shape.sort ~axis ~k x)
+
+(* Shape.unique *)
+
+let three = result (triple ints ints ints) reason
+
+let uniques =
+  [
+    ("five rows of two words", 3, [| 5; 2 |]);
+    ("no row", 0, [| 0; 0 |]);
+    ("max_numel entries", big, [| 1; 1 |]);
+  ]
+
+let test_unique (_, size, keys) =
+  equal three (Ok ([| keys.(0) |], [| size |], [||])) (Shape.unique ~size keys)
+
+let unique_errors =
+  [
+    ("keys of rank 0", 3, [||]);
+    ("keys of rank 1", 3, [| 5 |]);
+    ("keys of rank 3", 3, [| 5; 2; 1 |]);
+    ("a negative size", -1, [| 5; 2 |]);
+    ("a size past max_numel", big + 1, [| 5; 2 |]);
+  ]
+
+let test_unique_error (_, size, keys) =
+  is_error ~pp:(Testable.pp (triple ints ints ints)) (Shape.unique ~size keys)
+
+(* Shape.assemble *)
+
+type assemble_case = { y : int array; regions : M.range array array }
 
 let pp_regions ppf rs =
   Array.iter
@@ -687,385 +528,866 @@ let pp_regions ppf rs =
 
 let assemble_case =
   Gen.with_pp
-    (fun ppf c ->
-      Format.fprintf ppf "shape %a, regions %a" pp_ints c.shape pp_regions
-        c.regions)
+    (fun ppf (c : assemble_case) ->
+      Format.fprintf ppf "%a of regions %a" pp_ints c.y pp_regions c.regions)
     (let open Gen in
-     let* shape = Nx_array_gen.shape in
+     let* y = Nx_array_gen.shape in
      let region =
        let rec go i acc =
          if i < 0 then constant (Array.of_list acc)
          else
-           let* r = Nx_array_gen.range shape.(i) in
+           let* r = Nx_array_gen.range y.(i) in
            go (i - 1) (r :: acc)
        in
-       go (Array.length shape - 1) []
+       go (Array.length y - 1) []
      in
      let+ regions = array ~size:(int_range 0 3) region in
-     { shape; regions })
+     { y; regions })
 
 (* Each piece has its region's shape, as Move.Slice keeps it. *)
-let law_assemble c =
-  let regions = Array.map Iarray.of_array c.regions in
-  let s = Iarray.of_array c.shape in
-  let pieces =
-    Array.map (fun r -> Iarray.to_list (M.shape (Slice r) s)) regions
-  in
+let law_assemble (c : assemble_case) =
+  let s = Iarray.of_array c.y in
+  let piece r = Iarray.to_array (M.shape (Slice (Iarray.of_array r)) s) in
   cover "pieces" (c.regions <> [||]);
-  equal shapes_t (Ok (Array.to_list pieces))
-    (of_shapes (Result.map Array.to_list (Shape.assemble c.shape regions)))
+  equal
+    (result (array ints) reason)
+    (Ok (Array.map piece c.regions))
+    (Shape.assemble c.y (Array.map Iarray.of_array c.regions))
 
-let test_assemble_refuses () =
-  let r start count step = { M.start; count; step } in
-  let assemble y regions =
-    of_shapes (Result.map Array.to_list (Shape.assemble y regions))
+let range start count step = { M.start; count; step }
+
+let assemble_examples =
+  [
+    { y = [| 2 |]; regions = [||] };
+    { y = [| 2 |]; regions = [| [| range 0 2 1 |] |] };
+    { y = [| big |]; regions = [| [| range (big - 1) big (-1) |] |] };
+  ]
+
+let assemble_errors =
+  [
+    ("a region of another rank", [| [| range 0 1 1; range 0 1 1 |] |]);
+    ("a region past its axis", [| [| range 1 2 1 |] |]);
+    ("a region before its axis", [| [| range (-1) 1 1 |] |]);
+    ("a step of 0", [| [| range 0 1 0 |] |]);
+    ("a negative count", [| [| range 0 (-1) 1 |] |]);
+    ("a region ending past every int", [| [| range 0 max_int max_int |] |]);
+    ("a second region past its axis", [| [| range 0 2 1 |]; [| range 0 3 1 |] |]);
+  ]
+
+let test_assemble_error (_, regions) =
+  is_error
+    ~pp:(Testable.pp (array ints))
+    (Shape.assemble [| 2 |] (Array.map Iarray.of_array regions))
+
+(* Shape.contract *)
+
+(* A contraction drawn by its groups' extents. [a] is batch, rows, then
+   contracted axes, and [b] batch, contracted, then columns, each permuted:
+   [pa.(i)] is the group axis of [a]'s axis [i]. *)
+type contraction = {
+  batch : int array;
+  rows : int array;
+  contracted : int array;
+  columns : int array;
+  pa : int array;
+  pb : int array;
+}
+
+let permuted p s = Array.map (fun m -> s.(m)) p
+
+let a_of (c : contraction) =
+  permuted c.pa (Array.concat [ c.batch; c.rows; c.contracted ])
+
+let b_of (c : contraction) =
+  permuted c.pb (Array.concat [ c.batch; c.contracted; c.columns ])
+
+let pp_contraction ppf (c : contraction) =
+  Format.fprintf ppf "%a by %a, batch %a, contracting %a" pp_ints (a_of c)
+    pp_ints (b_of c) pp_ints c.batch pp_ints c.contracted
+
+let inverse p =
+  let q = Array.make (Array.length p) 0 in
+  Array.iteri (fun i m -> q.(m) <- i) p;
+  q
+
+(* The pairs of [c]: each group's axis, as an axis of [a] and of [b]. *)
+let pairs_of (c : contraction) =
+  let nb = Array.length c.batch and nr = Array.length c.rows in
+  let ia = inverse c.pa and ib = inverse c.pb in
+  let batch = Array.init nb (fun k -> (ia.(k), ib.(k))) in
+  let contracting =
+    Array.init (Array.length c.contracted) (fun k ->
+        (ia.(nb + nr + k), ib.(nb + k)))
   in
-  let refuses ~msg got = equal ~msg shapes_t misfit got in
-  equal ~msg:"no piece" shapes_t (Ok []) (assemble [| 2 |] [||]);
-  equal ~msg:"a region of its axis" shapes_t (Ok [ [ 2 ] ])
-    (assemble [| 2 |] [| [| r 0 2 1 |] |]);
-  refuses ~msg:"a negative extent" (assemble [| -1 |] [||]);
-  refuses ~msg:"a region of another rank"
-    (assemble [| 2 |] [| [| r 0 1 1; r 0 1 1 |] |]);
-  refuses ~msg:"a region past its axis" (assemble [| 2 |] [| [| r 1 2 1 |] |]);
-  refuses ~msg:"a step of 0" (assemble [| 2 |] [| [| r 0 1 0 |] |]);
-  equal ~msg:"an assembly of max_numel" shapes_t (Ok [])
-    (assemble [| L.max_numel |] [||]);
-  refuses ~msg:"an assembly past max_numel"
-    (assemble [| L.max_numel + 1 |] [||])
+  (batch, contracting)
 
-(* Fourier transforms *)
+(* The axes of a rank [r] that no pair names, in axis order. *)
+let free r named =
+  List.filter (fun ax -> not (List.mem ax named)) (List.init r Fun.id)
 
-type transform = C2c | R2c | C2r of int
+let contraction =
+  Gen.with_pp pp_contraction
+    (let open Gen in
+     let extents = array ~size:(int_range 0 2) Nx_array_gen.extent in
+     let order n = map Array.of_list (permutation (List.init n Fun.id)) in
+     let* batch = extents in
+     let* rows = extents in
+     let* contracted = extents in
+     let* columns = extents in
+     let nb = Array.length batch and nk = Array.length contracted in
+     let* pa = order (nb + Array.length rows + nk) in
+     let+ pb = order (nb + nk + Array.length columns) in
+     { batch; rows; contracted; columns; pa; pb })
 
-let pp_transform ppf = function
-  | C2c -> Format.pp_print_string ppf "c2c"
-  | R2c -> Format.pp_print_string ppf "r2c"
-  | C2r n -> Format.fprintf ppf "c2r %d" n
+(* The result by the rule: the batch extents in pair order, then [a]'s free
+   extents, then [b]'s, each in axis order. *)
+let law_contract (c : contraction) =
+  let a = a_of c and b = b_of c in
+  let batch, contracting = pairs_of c in
+  let named side =
+    Array.to_list (Array.map side (Array.append batch contracting))
+  in
+  let fa = free (Array.length a) (named fst) in
+  let fb = free (Array.length b) (named snd) in
+  let want =
+    Array.concat
+      [
+        Array.map (fun (i, _) -> a.(i)) batch;
+        Array.of_list (List.map (fun ax -> a.(ax)) fa);
+        Array.of_list (List.map (fun ax -> b.(ax)) fb);
+      ]
+  in
+  equal shape (Ok want)
+    (Shape.contract ~batch:(Iarray.of_array batch)
+       ~contracting:(Iarray.of_array contracting)
+       ~segments:None (a, None) (b, None))
 
-type fft_case = { t : transform; fft_axes : int array; x : int array }
+type call = {
+  batch : (int * int) array;
+  contracting : (int * int) array;
+  segments : int array Nx_kernel.segments option;
+  a : int array * int array option;
+  b : int array * int array option;
+}
 
-let pp_fft_case ppf c =
-  Format.fprintf ppf "%a along %a of %a" pp_transform c.t pp_ints c.fft_axes
-    pp_ints c.x
+let call ?(batch = [| (0, 0) |]) ?(contracting = [| (2, 1) |]) ?segments ?sa ?sb
+    a b =
+  { batch; contracting; segments; a = (a, sa); b = (b, sb) }
 
-(* A transform along a non-empty subset of an operand's axes, whose last
-   axis holds, for most C2r, the bins its points need. *)
-let fft_case =
-  Gen.with_pp pp_fft_case
+let contract (c : call) =
+  Shape.contract ~batch:(Iarray.of_array c.batch)
+    ~contracting:(Iarray.of_array c.contracting)
+    ~segments:c.segments c.a c.b
+
+let test_contract_fit (_, c, want) = equal shape (Ok want) (contract c)
+let test_contract_error (_, c) = is_error ~pp:pp_ints (contract c)
+
+let contract_errors =
+  let a = [| 2; 3; 4 |] and sq = [| 4; 4 |] in
+  [
+    ("pairs of other extents", call a [| 2; 3; 5 |]);
+    ("batch pairs of other extents", call a [| 3; 4; 5 |]);
+    ("a pair past b's rank", call a [| 2 |]);
+    ("a pair past a's rank", call ~contracting:[| (3, 1) |] a [| 2; 4; 5 |]);
+    ("a negative axis of a", call ~batch:[| (-1, 0) |] a [| 2; 4; 5 |]);
+    ("a negative axis of b", call ~batch:[| (0, -1) |] a [| 2; 4; 5 |]);
+    ( "an axis of a in two pairs",
+      call ~batch:[| (0, 0) |] ~contracting:[| (0, 1) |] sq sq );
+    ( "an axis of b in two pairs",
+      call ~batch:[| (0, 1); (1, 1) |] ~contracting:[||] sq sq );
+    ( "an axis in two contracting pairs",
+      call ~batch:[||] ~contracting:[| (1, 0); (1, 1) |] sq sq );
+  ]
+
+(* A matrix product of [a] by [b], scaled by [sa] and [sb]. *)
+let mm ?segments ?sa ?sb a b =
+  call ~batch:[||] ~contracting:[| (1, 0) |] ?segments ?sa ?sb a b
+
+let scale_fits =
+  let a = [| 4; 8 |] and b = [| 8; 6 |] in
+  [
+    ("blocks of 4 by 2", mm ~sb:[| 2; 3 |] a b, [| 4; 6 |]);
+    ("a block of a whole axis", mm ~sb:[| 8; 1 |] a b, [| 4; 6 |]);
+    ("a ratio of 1", mm ~sa:a ~sb:b a b, [| 4; 6 |]);
+    ("0 along an empty axis", mm ~sa:[| 0; 2 |] [| 0; 8 |] b, [| 0; 6 |]);
+    ("1 along an empty axis", mm ~sa:[| 1; 2 |] [| 0; 8 |] b, [| 0; 6 |]);
+  ]
+
+let scale_errors =
+  let a = [| 4; 8 |] and b = [| 8; 6 |] in
+  [
+    ("an extent that does not divide", mm ~sb:[| 3; 6 |] a b);
+    ("an extent past the operand's", mm ~sa:[| 8; 8 |] a b);
+    ("a lower rank", mm ~sa:[| 4 |] a b);
+    ("a higher rank", mm ~sa:[| 4; 8; 1 |] a b);
+    ("0 along a full axis", mm ~sa:[| 0; 2 |] a b);
+    ("a negative extent", mm ~sa:[| -4; 2 |] a b);
+  ]
+
+let rows ?(a_axis = 0) ?(b_axis = 0) ids =
+  Nx_kernel.Rows { ids; a_axis; b_axis }
+
+let groups ?(groups = 4) ?(pair = 0) ids =
+  Nx_kernel.Contracting { ids; groups; pair }
+
+(* Rows of [10; 8] by [3; 8; 6] along their 8s; rows per batch of [2; 10; 8] by
+   [2; 3; 8; 6]; groups of [4; 8] by [8; 6]. *)
+let by_rows s =
+  call ~batch:[||]
+    ~contracting:[| (1, 1) |]
+    ~segments:s [| 10; 8 |] [| 3; 8; 6 |]
+
+let by_batch_rows ids =
+  call
+    ~contracting:[| (2, 2) |]
+    ~segments:(rows ~a_axis:1 ~b_axis:1 ids)
+    [| 2; 10; 8 |] [| 2; 3; 8; 6 |]
+
+let by_groups s = mm ~segments:s [| 4; 8 |] [| 8; 6 |]
+
+let segment_fits =
+  [
+    ("Rows drops b's b_axis", by_rows (rows [| 10 |]), [| 10; 6 |]);
+    ( "Rows of no group",
+      call ~batch:[||]
+        ~contracting:[| (1, 1) |]
+        ~segments:(rows [| 10 |]) [| 10; 8 |] [| 0; 8; 6 |],
+      [| 10; 6 |] );
+    ("Rows per batch", by_batch_rows [| 2; 10 |], [| 2; 10; 6 |]);
+    ( "Contracting puts the groups' axis first",
+      by_groups (groups [| 8 |]),
+      [| 4; 4; 6 |] );
+    ( "Contracting into no group",
+      by_groups (groups ~groups:0 [| 8 |]),
+      [| 0; 4; 6 |] );
+  ]
+
+let segment_errors =
+  [
+    ("Rows' ids of another extent", by_rows (rows [| 3 |]));
+    ("Rows' ids of another rank", by_rows (rows [| 10; 1 |]));
+    ("Rows' 0-d ids", by_rows (rows [||]));
+    ("an a_axis in a pair", by_rows (rows ~a_axis:1 [| 8 |]));
+    ("a b_axis in a pair", by_rows (rows ~b_axis:1 [| 10 |]));
+    ("an a_axis past a's rank", by_rows (rows ~a_axis:2 [| 10 |]));
+    ("a negative b_axis", by_rows (rows ~b_axis:(-1) [| 10 |]));
+    ("Rows' ids without the batch", by_batch_rows [| 10 |]);
+    ("Rows' ids of another batch", by_batch_rows [| 3; 10 |]);
+    ("Contracting's 0-d ids", by_groups (groups [||]));
+    ("Contracting's ids of another extent", by_groups (groups [| 4 |]));
+    ("Contracting's ids of another rank", by_groups (groups [| 2; 8 |]));
+    ("negative groups", by_groups (groups ~groups:(-1) [| 8 |]));
+    ("a pair past the contracting ones", by_groups (groups ~pair:1 [| 8 |]));
+    ("a negative pair", by_groups (groups ~pair:(-1) [| 8 |]));
+  ]
+
+let contract_bounds =
+  let k = 1 lsl 27 in
+  let ones n = Array.make n 1 in
+  let deep b =
+    call ~batch:[||]
+      ~contracting:[| (0, 0) |]
+      ~segments:(groups ~groups:1 [| 1 |])
+      (ones (L.max_rank - 1))
+      b
+  in
+  let none = call ~batch:[||] ~contracting:[||] in
+  [
+    ( "a result of the most axes",
+      none (ones L.max_rank) [||],
+      Ok (ones L.max_rank) );
+    ("a result past the most axes", none (ones L.max_rank) [| 1 |], misfit);
+    ("groups' result of the most axes", deep [| 1; 1 |], Ok (ones L.max_rank));
+    ("groups' result past the most axes", deep [| 1; 1; 1 |], misfit);
+    ("a result of max_numel", mm [| k / 2; 0 |] [| 0; k |], Ok [| k / 2; k |]);
+    ("a result past max_numel", mm [| k; 0 |] [| 0; k |], misfit);
+    ( "groups of max_numel",
+      mm ~segments:(groups ~groups:big [| 8 |]) [| 1; 8 |] [| 8; 1 |],
+      Ok [| big; 1; 1 |] );
+    ( "groups past max_numel",
+      mm ~segments:(groups ~groups:(big + 1) [| 8 |]) [| 1; 8 |] [| 8; 1 |],
+      misfit );
+  ]
+
+let test_contract_bound (_, c, want) = equal shape want (contract c)
+
+(* Shape.c2c, r2c and c2r *)
+
+type transform = { x : int array; axes : int array; n : int }
+
+let pp_transform ppf (c : transform) =
+  Format.fprintf ppf "%a along %a, n %d" pp_ints c.x pp_ints c.axes c.n
+
+(* A transform of an operand of rank 1 to 4 along a non-empty subset of its
+   axes, written three times in four as it is, else emptied, reversed, with its
+   last axis repeated, -1 put first or the rank put last; with [n] points, whose
+   bins the last of the axes holds half the time. *)
+let transform =
+  Gen.with_pp pp_transform
     (let open Gen in
      let* rank = int_range 1 4 in
      let* x = array ~size:(constant rank) (int_range 0 9) in
-     let* keep = array ~size:(constant rank) bool in
-     let* last = int_range 0 (rank - 1) in
-     let fft_axes =
-       Array.of_list
-         (List.filter (fun i -> keep.(i) || i = last) (List.init rank Fun.id))
+     let* top = int_range 0 (rank - 1) in
+     let* kept = subsequence (List.init top Fun.id) in
+     let axes = Array.of_list (kept @ [ top ]) in
+     let* spoil =
+       frequency
+         [
+           (15, constant Fun.id);
+           (1, constant (fun _ -> [||]));
+           (1, constant (fun a -> Array.of_list (List.rev (Array.to_list a))));
+           (1, constant (fun a -> Array.append a [| top |]));
+           (1, constant (fun a -> Array.append [| -1 |] a));
+           (1, constant (fun a -> Array.append a [| rank |]));
+         ]
      in
-     let* n = int_range 0 17 in
-     let* t = of_list ~pp:pp_transform [ C2c; R2c; C2r n ] in
-     let+ fits = bool in
-     let top = fft_axes.(Array.length fft_axes - 1) in
-     (match t with C2r n when fits -> x.(top) <- (n / 2) + 1 | _ -> ());
-     { t; fft_axes; x })
+     let* n = int_range (-1) 17 in
+     let+ binned = bool in
+     let x =
+       if binned then
+         Array.mapi (fun i d -> if i = top then (n / 2) + 1 else d) x
+       else x
+     in
+     { x; axes = spoil axes; n })
 
-let transform t ~axes x =
-  let axes = Iarray.of_array axes in
-  match t with
-  | C2c -> Shape.c2c ~axes x
-  | R2c -> Shape.r2c ~axes x
-  | C2r n -> Shape.c2r ~axes ~n x
+(* Whether [axes] are strictly increasing axes of a rank [r], not empty. *)
+let takes r axes =
+  axes <> [||]
+  && Array.for_all (fun a -> a >= 0 && a < r) axes
+  && Array.for_all Fun.id
+       (Array.init (Array.length axes - 1) (fun i -> axes.(i) < axes.(i + 1)))
 
-(* The result has the operand's shape, but along the last axis: n/2 + 1
-   bins of r2c's n points, c2r's n points of exactly n/2 + 1 bins. *)
-let law_fft c =
-  let top = c.fft_axes.(Array.length c.fft_axes - 1) in
-  let y = Array.copy c.x in
+let along x i n = Array.mapi (fun j d -> if j = i then n else d) x
+let last a = a.(Array.length a - 1)
+
+let law_c2c (c : transform) =
+  let fits = takes (Array.length c.x) c.axes in
+  cover "fits" fits;
+  cover "refused" (not fits);
+  equal shape
+    (if fits then Ok c.x else misfit)
+    (Shape.c2c ~axes:(Iarray.of_array c.axes) c.x)
+
+let law_r2c (c : transform) =
+  let fits = takes (Array.length c.x) c.axes in
+  cover "fits" fits;
+  cover "refused" (not fits);
   let want =
-    match c.t with
-    | C2c -> Ok (Array.to_list y)
-    | R2c ->
-        y.(top) <- (c.x.(top) / 2) + 1;
-        Ok (Array.to_list y)
-    | C2r n when c.x.(top) = (n / 2) + 1 ->
-        y.(top) <- n;
-        Ok (Array.to_list y)
-    | C2r _ -> misfit
+    if not fits then misfit
+    else
+      let top = last c.axes in
+      Ok (along c.x top ((c.x.(top) / 2) + 1))
   in
-  cover "fits" (Result.is_ok want);
-  cover "c2r" (match c.t with C2r _ -> true | _ -> false);
-  equal shape_t want (of_shape (transform c.t ~axes:c.fft_axes c.x))
+  equal shape want (Shape.r2c ~axes:(Iarray.of_array c.axes) c.x)
 
-let test_fft_refuses () =
-  let x = [| 2; 4 |] in
-  List.iter
-    (fun t ->
-      let x = match t with C2r _ -> [| 2; 3 |] | _ -> x in
-      let msg s = Format.asprintf "%a: %s" pp_transform t s in
-      let refuses s axes = refuses ~msg:(msg s) (transform t ~axes x) in
-      refuses "no axis" [||];
-      refuses "axes out of order" [| 1; 0 |];
-      refuses "a repeated axis" [| 1; 1 |];
-      refuses "a negative axis" [| -1 |];
-      refuses "an axis past the rank" [| 2 |];
-      equal ~msg:(msg "both axes") bool true
-        (Result.is_ok (transform t ~axes:[| 0; 1 |] x)))
-    [ C2c; R2c; C2r 4 ];
-  refuses ~msg:"a negative point count" (Shape.c2r ~axes:[| 0 |] ~n:(-1) [| 0 |]);
-  refuses ~msg:"a negative point count of one bin"
-    (Shape.c2r ~axes:[| 0 |] ~n:(-1) [| 1 |]);
-  refuses ~msg:"too few bins" (Shape.c2r ~axes:[| 1 |] ~n:4 [| 2; 2 |]);
-  refuses ~msg:"too many bins" (Shape.c2r ~axes:[| 1 |] ~n:4 [| 2; 4 |]);
-  fits ~msg:"bins of an odd count" [ 2; 5 ]
-    (Shape.c2r ~axes:[| 1 |] ~n:5 [| 2; 3 |]);
-  fits ~msg:"no point is one bin" [ 2; 1 ] (Shape.r2c ~axes:[| 1 |] [| 2; 0 |]);
-  fits ~msg:"one bin is no point" [ 2; 0 ]
-    (Shape.c2r ~axes:[| 1 |] ~n:0 [| 2; 1 |])
-
-(* The doc's pairs: each float32 or complex64, or each float64 or
-   complex128. *)
-let test_same_precision () =
-  let precision (D.Any dt) =
-    match dt with
-    | D.Float32 | D.Complex64 -> Some 32
-    | D.Float64 | D.Complex128 -> Some 64
-    | _ -> None
+let law_c2r (c : transform) =
+  let binned =
+    takes (Array.length c.x) c.axes
+    && c.n >= 0
+    && c.x.(last c.axes) = (c.n / 2) + 1
   in
-  List.iter
-    (fun (D.Any x as dx) ->
-      List.iter
-        (fun (D.Any y as dy) ->
-          let want =
-            match (precision dx, precision dy) with
-            | Some p, Some q -> p = q
-            | _ -> false
-          in
-          equal
-            ~msg:(D.name x ^ " with " ^ D.name y)
-            bool want
-            (Nx_kernel.same_precision x y))
-        D.all)
-    D.all
+  let y = if binned then along c.x (last c.axes) c.n else c.x in
+  let fits = binned && admits [ y ] in
+  cover "fits" fits;
+  cover "refused" (not fits);
+  cover "a negative n" (c.n < 0);
+  let want = if fits then Ok y else misfit in
+  equal shape want (Shape.c2r ~axes:(Iarray.of_array c.axes) ~n:c.n c.x)
+
+let r2c_examples = [ { x = [| 2; 0 |]; axes = [| 1 |]; n = 0 } ]
+
+let c2r_examples =
+  [
+    { x = [| 0 |]; axes = [| 0 |]; n = -1 };
+    { x = [| 1 |]; axes = [| 0 |]; n = -1 };
+    { x = [| 2; 3 |]; axes = [| 1 |]; n = 5 };
+    { x = [| 2; 1 |]; axes = [| 1 |]; n = 0 };
+    { x = [| (big / 2) + 1 |]; axes = [| 0 |]; n = big };
+    { x = [| (big / 2) + 1 |]; axes = [| 0 |]; n = big + 1 };
+  ]
 
 (* Matrices *)
 
-type routine =
-  | Cholesky
-  | Lu
-  | Qr of Nx_kernel.factors
-  | Svd of Nx_kernel.factors
-  | Eigh
-  | Eig
-  | Solve
-
-let routines =
-  [
-    Cholesky;
-    Lu;
-    Qr Reduced;
-    Qr Complete;
-    Svd Reduced;
-    Svd Complete;
-    Eigh;
-    Eig;
-    Solve;
-  ]
-
-let pp_routine ppf r =
-  let factors = function
-    | Nx_kernel.Reduced -> "reduced"
-    | Complete -> "complete"
+(* A matrix's shape: a batch of rank 0 to 2, then [m] rows and [n] columns,
+   square a third of the time; cut to rank 0 or 1 one time in ten. *)
+let matrix =
+  let open Gen in
+  let* batch = array ~size:(int_range 0 2) (int_range 0 3) in
+  let* m = int_range 0 5 in
+  let* n = int_range 0 5 in
+  let* square = frequency [ (2, constant false); (1, constant true) ] in
+  let a = Array.append batch [| m; (if square then m else n) |] in
+  let+ cut =
+    frequency [ (9, constant None); (1, map Option.some (int_range 0 1)) ]
   in
-  Format.pp_print_string ppf
-    (match r with
-    | Cholesky -> "cholesky"
-    | Lu -> "lu"
-    | Qr f -> "qr " ^ factors f
-    | Svd f -> "svd " ^ factors f
-    | Eigh -> "eigh"
-    | Eig -> "eig"
-    | Solve -> "solve_triangular")
+  match cut with None -> a | Some r -> Array.sub a 0 (min r (Array.length a))
 
-type linalg_case = { r : routine; a : int array; b : int array }
+let matrices = Gen.with_pp pp_ints matrix
 
-let pp_linalg_case ppf c =
-  Format.fprintf ppf "%a of %a%s" pp_routine c.r pp_ints c.a
-    (if c.r = Solve then Format.asprintf " and %a" pp_ints c.b else "")
+(* [a]'s batch, rows and columns, where it has two axes or more. *)
+let split a =
+  let r = Array.length a in
+  if r < 2 then None else Some (Array.sub a 0 (r - 2), a.(r - 2), a.(r - 1))
 
-(* A routine on a matrix of a batch of rank 0 to 2, square for most, with
-   right-hand sides that fit for most solves, and operands of rank below 2
-   now and then. A solve is drawn a quarter of the time: it is one routine
-   of many, and the law needs fitting solves in every run. *)
-let linalg_case =
-  Gen.with_pp pp_linalg_case
-    (let open Gen in
-     let most = map (fun k -> k > 0) (int_range 0 3) in
-     let others = List.filter (fun r -> r <> Solve) routines in
-     let* r =
-       frequency [ (3, of_list ~pp:pp_routine others); (1, constant ~pp:pp_routine Solve) ]
-     in
-     let* batch = array ~size:(int_range 0 2) (int_range 0 3) in
-     let* m = int_range 0 5 in
-     let* n = int_range 0 5 in
-     let* square = most in
-     let n = if square then m else n in
-     let* cols = int_range 0 4 in
-     let* fits = most in
-     let* rank = int_range 0 1 in
-     let a = Array.append batch [| m; n |] in
-     let b = Array.append batch [| (if fits then n else n + 1); cols |] in
-     let+ odd = int_range 0 9 in
-     let a = if odd = 0 then Array.sub a 0 (min rank (Array.length a)) else a in
-     { r; a; b })
+let cover_forms a =
+  cover "rank below 2" (split a = None);
+  let form f = match split a with Some (_, m, n) -> f m n | None -> false in
+  cover "wide" (form ( < ));
+  cover "tall" (form ( > ));
+  cover "square" (form ( = ))
 
-let routine r a b =
-  let one y = [ y ] in
-  match r with
-  | Cholesky -> Result.map one (Shape.cholesky a)
-  | Lu -> Result.map (fun (l, p, q) -> [ l; p; q ]) (Shape.lu a)
-  | Qr f -> Result.map (fun (q, r) -> [ q; r ]) (Shape.qr f a)
-  | Svd f -> Result.map (fun (s, u, vh) -> [ s; u; vh ]) (Shape.svd f a)
-  | Eigh | Eig -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eigh a)
-  | Solve -> Result.map one (Shape.solve_triangular a b)
+let low_ranks = [ [||]; [| 3 |] ]
+let two = result (pair ints ints) reason
 
-(* The destinations by each routine's rule, for [a] of [batch; m; n]. *)
-let law_linalg c =
+let law_cholesky a =
+  cover_forms a;
   let want =
-    let ra = Array.length c.a in
-    if ra < 2 then misfit
-    else
-      let batch = Array.to_list (Array.sub c.a 0 (ra - 2)) in
-      let m = c.a.(ra - 2) and n = c.a.(ra - 1) in
-      let k = min m n in
-      let y tail = batch @ tail in
-      match c.r with
-      | (Cholesky | Eigh | Eig | Solve) when m <> n -> misfit
-      | Cholesky -> Ok [ y [ n; n ] ]
-      | Eigh | Eig -> Ok [ y [ n ]; y [ n; n ] ]
-      | Solve ->
-          let b = Array.to_list c.b in
-          let rows = List.filteri (fun i _ -> i < ra - 1) b in
-          if List.length b = ra && rows = y [ n ] then Ok [ b ] else misfit
-      | Lu -> Ok [ y [ m; n ]; y [ k ]; y [ m ] ]
-      | Qr Reduced -> Ok [ y [ m; k ]; y [ k; n ] ]
-      | Qr Complete -> Ok [ y [ m; m ]; y [ m; n ] ]
-      | Svd Reduced -> Ok [ y [ k ]; y [ m; k ]; y [ k; n ] ]
-      | Svd Complete -> Ok [ y [ k ]; y [ m; m ]; y [ n; n ] ]
+    match split a with Some (_, m, n) when m = n -> Ok a | _ -> misfit
   in
-  let wide =
-    match List.rev (Array.to_list c.a) with n :: m :: _ -> n > m | _ -> false
+  equal shape want (Shape.cholesky a)
+
+let law_lu a =
+  cover_forms a;
+  let want =
+    match split a with
+    | None -> misfit
+    | Some (batch, m, n) ->
+        let y tail = Array.append batch tail in
+        Ok (a, y [| min m n |], y [| m |])
+  in
+  equal three want (Shape.lu a)
+
+let pp_factors ppf = function
+  | Nx_kernel.Reduced -> Format.pp_print_string ppf "Reduced"
+  | Complete -> Format.pp_print_string ppf "Complete"
+
+let factored =
+  Gen.with_pp
+    (fun ppf (f, a) -> Format.fprintf ppf "%a %a" pp_factors f pp_ints a)
+    (Gen.pair (Gen.of_list [ Nx_kernel.Reduced; Complete ]) matrix)
+
+let law_qr (f, a) =
+  cover_forms a;
+  let want =
+    match (split a, f) with
+    | None, _ -> misfit
+    | Some (batch, m, n), Nx_kernel.Reduced ->
+        let y tail = Array.append batch tail and k = min m n in
+        Ok (y [| m; k |], y [| k; n |])
+    | Some (batch, m, n), Complete ->
+        let y tail = Array.append batch tail in
+        Ok (y [| m; m |], y [| m; n |])
+  in
+  let want =
+    match want with Ok (q, r) when not (admits [ q; r ]) -> misfit | w -> w
+  in
+  equal two want (Shape.qr f a)
+
+let law_svd (f, a) =
+  cover_forms a;
+  let want =
+    match (split a, f) with
+    | None, _ -> misfit
+    | Some (batch, m, n), Nx_kernel.Reduced ->
+        let y tail = Array.append batch tail and k = min m n in
+        Ok (y [| k |], y [| m; k |], y [| k; n |])
+    | Some (batch, m, n), Complete ->
+        let y tail = Array.append batch tail in
+        Ok (y [| min m n |], y [| m; m |], y [| n; n |])
+  in
+  let want =
+    match want with
+    | Ok (s, u, vh) when not (admits [ s; u; vh ]) -> misfit
+    | w -> w
+  in
+  equal three want (Shape.svd f a)
+
+(* Square factors past max_numel of a matrix of no element. *)
+let factored_examples =
+  let k = 1 lsl 27 in
+  List.concat_map
+    (fun f ->
+      [
+        (f, [||]);
+        (f, [| 3 |]);
+        (f, [| k / 2; 0 |]);
+        (f, [| k; 0 |]);
+        (f, [| 0; k |]);
+      ])
+    [ Nx_kernel.Reduced; Complete ]
+
+let law_eigh a =
+  cover_forms a;
+  let want =
+    match split a with
+    | Some (batch, m, n) when m = n -> Ok (Array.append batch [| n |], a)
+    | _ -> misfit
+  in
+  equal two want (Shape.eigh a)
+
+let solve =
+  Gen.with_pp
+    (fun ppf (a, b) -> Format.fprintf ppf "%a by %a" pp_ints a pp_ints b)
+    (let open Gen in
+     let* a = matrix in
+     let* cols = int_range 0 4 in
+     let+ fits = frequency [ (3, constant true); (1, constant false) ] in
+     let b =
+       match split a with
+       | Some (batch, _, n) ->
+           Array.append batch [| (if fits then n else n + 1); cols |]
+       | None -> [| cols |]
+     in
+     (a, b))
+
+let law_solve (a, b) =
+  let want =
+    match split a with
+    | Some (batch, m, n) when m = n && b = Array.append batch [| n; last b |] ->
+        Ok b
+    | _ -> misfit
   in
   cover "fits" (Result.is_ok want);
-  cover "solves" (c.r = Solve && Result.is_ok want);
-  cover "wide" (wide && Result.is_ok want);
-  equal shapes_t want (of_shapes (routine c.r c.a c.b))
+  cover "refused" (Result.is_error want);
+  equal shape want (Shape.solve_triangular a b)
 
-(* The doc's table: float32, float64, complex64 and complex128. *)
-let test_full_precision () =
-  List.iter
-    (fun (D.Any dt) ->
-      let want =
-        match dt with
-        | D.Float32 | D.Float64 | D.Complex64 | D.Complex128 -> true
-        | _ -> false
-      in
-      equal ~msg:(D.name dt) bool want (Nx_kernel.full_precision dt))
-    D.all
+let solve_errors =
+  [
+    ("b of another batch", [| 2; 3; 3 |], [| 3; 3; 1 |]);
+    ("b of another rank", [| 2; 3; 3 |], [| 3; 1 |]);
+    ("b of one axis", [| 3; 3 |], [| 3 |]);
+  ]
+
+let test_solve_error (_, a, b) =
+  is_error ~pp:pp_ints (Shape.solve_triangular a b)
+
+(* Shape.attention *)
+
+type attention = {
+  q : int array;
+  kv : (int array, int array) Nx_kernel.kv;
+  lengths : int array option;
+  loads : int array array;
+}
+
+let dense ?lengths ?(loads = [||]) q k v =
+  { q; kv = Dense { k; v }; lengths; loads }
+
+let paged ?(loads = [||]) q k v table =
+  { q; kv = Paged { k; v; table }; lengths = None; loads }
+
+let attend (c : attention) = Shape.attention c.q c.kv ~lengths:c.lengths c.loads
+
+let attentions =
+  let q = [| 2; 4; 3; 5 |] in
+  let k = [| 2; 2; 7; 5 |] and v = [| 2; 2; 7; 6 |] in
+  let pools = ([| 5; 1; 4; 5 |], [| 5; 1; 4; 6 |]) in
+  [
+    ("dense, grouped heads", dense q k v, ([| 2; 4; 3; 6 |], [| 2; 4; 3 |]));
+    ( "lengths and a load",
+      dense ~lengths:[| 2 |] ~loads:[| [| 2; 4; 3; 7 |] |] q k v,
+      ([| 2; 4; 3; 6 |], [| 2; 4; 3 |]) );
+    ( "paged",
+      paged ~loads:[| [| 2; 4; 3; 12 |] |] q (fst pools) (snd pools) [| 2; 3 |],
+      ([| 2; 4; 3; 6 |], [| 2; 4; 3 |]) );
+    ( "no heads",
+      dense [| 0; 3; 5 |] [| 0; 7; 5 |] [| 0; 7; 6 |],
+      ([| 0; 3; 6 |], [| 0; 3 |]) );
+    ( "paged keys of max_numel",
+      paged [| 1; 1; 1 |] [| 1; 1; 2; 1 |] [| 1; 1; 2; 1 |] [| big / 2 |],
+      ([| 1; 1; 1 |], [| 1; 1 |]) );
+  ]
+
+let test_attention (_, c, want) = equal two (Ok want) (attend c)
+
+let attention_errors =
+  let q = [| 2; 4; 3; 5 |] in
+  let k = [| 2; 2; 7; 5 |] and v = [| 2; 2; 7; 6 |] in
+  let kp = [| 5; 1; 4; 5 |] and vp = [| 5; 1; 4; 6 |] in
+  let e = 1 lsl 27 in
+  [
+    ("q of two axes", dense [| 3; 5 |] [| 7; 5 |] [| 7; 6 |]);
+    ("heads that do not divide", dense q [| 2; 3; 7; 5 |] [| 2; 3; 7; 6 |]);
+    ("no key head for two", dense [| 2; 3; 5 |] [| 0; 7; 5 |] [| 0; 7; 6 |]);
+    ("keys of another dimension", dense q [| 2; 2; 7; 4 |] v);
+    ("keys of another lead", dense q [| 3; 2; 7; 5 |] [| 3; 2; 7; 6 |]);
+    ("values of other keys", dense q k [| 2; 2; 8; 6 |]);
+    ("lengths of another shape", dense ~lengths:[| 3 |] q k v);
+    ("a load of another shape", dense ~loads:[| [| 2; 4; 3; 6 |] |] q k v);
+    ("a table of another rank", paged q kp vp [| 3 |]);
+    ("pools of other pages", paged q kp [| 4; 1; 4; 6 |] [| 2; 3 |]);
+    ("a key pool of another dimension", paged q [| 5; 1; 4; 4 |] vp [| 2; 3 |]);
+    ( "paged keys past max_numel",
+      paged [| 1; 1; 1 |] [| 1; 1; 2; 1 |] [| 1; 1; 2; 1 |] [| (big / 2) + 1 |]
+    );
+    ("o past max_numel", dense [| e; 1; 1 |] [| 1; 1; 1 |] [| 1; 1; e |]);
+  ]
+
+let test_attention_error (_, c) =
+  is_error ~pp:(Testable.pp (pair ints ints)) (attend c)
 
 (* Libraries *)
 
-(* nx.cpu computes on the memory the host reaches: its own and a software
-   device's, and not an io device's. *)
-let devices =
-  let memory = Result.get_ok (Rig.software "nx-kernel-computes-on") in
-  [
-    ("the host", Rig.host, true);
-    ("a software device", memory, true);
-    ("an io device", Nx_array_support.io_device (), false);
-  ]
+(* The host addresses its own memory and a software device's, and not an io
+   device's. *)
+let test_computes_on () =
+  let devices =
+    [
+      ("the host", Rig.host);
+      ("a software device", Result.get_ok (Rig.software "nx-kernel-computes-on"));
+      ("an io device", Nx_array_support.io_device ());
+    ]
+  in
+  equal
+    (list (pair string bool))
+    [ ("the host", true); ("a software device", true); ("an io device", false) ]
+    (List.map (fun (n, d) -> (n, Nx_cpu.computes_on d)) devices)
 
-let test_computes_on (_, d, want) =
-  equal bool want (Nx_cpu.computes_on d);
-  equal ~msg:"as the host reaches it" bool (Rig.reaches Rig.host d)
-    (Nx_cpu.computes_on d)
+(* The suite *)
 
-let tests =
-  [
-    group "contractions"
-      [
-        prop "the result is batch, then a's free axes, then b's" any_case
-          law_contract;
-        test
-          "refuses extents that differ, axes past a rank or in two pairs, \
-           and results past the most rank"
-          test_contract_refuses;
-        test
-          "refuses a scale of another rank, or extents that do not divide"
-          test_contract_scales;
-        test
-          "shapes segments' results and refuses their ids of other \
-           shapes or axes in pairs"
-          test_contract_segments;
-        test "admits every shape it derives by max_numel" test_admits;
-        test "accumulates states the accumulators" test_accumulates;
-      ];
-    group "paddings"
-      [
-        prop "padded is the padded extents, then the windows" padded_case
-          law_padded;
-        test "refuses paddings that do not fit" test_padded_refuses;
-      ];
-    group "reductions and scans"
-      [
-        prop "a reduction drops its axes; an extreme needs a term" reduce_case
-          law_reduce;
-        test "refuses axes that do not fit and extremes of no term"
-          test_reduce_refuses;
-        test "accepts states each reduction's dtypes" test_accepts;
-        cases "carrier holds every element of the dtype"
-          ~id:(fun (D.Any dt) -> D.name dt)
-          D.all test_carrier;
-        cases "float_carrier is the carrier of a float"
-          ~id:(fun (Nx_kernel.Any_float dt) -> D.name dt)
-          floats test_float_carrier;
-      ];
-    group "gathers, scatters and sorts"
-      [
-        test "refuse axes outside the rank and a negative k" test_index_refuses;
-        test "state each family's shapes" test_index_shapes;
-        test "state a range gather's shape" test_ranges_shapes;
-      ];
-    group "assemblies"
-      [
-        prop "each piece has its region's shape" assemble_case law_assemble;
-        test "refuses shapes and regions that do not fit" test_assemble_refuses;
-      ];
-    group "transforms"
-      [
-        prop "results keep the shape but along the last axis" fft_case law_fft;
-        test "refuses axes and bins that do not fit" test_fft_refuses;
-        test "same_precision pairs the dtypes of one precision"
-          test_same_precision;
-      ];
-    group "matrices"
-      [
-        (* A wide matrix that fits its routine is about 1 case in 26, so
-           100 cases missed "wide" about 2% of runs; 1000 miss it about
-           once in 10^17. *)
-        prop ~count:1000 "results are each routine's, after the batch"
-          linalg_case law_linalg;
-        test "full_precision states the routines' dtypes" test_full_precision;
-      ];
-    group "attention"
-      [ test "states o's and lse's shapes and refuses others" test_attention ];
-    group "libraries"
-      [
-        test "name names the kernels" (fun () ->
-            equal string "nx.cpu" Nx_cpu.name);
-        cases "computes_on is whether the host reaches the device"
-          ~id:(fun (n, _, _) -> n)
-          devices test_computes_on;
-      ];
-  ]
+let fst3 (n, _, _) = n
+let fst4 (n, _, _, _) = n
+let fst5 (n, _, _, _, _) = n
+let fst6 (n, _, _, _, _, _) = n
 
-let () = exit (run "nx_kernel.shape" tests)
+let () =
+  exit
+    (run "nx_kernel.shape"
+       [
+         group "carrier"
+           [
+             cases
+               "is float32 for a float narrower than it, int8 and uint8 for \
+                int4 and uint4, bool for bit, else the dtype"
+               ~id:name D.all test_carrier;
+           ];
+         group "float_carrier"
+           [
+             cases "is the carrier of the float"
+               ~id:(fun (Nx_kernel.Any_float dt) -> D.name dt)
+               floats test_float_carrier;
+           ];
+         group "accepts"
+           [
+             cases
+               "takes for Sum and Prod every dtype but booleans, for Max, Min \
+                and Arg every dtype, for Logsumexp and Moments floats"
+               ~id:reduction_name reductions test_accepts;
+           ];
+         group "accumulates"
+           [
+             test
+               "holds for every dtype but booleans and floats narrower than \
+                float32"
+               test_accumulates;
+           ];
+         group "same_precision"
+           [
+             test "pairs float32 and complex64, and float64 and complex128"
+               test_same_precision;
+           ];
+         group "full_precision"
+           [
+             test "holds for float32, float64, complex64 and complex128"
+               test_full_precision;
+           ];
+         group "Shape"
+           [
+             group "padded"
+               [
+                 prop ~examples:padded_examples
+                   "is the padded extents, then the windows Move.Window takes"
+                   padded_case law_padded;
+                 cases
+                   "is an Error for lo, hi or interior of another rank, a \
+                    negative interior or padded extent, or windows not on \
+                    strictly increasing axes or of size, step or dilation 0"
+                   ~id:fst3 padded_errors test_padded_error;
+                 cases
+                   "admits an extent of max_numel and is an Error past it, or \
+                    where lo + hi or interior times an extent passes an int"
+                   ~id:fst4 padded_bounds test_padded_bound;
+               ];
+             group "reduce"
+               [
+                 prop ~examples:reduce_examples
+                   "is y without axes, an Error for an extreme with a \
+                    destination element and no term"
+                   reduce_case law_reduce;
+                 cases
+                   "is an Error unless axes are strictly increasing axes of y"
+                   ~id:fst reduce_errors test_reduce_error;
+               ];
+             group "scan"
+               [
+                 cases "is y" ~id:fst3 scans test_scan;
+                 cases "is an Error for an axis outside [0, rank)" ~id:fst3
+                   axis_errors test_scan_error;
+               ];
+             group "carry"
+               [
+                 cases "is y with extent 1 along axis" ~id:fst4 carries
+                   test_carry;
+                 cases "is an Error for an axis outside [0, rank)" ~id:fst3
+                   axis_errors test_carry_error;
+               ];
+             group "gather"
+               [
+                 cases "is idx, of x's rank and extents but along axis" ~id:fst4
+                   gathers test_gather;
+                 cases
+                   "is an Error for an axis outside [0, rank), or idx of \
+                    another rank or extent off the axis"
+                   ~id:fst4 gather_errors test_gather_error;
+               ];
+             group "gather_ranges"
+               [
+                 cases "is x with size elements along the runs' axis" ~id:fst6
+                   ranges test_ranges;
+                 cases
+                   "is an Error for 0-d or differing runs, x without the runs' \
+                    lead extents or axis, a negative size, or past max_numel"
+                   ~id:fst5 range_errors test_ranges_error;
+               ];
+             group "scatter"
+               [
+                 cases
+                   "is into, where idx and updates have one shape, into's but \
+                    along axis"
+                   ~id:fst4 scatters test_scatter;
+                 cases
+                   "is an Error for idx and updates of other shapes, or an \
+                    axis outside [0, rank)"
+                   ~id:fst5 scatter_errors test_scatter_error;
+               ];
+             group "sort"
+               [
+                 cases "is x with k elements along axis, or x" ~id:fst5 sorts
+                   test_sort;
+                 cases
+                   "is an Error for k negative or past the axis's extent, or \
+                    an axis outside [0, rank)"
+                   ~id:fst4 sort_errors test_sort_error;
+               ];
+             group "unique"
+               [
+                 cases "is [n], [size] and [] for keys of [n; w]" ~id:fst3
+                   uniques test_unique;
+                 cases
+                   "is an Error unless keys have rank 2 and size is not \
+                    negative, or past max_numel"
+                   ~id:fst3 unique_errors test_unique_error;
+               ];
+             group "assemble"
+               [
+                 prop ~examples:assemble_examples
+                   "is each region's shape, as Move.Slice keeps it"
+                   assemble_case law_assemble;
+                 cases "is an Error for a region Move.shape refuses as a Slice"
+                   ~id:fst assemble_errors test_assemble_error;
+               ];
+             group "contract"
+               [
+                 prop
+                   "is the batch axes in pair order, then a's free axes, then \
+                    b's"
+                   contraction law_contract;
+                 cases
+                   "is an Error for pairs of other extents, axes outside a \
+                    rank or in two pairs"
+                   ~id:fst contract_errors test_contract_error;
+                 cases
+                   "takes a scale of its operand's rank, each extent dividing \
+                    the operand's, 0 only along an empty axis"
+                   ~id:fst3 scale_fits test_contract_fit;
+                 cases "is an Error for another scale" ~id:fst scale_errors
+                   test_contract_error;
+                 cases
+                   "drops b's b_axis for Rows; puts the groups' axis first for \
+                    Contracting"
+                   ~id:fst3 segment_fits test_contract_fit;
+                 cases
+                   "is an Error for segments' ids of other shapes, axes in \
+                    pairs or past a rank, another pair or negative groups"
+                   ~id:fst segment_errors test_contract_error;
+                 cases
+                   "admits max_rank axes and max_numel elements and is an \
+                    Error past them"
+                   ~id:fst3 contract_bounds test_contract_bound;
+               ];
+             group "c2c"
+               [
+                 prop
+                   "is x, where axes are strictly increasing axes of x, not \
+                    empty"
+                   transform law_c2c;
+               ];
+             group "r2c"
+               [
+                 prop ~examples:r2c_examples
+                   "is x but n/2 + 1 bins along the last of axes" transform
+                   law_r2c;
+               ];
+             group "c2r"
+               [
+                 prop ~examples:c2r_examples
+                   "is x but n points along the last of axes, where x has n/2 \
+                    + 1 bins there and n is not negative"
+                   transform law_c2r;
+               ];
+             group "cholesky"
+               [ prop ~examples:low_ranks "is a, square" matrices law_cholesky ];
+             group "lu"
+               [
+                 prop ~examples:low_ranks "is a, [...; k] and [...; m]" matrices
+                   law_lu;
+               ];
+             group "qr"
+               [
+                 prop ~examples:factored_examples
+                   "is [...; m; k] and [...; k; n] under Reduced, [...; m; m] \
+                    and [...; m; n] under Complete"
+                   factored law_qr;
+               ];
+             group "svd"
+               [
+                 prop ~examples:factored_examples
+                   "is [...; k], then [...; m; k] and [...; k; n] under \
+                    Reduced, [...; m; m] and [...; n; n] under Complete"
+                   factored law_svd;
+               ];
+             group "eigh"
+               [
+                 prop ~examples:low_ranks "is [...; n] and a, square" matrices
+                   law_eigh;
+               ];
+             group "solve_triangular"
+               [
+                 prop "is b, [...; n; r], for a square of n and b of a's batch"
+                   solve law_solve;
+                 cases "is an Error for b of another batch or rank" ~id:fst3
+                   solve_errors test_solve_error;
+               ];
+             group "attention"
+               [
+                 cases "is [lead...; hq; tq; dv] and [lead...; hq; tq]" ~id:fst3
+                   attentions test_attention;
+                 cases
+                   "is an Error for q of fewer than three axes, kv of other \
+                    shapes, hk not dividing hq, other lengths or loads, or tk \
+                    past max_numel"
+                   ~id:fst attention_errors test_attention_error;
+               ];
+           ];
+         group "name"
+           [
+             test "is \"nx.cpu\"" (fun () -> equal string "nx.cpu" Nx_cpu.name);
+           ];
+         group "computes_on"
+           [
+             test
+               "is whether the host addresses d's memory: its own and a \
+                software device's, not an io device's"
+               test_computes_on;
+           ];
+       ])
