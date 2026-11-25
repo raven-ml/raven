@@ -159,21 +159,38 @@
     aligned loads of 16 bytes where they lie within the bytes the operand's
     layout reaches, its bytes one at a time otherwise. A block weighs 128
     operations, and for each axis before its row 64 where the copy's byte
-    indices fit 32 bits and 4096 past them. An operand of rows of more than 7
+    indices fit 32 bits and 4096 past them. An operand whose innermost axis,
+    once merged, steps two elements of 8 bytes or fewer, each stored on its
+    width, in a copy whose byte indices fit 32 bits, is copied the same way
+    where its rows hold 96 bytes or more of elements of 1 or 2 bytes or 192 of 4
+    bytes, or 16 bytes or more where no block of the destination crosses a row's
+    end: a single row, or rows of a multiple of 16 bytes into a destination that
+    starts on 16 bytes. A thread copies a block of 16 bytes of the destination
+    from the two or three aligned loads of 16 bytes that hold the 32 source
+    bytes its elements lie in, its elements one at a time where they cross a
+    row's end; a block weighs as a row's and reads 32 bytes. An element copied
+    one at a time, in a block a row's end crosses or a partial block of the
+    destination, weighs 512 operations more, 16 cycles of its SIMD group's 32
+    lanes, which wait on it; and a group of 32 blocks that holds such a block
+    weighs a block's elements more, for the loop it issues, counted for as many
+    groups as the fewer of such blocks and the copy's groups of 32 blocks, at
+    least as many as the groups that hold one. An operand of rows of more than 7
     axes once merged takes a constant of 24 bytes an axis. Any other operand is
     copied an element a thread: an element weighs 128 operations, and for each
     axis of its operand past the first once adjacent axes that step alike are
     merged, 64 more where the copy's indices fit 32 bits, a division by a
     multiplier the host gives, and 4096 past them, a 64-bit division the GPU
-    emulates. Where they fit, its launches run a kernel of the element's unit of
-    copy, 1, 2, 4 or 8 bytes, which holds neither the 64-bit path nor the other
-    units'. A call of more than two launches an output takes a submission of its
-    own. It takes no ticket, and takes a constant of 24 bytes an axis for each
-    operand of more than 8 axes once merged. An output whose operand shares
-    memory with another output's destination first copies the operand into
-    workspace: the elements between the first and the last its layout reaches,
-    or its elements in order where they are fewer, so that a broadcast operand
-    takes only the elements it reads. *)
+    emulates; it reads a line of 128 bytes for each load of its unit of copy
+    where the operand's innermost axis steps 128 bytes or more. Where they fit,
+    its launches run a kernel of the element's unit of copy, 1, 2, 4 or 8 bytes,
+    which holds neither the 64-bit path nor the other units'. A call of more
+    than two launches an output takes a submission of its own. It takes no
+    ticket, and takes a constant of 24 bytes an axis for each operand of more
+    than 8 axes once merged. An output whose operand shares memory with another
+    output's destination first copies the operand into workspace: the elements
+    between the first and the last its layout reaches, or its elements in order
+    where they are fewer, so that a broadcast operand takes only the elements it
+    reads. *)
 
 (** {1:loops Loops}
 

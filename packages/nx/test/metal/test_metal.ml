@@ -239,10 +239,14 @@ let element_copy (k : Nx_metal.Kernels.t) =
   | Copy | Copy_8 | Copy_16 | Copy_32 | Copy_64 -> true
   | _ -> false
 
-(* Whether [k] copies a source whose elements are apart: an element at a time or
-   rows of 16 bytes or more. *)
+(* Whether [k] copies a source whose elements are apart: an element at a time,
+   or rows of 16 bytes or more of consecutive elements or of every other one. *)
 let apart_copy (k : Nx_metal.Kernels.t) =
-  match k with Copy_rows | Copy_rows_wide -> true | _ -> element_copy k
+  match k with
+  | Copy_rows | Copy_rows_wide | Copy_step_8 | Copy_step_16 | Copy_step_32
+  | Copy_step_64 ->
+      true
+  | _ -> element_copy k
 
 let copies launches =
   List.length
@@ -444,6 +448,34 @@ let by_rows ~width l =
   let r = L.rank m in
   r >= 2 && L.stride m (r - 1) = 1 && L.dim m (r - 1) * width >= 16
 
+(* nx_metal.mli: the fewest bytes of a row of every other element of [width]
+   bytes copy_step takes where a block of the destination crosses a row's end,
+   if any. *)
+let step_row_bytes = function 1 | 2 -> Some 96 | 4 -> Some 192 | _ -> None
+
+(* Whether [row] bytes lie under {!step_row_bytes} of [width]. *)
+let under_least ~width row =
+  match step_row_bytes width with Some least -> row < least | None -> true
+
+(* nx_metal.mli: whether a copy of [l], of [width]-byte elements stored on
+   [align] bytes, into a destination whose first byte lies [head] bytes past 16,
+   copies rows of every other element: its innermost axis, once adjacent axes
+   that step alike are merged, steps two elements of 8 bytes or fewer stored on
+   their width, in a copy whose byte indices take 32 bits, to [narrow], over
+   {!step_row_bytes} or more of them where it has a bound, or 16 or more where
+   no block of the destination crosses a row's end: one row, or rows of a
+   multiple of 16 bytes from [head] 0. *)
+let by_steps ~narrow ~width ~align ~head l =
+  let m = (L.coalesce [| L.contiguous (L.shape l); l |]).(1) in
+  let r = L.rank m in
+  let row = L.dim m (r - 1) * width in
+  let uncrossed = r = 1 || (row mod 16 = 0 && head = 0) in
+  L.stride m (r - 1) = 2
+  && width <= 8 && align = width
+  && L.numel l * width <= narrow
+  && row >= 16
+  && (uncrossed || not (under_least ~width row))
+
 (* The kernel of a launch that ends at byte [stop] of a copy of rows of [l], of
    [width]-byte elements: copy_rows where its byte indices and every extent of
    its merged axes, its row's in bytes, take 32 bits, to [narrow]. *)
@@ -461,9 +493,10 @@ let rows_kernel ~narrow ~width l stop =
    and length are no multiple of 16 bytes, and sources whose elements are apart.
    A source of consecutive elements is copied by copy_run, wherever its first
    byte and the destination's lie, a source of rows by copy_rows ([by_rows],
-   [rows_kernel]), and every other source by the copy of its unit where a launch
-   ends at element [narrow] or before, and by copy past it: [2^32 - 256], or
-   less under {!Nx_metal.bound_copy}. *)
+   [rows_kernel]), one of rows of every other element by copy_step ([by_steps]),
+   and every other source by the copy of its unit where a launch ends at element
+   [narrow] or before, and by copy past it: [2^32 - 256], or less under
+   {!Nx_metal.bound_copy}. *)
 let law_source ?(narrow = (1 lsl 32) - 256) c =
   let (D.Any dt) = source_dtype c in
   let width = widths.(c.width) in
@@ -500,21 +533,23 @@ let law_source ?(narrow = (1 lsl 32) - 256) c =
   let by_position = placed_on ~src:(c.src_at * width) ~dst:(c.dst_at * width) in
   let consecutive = n > 0 && L.is_contiguous l in
   let align = if D.is D.Complex dt then width / 2 else width in
-  let count (t : Plan.traced) =
-    Int64.to_int (Bytes.get_int64_le t.words (8 * Nx_metal.Kernels.copy_count))
-  in
-  let kernel t =
-    if consecutive then "copy_run"
-    else if by_rows ~width l then rows_kernel ~narrow ~width l (count t)
-    else if count t > narrow then "copy"
-    else Printf.sprintf "copy_%d" (8 * align)
-  in
   (* The destination's first byte in its block of 16 bytes, and the source's
      bytes past the destination's, modulo 16. *)
   let src_byte = c.src_base + (c.src_at * width) in
   let dst_byte = c.dst_base + (c.dst_at * width) in
   let head = dst_byte mod 16 in
   let shift = (src_byte - dst_byte + 16) mod 16 in
+  let count (t : Plan.traced) =
+    Int64.to_int (Bytes.get_int64_le t.words (8 * Nx_metal.Kernels.copy_count))
+  in
+  let kernel t =
+    if consecutive then "copy_run"
+    else if by_rows ~width l then rows_kernel ~narrow ~width l (count t)
+    else if by_steps ~narrow ~width ~align ~head l then
+      Printf.sprintf "copy_step_%d" (8 * width)
+    else if count t > narrow then "copy"
+    else Printf.sprintf "copy_%d" (8 * align)
+  in
   let bytes = n * width in
   cover (Printf.sprintf "%d-byte elements" width) true;
   cover "a source whose elements are apart" (n > 1 && not (L.is_contiguous l));
@@ -641,8 +676,9 @@ let law_source_wide c =
 (* A source of rows: [outer] blocks of [nrows] rows of [cols] elements of
    [widths.(rw)] bytes, a row [gap] elements past the previous one's end and a
    block [gap] past the previous block's, the rows in reverse where [flip],
-   within [deep] axes more of extent 2 that merge with none; [at] elements past
-   its buffer's first, the buffer ending at its last byte. *)
+   within [deep] axes more of extent 2 that merge with none; the elements of a
+   row [rstep] apart; [at] elements past its buffer's first, the buffer ending
+   at its last byte. *)
 type rows = {
   rw : int;
   rdt : int;
@@ -650,6 +686,7 @@ type rows = {
   outer : int;
   nrows : int;
   cols : int;
+  rstep : int;
   gap : int;
   flip : bool;
   at : int;
@@ -663,13 +700,13 @@ type rows = {
 let rows_dtype c = List.nth (of_width widths.(c.rw)) c.rdt
 
 let rows_layout c =
-  let rs = c.cols + c.gap in
+  let rs = (c.cols * c.rstep) + c.gap in
   let os = (c.nrows * rs) + c.gap in
   let rs' = if c.flip then -rs else rs in
   let offset = c.at + if c.flip then (c.nrows - 1) * rs else 0 in
   let shape, strides =
-    if c.outer > 1 then ([ c.outer; c.nrows; c.cols ], [ os; rs'; 1 ])
-    else ([ c.nrows; c.cols ], [ rs'; 1 ])
+    if c.outer > 1 then ([ c.outer; c.nrows; c.cols ], [ os; rs'; c.rstep ])
+    else ([ c.nrows; c.cols ], [ rs'; c.rstep ])
   in
   (* Each axis more steps past the span of those inside it and a gap, so that it
      merges with none. *)
@@ -740,6 +777,7 @@ let rows_source =
        outer;
        nrows;
        cols = Int.max 2 ((bytes + w - 1) / w);
+       rstep = 1;
        gap;
        flip;
        at;
@@ -776,6 +814,7 @@ let rows_examples =
       outer = 1;
       nrows = 2;
       cols = 16;
+      rstep = 1;
       gap = 1;
       flip = false;
       at = 0;
@@ -795,11 +834,15 @@ let rows_examples =
     { c with cols = 272; rbudget = Some one_group };
   ]
 
-(* nx_metal.mli: a copy of rows of 16 bytes or more runs copy_rows and gives the
-   destination the source's elements in C order, keeping the bits around it:
-   rows at every shift from 16 bytes, blocks of the destination across two rows,
-   rows of rows, rows in reverse, and sources whose span starts or ends off 16
-   bytes, at its buffer's ends. *)
+(* nx_metal.mli: a copy of rows of 16 bytes or more runs copy_rows, or copy_step
+   for rows of every other element ([rstep] 2), and gives the destination the
+   source's elements in C order, keeping the bits around it: rows at every shift
+   from 16 bytes, blocks of the destination across two rows, rows of rows, rows
+   in reverse, and sources whose span starts or ends off 16 bytes, at its
+   buffer's ends. Rows of every other element under 16 bytes, or under
+   {!step_row_bytes} where a block of the destination crosses a row's end, of
+   complex elements, or of elements of 16 bytes are copied an element at a
+   time. *)
 let law_rows ?(narrow = (1 lsl 32) - 256) c =
   let (D.Any dt) = rows_dtype c in
   let width = widths.(c.rw) in
@@ -823,13 +866,20 @@ let law_rows ?(narrow = (1 lsl 32) - 256) c =
   let got, launches = Plan.traced call in
   equal answer A.Done got;
   let name (t : Plan.traced) = Nx_metal.Kernels.name t.kernel in
-  let stop (t : Plan.traced) =
-    Int64.to_int
-      (Bytes.get_int64_le t.words (8 * Nx_metal.Kernels.copy_rows_end))
+  let word (t : Plan.traced) i =
+    Int64.to_int (Bytes.get_int64_le t.words (8 * i))
   in
-  equal (list string)
-    (List.map (fun t -> rows_kernel ~narrow ~width l (stop t)) launches)
-    (List.map name launches);
+  let stop t = word t Nx_metal.Kernels.copy_rows_end in
+  let align = if D.is D.Complex dt then width / 2 else width in
+  let head = (c.dbase + (c.dat * width)) mod 16 in
+  let steps = c.rstep = 2 && by_steps ~narrow ~width ~align ~head l in
+  let kernel t =
+    if c.rstep = 1 then rows_kernel ~narrow ~width l (stop t)
+    else if steps then Printf.sprintf "copy_step_%d" (8 * width)
+    else if word t Nx_metal.Kernels.copy_count > narrow then "copy"
+    else Printf.sprintf "copy_%d" (8 * align)
+  in
+  equal (list string) (List.map kernel launches) (List.map name launches);
   let want =
     Array.concat
       [ Array.sub was 0 c.dat; elements x; Array.sub was (c.dat + n) after ]
@@ -846,30 +896,76 @@ let law_rows ?(narrow = (1 lsl 32) - 256) c =
     done;
     !p
   in
-  let shifts =
-    List.init (n / c.cols) (fun k -> (c.rbase + (row_at k * width)) mod 16)
-  in
-  let head = (c.dbase + (c.dat * width)) mod 16 in
-  List.iter
-    (fun b -> cover (Printf.sprintf "rows of %d bytes" b) (row_bytes = b))
-    [ 16; 17; 210 ];
   List.iter
     (fun w -> cover (Printf.sprintf "%d-byte elements" w) (width = w))
     (Array.to_list widths);
-  for s = 0 to 15 do
-    cover (Printf.sprintf "a row %d bytes past 16" s) (List.mem s shifts)
-  done;
-  cover "a block of the destination across two rows"
-    ((head + row_bytes) mod 16 <> 0 || row_bytes mod 16 <> 0);
-  (* A block whose first row is the last of a block of rows reads the next row's
-     place by a carry into the outer axis. *)
-  cover "a block of the destination across two blocks of rows"
-    (c.outer > 1
-    && List.exists
-         (fun j -> (head + (j * c.nrows * row_bytes)) mod 16 <> 0)
-         (List.init (c.outer - 1) (fun j -> j + 1)));
-  cover "rows of rows" (c.outer > 1);
   let merged = L.rank (L.coalesce [| L.contiguous shape; l |]).(1) in
+  if c.rstep = 1 then begin
+    let shifts =
+      List.init (n / c.cols) (fun k -> (c.rbase + (row_at k * width)) mod 16)
+    in
+    List.iter
+      (fun b -> cover (Printf.sprintf "rows of %d bytes" b) (row_bytes = b))
+      [ 16; 17; 210 ];
+    for s = 0 to 15 do
+      cover (Printf.sprintf "a row %d bytes past 16" s) (List.mem s shifts)
+    done;
+    cover "a block of the destination across two rows"
+      ((head + row_bytes) mod 16 <> 0 || row_bytes mod 16 <> 0);
+    (* A block whose first row is the last of a block of rows reads the next
+       row's place by a carry into the outer axis. *)
+    cover "a block of the destination across two blocks of rows"
+      (c.outer > 1
+      && List.exists
+           (fun j -> (head + (j * c.nrows * row_bytes)) mod 16 <> 0)
+           (List.init (c.outer - 1) (fun j -> j + 1)))
+  end
+  else begin
+    (* The destination's blocks of 16 bytes that hold only elements, by their
+       first element: where it lies modulo 16 in the source, and whether the
+       block's elements cross a row's end. *)
+    let per = 16 / Int.min width 16 in
+    let blocks =
+      List.filter
+        (fun k -> (c.dbase + ((c.dat + k) * width)) mod 16 = 0 && k + per <= n)
+        (List.init n Fun.id)
+    in
+    let shift k =
+      (c.rbase + ((row_at (k / c.cols) + (c.rstep * (k mod c.cols))) * width))
+      mod 16
+    in
+    let within k = (k mod c.cols) + per <= c.cols in
+    let block p = steps && List.exists p blocks in
+    let under = under_least ~width row_bytes in
+    cover "every other element, rows under 16 bytes" (row_bytes < 16);
+    cover "every other element, rows that cross under the width's least"
+      ((not steps) && row_bytes >= 16 && under
+      && (head + row_bytes) mod 16 <> 0
+      && merged > 1);
+    cover "every other element, rows of the width's least, by copy_step"
+      (steps && step_row_bytes width = Some row_bytes);
+    cover
+      "every other element, rows of a multiple of 16 bytes under the width's \
+       least, by copy_step"
+      (steps && under && merged > 1);
+    List.iter
+      (fun w ->
+        cover
+          (Printf.sprintf "every other element of %d bytes, by copy_step" w)
+          (steps && width = w))
+      [ 1; 2; 4; 8 ];
+    cover "every other complex element" (D.is D.Complex dt && width <= 8);
+    cover "every other element of one row" (steps && merged = 1);
+    cover "a block from two aligned words on 16 bytes"
+      (block (fun k -> within k && shift k = 0));
+    cover "a block from two aligned words off 16 bytes"
+      (block (fun k -> within k && shift k > 0 && shift k <= width));
+    cover "a block from three aligned words"
+      (block (fun k -> within k && shift k > width));
+    cover "a block of the destination across two rows"
+      (block (fun k -> not (within k)))
+  end;
+  cover "rows of rows" (c.outer > 1);
   cover "rows of the most axes the launch holds"
     (merged = Nx_metal.Kernels.copy_rows_holds);
   cover "rows of more axes than the launch holds, from a constant"
@@ -881,7 +977,12 @@ let law_rows ?(narrow = (1 lsl 32) - 256) c =
   cover "a source to its buffer's last byte, off 16 bytes"
     ((c.rbase + (hi * width)) mod 16 <> 0);
   cover "a copy in several launches" (List.length launches > 1);
-  if narrow < (1 lsl 32) - 256 then begin
+  if narrow < (1 lsl 32) - 256 && c.rstep = 2 then begin
+    cover "every other element past the bound, an element a thread"
+      ((not steps) && by_steps ~narrow:max_int ~width ~align ~head l);
+    cover "every other element under the bound, by copy_step" steps
+  end;
+  if narrow < (1 lsl 32) - 256 && c.rstep = 1 then begin
     let wide t = stop t > narrow in
     cover "a launch of 64-bit byte indices" (List.exists wide launches);
     cover "a launch of 32-bit byte indices"
@@ -897,6 +998,72 @@ let law_rows_wide c =
     (fun () ->
       Nx_metal.bound_copy ~wide:9;
       law_rows ~narrow:256 c)
+
+(* Rows of every other element: under 16 bytes; of one element under, at or over
+   the least bytes copy_step takes a row of the width at, where it has one; of a
+   multiple of 16 bytes up to it, or to 600 bytes where it has none; or any up
+   to 600 bytes; of 2 elements or more; single rows, and rows no gap apart,
+   which merge into one. *)
+let steps_source =
+  let open Gen in
+  with_pp pp_rows
+    (let* c = rows_source in
+     let w = widths.(c.rw) in
+     let sixteens = Int.max 1 (16 / w) in
+     let short = int_range 2 (Int.max 2 (15 / w)) in
+     let any = int_range 2 (Int.max 2 (600 / w)) in
+     let to_bytes b = map (fun k -> k * sixteens) (int_range 1 (b / 16)) in
+     let* cols =
+       match step_row_bytes w with
+       | None -> frequency [ (1, short); (1, to_bytes 600); (3, any) ]
+       | Some least ->
+           let near = least / w in
+           frequency
+             [
+               (1, short);
+               (2, int_range (near - 1) (near + 1));
+               (1, to_bytes least);
+               (3, any);
+             ]
+     in
+     let* nrows = frequency [ (1, constant 1); (3, int_range 2 40) ] in
+     let+ gap =
+       if c.flip then int_range 0 20
+       else frequency [ (1, constant 0); (3, int_range 1 20) ]
+     in
+     { c with rstep = 2; cols = Int.max 2 cols; nrows; gap })
+
+let steps_wide = budgets_wide steps_source
+
+(* Rows of every other element of the most axes the launch's parameters hold, 7,
+   and of one more; and, under the bound of {!law_rows_wide}, whose draws reach
+   few, two rows into a destination on 16 bytes: at each width copy_step takes,
+   of one element under, at and over its least bytes, or of 72 and 264 bytes
+   where it has none, and of 32 bytes; of uint8 rows of 9 bytes; and of complex
+   elements. *)
+let steps_examples =
+  let c = { (List.hd rows_examples) with rstep = 2 } in
+  let complex =
+    let rec find i = function
+      | [] -> invalid_arg "steps_examples: no complex dtype of 8 bytes"
+      | D.Any dt :: rest -> if D.is D.Complex dt then i else find (i + 1) rest
+    in
+    find 0 (of_width 8)
+  in
+  List.map
+    (fun c -> { c with rstep = 2; cols = 65 })
+    [ List.nth rows_examples 2; List.nth rows_examples 3 ]
+  @ List.concat_map
+      (fun rw ->
+        let w = widths.(rw) in
+        let near =
+          match step_row_bytes w with
+          | Some least -> [ (least / w) - 1; least / w; (least / w) + 1 ]
+          | None -> [ 72 / w; 264 / w ]
+        in
+        List.map (fun cols -> { c with rw; cols }) (near @ [ 32 / w ]))
+      [ 0; 1; 2; 3 ]
+  @ [ { c with rw = 0; cols = 9 }; { c with rw = 3; rdt = complex; cols = 9 } ]
 
 (* Each operand another output's destination shares memory with is first copied
    into workspace: two launches for it, one for an output whose operand is its
@@ -2010,9 +2177,28 @@ let direct =
   let base =
     frequency [ (1, constant 0); (1, of_list [ 1; 2; 3; 4; 6; 8; 12 ]) ]
   in
+  (* The long kinds of int8 and uint8, which the direct kernel runs in place of
+     the kernel of bytes: drawn alone a case in 13, as the class draw below
+     reaches them in under 1% of cases. *)
+  let long_bytes =
+    List.concat_map
+      (fun (D.Any d as dt) ->
+        List.filter_map
+          (fun k ->
+            if P.accepts2 (Binary k) d then
+              Some
+                {
+                  name = Kernels_cases.name2 (Binary k);
+                  ins = [| dt; dt |];
+                  node = P.Op2 (Binary k, 0, 1);
+                }
+            else None)
+          P.[ Idiv; Mod; Pow ])
+      [ D.Any D.Int8; D.Any D.Uint8 ]
+  in
   (* A dtype, a class of its programs and one of them, or half the time in place
      of a cast, a cast between float32 and a narrow float. *)
-  let form =
+  let classed =
     (* 32-bit dtypes twice as often, so that flat maps of 32 bits reach each of
        their covers. *)
     let* dt =
@@ -2030,6 +2216,7 @@ let direct =
         frequency [ (1, forms); (1, of_list narrow_casts) ]
     | _ -> forms
   in
+  let form = frequency [ (12, classed); (1, of_list long_bytes) ] in
   with_pp pp_direct
     (let* form = form in
      let dt = form.ins.(Array.length form.ins - 1) in
@@ -3190,6 +3377,10 @@ let is_copy n =
       "copy_run";
       "copy_rows";
       "copy_rows_wide";
+      "copy_step_8";
+      "copy_step_16";
+      "copy_step_32";
+      "copy_step_64";
     ]
 
 (* nx_metal.mli: a map of one plain load cast into a dtype of a byte or more but
@@ -3345,8 +3536,8 @@ let test_nibble_cast_far () =
    {!Nx_metal.moves} do. A sum of 11 int32 loads beside a move of a 12th load is
    14 operands and destinations: the sum takes a loop of its 12, the move the
    copies, with the operand's bits: 1024 contiguous elements on 16 bytes in one
-   launch of copy_run, every other element from the second in one of the copy of
-   its unit. *)
+   launch of copy_run, every other element from the second in one of copy_step
+   of its width. *)
 let test_split_moves () =
   let st = Random.State.make [| 5 |] in
   let n = 1024 in
@@ -3389,7 +3580,8 @@ let test_split_moves () =
       in
       equal ~msg:"the move's launches" (list string)
         [
-          (if stepped then Printf.sprintf "copy_%d" (D.bits s) else "copy_run");
+          (if stepped then Printf.sprintf "copy_step_%d" (D.bits s)
+           else "copy_run");
         ]
         (List.filter (fun k -> is_copy k || is_cast k) names);
       equal ~msg:"the move's bits" (array string) (elements a) (elements y);
@@ -5212,6 +5404,120 @@ let law_huge c =
   equal ~msg:"the copy's seconds"
     (float_rel ~rel:1e-9 ~abs:0.)
     t (call_seconds p)
+
+(* nx_metal.mli: a copy an element a thread reads a line of 128 bytes for each
+   load of its unit of copy where its source's innermost axis steps 128 bytes or
+   more: one load an element of an integer or a float, two of a complex number,
+   stored on half its width. A transpose of 64 rows of 128 elements steps 128
+   elements, and its launches may count at most two lines more a run of 64
+   elements, and six more a launch. *)
+let test_strided_reads () =
+  let rows = 64 and cols = 128 in
+  let n = rows * cols in
+  List.iter
+    (fun (D.Any dt, loads) ->
+      let b = Plan.make () in
+      let ws = Plan.workspace b in
+      let site l =
+        Nx_metal.Moves.site_at ~slot:ws ~base:0 ~residue:0 (D.Any dt) l
+      in
+      let src =
+        L.v
+          ~strides:(Iarray.of_list [ 1; cols ])
+          (Iarray.of_list [ cols; rows ])
+      in
+      let dst = L.contiguous (Iarray.of_list [ cols; rows ]) in
+      ignore (Nx_metal.Moves.launch b ~n ~dst:(site dst) (site src));
+      let p = Plan.finish b in
+      let charged =
+        Array.fold_left
+          (fun t (l : Plan.launch) -> t + l.cost.bytes)
+          0 p.launches
+      in
+      let reads = n * ((D.bits dt / 8) + (loads * Plan.line)) in
+      let ends = 6 * Plan.line * Array.length p.launches in
+      at_least ~msg:(D.name dt) int ~than:reads charged;
+      at_most ~msg:(D.name dt) int
+        ~than:(reads + (2 * Plan.line * (n / rows)) + ends)
+        charged)
+    [
+      (D.Any D.Uint8, 1);
+      (D.Any D.Float16, 1);
+      (D.Any D.Float32, 1);
+      (D.Any D.Int64, 1);
+      (D.Any D.Complex64, 2);
+      (D.Any D.Complex128, 2);
+    ]
+
+(* nx_metal.mli: copy_step weighs each element it copies one at a time, in a
+   block a row's end crosses or a partial block of the destination, 512
+   operations more, and a block's elements more for as many groups of 32 blocks
+   as the fewer of such blocks and groups, at least as many as the groups that
+   hold one; its blocks share the weight, rounded up, beside its threads' 128
+   operations and 64 for the axis before its row. The blocks are counted here
+   one by one: rows of 97 and 104 bytes of uint8 (104 into a destination one
+   byte past 16, where every row's end crosses), and of 49 uint16 and float32
+   elements. *)
+let test_step_serial () =
+  let run = Nx_metal.Kernels.copy_run_bytes in
+  List.iter
+    (fun (D.Any dt, e, head) ->
+      let w = D.bits dt / 8 in
+      let rows = 4096 in
+      let row = e * w and bytes = rows * e * w in
+      let b = Plan.make () in
+      let ws = Plan.workspace b in
+      let site ~residue l =
+        Nx_metal.Moves.site_at ~slot:ws ~base:0 ~residue (D.Any dt) l
+      in
+      let src =
+        L.v
+          ~strides:(Iarray.of_list [ (2 * e) + 2; 2 ])
+          (Iarray.of_list [ rows; e ])
+      in
+      let dst = L.contiguous (Iarray.of_list [ rows; e ]) in
+      ignore
+        (Nx_metal.Moves.launch b ~n:(rows * e) ~dst:(site ~residue:head dst)
+           (site ~residue:0 src));
+      let p = Plan.finish b in
+      let blocks = (head + bytes + run - 1) / run in
+      let serial = ref 0 in
+      for k = 0 to blocks - 1 do
+        let lo = (k * run) - head in
+        let hi = lo + run in
+        let crossed = lo / row <> (hi - 1) / row in
+        if lo < 0 || hi > bytes || (lo >= 0 && crossed) then incr serial
+      done;
+      let serial = !serial in
+      let elements =
+        (serial + Int.min serial ((blocks + 31) / 32)) * (run / w)
+      in
+      let share = ((elements * 512) + blocks - 1) / blocks in
+      let threads =
+        Array.fold_left
+          (fun t (l : Plan.launch) ->
+            let x, y, z = l.groups and per, _, _ = l.threads in
+            t + (x * y * z * per))
+          0 p.launches
+      in
+      let msg = Printf.sprintf "%s rows of %d bytes" (D.name dt) row in
+      Array.iter
+        (fun (l : Plan.launch) ->
+          equal ~msg string
+            (Printf.sprintf "copy_step_%d" (8 * w))
+            (Nx_metal.Kernels.name l.kernel))
+        p.launches;
+      equal ~msg int
+        ((threads * (128 + 64)) + (blocks * share))
+        (Array.fold_left
+           (fun t (l : Plan.launch) -> t + l.cost.ops)
+           0 p.launches))
+    [
+      (D.Any D.Uint8, 97, 0);
+      (D.Any D.Uint8, 104, 1);
+      (D.Any D.Uint16, 49, 0);
+      (D.Any D.Float32, 49, 4);
+    ]
 
 (* Tickets *)
 
@@ -19007,6 +19313,14 @@ let () =
                "a copy of rows of 64-bit byte indices, under bound_copy, gives \
                 its elements"
                rows_wide law_rows_wide;
+             prop ~count:300 ~examples:steps_examples
+               "a copy of every other element in rows of its width's least \
+                bytes runs copy_step and gives its elements"
+               steps_source law_rows;
+             prop ~count:100 ~examples:steps_examples
+               "a copy of every other element past bound_copy's bound copies \
+                an element a thread and gives its elements"
+               steps_wide law_rows_wide;
              test "an operand another output writes is staged in workspace"
                test_staged;
              test "a broadcast operand stages the elements it reads"
@@ -19082,6 +19396,9 @@ let () =
                "a copy of 2^32 elements or more keeps each launch within the \
                 time budget"
                huge law_huge;
+             test "a strided copy counts a line a load" test_strided_reads;
+             test "copy_step weighs the elements it copies one at a time"
+               test_step_serial;
            ];
          group "harness"
            [

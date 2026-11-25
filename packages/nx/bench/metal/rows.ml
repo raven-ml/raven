@@ -270,11 +270,13 @@ let loop_op ~check op dt shape g =
       run_of (prog [ x ] [ P.In 0 ] 0) Map ~shape ~dsts:[ z ] [ plain x ]
   | "copy_rows" | "copy_step2" ->
       (* Elements apart, by copy: the first [cols] of each row of
-         [row_elements], two axes; or every other element, one axis, a position
-         with no division. *)
+         [row_elements], two axes; or every other element, of one axis, a
+         position with no division, or of rows apart. *)
       let row_elements = 256 in
       let strides, span =
         if op = "copy_rows" then ([ row_elements; 1 ], shape.(0) * row_elements)
+        else if Array.length shape = 2 then
+          ([ (2 * shape.(1)) + 2; 2 ], shape.(0) * ((2 * shape.(1)) + 2))
         else ([ 2 ], 2 * shape.(0))
       in
       let (A.Any xa) = fresh g ~seed:1 dt [| span |] in
@@ -587,11 +589,13 @@ let loops =
       sized "map" "copy_at1" u8 vec;
       sized "map" "copy_at1" u16 vec;
       sized "map" "copy_at1" f32 vec;
-      (* 13.8 MB of uint8 rows, 210 of each 256 bytes, and every other byte of
-         32 MB. *)
+      (* 13.8 MB of uint8 rows, 210 of each 256 bytes; every other byte within
+         32 MB; and every other byte of rows of 24, most of whose blocks of 16
+         bytes cross a row's end. *)
       [
         loop_row "map" "copy_rows" u8 [| 1 lsl 16; 210 |];
         loop_row "map" "copy_step2" u8 [| 1 lsl 24 |];
+        loop_row "map" "copy_step2" u8 [| 1 lsl 17; 24 |];
       ];
       sized "map" "add" bf16 ([| 1 lsl 21 |], [| 1 lsl 27 |]);
       sized "map" "cast_bf16" f32 vec;

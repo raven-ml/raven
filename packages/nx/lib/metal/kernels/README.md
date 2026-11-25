@@ -69,13 +69,13 @@ stamp covers are listed by hand in `gen.py` and the dune rules, so
 `gen.py` refuses a unit that includes, outside the SDK, a file its stamp
 does not cover, from the dependencies `metal -MD` reports.
 
-The library's metallib is 9,467,499 bytes (copy 4,736, copy_8 to
-copy_64 4,448 to 4,464 each, copy_run 4,544, copy_rows 8,320,
-copy_rows_wide 8,192, zero 3,552, widen 9,728; the casts' 50 kernels
-7,536 to 18,464 each, a byte source class's with its tables; the
-contraction's 354 kernels 4.0
-MB, the spectral routines' 77 0.53 MB, attention's 27 0.64 MB, the
-transforms' 35 0.26 MB, the sorts' 25 0.27 MB, the matrix routines' 15
-0.22 MB, the gathers, assemblies and folds' 11 (fold 6, runs 3, move 2)
-0.1 MB, the loops the rest, of which the flat direct maps of 32 bits
-take 12,768 and 19,520); the harness's, 16,555.
+The library's metallib is 9,496,738 bytes (copy 4,736, copy_8 to copy_64
+4,448 to 4,464 each, copy_run 4,544, copy_rows 8,320, copy_rows_wide
+8,192, copy_step_8 to copy_step_64 7,136 to 7,200 each, zero 3,552,
+widen 9,728; the casts' 50 kernels 7,536 to 18,464 each, a byte source
+class's with its tables; the contraction's 354 kernels 4.0 MB, the
+spectral routines' 77 0.53 MB, attention's 27 0.64 MB, the transforms'
+35 0.26 MB, the sorts' 25 0.27 MB, the matrix routines' 15 0.22 MB, the
+gathers, assemblies and folds' 11 (fold 6, runs 3, move 2) 0.1 MB, the
+loops the rest, of which the flat direct maps of 32 bits take 12,768 and
+19,520); the harness's, 16,555.

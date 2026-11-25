@@ -147,40 +147,49 @@ let work ~ops ~n ~rank =
 let widen_ops = 512
 
 (* The bytes of [width]-byte elements a copy reads an element from a source
-   whose innermost axis steps [s] elements: the element's own where it steps by
-   at most one, and a line where neighbours share none. *)
-let read ~width s = if s = 0 then width else Int.min Plan.line (abs s * width)
+   whose innermost axis steps [s] elements, in loads of [unit] bytes: the
+   element's own where it steps by at most one, its stride's where neighbours
+   share a line, and a line a load where they share none, as each load of a SIMD
+   group then touches a line a thread: a transposed copy of 8M complex128
+   elements, two loads of 8 bytes each, takes about the time of one of 16M int64
+   elements. *)
+let read ~width ~unit s =
+  if s = 0 then width
+  else if abs s * width < Plan.line then abs s * width
+  else width / unit * Plan.line
 
 (* The cost of copying [m] elements in [groups] groups of [per] threads of
    [work] operations each from a source whose innermost axis has extent [e] and
    stride [s]: the destination's bytes and the source's, two lines at each run
    of the innermost axis and at the destination's ends, and each thread's work,
    the last group's idle ones included. *)
-let cost ~work ~m ~per ~groups ~width (e, s) =
+let cost ~work ~m ~per ~groups ~width ~unit (e, s) =
   let runs = ((m + e - 1) / e) + 1 in
   {
-    Plan.bytes = (m * (width + read ~width s)) + (2 * Plan.line * (runs + 1));
+    Plan.bytes =
+      (m * (width + read ~width ~unit s)) + (2 * Plan.line * (runs + 1));
     ops = per * groups * work;
     chain = 0;
   }
 
 (* The most elements a launch of groups of [per] threads copies within
-   {!Plan.allowed}, by [cost]'s and {!Plan.seconds}' bounds: a dispatch, traffic
-   of [m (width + read + 2 line / e) + 6 line] bytes, and work of [(m + per - 1)
-   w / (cores lanes op_rate) + ceil (per / lanes) w / op_rate] seconds at [w]
-   operations a thread, [work], less one for rounding. *)
-let most ~work ~per ~width (e, s) =
+   {!Plan.allowed}, by [cost]'s and {!Plan.seconds}' bounds, less one for
+   rounding: a dispatch, traffic of [m (width + read + 2 line / e) + 6 line]
+   bytes, and the work of [w] operations a thread, [work], and [x] more an
+   element, [extra]: [(m + per - 1) w / all + m x / all] seconds, where [all] is
+   [cores lanes op_rate], and [ceil (per / lanes) (w + x) / op_rate] more. *)
+let most ?(extra = 0) ~work ~per ~width ~unit (e, s) =
   let line = float Plan.line in
-  let w = float work in
+  let w = float work and x = float extra in
   let all = float (Plan.cores * Plan.lanes) *. Plan.op_rate in
-  let bytes = float (width + read ~width s) +. (2. *. line /. float e) in
-  let per_element = (bytes /. Plan.bandwidth) +. (w /. all) in
+  let bytes = float (width + read ~width ~unit s) +. (2. *. line /. float e) in
+  let per_element = (bytes /. Plan.bandwidth) +. ((w +. x) /. all) in
   let rounds = float ((per + Plan.lanes - 1) / Plan.lanes) in
   let fixed =
     Plan.dispatch
     +. (6. *. line /. Plan.bandwidth)
     +. (float (per - 1) *. w /. all)
-    +. (rounds *. w /. Plan.op_rate)
+    +. (rounds *. (w +. x) /. Plan.op_rate)
   in
   Int.max 1 (Float.to_int ((Plan.allowed () -. fixed) /. per_element) - 1)
 
@@ -197,7 +206,7 @@ let launch_run b ~n ~dst src =
   let shift = (place src - head + width) mod width in
   let pieces = if bytes = 0 then 0 else (head + bytes + width - 1) / width in
   let work = element_ops in
-  let piece = most ~work ~per ~width (pieces, 1) in
+  let piece = most ~work ~per ~width ~unit:width (pieces, 1) in
   let first = ref 0 and seconds = ref 0. in
   while !first < pieces do
     let m = Int.min piece (pieces - !first) in
@@ -210,7 +219,7 @@ let launch_run b ~n ~dst src =
     Plan.set w Kernels.copy_run_head head;
     Plan.set w Kernels.copy_run_shift shift;
     let groups = (m + per - 1) / per in
-    let cost = cost ~work ~m ~per ~groups ~width (pieces, 1) in
+    let cost = cost ~work ~m ~per ~groups ~width ~unit:width (pieces, 1) in
     seconds := !seconds +. Plan.seconds ~threads:per ~groups:(groups, 1, 1) cost;
     Plan.launch b Kernels.Copy_run ~groups:(groups, 1, 1) ~cost w
       [|
@@ -234,7 +243,7 @@ let launch_elements b ~n ~dst src =
   let inner = (L.dim l (rank - 1), L.stride l (rank - 1)) in
   let tail = tail b l in
   let work = work ~ops:element_ops ~n ~rank in
-  let piece = most ~work ~per ~width:src.width inner in
+  let piece = most ~work ~per ~width:src.width ~unit inner in
   let first = ref 0 and seconds = ref 0. in
   while !first < n do
     let m = Int.min piece (n - !first) in
@@ -249,7 +258,7 @@ let launch_elements b ~n ~dst src =
     Plan.set w Kernels.copy_units (src.width / unit);
     if rank <= Kernels.copy_holds then axes w ~at:Kernels.copy_held l;
     let groups = (m + per - 1) / per in
-    let cost = cost ~work ~m ~per ~groups ~width:src.width inner in
+    let cost = cost ~work ~m ~per ~groups ~width:src.width ~unit inner in
     seconds := !seconds +. Plan.seconds ~threads:per ~groups:(groups, 1, 1) cost;
     Plan.launch b kernel ~groups:(groups, 1, 1) ~cost w
       (Array.append
@@ -262,14 +271,18 @@ let launch_elements b ~n ~dst src =
   done;
   !seconds
 
-(* [l]'s axes in bytes of [width]-byte elements, as copy_rows reads them: each
-   but the last stepping its stride's bytes, the last, a row of consecutive
-   elements, its extent's bytes at a stride of 1. *)
-let row_axes s ~at ~width l =
+(* The copies of rows 16 bytes a thread: copy_rows' rows of consecutive
+   elements, and copy_step's of every other element. *)
+type rows = Consecutive | Every_other
+
+(* [l]'s axes in bytes of [width]-byte elements, as copy_rows and copy_step read
+   them: each stepping its stride's bytes, but for copy_rows the last, a row of
+   consecutive elements, its extent's bytes at a stride of 1. *)
+let row_axes s ~at ~width rows l =
   let r = L.rank l in
   for j = 0 to r - 1 do
     let e, stride =
-      if j = r - 1 then (L.dim l j * width, 1)
+      if j = r - 1 && rows = Consecutive then (L.dim l j * width, 1)
       else (L.dim l j, L.stride l j * width)
     in
     let word i v =
@@ -281,29 +294,107 @@ let row_axes s ~at ~width l =
     word Kernels.axis_divisor (Plan.divisor e)
   done
 
-(* The coalesced axes of [src]'s layout where copy_rows copies it: rows of
-   consecutive elements of {!Kernels.copy_run_bytes} bytes or more beside other
-   axes. *)
-let rows src =
+(* The fewest bytes of every other element of [width] bytes a row takes for
+   copy_step where a block of the destination crosses a row's end, if any. Such
+   a block copies its elements one at a time while the rest of its SIMD group,
+   512 bytes of the destination, waits. Against copy_8 to copy_64 on an M1 Max,
+   on rows of an odd count of elements, copy_step took 1.38, 0.86 and 0.53 of
+   the time on uint8 rows of 47, 97 and 263 bytes; 1.27, 0.89 and 0.66 on uint16
+   rows of 54, 98 and 262; 1.31, 1.04, 0.95 and 0.92 on float32 rows of 68, 100,
+   196 and 260; and 1.15 on int64 rows of 104 to 264. *)
+let step_row_bytes = function 1 | 2 -> Some 96 | 4 -> Some 192 | _ -> None
+
+(* Whether a row of [row] bytes of every other element of [width] bytes takes
+   copy_step where a block of the destination crosses its end. *)
+let crosses_long ~width row =
+  match step_row_bytes width with Some least -> row >= least | None -> false
+
+(* How copy_rows or copy_step copies [src]'s [n] elements into [dst], and the
+   coalesced axes of [src]'s layout: copy_rows' rows of consecutive elements of
+   {!Kernels.copy_run_bytes} bytes or more beside other axes; copy_step's rows
+   of every other element, each of 8 bytes or fewer and stored, at both ends, on
+   its width, in a copy whose byte indices fit 32 bits, of {!step_row_bytes}
+   bytes or more of them where the width has a bound, or of
+   {!Kernels.copy_run_bytes} or more where no block of the destination crosses a
+   row's end: one row, or rows of a multiple of {!Kernels.copy_run_bytes} bytes
+   into a destination that starts on them. *)
+let rows ~n ~dst src =
   let l =
     (L.coalesce [| L.contiguous (L.shape src.layout); src.layout |]).(1)
   in
   let r = L.rank l in
-  if
-    r >= 2
-    && L.stride l (r - 1) = 1
-    && L.dim l (r - 1) * src.width >= Kernels.copy_run_bytes
-  then Some l
-  else None
+  let row = L.dim l (r - 1) * src.width in
+  if r >= 2 && L.stride l (r - 1) = 1 && row >= Kernels.copy_run_bytes then
+    Some (Consecutive, l)
+  else
+    let run = Kernels.copy_run_bytes in
+    let uncrossed = r = 1 || (row mod run = 0 && place dst = 0) in
+    if
+      L.stride l (r - 1) = 2
+      && src.width <= 8
+      && Int.min src.align dst.align = src.width
+      && n * src.width <= Atomic.get narrow_most
+      && row >= run
+      && (uncrossed || crosses_long ~width:src.width row)
+    then Some (Every_other, l)
+    else None
 
-(* Adds the launches of copy_rows that copy the [n] elements of [src], of rows
-   [l], from its position 0 into consecutive ones of [dst]: the blocks of
-   {!Kernels.copy_run_bytes} bytes of [dst]'s memory that its bytes reach, as
-   many a launch as keep it within the time budget, each block's work a copy_run
-   thread's and an axis's for each axis before the row, by copy_rows where the
-   bytes' indices fit 32 bits and copy_rows_wide past them; their estimated
-   seconds are the result. *)
-let launch_rows b ~n ~dst src l =
+(* The weight of an element a copy_step block copies alone, where the block
+   crosses a row's end: 16 cycles of its SIMD group's 32 lanes, since the rest
+   of the group waits. Each such element is a load and a store of its own, as
+   the crossing lanes of a group lie in different rows and share no line: an M1
+   Max took 87 ps of its whole GPU's time an element, about 13 cycles, alike at
+   1 and 4 bytes an element, on rows of 17 to 1032 bytes. *)
+let serial_ops = 32 * 16
+let rec gcd a b = if b = 0 then a else gcd b (a mod b)
+
+(* The elements copy_step's blocks copy one at a time, of [rows] rows of [row]
+   bytes of [width]-byte elements into a destination [head] bytes past a
+   multiple of {!Kernels.copy_run_bytes}, in [blocks] blocks: each block's that
+   a row's end crosses, and the destination's first and last where they are
+   partial; and as many again for each SIMD group of 32 blocks that holds one,
+   since a group issues the loop once whatever its count of such blocks: the
+   fewer of such blocks and groups, at least as many as the groups that hold
+   one. A row's end crosses a block where it lies off a multiple of 16 bytes: of
+   the ends at [head + q row], none where [head] lies off a multiple of [g = gcd
+   row 16], and one in [16 / g] otherwise. *)
+let serial_elements ~width ~head ~row ~rows ~blocks =
+  let run = Kernels.copy_run_bytes in
+  let ends = Int.max 0 (rows - 1) in
+  let period = run / gcd row run in
+  let rec first q =
+    if q > period then None
+    else if (head + (q * row)) mod run = 0 then Some q
+    else first (q + 1)
+  in
+  let aligned =
+    match first 1 with
+    | Some q when q <= ends -> ((ends - q) / period) + 1
+    | Some _ | None -> 0
+  in
+  let partial =
+    Bool.to_int (head <> 0) + Bool.to_int ((head + (rows * row)) mod run <> 0)
+  in
+  let crossing = ends - aligned + partial in
+  let groups = Int.min crossing ((blocks + 31) / 32) in
+  (crossing + groups) * (run / width)
+
+(* The copy_step of [width]-byte elements. *)
+let step_kernel = function
+  | 1 -> Kernels.Copy_step_8
+  | 2 -> Kernels.Copy_step_16
+  | 4 -> Kernels.Copy_step_32
+  | _ -> Kernels.Copy_step_64
+
+(* Adds the launches of copy_rows or copy_step, by [rows], that copy the [n]
+   elements of [src], of rows [l], from its position 0 into consecutive ones of
+   [dst]: the blocks of {!Kernels.copy_run_bytes} bytes of [dst]'s memory that
+   its bytes reach, as many a launch as keep it within the time budget, each
+   block's work a copy_run thread's and an axis's for each axis before the row,
+   and its reads a run's, twice those of a block for copy_step. copy_rows runs
+   where the bytes' indices and the extents fit 32 bits, and copy_rows_wide past
+   them; their estimated seconds are the result. *)
+let launch_rows b ~n ~dst src (rows, l) =
   let per = Kernels.threads Kernels.Copy_rows in
   let width = Kernels.copy_run_bytes in
   let bytes = n * src.width in
@@ -316,7 +407,7 @@ let launch_rows b ~n ~dst src l =
     if rank <= Kernels.copy_rows_holds then [||]
     else
       let s = Bytes.create (8 * Kernels.axis_words * rank) in
-      row_axes s ~at:0 ~width:src.width l;
+      row_axes s ~at:0 ~width:src.width rows l;
       let t = Bytes.unsafe_to_string s in
       let c =
         Plan.constant b ~key:("copy_rows " ^ t) ~length:(String.length t)
@@ -325,8 +416,19 @@ let launch_rows b ~n ~dst src l =
       [| { Plan.word = Kernels.copy_rows_axes; slot = c; write = false } |]
   in
   let work = work ~ops:element_ops ~n:bytes ~rank in
-  let inner = (Int.max 1 (row / width), 1) in
-  let piece = most ~work ~per ~width inner in
+  (* copy_step's blocks share the weight of the elements it copies one at a
+     time, rounded up, a block's share in each launch beside its threads'. *)
+  let extra =
+    if rows = Consecutive then 0
+    else
+      let serial =
+        serial_elements ~width:src.width ~head ~row ~rows:(bytes / row)
+          ~blocks:pieces
+      in
+      ((serial * serial_ops) + pieces - 1) / pieces
+  in
+  let inner = (Int.max 1 (row / width), if rows = Consecutive then 1 else 2) in
+  let piece = most ~extra ~work ~per ~width ~unit:width inner in
   (* copy_rows compares coordinates with extents in 32 bits, so an extent past
      them, the row's in bytes included, takes copy_rows_wide in every launch. *)
   let narrow = Atomic.get narrow_most in
@@ -339,7 +441,8 @@ let launch_rows b ~n ~dst src l =
     let m = Int.min piece (pieces - !first) in
     let stop = Int.min bytes (((!first + m) * width) - head) in
     let kernel =
-      if extents_fit && stop <= narrow then Kernels.Copy_rows
+      if rows = Every_other then step_kernel src.width
+      else if extents_fit && stop <= narrow then Kernels.Copy_rows
       else Kernels.Copy_rows_wide
     in
     let w = Plan.words kernel in
@@ -353,9 +456,10 @@ let launch_rows b ~n ~dst src l =
     Plan.set w Kernels.copy_rows_lo ((lo - L.offset l) * src.width);
     Plan.set w Kernels.copy_rows_hi ((hi - L.offset l) * src.width);
     if rank <= Kernels.copy_rows_holds then
-      row_axes w ~at:Kernels.copy_rows_held ~width:src.width l;
+      row_axes w ~at:Kernels.copy_rows_held ~width:src.width rows l;
     let groups = (m + per - 1) / per in
-    let cost = cost ~work ~m ~per ~groups ~width inner in
+    let cost = cost ~work ~m ~per ~groups ~width ~unit:width inner in
+    let cost = { cost with ops = cost.ops + (m * extra) } in
     seconds := !seconds +. Plan.seconds ~threads:per ~groups:(groups, 1, 1) cost;
     Plan.launch b kernel ~groups:(groups, 1, 1) ~cost w
       (Array.append
@@ -370,13 +474,14 @@ let launch_rows b ~n ~dst src l =
 
 (* Adds the launches that copy [src]'s [n] elements into consecutive ones of
    [dst], from its position 0: copy_run's where [src]'s elements are
-   consecutive, copy_rows' where they are rows of 16 bytes or more, and copy's
-   otherwise. Their estimated seconds are the result. *)
+   consecutive, copy_rows' or copy_step's where they are rows of 16 bytes or
+   more, of consecutive elements or every other one, and copy's otherwise. Their
+   estimated seconds are the result. *)
 let launch b ~n ~dst src =
   if L.is_contiguous src.layout then launch_run b ~n ~dst src
   else
-    match rows src with
-    | Some l -> launch_rows b ~n ~dst src l
+    match rows ~n ~dst src with
+    | Some rows -> launch_rows b ~n ~dst src rows
     | None -> launch_elements b ~n ~dst src
 
 (* Widenings *)
@@ -412,7 +517,7 @@ let widen b ~dst ~slot (A.Any x as ax) l =
   let inner = (L.dim l (rank - 1), L.stride l (rank - 1)) in
   let tail = tail b l in
   let work = work ~ops:widen_ops ~n ~rank in
-  let piece = most ~work ~per ~width:1 inner in
+  let piece = most ~work ~per ~width:1 ~unit:1 inner in
   let (D.Any to_) = twin (D.Any (A.dtype x)) in
   let codes = D.code (A.dtype x) + (256 * D.code to_) in
   let first = ref 0 in
@@ -429,7 +534,7 @@ let widen b ~dst ~slot (A.Any x as ax) l =
     if rank <= Kernels.copy_holds then axes w ~at:Kernels.copy_held l;
     let groups = (m + per - 1) / per in
     Plan.launch b Kernels.Widen ~groups:(groups, 1, 1)
-      ~cost:(cost ~work ~m ~per ~groups ~width:1 inner)
+      ~cost:(cost ~work ~m ~per ~groups ~width:1 ~unit:1 inner)
       w
       (Array.append
          [|

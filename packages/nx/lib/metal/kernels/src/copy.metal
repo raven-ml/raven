@@ -30,7 +30,13 @@
    copied 16 bytes a thread: a block's bytes come from at most two rows,
    each read as copy_run reads a run, by its own shift. copy_rows finds a
    block's rows by 32-bit divisions where the launch's byte indices fit
-   32 bits, and copy_rows_wide by 64-bit ones past them. */
+   32 bits, and copy_rows_wide by 64-bit ones past them.
+
+   A source of rows of every other element, each row of 16 bytes or more
+   of them, is copied 16 bytes a thread too: copy_step reads the 32
+   source bytes that hold a block's elements by two or three aligned
+   words, and keeps every other element by a select of the element's
+   width, in a kernel of each width. */
 
 #include "device.h"
 #include "nx_dtype.h"
@@ -392,6 +398,126 @@ void copy_rows_wide(constant copy_rows_words &w [[buffer(0)]],
                     uint t [[thread_index_in_threadgroup]]) {
   copy_rows_block<ulong>(w, w.first + nx_thread(g, t, NX_COPY_ROWS_THREADS));
 }
+
+/* The place of the first element of row [q] of a copy_step's source, in
+   bytes about [src]: none to find for a source of one row. */
+static inline long step_place(constant long *axes, int rank, uint q) {
+  long next;
+  return rank == 1 ? 0 : rows_place(axes, rank, q, next);
+}
+
+/* Copies the destination's elements [from] to [to] - 1 of type [T] one
+   at a time, each from its row, stepping along the row and then to the
+   next. */
+template <typename T>
+static inline void step_elements(constant copy_rows_words &w,
+                                 constant long *axes, int rank, uint from,
+                                 uint to) {
+  constant long *row = axes + NX_AXIS_WORDS * (rank - 1);
+  const uint e = uint(row[NX_AXIS_EXTENT]);
+  const long step = row[NX_AXIS_STRIDE];
+  uint q = rows_over(from, row);
+  uint i = from - q * e;
+  long at = step_place(axes, rank, q);
+  device T *d = (device T *)w.dst;
+  for (uint k = from; k < to; k++) {
+    d[k] = *(device const T *)(w.src + at + long(i) * step);
+    if (++i == e && k + 1 < to) {
+      i = 0;
+      at = step_place(axes, rank, ++q);
+    }
+  }
+}
+
+/* Whether the aligned words that hold the elements of [T] every other
+   one from byte [a] about [src], 16 bytes of them, lie in the source's
+   span: two words, and a third where the last element lies past them. */
+template <typename T>
+static inline bool step_within(constant copy_rows_words &w, long a) {
+  const long s = long(uint(a + long(w.shift)) & (NX_COPY_RUN_BYTES - 1));
+  const long n = (s > long(sizeof(T)) ? 3 : 2) * NX_COPY_RUN_BYTES;
+  return a - s >= w.lo && a - s + n <= w.hi;
+}
+
+/* The 16 bytes of the elements of [T] every other one from byte [a]
+   about [src]: the 32 bytes from [a], from the aligned words that hold
+   them joined by words selected by index, then every other element of
+   them, by a select of the element's width. */
+template <typename T>
+static inline uint4 step_run(constant copy_rows_words &w, long a) {
+  constexpr uint W = sizeof(T);
+  const uint s = uint(a + long(w.shift)) & (NX_COPY_RUN_BYTES - 1);
+  device const uint4 *words = (device const uint4 *)(w.src + (a - long(s)));
+  const uint4 x = words[0], y = words[1];
+  const uint4 z = s > W ? words[2] : uint4(0);
+  const uint v[12] = {x.x, x.y, x.z, x.w, y.x, y.y,
+                      y.z, y.w, z.x, z.y, z.z, z.w};
+  const uint q = s >> 2, bits = 8 * (s & 3);
+  uint u[8];
+  for (uint k = 0; k < 8; k++)
+    u[k] = bits == 0 ? v[q + k]
+                     : (v[q + k] >> bits) | (v[q + k + 1] << (32 - bits));
+  uint4 r;
+  for (uint k = 0; k < 4; k++) {
+    const uint lo = u[2 * k], hi = u[2 * k + 1];
+    if (W == 1)
+      r[k] = (lo & 0xffu) | ((lo >> 8) & 0xff00u) | ((hi & 0xffu) << 16) |
+             ((hi << 8) & 0xff000000u);
+    else if (W == 2)
+      r[k] = (lo & 0xffffu) | (hi << 16);
+    else if (W == 4)
+      r[k] = lo;
+    else
+      r[k] = u[k / 2 * 4 + k % 2];
+  }
+  return r;
+}
+
+/* A thread's block of copy_step of elements of [T]. */
+template <typename T>
+static inline void copy_step_block(constant copy_rows_words &w, uint block) {
+  constexpr uint W = sizeof(T);
+  constexpr uint per = NX_COPY_RUN_BYTES / W;
+  const long at = long(block) * NX_COPY_RUN_BYTES - long(w.head);
+  const long end = long(w.end);
+  if (at >= end) return;
+
+  constant long *axes = w.rank <= NX_COPY_ROWS_HOLDS ? w.held : w.axes;
+  const int rank = int(w.rank);
+  if (at < 0 || at + NX_COPY_RUN_BYTES > end) {
+    step_elements<T>(w, axes, rank, uint(at < 0 ? 0 : at) / W,
+                     uint(metal::min(at + NX_COPY_RUN_BYTES, end)) / W);
+    return;
+  }
+
+  /* The block's elements are [per] of row [q] from its element [i],
+     unless they cross the row's end. */
+  constant long *row = axes + NX_AXIS_WORDS * (rank - 1);
+  const uint e = uint(row[NX_AXIS_EXTENT]);
+  const uint k = uint(at) / W;
+  const uint q = rows_over(k, row);
+  const uint i = k - q * e;
+  const long a = step_place(axes, rank, q) + long(i) * row[NX_AXIS_STRIDE];
+  if (i + per > e || !step_within<T>(w, a)) {
+    step_elements<T>(w, axes, rank, k, k + per);
+    return;
+  }
+  *(device uint4 *)(w.dst + at) = step_run<T>(w, a);
+}
+
+/* A copy_step of elements of [T]. */
+#define NX_COPY_STEP_KERNEL(name, T)                                           \
+  NX_KERNEL(NX_COPY_ROWS_THREADS)                                              \
+  void name(constant copy_rows_words &w [[buffer(0)]],                         \
+            uint g [[threadgroup_position_in_grid]],                           \
+            uint t [[thread_index_in_threadgroup]]) {                          \
+    copy_step_block<T>(w, uint(w.first) + g * NX_COPY_ROWS_THREADS + t);       \
+  }
+
+NX_COPY_STEP_KERNEL(copy_step_8, uchar)
+NX_COPY_STEP_KERNEL(copy_step_16, ushort)
+NX_COPY_STEP_KERNEL(copy_step_32, uint)
+NX_COPY_STEP_KERNEL(copy_step_64, ulong)
 
 NX_KERNEL(NX_COPY_THREADS)
 void widen(constant copy_words &w [[buffer(0)]],

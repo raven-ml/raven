@@ -180,6 +180,10 @@ enum {
   X(copy_run, NX_FAMILY_COPY, NX_COPY_RUN_THREADS, NX_COPY_RUN_WORDS)         \
   X(copy_rows, NX_FAMILY_COPY, NX_COPY_ROWS_THREADS, NX_COPY_ROWS_WORDS)      \
   X(copy_rows_wide, NX_FAMILY_COPY, NX_COPY_ROWS_THREADS, NX_COPY_ROWS_WORDS) \
+  X(copy_step_8, NX_FAMILY_COPY, NX_COPY_ROWS_THREADS, NX_COPY_ROWS_WORDS)    \
+  X(copy_step_16, NX_FAMILY_COPY, NX_COPY_ROWS_THREADS, NX_COPY_ROWS_WORDS)   \
+  X(copy_step_32, NX_FAMILY_COPY, NX_COPY_ROWS_THREADS, NX_COPY_ROWS_WORDS)   \
+  X(copy_step_64, NX_FAMILY_COPY, NX_COPY_ROWS_THREADS, NX_COPY_ROWS_WORDS)   \
   X(widen, NX_FAMILY_COPY, NX_COPY_THREADS, NX_COPY_WORDS)                    \
   X(zero, NX_FAMILY_TRUNK, NX_ZERO_THREADS, NX_ZERO_WORDS)
 
@@ -280,7 +284,15 @@ enum { NX_COPY_ROWS_THREADS = 256 };
    byte indices fit 32 bits, and every extent, the row's in bytes
    included, is below 2^32, so that its coordinates' bounds do.
 
-   copy_rows_wide: as copy_rows, of any [end], its byte indices 64-bit. */
+   copy_rows_wide: as copy_rows, of any [end], its byte indices 64-bit.
+
+   copy_step_8, copy_step_16, copy_step_32 and copy_step_64: as copy_rows,
+   of a source of rows of every other element of 1, 2, 4 or 8 bytes, its
+   elements and [dst]'s on multiples of their width: the last axis is
+   the row, of its extent of elements, at least NX_COPY_RUN_BYTES bytes
+   of them, at a stride of twice the element's width. A thread copies its
+   block's elements one at a time where they cross a row's end. Every
+   extent is below 2^32, as [end] is. */
 enum {
   NX_COPY_ROWS_DST,
   NX_COPY_ROWS_SRC,
