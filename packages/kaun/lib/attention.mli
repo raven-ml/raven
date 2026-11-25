@@ -114,10 +114,10 @@ val apply :
 
     Raises [Invalid_argument] if [x]'s dtype is a float8 or float4 format, [x]
     has fewer than 2 axes, [x]'s last axis does not have size [embed_dim],
-    [head_dim] does not divide the projection widths, [kv_heads] does not
-    divide [heads], [lengths] does not have the shape of [x]'s batch axes, or
-    [mask]'s results or captures do not broadcast to
-    [[| batch; heads; seq; seq |]]. *)
+    [head_dim] is not positive or does not divide the projection widths, the key
+    and value projections differ in width, [kv_heads] does not divide [heads],
+    [lengths] does not have the shape of [x]'s batch axes, or [mask]'s results
+    or captures do not broadcast to [[| batch; heads; seq; seq |]]. *)
 
 (** {1:cache Decoding with a key-value cache}
 
@@ -247,10 +247,10 @@ val cached :
     Differentiable through Rune.
 
     Raises [Invalid_argument] if [x]'s dtype is a float8 or float4 format, [x]
-    does not have shape [[| batch; seq; embed_dim |]] with the index's batch
-    and seq, [head_dim] does not divide the projection widths, [kv_heads] does
-    not divide [heads], or the cache does not have shape
-    [[| _; kv_heads; head_dim |]]. *)
+    does not have shape [[| batch; seq; embed_dim |]] with the index's batch and
+    seq, [head_dim] is not positive or does not divide the projection widths,
+    the key and value projections differ in width, [kv_heads] does not divide
+    [heads], or the cache does not have shape [[| _; kv_heads; head_dim |]]. *)
 
 (** {1:pieces The pieces of a layer}
 

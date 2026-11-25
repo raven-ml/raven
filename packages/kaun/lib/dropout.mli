@@ -52,12 +52,15 @@ val apply :
     With [training = true], each element of [x] is zeroed independently with
     probability [rate] and the survivors are scaled by [1 / (1 - rate)]
     (inverted dropout), so the result's expectation is [x]. The result is
-    [x * m / (1 - rate)], where [m] is {!mask}[ ~rate ?key x] as [0] and [1].
-    The same key, rate and shape give the same mask, so derive a fresh key
-    per call ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for a fresh mask. Without
-    [?key], each call draws a fresh mask from the implicit RNG scope. Either way the
-    mask selects at [x]'s dtype and is a constant of differentiation, so
-    gradients flow to [x] through the surviving elements only.
+    [(x * m) * s], where [m] is {!mask}[ ~rate ?key x] as [0] and [1] and [s] is
+    [1 / (1 - rate)] rounded to [x]'s dtype, each product rounded to that dtype.
+    A dropped element is [x * 0], the product of Srivastava et al., so a dropped
+    infinity or NaN gives NaN. The same key, rate and shape give the same mask,
+    so derive a fresh key per call ({!Nx.Rng.split}, {!Nx.Rng.fold_in}) for a
+    fresh mask. Without [?key], each call draws a fresh mask from the implicit
+    RNG scope. Either way the mask selects at [x]'s dtype and is a constant of
+    differentiation, so gradients flow to [x] through the surviving elements
+    only.
 
     The mask lies where [x] does, whole where [x] is a sum
     ({!Nx.Placement.partial}): scaling each term alike, dropout keeps a sum

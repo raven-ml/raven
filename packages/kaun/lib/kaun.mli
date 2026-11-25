@@ -24,9 +24,10 @@
       ((params, ostate), Nx.item [] l)
     ]}
 
-    Layers are made from a key ({!Init}), which decides their draws and where
-    their parameters lie. Shuffling ({!Data}) and keyless dropout draw from the
-    ambient {!Nx.Rng} scope; open one with {!Nx.Rng.with_key} for
+    Layers with random parameters are made from a key ({!Init}), which decides
+    their draws and where their parameters lie; the norms are made at a
+    placement. An epoch's order ({!Data}) is drawn from a key. Keyless dropout
+    draws from the ambient {!Nx.Rng} scope; open one with {!Nx.Rng.with_key} for
     reproducibility. A traced function, as [Rune.jit]'s, refuses a draw without
     a key from a scope around it: a compiled step passes its dropout key as an
     input, as [~key] or as a scope it opens at that key. *)
