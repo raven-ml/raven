@@ -82,9 +82,11 @@
       pixels rounded up, at most {!image_samples}.
     - An {{!Hugin_vg.Picture.opacity}opacity} is drawn into a layer of its
       own, then composited as one primitive.
-    - The instances of a {{!Hugin_vg.Picture.stamp}stamp} are placed at
-      their positions rounded to the nearest quarter of a pixel in each
-      direction, an error of at most an eighth of a pixel.
+    - The instances of a {{!Hugin_vg.Picture.stamp}stamp} whose picture holds
+      no stamp are placed at their positions rounded to the nearest quarter of a
+      pixel in each direction, an error of at most an eighth of a pixel, however
+      deep the stamp is nested in others. Those of a stamp whose picture holds
+      stamps are placed at their positions.
     - Points are mapped to the device and edges cut to the page in double
       precision, so that an edge lies within about [2{^-50} d] pixels of where
       it should, [d] being the largest magnitude, in pixels, of the terms that

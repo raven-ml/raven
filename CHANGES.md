@@ -319,6 +319,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster` places the instances of a stamp that holds stamps at their
+  positions, unrounded. Each stamp rounded its own to a quarter pixel, so a
+  nested instance moved an eighth of a pixel per stamp, outside its bounds.
 - `Hugin_vg_raster` draws a round join once where a stroke turns straight back.
   Both sides of the outline drew it, darkening its edge pixels; a dash that
   turned back drew its join once or twice by the rounding of its points.

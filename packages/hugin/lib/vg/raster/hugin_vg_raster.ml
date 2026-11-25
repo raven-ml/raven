@@ -402,18 +402,6 @@ let rec planar (p : Picture.t) =
       planar picture
   | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> true
 
-(* [nesting p] is how many stamps deep [p] goes. *)
-let rec nesting (p : Picture.t) =
-  match p with
-  | Stamp { picture; _ } -> 1 + nesting picture
-  | Group ps -> List.fold_left (fun n p -> Int.max n (nesting p)) 0 ps
-  | Clip { picture; _ }
-  | Transform { picture; _ }
-  | Opacity { picture; _ }
-  | Tag { picture; _ } ->
-      nesting picture
-  | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> 0
-
 (* [planes ctx ~w ~h clip m ~far ~fills ~strokes style p acc] adds to [acc], in
    reverse order, the planes of [p] on a tile of [w] by [h] pixels, [far] being
    as {!compose} grows it. Fills and strokes take the instance's colours if
@@ -640,17 +628,21 @@ and stamp ctx t clip m ~far style picture xs ys scales fills strokes =
           pen = style.pen /. s;
         }
       in
-      (* An instance's device position, rounded to a quarter of a pixel, in
-         quarters, or [None] if it is not finite or far beyond the window. *)
-      let quarters i =
+      (* A stamp whose picture holds no stamp rounds its positions to a quarter
+         of a pixel, so that sixteen tiles serve all its instances. One whose
+         picture holds stamps draws no tile and places its instances exactly:
+         each leaf is then moved once, by the innermost stamp above it. *)
+      let rounds = planar picture in
+      (* An instance's device position, or [None] if it is not finite or far
+         beyond the window. *)
+      let position i =
         let x = xs.(i) and y = ys.(i) in
         let dx = (m.xx *. x) +. (m.xy *. y) +. m.x0 in
         let dy = (m.yx *. x) +. (m.yy *. y) +. m.y0 in
-        if Float.abs dx < 1e15 && Float.abs dy < 1e15 then
-          Some
-            ( int_of_float (Float.round (dx *. 4.)),
-              int_of_float (Float.round (dy *. 4.)) )
-        else None
+        if not (Float.abs dx < 1e15 && Float.abs dy < 1e15) then None
+        else if rounds then
+          Some (Float.round (dx *. 4.) /. 4., Float.round (dy *. 4.) /. 4.)
+        else Some (dx, dy)
       in
       let window =
         Box2.v (float clip.x0) (float clip.y0)
@@ -661,14 +653,11 @@ and stamp ctx t clip m ~far style picture xs ys scales fills strokes =
          them, and a stamp within the picture rounds its positions, which the
          extent does not, by up to an eighth of a pixel. *)
       let kept =
-        Instances.reach lin style.pen picture
-        +. (rounding *. float (nesting picture))
+        Instances.reach lin style.pen picture +. if rounds then 0. else rounding
       in
-      let at qx qy = P2.v (float qx /. 4.) (float qy /. 4.) in
-      (* [full i qx qy s] draws instance [i] at [(qx, qy)] quarters, of scale
-         [s]. *)
-      let full i qx qy s =
-        let at = Affine.translate (float qx /. 4.) (float qy /. 4.) in
+      (* [full i x y s] draws instance [i] at [(x, y)], of scale [s]. *)
+      let full i x y s =
+        let at = Affine.translate x y in
         let m, far = compose far at Affine.(lin * scale s s) in
         (* As [Picture.transform], a map with no inverse paints nothing: that of
            a scale that is not finite or is 0 among them. *)
@@ -679,10 +668,10 @@ and stamp ctx t clip m ~far style picture xs ys scales fills strokes =
       let in_full () =
         for i = 0 to Array.length xs - 1 do
           let s = match scales with None -> 1. | Some a -> a.(i) in
-          match quarters i with
-          | Some (qx, qy)
-            when Instances.shows window ~reach:kept (at qx qy) s extent ->
-              full i qx qy s
+          match position i with
+          | Some (x, y)
+            when Instances.shows window ~reach:kept (P2.v x y) s extent ->
+              full i x y s
           | _ -> ()
         done
       in
@@ -748,11 +737,11 @@ and stamp ctx t clip m ~far style picture xs ys scales fills strokes =
           in
           let px0 = Box2.minx ps and px1 = Box2.maxx ps in
           let py0 = Box2.miny ps and py1 = Box2.maxy ps in
-          let shows qx qy =
-            let x = float qx /. 4. and y = float qy /. 4. in
-            x >= px0 && x <= px1 && y >= py0 && y <= py1
-          in
-          let tiled i qx qy =
+          let shows x y = x >= px0 && x <= px1 && y >= py0 && y <= py1 in
+          (* Positions here are whole quarters, below [2{^52}]: [x *. 4.] is
+             exact. *)
+          let tiled i x y =
+            let qx = int_of_float (x *. 4.) and qy = int_of_float (y *. 4.) in
             composite t clip
               ((qx asr 2) + bx0)
               ((qy asr 2) + by0)
@@ -765,20 +754,16 @@ and stamp ctx t clip m ~far style picture xs ys scales fills strokes =
              from it paints nothing, and one across it is drawn in full, which
              leaves out the leaves that miss it. *)
           for i = 0 to Array.length xs - 1 do
-            match quarters i with
-            | Some (qx, qy) when shows qx qy -> (
+            match position i with
+            | Some (x, y) when shows x y -> (
                 match clip.box with
-                | None -> tiled i qx qy
+                | None -> tiled i x y
                 | Some c -> (
-                    let b =
-                      Box2.transform
-                        (Affine.translate (float qx /. 4.) (float qy /. 4.))
-                        extent
-                    in
+                    let b = Box2.transform (Affine.translate x y) extent in
                     match Instances.meets b c with
                     | None -> ()
-                    | Some within when Box2.equal within b -> tiled i qx qy
-                    | Some _ -> full i qx qy 1.))
+                    | Some within when Box2.equal within b -> tiled i x y
+                    | Some _ -> full i x y 1.))
             | _ -> ()
           done)
 

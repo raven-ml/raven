@@ -1173,11 +1173,24 @@ let instances (s : Picture.t) =
    bound. *)
 let line_slack = 0x1p-40
 
+(* [holds_stamp p] is [true] iff a stamp is within [p]. *)
+let rec holds_stamp (p : Picture.t) =
+  match p with
+  | Stamp _ -> true
+  | Group ps -> List.exists holds_stamp ps
+  | Clip { picture; _ }
+  | Transform { picture; _ }
+  | Opacity { picture; _ }
+  | Tag { picture; _ } ->
+      holds_stamp picture
+  | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> false
+
 (* [near_lines ~w ~h p] is the pixels of a page [w] by [h] pixels at density 1,
    by row, with a centre near a line of an image of [p], and for each image's
    tensor met, its lines that a centre is near: [cols.(j)] and [rows.(i)] for
    the line before column [j] and row [i]. Instances of stamps are placed as the
-   interface says, at their positions rounded to a quarter pixel. *)
+   interface says: at their positions rounded to a quarter pixel if the stamp's
+   picture holds no stamp, and at their positions otherwise. *)
 let near_lines ~w ~h p =
   let exempt = Array.make (w * h) false in
   let found = ref [] in
@@ -1301,7 +1314,9 @@ let near_lines ~w ~h p =
         go Affine.(m * m') ~far:(Float.max far (terms m m')) ~wide picture
     | Stamp { picture; xs; ys; scales; _ } ->
         let lin = Affine.linear m in
-        let q v = Float.round (v *. 4.) /. 4. in
+        let q v =
+          if holds_stamp picture then v else Float.round (v *. 4.) /. 4.
+        in
         Array.iteri
           (fun i x ->
             let y = ys.(i) in
@@ -1583,6 +1598,21 @@ let stamps =
                   (Affine.translate (quarter x) (quarter y))
                   marker))
             (render 20. 20. (Picture.stamp [| x |] [| y |] marker)));
+      prop
+        "a nested instance is drawn at its position rounded to a quarter pixel"
+        Gen.(
+          pair
+            (pair (gen_in 2. 8.) (gen_in 2. 8.))
+            (pair (gen_in 2. 7.) (gen_in 2. 7.)))
+        (fun ((x, y), (x', y')) ->
+          same_image ~within:1
+            (render 20. 20.
+               (Picture.transform
+                  (Affine.translate (quarter (x +. x')) (quarter (y +. y')))
+                  marker))
+            (render 20. 20.
+               (Picture.stamp [| x |] [| y |]
+                  (Picture.stamp [| x' |] [| y' |] marker))));
       test "instances at non-finite or far positions are skipped" (fun () ->
           let p =
             Picture.stamp
@@ -1849,6 +1879,17 @@ let cut_by_the_page =
                 (Affine.translate 1.9834333955250643 0.)
                 (Picture.image (Box2.v 0. 0. 1. 1.) Vg_corpus.tensor))) );
     ]
+
+(* A stroked circle in a stamp nested in another, each position about 0.1 past
+   a quarter of a pixel. Its outline's top is 1.1254 down, and rounding each
+   position apart would move it 0.2 up, into the first row of pixels. *)
+let nested_rounding =
+  Picture.stamp [| 0. |] [| 1.85045 |]
+    (Picture.stamp [| 0.; 0. |] [| 1.84544; 2. |]
+       (Picture.stroke
+          (Stroke.v ~cap:`Butt 1.95191)
+          Color.black
+          (Path.circle (P2.v 0. 0.) 1.59453)))
 
 (* [ink_outside p] is the pixels of [p] drawn on a page of 100 whose alpha is
    not zero and whose square does not meet [Picture.bounds p], grown by the
@@ -2335,7 +2376,8 @@ let render_group =
                (render 1. 1.
                   (Picture.fill (Color.with_alpha 0.001 red) (rect 0. 0. 1. 1.)))
                0 0));
-      prop "a picture paints within its bounds" Vg_corpus.gen_picture (fun p ->
+      prop "a picture paints within its bounds" ~examples:[ nested_rounding ]
+        Vg_corpus.gen_picture (fun p ->
           equal (list (pair int int)) [] (ink_outside p));
       prop "equal renderables give equal pixels" Vg_corpus.gen_picture (fun p ->
           Law.ignores picture raster (render 100. 100.) Vg_corpus.respell p);
