@@ -1281,6 +1281,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Quad.qmc` returns the integral over a box of any size and orientation, its
+  signed volume times `f`'s mean. It returned the mean alone, the integral
+  over a unit box: `f = 1` over `[0, 2]²` gave 1. Its error and derivative
+  scale with it, and the derivative reaches the corners.
 - `Minimize.solve` with `nelder_mead` on a start of no unknowns converges at
   once, as the other methods do, where it raised `Invalid_argument` from
   `Nx.max` while writing its report.

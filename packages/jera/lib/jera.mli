@@ -1142,20 +1142,21 @@ module Quad : sig
       receives points of shape [[64; 16] @ lanes @ [d]], a chunk of 64 points
       under each of 16 shifts, and reduces only their last, coordinate axis.
 
-      {b Method.} The mean of [f] over a Sobol sequence (Joe and Kuo's direction
-      numbers) under 16 independent random digital shifts drawn from [key]. It
-      adds the sequence in chunks of 64 points and tests at each power of two,
-      where a Sobol prefix is balanced. Points are [(i + ½) / 2^k] after the
-      shift, [k] the bits the dtype holds below 1 (32 in float64), so none lies
-      on the box's boundary. {b Error.} [e] is the standard error of the mean
-      over the shifts, an estimate of a standard deviation: the test is
-      statistical. [y] is the integral. Each estimate at a fixed point count is
-      unbiased, and the stopped one to within its standard error. [budget]
-      chunks end a lane [Budget_spent]. {b Cost.} 1024 points per chunk, 64
-      under each of 16 shifts, [budget] chunks at most, and the answer evaluates
-      the final points again. {b Derivative.} The mean's over the final points:
-      an estimate of the integral's derivative where the integrand is Lipschitz
-      in the parameter.
+      {b Method.} The box's signed volume times the mean of [f] over a Sobol
+      sequence (Joe and Kuo's direction numbers) under 16 independent random
+      digital shifts drawn from [key]. It adds the sequence in chunks of 64
+      points and tests at each power of two, where a Sobol prefix is balanced.
+      Points are [(i + ½) / 2^k] after the shift, [k] the bits the dtype holds
+      below 1 (32 in float64), so none lies on the box's boundary. {b Error.}
+      [e] is the standard error of the estimate over the shifts, an estimate of
+      a standard deviation: the test is statistical. [y] is the integral. Each
+      estimate at a fixed point count is unbiased, and the stopped one to within
+      its standard error. [budget] chunks end a lane [Budget_spent]. {b Cost.}
+      1024 points per chunk, 64 under each of 16 shifts, [budget] chunks at
+      most, and the answer evaluates the final points again. {b Derivative.} The
+      estimate's over the final points, through the corners and the integrand's
+      parameters: an estimate of the integral's derivative where the integrand
+      is Lipschitz in the parameter.
 
       Raises [Invalid_argument] if [d] is above 1111, if [budget < 1], or if
       [f]'s result is not the points' shape without its last axis. *)

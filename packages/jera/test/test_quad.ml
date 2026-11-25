@@ -699,6 +699,36 @@ let qmc_tests =
           Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) integral
         in
         equal (Oracle.tensor ~rel:1e-12 ()) (integral key) (compiled key));
+    cases "the integral of 1 over a box is its signed volume"
+      ~id:(fun (name, _, _, _) -> name)
+      [
+        ("[0, 2]", [| 0. |], [| 2. |], 2.);
+        ("[0, 2] × [−1, ½]", [| 0.; -1. |], [| 2.; 0.5 |], 3.);
+        ("[0, 1] × [1, 0]", [| 0.; 1. |], [| 1.; 0. |], -1.);
+      ]
+      (fun (_, lo, hi, volume) ->
+        let one x = Nx.ones_like (coord 0 x) in
+        let s =
+          Quad.qmc key ~tol:(Tol.abs 1e-12) ~budget:4 one
+            (Quad.Box.v (vec lo) (vec hi))
+        in
+        equal (Oracle.tensor ~rel:1e-15 ()) (scalar volume) (Solution.get s));
+    test "grad in a corner estimates the integral's" (fun () ->
+        (* ∫ e^(x + y) over [0, h] × [0, 1] = (e^h − 1)(e − 1), whose
+           h-derivative is e^h (e − 1). *)
+        let integral h =
+          let lo = vec [| 0.; 0. |] in
+          let hi = Nx.stack [ h; Nx.scalar f64 1. ] in
+          let f x = Nx.exp (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) in
+          Solution.get
+            (Quad.qmc key ~tol:(Tol.rel 1e-5) ~budget:1024 f (Quad.Box.v lo hi))
+        in
+        let h = 0.7 in
+        (* The statistical tolerance of the parameter's test above. *)
+        equal
+          (Oracle.tensor ~rel:1e-3 ())
+          (scalar (Float.exp h *. (Float.exp 1. -. 1.)))
+          (Rune.grad' integral (scalar h)));
     test "dimensions past the table raise" (fun () ->
         raises_match (Exn.invalid_arg ~sub:"d = 1112 is above 1111") (fun () ->
             Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:1 product

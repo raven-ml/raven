@@ -1008,6 +1008,9 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
   let lo0 = Rune.detach box.lo and hi0 = Rune.detach box.hi in
   let search x = Rune.detach (f x) in
   let per_lane v = Nx.broadcast_to lanes v in
+  (* Each lane's signed volume: the integral is the volume times f's mean. *)
+  let volume lo hi = Nx.prod ~axes:[ rank - 1 ] (Nx.sub hi lo) in
+  let volume0 = volume lo0 hi0 in
   (* The carry: the next chunk, then per lane the sums under each shift, the
      chunks used, the estimate, its standard error and the status. *)
   let step (j, (sums, (used, (estimate, (error, st))))) =
@@ -1025,7 +1028,7 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
        the shifts. *)
     let power = Nx.equal (Nx.bitwise_and n (Nx.sub_s n 1l)) (Nx.zeros_like n) in
     let count = Nx.mul_s (Nx.cast dtype n) (float qmc_chunk) in
-    let means = Nx.div sums count in
+    let means = Nx.mul (Nx.div sums count) (Nx.unsqueeze ~axes:[ 0 ] volume0) in
     let mean = Nx.mean ~axes:[ 0 ] means in
     let se =
       Nx.sqrt
@@ -1070,8 +1073,8 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
           ) ) )
   in
   let ok = Nx.equal_s st (Solution.code Converged) in
-  (* The answer: the mean over each lane's final points, tracked, chunk by
-     chunk. *)
+  (* The answer: the volume times the mean over each lane's final points,
+     tracked, chunk by chunk. *)
   let sum_chunk total j =
     let keep = Nx.unsqueeze ~axes:[ 0 ] (Nx.less (per_lane j) used) in
     let s = chunk_sums f box.lo box.hi j in
@@ -1092,7 +1095,10 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
            "Raise the budget or loosen tol: the standard error of a smooth \
             integrand falls about as the inverse of the point count."
          ~stalled:"")
-    ~value:(Nx.where ok (Nx.div total count) estimate)
+    ~value:
+      (Nx.where ok
+         (Nx.mul (Nx.div total count) (volume box.lo box.hi))
+         estimate)
     ~error ~status:st
     ~evaluations:(Nx.mul_s used (Int32.of_int (qmc_chunk * shifts)))
     ~facts:[ Fact ("estimate", estimate); Fact ("error", error) ]
