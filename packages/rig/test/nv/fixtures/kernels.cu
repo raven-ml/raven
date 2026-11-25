@@ -51,12 +51,15 @@ extern "C" __global__ void copy_after(u64 ns, unsigned char *dst,
 extern "C" __global__ void spin(volatile u64 *flag, u64 ns) { hold(flag, ns); }
 
 /* The 32-bit word i at [out] is 512i + 130816, the sum of i + k over
-   k < 512, each kept in 2 KiB of the thread's local memory, for i < n. */
+   k < 512, each kept in 2 KiB of the thread's local memory, for i < n. The
+   loops are kept rolled, so that only local memory holds the words. */
 extern "C" __global__ void stack(int *out, int n) {
   volatile int kept[512];
   int i = blockIdx.x * THREADS + threadIdx.x;
+#pragma unroll 1
   for (int k = 0; k < 512; k++) kept[k] = i + k;
   int sum = 0;
+#pragma unroll 1
   for (int k = 0; k < 512; k++) sum += kept[k];
   if (i < n) out[i] = sum;
 }
@@ -67,9 +70,11 @@ extern "C" __global__ void stack_held(volatile u64 *flag, u64 ns, int *out,
                                       int n) {
   volatile int kept[512];
   int i = blockIdx.x * THREADS + threadIdx.x;
+#pragma unroll 1
   for (int k = 0; k < 512; k++) kept[k] = i + k;
   hold(flag, ns);
   int sum = 0;
+#pragma unroll 1
   for (int k = 0; k < 512; k++) sum += kept[k];
   if (i < n) out[i] = sum;
 }

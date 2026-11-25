@@ -1798,14 +1798,14 @@ let growth () =
   S.free_launches l;
   List.iter (N.free t.g) [ flag; first; next ]
 
-(* Local memory handed over: each growth replaces it while kernels placed
-   before it still keep 2 KiB a thread in the old one, each held until the test
-   raises a flag of its own. The test then runs them one at a time and grows
-   again after each, so the word moves on by single values and every growth
-   frees what the word passed. Every kernel computes right and the device
-   lives. An RTX 5000 Ada still reads a memory freed under a held kernel, so
-   on it the test does not see when each memory goes back. Each memory takes
-   some 600 MiB of the GPU. *)
+(* Local memory handed over: each growth replaces it while kernels placed before
+   it still keep 2 KiB a thread in the old one, each held until the test raises
+   a flag of its own. The test then runs them one at a time and grows again
+   after each, so the word moves on by single values and every growth frees what
+   the word passed. Every kernel computes right and the device lives. A memory
+   freed under a held kernel fails that: on an RTX 5000 Ada the kernel faults on
+   its next read and the device is lost. Each memory takes some 600 MiB of the
+   GPU. *)
 let handover () =
   S.with_ @@ fun t ->
   let k = S.kernels t and l = S.launches t.g in
