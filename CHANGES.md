@@ -1288,10 +1288,10 @@ All notable changes to this project will be documented in this file.
   lane's, an unused piece's, a chunk past a lane's end, padding) through the
   tracked integrand and masked the result, so a pole there gave 0 × ∞; such a
   point is now evaluated at the lane's first search point and adds zero.
-  `jera.mli` narrows the promise to that case.
-- `Quad.tanh_sinh` converges on a half-line or the line for an integrable
-  singularity at its anchor, as `jera.mli` states, where it ended `Not_finite`:
-  the schedule's padding nodes were evaluated at the anchor itself.
+  `jera.mli` states that case in Quad's solves and `Piecewise.adapt`.
+- `Quad.tanh_sinh` converges on a half-line for an integrable singularity at
+  its end, as `jera.mli` states, where it ended `Not_finite`: the schedule's
+  padding nodes were evaluated at the end itself.
 - `Root.newton` and `System.anderson` end a lane `Stalled` where a step
   overflows to `±∞` while `f` stays finite there, as `tanh` does, and keep
   its last finite estimate: `Solution.best` held the infinity.
