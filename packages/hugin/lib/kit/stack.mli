@@ -13,10 +13,11 @@
 
     Within a column, the lengths that are not negative are laid upward from [0.]
     and the negative ones downward from [0.], in increasing series number, so
-    positive and negative lengths never cancel. The {e extent} of a column then
-    runs from the end of its negative pile, [lo], to the end of its positive
-    pile, [hi], with [lo <= 0. <= hi]. An {{!type-offset}offset} then moves or
-    scales each column.
+    positive and negative lengths never cancel. A length of [-0.] is laid upward
+    as [0.] is. The {e extent} of a column then runs from the end of its
+    negative pile, [lo], to the end of its positive pile, [hi], with
+    [lo <= 0. <= hi]. An {{!type-offset}offset} then moves or scales each
+    column.
 
     {!intervals} gives each length the interval it covers. A figure draws a
     stacked bar from the start of its interval to the end, and a stacked area
@@ -49,8 +50,9 @@ val intervals :
     is the end of the length laid before it, or [0.] for the first, and its end
     is its start plus itself, both then moved and scaled by [offset]. A pile
     lays its lengths by increasing series number, and the lengths of one series
-    by increasing [r]. A missing length has [nan] as its start and end. Piles
-    whose sums or extent exceed [max_float] give non-finite intervals. [offset]
+    by increasing [r]. A missing length has [nan] as its start and end. A pile
+    whose sum exceeds [max_float] gives non-finite intervals under every offset,
+    as does, under [`Expand], a column whose extent exceeds it. [offset]
     defaults to [`Zero].
 
     Raises [Invalid_argument] if [columns], [series] and [lengths] differ in
