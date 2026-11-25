@@ -507,10 +507,10 @@ let schedule kind dtype =
       in
       chunks :=
         ( Array.init de_chunk (fun i -> get i (fun (_, (s, _, _)) -> s) 0.),
+          (* Padding sits at the t = 0 node: the midpoint of a finite range
+             (side 0), [a + 1] on a half-line, [c] on the line. *)
           Array.init de_chunk (fun i ->
-              get i
-                (fun (_, (_, u, _)) -> u)
-                (if kind = `Finite then 1. else 0.)),
+              get i (fun (_, (_, u, _)) -> u) (if kind = `Line then 0. else 1.)),
           Array.init de_chunk (fun i -> get i (fun (_, (_, _, w)) -> w) 0.),
           Array.init de_chunk (fun i ->
               get i
@@ -533,12 +533,13 @@ let schedule kind dtype =
   }
 
 (* The terms [w f(x)] of one chunk's nodes, [side], [offset] and [weight] of
-   shape [[c] @ ones], in the lanes [live]. A node the sum drops (padding, of
-   weight zero; a point that rounds to an end of a finite range; a lane not
-   live) is evaluated at the t = 0 node, the one the search evaluates first, and
-   its term is zero, so neither its value nor its derivative reaches the sum. *)
-let terms fn f range ~live (side, offset, weight) =
-  let x, scale, spare, kept =
+   shape [[c] @ ones], in the lanes [live] or in every lane. A node the sum
+   drops (a point that rounds to an end of a finite range; a lane not live) is
+   evaluated at the t = 0 node, the one the search evaluates first, and its term
+   is zero, so neither its value nor its derivative reaches the sum. Padding
+   sits at that node with weight zero. *)
+let terms fn f range ?live (side, offset, weight) =
+  let x, scale, spare, inside =
     match range with
     | Range.Finite (a, b) ->
         let half = Nx.div_s (Nx.sub b a) 2. in
@@ -553,19 +554,22 @@ let terms fn f range ~live (side, offset, weight) =
           Nx.logical_or (Nx.equal_s side 0.)
             (Nx.logical_and (Nx.not_equal x a) (Nx.not_equal x b))
         in
-        (x, Nx.mul half weight, mid, inside)
-    | From a ->
-        (Nx.add a offset, weight, Nx.add_s a 1., Nx.ones_like (Nx.isnan a))
-    | Line c -> (Nx.add c offset, weight, c, Nx.ones_like (Nx.isnan c))
+        (x, Nx.mul half weight, mid, Some inside)
+    | From a -> (Nx.add a offset, weight, Nx.add_s a 1., None)
+    | Line c -> (Nx.add c offset, weight, c, None)
   in
   let use =
-    Nx.logical_and
-      (Nx.logical_and (Nx.unsqueeze ~axes:[ 0 ] live) (Nx.greater_s weight 0.))
-      kept
+    match (Option.map (Nx.unsqueeze ~axes:[ 0 ]) live, inside) with
+    | None, None -> None
+    | Some m, None | None, Some m -> Some m
+    | Some live, Some inside -> Some (Nx.logical_and live inside)
   in
-  let use = Nx.broadcast_to (Nx.shape x) use in
-  let y = call fn f (Nx.where use x (Nx.broadcast_to (Nx.shape x) spare)) in
-  Nx.where use (Nx.mul scale y) (Nx.zeros_like y)
+  match use with
+  | None -> Nx.mul scale (call fn f x)
+  | Some use ->
+      let use = Nx.broadcast_to (Nx.shape x) use in
+      let y = call fn f (Nx.where use x (Nx.broadcast_to (Nx.shape x) spare)) in
+      Nx.where use (Nx.mul scale y) (Nx.zeros_like y)
 
 let tanh_sinh ~tol f range =
   let fn = "Jera.Quad.tanh_sinh" in
@@ -613,8 +617,7 @@ let tanh_sinh ~tol f range =
     let run = Elementwise.searching st in
     let i64 = Nx.cast Nx.int64 i in
     let t =
-      terms fn search detached ~live:run
-        (row side i64, row offset i64, row weight i64)
+      terms fn search detached (row side i64, row offset i64, row weight i64)
     in
     let sum = Nx.add sum (Nx.sum ~axes:[ 0 ] t) in
     let tail =
