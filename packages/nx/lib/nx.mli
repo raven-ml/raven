@@ -1483,9 +1483,11 @@ val set : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Otherwise the positions of each [L], [T] and [D] entry are read
     broadcast to the selection's shape, beside those of the entries before
     it, at the union of their cuts in the order of [idx]
-    ({!section-routing}). A refusal names the entry's positions as operand
-    [1], broadcast to the selection, a value the program does not hold,
-    beside the entries before it as operand [0]; the {!place} to write puts
+    ({!section-routing}). A refusal names the entry's positions, broadcast to
+    the selection, as the operand of its rank among the entries that hold
+    positions, from [0]: the second such entry is operand [1], the third
+    operand [2]. That operand is a value the program does not hold, so the
+    {!place} the refusal prints cannot be written; the {!place} to write puts
     that entry's positions, as given, whole on each device,
     [Placement.on s].
 
