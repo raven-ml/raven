@@ -218,12 +218,11 @@ type progress = { consumed : int; produced : int }
     A decoder's step takes all of [src] unless the stream ends inside it
     or its run is {e full}. A run is full once it holds the decoder's
     {e run capacity}, the most bytes one run holds ({!Decoder}). A
-    Zstandard run is also full once its next block might pass that
-    capacity, so a full Zstandard run holds at least the run capacity less
-    the frame's Block_Maximum_Size ({!Zstd}). An encoder's step takes all
-    of [src] up to the encoder's {e quota}, the most input one step takes,
-    and so exactly the quota of a longer [src] ({!Encoder}). The next step
-    begins at the first byte not taken.
+    Zstandard run is also full once it holds bytes and its next block
+    might pass that capacity or the end of the decoder's buffer. An
+    encoder's step takes all of [src] up to the encoder's {e quota}, the
+    most input one step takes, and so exactly the quota of a longer [src]
+    ({!Encoder}). The next step begins at the first byte not taken.
 
     A decoder or encoder is {e busy} while a step on it runs, [f]
     included. A step applies [f] with the domain lock held, and [f] may
@@ -530,7 +529,9 @@ end
        than 255 weights, at its first byte;}
     {- a Frame_Content_Size or Content_Checksum that does not match the
        frame's decoded bytes.}}
-    A frame naming a dictionary is [Unsupported] at its Dictionary_ID.
+    A field that would begin past its block's end is at the block's last
+    byte, or at the block header's last byte when the block is empty. A
+    frame naming a dictionary is [Unsupported] at its Dictionary_ID.
     Output a Zstandard block asks for past [dst]'s end is [Too_long] at the
     block's header. *)
 module Zstd : sig
@@ -751,7 +752,9 @@ end
 
 (**/**)
 
-(* For the tests: the checksums the formats carry. *)
+(* For the tests: the checksums the formats carry, called as {!Crc32}'s
+   functions are. [~adler] defaults to 1 and continues a running value as
+   [~crc] does; [~seed] defaults to 0 and continues nothing. *)
 
 module Adler32 : sig
   val bigbytes : ?adler:int32 -> bigbytes -> int32
