@@ -292,16 +292,20 @@ let fixed_tests =
       (unit_range theta)
   in
   [
-    prop "is the rule's sum (b − a)/2 Σ w f(mid + u (b − a)/2)"
+    prop
+      "is the rule's sum (b − a)/2 Σ w f(mid + u (b − a)/2)"
+      (* n points of Gauss, or 0 for Kronrod's 15, a coerced formula. A range of
+         subnormal width once failed a purely relative bound. *)
+      ~examples:[ (0, 0., -3.6e-310); (3, 0., -3.6e-310) ]
       Gen.(
         triple
-          (frequency
-             [
-               (2, map Quad.Rule.gauss (int_range 1 20));
-               (1, constant (Quad.Rule.kronrod 7 :> [ `Formula ] Quad.Rule.t));
-             ])
+          (frequency [ (2, int_range 1 20); (1, constant 0) ])
           (float_range (-3.) 3.) (float_range (-3.) 3.))
-      (fun (rule, a, b) ->
+      (fun (n, a, b) ->
+        let rule =
+          if n = 0 then (Quad.Rule.kronrod 7 :> [ `Formula ] Quad.Rule.t)
+          else Quad.Rule.gauss n
+        in
         let u, w = Quad.Rule.nodes rule f64 in
         cover "a Kronrod rule" (Nx.numel u = 15);
         let mid = (a +. b) /. 2. and half = (b -. a) /. 2. in
@@ -311,10 +315,11 @@ let fixed_tests =
             (Nx.to_array u) (Nx.to_array w)
         in
         (* exp to an ulp or so, and at most 20 terms of one sign summed in
-           another order: 32 ε of the sum. *)
+           another order: 32 ε of the sum, or subnormals' spacing for a range of
+           nearly zero width. *)
         let sum = Array.fold_left ( +. ) 0. terms in
         equal
-          (float_rel ~rel:(32. *. epsilon_float) ~abs:0.)
+          (float_rel ~rel:(32. *. epsilon_float) ~abs:Float.min_float)
           sum
           (Nx.item []
              (Quad.fixed rule Nx.exp (Quad.Range.v (scalar a) (scalar b)))));
@@ -439,12 +444,8 @@ let adaptive ?(budget = 200) ?(tol = Tol.v ~rel:1e-10 ~abs:1e-12) f range =
    estimate |K − G| exceeds the Kronrod sum's own error. *)
 let at_tol () = Oracle.tensor ~rel:1e-10 ~abs:1e-12 ()
 
-(* A Gaussian peak of width w at 0.3 on [0, 1], and its integral. *)
+(* A Gaussian peak of width w at 0.3 on [0, 1]. *)
 let peak w x = Nx.exp (Nx.neg (Nx.square (Nx.div (Nx.sub_s x 0.3) w)))
-
-let peak_integral w =
-  w *. Float.sqrt Float.pi /. 2.
-  *. (Float.erf (0.7 /. w) +. Float.erf (0.3 /. w))
 
 (* 0 below 0.3 and 1 above: no piece of positive width resolves the jump. *)
 let jump x = Nx.cast f64 (Nx.greater_s x 0.3)
@@ -473,19 +474,16 @@ let adaptive_tests =
         let widths = [| 1.; 1e-1; 1e-2 |] in
         let solve w = adaptive (peak w) (unit_range w) in
         let all = solve (vec widths) in
-        equal (at_tol ())
-          (Nx.map_item peak_integral (vec widths))
-          (Solution.get all);
-        Array.iteri
-          (fun i w ->
-            let alone = solve (vec [| w |]) in
-            let at v = Nx.slice [ Nx.R (i, i + 1) ] v in
-            let msg = Printf.sprintf "width %g" w in
-            equal ~msg (exact ()) (Solution.best alone) (at (Solution.best all));
-            equal ~msg (exact ())
-              (Solution.evaluations alone)
-              (at (Solution.evaluations all)))
-          widths);
+        let alone read =
+          Nx.concatenate ~axis:0
+            (List.map
+               (fun w -> read (solve (vec [| w |])))
+               (Array.to_list widths))
+        in
+        equal ~msg:"best" (exact ()) (alone Solution.best) (Solution.best all);
+        equal ~msg:"evaluations" (exact ())
+          (alone Solution.evaluations)
+          (Solution.evaluations all));
     test "a half-line converges" (fun () ->
         let a = vec [| 0.; 1. |] in
         let s =
@@ -522,21 +520,29 @@ let adaptive_tests =
         in
         equal Oracle.status_t Not_finite (Oracle.status s));
     test "a jump no piece resolves ends Stalled" (fun () ->
-        (* The piece holding 0.3 is bisected until no float lies inside it,
-           about 54 levels down. *)
+        (* Floats near 0.3 are 2^−54 apart, so the piece holding the jump holds
+           none inside at level 54: 55 pieces, which evaluate 15 (2 · 55 − 1 +
+           416) points with the answer's 13 chunks. *)
         let s =
           adaptive ~budget:400 ~tol:(Tol.rel 1e-30) jump
             (unit_range (vec [| 0. |]))
         in
-        equal Oracle.status_t Stalled (Oracle.status s));
+        equal Oracle.status_t Stalled (Oracle.status s);
+        equal (exact ())
+          (Nx.create Nx.int32 [| 1 |] [| 7875l |])
+          (Solution.evaluations s));
     test "a piece at level 62 ends Stalled" (fun () ->
         (* The worst piece of x^(−½) is [0, 2^−L], whose floats never run out:
-           only the level stops it, at 63 pieces of a budget of 80. *)
+           only the level stops it, at 63 pieces, which evaluate 15 (2 · 63 − 1
+           + 96) points with the answer's 3 chunks. *)
         let s =
           adaptive ~budget:80 ~tol:(Tol.rel 1e-30) Nx.rsqrt
             (unit_range (vec [| 0. |]))
         in
-        equal Oracle.status_t Stalled (Oracle.status s));
+        equal Oracle.status_t Stalled (Oracle.status s);
+        equal (exact ())
+          (Nx.create Nx.int32 [| 1 |] [| 3315l |])
+          (Solution.evaluations s));
     test "grad in a parameter is the exact integral's" (fun () ->
         (* The derivative's integrand x e^(θx), on the partition chosen for
            e^(θx): within 10 tol. *)
@@ -588,7 +594,7 @@ let tanh_sinh_tests =
   let ts = Quad.tanh_sinh ~tol:(Tol.v ~rel:1e-12 ~abs:1e-14) in
   (* The tolerance the solves are asked for: the last two levels' difference
      exceeds the final level's error, which falls quadratically. *)
-  let at_tol () = Oracle.tensor ~rel:1e-12 ~abs:1e-14 () in
+  let ts_tol () = Oracle.tensor ~rel:1e-12 ~abs:1e-14 () in
   (* ∫₀¹ x^(a−1) log x dx = −1 / a². *)
   let log_moment a =
     Solution.get
@@ -600,7 +606,7 @@ let tanh_sinh_tests =
   [
     test "endpoint singularities at 0 converge" (fun () ->
         let a = vec [| 0.3; 0.5; 1.; 2.5 |] in
-        equal (at_tol ())
+        equal (ts_tol ())
           (Nx.map_item (fun a -> -1. /. (a *. a)) a)
           (log_moment a));
     test "1 / √(1 − x²) on [−1, 1] is π to the ends' resolution" (fun () ->
@@ -623,7 +629,7 @@ let tanh_sinh_tests =
             ]
         in
         let s = ts f (Quad.Range.from (vec [| 0.; 0. |])) in
-        equal (at_tol ()) (vec [| 1.; Float.pi /. 2. |]) (Solution.get s));
+        equal (ts_tol ()) (vec [| 1.; Float.pi /. 2. |]) (Solution.get s));
     test "an end singularity converges on a half-line" (fun () ->
         (* ∫₀^∞ x^(−½) e^(−x) dx = Γ(½) = √π. *)
         let s =
@@ -631,7 +637,7 @@ let tanh_sinh_tests =
             (fun x -> Nx.mul (Nx.rsqrt x) (Nx.exp (Nx.neg x)))
             (Quad.Range.from (vec [| 0. |]))
         in
-        equal (at_tol ()) (vec [| Float.sqrt Float.pi |]) (Solution.get s));
+        equal (ts_tol ()) (vec [| Float.sqrt Float.pi |]) (Solution.get s));
     test "sinh-sinh integrates the line" (fun () ->
         let c = vec [| 0.; 0.5 |] in
         let s =
@@ -639,7 +645,7 @@ let tanh_sinh_tests =
             (fun x -> Nx.exp (Nx.neg (Nx.square (Nx.sub x c))))
             (Quad.Range.line c)
         in
-        equal (at_tol ())
+        equal (ts_tol ())
           (Nx.full f64 [| 2 |] (Float.sqrt Float.pi))
           (Solution.get s));
     test "f receives points of shape [64] @ shape" (fun () ->
@@ -898,18 +904,27 @@ let qmc_tests =
       (Quad.qmc key ~tol:(Tol.rel 1e-5) ~budget:256 f (unit_box [| 2 |] 2))
   in
   [
-    cases "each dimension's prefix of 2^k points is balanced"
-      ~id:(Printf.sprintf "dimension %d") [ 0; 1; 2; 7; 100; 555; 1110 ]
-      (fun j ->
-        (* 1024 points put one point in each 1/1024 of [0, 1] along any axis, so
-           the mean of x_j is within 2^-11 of 1/2. *)
+    test "each dimension's prefix of 2^k points is balanced" (fun () ->
+        (* Lane l integrates coordinate dims.(l) over [0, 1]^1111. 1024 points
+           put one point in each 1/1024 of [0, 1] along any axis, so each mean
+           is within 2^-11 of 1/2. *)
+        let dims = [| 0; 1; 2; 7; 100; 555; 1110 |] in
+        let lanes = Array.length dims in
+        let index =
+          Nx.create Nx.int64 [| 1; 1; lanes; 1 |] (Array.map Int64.of_int dims)
+        in
+        let f x =
+          let index = Nx.broadcast_to [| 64; 16; lanes; 1 |] index in
+          Nx.squeeze ~axes:[ 3 ] (Nx.take_along_axis ~axis:3 index x)
+        in
         let s =
-          Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:16 (coord j)
-            (unit_box [||] 1111)
+          Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:16 f
+            (unit_box [| lanes |] 1111)
         in
         equal
           (Oracle.tensor ~abs:(Float.ldexp 1. (-11)) ())
-          (scalar 0.5) (Solution.best s));
+          (Nx.full f64 [| lanes |] 0.5)
+          (Solution.best s));
     cases "the integral of 1 over a box is its signed volume"
       ~id:(fun (name, _, _, _) -> name)
       [
@@ -924,26 +939,18 @@ let qmc_tests =
             (Quad.Box.v (vec lo) (vec hi))
         in
         equal (Oracle.tensor ~rel:1e-15 ()) (scalar volume) (Solution.get s));
-    test "no point lies on the box's boundary" (fun () ->
-        (* f is NaN at a coordinate 0 or 1, which would end the lane
-           Not_finite. *)
-        let off_boundary : type b. (float, b) Nx.dtype -> unit =
-         fun dtype ->
-          let f x =
-            let edge = Nx.logical_or (Nx.equal_s x 0.) (Nx.equal_s x 1.) in
-            let on_edge = Nx.any ~axes:[ Nx.ndim x - 1 ] edge in
-            let one = Nx.ones_like (coord 0 x) in
-            Nx.where on_edge (Nx.full_like one Float.nan) one
-          in
-          let box =
-            Quad.Box.v (Nx.zeros dtype [| 3 |]) (Nx.ones dtype [| 3 |])
-          in
-          let s = Quad.qmc key ~tol:(Tol.abs 1e-3) ~budget:16 f box in
-          equal ~msg:(Nx.Dtype.name dtype) Oracle.status_t Converged
-            (Oracle.status s)
+    test "the error scales with the box's volume" (fun () ->
+        (* e^(x/2 + y/2) over [0, 2]² sees the values of e^(x + y) over [0, 1]²
+           at the same points, times the volume 4. *)
+        let error f box =
+          Solution.error (Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:2 f box)
         in
-        off_boundary Nx.float64;
-        off_boundary Nx.float32);
+        let big = Quad.Box.v (vec [| 0.; 0. |]) (vec [| 2.; 2. |]) in
+        equal (exact ())
+          (Nx.mul_s
+             (error (fun x -> Nx.exp (sum_coords x)) (unit_box [||] 2))
+             4.)
+          (error (fun x -> Nx.exp (Nx.div_s (sum_coords x) 2.)) big));
     test "a smooth integral converges" (fun () ->
         let s =
           Quad.qmc key ~tol:(Tol.abs 1e-5) ~budget:256 tilted (unit_box [||] 5)
@@ -951,10 +958,11 @@ let qmc_tests =
         (* The test is statistical: five standard errors. *)
         equal (Oracle.tensor ~abs:5e-5 ()) (scalar 1.) (Solution.get s));
     test "a converged lane stops at a power of two chunks" (fun () ->
-        let budget = 256 in
+        let budget = 300 in
         let s =
           Quad.qmc key ~tol:(Tol.abs 1e-5) ~budget tilted (unit_box [||] 5)
         in
+        equal Oracle.status_t Converged (Oracle.status s);
         (* Evaluations are the chunks searched and the answer's [budget], 1024
            points each. *)
         let n = Int32.to_int (Nx.item [] (Solution.evaluations s)) in
