@@ -2119,12 +2119,13 @@ module Expr : sig
         [ty], a [date], [datetime] or [clock] type. [fmt] holds the directives
         [%Y] (the year), [%m], [%d], [%H], [%M], [%S] (two digits each), [%f]
         (one to nine digits of a fraction of a second), [%z] ([Z] or a [±hh:mm]
-        offset) and [%%]; other characters match themselves. A year is four
-        digits, or a sign and at least four digits, as {!Time.Date.pp} writes
-        it. A field that [fmt] leaves out is that of 1970-01-01 00:00:00; a date
-        reads the day alone, and a clock the time of day. An instant needs
-        [%z] in [fmt], and a wall clock takes none. Text that does not
-        match, and a value that [ty] does not hold, are data errors.
+        offset) and [%%]; other characters match themselves. A year is [YYYY], a
+        year outside [0000] to [9999] signed and of at least four digits, as
+        {!Time.Date.pp} writes it: [-0044]. A field that [fmt] leaves out is
+        that of 1970-01-01 00:00:00; a date reads the day alone, and a clock the
+        time of day. An instant needs [%z] in [fmt], and a wall clock takes
+        none. Text that does not match, and a value that [ty] does not hold, are
+        data errors.
 
         Raises [Invalid_argument] if [fmt] holds another directive. *)
 

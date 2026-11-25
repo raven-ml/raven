@@ -136,10 +136,22 @@ let values =
           List.map day [ 0; 11016; -719528; 2932896; -1 ] );
       Case
         ( date,
-          [ "-0044-03-15"; "+12345-01-01"; "-0001-12-31" ],
+          [
+            "-0044-03-15";
+            "+12345-01-01";
+            "-0001-12-31";
+            "+10000-01-01";
+            "+012345-01-01";
+          ],
           List.map
             (fun ymd -> Option.get (Time.Date.of_civil ymd))
-            [ (-44, 3, 15); (12345, 1, 1); (-1, 12, 31) ] );
+            [
+              (-44, 3, 15);
+              (12345, 1, 1);
+              (-1, 12, 31);
+              (10000, 1, 1);
+              (12345, 1, 1);
+            ] );
       Case
         ( wall Us,
           [
@@ -318,6 +330,10 @@ let refusal_rows =
       (Any date, "+123-01-01", __POS_OF__ {|not YYYY-MM-DD|});
       (Any date, "12345-01-01", __POS_OF__ {|not YYYY-MM-DD|});
       (Any date, "+12a45-01-01", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any date, "+2024-02-29", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any date, "+0000-01-01", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any date, "-0000-01-01", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any date, "+09999-12-31", __POS_OF__ {|not YYYY-MM-DD|});
       (Any date, "-12345-02-30", __POS_OF__ {|not a day of the calendar|});
       (Any date, "+5881581-01-01", __POS_OF__ {|out of range|});
       (Any date, "-99999999999999999999-01-01", __POS_OF__ {|out of range|});
@@ -342,6 +358,8 @@ let refusal_rows =
         "2024-01-01T00:00:00.5",
         __POS_OF__ {|not a whole number of seconds|} );
       (Any (wall S), "+999-01-01T00:00:00", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any (wall S), "+2024-01-01T00:00:00", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any (instant S), "-0000-01-01T00:00:00Z", __POS_OF__ {|not YYYY-MM-DD|});
       (Any (wall S), "+292277026596-12-04T15:30:08", __POS_OF__ {|out of range|});
       (Any (wall S), "-292277022657-01-27T08:29:51", __POS_OF__ {|out of range|});
       (Any (wall Ms), "+300000000-01-01T00:00:00", __POS_OF__ {|out of range|});

@@ -6323,6 +6323,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Column.parse` and `Expr.Temporal.parse`'s `%Y` refuse a signed year in
+  `0000` to `9999`, such as `+2024-02-29` or `-0000-01-01`, as their grammar
+  excludes. They read them.
 - `Talon_arrow.sniff`'s refusal of a field type talon cannot hold reads
   `column "bad" has the Arrow type interval, which talon cannot hold`, where it
   read `column "bad" is a interval`.

@@ -544,21 +544,31 @@ let date_at b pos =
   day_at b (pos + 4) ((100 * y0) + y1)
 
 (* A year outside [0000] to [9999] is signed and of at least four digits, as
-   [Time.Date.pp] writes it: [-0044-03-15], [+12345-01-01]. Past 2^40 the year
-   stops growing, past any range. [civil_days] is the days of any such date,
-   which a datetime's ticks bound, and [date] those that {!Time.Date} holds. *)
+   [Time.Date.pp] writes it: [-0044], [+12345]. A year inside it is never
+   signed, so [+2024] and [-0000] are refused. [signed_year fail b pos stop]
+   reads the sign at [pos] and the digits from [pos + 1] up to [stop] as such a
+   year, or calls [fail]. Past 2^40 the year stops growing, past any range. *)
+let signed_year fail b pos stop =
+  let sign = get b pos in
+  if (sign <> '+' && sign <> '-') || stop - pos - 1 < 4 then fail ();
+  let y = ref 0 in
+  for i = pos + 1 to stop - 1 do
+    if not (is_digit (get b i)) then fail ();
+    if !y < 1 lsl 40 then y := (10 * !y) + digit b i
+  done;
+  let y = if sign = '-' then - !y else !y in
+  if y >= 0 && y <= 9999 then fail ();
+  y
+
+(* [civil_days] is the days of a date of any year, which a datetime's ticks
+   bound, and [date] those that {!Time.Date} holds. *)
 let civil_days b pos len =
   if len = 10 then date_at b pos
   else begin
     let stop = pos + len in
-    if len < 11 || (get b pos <> '+' && get b pos <> '-') then
-      invalid "not YYYY-MM-DD";
-    let y = ref 0 in
-    for i = pos + 1 to stop - 7 do
-      if not (is_digit (get b i)) then invalid "not YYYY-MM-DD";
-      if !y < 1 lsl 40 then y := (10 * !y) + digit b i
-    done;
-    day_at b (stop - 6) (if get b pos = '-' then - !y else !y)
+    if len < 11 then invalid "not YYYY-MM-DD";
+    let fail () = invalid "not YYYY-MM-DD" in
+    day_at b (stop - 6) (signed_year fail b pos (stop - 6))
   end
 
 let date b pos len =
@@ -718,15 +728,13 @@ let directed fmt (Type.Any ty) b pos len (a : int64s) k =
   in
   let year () =
     match if !i < stop then get b !i else ' ' with
-    | ('+' | '-') as sign ->
+    | '+' | '-' ->
+        let sign = !i in
         incr i;
-        let first = !i and y = ref 0 in
         while !i < stop && is_digit (get b !i) do
-          if !y < 1 lsl 40 then y := (10 * !y) + digit b !i;
           incr i
         done;
-        if !i - first < 4 then mismatch ();
-        if sign = '-' then - !y else !y
+        signed_year mismatch b sign !i
     | _ -> digits 4
   in
   let y = ref 1970 and mo = ref 1 and d = ref 1 and h = ref 0 and mi = ref 0 in

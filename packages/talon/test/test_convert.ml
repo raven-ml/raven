@@ -2213,6 +2213,20 @@ let parse_tests =
           (array (option int64))
           [| Some (Int64.of_int (Time.Date.to_days (date 2024 1 1))) |]
           (parsed "%Y" Type.date "2024"));
+    test "%Y reads a year outside 0000 to 9999 signed" (fun () ->
+        let day y = Int64.of_int (Time.Date.to_days (date y 1 1)) in
+        equal
+          (array (option int64))
+          [| Some (day 10000); Some (day (-44)); Some (day 12345) |]
+          (stored
+             (result
+                (Expr.Temporal.parse "%Y" Type.date s)
+                (texts [| Some "+10000"; Some "-0044"; Some "+012345" |]))));
+    cases "%Y refuses a signed year inside 0000 to 9999" ~id:Fun.id
+      [ "+2024"; "-0000"; "+09999" ] (fun text ->
+        contains
+          ~sub:(Printf.sprintf {|: row 0: %S: not in the format "%%Y".|} text)
+          (error (Expr.Temporal.parse "%Y" Type.date s) (texts [| Some text |])));
     test "%f reads one to nine digits" (fun () ->
         let parsed text =
           stored
