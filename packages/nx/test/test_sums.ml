@@ -61,163 +61,183 @@ type kind =
       dt : ('v, 's) D.t;
       of_int : int -> 'v;
       zero : 'v;  (** Negative where the dtype has a negative zero. *)
-      same : 'v -> 'v -> bool;
-      alike : 'v -> 'v -> bool;  (** Equal, zeros of either sign alike. *)
     }
       -> kind
 
 let same_float a b = Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
-let alike_float a b = (a = 0. && b = 0.) || same_float a b
 
 let kinds =
   [
-    K
-      {
-        dt = D.Float32;
-        of_int = Float.of_int;
-        zero = -0.;
-        same = same_float;
-        alike = alike_float;
-      };
-    K
-      {
-        dt = D.Float64;
-        of_int = Float.of_int;
-        zero = -0.;
-        same = same_float;
-        alike = alike_float;
-      };
-    K
-      {
-        dt = D.Bfloat16;
-        of_int = Float.of_int;
-        zero = -0.;
-        same = same_float;
-        alike = alike_float;
-      };
-    K
-      {
-        dt = D.Float16;
-        of_int = Float.of_int;
-        zero = -0.;
-        same = same_float;
-        alike = alike_float;
-      };
+    K { dt = D.Float32; of_int = Float.of_int; zero = -0. };
+    K { dt = D.Float64; of_int = Float.of_int; zero = -0. };
+    K { dt = D.Bfloat16; of_int = Float.of_int; zero = -0. };
+    K { dt = D.Float16; of_int = Float.of_int; zero = -0. };
     K
       {
         dt = D.Complex64;
         of_int = (fun n -> { Complex.re = Float.of_int n; im = Float.of_int (-n) });
         zero = { Complex.re = -0.; im = -0. };
-        same = (fun a b -> same_float a.re b.re && same_float a.im b.im);
-        alike = (fun a b -> alike_float a.re b.re && alike_float a.im b.im);
       };
-    K { dt = D.Int32; of_int = Int32.of_int; zero = 0l; same = Int32.equal; alike = Int32.equal };
-    K { dt = D.Int8; of_int = Fun.id; zero = 0; same = Int.equal; alike = Int.equal };
+    K { dt = D.Int32; of_int = Int32.of_int; zero = 0l };
+    K { dt = D.Int8; of_int = Fun.id; zero = 0 };
   ]
-
-let is_float (type v s) (dt : (v, s) D.t) =
-  match D.kind dt with D.Float -> true | _ -> false
 
 let pp_kind ppf (K k) = Format.pp_print_string ppf (D.name k.dt)
 
-(* Operations. [f] computes one over a sum [p], a sum [q] over the same
-   groups, and [w], no sum, of one shape, along an axis no device cuts. *)
+(* Operations linear in a sum [p], beside [q], a sum over the same groups, and
+   [w], no sum, of one shape, along an axis [axis] no device cuts. *)
 type env = { axis : int; positions : int array }
 
-type f = {
-  f :
-    'v 's 'd.
-    ('v, 's) D.t ->
-    (int -> 'v) ->
-    env ->
-    ('v, 's, 'd) Nx.t ->
-    ('v, 's, 'd) Nx.t ->
-    ('v, 's, 'd) Nx.t ->
-    ('v, 's, 'd) Nx.t;
-}
-
-type op = {
-  name : string;
-  floats : bool;  (** Only for floats. *)
-  signs : bool;  (** It negates or scales terms: a zero's sign may differ. *)
-  usable : sum -> int array -> env -> bool;
-  run : f;
-}
-
-let any _ _ _ = true
-let has_axis _ s env = env.axis < Array.length s
-let uncut w _ _ = cut w = None
-let two _ s _ = Array.length s >= 2
-
-let op ?(floats = false) ?(signs = false) ?(usable = any) name run =
-  { name; floats; signs; usable; run }
+type linear =
+  | Add_pq
+  | Add_pw
+  | Add_wp
+  | Sub_pw
+  | Sub_wp
+  | Sub_pq
+  | Neg
+  | Mul_pw
+  | Mul_wp
+  | Times_3
+  | Over_4
+  | Plus_1
+  | Add_zeros
+  | Copy
+  | Cast_float64
+  | Cast_complex128
+  | Mean
+  | Where_p_w
+  | Where_w_p
+  | Where_p_q
+  | Sum
+  | Sum_kept
+  | Reshape
+  | Transpose
+  | Broadcast
+  | Take
 
 let linear =
   [
-    op "add p q" { f = (fun _ _ _ p q _ -> Nx.add p q) };
-    op "add p w" { f = (fun _ _ _ p _ w -> Nx.add p w) };
-    op "add w p" { f = (fun _ _ _ p _ w -> Nx.add w p) };
-    op "sub p w" { f = (fun _ _ _ p _ w -> Nx.sub p w) };
-    op ~signs:true "sub w p" { f = (fun _ _ _ p _ w -> Nx.sub w p) };
-    op ~signs:true "sub p q" { f = (fun _ _ _ p q _ -> Nx.sub p q) };
-    op ~signs:true "neg p" { f = (fun _ _ _ p _ _ -> Nx.neg p) };
-    op ~signs:true "mul p w" { f = (fun _ _ _ p _ w -> Nx.mul p w) };
-    op ~signs:true "mul w p" { f = (fun _ _ _ p _ w -> Nx.mul w p) };
-    op ~signs:true "p times 3"
-      { f = (fun _ of_int _ p _ _ -> Nx.Infix.(p *$ of_int 3)) };
-    op ~floats:true ~signs:true "p over 4"
-      { f = (fun _ of_int _ p _ _ -> Nx.div p (Nx.scalar_like p (of_int 4))) };
-    op "p plus 1, a whole scalar beside it"
-      { f = (fun _ of_int _ p _ _ -> Nx.Infix.(p +$ of_int 1)) };
-    op "add p, zeros like p" { f = (fun _ _ _ p _ _ -> Nx.add p (Nx.zeros_like p)) };
-    op "copy p" { f = (fun _ _ _ p _ _ -> Nx.copy p) };
-    op ~floats:true "cast p to float64 and back"
-      { f = (fun dt _ _ p _ _ -> Nx.cast dt (Nx.cast Nx.float64 p)) };
-    op ~floats:true
-      ~usable:(fun _ s env ->
-        has_axis () s env && List.mem s.(env.axis) [ 1; 2; 4 ])
-      "mean p along an axis of 1, 2 or 4"
-      { f = (fun _ _ env p _ _ -> Nx.mean ~axes:[ env.axis ] p) };
-    op "where w is negative, p, else w"
-      { f = (fun _ _ _ p _ w -> Nx.where (Nx.less w (Nx.zeros_like w)) p w) };
-    op "where w is negative, w, else p"
-      { f = (fun _ _ _ p _ w -> Nx.where (Nx.less w (Nx.zeros_like w)) w p) };
-    op "where w is negative, p, else q"
-      { f = (fun _ _ _ p q w -> Nx.where (Nx.less w (Nx.zeros_like w)) p q) };
-    op ~usable:has_axis "sum p along an axis"
-      { f = (fun _ _ env p _ _ -> Nx.sum ~axes:[ env.axis ] p) };
-    op ~usable:has_axis "sum p along an axis, kept"
-      { f = (fun _ _ env p _ _ -> Nx.sum ~keepdims:true ~axes:[ env.axis ] p) };
-    op ~usable:uncut "reshape p flat"
-      {
-        f =
-          (fun _ _ _ p _ _ ->
-            Nx.reshape [| Array.fold_left ( * ) 1 (Nx.shape p) |] p);
-      }
-        ;
-    op ~usable:two "transpose p" { f = (fun _ _ _ p _ _ -> Nx.transpose p) };
-    op "broadcast p"
-      {
-        f =
-          (fun _ _ _ p _ _ ->
-            Nx.broadcast_to (Array.append [| 2 |] (Nx.shape p)) p);
-      }
-        ;
-    op
-      ~usable:(fun _ s env -> has_axis () s env && s.(env.axis) > 0)
-      "take p at whole positions"
-      {
-        f =
-          (fun _ _ env p _ _ ->
-            let idx =
-              Nx.place (Nx.beside p)
-                (Nx.create Nx.int64 [| Array.length env.positions |]
-                   (Array.map Int64.of_int env.positions))
-            in
-            Nx.take ~axis:env.axis idx p);
-      }
-        ;
+    Add_pq;
+    Add_pw;
+    Add_wp;
+    Sub_pw;
+    Sub_wp;
+    Sub_pq;
+    Neg;
+    Mul_pw;
+    Mul_wp;
+    Times_3;
+    Over_4;
+    Plus_1;
+    Add_zeros;
+    Copy;
+    Cast_float64;
+    Cast_complex128;
+    Mean;
+    Where_p_w;
+    Where_w_p;
+    Where_p_q;
+    Sum;
+    Sum_kept;
+    Reshape;
+    Transpose;
+    Broadcast;
+    Take;
   ]
+
+let linear_name = function
+  | Add_pq -> "add p q"
+  | Add_pw -> "add p w"
+  | Add_wp -> "add w p"
+  | Sub_pw -> "sub p w"
+  | Sub_wp -> "sub w p"
+  | Sub_pq -> "sub p q"
+  | Neg -> "neg p"
+  | Mul_pw -> "mul p w"
+  | Mul_wp -> "mul w p"
+  | Times_3 -> "p times 3"
+  | Over_4 -> "p over 4"
+  | Plus_1 -> "p plus 1, a whole scalar beside it"
+  | Add_zeros -> "add p, zeros like p"
+  | Copy -> "copy p"
+  | Cast_float64 -> "cast p to float64 and back"
+  | Cast_complex128 -> "cast p to complex128 and back"
+  | Mean -> "mean p along an axis of 1, 2 or 4"
+  | Where_p_w -> "where w is negative, p, else w"
+  | Where_w_p -> "where w is negative, w, else p"
+  | Where_p_q -> "where w is negative, p, else q"
+  | Sum -> "sum p along an axis"
+  | Sum_kept -> "sum p along an axis, kept"
+  | Reshape -> "reshape p flat"
+  | Transpose -> "transpose p"
+  | Broadcast -> "broadcast p"
+  | Take -> "take p at whole positions"
+
+(* It negates or scales terms: a zero's sign may differ. *)
+let signs = function
+  | Sub_wp | Sub_pq | Neg | Mul_pw | Mul_wp | Times_3 | Over_4 -> true
+  | _ -> false
+
+let apply (type v s d) op (dt : (v, s) D.t) (of_int : int -> v) env
+    (p : (v, s, d) Nx.t) (q : (v, s, d) Nx.t) (w : (v, s, d) Nx.t) :
+    (v, s, d) Nx.t =
+  let negative = Nx.less w (Nx.zeros_like w) in
+  match op with
+  | Add_pq -> Nx.add p q
+  | Add_pw -> Nx.add p w
+  | Add_wp -> Nx.add w p
+  | Sub_pw -> Nx.sub p w
+  | Sub_wp -> Nx.sub w p
+  | Sub_pq -> Nx.sub p q
+  | Neg -> Nx.neg p
+  | Mul_pw -> Nx.mul p w
+  | Mul_wp -> Nx.mul w p
+  | Times_3 -> Nx.Infix.(p *$ of_int 3)
+  | Over_4 -> Nx.div p (Nx.scalar_like p (of_int 4))
+  | Plus_1 -> Nx.Infix.(p +$ of_int 1)
+  | Add_zeros -> Nx.add p (Nx.zeros_like p)
+  | Copy -> Nx.copy p
+  | Cast_float64 -> Nx.cast dt (Nx.cast Nx.float64 p)
+  | Cast_complex128 -> Nx.cast dt (Nx.cast Nx.complex128 p)
+  | Mean -> Nx.mean ~axes:[ env.axis ] p
+  | Where_p_w -> Nx.where negative p w
+  | Where_w_p -> Nx.where negative w p
+  | Where_p_q -> Nx.where negative p q
+  | Sum -> Nx.sum ~axes:[ env.axis ] p
+  | Sum_kept -> Nx.sum ~keepdims:true ~axes:[ env.axis ] p
+  | Reshape -> Nx.reshape [| Array.fold_left ( * ) 1 (Nx.shape p) |] p
+  | Transpose -> Nx.transpose p
+  | Broadcast -> Nx.broadcast_to (Array.append [| 2 |] (Nx.shape p)) p
+  | Take ->
+      let idx =
+        Nx.place (Nx.beside p)
+          (Nx.create Nx.int64
+             [| Array.length env.positions |]
+             (Array.map Int64.of_int env.positions))
+      in
+      Nx.take ~axis:env.axis idx p
+
+(* The dtypes [op] takes: [Over_4], [Cast_float64] and [Mean] floats,
+   [Cast_complex128] complex numbers. *)
+let takes_dtype (type v s) op (dt : (v, s) D.t) =
+  match (op, D.kind dt) with
+  | (Over_4 | Cast_float64 | Mean), D.Float -> true
+  | (Over_4 | Cast_float64 | Mean), _ -> false
+  | Cast_complex128, D.Complex -> true
+  | Cast_complex128, _ -> false
+  | _ -> true
+
+(* Whether [op] takes the shape [s] at the sum [w], along [env]'s axis. *)
+let takes_shape op w s env =
+  let has_axis = env.axis < Array.length s in
+  match op with
+  | Mean -> has_axis && List.mem s.(env.axis) [ 1; 2; 4 ]
+  | Sum | Sum_kept -> has_axis
+  | Take -> has_axis && s.(env.axis) > 0
+  | Reshape -> cut w = None
+  | Transpose -> Array.length s >= 2
+  | _ -> true
 
 (* Cases *)
 
@@ -226,25 +246,30 @@ type case =
       kind : kind;
       dt : ('v, 's) D.t;
       of_int : int -> 'v;
-      same : 'v -> 'v -> bool;
-      alike : 'v -> 'v -> bool;
       w : sum;
       shape : int array;
       p : 'v array array;
       q : 'v array array;
       whole : 'v array;
       env : env;
-      op : op;
+      op : linear;
     }
       -> case
 
 let pp_case ppf (Case c) =
-  Format.fprintf ppf "%s, %a [%s] over %a, axis %d" c.op.name pp_kind c.kind
+  Format.fprintf ppf "%s, %a [%s] over %a, axis %d" (linear_name c.op) pp_kind
+    c.kind
     (String.concat "; " (Array.to_list (Array.map string_of_int c.shape)))
     pp_sum c.w c.env.axis
 
-let case_of ops =
+(* The operation first, then a dtype and a shape it takes: a shape it does not
+   take, about one case in twenty, is discarded. *)
+let case =
   let open Gen in
+  let* op = of_list linear in
+  let* (K k as kind) =
+    of_list ~pp:pp_kind (List.filter (fun (K k) -> takes_dtype op k.dt) kinds)
+  in
   let* shape =
     array ~size:(int_range 1 3)
       (frequency [ (1, constant 0); (1, constant 1); (4, int_range 2 5) ])
@@ -253,7 +278,6 @@ let case_of ops =
   let* w =
     of_list ~pp:pp_sum ([ Line; Over_b ] @ List.init rank (fun c -> Over_a c))
   in
-  let* (K k as kind) = of_list ~pp:pp_kind kinds in
   let free = List.filter (fun a -> cut w <> Some a) (List.init rank Fun.id) in
   let* axis = if free = [] then constant rank else of_list free in
   let extent = if axis < rank then shape.(axis) else 0 in
@@ -261,41 +285,36 @@ let case_of ops =
     array ~size:(int_range 0 3) (int_range 0 (Int.max 0 (extent - 1)))
   in
   let env = { axis; positions } in
-  let usable o =
-    o.usable w shape env && ((not o.floats) || is_float k.dt)
-  in
-  let* op = of_list (List.filter usable ops) in
   let n = Array.fold_left ( * ) 1 shape in
   let elt =
-    frequency
-      [ (1, constant k.zero); (4, map k.of_int (int_range (-8) 8)) ]
+    frequency [ (1, constant k.zero); (4, map k.of_int (int_range (-8) 8)) ]
   in
   let values = array ~size:(constant n) elt in
   let* p = array ~size:(constant (terms w)) values in
   let* q = array ~size:(constant (terms w)) values in
   let+ whole = values in
-  Case
-    {
-      kind;
-      dt = k.dt;
-      of_int = k.of_int;
-      same = k.same;
-      alike = k.alike;
-      w;
-      shape;
-      p;
-      q;
-      whole;
-      env;
-      op;
-    }
+  Case { kind; dt = k.dt; of_int = k.of_int; w; shape; p; q; whole; env; op }
 
 let elements x =
   A.to_array (require_some (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
 
+(* Elements equal as [Nx_support.elements] has them, but zeros of either sign
+   alike. *)
+let alike (type v s) (dt : (v, s) D.t) : v list testable =
+  let zero (v : v) : v =
+    match D.kind dt with
+    | D.Float -> if v = 0. then 0. else v
+    | D.Complex ->
+        let z x = if x = 0. then 0. else x in
+        { Complex.re = z v.Complex.re; im = z v.im }
+    | D.Signed | D.Unsigned | D.Boolean -> v
+  in
+  Testable.contramap (List.map zero) (Nx_support.elements dt)
+
 let law_kept (Case c) =
+  assume (takes_shape c.op c.w c.shape c.env);
   cover "a cut beside the sum" (cut c.w <> None);
-  List.iter (fun o -> cover o.name (o.name = c.op.name)) linear;
+  List.iter (fun o -> cover (linear_name o) (o = c.op)) linear;
   cover "no element" (Array.mem 0 c.shape);
   let p = partial_value c.w c.dt c.shape c.p in
   let q = partial_value c.w c.dt c.shape c.q in
@@ -305,18 +324,17 @@ let law_kept (Case c) =
       (Nx.Repr.of_array Nx.Host.v
          (A.of_array c.dt (Iarray.of_array c.shape) c.whole))
   in
-  let r = c.op.run.f c.dt c.of_int c.env p q w in
+  let r = apply c.op c.dt c.of_int c.env p q w in
   let at = Nx.placement r in
   not_equal (Nx_support.placement ()) ~msg:"the result is a sum"
     (Nx.Placement.closed at) at;
-  let e = c.op.run.f c.dt c.of_int c.env (Nx.place closed p) (Nx.place closed q) w in
-  let same = if c.op.signs then c.alike else c.same in
-  let got = elements r and want = elements e in
-  equal int ~msg:"elements" (Array.length want) (Array.length got);
-  Array.iteri
-    (fun i x ->
-      if not (same x got.(i)) then failf "element %d differs from closing first" i)
-    want
+  let e =
+    apply c.op c.dt c.of_int c.env (Nx.place closed p) (Nx.place closed q) w
+  in
+  let same = if signs c.op then alike c.dt else Nx_support.elements c.dt in
+  equal same ~msg:"closing first"
+    (Array.to_list (elements e))
+    (Array.to_list (elements r))
 
 (* With NaN, infinities and values large enough to overflow: closing after
    an elementwise operation equals closing first, NaN as a class, but where
@@ -367,7 +385,12 @@ let law_specials (sop, w, shape, p, q, whole) =
         else (sop.scales && Float.is_nan g) || same_float e g
       in
       cover "an overflow" overflow;
-      if not ok then failf "element %d is %h, closing first gives %h" i g e)
+      satisfies
+        ~msg:(Printf.sprintf "element %d" i)
+        (Testable.pair float_exact float_exact)
+        ~claim:"closing after as closing first, but where nx.mli says"
+        (fun _ -> ok)
+        (e, g))
     want
 
 let specials_case =
@@ -393,23 +416,6 @@ let pp_specials ppf (sop, w, shape, _, _, _) =
     (String.concat "; " (Array.to_list (Array.map string_of_int shape)))
     pp_sum w
 
-let kept =
-  group "kept"
-    [
-      (* "mean p along an axis of 1, 2 or 4" needs a float dtype and an axis
-         of that extent, about one case in a hundred: 4000 cases reach it about
-         40 times a run. *)
-      prop ~count:4000
-        "a linear operation kept a sum, then closed, equals closing first"
-        (Gen.with_pp pp_case (case_of linear))
-        law_kept;
-      prop ~count:400
-        "with NaN, infinities and overflows, closing after equals closing \
-         first but where nx.mli says"
-        (Gen.with_pp pp_specials specials_case)
-        law_specials;
-    ]
-
 (* Contractions *)
 
 (* Where a contraction's operands lie: [a] of [m; k] and [b] of [k; n] cut
@@ -426,7 +432,6 @@ type contraction =
   | Contraction : {
       kind : kind;
       dt : ('v, 's) D.t;
-      same : 'v -> 'v -> bool;
       over : over;
       m : int;
       k : int;
@@ -463,8 +468,7 @@ let contraction =
   in
   let* b = values (kk * n) in
   let+ init = option (values (m * n)) in
-  Contraction
-    { kind; dt = k.dt; same = k.same; over; m; k = kk; n; a; b; init }
+  Contraction { kind; dt = k.dt; over; m; k = kk; n; a; b; init }
 
 let law_contraction (Contraction c) =
   cover "a tile of no element" (c.over <> Summed_a && c.k < 4);
@@ -497,22 +501,20 @@ let law_contraction (Contraction c) =
   let want =
     Nx.contract ?init:(Option.map closed init) c.dt pattern (closed a) (closed b)
   in
-  let got = elements y and want = elements want in
-  let again = elements (Nx.contract ?init ~sum:true c.dt pattern a b) in
-  Array.iteri
-    (fun i x -> if not (c.same x again.(i)) then failf "element %d differs on a second run" i)
-    got;
-  Array.iteri
-    (fun i x ->
-      if not (c.same x got.(i)) then
-        failf "element %d differs from the contraction of the closed operands" i)
-    want
+  let got = Array.to_list (elements y) in
+  let again =
+    Array.to_list (elements (Nx.contract ?init ~sum:true c.dt pattern a b))
+  in
+  equal (Nx_support.elements c.dt) ~msg:"a second run" got again;
+  equal (Nx_support.elements c.dt) ~msg:"the closed operands' contraction"
+    (Array.to_list (elements want))
+    got
 
-(* A bfloat16 product over a cut k. Closed by default, it sums in float32
-   and rounds once: within [γ(K + 1, 2u') Σ|ab| + u |exact|], [u'] float32's
-   unit roundoff and [u = 2^-8] bfloat16's. Asked for its sum, each of
-   the [t] terms rounds into bfloat16 and the closing adds them there:
-   [γ(t, u) Σ|term|] more, [Σ|term| <= Σ|ab|]. *)
+(* A bfloat16 product over a cut k. Closed by default, it sums in float32 and
+   rounds once: within the contraction's bound [(1 + u') γ(β(m) + t - 1, u')
+   Σ|ab|], [u'] float32's unit roundoff, then [u |exact|], [u = 2^-8]
+   bfloat16's. Asked for its sum, each of the [t] terms rounds into bfloat16 and
+   the closing adds them there: [γ(t, u) Σ|term|] more, [Σ|term| <= Σ|ab|]. *)
 type narrow = { nm : int; nk : int; nn : int; nseed : int; over : int }
 
 let narrow =
@@ -531,6 +533,10 @@ let pp_narrow ppf c =
 module Two = (val Nx.devices [ m 0; m 1 ])
 
 let gamma n u = n *. u /. (1. -. (n *. u))
+
+(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉] for a sum in
+   blocks. *)
+let beta n = (((5 * min n 256) + 3) / 4) + ((n + 127) / 128)
 let u32 = Float.ldexp 1. (-24)
 let ub = Float.ldexp 1. (-8)
 
@@ -574,12 +580,14 @@ let law_narrow c =
         exact := !exact +. p;
         mag := !mag +. Float.abs p
       done;
-      let product = gamma (Float.of_int (c.nk + 1)) (2. *. u32) *. !mag in
+      let m = (c.nk + c.over - 1) / c.over in
+      let roundings = Float.of_int (beta m + Int.min c.over c.nk - 1) in
+      let product = (1. +. u32) *. gamma roundings u32 *. !mag in
       let check what got bound =
         let g = got.((i * c.nn) + j) in
-        if Float.abs (g -. !exact) > bound then
-          failf "%s (%d, %d) is %g, the exact sum %g, beyond %g" what i j g
-            !exact bound
+        at_most float_exact
+          ~msg:(Printf.sprintf "%s (%d, %d): %h against %h" what i j g !exact)
+          ~than:bound (Nx_support.gap g !exact)
       in
       check "closed" closed (product +. (ub *. Float.abs !exact) +. tiny);
       check "a sum" asked (product +. (gamma t ub *. !mag) +. (t *. tiny))
@@ -601,7 +609,7 @@ let test_rounded_terms () =
   let sum = 1. +. (3. *. e) in
   less float_exact ~msg:"within γ(4, u) of the terms"
     ~than:(gamma 4. ub *. sum)
-    (Float.abs (asked.(0) -. sum))
+    (Nx_support.gap asked.(0) sum)
 
 (* Creations at a sum: the value made where the sum lies closed, on each
    group's first device. *)
@@ -636,59 +644,195 @@ let test_creations () =
   refused ~by:"Nx.full_at" (fun () -> Nx.full_at p Nx.bool [| 2 |] true);
   refused ~by:"Nx.zeros_at" (fun () -> Nx.zeros_at p Nx.int4 [| 2 |])
 
-(* A product closes unless asked for its sum, and every function built
-   on one closes: a convolution, einsum's inner products and a chain.
-   einsum's sum over one operand keeps a sum. *)
-let test_entry_points () =
-  let host x = Nx.place Nx.Host.on x in
-  let near ~msg want got =
-    equal (array (float 1e-5)) ~msg (Nx.to_array (host want))
-      (Nx.to_array (host got))
-  in
-  let is_whole ~msg x =
-    let p = Nx.placement x in
-    equal (Nx_support.placement ()) ~msg (Nx.Placement.closed p) p
-  in
-  let x = Nx.init Nx.float32 [| 1; 5; 8 |] (fun i -> Float.of_int (i.(1) + i.(2)) /. 8.) in
-  let w = Nx.init Nx.float32 [| 2; 3; 8 |] (fun i -> Float.of_int (i.(0) - i.(2)) /. 8.) in
-  let cut = Nx.Placement.split ~axis:2 Mem.v in
-  let y = Nx.conv (Nx.place cut x) (Nx.place cut w) in
-  is_whole ~msg:"a convolution over cut channels closes" y;
-  near ~msg:"a convolution" (Nx.conv x w) y;
-  let a = Nx.init Nx.float32 [| 3; 8 |] (fun i -> Float.of_int (i.(0) * i.(1)) /. 16.)
-  and b = Nx.init Nx.float32 [| 8; 4 |] (fun i -> Float.of_int (i.(0) - i.(1)) /. 8.)
-  and v = Nx.init Nx.float32 [| 4 |] (fun i -> Float.of_int i.(0)) in
-  let pat = Nx.Pattern.v "i j, j k, k -> i | j k" in
-  let a' = Nx.place (Nx.Placement.split ~axis:1 Mem.v) a
-  and b' = Nx.place (Nx.Placement.split ~axis:0 Mem.v) b in
-  near ~msg:"a three-operand einsum" (Nx.einsum pat [ a; b; v ])
-    (Nx.einsum pat [ a'; b'; Nx.place Mem.on v ]);
-  is_whole ~msg:"a chain closes" (Nx.multi_dot [ a'; b'; Nx.place Mem.on (Nx.reshape [| 4; 1 |] v) ]);
-  is_whole ~msg:"a product closes" (Nx.matmul a' b');
-  near ~msg:"a product" (Nx.matmul a b) (Nx.matmul a' b');
+(* A product over a cut summed axis closes unless asked for its sum, and so does
+   every function built on one: a convolution over cut channels, einsum's tree
+   of products and a chain. The data are multiples of 1/64 of few terms, so
+   every sum is exact in float32. *)
+let x_conv =
+  lazy
+    (Nx.init Nx.float32 [| 1; 5; 8 |] (fun i ->
+         Float.of_int (i.(1) + i.(2)) /. 8.))
+
+let w_conv =
+  lazy
+    (Nx.init Nx.float32 [| 2; 3; 8 |] (fun i ->
+         Float.of_int (i.(0) - i.(2)) /. 8.))
+
+let a_prod =
+  lazy
+    (Nx.init Nx.float32 [| 3; 8 |] (fun i ->
+         Float.of_int (i.(0) * i.(1)) /. 16.))
+
+let b_prod =
+  lazy
+    (Nx.init Nx.float32 [| 8; 4 |] (fun i -> Float.of_int (i.(0) - i.(1)) /. 8.))
+
+let v_prod = lazy (Nx.init Nx.float32 [| 4 |] (fun i -> Float.of_int i.(0)))
+let rows_of x = Nx.place (Nx.Placement.split ~axis:1 Mem.v) x
+let cols_of x = Nx.place (Nx.Placement.split ~axis:0 Mem.v) x
+
+let same_product ~msg want got =
+  equal ~msg
+    (Nx_support.elements Nx.float32)
+    (Array.to_list (Nx.to_array (Nx.place Nx.Host.on want)))
+    (Array.to_list (Nx.to_array (Nx.place Nx.Host.on got)))
+
+let closes =
+  [
+    ( "a convolution over cut channels",
+      fun () ->
+        let x = Lazy.force x_conv and w = Lazy.force w_conv in
+        let cut = Nx.Placement.split ~axis:2 Mem.v in
+        (Nx.conv x w, Nx.conv (Nx.place cut x) (Nx.place cut w)) );
+    ( "a three-operand einsum",
+      fun () ->
+        let pat = Nx.Pattern.v "i j, j k, k -> i | j k" in
+        let a = Lazy.force a_prod and b = Lazy.force b_prod in
+        let v = Lazy.force v_prod in
+        ( Nx.einsum pat [ a; b; v ],
+          Nx.einsum pat [ rows_of a; cols_of b; Nx.place Mem.on v ] ) );
+    ( "a chain",
+      fun () ->
+        let a = Lazy.force a_prod and b = Lazy.force b_prod in
+        let v = Nx.reshape [| 4; 1 |] (Lazy.force v_prod) in
+        ( Nx.multi_dot [ a; b; v ],
+          Nx.multi_dot [ rows_of a; cols_of b; Nx.place Mem.on v ] ) );
+    ( "a matrix product",
+      fun () ->
+        let a = Lazy.force a_prod and b = Lazy.force b_prod in
+        (Nx.matmul a b, Nx.matmul (rows_of a) (cols_of b)) );
+  ]
+
+let law_closes (name, f) =
+  let want, got = f () in
+  let p = Nx.placement got in
+  equal (Nx_support.placement ()) ~msg:"closed" (Nx.Placement.closed p) p;
+  same_product ~msg:name want got
+
+let test_reduce_scattered () =
+  let a = Lazy.force a_prod and b = Lazy.force b_prod in
   let rows = Nx.Placement.split ~axis:0 Mem.v in
-  let scattered = Nx.place rows (Nx.matmul ~sum:true a' b') in
-  equal (Nx_support.placement ()) ~msg:"a product reduce-scattered" rows
-    (Nx.placement scattered);
-  near ~msg:"a product reduce-scattered" (Nx.matmul a b) scattered;
-  let s = Nx.matmul ~sum:true a' b' in
-  equal (Nx_support.placement ()) ~msg:"a product asked for its sum"
-    (sum_at Line) (Nx.placement s);
+  let y = Nx.place rows (Nx.matmul ~sum:true (rows_of a) (cols_of b)) in
+  equal (Nx_support.placement ()) ~msg:"where it lies" rows (Nx.placement y);
+  same_product ~msg:"its rows" (Nx.matmul a b) y
+
+let test_einsum_keeps () =
+  let a = Lazy.force a_prod and b = Lazy.force b_prod in
+  let s = Nx.matmul ~sum:true (rows_of a) (cols_of b) in
+  equal (Nx_support.placement ()) ~msg:"a sum" (sum_at Line) (Nx.placement s);
   let summed = Nx.einsum (Nx.Pattern.v "i j -> i | j") [ s ] in
   let at = Nx.placement summed in
-  not_equal (Nx_support.placement ()) ~msg:"einsum's sum over one operand keeps a sum"
-    (Nx.Placement.closed at) at;
-  near ~msg:"einsum's sum" (Nx.sum ~axes:[ 1 ] (Nx.matmul a b)) summed
+  not_equal (Nx_support.placement ()) ~msg:"a sum" (Nx.Placement.closed at) at;
+  same_product ~msg:"its sum" (Nx.sum ~axes:[ 1 ] (Nx.matmul a b)) summed
 
-(* Closed products over cut summed axes, at every float dtype: each device's
-   partial in the accumulator, adding [-0] where there is an [init], added
-   from the first window's in C order of the windows, then [init], rounded
-   once (nx.mli's {!Nx.section-contraction}). [k] is cut along a line of
-   two or four devices, or over a grid whose cut lists its mesh axes major
-   first or minor first. Asked for its sum at the accumulator's dtype, the
-   product without [init] closes to the same bits. With one window holding
-   products it has one device's bits, and with [init] or without it stays
-   within the bound {!Nx.contract} states. *)
+(* Every product asked for its sum over a cut summed axis leaves the devices'
+   terms, which close to the product: small integers, so every sum is exact. *)
+let products =
+  let a =
+    lazy
+      (Nx.init Nx.float32 [| 3; 8 |] (fun i -> Float.of_int (i.(0) + i.(1) - 4)))
+  in
+  let b =
+    lazy
+      (Nx.init Nx.float32 [| 8; 3 |] (fun i ->
+           Float.of_int (i.(0) - (2 * i.(1)))))
+  in
+  let v =
+    lazy (Nx.init Nx.float32 [| 8 |] (fun i -> Float.of_int (i.(0) - 3)))
+  in
+  let on = cols_of in
+  [
+    ( "contract",
+      fun sum ->
+        let p = Nx.Pattern.v "m k, k n -> m n | k" in
+        let f a b = Nx.contract ~sum Nx.float32 p a b in
+        ( f (Lazy.force a) (Lazy.force b),
+          f (rows_of (Lazy.force a)) (on (Lazy.force b)) ) );
+    ( "einsum",
+      fun sum ->
+        let p = Nx.Pattern.v "m k, k n -> m n | k" in
+        let f a b = Nx.einsum ~sum p [ a; b ] in
+        ( f (Lazy.force a) (Lazy.force b),
+          f (rows_of (Lazy.force a)) (on (Lazy.force b)) ) );
+    ( "matmul",
+      fun sum ->
+        let f a b = Nx.matmul ~sum a b in
+        ( f (Lazy.force a) (Lazy.force b),
+          f (rows_of (Lazy.force a)) (on (Lazy.force b)) ) );
+    ( "dot",
+      fun sum ->
+        let f a b = Nx.dot ~sum a b in
+        ( f (Lazy.force a) (Lazy.force v),
+          f (rows_of (Lazy.force a)) (on (Lazy.force v)) ) );
+    ( "vdot",
+      fun sum ->
+        let f a b = Nx.vdot ~sum a b in
+        ( f (Lazy.force v) (Lazy.force v),
+          f (on (Lazy.force v)) (on (Lazy.force v)) ) );
+    ( "tensordot",
+      fun sum ->
+        let f a b = Nx.tensordot ~axes:([ 1 ], [ 0 ]) ~sum a b in
+        ( f (Lazy.force a) (Lazy.force b),
+          f (rows_of (Lazy.force a)) (on (Lazy.force b)) ) );
+    ( "inner",
+      fun sum ->
+        let f a b = Nx.inner ~sum a b in
+        let bt = Nx.transpose (Lazy.force b) in
+        (f (Lazy.force a) bt, f (rows_of (Lazy.force a)) (rows_of bt)) );
+    ( "vecdot",
+      fun sum ->
+        let f a b = Nx.vecdot ~sum a b in
+        let bt = Nx.transpose (Lazy.force b) in
+        (f (Lazy.force a) bt, f (rows_of (Lazy.force a)) (rows_of bt)) );
+  ]
+
+let law_takes_sum (name, f) =
+  let want, _ = f false in
+  let _, got = f true in
+  let at = Nx.placement got in
+  not_equal (Nx_support.placement ()) ~msg:"a sum" (Nx.Placement.closed at) at;
+  same_product ~msg:name want got
+
+(* A product whose summed axes no device cuts is the same asked for its sum: [a]
+   cut along its rows or whole, [b] whole on every device. *)
+let law_uncut_sum (m, k, n, rows_cut, seed) =
+  let st = Random.State.make [| seed |] in
+  let draw s =
+    Nx.init Nx.float32 s (fun _ ->
+        Float.ldexp
+          (Random.State.float st 2. -. 1.)
+          (Random.State.int st 21 - 10))
+  in
+  let a = draw [| m; k |] and b = draw [| k; n |] in
+  cover "a cut kept axis" rows_cut;
+  let a =
+    Nx.place (if rows_cut then Nx.Placement.split ~axis:0 Mem.v else Mem.on) a
+  in
+  let b = Nx.place Mem.on b in
+  let without = Nx.matmul a b and asked = Nx.matmul ~sum:true a b in
+  equal (Nx_support.placement ()) ~msg:"where it lies" (Nx.placement without)
+    (Nx.placement asked);
+  same_product ~msg:"its elements" without asked
+
+let uncut_case =
+  let open Gen in
+  let* m = int_range 1 9 and+ k = int_range 0 9 and+ n = int_range 1 5 in
+  let+ rows_cut = bool and+ seed = int in
+  (m, k, n, rows_cut, seed)
+
+let pp_uncut ppf (m, k, n, rows_cut, seed) =
+  Format.fprintf ppf "[%d; %d] by [%d; %d]%s, seed %d" m k k n
+    (if rows_cut then ", rows cut" else "")
+    seed
+
+(* Products over cut summed axes, at every float dtype, [k] cut along a line of
+   two or four devices, or over a grid whose cut lists its mesh axes major first
+   or minor first. Asked for its sum at the accumulator's dtype, the product
+   without [init] closes to the bits of the product without [~sum:true]. With
+   one window holding products it has one device's bits, and with [init] or
+   without it stays within the bound {!Nx.contract} states over cut summed
+   names. test_partial's contraction law holds the order in which the partials
+   add. *)
 type float_dt = F : (float, 's) D.t -> float_dt
 type layout = Line_of of int | Grid_ab | Grid_ba
 
@@ -735,10 +879,6 @@ let ordered =
 let bits x =
   Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 x))
 
-(* nx_kernel.mli's [β(n) = ⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉] for a sum in
-   blocks. *)
-let beta n = (((5 * min n 256) + 3) / 4) + ((n + 127) / 128)
-
 let law_ordered c =
   let (F dt) = c.fdt in
   cover "a narrow float" (match c.fdt with F D.Float16 | F D.Bfloat16 -> true | _ -> false);
@@ -753,42 +893,6 @@ let law_ordered c =
   let init = if c.oinit then Some (draw [| c.om; c.on |]) else None in
   let pattern = Nx.Pattern.v "m k, k n -> m n | k" in
   let t = match c.layout with Line_of t -> t | Grid_ab | Grid_ba -> 4 in
-  (* Tile [j] of [t] along [k], as a split cuts it. *)
-  let tile j =
-    let q = c.ok / t and r = c.ok mod t in
-    ((j * q) + Int.min j r, q + if j < r then 1 else 0)
-  in
-  let want =
-    let host_rule (type q) (acc : (float, q) D.t) =
-      (* Each tile's partial adding [-0] where there is an [init], which
-         joins after the partials' sum. *)
-      let partial j =
-        let lo, n = tile j in
-        let init =
-          match init with
-          | Some _ -> Some (Nx.full acc [| c.om; c.on |] (-0.))
-          | None -> None
-        in
-        Nx.contract ?init acc pattern
-          (Nx.slice [ A; R (lo, lo + n) ] a)
-          (Nx.slice [ R (lo, lo + n); A ] b)
-      in
-      let held = List.filter (fun j -> snd (tile j) > 0) (List.init t Fun.id) in
-      match (held, init) with
-      | [], Some i -> Nx.contract ~init:i dt pattern a b
-      | [], None -> Nx.cast dt (Nx.contract acc pattern a b)
-      | j :: rest, _ -> (
-          let s =
-            List.fold_left (fun s j -> Nx.add s (partial j)) (partial j) rest
-          in
-          match init with
-          | Some i -> Nx.cast dt (Nx.add s (Nx.cast acc i))
-          | None -> Nx.cast dt s)
-    in
-    match c.fdt with
-    | F D.Float64 -> host_rule D.Float64
-    | F _ -> host_rule D.Float32
-  in
   (* The product closed, and asked for its sum then closed, with [a] and
      [b] cut along [k] by [cut] and [init] whole on [on]. *)
   let run cut on =
@@ -807,7 +911,6 @@ let law_ordered c =
     | Grid_ba ->
         run (fun axis -> Nx.Placement.mesh grid [ (axis, [ "b"; "a" ]) ]) Mem.on
   in
-  equal (array int64) ~msg:"closed, the rule's bits" (bits want) closed;
   let wide = match c.fdt with F D.Float32 | F D.Float64 -> true | F _ -> false in
   if wide && not c.oinit then
     equal (array int64) ~msg:"its sum closed, the same bits" closed summed;
@@ -816,10 +919,11 @@ let law_ordered c =
     equal (array int64) ~msg:"one window holding products, one device's bits"
       (bits (Nx.contract ?init dt pattern a b))
       closed;
-  (* Nx.contract's bound, u|r| + (1 + u) γ(β(K), u) Σ|a||b| in the
-     accumulator, the [u|r|] term with [init] alone, then half the dtype's
-     spacing [u_out] relative, or [tiny] below its normals; the float64
-     reference errs by γ(K + 2) of float64. *)
+  (* Nx.contract's bound over cut summed names, u|r| + (1 + u) γ(β(m) + t - 1,
+     u) Σ|a||b| in the accumulator, [m] the most products a window holds and [t]
+     the windows holding products, the [u|r|] term with [init] alone, then half
+     the dtype's spacing [u_out] relative, or [tiny] below its normals; the
+     float64 reference errs by γ(K + 2) of float64. *)
   let u, u_out, tiny =
     match c.fdt with
     | F D.Float64 -> (0x1p-53, 0., 0.)
@@ -830,7 +934,9 @@ let law_ordered c =
   let host x = Nx.to_array (Nx.cast Nx.float64 x) in
   let ha = host a and hb = host b and hi = Option.map host init in
   let gamma n u = n *. u /. (1. -. (n *. u)) in
-  let k = Float.of_int (beta c.ok) and k64 = Float.of_int (c.ok + 2) in
+  let m = (c.ok + t - 1) / t in
+  let k = Float.of_int (beta m + Int.min c.ok t - 1)
+  and k64 = Float.of_int (c.ok + 2) in
   for i = 0 to c.om - 1 do
     for j = 0 to c.on - 1 do
       let o = (i * c.on) + j in
@@ -848,8 +954,9 @@ let law_ordered c =
       in
       let bound = g +. (u_out *. (Float.abs !sum +. g)) +. tiny in
       let got = Int64.float_of_bits closed.(o) in
-      if Float.abs (got -. !sum) > bound then
-        failf "(%d, %d) is %h, the exact sum %h, beyond %h" i j got !sum bound
+      at_most float_exact
+        ~msg:(Printf.sprintf "(%d, %d): %h against %h" i j got !sum)
+        ~than:bound (Nx_support.gap got !sum)
     done
   done
 
@@ -857,26 +964,25 @@ let law_ordered c =
    order, whichever order the mesh lists them in: a value placed at that
    partial placement adds to it, and the sum closes to the closed product
    plus the value. The values are small integers, so every sum is exact. *)
-let test_named_sums () =
+let named_sums =
+  let ba = Nx.Mesh.v Mem.v [ ("b", 2); ("a", 2) ] in
+  [
+    ("cut over b then a, mesh a then b", (grid, [ "b"; "a" ]));
+    ("cut over a then b, mesh a then b", (grid, [ "a"; "b" ]));
+    ("cut over a then b, mesh b then a", (ba, [ "a"; "b" ]));
+    ("cut over b then a, mesh b then a", (ba, [ "b"; "a" ]));
+  ]
+
+let law_named_sum (_, (mesh, order)) =
   let a = Nx.init Nx.float32 [| 2; 8 |] (fun i -> Float.of_int (i.(0) + i.(1)))
   and b = Nx.init Nx.float32 [| 8; 3 |] (fun i -> Float.of_int (i.(0) - i.(1)))
   and z = Nx.init Nx.float32 [| 2; 3 |] (fun i -> Float.of_int (i.(0) * i.(1))) in
-  let want = Nx.add (Nx.matmul a b) z in
-  let check ~msg mesh order =
-    let cut axis = Nx.Placement.mesh mesh [ (axis, order) ] in
-    let s = Nx.matmul ~sum:true (Nx.place (cut 1) a) (Nx.place (cut 0) b) in
-    let named = Nx.Placement.partial mesh order [] in
-    equal (Nx_support.placement ()) ~msg:(msg ^ ": named") named
-      (Nx.placement s);
-    let y = Nx.add s (Nx.place named z) in
-    equal (array float_exact) ~msg (Nx.to_array want)
-      (Nx.to_array (Nx.place Nx.Host.on y))
-  in
-  let ba = Nx.Mesh.v Mem.v [ ("b", 2); ("a", 2) ] in
-  check ~msg:"cut over b then a, mesh a then b" grid [ "b"; "a" ];
-  check ~msg:"cut over a then b, mesh a then b" grid [ "a"; "b" ];
-  check ~msg:"cut over a then b, mesh b then a" ba [ "a"; "b" ];
-  check ~msg:"cut over b then a, mesh b then a" ba [ "b"; "a" ]
+  let cut axis = Nx.Placement.mesh mesh [ (axis, order) ] in
+  let s = Nx.matmul ~sum:true (Nx.place (cut 1) a) (Nx.place (cut 0) b) in
+  let named = Nx.Placement.partial mesh order [] in
+  equal (Nx_support.placement ()) ~msg:"named" named (Nx.placement s);
+  let y = Nx.add s (Nx.place named z) in
+  same_product ~msg:"closed, plus the value" (Nx.add (Nx.matmul a b) z) y
 
 (* A large init joins a cut sum after every product: four products of
    [0x1.8p-26] over four devices add [1.5 · 2^-24] to an init of [1], which
@@ -892,79 +998,124 @@ let test_init_joins_last () =
   equal (array float_exact) [| 1. +. 0x1p-23 |]
     (Nx.to_array (Nx.place Nx.Host.on y))
 
-let contractions =
-  group "contractions"
-    [
-      prop ~count:300
-        "a contraction over a cut summed axis closes to the contraction of \
-         its closed operands"
-        (Gen.with_pp pp_contraction contraction)
-        law_contraction;
-      prop "a bfloat16 product over a cut summed axis, closed or asked for as \
-         a sum, is within its bound"
-        (Gen.with_pp pp_narrow narrow)
-        law_narrow;
-      test "a bfloat16 sum rounds each term and each addition"
-        test_rounded_terms;
-      test "a creation at a sum is made where the sum lies closed"
-        test_creations;
-      test "a product closes unless asked for its sum" test_entry_points;
-      test "a product's sum is named by its cut's mesh axes in order"
-        test_named_sums;
-      test "a large init joins a cut sum after its products"
-        test_init_joins_last;
-      prop ~count:300 ~examples:ordered_examples
-        "a closed product over cut summed axes adds its devices' partials \
-         in C order of their windows, then init, rounds once and keeps \
-         the contraction's bound"
-        (Gen.with_pp pp_ordered ordered)
-        law_ordered;
-    ]
-
 (* Refusals *)
 
-let refuses ~by f =
-  raises_match
-    (Exn.invalid_arg ~sub:(by ^ ": operand "))
-    f
-
 let x () = Nx.place (sum_at Line) (Nx.ones Nx.float32 [| 4 |])
+let i () = Nx.place (sum_at Line) (Nx.ones Nx.int32 [| 4 |])
+let whole () = Nx.place Mem.on (Nx.ones Nx.float32 [| 4 |])
 let names = String.concat "; " (List.map Rig.name (Nx.Devices.to_list Mem.v))
 
-let test_refusals () =
-  let p = x () in
-  let whole = Nx.ones Nx.float32 [| 4 |] in
-  let whole = Nx.place Mem.on whole in
+let test_exp_refused () =
   raises
     (Invalid_argument
        ("Nx.exp: operand 0 lies at partial [" ^ names
       ^ "], a sum the operation does not keep; Nx.place (Placement.on s) x"))
-    (fun () -> Nx.exp p);
-  refuses ~by:"Nx.mul" (fun () -> Nx.mul p p);
-  refuses ~by:"Nx.div" (fun () -> Nx.div whole p);
-  refuses ~by:"Nx.maximum" (fun () -> Nx.maximum p whole);
-  refuses ~by:"Nx.sqrt" (fun () -> Nx.sqrt p);
-  refuses ~by:"Nx.cumsum" (fun () -> Nx.cumsum p);
-  refuses ~by:"Nx.max" (fun () -> Nx.max p);
-  refuses ~by:"Nx.cast" (fun () -> Nx.cast Nx.int32 p);
-  let i = Nx.place (sum_at Line) (Nx.ones Nx.int32 [| 4 |]) in
-  refuses ~by:"Nx.mean" (fun () -> Nx.mean i);
-  refuses ~by:"Nx.div" (fun () -> Nx.div i (Nx.full_like i 2l));
-  let other = Nx.place (sum_at Over_b) (Nx.ones Nx.float32 [| 4 |]) in
-  refuses ~by:"Nx.add" (fun () -> Nx.add p other);
-  (* An operand that is no sum, beside a sum, is named whole. *)
-  let c = Nx.place (Nx.Placement.split ~axis:0 Mem.v) (Nx.ones Nx.float32 [| 4; 2 |]) in
+    (fun () -> Nx.exp (x ()))
+
+(* Operations not linear in a sum, each named with the operand it refuses. *)
+let not_linear =
+  [
+    ("a sum times a sum", "Nx.mul", fun () -> ignore (Nx.mul (x ()) (x ())));
+    ("a value over a sum", "Nx.div", fun () -> ignore (Nx.div (whole ()) (x ())));
+    ("a maximum", "Nx.maximum", fun () -> ignore (Nx.maximum (x ()) (whole ())));
+    ("a square root", "Nx.sqrt", fun () -> ignore (Nx.sqrt (x ())));
+    ("a cumulative sum", "Nx.cumsum", fun () -> ignore (Nx.cumsum (x ())));
+    ("a maximum along an axis", "Nx.max", fun () -> ignore (Nx.max (x ())));
+    ( "a cast to an integer",
+      "Nx.cast",
+      fun () -> ignore (Nx.cast Nx.int32 (x ())) );
+    ("an integer mean", "Nx.mean", fun () -> ignore (Nx.mean (i ())));
+    ( "an integer division",
+      "Nx.div",
+      fun () -> ignore (Nx.div (i ()) (Nx.full_like (i ()) 2l)) );
+    ( "sums over other groups",
+      "Nx.add",
+      fun () ->
+        ignore
+          (Nx.add (x ())
+             (Nx.place (sum_at Over_b) (Nx.ones Nx.float32 [| 4 |]))) );
+    ( "a sum along a cut axis",
+      "Nx.sum",
+      fun () ->
+        ignore
+          (Nx.sum (Nx.place (sum_at (Over_a 0)) (Nx.ones Nx.float32 [| 4 |])))
+    );
+  ]
+
+(* An operand that is no sum, beside a sum, is named whole. *)
+let test_beside_sum_refused () =
+  let c =
+    Nx.place (Nx.Placement.split ~axis:0 Mem.v) (Nx.ones Nx.float32 [| 4; 2 |])
+  in
   let pm = Nx.place (sum_at Line) (Nx.ones Nx.float32 [| 3; 4 |]) in
   raises_match
     (fun e ->
       Exn.invalid_arg ~sub:"Nx.matmul: operand 1 lies at split" e
       && Exn.invalid_arg ~sub:"Nx.place (Placement.on s) y" e)
-    (fun () -> Nx.matmul pm c);
-  let cut = Nx.place (sum_at (Over_a 0)) (Nx.ones Nx.float32 [| 4 |]) in
-  refuses ~by:"Nx.sum" (fun () -> Nx.sum cut)
+    (fun () -> Nx.matmul pm c)
 
-let refusals =
-  group "refusals"
-    [ test "an operation that is not linear in a sum raises" test_refusals ]
+let routing =
+  group "routing"
+    [
+      (* 26 operations drawn alike: each misses a run of 600 cases with
+         probability (25/26)^600 = 6e-11. *)
+      prop ~count:600
+        "a linear operation keeps a sum, and closing after equals closing first"
+        (Gen.with_pp pp_case case) law_kept;
+      prop ~count:400
+        "closing after equals closing first but where a term overflows, a \
+         zero's sign or an infinity's scaling decides"
+        (Gen.with_pp pp_specials specials_case)
+        law_specials;
+      test
+        "a value made at a sum holds its elements on each group's first device"
+        test_creations;
+      test "exp of a sum raises naming the place that closes it"
+        test_exp_refused;
+      cases "an operation that is not linear in a sum raises"
+        ~id:(fun (id, _, _) -> id)
+        not_linear
+        (fun (_, by, f) ->
+          raises_match (Exn.invalid_arg ~sub:(by ^ ": operand ")) f);
+      test "an operand that is no sum beside a sum is named whole"
+        test_beside_sum_refused;
+    ]
 
-let () = exit (run "nx sums" [ kept; contractions; refusals ])
+let contractions =
+  group "contractions"
+    [
+      prop ~count:300
+        "a contraction over a cut summed axis asked for its sum closes to the \
+         contraction of its closed operands"
+        (Gen.with_pp pp_contraction contraction)
+        law_contraction;
+      cases "a product over a cut summed axis closes unless asked for its sum"
+        ~id:fst closes law_closes;
+      test "a sum reduce-scattered is the product's rows" test_reduce_scattered;
+      test "einsum's sum over one operand keeps a sum" test_einsum_keeps;
+      cases "every product takes ~sum and leaves a sum" ~id:fst products
+        law_takes_sum;
+      prop
+        "a product whose summed axes no device cuts is the same asked for its \
+         sum"
+        (Gen.with_pp pp_uncut uncut_case)
+        law_uncut_sum;
+      cases "a product's sum is named by its cut's mesh axes in order" ~id:fst
+        named_sums law_named_sum;
+      test "a large init joins a cut sum after its products"
+        test_init_joins_last;
+      test "a bfloat16 sum rounds each term and each addition"
+        test_rounded_terms;
+      prop
+        "a bfloat16 product over a cut summed axis, closed or asked for as a \
+         sum, is within its bound"
+        (Gen.with_pp pp_narrow narrow)
+        law_narrow;
+      prop ~count:300 ~examples:ordered_examples
+        "a product asked for its sum at the accumulator's dtype closes to the \
+         product's bits, within the contraction's bound"
+        (Gen.with_pp pp_ordered ordered)
+        law_ordered;
+    ]
+
+let () = exit (run "nx sums" [ routing; contractions ])
