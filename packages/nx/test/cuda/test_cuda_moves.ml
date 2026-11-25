@@ -3,14 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx.cuda's moves on each rig driver that reaches the machine's NVIDIA GPU
-   0: a scatter Add as nx_cuda.mli states it, at each target x + S, S the
-   sum of the position tree over the updates' positions along the axis, bit
-   for bit, for axes past one tile, for updates whose positions step 0 along
-   the last axis and into its own operand, of no update, target or column,
-   NaNs and infinities among the values, operands through strided,
-   permuted and reversed views; and every move of complex64
-   arrays aligned to their parts' 4 bytes alone, as nx.cpu's. *)
+(* nx.cuda's moves on each rig driver that reaches the machine's NVIDIA GPU 0: a
+   scatter Add as nx_cuda.mli states it, at each target x + S, S the sum of the
+   position tree over the updates' positions along the axis, bit for bit, for
+   axes past one tile, for updates whose positions step 0 along the last axis
+   and into its own operand, of no update, target or column, NaNs and infinities
+   among the values, operands through strided, permuted and reversed views;
+   every move of complex64 arrays aligned to their parts' 4 bytes alone, as
+   nx.cpu's; and the workspace that moves in a loop hold, within nx_cuda.mli's
+   bytes. *)
 
 open Windtrap
 open Elements
@@ -104,6 +105,33 @@ let gen =
 
 let cases = Gen.with_pp pp_case gen
 
+(* Draws reach row tiles past one tile, and no update, target or column, too
+   rarely for every run (p 0.098 and 0.133 a case, so 100 cases miss them 3e-5
+   and 7e-7 of runs): an example each. *)
+let examples =
+  let c =
+    {
+      dt = D.Any D.Float32;
+      m = 0;
+      d = 5;
+      cols = 3;
+      axis = 0;
+      rows = false;
+      in_place = false;
+      vi = plain 2;
+      vx = plain 2;
+      vu = plain 2;
+      specials = false;
+      seed = 1;
+    }
+  in
+  [
+    { c with dt = D.Any D.Bfloat16; m = 1500; d = 300; rows = true };
+    c;
+    { c with m = 40; d = 0 };
+    { c with m = 40; cols = 0 };
+  ]
+
 (* Values *)
 
 let narrow (D.Any dt) = D.is D.Float dt && D.bits dt < 32
@@ -136,37 +164,52 @@ let parts dt e =
   else if String.length e = 4 then [| get32 e 0 |]
   else [| get64 e 0 |]
 
-let of_parts dt ps =
-  if narrow dt then encode dt ps.(0)
-  else
-    String.concat ""
-      (Array.to_list (Array.map (if wide dt then f64 else f32) ps))
+(* The codes of the narrow float [dt] nearest each of [xs], by one nx.cpu cast:
+   one call, where a cast an element would cost the suite seconds. *)
+let encoded (D.Any dt) xs =
+  let n = Array.length xs in
+  let src = A.of_array D.Float32 [| n |] xs in
+  let dst = A.create Rig.host dt [| n |] in
+  match Support.map1 Support.cpu.kernels Cast ~dst src with
+  | A.Done -> elements (A.Any dst)
+  | r -> failf "a cast answered %a" Nx_array_support.pp_answer r
 
-let draw ?specials dt rs =
-  let n = if complex dt then 2 else 1 in
-  of_parts dt (Array.init n (fun _ -> round32 (value ?specials dt rs)))
+(* A wide element from its parts. *)
+let of_parts dt ps =
+  String.concat "" (Array.to_list (Array.map (if wide dt then f64 else f32) ps))
+
+(* [n] elements drawn by [value] from [rs], in order. *)
+let drawn ?specials dt rs n =
+  let part () = round32 (value ?specials dt rs) in
+  if narrow dt then encoded dt (Array.init n (fun _ -> part ()))
+  else
+    let k = if complex dt then 2 else 1 in
+    Array.init n (fun _ -> of_parts dt (Array.init k (fun _ -> part ())))
 
 (* The reference *)
 
-(* The position tree's sum over [items], positions below [2^l]: each half
-   of the block summed apart, the left one first; [None] for none. *)
-let rec tree dt l items =
-  match items with
-  | [] -> None
-  | [ (_, v) ] -> Some v
-  | _ -> (
-      let left, right =
-        List.partition (fun (j, _) -> (j lsr (l - 1)) land 1 = 0) items
-      in
-      match (tree dt (l - 1) left, tree dt (l - 1) right) with
-      | Some a, Some b -> Some (add dt a b)
-      | (Some _ as a), None | None, (Some _ as a) -> a
-      | None, None -> None)
+(* The position tree's sum of [vs.(lo)] to [vs.(hi - 1)], at the increasing
+   positions [js], all below [2^l] and sharing the bits above: each half of the
+   block summed apart, the left one first; [None] for none. *)
+let rec tree dt l js vs lo hi =
+  if lo >= hi then None
+  else if hi - lo = 1 then Some vs.(lo)
+  else
+    let mid = ref lo in
+    while !mid < hi && (js.(!mid) lsr (l - 1)) land 1 = 0 do
+      incr mid
+    done;
+    match (tree dt (l - 1) js vs lo !mid, tree dt (l - 1) js vs !mid hi) with
+    | Some a, Some b -> Some (add dt a b)
+    | (Some _ as a), None | None, (Some _ as a) -> a
+    | None, None -> None
 
 let rec ceil_log2 ?(b = 0) n =
   if 1 lsl b >= n then b else ceil_log2 ~b:(b + 1) n
 
-(* The scatter's result as nx_cuda.mli states it, as elements in C order. *)
+(* The scatter's result as nx_cuda.mli states it, as elements in C order: at
+   each target, its updates' positions in increasing order and each part's
+   values, summed by the tree and added to the target's part. *)
 let expected c into idx upd =
   let tgt = Array.map (fun _ -> []) into in
   for j = c.m - 1 downto 0 do
@@ -174,26 +217,36 @@ let expected c into idx upd =
       let p = idx j k in
       if p >= 0 && p < c.d then begin
         let t = if c.axis = 0 then (p * c.cols) + k else (k * c.d) + p in
-        tgt.(t) <- (j, upd j k) :: tgt.(t)
+        tgt.(t) <- (j, parts c.dt (upd j k)) :: tgt.(t)
       end
     done
   done;
+  let l = ceil_log2 c.m in
+  let sum us x =
+    let us = Array.of_list us in
+    let js = Array.map fst us and n = Array.length us in
+    let part i xi =
+      let vs = Array.map (fun (_, u) -> u.(i)) us in
+      add c.dt xi (Option.get (tree c.dt l js vs 0 n))
+    in
+    Array.mapi part (parts c.dt x)
+  in
+  let sums =
+    Array.mapi
+      (fun t x -> match tgt.(t) with [] -> None | us -> Some (sum us x))
+      into
+  in
+  let codes =
+    if narrow c.dt then
+      encoded c.dt (Array.map (function Some s -> s.(0) | None -> 0.) sums)
+    else [||]
+  in
   Array.mapi
     (fun t x ->
-      match tgt.(t) with
-      | [] -> x
-      | us ->
-          let xs = parts c.dt x in
-          let sums =
-            Array.mapi
-              (fun i xi ->
-                let leaves =
-                  List.map (fun (j, u) -> (j, (parts c.dt u).(i))) us
-                in
-                add c.dt xi (Option.get (tree c.dt (ceil_log2 c.m) leaves)))
-              xs
-          in
-          of_parts c.dt sums)
+      match sums.(t) with
+      | None -> x
+      | Some _ when narrow c.dt -> codes.(t)
+      | Some s -> of_parts c.dt s)
     into
 
 (* The law *)
@@ -211,9 +264,12 @@ let law (b : Support.backend) c =
   let rs = Random.State.make [| c.seed |] in
   let ts = if c.axis = 0 then [| c.d; c.cols |] else [| c.cols; c.d |] in
   let us = if c.axis = 0 then [| c.m; c.cols |] else [| c.cols; c.m |] in
-  let value _ = draw ~specials:c.specials c.dt rs in
-  let (A.Any into_a) = operand c.dt ts c.vi value in
-  let u = operand c.dt us c.vu value in
+  (* The elements of the array a view is made from, in order. *)
+  let drawn s v = drawn ~specials:c.specials c.dt rs (total (made v s)) in
+  let into_es = drawn ts c.vi in
+  let (A.Any into_a) = operand c.dt ts c.vi (fun i -> into_es.(i)) in
+  let u_es = drawn us c.vu in
+  let u = operand c.dt us c.vu (fun i -> u_es.(i)) in
   let into = elements (A.Any into_a) and ups = elements u in
   let pos () = Int64.of_int (Random.State.int rs (c.d + 2) - 1) in
   let idx_a =
@@ -379,6 +435,52 @@ let test_loop_set (b : Support.backend) () =
       done_ (K.scatter Set ~unique:false ~axis:0 ~dst ~into idx u);
       Rig.Buffer.wait (A.buffer dst) Read_write)
 
+(* nx_cuda.mli: a [Max] scatter of complex numbers takes 4 bytes a target while
+   it runs. These tests read a call's own buffers, past the 64 MiB of moves'
+   workspace nx.cuda keeps (nx_cuda.ml), within the 192 MiB nx_cuda.mli allows:
+   a device that kept more would show none held. *)
+let test_loop_max (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let n = 1 lsl 25 and d = b.device in
+  let into = A.create d D.Complex64 [| n |] in
+  let dst = A.create d D.Complex64 [| n |] in
+  let idx = ints b [| 4 |] [| 0; 7; 7; n - 1 |] in
+  let u = A.create d D.Complex64 [| 4 |] in
+  Kernels_cases.loop_held b
+    ~bound:(Rig.allocation d (4 * n))
+    (fun () ->
+      done_ (K.scatter Max ~unique:false ~axis:0 ~dst ~into idx u);
+      Rig.Buffer.wait (A.buffer dst) Read_write)
+
+(* nx_cuda.mli: a tiled add takes 4 bytes a target of [into], at most [83 + 4 w]
+   bytes an update, [w] 4 at float32, and 5 KiB: 2^16 updates, so that their 6.5
+   MiB pass the driver's 2 MiB granules (the 5 KiB stay within one). *)
+let test_loop_tiled (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let t = 1 lsl 25 and m = 1 lsl 16 and d = b.device in
+  let into = A.create d D.Float32 [| t |]
+  and dst = A.create d D.Float32 [| t |] in
+  let idx = ints b [| m |] (Array.init m (fun j -> j * 7 mod t)) in
+  let u = A.create d D.Float32 [| m |] in
+  let bound = (4 * t) + ((83 + 16) * m) + 5120 in
+  Kernels_cases.loop_held b ~bound:(Rig.allocation d bound) (fun () ->
+      done_ (K.scatter Add ~unique:false ~axis:0 ~dst ~into idx u);
+      Rig.Buffer.wait (A.buffer dst) Read_write)
+
+(* nx_cuda.mli: a range gather takes 24 bytes a run and 8 for each 4096 runs of
+   a row: here one row of 2^22 runs of one element, whose 8 KiB for each 4096
+   runs fall within a driver's granule. *)
+let test_loop_ranges (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let k = 1 lsl 22 and d = b.device in
+  let x = A.create d D.Float32 [| k |] and dst = A.create d D.Float32 [| k |] in
+  let starts = ints b [| k |] (Array.init k Fun.id) in
+  let ends = ints b [| k |] (Array.init k (fun i -> i + 1)) in
+  let bound = (24 * k) + (8 * ((k + 4095) / 4096)) in
+  Kernels_cases.loop_held b ~bound:(Rig.allocation d bound) (fun () ->
+      done_ (K.gather_ranges ~dst ~starts ~ends x);
+      Rig.Buffer.wait (A.buffer dst) Read_write)
+
 (* GPU 0 through CUDA and through rig.nv, opened at a test's first call;
    a test skips without its GPU. *)
 let cuda () =
@@ -399,13 +501,23 @@ let () =
             let on f x = f (b ()) x in
             group name
               [
-                prop
+                prop ~examples
                   "a float Add is x + S, S the position tree's sum of the \
                    updates"
                   cases (on law);
                 test "moves complex64 aligned to 4 bytes as nx.cpu does"
                   (on test_misaligned);
+                test
+                  "range gathers in a loop hold 24 bytes a run and 8 each 4096 \
+                   runs"
+                  (on test_loop_ranges);
                 test "scatters in a loop hold one scatter's workspace"
                   (on test_loop_set);
+                test "complex Max scatters in a loop hold 4 bytes a target"
+                  (on test_loop_max);
+                test
+                  "tiled adds in a loop hold their targets', updates' and 5 \
+                   KiB's workspace"
+                  (on test_loop_tiled);
               ])
           [ ("cuda", cuda); ("cuda/nv", nv) ]))
