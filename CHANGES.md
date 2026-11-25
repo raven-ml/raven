@@ -4703,6 +4703,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun_hf` runs curl with `-q` first, so it reads no `~/.curlrc`: an
+  option there, such as `--location-trusted`, sent the token on to the
+  hosts the Hub redirects to.
 - `Kaun_hf.download_file` gives curl the token on its standard input
   (`-H @-`), never on its command line, where every user of the machine
   could read it in `/proc` while a download ran. A token holding a CR, an

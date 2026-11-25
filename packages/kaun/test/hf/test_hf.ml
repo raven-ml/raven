@@ -305,6 +305,17 @@ let fetches_revision () =
   mem ~msg:"the URL" string "https://huggingface.co/acme/tiny/resolve/v1/f.json"
     (Option.value (ran log) ~default:[])
 
+(* curl reads ~/.curlrc before its arguments unless [-q] comes first (man curl,
+   [-q]); an option there, such as [--location-trusted], would act on the
+   download. *)
+let reads_no_curlrc () =
+  let log = curl_stand_in () in
+  ignore
+    (Hf.download_file ~token:"t0k" ~cache_dir:(temp_dir ()) ~file:"f.json"
+       "acme/tiny");
+  equal ~msg:"curl's first argument" (option string) (Some "-q")
+    (Option.bind (ran log) (function a :: _ -> Some a | [] -> None))
+
 (* FIPS 180-2, appendix B, and the digest of no bytes. The 56-byte message pads
    into a second block. *)
 let digests =
@@ -568,6 +579,7 @@ let () =
                ]
                refuses_token;
              test "fetches the revision" fetches_revision;
+             test "runs curl reading no configuration file" reads_no_curlrc;
            ];
          group "download_url"
            [

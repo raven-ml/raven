@@ -190,7 +190,9 @@ let curl_download ?sha256 ~headers ~url ~dest () =
   let remove_temp () = try Sys.remove temp with Sys_error _ -> () in
   let fetch () =
     with_headers headers @@ fun ~stdin header_args ->
-    let args = [ "-L"; "--fail"; "-s" ] @ header_args @ [ url ] in
+    (* [-q] first: curl reads no ~/.curlrc, whose options, such as
+       [--location-trusted], would act on the download. *)
+    let args = [ "-q"; "-L"; "--fail"; "-s" ] @ header_args @ [ url ] in
     match sha256 with
     | None -> curl ~stdin ~out:(Unix.descr_of_out_channel oc) args
     | Some want ->

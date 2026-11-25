@@ -19,7 +19,8 @@
         weights
     ]}
 
-    Downloading requires [curl] on the [PATH]. Fetched files are cached under
+    Downloading requires [curl] on the [PATH], which runs without reading the
+    user's curl configuration files. Fetched files are cached under
     {!cache_path} and served from the cache on subsequent calls, so only the
     first access of a given file touches the network. *)
 
