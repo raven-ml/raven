@@ -14,7 +14,8 @@
   windtrap)
  (deps
   (glob_files golden/*.pdf.txt)
-  ../../font/golden/cff-small.otf)
+  ../../font/golden/cff-small.otf
+  ../../font/golden/cff2-small.otf)
  (action
   (progn
    (run %{test} --corrected)
