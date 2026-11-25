@@ -21,4 +21,4 @@ let () =
       write
         (Filename.concat dir (name ^ ".png"))
         (Hugin_vg_raster.png ~density:Figures.density r))
-    Figures.goldens
+    (Figures.goldens @ [ Figures.dense ])

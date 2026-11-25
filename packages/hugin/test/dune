@@ -61,7 +61,6 @@
    (diff? golden/confusion.svg golden/confusion.svg.corrected)
    (diff? golden/dashboard.svg golden/dashboard.svg.corrected)
    (diff? golden/embedding.svg golden/embedding.svg.corrected)
-   (diff? golden/embedding-dense.svg golden/embedding-dense.svg.corrected)
    (diff? golden/images.svg golden/images.svg.corrected)
    (diff? golden/landscape.svg golden/landscape.svg.corrected)
    (diff? golden/legends.svg golden/legends.svg.corrected)

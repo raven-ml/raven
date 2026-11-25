@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The call sites of the benchmark figures, against hugin.mli. This library is
-   compiled and never run: it checks that the interface states what the figures
-   need. Munin and talon values that do not exist yet are stubbed with the types
-   the figures read. *)
+(* The call sites of the Guide's figures that support/figures.ml does not
+   compile, against hugin.mli. This library is compiled and never run: it checks
+   that the interface states what the figures need. Munin and talon values that
+   do not exist yet are stubbed with the types the figures read. *)
 
 module Munin = struct
   module Run = struct
@@ -70,8 +70,7 @@ let sweep rates finals losses =
   let fitted = Resolved.scale (resolve f) lr in
   line ~y:(num losses) ~stroke:(num ~scale:fitted rates) ()
 
-(* Composing figures. The bars would stack with a [stack] transform, which hugin
-   does not provide. *)
+(* Composing figures, and bars grouped by metric. *)
 
 let compose a b = (grid [ [ a; b ] ], grid [ [ a ]; [ b ] ], span ~cols:2 a)
 
@@ -109,41 +108,8 @@ let dashboard run =
   in
   grid [ [ losses ]; [ accuracy ] ] |> share [ ("x", `Shared) ]
 
-(* Confusion matrix. *)
-
-let confusion (m : Nx.host Nx.int32_t) classes =
-  let counts = Nx.cast Nx.float64 m in
-  let recall =
-    num ~title:"recall" Nx.(div counts (sum ~axes:[ 1 ] ~keepdims:true counts))
-  in
-  let predicted = dim ~title:"predicted" ~labels:classes 1
-  and truth = dim ~title:"true" ~labels:classes 0 in
-  layer
-    [
-      rect ~x:predicted ~y:truth ~fill:recall ();
-      text ~x:predicted ~y:truth ~text:(num m)
-        ~fill:(map_range Color.contrast recall)
-        ();
-    ]
-  |> coord (Coord.cartesian ~aspect:1. ())
-
-(* Attention grid: a : [12; 12; T; T]. *)
-
-let attention (a : Nx.host Nx.float32_t) tokens =
-  rect ~fy:(dim ~title:"layer" 0) ~fx:(dim ~title:"head" 1)
-    ~y:(dim ~labels:tokens 2) ~x:(dim ~labels:tokens 3)
-    ~fill:(num ~title:"attention" a) ()
-
-(* Embedding scatter, e : [100_000; 2], and its density. nx counts points into
-   the cells of given edges, so the density computes its edges where the data
-   lives. *)
-
-let embedding (e : Nx.host Nx.float32_t) (labels : Nx.host Nx.int32_t) digits =
-  dot
-    ~x:(num Nx.(slice [ A; I 0 ] e))
-    ~y:(num Nx.(slice [ A; I 1 ] e))
-    ~fill:(cat ~labels:digits labels)
-    ~opacity:(const 0.3) ()
+(* The density of a scatter. nx counts points into the cells of given edges, so
+   the density computes its edges where the data lives. *)
 
 let density (x : Nx.host Nx.float32_t) (y : Nx.host Nx.float32_t) =
   let edges v =
@@ -160,21 +126,6 @@ let density (x : Nx.host Nx.float32_t) (y : Nx.host Nx.float32_t) =
     ~fill:(num ~scale:(Scale.log ()) counts)
     ()
 
-(* Image grid: batch : [64; 32; 32; 3] in [0, 1]. *)
-
-let predictions (batch : Nx.host Nx.float32_t) ~(truth : Nx.host Nx.int32_t)
-    ~(pred : Nx.host Nx.int32_t) classes =
-  let name c = classes.(Int32.to_int c) in
-  let caption t p = name t ^ " → " ^ name p in
-  let captions = Array.map2 caption (Nx.to_array truth) (Nx.to_array pred) in
-  layer
-    [
-      image ~fx:(dim ~scale:(Scale.band ~wrap:8 ()) ~labels:captions 0) batch;
-      rect
-        ~fx:(dim ~valid:(Nx.not_equal truth pred) 0)
-        ~stroke:(const Color.red) ();
-    ]
-
 (* Faceted talon plot. *)
 
 let by_optimizer t =
@@ -190,23 +141,6 @@ let by_optimizer t =
     ~x:(num (Column.to_tensor Nx.int64 (column t "step")))
     ~y:(num ~title:"loss" (Column.to_tensor Nx.float64 (column t "loss")))
     ~stroke:(codes "optimizer") ~fx:(codes "batch_size") ()
-
-(* Loss landscape: loss : [nb; na], alphas : [na], betas : [nb], path : [n; 2].
-   betas gets an axis of its own so that it varies along the rows of loss. *)
-
-let landscape ~(alphas : Nx.host Nx.float64_t) ~(betas : Nx.host Nx.float64_t)
-    (loss : Nx.host Nx.float64_t) (path : Nx.host Nx.float64_t) =
-  let px = num Nx.(slice [ A; I 0 ] path)
-  and py = num Nx.(slice [ A; I 1 ] path) in
-  layer
-    [
-      contour ~x:(num alphas)
-        ~y:(num Nx.(slice [ A; N ] betas))
-        ~fill:(num ~scale:(Scale.log ()) ~title:"loss" loss)
-        ();
-      line ~x:px ~y:py ();
-      dot ~x:px ~y:py ~size:(const 9.) ();
-    ]
 
 (* Paper figure. *)
 

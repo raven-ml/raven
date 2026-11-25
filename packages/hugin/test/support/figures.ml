@@ -238,11 +238,15 @@ let stacks () =
       ];
     ]
 
-(* Time: daily values over a quarter, and a day of readings every ten
-   minutes, whose ticks name hours with their days. *)
+(* Time: daily values over a quarter, and a day of readings every ten minutes,
+   whose ticks name hours with their days. *)
 
 let timeline () =
-  let day = 86_400L and start = 1_767_225_600L (* 2026-01-01 UTC *) in
+  let day = 86_400L
+  and start =
+    1_767_225_600L
+    (* 2026-01-01 UTC *)
+  in
   let days =
     Nx.init Nx.int64 [| 90 |] (fun i ->
         Int64.(add start (mul day (of_int i.(0)))))
@@ -254,29 +258,28 @@ let timeline () =
     Nx.init Nx.int64 [| 144 |] (fun i ->
         Int64.(add (add start (mul day 40L)) (mul 600L (of_int i.(0)))))
   in
-  let load =
-    Nx.init Nx.float64 [| 144 |] (fun i -> cos (float i.(0) /. 23.))
-  in
+  let load = Nx.init Nx.float64 [| 144 |] (fun i -> cos (float i.(0) /. 23.)) in
   grid
     [
       [ line ~x:(time S days) ~y:(num ~title:"level" level) () ];
       [ line ~x:(time S minutes) ~y:(num ~title:"load" load) () ];
     ]
 
-(* Legends: entries in columns, inside at the middle of the top edge and
-   below the panels. *)
+(* Legends: entries in columns, inside at the middle of the top edge and below
+   the panels. *)
 
 let legends () =
   let t = Nx.linspace Nx.float64 0. 6. 40 in
   let curves k =
     Nx.init Nx.float64 [| k; 40 |] (fun i ->
-        float i.(0) +. sin (float i.(1) /. 6. +. float i.(0)))
+        float i.(0) +. sin ((float i.(1) /. 6.) +. float i.(0)))
   in
   let names k = Array.init k (fun i -> "series " ^ string_of_int (i + 1)) in
   let panel name k side ncol =
     layer
       [
-        line ~x:(num t) ~y:(num (curves k))
+        line ~x:(num t)
+          ~y:(num (curves k))
           ~stroke:(dim ~scale:(Scale.band ~name ()) ~labels:(names k) 0)
           ();
         legend ~side ~ncol name;
@@ -294,8 +297,7 @@ let goldens =
   [
     ("confusion", confusion, Theme.default, default);
     ("attention", attention, Theme.default, default);
-    ("embedding", (fun () -> embedding 400), Theme.default, default);
-    ("embedding-dense", (fun () -> embedding 21_000), Theme.default, default);
+    ("embedding", (fun () -> embedding 40), Theme.default, default);
     ("images", images, Theme.default, default);
     ("landscape", landscape, Theme.default, default);
     ("dashboard", dashboard, Theme.default, default);
@@ -305,6 +307,14 @@ let goldens =
     ("timeline", timeline, Theme.default, default);
     ("legends", legends, Theme.default, default);
   ]
+
+(* The dense embedding, whose dots the raster reducer paints. Its SVG embeds
+   that raster, so it has a PNG baseline only. *)
+let dense =
+  ( "embedding-dense",
+    (fun () -> embedding 21_000),
+    Theme.default,
+    Size.figure 360. 240. )
 
 (* Goldens are drawn at one device pixel per point. *)
 let density = 1.

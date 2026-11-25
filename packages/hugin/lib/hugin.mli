@@ -671,7 +671,9 @@ val image :
     its leading axes are datum axes, one image per datum, which [fx] and [fy] (a
     {!dim} of a leading axis) put in panels of their own; the images of one
     panel are drawn in row order. Values range over [0] to [255] for [uint8] and
-    over \[[0];[1]\], clamped, for a floating-point dtype; a pixel with a NaN
+    over \[[0];[1]\], clamped, for a floating-point dtype. A component [v] of a
+    floating-point dtype is read as a [float32] and paints the level nearest
+    [255 v], computed in [float32], a half rounding up. A pixel with a NaN
     component paints nothing.
 
     Each image covers \[[0];[w]\] on the scale ["x"] and \[[0];[h]\] on the
@@ -2001,15 +2003,16 @@ val save :
   unit
 (** [save ~warn ~view ~theme ~size ~density file f] writes the renderable of
     [draw ~density (layout ~theme size (resolve ~view f))] to [file] in the
-    format its extension names, ignoring case: PNG for [.png], drawn at [density] with the density
-    and the sRGB colour space recorded ({!Hugin_vg_raster.png}); SVG for [.svg];
-    PDF for [.pdf]. [size] defaults to [Size.figure 360. 240.] and [density] to
-    [2.]. [warn] is called on each of the drawing's warnings, in order, before
-    the file is written; by default it formats the warning with {!pp_warning} on
-    [Format.err_formatter].
+    format its extension names, ignoring case: PNG for [.png], drawn at
+    [density] with the density and the sRGB colour space recorded
+    ({!Hugin_vg_raster.png}); SVG for [.svg]; PDF for [.pdf]. [size] defaults to
+    [Size.figure 360. 240.] and [density] to [2.]. [warn] is called on each of
+    the drawing's warnings, in order, before the file is written; by default it
+    formats the warning with {!pp_warning} on [Format.err_formatter].
 
     Raises [Invalid_argument] for another extension, what {!resolve}, {!layout}
-    and {!draw} raise, and [Sys_error] if [file] cannot be written. *)
+    and {!draw} raise, and [Sys_error] if [file] cannot be written. It raises
+    [Invalid_argument] before it creates [file]. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp ppf f] displays [f] in a Quill notebook: it renders [f] as SVG as

@@ -42,18 +42,6 @@ scales
   "color" categorical, read by root:fill
     (band (domain (labels "0" "1" "2" "3" "4" "5" "6" "7" "8" "9")))
 
-embedding-dense
-figure
-  panel root
-    dot root
-scales
-  "x" quantitative, read by root:x
-    (linear (domain -10 10))
-  "y" quantitative, read by root:y
-    (linear (domain -10 10))
-  "color" categorical, read by root:fill
-    (band (domain (labels "0" "1" "2" "3" "4" "5" "6" "7" "8" "9")))
-
 images
 figure
   panel root
