@@ -172,18 +172,23 @@ let bijectors (type f) (dt : (float, f) Nx.dtype) : f bijector list =
     };
   ]
 
-let count = List.length (bijectors Nx.float64)
-let nth dt i = List.nth (bijectors dt) i
+(* The bijectors, built once at each dtype the laws draw, the same index naming
+   the same bijector at both. *)
+let bijectors64 = Array.of_list (bijectors Nx.float64)
+let bijectors32 = Array.of_list (bijectors Nx.float32)
+let count = Array.length bijectors64
 
-let cover_each i =
-  List.iteri (fun j c -> cover c.name (i = j)) (bijectors Nx.float64)
+let named name =
+  Option.get (Array.find_index (fun c -> c.name = name) bijectors64)
+
+let cover_each i = Array.iteri (fun j c -> cover c.name (i = j)) bijectors64
 
 (* A bijector's index and coordinates moderate enough that none saturates. *)
 let moderate =
   Gen.(
     let* i = int_range 0 (count - 1) in
     let+ u =
-      array ~size:(constant (nth Nx.float64 i).dim) (float_range (-3.) 3.)
+      array ~size:(constant bijectors64.(i).dim) (float_range (-3.) 3.)
     in
     (i, u))
 
@@ -224,7 +229,7 @@ let totality =
     ~examples:
       (List.concat_map
          (fun i ->
-           let u = Array.make (nth Nx.float64 i).dim 0. in
+           let u = Array.make bijectors64.(i).dim 0. in
            u.(0) <- Float.max_float;
            [ (i, false, u); (i, true, u) ])
          (List.init count Fun.id))
@@ -232,25 +237,23 @@ let totality =
       let* i = int_range 0 (count - 1) in
       let* narrow = bool in
       let+ u =
-        with_pp pp_floats
-          (array ~size:(constant (nth Nx.float64 i).dim) extreme)
+        with_pp pp_floats (array ~size:(constant bijectors64.(i).dim) extreme)
       in
       (i, narrow, u))
     (fun (i, narrow, u) ->
-      let at (type f) (dt : (float, f) Nx.dtype) huge =
-        let c = nth dt i in
+      let at (type f) (dt : (float, f) Nx.dtype) (c : f bijector) huge =
         let eps = (Nx.Dtype.float_format dt).epsilon in
         let clip x = Float.min huge (Float.max (-.huge) x) in
         let x, ld =
           B.forward c.b (Nx.create dt [| c.dim |] (Array.map clip u))
         in
         let ld = floats ld in
-        List.iteri
+        Array.iteri
           (fun j b ->
             if b.name <> "identity" then
               cover (b.name ^ " saturates")
                 (i = j && Array.exists (( = ) Float.neg_infinity) ld))
-          (bijectors Nx.float64);
+          bijectors64;
         cover (Nx.Dtype.name dt) true;
         satisfies ~msg:c.name ~claim:"in the open support" (array float_exact)
           (c.inside ~eps) (floats x);
@@ -259,7 +262,8 @@ let totality =
           ld
       in
       cover_each i;
-      if narrow then at Nx.float32 float32 else at Nx.float64 Float.max_float)
+      if narrow then at Nx.float32 bijectors32.(i) float32
+      else at Nx.float64 bijectors64.(i) Float.max_float)
 
 (* The Jacobian of the map onto the free components, by forward-mode
    derivatives, and its log-determinant by LU: within [n κ ε] of the exact one,
@@ -268,7 +272,7 @@ let totality =
 let log_det =
   prop "the log-determinant is the Jacobian's over the free components"
     ~count:(13 * 100) moderate (fun (i, u) ->
-      let c = nth Nx.float64 i in
+      let c = bijectors64.(i) in
       cover_each i;
       let u = vec u in
       let _, ld = B.forward c.b u in
@@ -288,8 +292,10 @@ let forward =
           equal (array int) [| 2; 3 |] (Nx.shape x);
           equal (array int) [| 2 |] (Nx.shape ld);
           let x1, ld1 = B.forward B.simplex (Nx.slice [ Nx.I 1 ] u) in
-          equal (array float_exact) (floats x1) (floats (Nx.slice [ Nx.I 1 ] x));
-          equal float_exact (Nx.item [] ld1) (Nx.item [ 1 ] ld));
+          (* a batch may sum a row in another order: a few roundings *)
+          let near = float (8. *. epsilon_float) in
+          equal (array near) (floats x1) (floats (Nx.slice [ Nx.I 1 ] x));
+          equal near (Nx.item [] ld1) (Nx.item [ 1 ] ld));
       test "a log-determinant has one element per unit" (fun () ->
           let _, ld =
             B.forward B.cholesky_corr (Nx.zeros Nx.float64 [| 5; 3 |])
@@ -400,11 +406,11 @@ let constructors =
           let x, ld = B.forward B.cholesky_corr (Nx.zeros Nx.float64 [| 3 |]) in
           equal (array float_exact) (floats (Nx.eye Nx.float64 3)) (floats x);
           equal float_exact 0. (Nx.item [] ld));
-      (* The one partial correlation of a 2 × 2 factor is its correlation,
-         and its diagonal [√(1 - z²)] is [1 / cosh u]. The map reads the
-         diagonal from [z = tanh u] rounded, whose error of [ε / 2] moves
-         [1 - z²] by [ε] relatively over [1 - z² = sech² u]: the diagonal,
-         [sech u], is within [ε cosh u] absolutely. *)
+      (* The one partial correlation of a 2 × 2 factor is its correlation, and
+         its diagonal [√(1 - z²)] is [1 / cosh u]. The map reads the diagonal
+         from [z = tanh u] rounded, whose error of [ε / 2] moves [1 - z²] by [ε]
+         relatively over [1 - z² = sech² u]: the diagonal, [sech u], is within
+         [ε cosh u] absolutely. *)
       prop "cholesky_corr of one coordinate is [[1, 0], [tanh u, sech u]]"
         ~examples:[ 3.839634256037935 ]
         Gen.(float_range (-5.) 5.)
@@ -444,7 +450,7 @@ let constructors =
    which [2^-31] holds. *)
 let inverse_of_forward =
   prop "undoes forward" ~count:(13 * 100) moderate (fun (i, u) ->
-      let c = nth Nx.float64 i in
+      let c = bijectors64.(i) in
       cover_each i;
       Law.round_trip
         (array (float 0x1p-31))
@@ -461,9 +467,9 @@ let inverse_of_forward =
    near unit partial correlations a row's [1 - Σ l²] loses the digits this bound
    would need. *)
 let forward_of_inverse =
-  let interval = 4 in
+  let interval = named "interval" in
   let drawn =
-    List.filter (fun i -> (nth Nx.float64 i).dim <> 6) (List.init count Fun.id)
+    List.filter (fun i -> bijectors64.(i).dim <> 6) (List.init count Fun.id)
   in
   let near_low = Float.succ low and near_high = Float.pred high in
   prop "forward of the inverse is the value" ~count:(13 * 100)
@@ -474,12 +480,12 @@ let forward_of_inverse =
       ]
     Gen.(
       let* i = of_list ~pp:Format.pp_print_int drawn in
-      let c = nth Nx.float64 i in
+      let c = bijectors64.(i) in
       let+ u = array ~size:(constant c.dim) (float_range (-30.) 30.) in
       (i, floats (fst (B.forward c.b (vec u)))))
     (fun (i, x) ->
-      let c = nth Nx.float64 i in
-      List.iter (fun j -> cover (nth Nx.float64 j).name (i = j)) drawn;
+      let c = bijectors64.(i) in
+      List.iter (fun j -> cover bijectors64.(j).name (i = j)) drawn;
       Law.round_trip
         (array
            (float_rel ~rel:(8. *. epsilon_float) ~abs:(80. *. epsilon_float)))
@@ -514,10 +520,12 @@ let shapes =
             B.cholesky_corr,
             [| 2; 4; 4 |],
             [| 2; 6 |] );
+          (* cholesky_corr's [6] of a 4 × 4 factor, then simplex's [5]; the
+             other order would read [4; 3] as a matrix and refuse it *)
           ( "compose reads its outer bijector's first",
-            B.compose B.simplex B.exp,
-            [| 4 |],
-            [| 3 |] );
+            B.compose B.cholesky_corr B.simplex,
+            [| 4; 4 |],
+            [| 5 |] );
         ]
         (fun (_, b, s, expected) -> equal (array int) expected (B.shape b s));
       cases "refuses a shape without a unit"
