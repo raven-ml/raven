@@ -3,10 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx.metal's pipelines, skipping without a Metal GPU: a call's first launch on
-   a device waits for the pipelines of its own launches, and of a kernel it
-   weighs against them, and for no other's. Each test opens GPU 0 afresh, since
-   a device keeps a pipeline once made, and the process opens it for nothing
+(* nx.metal's pipelines and kept plans, skipping without a Metal GPU: a call's
+   first launch on a device waits for the pipelines of its own launches, and of
+   a kernel it weighs against them, and for no other's; a device keeps the plans
+   of maps of distinct shapes. Each test opens GPU 0 afresh, since a device
+   keeps a pipeline and a plan once made, and the process opens it for nothing
    else. *)
 
 open Windtrap
@@ -187,6 +188,34 @@ let test_contract () =
   let launched = contracted d 64 64 64 in
   equal (list string) launched (made_tiles d)
 
+(* nx_metal.mli: a device keeps maps' plans up to 2 MiB, in groups by a hash of
+   every fact of their operands. Copies of one program over 1000 uint8 shapes of
+   1 to 25 rows of 1 to 40 elements, destination and load of one shape: about
+   0.5 MiB of plans, which 256 groups hold whole as long as their shapes spread
+   over the groups, so each copy keeps its plan. *)
+let kept_rows = 25
+let kept_cols = 40
+
+let test_kept_shapes () =
+  fresh @@ fun d ->
+  let copy = P.v ~ins:[| D.Any D.Uint8 |] [| P.In 0 |] ~outs:[| 0 |] in
+  let bytes = kept_rows * kept_cols in
+  let x = Rig.Buffer.create d bytes and y = Rig.Buffer.create d bytes in
+  let at b r c =
+    let l = Nx_array.Layout.contiguous (Iarray.of_list [ r; c ]) in
+    A.v D.Uint8 l (Rig.Buffer.view b ~first:0 ~length:(r * c))
+  in
+  let before = Nx_metal.kept_plans d in
+  for r = 1 to kept_rows do
+    for c = 1 to kept_cols do
+      equal answer A.Done
+        (Nx_metal.map copy
+           ~dsts:[| A.Any (at y r c) |]
+           [| Nx_kernel.Plain (at x r c) |])
+    done
+  done;
+  equal int (kept_rows * kept_cols) (Nx_metal.kept_plans d - before)
+
 let () =
   exit
     (run "nx_metal.pipelines"
@@ -202,4 +231,6 @@ let () =
            test_direct_strided;
          test "a map waits for its own kernel alone" test_map;
          test "a sum along rows waits for its own kernel alone" test_row_sum;
+         test "a fresh device keeps a copy's plan for each of 1000 shapes"
+           test_kept_shapes;
        ])

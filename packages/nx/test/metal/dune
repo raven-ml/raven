@@ -23,8 +23,8 @@
   rig
   windtrap))
 
-; nx.metal's pipelines, in a process of their own that opens GPU 0 afresh
-; for each test.
+; nx.metal's pipelines and kept plans, in a process of their own that opens
+; GPU 0 afresh for each test.
 
 (executable
  (name test_pipelines)

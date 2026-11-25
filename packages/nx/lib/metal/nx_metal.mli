@@ -61,31 +61,34 @@
     on [d]: for each GPU function, those of at most 64 calls or parts of calls
     that launch it first; of the Fourier transforms' specialised steps
     ({!section-fft}), the calls or parts holding at most 256 steps among them;
-    and the plans of maps, at most 2 MiB of them, none of over 8 KiB. A map of
-    the same program value as an earlier map, over operands of the same dtypes,
-    layouts, paddings, fills and placement in memory, and of the same operands
-    sharing buffers, takes the earlier map's plan, and allocates a few words for
-    each operand in place of its planning's thousands. A call's values, its
-    launches' grids and words, go into blocks that rig keeps for the life of the
-    process ({!Rig.submit}): [32 + 16 w] bytes for each launch of a GPU function
-    of [w] words, in as many sets as submits were ever under way at once, each
-    as large as the largest submission it served. The exceptions are the calls
-    that split into more launches than their section keeps ({b Time}), whose
-    launches, and so whose words, grow with their extents: each takes a
-    submission of its own, which no later call reuses. A call's plan holds host
-    memory for each launch: about 200 bytes, 8 more for each of its words and 40
-    for each buffer it addresses, so about 47 MB for 10{^ 5} launches of 16
-    words and 4 buffers. On a Mac that memory is the GPU's too, so where a
-    section states the largest array a call takes, it states one that leaves
-    that room. Beside its arrays, a kernel takes {e workspace}, memory on [d]
-    for its temporaries, {e tickets}, zero 32-bit words its groups count on, and
-    {e constants}, tables of bytes that no launch writes, of the sizes its
-    section states. It keeps at most 64 MiB of workspace, 4 MiB of tickets and
-    16 constants of at most 64 MiB together for later calls on [d], and a call
-    that needs more takes buffers of its own, which return to [d] once its work
-    is done. Kept memory that a later call replaces returns once collected
-    ({!Rig.section-reclaim}), since another domain's call may still use it. A
-    kernel raises {!Rig.Out_of_memory} where [d] lacks that memory.
+    and the plans of maps, at most 2 MiB of them, none of over 8 KiB, in 256
+    groups of 8 KiB by a hash of every fact of their operands, so that maps
+    whose operands differ in any fact, their shape alone included, spread over
+    the groups alike. A map of the same program value as an earlier map, over
+    operands of the same dtypes, layouts, paddings, fills and placement in
+    memory, and of the same operands sharing buffers, takes the earlier map's
+    plan, and allocates a few words for each operand in place of its planning's
+    thousands. A call's values, its launches' grids and words, go into blocks
+    that rig keeps for the life of the process ({!Rig.submit}): [32 + 16 w]
+    bytes for each launch of a GPU function of [w] words, in as many sets as
+    submits were ever under way at once, each as large as the largest submission
+    it served. The exceptions are the calls that split into more launches than
+    their section keeps ({b Time}), whose launches, and so whose words, grow
+    with their extents: each takes a submission of its own, which no later call
+    reuses. A call's plan holds host memory for each launch: about 200 bytes, 8
+    more for each of its words and 40 for each buffer it addresses, so about 47
+    MB for 10{^ 5} launches of 16 words and 4 buffers. On a Mac that memory is
+    the GPU's too, so where a section states the largest array a call takes, it
+    states one that leaves that room. Beside its arrays, a kernel takes
+    {e workspace}, memory on [d] for its temporaries, {e tickets}, zero 32-bit
+    words its groups count on, and {e constants}, tables of bytes that no launch
+    writes, of the sizes its section states. It keeps at most 64 MiB of
+    workspace, 4 MiB of tickets and 16 constants of at most 64 MiB together for
+    later calls on [d], and a call that needs more takes buffers of its own,
+    which return to [d] once its work is done. Kept memory that a later call
+    replaces returns once collected ({!Rig.section-reclaim}), since another
+    domain's call may still use it. A kernel raises {!Rig.Out_of_memory} where
+    [d] lacks that memory.
 
     {b Time.} Metal ends a command buffer that runs too long and the device is
     lost: every later call on [d] raises {!Rig.Lost}, and after repeated losses

@@ -1310,6 +1310,35 @@ let test_unkept () =
   call ();
   equal ~msg:"within it" int (before + 1) (Nx_metal.kept_calls d)
 
+(* operands.mli: keys fall in buckets by their low bits about as uniform draws
+   do. The keys of copies whose destination and load share a shape, of 1 to 8
+   rows of 1 to 40 elements, at byte 0, a uint8 and a float32: 320 uniform draws
+   into 256 buckets fill 182.8 of them, with a standard deviation of 5.1, so
+   each dtype's keys fill at least 162. *)
+let key_shapes = List.init 8 (fun r -> List.init 40 (fun c -> (r + 1, c + 1)))
+let uniform_least = 162
+
+let test_hash_spread () =
+  let _ = backend () in
+  let d = S.device () in
+  let spread (D.Any dt) =
+    let size = D.bits dt / 8 in
+    let x = Rig.Buffer.create d (8 * 40 * size) in
+    let y = Rig.Buffer.create d (8 * 40 * size) in
+    let bucket (r, c) =
+      let l = L.contiguous (Iarray.of_array [| r; c |]) in
+      let at b = A.v dt l (Rig.Buffer.view b ~first:0 ~length:(r * c * size)) in
+      let xs = facts ~dsts:[| A.Any (at y) |] [| Plain (at x) |] in
+      Nx_metal.Operands.hash (Nx_metal.Operands.key xs) land 255
+    in
+    let seen = Array.make 256 false in
+    List.iter (List.iter (fun s -> seen.(bucket s) <- true)) key_shapes;
+    let filled = Array.fold_left (fun n b -> if b then n + 1 else n) 0 seen in
+    at_least ~msg:(D.name dt) int ~than:uniform_least filled
+  in
+  spread (D.Any D.Uint8);
+  spread (D.Any D.Float32)
+
 let test_bounds () =
   raises (Invalid_argument "Nx_metal.bound_fresh: workspace") (fun () ->
       Nx_metal.bound_fresh ~workspace:(-1) ~tickets:0);
@@ -19340,6 +19369,8 @@ let () =
              test "a call past the launches kept keeps no submission"
                test_unkept;
              test "bounds out of range are refused" test_bounds;
+             test "keys of one shape twice fall in buckets as uniform draws do"
+               test_hash_spread;
              test
                "a kept call at another base reads and writes there, by the \
                 direct kernel and by the tape"

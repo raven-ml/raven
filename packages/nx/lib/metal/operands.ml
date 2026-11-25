@@ -143,12 +143,22 @@ let key t =
   done;
   k
 
+(* Each field is folded in by a multiply, which carries its low bits up, and a
+   shift of the product's high bits back down, so that the low bits a bucket
+   takes depend on every field. A sum [h * 31 + k] does not: as 31 is -1 modulo
+   32, a field the key holds twice an odd distance apart, such as a shape a
+   destination and its load share, cancels in the low five bits. *)
+let fnv_prime = 0x100000001b3
+let fold_shift = 29
+
 let hash k =
   let h = ref 0 in
   for i = 0 to Array.length k - 1 do
-    h := ((!h * 31) + k.(i)) land max_int
+    let x = !h lxor k.(i) in
+    let x = x * fnv_prime in
+    h := x lxor (x lsr fold_shift)
   done;
-  !h
+  !h land max_int
 
 (* The facts are made at every call, so these functions take the call's parts as
    arguments and build no closure. *)

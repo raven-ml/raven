@@ -63,7 +63,9 @@ val key : t -> int array
     only if their keys are. *)
 
 val hash : int array -> int
-(** [hash k] is a hash of the key [k], non-negative. *)
+(** [hash k] is a hash of the key [k], non-negative, whose low bits depend on
+    every field of [k]: keys that differ fall in [2{^b}] buckets by their low
+    [b] bits about as uniform draws do. *)
 
 val overlaps : t -> load:int -> dst:int -> bool
 (** [overlaps t ~load ~dst] is [t.overlaps]'s entry of [load] and [dst]. *)
