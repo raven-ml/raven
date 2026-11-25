@@ -2621,7 +2621,8 @@ module Local : sig
          stored first, so both gets answer it.}
       {- If [init d] raises, [get] raises it and stores nothing.}}
 
-      Raises {!Lost} if [d] is lost. *)
+      Raises {!Lost} if [d] is lost, also when the loss comes while [init d]
+      runs and no other get stored a value first. *)
 end
 
 (** {1:claims Claims}
