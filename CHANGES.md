@@ -3570,6 +3570,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.eig` and `Nx.eigvals` on nx.cuda and nx.amd answered NaN when the QR
+  iteration stalled, as on two rotation blocks coupled by 2^-43. A block left
+  whole at the iteration limit now splits, as on nx.cpu.
 - `Nx_kernel.Prog.bits` stores a float as `Nx.Dtype.of_float` does: a
   signalling float64 NaN is quiet, and on RISC-V a float32 NaN keeps its sign
   and payload.

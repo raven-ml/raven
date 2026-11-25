@@ -586,15 +586,18 @@
     equation to 30 steps, the first of them its initial guess, and a
     step's equation over three poles, where it takes one, to 40
     iterations, the bidiagonal QR sweeps to [6 k{^2}] rotations, [k] the
-    smaller extent, and [eig] to [30 max(10, h)] QR
-    iterations an eigenvalue, [h] the order balancing leaves to iterate
-    on. A matrix on which an iteration does not converge within its limit,
-    or that holds a NaN or an infinity where it is read, is NaN in every
-    result. Otherwise, with [γ] as {!Nx_kernel.section-bounds} defines it,
-    [u] the dtype's unit roundoff, [ν(k) = k η] and [θ(k) = k t], [η] the
-    dtype's least positive subnormal (2{^-149} or 2{^-1074}) and [t] its
-    least normal number (2{^-126} or 2{^-1022}), [k] doubled on complex
-    dtypes:
+    smaller extent, and [eig] to [30 max(10, h)] QR iterations an
+    eigenvalue, [h] the order balancing leaves to iterate on. Past that
+    limit [eig] splits the block it iterates on at its last subdiagonal
+    element of magnitude at most [u ‖B‖_F], [u] the dtype's unit roundoff
+    and [B] the block, and iterates again on what remains; a block with
+    no such element has not converged. A matrix on which an iteration
+    does not converge within its limit, or that holds a NaN or an
+    infinity where it is read, is NaN in every result. Otherwise, with
+    [γ] as {!Nx_kernel.section-bounds} defines it, [ν(k) = k η] and
+    [θ(k) = k t], [η] the dtype's least positive subnormal (2{^-149} or
+    2{^-1074}) and [t] its least normal number (2{^-126} or 2{^-1022}),
+    [k] doubled on complex dtypes:
     {ul
     {- [eigh]: with [g = γ(16n)] and [h = ν(16n)],
        [‖a - v diag w vᴴ‖_F <= g ‖a‖_F + h] and [‖vᴴv - I‖_F <= g]; each

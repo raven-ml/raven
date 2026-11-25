@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The factorisations' laws the suites of nx.cpu and nx.cuda share: each
-   result against its defining relation within the bound its library
-   states, by residuals computed in double-double, and the same bits under
-   every layout of the same values. *)
+(* The factorisations' laws the suites of nx.cpu, nx.cuda and nx.amd
+   share: each result against its defining relation within the bound its
+   library states, by residuals computed in double-double, and the same
+   bits under every layout of the same values. *)
 
 open Windtrap
 open Nx_array_gen
@@ -1645,6 +1645,80 @@ let law_eig_spectrum (b : Support.backend) c =
       spectrum ~msg:"with vectors" (values y'.(0));
       check_eig c.dt ~e:0 ~count:1 ~n (values x) (values y'.(0)) (values y'.(1))
   | _ -> ()
+
+(* A normal matrix whose eigenvalues ±i come twice: its QR iteration leaves two
+   rotation blocks coupled by 2^-43, against diagonals of rounding errors, that
+   xLAHQR's local test does not split within its iteration limit. *)
+let twice_i =
+  {
+    dt = D.Any D.Float32;
+    batch = [||];
+    n = 129;
+    r = 0;
+    triangle = Lower;
+    adjoint = false;
+    unit_diagonal = false;
+    seed = 36049;
+    how = Contiguous;
+    scale = Plain;
+  }
+
+(* A float64 normal matrix of order 65 whose QR iteration reaches its limit on
+   nx.cpu on x86-64; on arm64 its rounding lets the local test split it. *)
+let stalls_x86 = { twice_i with dt = D.Any D.Float64; n = 65; seed = 591249 }
+
+(* The block on which twice_i's iteration stalls, row by row: two rotation
+   blocks coupled by a(2, 1) = 2^-43, which xLAHQR's local test leaves whole
+   over 300 sweeps. Its eigenvalues lie within 2^-20 of ±i, each twice, so
+   eig's, alone and with vectors, lie within γ(64) ‖a‖_F + ε(64) + 2^-20 of ±i,
+   and its vectors meet check_eig's relations. *)
+let test_eig_stalled (b : Support.backend) () =
+  let n = 4 and dt = D.Any D.Float32 in
+  let a =
+    Array.map
+      (fun re -> { Complex.re; im = 0. })
+      [|
+        0x1.fffffcp-24;
+        -0x1.00000cp+0;
+        0x1.2296fep-26;
+        -0x1.c9d298p-35;
+        0x1.00000ap+0;
+        -0x1.7ffff4p-22;
+        0x1.8077a4p-26;
+        0x1.5e6b62p-23;
+        0.;
+        0x1p-43;
+        0x1.00006p-23;
+        0x1.000006p+0;
+        0.;
+        0.;
+        -0x1.00001p+0;
+        -0x1.800038p-22;
+      |]
+  in
+  let x = of_values dt [| n; n |] a in
+  let norm = sqrt (Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. a) in
+  let bound = (eig_bound dt n *. norm) +. eig_term ~e:0 dt n in
+  let spectrum ~msg w =
+    let worst = { ratio = 0.; where = "" } in
+    Array.iteri
+      (fun j (z : Complex.t) ->
+        let near =
+          Float.min
+            (Complex.norm (Complex.sub z Complex.i))
+            (Complex.norm (Complex.add z Complex.i))
+        in
+        worse worst ~bound:(bound +. 0x1p-20) ~residual:near (fun () ->
+            Printf.sprintf "%s: eigenvalue %d, %h%+hi" msg j z.re z.im))
+      w;
+    check_worst worst
+  in
+  match (run b (Eig false) [| x |], run b (Eig true) [| x |]) with
+  | Some y, Some y' ->
+      spectrum ~msg:"alone" (values y.(0));
+      spectrum ~msg:"with vectors" (values y'.(0));
+      check_eig dt ~e:0 ~count:1 ~n (values x) (values y'.(0)) (values y'.(1))
+  | _ -> failf "eig declined a float32 matrix of order 4"
 
 (* Balancing at work: a = G A G⁻¹ for A tridiagonal [1 2 1] and G =
    diag (2^30, 1, 2^-30), whose eigenvalues are A's, 2 and 2 ± √2. xGEBAL

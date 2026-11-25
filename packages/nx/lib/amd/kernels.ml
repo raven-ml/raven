@@ -1143,8 +1143,8 @@ let vgprs = function
   | Sp_bd_out -> 56
   | Sp_eig_schur_f32 -> 117
   | Sp_eig_schur_f64 -> 135
-  | Sp_eig_schur_c64 -> 124
-  | Sp_eig_schur_c128 -> 144
+  | Sp_eig_schur_c64 -> 126
+  | Sp_eig_schur_c128 -> 147
   | Sp_eig_norms -> 26
   | Sp_eig_vectors_f32 -> 79
   | Sp_eig_vectors_f64 -> 112

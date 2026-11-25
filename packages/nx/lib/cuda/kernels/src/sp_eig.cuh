@@ -223,6 +223,29 @@ __device__ __noinline__ bool negligible(const T *h, int n, int k, int lo, int hi
   return ba * (ab / s) <= fmax(smlnum, tt);
 }
 
+/* Where the local test has not split H's block [l, i] within its
+   iterations: the last k in (l, i] with |H(k, k − 1)| at most u ‖H(l:i,
+   l:i)‖_F, or l if there is none. Setting that element to 0 perturbs H
+   by u ‖H‖_F at most, the test that keeps QR backward stable (Ahues and
+   Tisseur, LAWN 122, (1.1)). The local test can stall: on two copies of
+   a rotation's block, whose diagonals are rounding errors, coupled by an
+   element of order u² that each sweep keeps at that order, it compares
+   the coupling with the diagonals alone. */
+template <class T>
+__device__ __noinline__ int split_block(const T *h, int n, int l, int i,
+                  typename real_of<T>::R *sh) {
+  typedef typename real_of<T>::R R;
+  R norm = 0;
+  #pragma unroll 1
+  for (int j = l; j <= i; j++)
+    norm = lapy3(norm, bnorm(&M(h, l, j), min(j + 1, i) - l + 1, 1, sh),
+                 (R)0);
+  #pragma unroll 1
+  for (int k = i; k > l; k--)
+    if (mag1(M(h, k, k - 1)) <= lim<R>::eps() * norm) return k;
+  return l;
+}
+
 /* sqrt of a complex number, principal branch. */
 template <class R> D cx<R> csqrt(cx<R> a) {
   R m = hypot(a.re, a.im);
@@ -234,9 +257,10 @@ template <class R> D cx<R> csqrt(cx<R> a) {
 
 /* Complex: single-shift QR sweeps (xLAHQR). H made upper triangular in
    columns [i1, i2] under [wantt], Z's rows [0, n) rotated where [z].
-   Returns false if an eigenvalue takes more than q max(10, hi − lo + 1)
-   QR steps, q 30 but in tests (NX_SP_QR): xLAHQR's limit, without its
-   last step, whose result xLAHQR never tests. */
+   A block that q max(10, hi − lo + 1) QR steps leave whole, q 30 but
+   in tests (NX_SP_QR), is split where split_block finds; returns false
+   where it finds nowhere. The limit is xLAHQR's, without its last step,
+   whose result xLAHQR does not test. */
 template <class R>
 __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, cx<R> *h, R *wr, R *wi,
              cx<R> *z, R *sh, int q) {
@@ -291,7 +315,7 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, cx<R> *h, 
       __syncthreads();
       if (l > lo && t == 0) M(h, l, l - 1) = T{0, 0};
       if (l >= i) break;
-      if (its == itmax) return false;
+      if (its == itmax) break;
       kdefl++;
       if (!wantt) i1 = l, i2 = i;
       T s;
@@ -424,6 +448,15 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, cx<R> *h, 
         for (int p = t; z && p < n; p += nt) M(z, p, i) = M(z, p, i) * x;
       }
     }
+    if (l < i) {
+      /* Split by the normwise test, then iterate again on what remains. */
+      int k = split_block(h, n, l, i, sh);
+      if (k == l) return false;
+      __syncthreads();
+      if (t == 0) M(h, k, k - 1) = T{0, 0};
+      kdefl = 0;
+      continue;
+    }
     __syncthreads();
     if (t == 0) {
       wr[i] = M(h, i, i).re;
@@ -529,8 +562,8 @@ __device__ __noinline__ void lanv2(R *a, R *b, R *c, R *d, R *rt1r, R *rt1i, R *
 }
 
 /* Real: Francis double-shift QR sweeps (xLAHQR), each complex pair a 2 ×
-   2 block in xLANV2's form under [wantt]. Returns false as the complex
-   one does. */
+   2 block in xLANV2's form under [wantt]. Splits a block and returns
+   false as the complex one does. */
 template <class R>
 __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, R *h, R *wr, R *wi, R *z,
              R *sh, int q) {
@@ -561,7 +594,7 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, R *h, R *w
       __syncthreads();
       if (l > lo && t == 0) M(h, l, l - 1) = 0;
       if (l >= i - 1) break;
-      if (its == itmax) return false;
+      if (its == itmax) break;
       kdefl++;
       if (!wantt) i1 = l, i2 = i;
       R h11, h12, h21, h22, s;
@@ -686,6 +719,15 @@ __device__ __noinline__ bool lahqr(bool wantt, int n, int lo, int hi, R *h, R *w
           if (nr == 3) M(z, j, k2 + 2) -= sum * t3;
         }
       }
+    }
+    if (l < i - 1) {
+      /* Split by the normwise test, then iterate again on what remains. */
+      int k = split_block(h, n, l, i, sh);
+      if (k == l) return false;
+      __syncthreads();
+      if (t == 0) M(h, k, k - 1) = 0;
+      kdefl = 0;
+      continue;
     }
     __syncthreads();
     if (l == i) {

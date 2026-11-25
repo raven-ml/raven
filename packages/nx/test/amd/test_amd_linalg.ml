@@ -381,8 +381,11 @@ let laws () =
           prop "svd's values within γ(16 max (m, n) + 100) ‖a‖₂" case
             (on law_svd_spectrum);
           test "svd's values at large orders" (on test_svd_large);
-          prop "eig's eigenvalues of a normal matrix within γ(16n) ‖a‖_F" case
+          prop ~examples:[ twice_i; stalls_x86 ]
+            "eig's eigenvalues of a normal matrix within γ(16n) ‖a‖_F" case
             (on law_eig_spectrum);
+          test "eig's eigenvalues of two rotation blocks coupled by 2^-43"
+            (on test_eig_stalled);
           test "eig's eigenvalues of a graded matrix, balanced"
             (on test_eig_balanced);
           test
