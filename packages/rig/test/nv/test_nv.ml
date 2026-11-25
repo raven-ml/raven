@@ -2527,13 +2527,16 @@ let rm_keeping answer sw =
     in
     { p with rm; alloc; free }
   in
-  (* An object the device's stop freed already is refused again. *)
+  (* An object the device's stop freed already is refused again. An open that
+     failed before it made the path leaves nothing to give back. *)
   let release () =
-    let p = Option.get !path in
-    List.iter
-      (fun h -> ignore (Option.get p.rm.free ~parent:p.device h))
-      !objects;
-    List.iter p.free !given
+    Option.iter
+      (fun (p : _ N.path) ->
+        List.iter
+          (fun h -> ignore (Option.get p.rm.free ~parent:p.device h))
+          !objects;
+        List.iter p.free !given)
+      !path
   in
   {
     opener = Rig_nv_nvidia.gpu_with 0 ~wrap;
@@ -2543,20 +2546,21 @@ let rm_keeping answer sw =
     release;
   }
 
-(* [with_rm_keeping answer f] is [f sw g] on a device [g] of [rm_keeping
-   answer sw], its switches all off at the start, and turned off before the
-   device stops. *)
+(* [with_rm_keeping answer f] is [f k sw g] on a device [g] of [k], which is
+   [rm_keeping answer sw], its switches all off at the start, and turned off
+   before the device stops. The test then gives back what [k] kept, also after
+   an open or a stop that failed. *)
 let with_rm_keeping answer f =
   on_kernel ();
   let sw = { recording = false; lacking = false; failing = false } in
   let k = rm_keeping answer sw in
+  Fun.protect ~finally:k.release @@ fun () ->
   let g = require_ok (Rig_gpu_support.opened k.opener) in
   let stop () =
     sw.recording <- false;
     sw.lacking <- false;
     sw.failing <- false;
-    N.stop g ~fault:None;
-    k.release ()
+    N.stop g ~fault:None
   in
   Fun.protect ~finally:stop (fun () -> f k sw g)
 
