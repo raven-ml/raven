@@ -113,7 +113,13 @@ let scaled_gen =
 (* A statistic of draws times [2^j] is [2^j] times the draws' statistic, exactly
    for ordinary draws, so 1e-12 of it is far below what an intermediate that
    overflows or underflows would lose. *)
-let scaled = float_rel ~rel:1e-12 ~abs:0.
+let scaled =
+  let close = float_rel ~rel:1e-12 ~abs:0. in
+  (* Constant draws have no error nor effective size: NaN on both sides. *)
+  Testable.make
+    ~pp:(fun ppf x -> Format.fprintf ppf "%h" x)
+    ~equal:(fun a b ->
+      (Float.is_nan a && Float.is_nan b) || Testable.equal close a b)
 
 let cover_scaled j =
   cover "a scale whose square underflows" (j < -540);
@@ -203,7 +209,9 @@ let v =
             (columns (S.v t (Draws.v t (Nx.cast Nx.float64 x))))
             (columns (S.v t (Draws.v t x))));
       prop "keeps the statistics of draws scaled toward the float range's ends"
-        scaled_gen (fun (xs, j) ->
+        ~examples:[ (Array.make 8 0., 0) ]
+        scaled_gen
+        (fun (xs, j) ->
           cover_scaled j;
           let unit = S.v t (chains 2 4 xs) in
           let s =
@@ -419,6 +427,7 @@ let of_weighted =
           spread 1e200 [| -1e200; 1e200 |];
           spread 1e308 [| -1e308; 1e308 |]);
       prop "keeps the statistics of draws scaled toward the float range's ends"
+        ~examples:[ ((Array.make 8 0., 0), Array.make 8 0.) ]
         Gen.(pair scaled_gen (array ~size:(constant 8) (float_range (-4.) 4.)))
         (fun ((xs, j), lw) ->
           cover_scaled j;
