@@ -739,9 +739,16 @@ val set_address_space : int -> int
     to [n] bytes: [0], the errno of a refusal, or [-1] off Linux, where the
     limit does not bound allocations. *)
 
+val naming : string -> (unit -> 'a) -> 'a
+(** [naming what f] is [f ()]. When an exception leaves [f], a failure or the
+    test's timeout included, it writes [what] on a line of standard error, which
+    a failing test's report shows, then raises the exception again with its
+    backtrace. *)
+
 val await : string -> (unit -> bool) -> unit
 (** [await what f] returns once [f ()] holds, yielding to other threads between
-    checks. It raises [Failure] naming [what] after 10 s. *)
+    checks. A wait that the test's timeout ends writes [waiting for what] as
+    {!naming} does. *)
 
 val allocated_bytes : (unit -> unit) -> int
 (** [allocated_bytes f] is the bytes [f ()] adds to the OCaml heap, minor and

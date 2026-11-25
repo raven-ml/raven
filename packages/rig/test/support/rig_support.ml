@@ -998,8 +998,6 @@ external resident : unit -> int = "rig_test_resident"
 
 (* Waiting for a signal *)
 
-let watchdog_s = 10.
-
 let sees_waits = sees_waits ()
 
 type thread = int
@@ -1122,11 +1120,17 @@ let covered seen =
   Windtrap.greater ~msg:"landings between locks" Windtrap.int ~than:0
     seen.between
 
+let naming what f =
+  match f () with
+  | v -> v
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      prerr_endline what;
+      Printexc.raise_with_backtrace e bt
+
 let await what f =
-  let until = Unix.gettimeofday () +. watchdog_s in
+  naming ("waiting for " ^ what) @@ fun () ->
   while not (f ()) do
-    if Unix.gettimeofday () > until then
-      failwith (Printf.sprintf "await: no %s after %.0f s" what watchdog_s);
     Thread.yield ()
   done
 
