@@ -23,18 +23,17 @@ let sat_add a b =
 (* [at_shape e] is [e] at any shape: shapes are erased in nodes. *)
 let at_shape e = Expr.typed (Expr.typing e) (Expr.node e)
 
-(* [memoize same shared f] is [f] tied to itself, rewriting each step that
+(* [memoize same f shared] is [f] tied to itself, rewriting each step that
    [shared] holds of once per context, two contexts being one when [same] says
    so. A step that a plan reaches from several places, as [append q q] reaches
    [q], is otherwise rewritten once per path to it, and the paths double with
    each such level. A step that one step reads is rewritten once per rewrite of
    its reader, so only shared steps are remembered ({!Query.shared}), and a plan
-   without one, [None], allocates no table. *)
-let memoize same shared f =
-  match shared with
-  | None ->
-      let rec go context q = f go context q in
-      go
+   without one, [None], recurses plainly. *)
+let memoize same f =
+  let rec plain context q = f plain context q in
+  function
+  | None -> plain
   | Some shared ->
       let rewritten = Hashtbl.create 8 in
       let rec go context q =
@@ -175,15 +174,15 @@ let fold_outputs outputs =
       (n, Expr.Packed (Expr.fold_constants evaluator e)))
     outputs
 
-(* [fold fold q] is [q] with the constants of its expressions folded, a filter
-   of [true] gone and one with a conjunct of [false] or null an empty slice,
-   [fold] folding its inputs: a row passes a filter only if every conjunct is
-   [true]. *)
-let fold fold q =
+(* [fold fold () q] is [q] with the constants of its expressions folded, a
+   filter of [true] gone and one with a conjunct of [false] or null an empty
+   slice, [fold] folding its inputs: a row passes a filter only if every
+   conjunct is [true]. *)
+let fold fold () q =
   match Query.node q with
   | Filter { predicate; input } ->
       let predicate = Expr.fold_constants evaluator predicate
-      and input = fold input in
+      and input = fold () input in
       let never c =
         match truth c with Some (Some false | None) -> true | _ -> false
       in
@@ -200,7 +199,7 @@ let fold fold q =
         | Unnest r -> Unnest { r with outputs = fold_outputs r.outputs }
         | n -> n
       in
-      Query.make (Query.map_inputs fold folded)
+      Query.make (Query.map_inputs fold () folded)
 
 (* Pushing conjuncts and slices *)
 
@@ -413,7 +412,7 @@ let push push pending q =
                  left = push (passing `Left) left;
                  right = push (passing `Right) right;
                }))
-  | n -> above (List.rev pending) (Query.make (Query.map_inputs (push []) n))
+  | n -> above (List.rev pending) (Query.make (Query.map_inputs push [] n))
 
 (* Sources *)
 
@@ -464,12 +463,12 @@ let unkept q =
       input
   | _ -> q
 
-(* [narrow prune ~ordered need q] is [q] with each step narrowed to the columns
-   [need] of its result and those its steps read, and each source given its
-   request, [prune] narrowing its inputs. Unless [ordered], the order of [q]'s
-   columns is not observed, so a [derive] need not read a column that it
+(* [narrow prune (ordered, need) q] is [q] with each step narrowed to the
+   columns [need] of its result and those its steps read, and each source given
+   its request, [prune] narrowing its inputs. Unless [ordered], the order of
+   [q]'s columns is not observed, so a [derive] need not read a column that it
    replaces to keep its place. *)
-let rec narrow prune ~ordered need q =
+let rec narrow prune ((ordered, need) as context) q =
   match chain q with
   | Some (fs, leaf) -> place need fs leaf
   | None -> (
@@ -477,18 +476,18 @@ let rec narrow prune ~ordered need q =
       | Of_table _ | Of_source _ -> q
       | Filter { predicate; input } ->
           let input =
-            prune ~ordered (union need (Expr.reads predicate)) input
+            prune (ordered, union need (Expr.reads predicate)) input
           in
           Query.make (Filter { predicate; input })
       | Sort { keys; input } ->
           let keys_read = List.map (fun (k : Order.t) -> k.name) keys in
           Query.make
-            (Sort { keys; input = prune ~ordered (union need keys_read) input })
+            (Sort { keys; input = prune (ordered, union need keys_read) input })
       | Slice { offset; length; input } ->
-          limit offset length (prune ~ordered need input)
+          limit offset length (prune context input)
       | Select { outputs; input } ->
           let outputs = List.filter (fun (n, _) -> List.mem n need) outputs in
-          let input = unkept (prune ~ordered:false (reads_of outputs) input) in
+          let input = unkept (prune (false, reads_of outputs) input) in
           if is_identity outputs input then input
           else Query.make (Select { outputs; input })
       | Derive { outputs; input } ->
@@ -500,7 +499,7 @@ let rec narrow prune ~ordered need q =
                 && (ordered || not (List.mem_assoc n outputs)))
               need
           in
-          let input = prune ~ordered (union kept (reads_of outputs)) input in
+          let input = prune (ordered, union kept (reads_of outputs)) input in
           if List.is_empty outputs then input
           else Query.make (Derive { outputs; input })
       | Unnest { outputs; keep_empty; repeated; input } ->
@@ -516,12 +515,12 @@ let rec narrow prune ~ordered need q =
                 && (ordered || not (List.mem_assoc n outputs)))
               need
           in
-          let input = prune ~ordered (union kept (reads_of outputs)) input in
+          let input = prune (ordered, union kept (reads_of outputs)) input in
           Query.make (Unnest { outputs; keep_empty; repeated; input })
       | Aggregate { by; outputs; input } ->
           let outputs = List.filter (fun (n, _) -> List.mem n need) outputs in
           let input =
-            unkept (prune ~ordered:false (union by (reads_of outputs)) input)
+            unkept (prune (false, union by (reads_of outputs)) input)
           in
           Query.make (Aggregate { by; outputs; input })
       | Join ({ on; left; right; _ } as r) ->
@@ -543,15 +542,14 @@ let rec narrow prune ~ordered need q =
             (Join
                {
                  r with
-                 left = prune ~ordered left_need left;
-                 right = prune ~ordered right_need right;
+                 left = prune (ordered, left_need) left;
+                 right = prune (ordered, right_need) right;
                })
       | Append { input; rest } ->
-          let side ~ordered q = keep need (prune ~ordered need q) in
+          let side context q = keep need (prune context q) in
           Query.make
             (Append
-               { input = side ~ordered input; rest = side ~ordered:false rest })
-      )
+               { input = side context input; rest = side (false, need) rest }))
 
 (* [place need fs leaf] is the filters of the conjuncts [fs] over [leaf], a
    source, read with this place's request. The place offers the source the
@@ -625,8 +623,8 @@ and limit offset length input =
 let share shared q =
   let canonical = Hashtbl.create 64 in
   let go =
-    memoize any_context shared (fun go () q ->
-        let q = Query.make (Query.map_inputs (go ()) (Query.node q)) in
+    memoize any_context (fun go () q ->
+        let q = Query.make (Query.map_inputs go () (Query.node q)) in
         let h = Query.step_hash q in
         let steps = Option.value ~default:[] (Hashtbl.find_opt canonical h) in
         match List.find_opt (Query.same_step q) steps with
@@ -635,37 +633,30 @@ let share shared q =
             Hashtbl.replace canonical h (q :: steps);
             q)
   in
-  go () q
+  go shared () q
 
 (* Optimizing *)
 
-(* [once q] is [q] optimized by one run of the passes. *)
-(* The passes over a plan that reaches each step once, which need no memo. *)
-let rec fold_tree q = fold fold_tree q
-let rec push_tree pending q = push push_tree pending q
-let rec narrow_tree ~ordered need q = narrow narrow_tree ~ordered need q
 let same_need (o0, n0) (o1, n1) = o0 = o1 && List.equal String.equal n0 n1
+let fold = memoize any_context fold
+let push = memoize same_pending push
+let narrow = memoize same_need narrow
 
+(* [again first p] is the steps that [p] shares, found only when [first], the
+   round's input, shares one. *)
+let again first p = if Option.is_none first then None else Query.shared p
+
+(* [once q] is [q] optimized by one run of the passes. Fold, push and prune
+   build each step they return once, so over a plan that reaches each step once
+   they give such plans: the steps a pass's input shares are found again only
+   when the round's input shares one. *)
 let once q =
   let need = Schema.names (Query.schema q) in
-  (* Fold, push and prune build each step they return once, so over a plan that
-     reaches each step once they give such plans, and one walk tells for the
-     three. *)
-  match Query.shared q with
-  | None ->
-      share None (narrow_tree ~ordered:true need (push_tree [] (fold_tree q)))
-  | Some _ as shared ->
-      let folded =
-        memoize any_context shared (fun go () q -> fold (go ()) q) () q
-      in
-      let pushed = memoize same_pending (Query.shared folded) push [] folded in
-      let pruned =
-        memoize same_need (Query.shared pushed)
-          (fun go (ordered, need) q ->
-            narrow (fun ~ordered need q -> go (ordered, need) q) ~ordered need q)
-          (true, need) pushed
-      in
-      share (Query.shared pruned) pruned
+  let shared = Query.shared q in
+  let folded = fold shared () q in
+  let pushed = push (again shared folded) [] folded in
+  let pruned = narrow (again shared pushed) (true, need) pushed in
+  share (again shared pruned) pruned
 
 (* [steps q] is the number of distinct steps of [q]. *)
 let steps q =

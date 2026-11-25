@@ -104,8 +104,8 @@ val shared : t -> (t -> bool) option
     more than once, or [None] if [q] reaches each step once, as a plan built as
     a tree does. It walks [q] once. *)
 
-val map_inputs : (t -> t) -> node -> node
-(** [map_inputs f n] is [n] with [f] applied to each of its inputs. *)
+val map_inputs : ('c -> t -> t) -> 'c -> node -> node
+(** [map_inputs f c n] is [n] with [f c] applied to each of its inputs. *)
 
 val make : node -> t
 (** [make n] is the query whose last step is [n], with the schema that [n]'s

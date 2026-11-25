@@ -272,17 +272,17 @@ let step_hash q =
   | Append _ -> Hashtbl.hash (9, ids)
   | Unnest _ -> Hashtbl.hash (10, ids)
 
-let map_inputs f = function
+let map_inputs f c = function
   | (Of_table _ | Of_source _) as n -> n
-  | Select r -> Select { r with input = f r.input }
-  | Derive r -> Derive { r with input = f r.input }
-  | Filter r -> Filter { r with input = f r.input }
-  | Sort r -> Sort { r with input = f r.input }
-  | Slice r -> Slice { r with input = f r.input }
-  | Unnest r -> Unnest { r with input = f r.input }
-  | Aggregate r -> Aggregate { r with input = f r.input }
-  | Join r -> Join { r with left = f r.left; right = f r.right }
-  | Append { input; rest } -> Append { input = f input; rest = f rest }
+  | Select r -> Select { r with input = f c r.input }
+  | Derive r -> Derive { r with input = f c r.input }
+  | Filter r -> Filter { r with input = f c r.input }
+  | Sort r -> Sort { r with input = f c r.input }
+  | Slice r -> Slice { r with input = f c r.input }
+  | Unnest r -> Unnest { r with input = f c r.input }
+  | Aggregate r -> Aggregate { r with input = f c r.input }
+  | Join r -> Join { r with left = f c r.left; right = f c r.right }
+  | Append { input; rest } -> Append { input = f c input; rest = f c rest }
 
 (* [lines width pp] is what [pp] formats at the margin [width], line by line.
    Below 40 columns, as deep in a tree, Format would break a step at every
@@ -648,40 +648,35 @@ let step_equal ~input ~table q0 q1 =
         false)
   && List.equal input (inputs q0) (inputs q1)
 
-(* [equal_tree] and [same_tree] compare plans that reach each step once. *)
-let rec equal_tree q0 q1 =
-  q0 == q1 || step_equal ~input:equal_tree ~table:Table.equal q0 q1
+(* [plans_equal ~table q0 q1] is [step_equal] over the whole plans, each pair of
+   steps that [q0] shares compared once. A step that a plan reaches from several
+   places is otherwise compared once per path to it, and the paths double with
+   each such level. A step that one step reads is reached once per visit of its
+   reader, so only shared steps are remembered, and a plan without one compares
+   plainly. *)
+let plans_equal ~table =
+  let rec plain q0 q1 = q0 == q1 || step_equal ~input:plain ~table q0 q1 in
+  fun q0 q1 ->
+    q0 == q1
+    ||
+    match shared q0 with
+    | None -> plain q0 q1
+    | Some shared ->
+        let compared = Hashtbl.create 16 in
+        let rec equal q0 q1 =
+          q0 == q1
+          ||
+          if not (shared q0) then step_equal ~input:equal ~table q0 q1
+          else
+            match Hashtbl.find_opt compared (q0.id, q1.id) with
+            | Some b -> b
+            | None ->
+                let b = step_equal ~input:equal ~table q0 q1 in
+                Hashtbl.replace compared (q0.id, q1.id) b;
+                b
+        in
+        equal q0 q1
 
-let rec same_tree q0 q1 =
-  q0 == q1 || step_equal ~input:same_tree ~table:( == ) q0 q1
-
-(* [plans_equal ~table ~tree q0 q1] is [step_equal] over the whole plans, each
-   pair of steps that [q0] shares compared once, and [tree q0 q1] where [q0]
-   shares none. A step that a plan reaches from several places is otherwise
-   compared once per path to it, and the paths double with each such level. A
-   step that one step reads is reached once per visit of its reader, so only
-   shared steps are remembered. *)
-let plans_equal ~table ~tree q0 q1 =
-  q0 == q1
-  ||
-  match shared q0 with
-  | None -> tree q0 q1
-  | Some shared ->
-      let compared = Hashtbl.create 16 in
-      let rec equal q0 q1 =
-        q0 == q1
-        ||
-        if not (shared q0) then step_equal ~input:equal ~table q0 q1
-        else
-          match Hashtbl.find_opt compared (q0.id, q1.id) with
-          | Some b -> b
-          | None ->
-              let b = step_equal ~input:equal ~table q0 q1 in
-              Hashtbl.replace compared (q0.id, q1.id) b;
-              b
-      in
-      equal q0 q1
-
-let equal q0 q1 = plans_equal ~table:Table.equal ~tree:equal_tree q0 q1
-let same q0 q1 = plans_equal ~table:( == ) ~tree:same_tree q0 q1
+let equal = plans_equal ~table:Table.equal
+let same = plans_equal ~table:( == )
 let same_step q0 q1 = step_equal ~input:( == ) ~table:( == ) q0 q1
