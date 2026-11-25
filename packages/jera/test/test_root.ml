@@ -371,6 +371,16 @@ let newton_tests =
             (vec [| -1. |])
         in
         equal Oracle.status_t Not_finite (Oracle.status s));
+    test "a failed element's best is its last finite estimate" (fun () ->
+        (* The slope 1e-300 sends the step from 0 to −∞, where f is −∞. *)
+        let s =
+          Root.newton ~tol:tight ~budget:5
+            ~slope:(fun x -> Nx.full_like x 1e-300)
+            (fun x -> Nx.add_s x 1e300)
+            (vec [| 0. |])
+        in
+        equal Oracle.status_t Not_finite (Oracle.status s);
+        equal (Oracle.tensor ()) (vec [| 0. |]) (Solution.best s));
     test "a step at the zero is zero, which is the zero" (fun () ->
         let s =
           Root.newton ~tol:tight ~budget:3 ~slope:Nx.ones_like

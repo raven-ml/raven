@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Root.newton` keeps a lane's last estimate where `f` was finite, where it
+  held the iterate at which `f` was not, `−∞` after a step that overflowed:
+  `Solution.best` now reads a finite estimate, as `jera.mli` states.
 - `Root.bracket` raises `Invalid_argument` naming itself, `lo` and `hi` and
   their shapes when its ends do not broadcast, where `Nx.broadcast_arrays`
   raised its own error.
