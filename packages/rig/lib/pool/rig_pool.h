@@ -99,11 +99,13 @@
 
    On Linux it is min (a, ceil q). a is the number of CPUs in the affinity
    mask of the thread that makes the first call, or of the online CPUs if
-   the mask cannot be read. q is the smallest quota / period of the
-   process's cgroup and its ancestors, from cgroup v2's cpu.max, and
-   without a quota the count is a. cgroup v1's quotas are not read. On
-   macOS it is the physical cores, on Windows the active processors, and
-   elsewhere the online CPUs. */
+   the mask cannot be read. q is the smallest quota / period, from cgroup
+   v2's cpu.max, of the process's cgroup and its ancestors up to the root
+   of the cgroup2 mount that shows that cgroup, and without a quota, or
+   without such a mount, the count is a. A quota above that root, such as
+   one above the root of the process's cgroup namespace, is not read, nor
+   are cgroup v1's quotas. On macOS it is the physical cores, on Windows
+   the active processors, and elsewhere the online CPUs. */
 RIG_POOL_EXTERN int rig_pool_cores(void);
 
 /* rig_pool_performance_cores () is the number of the cores the process may

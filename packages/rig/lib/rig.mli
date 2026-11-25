@@ -2112,8 +2112,11 @@ end
     {ul
     {- On Linux, the CPUs in the affinity mask of the first thread to ask
        whose reported capacity is more than half the largest, or all of them
-       where no capacity is reported, and at most the process's cgroup v2
-       quotas allow.}
+       where no capacity is reported, and at most as many as the cgroup v2
+       quotas of the process's cgroup and its ancestors allow, up to the
+       root of the cgroup2 mount that shows that cgroup. A quota above that
+       root, such as one above the root of the process's cgroup namespace,
+       is not read.}
     {- On macOS, the performance cores where the system reports them.}
     {- Otherwise, the cores the process may occupy.}} *)
 
