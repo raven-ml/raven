@@ -4,13 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (* Reductions and scans through every kernel library the host runs, with
-   operands and results on its device: a float or complex sum or product,
-   reduced, scanned or from a carry, within its bound of the exact one, a
-   NaN or an infinity where its terms make one; an integer sum or product
-   its terms' wrapped in any order; the special values of
-   Logsumexp, Moments and Arg, reduced and scanned; a scan of a prefix the
-   prefix of the scan; an exact scan from a carry the scan it continues;
-   and nothing written where declined. *)
+   operands and results on its device: a Max or a Min the extreme of its terms;
+   a sum of -0 terms +0, an empty product 1 and a complex product of one term
+   that term; an integer sum or product its terms' wrapped in any order; the
+   special values of Logsumexp, Moments and Arg, reduced and scanned; a float or
+   complex sum or product, reduced, scanned or from a carry, within its bound of
+   the exact one, a NaN or an infinity where its terms make one; a scan of a
+   prefix the prefix of the scan; an exact scan from a carry the scan it
+   continues; and nothing written where declined. *)
 
 open Windtrap
 open Nx_array_gen
@@ -83,12 +84,205 @@ let bound_examples =
     example ~specials:20 Sum f32 [| 5000 |] [| 0 |];
   ]
 
+(* Monoids *)
+
+(* Terms of an extreme: a float's, and each part of a complex number's, one of
+   few values half the time, so that terms tie and zeros of both signs meet,
+   else of ten significant bits in (-4, 4), a NaN at the rate [specials]; other
+   dtypes' as {!Reduce_cases.elements} draws them. *)
+let extreme_values (D.Any dt) n ~specials seed =
+  let r = Random.State.make [| seed |] in
+  let few = [| -0.; 0.; 1.; -1.; infinity; neg_infinity |] in
+  let part () =
+    if specials > 0 && Random.State.int r specials = 0 then nan
+    else if Random.State.bool r then few.(Random.State.int r (Array.length few))
+    else full r 10
+  in
+  match D.kind dt with
+  | D.Float -> A.Any (A.of_array dt [| n |] (Array.init n (fun _ -> part ())))
+  | D.Complex ->
+      let z _ = { Complex.re = part (); im = part () } in
+      A.Any (A.of_array dt [| n |] (Array.init n z))
+  | _ -> A.Any (elements dt n ~specials seed)
+
+let extremes =
+  Gen.with_pp pp_case
+    (case_of ~monoids:[ Max; Min ] ~values:extreme_values D.all)
+
+(* Max of two elements of [d] by Prog.Maximum, or Min by Prog.Minimum: the first
+   NaN, a complex number with a NaN part one, else the greater, or the lesser,
+   in Prog's order, -0 below +0, complex numbers by real part then imaginary
+   part, [false] below [true]. *)
+let extreme d m a b =
+  if Elements.nan_of d a then a
+  else if Elements.nan_of d b then b
+  else
+    let c = Elements.compare_elements d a b in
+    if (m = Max && c >= 0) || (m = Min && c <= 0) then a else b
+
+(* Whether [e] of the float dtype [d] is -0 ([Some true]) or +0 ([Some
+   false]). *)
+let zero_sign d e =
+  let x =
+    if Elements.is_narrow d then Elements.decode d e
+    else if String.length e = 4 then Elements.get32 e 0
+    else Elements.get64 e 0
+  in
+  if x = 0. then Some (Float.sign_bit x) else None
+
+(* Whether the complex element [e] has one NaN part and one number. *)
+let one_nan_part e =
+  let h = String.length e / 2 in
+  let nan at =
+    Float.is_nan (if h = 4 then Elements.get32 e at else Elements.get64 e at)
+  in
+  nan 0 <> nan h
+
+(* Elements of [d] of the same bits, or both NaN, a complex number with a NaN
+   part one: a NaN result promises a NaN, never which. *)
+let same_or_nan d =
+  Testable.make ~pp:(Testable.pp Testable.string) ~equal:(fun a b ->
+      String.equal a b || (Elements.nan_of d a && Elements.nan_of d b))
+
+(* A Max or a Min is Prog.Maximum or Prog.Minimum of its terms: their greatest
+   or least in Prog's order, -0 below +0, a NaN where a term is, any or all on
+   booleans; a scan's result that of the terms up to it. *)
+let law_extreme (b : Support.backend) (c : case) =
+  let (D.Any dt as d) = dtype_of c.x in
+  let float = D.is D.Float dt and boolean = D.is D.Boolean dt in
+  let ts = Elements.elements c.x in
+  let zeros = ref false and mixed = ref false in
+  (* The extremes of [sl]'s prefixes, noting where zeros of both signs are among
+     the terms of a zero extreme, and booleans of both values among one output's
+     terms. *)
+  let running sl =
+    let y = Array.copy sl and neg = ref false and pos = ref false in
+    Array.iteri
+      (fun i t ->
+        if i > 0 then y.(i) <- extreme d c.monoid y.(i - 1) t;
+        if float then begin
+          (match zero_sign d t with
+          | Some true -> neg := true
+          | Some false -> pos := true
+          | None -> ());
+          if !neg && !pos && zero_sign d y.(i) <> None then zeros := true
+        end;
+        if boolean && not (String.equal t sl.(0)) then mixed := true)
+      sl;
+    y
+  in
+  let last a = a.(Array.length a - 1) in
+  let want =
+    results c ts ~fill:"" ~reduce:(fun o -> last (running o)) ~scan:running
+  in
+  cover "a scan" c.scan;
+  cover "a zero extreme of zeros of both signs" !zeros;
+  cover "a NaN term" (Array.exists (Elements.nan_of d) ts);
+  cover "a complex term of one NaN part"
+    (D.is D.Complex dt && Array.exists one_nan_part ts);
+  cover "booleans of both values" !mixed;
+  equal (array (same_or_nan d)) want (Elements.elements (run b c))
+
+(* Each cover's case at float32, float16, complex64 and booleans, which every
+   library computes: zeros of both signs, a NaN term, a complex term of a NaN
+   imaginary part beside greater real parts, and booleans of both values,
+   reduced and scanned. *)
+let extreme_examples =
+  let case ?(scan = false) monoid x =
+    { scan; monoid; axes = [| 0 |]; x; views = [] }
+  in
+  let z re im = { Complex.re; im } in
+  let vector dt xs = A.Any (A.of_array dt [| Array.length xs |] xs) in
+  [
+    case Max (vector D.Float16 [| -0.; -1.; 0.; -0. |]);
+    case ~scan:true Min (vector D.Float32 [| 0.; 1.; -0.; 0. |]);
+    case Min (vector D.Float32 [| 1.; nan; neg_infinity |]);
+    case ~scan:true Max
+      (vector D.Complex64 [| z 1. 0.; z 2. nan; z 3. 0.; z (-1.) 0. |]);
+    case Min (vector D.Complex64 [| z 1. 1.; z (-1.) nan; z (-2.) 0. |]);
+    case Max (vector D.Bool [| false; true; false |]);
+    case ~scan:true Min (vector D.Bool [| true; false; true |]);
+  ]
+
+(* The elements of [n] of [v] at [dt]. *)
+let repeated (type v s) (dt : (v, s) D.t) n (v : v) =
+  Elements.elements (A.Any (A.of_array dt [| n |] (Array.make n v)))
+
+(* [f ()], a library's decline of what it states it does not compute passing. *)
+let unless_declined f =
+  match f () with () -> () | exception Declined_as_stated -> ()
+
+(* Sums of [-0; -0], reduced and scanned, at each float precision and
+   complex64. *)
+let neg_zero_sums =
+  let sum scan x = { scan; monoid = Sum; axes = [| 0 |]; x; views = [] } in
+  let z = { Complex.re = -0.; im = -0. } in
+  List.concat_map
+    (fun (name, x) ->
+      [ (name ^ ", reduced", sum false x); (name ^ ", scanned", sum true x) ])
+    [
+      ("float16", vector_of D.Float16 [| -0.; -0. |]);
+      ("bfloat16", vector_of D.Bfloat16 [| -0.; -0. |]);
+      ("float32", vector_of D.Float32 [| -0.; -0. |]);
+      ("float64", vector_of D.Float64 [| -0.; -0. |]);
+      ("complex64", A.Any (A.of_array D.Complex64 [| 2 |] [| z; z |]));
+    ]
+
+(* nx_kernel.mli: Monoid Sum "adds the terms from [+0], as {!Prog.Add} does, so
+   a sum of [-0] terms is [+0]", and a scan stores at each index "the reduction
+   [r] … over the indices along [axis] up to that index's, inclusive": +0, each
+   part of a complex sum. *)
+let test_neg_zero_sum (b : Support.backend) (_, (c : case)) =
+  let (D.Any dt as d) = dtype_of c.x in
+  let n = if c.scan then 2 else 1 in
+  unless_declined (fun () ->
+      equal
+        (array (Elements.same d))
+        (repeated dt n (D.zero dt))
+        (Elements.elements (run b c)))
+
+(* nx_kernel.mli: "an empty product is [1]": a Prod along an axis of no
+   element. *)
+let test_empty_product (b : Support.backend) (D.Any dt as d) =
+  let c =
+    {
+      scan = false;
+      monoid = Prod;
+      axes = [| 1 |];
+      x = A.Any (A.of_array dt [| 3; 0 |] [||]);
+      views = [];
+    }
+  in
+  unless_declined (fun () ->
+      equal
+        (array (Elements.same d))
+        (repeated dt 3 (D.one dt))
+        (Elements.elements (run b c)))
+
+(* nx_kernel.mli: Monoid Prod "multiplies them from the first, never by [1],
+   which would change a complex term's signed zeros or make NaN parts from its
+   infinite ones", and a product scan's first result is its first term: -0 + ∞i
+   times 1 would be NaN + ∞i. *)
+let test_one_term_product (b : Support.backend) (scan, D.Any dt) =
+  match D.kind dt with
+  | D.Complex ->
+      let x =
+        A.Any (A.of_array dt [| 1 |] [| { Complex.re = -0.; im = infinity } |])
+      in
+      let c = { scan; monoid = Prod; axes = [| 0 |]; x; views = [] } in
+      unless_declined (fun () ->
+          equal
+            (array (Elements.same (D.Any dt)))
+            (Elements.elements x)
+            (Elements.elements (run b c)))
+  | _ -> invalid_arg "test_one_term_product: not complex"
+
 (* Bounds *)
 
-(* A float's precision: its unit roundoff, its largest finite number, the
-   least magnitude a partial product may take for the references below to
-   hold, and half its least subnormal number, the most a rounding into it
-   moves a result below its normal numbers. *)
+(* A float's precision: its unit roundoff, its largest finite number, the least
+   magnitude a partial product may take for the references below to hold, and
+   half its least subnormal number, the most a rounding into it moves a result
+   below its normal numbers. *)
 type precision = { u : float; big : float; floor : float; eta : float }
 
 let p32 =
@@ -198,10 +392,22 @@ let fsum_add s x =
    blocks. *)
 let beta n = (((5 * min n 256) + 3) / 4) + ((n + 127) / 128)
 
-(* A sum of magnitudes below half the largest number keeps every partial
-   sum of every association finite. A reduction's sum is within
-   [γ(β(n))], a scan's within [γ(n - 1)]. Where [flush], a sum with a
-   {!tiny} term or partial sum is barred. *)
+(* The most the references below err by, at [n] terms of magnitudes [mag]: [2n
+   (n + 2) u²] times [mag], [u] float64's. A sum's [hi] and [lo] are exact but
+   for [lo]'s roundings: [lo] adds two errors a term, each at most [u mag], so
+   its [k]th of [2n] roundings errs by at most [k u² mag], and all of them by [n
+   (2n + 1) u² mag]. A product's [lo] gains [u] of the product's magnitude a
+   factor and two roundings of at most [u |lo|], so its [k]th factor errs by [2
+   (k + 1) u²] of it, and all of them by [n (n + 3) u²]. A complex product's
+   double-double additions and multiplications err by at most [6 u²] of [|p|
+   |z|] a part, so each factor after the first, exact from [1], by [6√2 u²] of
+   the modulus, below [2n (n + 2) u²] in all. *)
+let slack n mag = Float.of_int (2 * n * (n + 2)) *. 0x1p-106 *. mag
+
+(* A sum of magnitudes below half the largest number keeps every partial sum of
+   every association finite. A reduction's sum is within [γ(β(n))], a scan's
+   within [γ(n - 1)]. Where [flush], a sum with a {!tiny} term or partial sum is
+   barred. *)
 let fsum_verdict ?into ?(flush = false) ~scan p s g =
   if s.nan || (s.pinf && s.ninf) then want_nan g
   else if s.mag > p.big /. 2. then Barred
@@ -210,7 +416,7 @@ let fsum_verdict ?into ?(flush = false) ~scan p s g =
   else if flush && s.tiny then Barred
   else
     let depth = if scan then s.n - 1 else beta s.n in
-    let bound = (gamma p depth +. 0x1p-100) *. s.mag in
+    let bound = (gamma p depth *. s.mag) +. slack s.n s.mag in
     within ?into ~exact:(s.hi, s.lo) ~bound g
 
 (* A float product's factors so far: their count, the exact product of the
@@ -273,10 +479,10 @@ let fprod_verdict ?into ?(flush = false) pr p g =
   else if over pr p.up || under pr p.down || (flush && p.tiny) then Barred
   else
     let a = Float.abs (p.hi +. p.lo) in
-    let bound = (gamma pr (p.n - 1) +. (0x1p-100 *. float_of_int p.n)) *. a in
+    let bound = (gamma pr (p.n - 1) *. a) +. slack p.n a in
     within ?into ~exact:(p.hi, p.lo) ~bound g
 
-(* Double-double sums and products, within a few units of 2^-104. *)
+(* TwoSum, and double-double sums and products by a double. *)
 let two_sum a b =
   let s = a +. b in
   let z = s -. a in
@@ -354,9 +560,7 @@ let zprod_verdict ?(flush = false) pr p (g : Complex.t) =
   else
     let er = fst p.re +. snd p.re and ei = fst p.im +. snd p.im in
     let a = Float.hypot er ei in
-    let bound =
-      (gamma pr (2 * (p.n - 1)) +. (0x1p-100 *. float_of_int p.n)) *. a
-    in
+    let bound = (gamma pr (2 * (p.n - 1)) *. a) +. slack p.n a in
     let part g (h, l) = g -. h -. l in
     let d = Float.hypot (part g.re p.re) (part g.im p.im) in
     if d <= bound then Bounded
@@ -863,22 +1067,32 @@ let covers_carry c =
   cover "a narrow float's carry" (D.bits dt = 16 && D.is D.Float dt);
   cover "a program's terms" c.through
 
-(* An exact scan from the carry of a slice's first [p] terms has the bits
-   of the whole slice's scan from term [p] on, a NaN as any NaN. *)
+(* The case's terms and their carry, nx.cpu's, and the two on [b]'s device. *)
+let carry_on (b : Support.backend) c =
+  let z, carry = Support.cpu.around (fun () -> carry_of Support.cpu c) in
+  (z, on b z, on b carry)
+
+(* An exact scan from the carry of a slice's first [p] terms has the bits of the
+   whole slice's scan from term [p] on, a NaN as any NaN. Those bits are the
+   contract's, so nx.cpu's whole scan and carry serve every library. *)
 let law_carry (b : Support.backend) c =
   let (Carried (dt, _)) = c.kind in
   covers_carry c;
   cover "a NaN term before an extreme's carry" (c.nan_before && c.m > 0);
-  let z, carry = carry_of b c in
-  let got = carry_scan b c (D.Any dt) ~carry dt (along1 z c.p c.m) in
-  let want = along1 (carry_scan b c (D.Any dt) dt z) c.p c.m in
-  equal (array (Elements.same (D.Any dt)))
+  let z, on_b, carry = carry_on b c in
+  let got = carry_scan b c (D.Any dt) ~carry dt (along1 on_b c.p c.m) in
+  let want =
+    Support.cpu.around (fun () ->
+        along1 (carry_scan Support.cpu c (D.Any dt) dt z) c.p c.m)
+  in
+  equal
+    (array (Elements.same (D.Any dt)))
     (Elements.elements (host want))
     (Elements.elements (host got))
 
-(* A float or complex Sum or Prod scan from a carry: each result within the
-   bound of a reduction of the carry's element and the terms up to it, a
-   NaN where a NaN carry or term reaches it. *)
+(* A float or complex Sum or Prod scan from a carry, nx.cpu's: each result
+   within the bound of a reduction of the carry's element and the terms up to
+   it, a NaN where a NaN carry or term reaches it. *)
 let law_carry_bound (b : Support.backend) c =
   let (Carried (dt, _)) = c.kind in
   let complex = D.is D.Complex dt in
@@ -888,7 +1102,7 @@ let law_carry_bound (b : Support.backend) c =
     (c.made && c.p > 1 && c.nan_after && c.m > 0);
   cover "a complex carry" complex;
   cover "a product's carry" (c.cm = Prod);
-  let z, carry = carry_of b c in
+  let _, z, carry = carry_on b c in
   let (D.Any _ as cd) = Nx_kernel.carrier (D.Any dt) in
   let terms = along1 z c.p c.m in
   let got = carry_scan b c (D.Any dt) ~carry dt terms in
@@ -951,23 +1165,27 @@ let reductions_view =
     output = (fun rs i -> snd rs.(i));
   }
 
-(* Reductions and scans that do not fit their kernel, whatever the
-   program computes: by other numbers of loads, destinations or
-   reductions, an output past the program's, a coordinate past the loop's
-   rank, an empty loop's included, a load of another dtype than its
-   operand, a reduction of a dtype it does not take, an Arg's position
-   other than int64, or a carry of a reduction that takes none, of another
-   shape or of another dtype than the carrier. Each with its misfit's
-   class, the refusal nx's rules name it by, the destinations' dtypes and
-   shapes, and the call into them. *)
-let loop_misfits (b : Support.backend) =
-  let (module K : Nx_kernel.S) = b.kernels in
+(* Reductions and scans that do not fit their kernel, whatever the program
+   computes: by other numbers of loads, destinations or reductions, an output
+   past the program's, a coordinate past the loop's rank, an empty loop's
+   included, a load of another dtype than its operand, a reduction of a dtype it
+   does not take, an Arg's position other than int64, or a carry of a reduction
+   that takes none, of another shape or of another dtype than the carrier. Each
+   with its misfit's class, the refusal nx's rules name it by, the destinations'
+   dtypes and shapes, and the call into them by a library, its operands, made on
+   the host, on the library's device. *)
+let loop_misfits =
   let f32 = D.Any D.Float32 and i64 = D.Any D.Int64 in
   let id = identity f32 in
   let coord = P.v ~ins:[||] [| P.Coord 2 |] ~outs:[| 0 |] in
   let x ?(dt = D.Any D.Float32) s =
     let (D.Any dt) = dt in
-    Nx_kernel.Plain (A.create b.device dt s)
+    Nx_kernel.Plain (A.create Rig.host dt s)
+  in
+  let placed (b : Support.backend) g : Nx_kernel.load -> Nx_kernel.load =
+    function
+    | Plain x -> Misfit.load g (Plain (Support.on b x))
+    | Padded _ as l -> Misfit.load g l
   in
   let wrong = A.Wrong_dtype and shape = A.Shape_mismatch in
   (* A reduction along axis 1 of a loop of [shape], or a scan along it of
@@ -978,10 +1196,11 @@ let loop_misfits (b : Support.backend) =
         ~reductions:reductions_view rs ~dsts:specs dsts ~loads:loads_view
         loads
     in
-    let call g ds =
+    let call (b : Support.backend) g ds =
+      let (module K : Nx_kernel.S) = b.kernels in
       K.reduce p ~shape:(Iarray.of_array shape) ~axes:[| 1 |]
         (Iarray.of_array rs) ~dsts:(Iarray.of_array ds)
-        (Iarray.map (Misfit.load g) (Iarray.of_array loads))
+        (Iarray.map (placed b g) (Iarray.of_array loads))
     in
     (Option.map fst named, dsts, call)
   in
@@ -1000,15 +1219,16 @@ let loop_misfits (b : Support.backend) =
               Some A.Shape_mismatch
           | _ -> None)
     in
-    let carry =
-      Option.map
-        (fun (D.Any d, s) -> A.Any (A.create b.device d (Iarray.of_array s)))
-        carry
-    in
-    let call (g : Misfit.guard) ds =
-      let carry = Option.map (fun (A.Any c) -> A.Any (g.g c)) carry in
+    let call (b : Support.backend) (g : Misfit.guard) ds =
+      let (module K : Nx_kernel.S) = b.kernels in
+      let carry =
+        Option.map
+          (fun (D.Any d, s) ->
+            A.Any (g.g (A.create b.device d (Iarray.of_array s))))
+          carry
+      in
       K.scan ?carry p ~axis:1 (r, k) ~dsts:(Iarray.of_array ds)
-        (Iarray.map (Misfit.load g) (Iarray.of_array loads))
+        (Iarray.map (placed b g) (Iarray.of_array loads))
     in
     (named, dsts, call)
   in
@@ -1073,11 +1293,31 @@ let check_misfit (b : Support.backend) (msg, what, want, (named, dsts, call))
   (match named with
   | Some got -> equal ~msg Elements.answer want got
   | None -> failf "%s: the rules find it fits" msg);
-  Misfit.check ~msg ~what b dsts call
+  Misfit.check ~msg ~what b dsts (call b)
 
-(* A Max's NaN carry that is its destination, a slice of one term, a
-   number, makes the result a NaN, though the scan writes the carry's
-   bytes. *)
+(* A destination over its load's bytes, one element on: the door refuses a
+   reduction or a scan into it as Overlapping. *)
+let test_overlapping (b : Support.backend) () =
+  let (module K : Nx_kernel.S) = b.kernels in
+  let x = A.create b.device D.Float32 [| 9 |] in
+  let from start count =
+    Option.get (A.move (M.Slice [| { M.start; count; step = 1 } |]) x)
+  in
+  let load = Option.get (A.move (M.Reshape [| 2; 4 |]) (from 0 8)) in
+  let p = identity f32 in
+  equal ~msg:"reduced" Elements.answer A.Overlapping
+    (K.reduce p ~shape:[| 2; 4 |] ~axes:[| 1 |]
+       [| (Monoid Sum, 0) |]
+       ~dsts:[| A.Any (from 1 2) |]
+       [| Plain load |]);
+  equal ~msg:"scanned" Elements.answer A.Overlapping
+    (K.scan p ~axis:0 (Monoid Sum, 0)
+       ~dsts:[| A.Any (from 1 8) |]
+       [| Plain (from 0 8) |])
+
+(* A Max's NaN carry that is its destination, a slice of one term, a number,
+   makes the result a NaN, though the scan writes the carry's bytes: nx_cuda.mli
+   and nx_amd.mli state that a scan's destination may be its carry. *)
 let test_aliased_carry (b : Support.backend) () =
   let (module K : Nx_kernel.S) = b.kernels in
   let f64 = Int64.float_of_bits in
@@ -1091,8 +1331,10 @@ let test_aliased_carry (b : Support.backend) () =
   with
   | exception Declined_as_stated -> ()
   | () ->
-      let y = A.expect D.Float64 (host (A.Any y)) in
-      equal ~msg:"a NaN" bool true (Float.is_nan (A.to_array y).(0))
+      equal
+        (array (Elements.same (D.Any D.Float64)))
+        [| Elements.f64 nan |]
+        (Elements.elements (host (A.Any y)))
 
 (* Special values *)
 
@@ -1442,19 +1684,23 @@ let law_special (b : Support.backend) c =
         (fun i (_, ks) ->
           if (not (fits ks.(k) g.(i))) && List.length !bad < 8 then
             bad :=
-              Printf.sprintf "result %d: %Lx, expected %s" i (bits_of g.(i))
+              Printf.sprintf "result %d: %Lx, expected %s" i
+                (bits_of g.(i))
                 (show_klass ks.(k))
               :: !bad)
         want;
-      equal ~msg:(Printf.sprintf "destination %d" k) (list string) []
-        (List.rev !bad))
+      equal
+        ~msg:(Printf.sprintf "destination %d" k)
+        (list string) [] (List.rev !bad))
     got
 
 (* Programs reduced and scanned *)
 
-(* A reduction along [axes], or a scan along [axes.(0)], of a program drawn
-   from [seed] over a loop of [shape], its operands of [dts], its first
-   load padded where [padded], of hundreds of nodes where [long]. *)
+(* A reduction along [axes], or a scan along [axes.(0)], of a program drawn from
+   [seed] over a loop of [shape], its operands of [dts], its first load padded
+   where [padded], of hundreds of nodes where [long]. An example of
+   {!law_several} may state its reductions, of an identity program of its one
+   operand. *)
 type programmed = {
   scanned : bool;
   summed : bool;
@@ -1463,6 +1709,7 @@ type programmed = {
   dts : D.any array;
   padded : bool;
   long : bool;
+  stated : (Nx_kernel.reduction * int) array option;
   seed : int;
 }
 
@@ -1476,7 +1723,13 @@ let pp_programmed ppf c =
     (Array.to_list c.dts)
     (if c.padded then ", padded" else "")
     (if c.long then ", long" else "")
-    c.seed
+    c.seed;
+  Option.iter
+    (fun rs ->
+      Format.fprintf ppf ", stated: %s"
+        (String.concat ", "
+           (Array.to_list (Array.map (fun (r, _) -> reduction_name r) rs))))
+    c.stated
 
 (* The floats narrower than float32. *)
 let narrow_floats =
@@ -1489,29 +1742,27 @@ let narrow_floats =
       Any Float4_e2m1fn;
     ]
 
-(* Every dtype a program reads: the narrow floats and integers and [bit]
-   among them. *)
+(* Every dtype a program reads: the narrow floats and integers and [bit] among
+   them. *)
 let narrows =
   base @ complexes @ narrow_floats @ D.[ Any Int4; Any Uint4; Any Bit ]
 
-(* Loops of small extents, rows, and one or two rows past 64 blocks of
-   terms, the long axis reduced or scanned. *)
+(* Rows of 3 to 5000 terms, as many as hold about 8192 elements, past a lane, a
+   block and a scan's chunk. *)
+let rows =
+  let open Gen in
+  let* k = of_list ~pp:Format.pp_print_int [ 3; 64; 1025; 5000 ] in
+  let+ r = int_range 1 (Int.min 40 (Int.max 1 (8192 / k))) in
+  [| r; k |]
+
+(* Loops of small extents and rows, the long axis reduced or scanned.
+   {!programmed_examples} reduce and scan rows past 64 blocks of terms. *)
 let programmed =
   let open Gen in
   let small = array ~size:(int_range 1 4) (int_range 1 5) in
-  let rows =
-    let* r = int_range 1 40 in
-    let+ k = of_list ~pp:Format.pp_print_int [ 3; 64; 1025; 5000 ] in
-    [| r; k |]
-  in
-  let long =
-    let* n = int_range 66_000 140_000 in
-    let+ r = int_range 1 2 in
-    if r = 1 then [| n |] else [| r; n |]
-  in
   let* scanned = bool in
   let* summed = if scanned then bool else constant false in
-  let* shape = frequency [ (3, small); (3, rows); (2, long) ] in
+  let* shape = frequency [ (1, small); (1, rows) ] in
   let r = Array.length shape in
   let last = r - 1 in
   let* axes =
@@ -1525,7 +1776,25 @@ let programmed =
   let* padded = bool in
   let* long = frequency [ (2, constant false); (1, constant true) ] in
   let+ seed = int in
-  { scanned; summed; shape; axes; dts; padded; long; seed }
+  { scanned; summed; shape; axes; dts; padded; long; stated = None; seed }
+
+(* A long program over two rows past 64 blocks of terms, reduced and scanned,
+   which the draws never reach. *)
+let long_programs =
+  List.map
+    (fun scanned ->
+      {
+        scanned;
+        summed = false;
+        shape = [| 2; 70_000 |];
+        axes = [| 1 |];
+        dts = D.[| Any Float32; Any Float16 |];
+        padded = true;
+        long = true;
+        stated = None;
+        seed = 7;
+      })
+    [ false; true ]
 
 (* Float sum scans along 64 terms of float32 rows, reductions of them, and
    scans of their columns, whose seeds cast to float32, which a library
@@ -1541,6 +1810,7 @@ let programmed_examples =
       dts = [| D.Any D.Float32 |];
       padded = false;
       long = false;
+      stated = None;
       seed;
     }
   in
@@ -1550,6 +1820,7 @@ let programmed_examples =
       (fun seed ->
         { (rows ~scanned:true seed) with summed = false; axes = [| 0 |] })
       [ 1; 2 ]
+  @ long_programs
 
 (* A load of [dt] whose loop has [shape]: through a drawn view, or, with
    [padded], padded by up to two elements at each end and one between
@@ -1689,7 +1960,13 @@ let programmed_call (b : Support.backend) c (p, _, loads, rs, ys) =
          ~axes:(Iarray.of_array c.axes) (Iarray.of_array rs) ~dsts:ds loads);
   dsts
 
+(* [b], or a skip where it does not state nx.cpu's lane order. *)
+let lane_ordered (b : Support.backend) =
+  if not b.lane_order then
+    skip ~reason:(b.name ^ " does not state nx.cpu's lane order") ()
+
 let law_programmed (b : Support.backend) c =
+  lane_ordered b;
   let module K = (val b.kernels) in
   let ((p, types, loads, rs, ys) as parts) = programmed_parts b c in
   let call p ~dsts loads =
@@ -1757,49 +2034,31 @@ let law_programmed (b : Support.backend) c =
 (* Several reductions of one program *)
 
 (* Loops as [programmed]'s, of zero to five elements an axis among the small
-   ones, reduced; rows of planes reduced across a kept axis; columns of up to
-   three blocks of terms reduced across rows, in pairs too; and as many rows of
-   more than eight blocks as a call's units need for a block group each.
-   Programs of hundreds of nodes run over loops of at most 2^16 elements: over
-   larger ones they took four fifths of the law's time. [several_examples] runs
-   one over each large profile. *)
+   ones, reduced; rows of planes reduced across a kept axis; columns reduced
+   across rows, in pairs too; each of at most about 8192 elements.
+   [several_examples] runs each size past that a cover needs. *)
 let several =
   let open Gen in
   let small = array ~size:(int_range 1 4) (int_range 0 5) in
-  let rows =
-    let* r = int_range 1 40 in
-    let+ k = of_list ~pp:Format.pp_print_int [ 3; 64; 1025; 5000 ] in
-    [| r; k |]
-  in
-  let long =
-    let* n = int_range 66_000 140_000 in
-    let+ r = int_range 1 2 in
-    if r = 1 then [| n |] else [| r; n |]
-  in
   (* Rows of planes reduced across the planes' kept axis. *)
   let parted =
-    let* p = int_range 2 6 in
-    let* k = int_range 2 5 in
-    let+ n = of_list ~pp:Format.pp_print_int [ 3; 64; 1025 ] in
+    let* n = of_list ~pp:Format.pp_print_int [ 3; 64; 1025 ] in
+    let* p = int_range 2 (if n > 1000 then 2 else 6) in
+    let+ k = int_range 2 (if n > 1000 then 3 else 5) in
     ([| p; k; n |], [| 0; 2 |])
   in
   let columns =
-    let* r = int_range 17 2100 in
-    let+ k = of_list ~pp:Format.pp_print_int [ 2; 64; 129; 300 ] in
+    let* k = of_list ~pp:Format.pp_print_int [ 2; 64; 129; 300 ] in
+    let+ r = int_range 17 (Int.max 17 (8192 / k)) in
     ([| r; k |], [| 0 |])
   in
-  (* Pairs of columns, as many as a call's units need for all of an
-     output's blocks each. *)
+  (* Pairs of columns. *)
   let paired =
-    let+ n = int_range 1025 3000 in
+    let+ n = int_range 2 64 in
     ([| 64; n; 2 |], [| 1 |])
   in
-  let grouped =
-    let+ n = int_range 8193 9000 in
-    ([| 64; n |], [| 1 |])
-  in
   let drawn =
-    let* shape = frequency [ (3, small); (3, rows); (2, long) ] in
+    let* shape = frequency [ (1, small); (1, rows) ] in
     let r = Array.length shape in
     let+ axes =
       if shape.(r - 1) > 1000 then constant [| r - 1 |]
@@ -1829,51 +2088,70 @@ let several =
         (1, loads narrows parted);
         (1, complex_columns);
         (1, loads narrows paired);
-        (3, loads narrows grouped);
         (2, loads narrow_floats (one_of [ columns; paired ]));
       ]
   in
   let* dts = array ~size:(int_range 1 3) (of_list ~pp:pp_dtype dtypes) in
   let* padded = bool in
-  let* long =
-    if Array.fold_left ( * ) 1 shape > 1 lsl 16 then constant false
-    else frequency [ (2, constant false); (1, constant true) ]
-  in
+  let* long = frequency [ (2, constant false); (1, constant true) ] in
   let+ seed = int in
-  { scanned = false; summed = false; shape; axes; dts; padded; long; seed }
+  {
+    scanned = false;
+    summed = false;
+    shape;
+    axes;
+    dts;
+    padded;
+    long;
+    stated = None;
+    seed;
+  }
 
-(* Programs of hundreds of nodes over rows of more than eight blocks and over a
-   long axis, of two loads; and two monoids across rows of a float16 output,
-   which the draws miss about one run in 20. *)
+(* A long program of two loads over two rows past 64 blocks of terms; the sizes
+   nx.cpu's paths for several reductions change at, each with the reductions it
+   takes: a Moments and a Sum along rows of more than eight blocks, 64 outputs,
+   a group of blocks each; a Sum and a Max of float16 across 1788 rows of 64
+   outputs; and a Sum and a Prod across a block and a term of 64 pairs of
+   columns; and a Sum and a Min of float16 along the innermost axis and one a
+   kept axis parts from it, which the draws reach one case in 16. *)
 let several_examples =
-  let case ?(long = true) ?(dts = D.[| Any Float32; Any Float16 |]) shape axes
-      seed =
+  let stated dt shape axes rs =
     {
       scanned = false;
       summed = false;
       shape;
       axes;
-      dts;
+      dts = [| dt |];
       padded = true;
-      long;
-      seed;
+      long = false;
+      stated = Some rs;
+      seed = 1;
     }
   in
-  [
-    case [| 64; 8193 |] [| 1 |] 7;
-    case [| 2; 70_000 |] [| 1 |] 7;
-    case ~long:false ~dts:D.[| Any Float16 |] [| 1788; 64 |] [| 0 |] 1;
-  ]
+  Nx_kernel.(
+    List.hd long_programs
+    :: [
+         stated f32 [| 64; 8193 |] [| 1 |] [| (Moments, 0); (Monoid Sum, 0) |];
+         stated (D.Any D.Float16) [| 1788; 64 |] [| 0 |]
+           [| (Monoid Sum, 0); (Monoid Max, 0) |];
+         stated f32 [| 64; 1025; 2 |] [| 1 |]
+           [| (Monoid Sum, 0); (Monoid Prod, 0) |];
+         stated (D.Any D.Float16) [| 2; 3; 64 |] [| 0; 2 |]
+           [| (Monoid Sum, 0); (Monoid Min, 0) |];
+       ])
 
-(* nx_cpu.mli: a Reduce of several reductions computes each one's bits
-   alone, so its destinations hold the bits of each reduction reduced by a
-   call of its own, any NaN for a NaN. *)
+(* nx_cpu.mli: a Reduce of several reductions computes each one's bits alone, so
+   its destinations hold the bits of each reduction reduced by a call of its
+   own, any NaN for a NaN. *)
 let law_several (b : Support.backend) c =
   let module K = (val b.kernels) in
   let st = Random.State.make [| c.seed |] in
   let rank = Array.length c.shape in
   let length = if c.long then 400 else 6 in
-  let p, _ = Kernels_cases.program ~length st c.dts ~room:16 ~rank in
+  let p =
+    if Option.is_some c.stated then identity c.dts.(0)
+    else fst (Kernels_cases.program ~length st c.dts ~room:16 ~rank)
+  in
   let loads =
     Array.mapi
       (fun i dt ->
@@ -1897,11 +2175,15 @@ let law_several (b : Support.backend) c =
                else None)
              reductions_all))
   in
-  let n = if pairs = [] then 0 else 2 + Random.State.int st 4 in
   let rs =
-    Array.init n (fun _ ->
-        List.nth pairs (Random.State.int st (List.length pairs)))
+    match c.stated with
+    | Some rs -> rs
+    | None ->
+        let n = if pairs = [] then 0 else 2 + Random.State.int st 4 in
+        Array.init n (fun _ ->
+            List.nth pairs (Random.State.int st (List.length pairs)))
   in
+  let n = Array.length rs in
   let ys =
     Result.get_ok
       (Nx_kernel.Shape.reduce ~axes:(Iarray.of_array c.axes) (Array.map fst rs)
@@ -2147,6 +2429,7 @@ let wide_scans seed =
     (Kernels_cases.wide_calls seed)
 
 let law_wide (b : Support.backend) ((c : Kernels_cases.wide), scanned) =
+  lane_ordered b;
   let scanned, call, mapped = wide_call c scanned in
   (* A library that flushes computes nx.cpu's bits only where nothing
      underflows: its own map, which has nx.cpu's bits under the flush,
@@ -2174,34 +2457,74 @@ let law_wide (b : Support.backend) ((c : Kernels_cases.wide), scanned) =
 (* nx.cpu's bits *)
 
 (* Float and complex sums and products of every float dtype, narrow ones
-   included, reduced, and scanned where [scans]. *)
+   included, reduced, or scanned where [scans]. *)
+(* A narrow float's terms of its full precision and mixed magnitudes,
+   within 2^±6 at 16 bits and 2^±2 narrower, so that their float32 sums and
+   products round otherwise in another order, a NaN, an infinity or -0 at
+   the rate [specials]; other dtypes' as {!Reduce_cases.elements} draws
+   them. *)
+let mixed_values (D.Any dt) n ~specials seed =
+  match D.kind dt with
+  | D.Float when D.bits dt < 32 ->
+      let r = Random.State.make [| seed |] in
+      let span = if D.bits dt = 16 then 6 else 2 in
+      let specials' = [| nan; infinity; neg_infinity; -0. |] in
+      let one () =
+        if specials > 0 && Random.State.int r specials = 0 then
+          specials'.(Random.State.int r 4)
+        else
+          Float.ldexp
+            (Random.State.float r 2. -. 1.)
+            (Random.State.int r ((2 * span) + 1) - span)
+      in
+      A.Any (A.of_array dt [| n |] (Array.init n (fun _ -> one ())))
+  | _ -> A.Any (elements dt n ~specials seed)
+
 let associated ~scans =
   Gen.with_pp pp_case
-    (case_of
-       ~scan:(if scans then Gen.bool else Gen.constant false)
-       ~monoids:[ Sum; Prod ]
+    (case_of ~scan:(Gen.constant scans) ~monoids:[ Sum; Prod ]
+       ~values:mixed_values
        (narrow_floats @ floats @ complexes))
 
-(* nx.cpu's association (reduce.c): an output's terms in blocks of 1024,
-   term [16 j + l] of a block folded in order into lane [l] from the
-   identity, the lanes holding a term then the blocks combined by the
-   pairwise tree; a scan's slice in chunks of 4096, each result its
-   chunk's carry combined with the chunk's terms up to it, left to right,
-   the carry into chunk 0 the identity and into chunk [c + 1] the carry
-   into [c] combined with [c]'s total, its terms reduced. A complex
-   product's lanes, and its chunk 0, start from their first term instead.
-   The model's combines compute in float32, on doubles that hold float32
-   values; the state of a float narrower than float32 is a float32 one,
-   rounded once at the end. Where [flush], each combine computes as
-   nx_metal.mli says Add and Mul do at underflow: a nonzero exact result
-   below 2^-126 is a zero of its sign; else as nx.cpu does. [under] is
-   whether a part of the computation fell below 2^-126. *)
+(* A reduction by [monoid] along [axes] of [mixed_values] of [d] and shape [s],
+   with no special. *)
+let mixed_case monoid d s axes =
+  let (A.Any x) = mixed_values d (total s) ~specials:0 1 in
+  let x = Option.get (A.move (M.Reshape (Iarray.of_array s)) x) in
+  { scan = false; monoid; axes; x = A.Any x; views = [] }
+
+(* [x] reversed along [axes]: a reduction of it folds its terms in another
+   association. *)
+let reversed_along axes (A.Any x) =
+  let r =
+    Iarray.mapi
+      (fun a e ->
+        if Array.mem a axes && e > 0 then
+          { M.start = e - 1; count = e; step = -1 }
+        else { M.start = 0; count = e; step = 1 })
+      (L.shape (A.layout x))
+  in
+  A.Any (Option.get (A.move (M.Slice r) x))
+
+(* nx.cpu's association (reduce.c): an output's terms in blocks of 1024, term
+   [16 j + l] of a block folded in order into lane [l] from the identity, the
+   lanes holding a term then the blocks combined by the pairwise tree; a scan's
+   slice in chunks of 4096, each result its chunk's carry combined with the
+   chunk's terms up to it, left to right, the carry into chunk 0 the identity
+   and into chunk [c + 1] the carry into [c] combined with [c]'s total, its
+   terms reduced. A complex product's lanes, and its chunk 0, start from their
+   first term instead. The model's combines compute in float32, on doubles that
+   hold float32 values; the state of a float narrower than float32 is a float32
+   one, rounded once at the end. Where [flush], each combine computes as
+   nx_metal.mli says Add and Mul do at underflow: a nonzero exact result below
+   2^-126 is a zero of its sign; else as nx.cpu does. [under] is whether a part
+   of the computation fell below 2^-126. *)
 type assoc = { flush : bool; mutable under : bool }
 
 (* [hi + lo], exact, rounded once into float32 or flushed. Where [lo] is
-   nonzero, [hi] rounds to odd first: an even [hi] steps one double
-   towards [lo], so that a double that rounds to nearest into float32
-   rounds the way the exact value does. *)
+   nonzero, [hi] rounds to odd first: an even [hi] steps one double towards
+   [lo], so that a double that rounds to nearest into float32 rounds the way the
+   exact value does. *)
 let round32 a hi lo =
   let lo = if Float.is_finite hi then lo else 0. in
   let m = Float.abs hi in
@@ -2351,35 +2674,57 @@ let subnormal_term least (c : case) =
         (fun (z : Complex.t) -> z.re <> 0. && Float.abs z.re < least)
         (zvalues c.x)
 
-(* A library that keeps nx.cpu's lane order and chunks gives nx.cpu's
-   bits: a float or complex sum's or product's results, reduced or scanned,
-   are nx.cpu's, any NaN for a NaN. One that flushes (nx_metal.mli,
-   Subnormal numbers) gives them where no part of the computation
-   underflows; where one does, float32's and bfloat16's are computed with
-   its flush at every combine, and complex64's keep their bounds, as the
-   bound law states them. A narrower float's terms keep their subnormals,
-   none of which is one in float32, but its float32 combines flush: a
-   product of tiny terms can carry a float32 subnormal. The association
-   computed without the flush must give nx.cpu's bits, and tells whether
-   a part underflows. *)
-let law_cpu_bits (b : Support.backend) (c : case) =
+(* A library that keeps nx.cpu's lane order and chunks gives nx.cpu's bits: a
+   float or complex sum's or product's results, reduced or scanned, are
+   nx.cpu's, any NaN for a NaN. One that flushes (nx_metal.mli, Subnormal
+   numbers) gives them where no part of the computation underflows; where one
+   does, float32's and bfloat16's are computed with its flush at every combine,
+   and complex64's keep their bounds, as the bound law states them. A narrower
+   float's terms keep their subnormals, none of which is one in float32, but its
+   float32 combines flush: a product of tiny terms can carry a float32
+   subnormal. The association computed without the flush must give nx.cpu's
+   bits, and tells whether a part underflows. A library that states nx.cpu's
+   chunks for every scan gives those bits of scans of any length, where [scans];
+   another states them for scans that are not its own order, such as the
+   examples' short running products, and for no drawn scan. *)
+let law_cpu_bits ~scans (b : Support.backend) (c : case) =
+  lane_ordered b;
+  if scans && not b.scan_order then
+    skip ~reason:(b.name ^ " does not state nx.cpu's chunks for every scan") ();
   let s = shape_of c.x in
-  if b.scan_order then begin
-    cover "a scan" c.scan;
-    cover "a scan past one chunk" (c.scan && s.(c.axes.(0)) > 4096);
-    cover "a scan along an axis not the innermost"
-      (c.scan && c.axes.(0) < Array.length s - 1)
-  end;
   let terms = total s / Int.max 1 (total (result_shape c)) in
-  cover "past one block of terms" (terms > 1024);
-  cover "past 64 blocks, several groups an output"
-    ((not c.scan) && terms > 64 * 1024);
+  if scans then begin
+    cover "a scan past one chunk" (s.(c.axes.(0)) > 4096);
+    cover "a scan along an axis not the innermost"
+      (c.axes.(0) < Array.length s - 1)
+  end
+  else begin
+    cover "past one block of terms" (terms > 1024);
+    cover "past 64 blocks, several groups an output"
+      ((not c.scan) && terms > 64 * 1024)
+  end;
   (* A library that flushes reads a subnormal term as a zero. *)
   let flushes = Kernels_cases.flushes b "add" (dtype_of c.x) in
   let least = narrow_least (dtype_of c.x) in
   let carries = b.underflow = Flush && Option.is_some least in
   let c = if flushes then { c with x = Kernels_cases.flushed_view c.x } else c in
   let (A.Any w) = Support.cpu.around (fun () -> run Support.cpu c) in
+  (* The values tell associations apart: nx.cpu's result of the reversed terms
+     differs, neither a NaN. *)
+  if not scans then begin
+    let back =
+      Support.cpu.around (fun () ->
+          run Support.cpu { c with x = reversed_along c.axes c.x })
+    in
+    let d = D.Any (A.dtype w) in
+    cover "a result the terms' order changes"
+      ((not c.scan)
+      && Array.exists2
+           (fun a b ->
+             a <> b && not (Elements.nan_of d a || Elements.nan_of d b))
+           (Elements.elements (A.Any w))
+           (Elements.elements back))
+  end;
   let (A.Any g) = run b c in
   let d = D.Any (A.dtype w) in
   let same = Kernels_cases.same_values d in
@@ -2390,16 +2735,21 @@ let law_cpu_bits (b : Support.backend) (c : case) =
     let (A.Any cpu) = associated_result plain c in
     equal ~msg:"nx.cpu's association" same (bits w) (bits cpu);
     let complex = D.is D.Complex (A.dtype w) in
-    cover "a combine underflows" (flushes && (not complex) && plain.under);
-    cover "a carry subnormal in float32" (carries && plain.under);
-    cover "a narrow float's subnormal term"
-      (carries && subnormal_term least c);
-    cover "a complex64 result with nx.cpu's bits" (complex && not plain.under);
-    cover "a complex64 computation underflows" (complex && plain.under);
+    (* The examples reach these, which the scans' draws may not. *)
+    if not scans then begin
+      cover "a combine underflows" (flushes && (not complex) && plain.under);
+      cover "a carry subnormal in float32" (carries && plain.under);
+      cover "a narrow float's subnormal term" (carries && subnormal_term least c);
+      cover "a complex64 result with nx.cpu's bits" (complex && not plain.under);
+      cover "a complex64 computation underflows" (complex && plain.under)
+    end;
     if not plain.under then equal same (bits w) (bits g)
-    else if complex then equal (list string) [] (misses (verdicts b c (A.Any g)))
+    else if complex then
+      equal (list string) [] (misses (verdicts b c (A.Any g)))
     else
-      let (A.Any flushed) = associated_result { flush = true; under = false } c in
+      let (A.Any flushed) =
+        associated_result { flush = true; under = false } c
+      in
       equal same (bits flushed) (bits g)
   end
 
@@ -2411,8 +2761,39 @@ let chunked_scans =
   ]
 
 (* So do Logsumexp's and Moments' results, reduced or scanned, and Arg's. *)
+(* A Logsumexp and a Moments of 300 float32 numbers of full precision,
+   whose results the terms' order changes, which the draws reach about one
+   case in 170. *)
+let ordered_specials =
+  let st = Random.State.make [| 3 |] in
+  let x = vector_of D.Float32 (Array.init 300 (fun _ -> full st 23)) in
+  List.map
+    (fun r ->
+      {
+        scanned = false;
+        stat = { r; axes = [| 0 |]; x; views = []; values = "example" };
+      })
+    Nx_kernel.[ Logsumexp; Moments ]
+
 let law_cpu_special (b : Support.backend) (c : special) =
+  lane_ordered b;
   let want = Support.cpu.around (fun () -> run_special Support.cpu c) in
+  (* The values tell associations apart: nx.cpu's Logsumexp or Moments of the
+     reversed terms differs, neither a NaN. *)
+  let st = c.stat in
+  let summed = match st.r with Logsumexp | Moments -> true | _ -> false in
+  cover "a Logsumexp or Moments result the terms' order changes"
+    ((not c.scanned) && summed
+    &&
+    let back =
+      Support.cpu.around (fun () ->
+          run_special Support.cpu
+            { c with stat = { st with x = reversed_along st.axes st.x } })
+    in
+    Array.exists2
+      (Array.exists2 (fun a b ->
+           (not (is_nan a || is_nan b)) && bits_of a <> bits_of b))
+      want back);
   let got = run_special b c in
   let s = shape_of c.stat.x in
   cover "a scan" c.scanned;
@@ -2438,170 +2819,218 @@ let law_cpu_special (b : Support.backend) (c : special) =
 
 (* The suite *)
 
-let laws (b : Support.backend) =
-  let run f x = b.around (fun () -> covering f x) in
-  group b.name
+(* Sums and products past 64 blocks of terms, and sums and products whose
+   computation underflows, reduced and scanned along a fold's terms. *)
+let cpu_bits_examples =
+  [
+    (* bfloat16 and float16 sums and a float16 product of terms of mixed
+       magnitudes, whose results the terms' order changes, which the draws reach
+       about one case in 25. *)
+    mixed_case Sum (D.Any D.Bfloat16) [| 3; 300 |] [| 1 |];
+    mixed_case Sum (D.Any D.Float16) [| 2; 100 |] [| 1 |];
+    mixed_case Prod (D.Any D.Float16) [| 3; 8 |] [| 1 |];
+    example Sum f32 [| 70_001 |] [| 0 |];
+    example Prod f64 [| 2; 66_000 |] [| 1 |];
+    (* A complex64 sum of numbers, which the draws reach one case in 9 where
+       float64 is declined. *)
+    example Sum (D.Any D.Complex64) [| 3; 7 |] [| 1 |];
+    (* Running float32 products whose second, 2^-140, lies below the least
+       normal number: nx.cpu keeps it, and its third is 2^-70; a library that
+       flushes gives zeros. *)
+    {
+      scan = true;
+      monoid = Prod;
+      axes = [| 0 |];
+      x = A.Any (A.of_array D.Float32 [| 3 |] [| 0x1p-70; 0x1p-70; 0x1p70 |]);
+      views = [];
+    };
+    (* Running complex64 products, a product of whose parts, 1.5 2^-127, lies
+       below the least normal number: nx.cpu gives an imaginary part of 1.375
+       2^-125, a library that flushes 2^-125, and nx_metal.mli bounds
+       neither. *)
+    {
+      scan = true;
+      monoid = Prod;
+      axes = [| 0 |];
+      x =
+        A.Any
+          (A.of_array D.Complex64 [| 2; 2 |]
+             Complex.
+               [|
+                 { re = 1.; im = 0x1p-60 };
+                 { re = 0x1p-60; im = 1. };
+                 { re = 0x1.8p-67; im = 0x1p-125 };
+                 { re = 0x1p-125; im = 0x1.8p-67 };
+               |]);
+      views = [];
+    };
+    (* Running float8_e5m2 products of terms of 2^-16 to 1.5 2^-14, whose
+       float32 carry falls below 2^-126 at the ninth, about 2^-130, then
+       -infinity: nx.cpu keeps the carry and gives -infinity; a library that
+       flushes it gives NaN. *)
+    {
+      scan = true;
+      monoid = Prod;
+      axes = [| 0 |];
+      x =
+        A.Any
+          (A.of_array D.Float8_e5m2 [| 13 |]
+             [|
+               0x1.4p-14;
+               0x1.4p-14;
+               0x1p-14;
+               0x1.8p-14;
+               0x1p-16;
+               0x1p-15;
+               0x1.8p-14;
+               0x1.8p-15;
+               0x1p-16;
+               Float.neg_infinity;
+               0x1p-14;
+               0x1p-16;
+               Float.neg_infinity;
+             |]);
+      views = [];
+    };
+    (* A float8_e5m2 sum of two of 2^-16, a subnormal: 2^-15, kept; a library
+       that flushed the terms would give 0. *)
+    {
+      scan = false;
+      monoid = Sum;
+      axes = [| 0 |];
+      x = A.Any (A.of_array D.Float8_e5m2 [| 2 |] [| 0x1p-16; 0x1p-16 |]);
+      views = [];
+    };
+    (* Running float8_e5m2 products of 2^-16, a subnormal, and 2^10: 2^-16 and
+       2^-6, kept; a library that flushed the term would give zeros. *)
+    {
+      scan = true;
+      monoid = Prod;
+      axes = [| 0 |];
+      x = A.Any (A.of_array D.Float8_e5m2 [| 2 |] [| 0x1p-16; 0x1p10 |]);
+      views = [];
+    };
+  ]
+
+let laws (d : Support.declared) =
+  let run law x =
+    let b = Support.opened d in
+    b.around (fun () -> covering (law b) x)
+  in
+  let around f x =
+    let b = Support.opened d in
+    b.around (fun () -> f b x)
+  in
+  let dtype_name (D.Any dt) = D.name dt in
+  let cpu = d.label = Support.cpu.name in
+  group d.label
     ([
-      prop ~examples:bound_examples
-        "a float or complex sum or product is within its bound of the exact \
-         one"
-        bounded (run (law_bound b));
-      prop ~examples:scan_examples "a scan of a prefix is the prefix of the scan"
-        scans (run (law_prefix b));
-      prop "an integer sum or product wraps, in any order of its terms"
-        integers (run (law_wrap b));
-      prop ~count:300 ~examples:special_examples
-        "Logsumexp, Moments and Arg give the special values their terms make"
-        special_case (run (law_special b));
-      cases
-        ~id:(fun (msg, _, _, _) -> msg)
-        "a reduction or scan that does not fit is not Done and writes \
-         nothing outside its destinations; nx's rules name its refusal"
-        (loop_misfits b) (check_misfit b);
-      prop ~examples:exact_carries
-        "an exact scan from a carry continues the scan whose terms it carries"
-        (carry_case Exact) (run (law_carry b));
-      prop ~examples:inexact_carries
-        "a float or complex sum or product from a carry is within the bound \
-         of the carry's and the terms' reduction"
-        (carry_case Inexact) (run (law_carry_bound b));
-      test "a carry of the carrier is taken" (fun () ->
-          b.around (test_carrier_carry b));
-      test "an extreme's carry its destination aliases" (fun () ->
-          b.around (test_aliased_carry b));
-    ]
-    @ (if not b.lane_order then []
-       else
+       group "reductions"
          [
-           prop ~count:200 ~examples:programmed_examples
-             "a reduction or a scan of a program has the bits of its outputs \
-              mapped, then reduced or scanned"
-             (Gen.with_pp pp_programmed programmed)
-             (run (law_programmed b));
-         ])
-    @ (if b != Support.cpu then []
+           prop ~examples:extreme_examples
+             "a Max or a Min is the extreme of its terms, -0 below +0, a NaN \
+              where a term is, any and all on booleans"
+             extremes (run law_extreme);
+           cases ~id:fst "a Sum of -0 terms is +0, reduced or scanned"
+             neg_zero_sums (around test_neg_zero_sum);
+           cases ~id:dtype_name "an empty product is 1"
+             D.[ Any Float32; Any Float16; Any Complex64; Any Int32; Any Uint8 ]
+             (around test_empty_product);
+           cases
+             ~id:(fun (scan, d) ->
+               dtype_name d ^ if scan then ", scanned" else ", reduced")
+             "a complex product of one term is that term"
+             (List.concat_map (fun d -> [ (false, d); (true, d) ]) complexes)
+             (around test_one_term_product);
+           prop "an integer sum or product wraps, in any order of its terms"
+             integers (run law_wrap);
+           prop ~count:300 ~examples:special_examples
+             "Logsumexp, Moments and Arg give the special values their terms \
+              make"
+             special_case (run law_special);
+         ];
+       group "bounds"
+         [
+           prop ~examples:bound_examples
+             "a float or complex sum or product is within its bound of the \
+              exact one"
+             bounded (run law_bound);
+         ];
+       group "scans"
+         [
+           prop ~examples:scan_examples
+             "a scan of a prefix is the prefix of the scan" scans
+             (run law_prefix);
+           prop ~examples:exact_carries
+             "an exact scan from a carry continues the scan whose terms it \
+              carries"
+             (carry_case Exact) (run law_carry);
+           prop ~examples:inexact_carries
+             "a float or complex sum or product from a carry is within the \
+              bound of the carry's and the terms' reduction"
+             (carry_case Inexact) (run law_carry_bound);
+           test "a carry of the carrier is taken" (fun () ->
+               around test_carrier_carry ());
+           test
+             "a NaN carry that is the scan's destination makes its result a NaN"
+             (fun () -> around test_aliased_carry ());
+         ];
+       cases
+         ~id:(fun (msg, _, _, _) -> msg)
+         "a call that does not fit is named by reduce_refusal, scan_refusal or \
+          Shape, is not Done, and writes nothing outside its destinations"
+         loop_misfits (around check_misfit);
+       test "a destination over its load's bytes is refused as Overlapping"
+         (fun () -> around test_overlapping ());
+       prop ~count:200 ~examples:programmed_examples
+         "a reduction or a scan of a program has the bits of its outputs \
+          mapped, then reduced or scanned"
+         (Gen.with_pp pp_programmed programmed)
+         (run law_programmed);
+     ]
+    @ (if not cpu then []
        else
          [
            prop ~count:200 ~examples:several_examples
-             "a reduction of several reductions of a program has the bits \
-              of each reduced alone"
+             "a reduction of several reductions of a program has the bits of \
+              each reduced alone"
              (Gen.with_pp pp_programmed several)
-             (run (law_several b));
+             (run law_several);
          ])
     @
-    if b == Support.cpu || not b.lane_order then []
+    if cpu then []
     else
       [
-        (* Each case runs every wide call of its seed, among them a
-           reduction held over uint8 from a padded load, which asks for the
-           most LDS a launch may. *)
+        (* Each case runs every wide call of its seed, among them a reduction
+           held over uint8 from a padded load, which asks for the most LDS a
+           launch may. *)
         prop ~count:1
           "a reduction or a scan too wide for a launch has nx.cpu's bits"
-          Kernels_cases.wide_seeds
-          (fun seed -> List.iter (run (law_wide b)) (wide_scans seed));
-        prop
-          ~examples:
-            ([
-               example Sum f32 [| 70_001 |] [| 0 |];
-               example Prod f64 [| 2; 66_000 |] [| 1 |];
-               (* A complex64 sum of numbers, which the draws reach one
-                  case in 9 where float64 is declined. *)
-               example Sum (D.Any D.Complex64) [| 3; 7 |] [| 1 |];
-               (* Running float32 products whose second, 2^-140, lies
-                  below the least normal number: nx.cpu keeps it, and its
-                  third is 2^-70; a library that flushes gives zeros. *)
-               {
-                 scan = true;
-                 monoid = Prod;
-                 axes = [| 0 |];
-                 x =
-                   A.Any
-                     (A.of_array D.Float32 [| 3 |]
-                        [| 0x1p-70; 0x1p-70; 0x1p70 |]);
-                 views = [];
-               };
-               (* Running complex64 products, a product of whose parts,
-                  1.5 2^-127, lies below the least normal number: nx.cpu
-                  gives an imaginary part of 1.375 2^-125, a library that
-                  flushes 2^-125, and nx_metal.mli bounds neither. *)
-               {
-                 scan = true;
-                 monoid = Prod;
-                 axes = [| 0 |];
-                 x =
-                   A.Any
-                     (A.of_array D.Complex64 [| 2; 2 |]
-                        Complex.
-                          [|
-                            { re = 1.; im = 0x1p-60 };
-                            { re = 0x1p-60; im = 1. };
-                            { re = 0x1.8p-67; im = 0x1p-125 };
-                            { re = 0x1p-125; im = 0x1.8p-67 };
-                          |]);
-                 views = [];
-               };
-               (* Running float8_e5m2 products of terms of 2^-16 to
-                  1.5 2^-14, whose float32 carry falls below 2^-126 at the
-                  ninth, about 2^-130, then -infinity: nx.cpu keeps the
-                  carry and gives -infinity; a library that flushes it
-                  gives NaN. *)
-               {
-                 scan = true;
-                 monoid = Prod;
-                 axes = [| 0 |];
-                 x =
-                   A.Any
-                     (A.of_array D.Float8_e5m2 [| 13 |]
-                        [|
-                          0x1.4p-14; 0x1.4p-14; 0x1p-14; 0x1.8p-14; 0x1p-16;
-                          0x1p-15; 0x1.8p-14; 0x1.8p-15; 0x1p-16;
-                          Float.neg_infinity; 0x1p-14; 0x1p-16;
-                          Float.neg_infinity;
-                        |]);
-                 views = [];
-               };
-               (* A float8_e5m2 sum of two of 2^-16, a subnormal: 2^-15,
-                  kept; a library that flushed the terms would give 0. *)
-               {
-                 scan = false;
-                 monoid = Sum;
-                 axes = [| 0 |];
-                 x =
-                   A.Any
-                     (A.of_array D.Float8_e5m2 [| 2 |] [| 0x1p-16; 0x1p-16 |]);
-                 views = [];
-               };
-               (* Running float8_e5m2 products of 2^-16, a subnormal, and
-                  2^10: 2^-16 and 2^-6, kept; a library that flushed the
-                  term would give zeros. *)
-               {
-                 scan = true;
-                 monoid = Prod;
-                 axes = [| 0 |];
-                 x =
-                   A.Any (A.of_array D.Float8_e5m2 [| 2 |] [| 0x1p-16; 0x1p10 |]);
-                 views = [];
-               };
-             ]
-            @ if b.scan_order then chunked_scans else [])
-          "float sums and products have nx.cpu's bits"
-          (associated ~scans:b.scan_order)
-          (run (law_cpu_bits b));
-        prop ~count:300
+          Kernels_cases.wide_seeds (fun seed ->
+            List.iter (run law_wide) (wide_scans seed));
+        prop ~examples:cpu_bits_examples
+          "float sums and products have nx.cpu's bits" (associated ~scans:false)
+          (run (law_cpu_bits ~scans:false));
+        prop ~examples:chunked_scans
+          "float sum and product scans in nx.cpu's chunks have nx.cpu's bits"
+          (associated ~scans:true)
+          (run (law_cpu_bits ~scans:true));
+        prop ~count:300 ~examples:ordered_specials
           "Logsumexp, Moments and Arg have nx.cpu's bits" special_case
-          (run (law_cpu_special b));
+          (run law_cpu_special);
       ])
 
 (* rig.nv *)
 
-(* rig.nv loads the cubin CUDA loads, so a call through it has CUDA's
-   bits: what it can get wrong, its launches, memory and order, shows in
-   them. Each case's calls run through CUDA, then through rig.nv. A NaN
-   agrees with any NaN: nx_cuda.mli leaves a NaN result's sign and
-   payload unspecified. *)
-let nv_laws (first : Support.backend) (nv : Support.backend) =
-  let agree call = Elements.agree first nv call in
-  group nv.name
+(* rig.nv loads the cubin CUDA loads, so a call through it has CUDA's bits: what
+   it can get wrong, its launches, memory and order, shows in them. Each case's
+   calls run through CUDA, then through rig.nv. A NaN agrees with any NaN:
+   nx_cuda.mli leaves a NaN result's sign and payload unspecified. *)
+let nv_laws (first : Support.declared) (nv : Support.declared) =
+  let agree ?msg call =
+    Elements.agree ?msg (Support.opened first) (Support.opened nv) call
+  in
+  group nv.label
     [
       group "bits are cuda's, any NaN for a NaN"
         [
@@ -2615,7 +3044,8 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
               cover "a narrow element" (D.bits dt < 16);
               List.iter (fun m -> cover (monoid_name m) (c.monoid = m)) monoids;
               agree (fun b -> [| run b c |]));
-          prop "of programs' reductions and scans, over padded loads too"
+          prop ~examples:long_programs
+            "of programs' reductions and scans, over padded loads too"
             (Gen.with_pp pp_programmed programmed) (fun c ->
               cover "a scan" c.scanned;
               cover "padded loads" c.padded;
@@ -2632,7 +3062,7 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
                   cover "past a launch's values held" (c.mode = Held);
                   cover "past a launch's reductions" (c.mode = Outputs);
                   cover "a scan" scanned;
-                  Elements.agree ~msg:(wide_name c scanned) first nv call)
+                  agree ~msg:(wide_name c scanned) call)
                 (wide_scans seed));
           prop "of Logsumexp, Moments and Arg" special_case (fun c ->
               cover "a scan" c.scanned;
@@ -2645,11 +3075,11 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
                            (Iarray.of_array [| Array.length t |])
                            (Array.map bits_of t)))
                     ys));
-          prop "of scans from a carry" (carry_case Inexact) (fun c ->
+          prop "of scans from a carry, nx.cpu's" (carry_case Inexact) (fun c ->
               let (Carried (dt, _)) = c.kind in
               covers_carry c;
               agree (fun b ->
-                  let z, carry = carry_of b c in
+                  let _, z, carry = carry_on b c in
                   [| carry_scan b c (D.Any dt) ~carry dt (along1 z c.p c.m) |]));
         ];
     ]
@@ -2673,7 +3103,7 @@ let amd_examples =
     example ~scan:true ~specials:20 Max (D.Any D.Int64) [| 5000; 3 |] [| 0 |];
   ]
 
-let amd_laws (amd : Support.backend) =
+let amd_laws (amd : Support.declared) =
   let called c (b : Support.backend) = b.around (fun () -> [| run b c |]) in
   group "amd against nx.cpu"
     [
@@ -2695,18 +3125,20 @@ let amd_laws (amd : Support.backend) =
             ((not c.scan) && r = 2 && along 0 && s.(0) > 16 * 1024);
           cover "a scan past one chunk" (c.scan && s.(c.axes.(0)) > 4096);
           cover "a scan along the first of two" (c.scan && r = 2 && along 0);
-          Elements.agree Support.cpu amd (called c));
+          Elements.agree Support.cpu (Support.opened amd) (called c));
     ]
 
 let () =
   let nv =
-    match (Support.gpus (), Support.nv ()) with
-    | first :: _, Some nv -> [ nv_laws first nv ]
+    match (Support.declared_cuda, Support.declared_nv) with
+    | Some first, Some nv -> [ nv_laws first nv ]
     | _ -> []
   in
+  let amd = Option.to_list Support.declared_amd in
   exit
     (Windtrap.run "nx_kernel.reduce"
-       (List.map laws (Support.backends () @ Option.to_list (Support.metal ()))
-       @ nv
-       @ List.map laws (Option.to_list (Support.amd ()))
-       @ List.map amd_laws (Option.to_list (Support.amd ()))))
+       (List.map laws
+          (Support.declare Support.cpu
+          :: List.filter_map Fun.id
+               [ Support.declared_cuda; Support.declared_metal ])
+       @ nv @ List.map laws amd @ List.map amd_laws amd))
