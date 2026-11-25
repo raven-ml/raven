@@ -877,15 +877,16 @@ module Minimize : sig
 
       {b Method.} Brent's method: parabolic steps through the three best points,
       forced to a golden-section step whenever the bracket has not shrunk by
-      [0.618] over two evaluations, so an element ends within about [3b]
-      evaluations for a [b]-bit dtype. On a function with several minima in the
-      bracket it finds one of them. {b Error.} [e] is half the final bracket and
-      [y] its midpoint; an element also ends when no float lies strictly inside
-      its bracket. A non-finite value of [f] ends it [Not_finite].
-      {b Derivative.} A minimum inside the bracket is stated as a zero of rune's
-      derivative of [f], so its derivative is [−∂²f/∂x∂θ / ∂²f/∂x²]; a minimum
-      at an end is that end, with its derivative; a lane that did not converge
-      has a zero derivative. *)
+      [0.618] over two evaluations. An element has a fixed budget of [3b + 9]
+      evaluations for a [b]-bit dtype (201 in float64), and a bracket too wide
+      to shrink to [tol] within it ends [Budget_spent]. On a function with
+      several minima in the bracket it finds one of them. {b Error.} [e] is half
+      the final bracket and [y] its midpoint; an element also ends when no float
+      lies strictly inside its bracket. A non-finite value of [f] ends it
+      [Not_finite]. {b Derivative.} A minimum inside the bracket is stated as a
+      zero of rune's derivative of [f], so its derivative is
+      [−∂²f/∂x∂θ / ∂²f/∂x²]; a minimum at an end is that end, with its
+      derivative; a lane that did not converge has a zero derivative. *)
 end
 
 module Quad : sig

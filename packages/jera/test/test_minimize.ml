@@ -54,6 +54,21 @@ let bracket_tests =
             ~hi:(vec [| 2.; -1. |])
         in
         equal (Oracle.tensor ()) (vec [| 1.; -1. |]) (Solution.get s));
+    test "a bracket too wide for 3b + 9 evaluations ends Budget_spent"
+      (fun () ->
+        (* Golden cuts of [−1e150, 1e150] reach the minimum's tolerance in about
+           2 log(1e150 / 1e-10) / log(1 / 0.618) evaluations, past the 3b + 9 =
+           201 of a float64 element (jera.mli, bracket). *)
+        let wide f bound =
+          let s =
+            Minimize.bracket ~tol:tight f ~lo:(vec [| -.bound |])
+              ~hi:(vec [| bound |])
+          in
+          equal Oracle.status_t Budget_spent (Oracle.status s);
+          equal int32 201l (Nx.item [ 0 ] (Solution.evaluations s))
+        in
+        wide (fun x -> Nx.square (Nx.sub_s x 0.5)) 1e150;
+        wide (fun x -> Nx.abs (Nx.sub_s x 0.5)) 1e100);
     test "a NaN value is not finite" (fun () ->
         let s =
           Minimize.bracket ~tol:tight Nx.log ~lo:(vec [| -2. |])

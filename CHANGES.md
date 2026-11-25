@@ -1281,6 +1281,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.bracket` ends an element whose bracket is too wide to shrink to
+  `tol` within its budget `Budget_spent`, where it reported `Stalled`: golden
+  steps take `[-1e100, 1e100]` past it. `jera.mli` states the budget, `3b + 9`
+  evaluations for a `b`-bit dtype (201 in float64).
 - An eager `Minimize.nelder_mead` solve takes about half the time: a step
   runs the restart test only once the simplex meets `tol`. Results are
   unchanged.

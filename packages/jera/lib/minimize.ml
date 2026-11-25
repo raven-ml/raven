@@ -174,6 +174,9 @@ let bracket ~tol f ~lo ~hi =
     in
     (fields s', (finish s' st, (n, Nx.add_s k 1l)))
   in
+  (* The budget: one evaluation at the start and one per step. Brent's forced
+     golden steps shrink a bracket by 0.618 every two evaluations, so it reaches
+     [tol] within it unless its width spans that many golden cuts. *)
   let limit = (3 * Num.bits dtype) + 8 in
   let carry =
     Nx.Ptree.(pair (list tensor) (pair tensor (pair tensor tensor)))
@@ -192,7 +195,7 @@ let bracket ~tol f ~lo ~hi =
   in
   let s = of_fields fs in
   let st =
-    settle st (Nx.ones_at (Nx.beside st) Nx.bool (Nx.shape st)) Stalled
+    settle st (Nx.ones_at (Nx.beside st) Nx.bool (Nx.shape st)) Budget_spent
   in
   let ok = Nx.equal_s st (Solution.code Converged) in
   (* A minimum whose bracket kept a given end is that end. *)
@@ -209,10 +212,10 @@ let bracket ~tol f ~lo ~hi =
   let fix (st : Solution.status) _ =
     match st with
     | Not_finite -> "f is not finite inside [lo, hi]: narrow it to f's domain."
-    | Stalled ->
-        "The bracket stopped shrinking: f may be flat or noisy at the \
-         tolerance's scale; loosen tol."
-    | Converged | Budget_spent | Not_bracketed -> ""
+    | Budget_spent ->
+        "The bracket is too wide to shrink to tol within its budget of \
+         evaluations: narrow [lo, hi]."
+    | Converged | Stalled | Not_bracketed -> ""
   in
   Solution.v ~fn
     ~settings:(Format.asprintf "tol %a" Tol.pp tol)
