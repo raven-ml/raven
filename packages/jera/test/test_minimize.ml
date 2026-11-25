@@ -606,9 +606,14 @@ let nelder_mead_tests =
             (vec [| 1.; 2. |])
         in
         equal (Oracle.tensor ~abs:0. ()) (vec [| 0.; 0. |]) g);
-    test "a spent budget of evaluations is reported" (fun () ->
+    test "budget trips end it Budget_spent" (fun () ->
+        (* jera.mli's Cost: the first simplex takes n + 1 = 3 evaluations, a
+           trip one to n + 3, a restart test 2n: 10 trips take 13 to 93. *)
         let s = simplex ~budget:10 rosenbrock (vec [| -1.2; 1. |]) in
-        equal Oracle.status_t Budget_spent (Oracle.status s));
+        equal Oracle.status_t Budget_spent (Oracle.status s);
+        let evaluations = Nx.item [] (Solution.evaluations s) in
+        at_least int32 ~than:13l evaluations;
+        at_most int32 ~than:93l evaluations);
     test "compiled equals eager (law 3)" (fun () ->
         Compiled.here ();
         let f c =

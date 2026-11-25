@@ -1281,6 +1281,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.solve`'s `budget` counts `nelder_mead`'s trips, the iterations
+  of its simplex, as it counts every other method's iterations. It counted
+  evaluations and checked them only after a trip and its restart test, so a
+  lane could end several evaluations past its budget. A budget sized in
+  evaluations now allows more work: one to `n + 3` evaluations per trip.
 - A derivative through `Linear.solve`, `System.solve`, `Minimize.solve` or an
   implicit `Ode` method whose linear solve misses its solver's bound raises
   `Invalid_argument` naming the entry point, as `Root` and `System.lanes` do.

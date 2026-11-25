@@ -790,10 +790,10 @@ module Minimize : sig
       [σ] along none of them descends by that margin; a diameter alone
       converges on McKinnon's function at a point whose gradient is [(0, 1)].
       A non-finite value counts as [+∞], one at the start ends the lane
-      [Not_finite]. [budget] counts evaluations.
-      {b Cost.} One evaluation per trip, two when it expands or contracts,
-      [n + 1] more when it shrinks, and [2n] for each diameter that meets
-      [tol].
+      [Not_finite]. [budget] counts trips, the iterations of the simplex.
+      {b Cost.} [n + 1] evaluations for the first simplex, one per trip, two
+      when it expands or contracts, [n + 1] more when it shrinks, and [2n] for
+      each diameter that meets [tol].
       {b Derivative.} None: its answer is the detached best vertex, since an
       objective with no useful gradient has a minimum with no equation. *)
 
@@ -849,8 +849,7 @@ module Minimize : sig
       [+∞] or its [hi] is [−∞], or either is NaN, ends the lane [Stalled].
 
       [x0] is projected on the box first. Its evaluations count the calls of
-      [f], with its gradient for a gradient method, and [budget] its iterations,
-      or its evaluations for {!nelder_mead}.
+      [f], with its gradient for a gradient method, and [budget] its iterations.
 
       Raises [Invalid_argument] if [budget < 1], if the float tensors of [x0]
       differ in dtype, if [lo] or [hi] differs from [x0] in its structure or the

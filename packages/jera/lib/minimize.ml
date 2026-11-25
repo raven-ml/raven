@@ -50,17 +50,18 @@ let bracket ~tol f ~lo ~hi =
   let st0 = Nx.full_at (Nx.beside a0) Nx.int32 (Nx.shape a0) running in
   let st0 = settle st0 (Nx.logical_not (Nx.isfinite f0)) Not_finite in
   (* The least distance between two evaluations, Brent's [localmin] as the
-     Fortran [fmin] states it: √ε |x| plus a third of [tol]'s scale. Closer than √ε |x|, values
-     of [f] differ by about its rounding near a minimum, so they no longer
-     order the points; the smallest normal float keeps a step at [x = 0]. *)
+     Fortran [fmin] states it: √ε |x| plus a third of [tol]'s scale. Closer
+     than √ε |x|, values of [f] differ by about its rounding near a minimum,
+     so they no longer order the points; the smallest normal float keeps a
+     step at [x = 0]. *)
   let least x =
     Nx.add_s
       (Nx.add (Nx.mul_s (Nx.abs x) root_eps) (Nx.div_s (Tol.scale tol x) 3.))
       (Num.tiny dtype)
   in
   (* An element converges when its bracket meets [tol] or holds no float, and
-     stalls when it is as narrow as its least step allows, [localmin]'s
-     stopping test, short of [tol]. *)
+     stalls when it is as narrow as its least step allows, [localmin]'s stopping
+     test, short of [tol]. *)
   let finish s st =
     let half = Nx.div_s (Nx.sub s.b s.a) 2. in
     let narrow =
@@ -1649,7 +1650,7 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
       Not_finite
   in
   let st0 = emptied box st0 in
-  let step ((v, fv), (st, (_, evaluations))) =
+  let step ((v, fv), (st, ((_, evaluations), trips))) =
     let (v, fv), spent = reflect ~project p.values n (v, fv) in
     let evaluations = Nx.add evaluations spent in
     let best, diameter = spread (v, fv) in
@@ -1754,30 +1755,33 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
       Nx.add evaluations
         (Nx.mul_s (Nx.cast Nx.int32 met) (Int32.of_int (2 * n)))
     in
+    let trips = Nx.add_s trips 1l in
+    (* [budget] trips, as every method counts its iterations. *)
     let st =
-      settle st
-        (Nx.greater_equal_s evaluations (Int32.of_int budget))
-        Budget_spent
+      settle st (Nx.greater_equal_s trips (Int32.of_int budget)) Budget_spent
     in
-    ((v, fv), (st, (diameter, evaluations)))
+    ((v, fv), (st, ((diameter, evaluations), trips)))
   in
-  let (v, fv), (st, (e, evaluations)) =
+  let int32 v = Nx.scalar_at (Nx.beside p.start) Nx.int32 v in
+  let (v, fv), (st, ((e, evaluations), trips)) =
     if n = 0 then
       ( (v0, fv0),
-        ( Nx.scalar_at (Nx.beside p.start) Nx.int32 (Solution.code Converged),
-          ( Nx.zeros_at (Nx.beside p.start) p.dtype [| 0 |],
-            Nx.scalar_at (Nx.beside p.start) Nx.int32 1l ) ) )
+        ( int32 (Solution.code Converged),
+          ((Nx.zeros_at (Nx.beside p.start) p.dtype [| 0 |], int32 1l), int32 0l)
+        ) )
     else
       Rune.iterate
-        Nx.Ptree.(pair (pair tensor tensor) (pair tensor (pair tensor tensor)))
+        Nx.Ptree.(
+          pair (pair tensor tensor)
+            (pair tensor (pair (pair tensor tensor) tensor)))
         ~max:budget
         ~until:(fun (_, (st, _)) -> Nx.logical_not (searching st))
         step
         ( (v0, fv0),
           ( st0,
-            ( Nx.full_at (Nx.beside p.start) p.dtype [| n |] Float.infinity,
-              Nx.scalar_at (Nx.beside p.start) Nx.int32 (Int32.of_int (n + 1))
-            ) ) )
+            ( ( Nx.full_at (Nx.beside p.start) p.dtype [| n |] Float.infinity,
+                int32 (Int32.of_int (n + 1)) ),
+              int32 0l ) ) )
   in
   let best, _ = spread (v, fv) in
   let fix (st : Solution.status) _ =
@@ -1790,7 +1794,7 @@ let simplex_solve fn x ?lo ?hi ~tol ~budget f start =
   Solution.v ~fn
     ~settings:
       (Format.asprintf "method nelder_mead, tol %a, budget %d" Tol.pp tol budget)
-    ~spent:{ used = evaluations; unit = "evaluations"; budget }
+    ~spent:{ used = trips; unit = "trips"; budget }
     ~fix ~value:(p.unravel best) ~error:(p.unravel e) ~status:st ~evaluations
     ~facts:[ Fact ("value", Nx.min fv); Fact ("diameter", Nx.max e) ]
     ()
