@@ -359,8 +359,9 @@
 
     [c2c], [r2c] and [c2r] compute every case that fits. A transform's
     result is a function of its operand's values alone, whatever its
-    layout, its batch or the threads, but for a NaN result's sign and
-    payload, which are unspecified. A transform works in host memory the call
+    layout, its batch or the threads, and the same on every host
+    architecture, but for a NaN result's sign and payload, which are
+    unspecified. A transform works in host memory the call
     holds until it returns. On Linux, a line by Bailey's four steps of at least
     32 MiB and past the largest cache, from an operand apart from its result and
     into points that lie side by side there, keeps its points between the steps
