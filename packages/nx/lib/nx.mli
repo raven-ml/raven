@@ -2615,8 +2615,21 @@ val ewma : ?axis:int -> alpha:float -> (float, 's, 'd) t -> (float, 's, 'd) t
     bit. Each device reads [axis] whole. Element [i] passes through at
     most [max(0, 2⌈log₂(i+1)⌉ - 1)] compositions of the recurrence's affine
     maps [y ↦ a y + b], in [O(n)] work for [n] elements. A NaN reaches every
-    later element, and an infinity as the recurrence carries it; a finite
-    term whose weight underflows to [0] drops out.
+    later element, and an infinity as the recurrence carries it. A finite
+    term drops out where a composition weighs it by a product of the maps'
+    slopes [a] that underflows to [0]: at [alpha = 0.5], element 4095 of
+    4096 elements, [2{^1023}] at 2047 and zeros elsewhere, is [+0.], where
+    the recurrence gives [2{^-1026}].
+
+    Barring overflow and underflow, with [alpha] rounded into the format it
+    computes in and [u] that format's unit roundoff, element [i] is within
+    [γ(i δ + 2D + 1) Mᵢ] of the exact average, [γ] as
+    {!Nx_kernel.section-bounds} defines it, [D = max(0, 2⌈log₂(i+1)⌉ - 1)],
+    [Mᵢ] the greatest magnitude of [x₀] to [xᵢ], and [δ] [0] for
+    [alpha >= 1/2], else [1]. Each weight carries the roundings of
+    [1 - alpha] and of the products of slopes that compose it, at most one
+    per later element, which weights that fall by half or more each element
+    absorb; each composition rounds one weighted sum at most [Mᵢ].
 
     Raises [Invalid_argument] naming itself unless [0 < alpha <= 1], or for
     an axis outside [x]'s rank. *)
