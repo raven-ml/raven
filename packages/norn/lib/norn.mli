@@ -1685,7 +1685,8 @@ module Evidence : sig
   val information : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
   (** [information z] is [H], the posterior's Kullback-Leibler divergence from
       the prior in nats, [E_post (ln L) - ln Z]: how much the data narrowed the
-      prior. *)
+      prior. At a {!Temperature} stop it is the tempered posterior's, with [L^β]
+      for [L]. *)
 
   val sample : ('u, 'f, 'd) t -> ('u, 'f, 'd) Weighted.t
   (** [sample z] is draws weighted by the posterior, their log weights

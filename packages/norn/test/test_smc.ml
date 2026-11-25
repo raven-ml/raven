@@ -204,9 +204,53 @@ let between_chains =
         (sd *. t975 /. 1.959963984540054)
         (Nx.item [ 0 ] err))
 
+(* H is the divergence of the tempered posterior [L^β π / Z_β] from the prior:
+   [β E_β (ln L) - ln Z_β], with the particles as the posterior's draws. A sum
+   of 1000 terms rounds within 1000 ulps of its largest, 1e-12 relatively. *)
+let information_at_beta s =
+  let z = Norn.Smc.evidence s in
+  let beta = Nx.item [] s.Norn.Smc.beta in
+  let mean_l = Nx.item [] (Nx.mean s.likelihood) in
+  let expected =
+    if beta = 0. then 0. else (beta *. mean_l) -. Nx.item [] s.log_evidence
+  in
+  equal
+    (float_rel ~rel:1e-12 ~abs:1e-12)
+    expected
+    (Nx.item [] (Norn.Evidence.information z))
+
 let evidence_tests =
   group "evidence"
     [
+      test "information at β = 0 is 0, the prior's divergence from itself"
+        (fun () ->
+          let start = conjugate.draw (Nx.Rng.key 2) 100 in
+          information_at_beta
+            (Norn.Smc.init t ~prior:conjugate.prior
+               ~likelihood:conjugate.likelihood start);
+          (* [L^0] is 1 where [L] is 0. *)
+          let zero_above x l =
+            Nx.where
+              (Nx.greater_s (Nx.reshape [| -1 |] x) 0.)
+              (Nx.full_like l Float.neg_infinity)
+              l
+          in
+          information_at_beta
+            (Norn.Smc.init t ~prior:conjugate.prior
+               ~likelihood:(fun x -> zero_above x (conjugate.likelihood x))
+               start));
+      test "information short of β = 1 is the tempered posterior's" (fun () ->
+          let s =
+            Norn.Smc.init t ~prior:gaussian.prior
+              ~likelihood:gaussian.likelihood
+              (gaussian.draw (Nx.Rng.key 2) 1000)
+          in
+          let s =
+            Norn.Smc.step t ~prior:gaussian.prior
+              ~likelihood:gaussian.likelihood (Nx.Rng.key 1) s
+          in
+          less float_exact ~than:1. (Nx.item [] s.beta);
+          information_at_beta s);
       test "short of β = 1 it stops at the temperature" (fun () ->
           let s =
             Norn.Smc.init t ~prior:conjugate.prior

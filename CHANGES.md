@@ -85,6 +85,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Evidence.information` of a run that stopped short of `β = 1` is the tempered
+  posterior's divergence from the prior, `β E (ln L) - ln Z_β`. It was `E (ln
+  L) - ln Z_β`, which is negative at small `β`: `Smc.evidence` of an `init` state
+  gave the prior mean of `ln L` where the divergence is `0`.
 - `Ensemble.step` names the walker at which the density is NaN or `+inf`. It
   named a row of the shuffled half the density was called on, another walker.
 - `Dist.cauchy` and `Dist.half_cauchy` keep a finite log density far in their

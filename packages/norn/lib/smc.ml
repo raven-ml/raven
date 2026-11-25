@@ -348,10 +348,19 @@ let evidence (type f) (s : (_, f, 'd) state) =
   let dt = Nx.dtype s.beta and on = Nx.beside s.beta in
   let n = (Nx.shape s.likelihood).(0) in
   let log_weights = Nx.full_at on dt [| n |] (-.Float.log (float_of_int n)) in
+  (* The tempered posterior [L^β π / Z_β] diverges from the prior by [β E (ln L)
+     - ln Z_β]. At [β = 0] a particle's [L^0] is 1, a likelihood of [-inf]
+     included. *)
+  let tempered =
+    Nx.where
+      (Nx.greater s.beta (Nx.zeros_like s.beta))
+      (Nx.mul s.beta s.likelihood)
+      (Nx.zeros_like s.likelihood)
+  in
   Evidence.v
     ~sample:{ Weighted.values = s.particles; log_weights }
     ~log_evidence:s.log_evidence ~error:(Nx.sqrt s.variance)
-    ~information:(Nx.sub (Nx.mean s.likelihood) s.log_evidence)
+    ~information:(Nx.sub (Nx.mean tempered) s.log_evidence)
     ~stop:
       (Nx.where (finished s)
          (Nx.scalar_at on Nx.int32 Evidence.converged)
