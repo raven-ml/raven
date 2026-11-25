@@ -89,8 +89,10 @@ val word : Rig_nv.t -> Rig_nv.region
 
 val pattern : int -> int -> int -> unit
 (** [pattern a n seed] writes the [n] bytes at [a] with the pattern of [seed]:
-    byte [i] a hash of [i] and [seed], so that a byte shifted, repeated or left
-    from another pattern differs. *)
+    byte [i] a hash of [i] xored with [seed]'s low byte. A byte shifted or
+    repeated within it equals the byte in its place about one time in 256, as a
+    random byte would, and a byte left from the pattern of a seed that differs
+    modulo 256 always differs. *)
 
 val mismatch : int -> int -> int -> int
 (** [mismatch a n seed] is the index of the first of the [n] bytes at [a] that

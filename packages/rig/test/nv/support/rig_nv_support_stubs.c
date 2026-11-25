@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define CAML_NAME_SPACE
 #include <caml/fail.h>
@@ -17,25 +18,51 @@
 
 #define Ptr_val(v) ((void *)Long_val(v))
 
-/* Byte [i] of the pattern of [seed]. */
-static uint8_t pattern_byte(uint64_t seed, uint64_t i) {
-  uint64_t h = (i + (seed << 40)) * 0x9E3779B97F4A7C1ULL;
-  return (uint8_t)((h ^ (h >> 29)) >> 17);
+/* Bytes [8k] to [8k + 7] of the pattern of [seed], in memory order: a hash
+   of [k], each byte xored with [seed]'s low byte, so that the patterns of
+   seeds that differ modulo 256 differ in every byte. A word at a time, a
+   pattern of the 2 GiB a copy engine moves at once is written or checked in
+   about 0.2 s, where a byte at a time took 0.75 s. */
+static uint64_t pattern_word(uint64_t seed, uint64_t k) {
+  uint64_t h = k * 0x9E3779B97F4A7C1ULL;
+  return h ^ (h >> 29) ^ (UINT64_C(0x0101010101010101) * (seed & 0xFF));
 }
 
 value rig_nv_test_pattern(value v_p, value v_n, value v_seed) {
   uint8_t *p = Ptr_val(v_p);
   uint64_t n = Long_val(v_n), seed = Long_val(v_seed);
-  for (uint64_t i = 0; i < n; i++) p[i] = pattern_byte(seed, i);
+  uint64_t k = 0;
+  for (; 8 * k + 8 <= n; k++) {
+    uint64_t w = pattern_word(seed, k);
+    memcpy(p + (8 * k), &w, 8);
+  }
+  uint64_t w = pattern_word(seed, k);
+  memcpy(p + (8 * k), &w, n - (8 * k));
   return Val_unit;
+}
+
+/* The index of the first of the [m] bytes at [p] that differs from the
+   first [m] bytes of the word [w], or [-1]. */
+static int64_t first_differing(const uint8_t *p, uint64_t w, uint64_t m) {
+  uint8_t b[8];
+  memcpy(b, &w, 8);
+  for (uint64_t j = 0; j < m; j++)
+    if (p[j] != b[j]) return (int64_t)j;
+  return -1;
 }
 
 value rig_nv_test_mismatch(value v_p, value v_n, value v_seed) {
   const uint8_t *p = Ptr_val(v_p);
   uint64_t n = Long_val(v_n), seed = Long_val(v_seed);
-  for (uint64_t i = 0; i < n; i++)
-    if (p[i] != pattern_byte(seed, i)) return Val_long(i);
-  return Val_long(-1);
+  uint64_t k = 0;
+  for (; 8 * k + 8 <= n; k++) {
+    uint64_t got, w = pattern_word(seed, k);
+    memcpy(&got, p + (8 * k), 8);
+    if (got != w)
+      return Val_long((int64_t)(8 * k) + first_differing(p + (8 * k), w, 8));
+  }
+  int64_t j = first_differing(p + (8 * k), pattern_word(seed, k), n - (8 * k));
+  return Val_long(j < 0 ? -1 : (int64_t)(8 * k) + j);
 }
 
 /* The parts [v_parts], each [(queue, words)], in C, with their scratch
