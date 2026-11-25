@@ -261,14 +261,17 @@ module Draws : sig
     'b t
   (** [simulate a b f k d] is [map a b] of [f k_ij] over [d], where the draw [j]
       of chain [i] has the key [Nx.Rng.fold_in k (i * n + j)], [n] being the
-      number of draws per chain. *)
+      number of draws per chain.
+
+      Raises [Invalid_argument] if [d] holds no tensor. *)
 
   val append : ('u, 'd) Nx.Ptree.t -> 'u t -> 'u t -> 'u t
   (** [append u d d'] is the draws of [d] followed, in every chain, by those of
       [d'].
 
       Raises [Invalid_argument] if [d] and [d'] differ in their visits
-      ({!Nx.Ptree.val-visits}) or in their number of chains. *)
+      ({!Nx.Ptree.val-visits}), in their number of chains, or in the shape of a
+      tensor past its first two axes. *)
 
   val thin : ('u, 'd) Nx.Ptree.t -> every:int -> 'u t -> 'u t
   (** [thin u ~every d] is every [every]-th draw of each chain of [d], from the

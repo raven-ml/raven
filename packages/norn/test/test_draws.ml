@@ -18,33 +18,67 @@ module Pos = struct
     { a; b }
 end
 
-let pos : (Nx.host Nx.float64_t pos, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Pos)
-let floats x = Nx.to_array x
+let pos : (Nx.host Nx.float64_t pos, Nx.host) Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Pos)
 
-(* Draws of 2 chains of 3: [a] scalar per draw, [b] a vector of 2. Element [(i,
-   j)] of [a] is [10 i + j]. *)
-let draws =
+let t = Nx.Ptree.tensor
+let floats x = Nx.to_array x
+let ( !! ) (type u) (d : u D.t) : u = (d :> u)
+
+let paths s x =
+  List.filter_map
+    (function
+      | Nx.Ptree.Leaf p -> Some (Nx.Ptree.Path.to_string p) | Report _ -> None)
+    (Nx.Ptree.visits s x)
+
+(* 2 chains of 3 draws: [a] a scalar, element [(i, j)] equal to [10 i + j], and
+   [b] a vector of 2. *)
+let draws () =
   D.v pos
     {
       a = Nx.create Nx.float64 [| 2; 3 |] [| 0.; 1.; 2.; 10.; 11.; 12. |];
       b = Nx.reshape [| 2; 3; 2 |] (Nx.arange_f Nx.float64 0. 12. 1.);
     }
 
-let ( !! ) (type u) (d : u D.t) : u = (d :> u)
+let stats =
+  test "Stats.ptree walks its fields in order" (fun () ->
+      let z = Nx.zeros Nx.float32 [| 2 |] and no = Nx.zeros Nx.bool [| 2 |] in
+      let st =
+        Norn.Stats.
+          {
+            lp = z;
+            acceptance = z;
+            step_size = z;
+            n_steps = Nx.zeros Nx.int32 [| 2 |];
+            diverging = no;
+            saturated = no;
+            energy = z;
+          }
+      in
+      equal (list string)
+        [
+          "lp";
+          "acceptance";
+          "step_size";
+          "n_steps";
+          "diverging";
+          "saturated";
+          "energy";
+        ]
+        (paths (Norn.Stats.ptree Nx.float32) st))
 
-let validation =
+let v =
   group "v"
     [
-      test "a tensor needs a chain and a draw axis" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"a: shape [3]") (fun () ->
+      test "raises naming a tensor with fewer than two axes" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"a: ") (fun () ->
               D.v pos
                 {
                   a = Nx.zeros Nx.float64 [| 3 |];
                   b = Nx.zeros Nx.float64 [| 2; 3; 2 |];
                 }));
-      test "every tensor has the same chains and draws" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"b: 2 chains of 4 draws")
-            (fun () ->
+      test "raises naming a tensor of other chains or draws" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"b: ") (fun () ->
               D.v pos
                 {
                   a = Nx.zeros Nx.float64 [| 2; 3 |];
@@ -52,113 +86,97 @@ let validation =
                 }));
     ]
 
-let maps =
+let ptree =
+  test "ptree has the structure's paths" (fun () ->
+      equal (list string) [ "a"; "b" ] (paths (D.ptree pos) (draws ())))
+
+let map =
   group "map"
     [
-      test "a function of one draw applies to every draw" (fun () ->
+      test "applies f to every draw" (fun () ->
           let d =
-            D.map pos Nx.Ptree.tensor (fun p -> Nx.add p.a (Nx.sum p.b)) draws
+            !!(D.map pos t (fun p -> Nx.add p.a (Nx.sum p.b)) (draws ()))
           in
-          let d = !!d in
-          equal (array int) [| 2; 3 |] (Nx.shape d);
+          (* Draw [k], chain-major, has [a] of [10 (k / 3) + k mod 3] and [b]
+             summing to [4 k + 1]. *)
           let expected =
             Array.init 6 (fun k ->
-                let i = k / 3 and j = k mod 3 in
-                float_of_int ((10 * i) + j) +. float_of_int ((4 * k) + 1))
+                float_of_int ((10 * (k / 3)) + (k mod 3) + (4 * k) + 1))
           in
-          equal (array (float 1e-12)) expected (floats d));
-      test "draw j of chain i has the key fold_in k (i n + j)" (fun () ->
-          let k = Nx.Rng.key 7 in
+          equal (array int) [| 2; 3 |] (Nx.shape d);
+          equal (array float_exact) expected (floats d));
+      test "runs f once for all draws" (fun () ->
+          let calls = ref 0 in
+          let count p =
+            incr calls;
+            p.a
+          in
+          ignore (D.map pos t count (draws ()));
+          equal int 1 !calls);
+    ]
+
+let simulate =
+  test "simulate gives draw j of chain i the key fold_in k (i n + j)" (fun () ->
+      let k = Nx.Rng.key 7 in
+      let uniform k = Nx.Rng.uniform ~key:k Nx.float64 [||] in
+      let d = !!(D.simulate pos t (fun k _ -> uniform k) k (draws ())) in
+      let expected =
+        Array.init 6 (fun ij -> Nx.item [] (uniform (Nx.Rng.fold_in k ij)))
+      in
+      equal (array float_exact) expected (floats d))
+
+let simulate_nothing =
+  test "simulate raises for draws with no tensor" (fun () ->
+      let u = Nx.Ptree.unit in
+      raises_match (Exn.invalid_arg ~sub:"Norn.Draws.simulate") (fun () ->
+          D.simulate u u (fun _ () -> ()) (Nx.Rng.key 0) (D.v u ())))
+
+let append =
+  let l = Nx.Ptree.list t in
+  let x = Nx.zeros Nx.float64 [| 2; 3 |] in
+  group "append"
+    [
+      test "puts the second draws after the first in every chain" (fun () ->
           let d =
-            D.simulate pos Nx.Ptree.tensor
-              (fun k _ -> Nx.Rng.uniform ~key:k Nx.float64 [||])
-              k draws
+            !!(D.append pos (draws ()) (D.thin pos ~every:2 (draws ())))
           in
-          let d = !!d in
-          for i = 0 to 1 do
-            for j = 0 to 2 do
-              let expected =
-                Nx.item []
-                  (Nx.Rng.uniform
-                     ~key:(Nx.Rng.fold_in k ((i * 3) + j))
-                     Nx.float64 [||])
-              in
-              equal
-                ~msg:(Printf.sprintf "(%d, %d)" i j)
-                float_exact expected
-                (Nx.item [ i; j ] d)
-            done
-          done);
+          equal (array float_exact)
+            [| 0.; 1.; 2.; 0.; 2.; 10.; 11.; 12.; 10.; 12. |]
+            (floats d.a);
+          equal (array int) [| 2; 5; 2 |] (Nx.shape d.b));
+      test "raises for another number of chains" (fun () ->
+          let y = Nx.zeros Nx.float64 [| 3; 3 |] in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Draws.append") (fun () ->
+              D.append l (D.v l [ x ]) (D.v l [ y ])));
+      test "raises for other visits" (fun () ->
+          raises_match Exn.invalid_arg (fun () ->
+              D.append l (D.v l [ x ]) (D.v l [ x; x ])));
+      test "raises for a tensor of another element shape" (fun () ->
+          let d = D.v t (Nx.zeros Nx.float64 [| 2; 3; 2 |]) in
+          let d' = D.v t (Nx.zeros Nx.float64 [| 2; 3; 3 |]) in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Draws.append") (fun () ->
+              D.append t d d'));
     ]
 
-let joins =
-  group "append and thin"
+let thin =
+  group "thin"
     [
-      test "append puts the second draws after the first in each chain"
-        (fun () ->
-          let d = !!(D.append pos draws draws) in
-          equal (array int) [| 2; 6 |] (Nx.shape d.a);
-          equal
-            (array (float 0.1))
-            [| 10.; 11.; 12.; 10.; 11.; 12. |]
-            (floats (Nx.slice [ Nx.I 1 ] d.a)));
-      test "thin keeps every n-th draw from the first" (fun () ->
-          let d = !!(D.thin pos ~every:2 draws) in
-          equal (array (float 0.1)) [| 0.; 2.; 10.; 12. |] (floats d.a);
-          equal (array int) [| 2; 2; 2 |] (Nx.shape d.b));
-      test "thinning every draw keeps them all" (fun () ->
-          equal
-            (array (float 0.1))
-            (floats !!draws.a)
-            (floats !!(D.thin pos ~every:1 draws).a));
-      test "thin refuses a step below one" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"every = 0") (fun () ->
-              D.thin pos ~every:0 draws));
+      prop "keeps every every-th draw from the first" (Gen.int_range 1 5)
+        (fun every ->
+          let kept =
+            List.filter
+              (fun a -> a mod 10 mod every = 0)
+              [ 0; 1; 2; 10; 11; 12 ]
+          in
+          equal (list float_exact)
+            (List.map float_of_int kept)
+            (Array.to_list (floats !!(D.thin pos ~every (draws ())).a)));
+      test "raises for every below 1" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Draws.thin") (fun () ->
+              D.thin pos ~every:0 (draws ())));
     ]
 
-let structures =
-  group "structures"
-    [
-      test "draws are walked as their structure" (fun () ->
-          let paths =
-            List.filter_map
-              (function
-                | Nx.Ptree.Leaf p -> Some (Nx.Ptree.Path.to_string p)
-                | Report _ -> None)
-              (Nx.Ptree.visits (D.ptree pos) draws)
-          in
-          equal (list string) [ "a"; "b" ] paths);
-      test "statistics are walked field by field" (fun () ->
-          let st =
-            Norn.Stats.
-              {
-                lp = Nx.zeros Nx.float32 [| 2 |];
-                acceptance = Nx.zeros Nx.float32 [| 2 |];
-                step_size = Nx.zeros Nx.float32 [| 2 |];
-                n_steps = Nx.zeros Nx.int32 [| 2 |];
-                diverging = Nx.zeros Nx.bool [| 2 |];
-                saturated = Nx.zeros Nx.bool [| 2 |];
-                energy = Nx.zeros Nx.float32 [| 2 |];
-              }
-          in
-          let paths =
-            List.filter_map
-              (function
-                | Nx.Ptree.Leaf p -> Some (Nx.Ptree.Path.to_string p)
-                | Report _ -> None)
-              (Nx.Ptree.visits (Norn.Stats.ptree Nx.float32) st)
-          in
-          equal (list string)
-            [
-              "lp";
-              "acceptance";
-              "step_size";
-              "n_steps";
-              "diverging";
-              "saturated";
-              "energy";
-            ]
-            paths);
-    ]
-
-let () = exit (run "Norn.Draws" [ validation; maps; joins; structures ])
+let () =
+  exit
+    (run "Norn.Draws"
+       [ stats; v; ptree; map; simulate; simulate_nothing; append; thin ])
