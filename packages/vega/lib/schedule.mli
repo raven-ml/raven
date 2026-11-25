@@ -168,7 +168,7 @@ val cosine_decay_restarts :
     [0.0].
 
     Raises [Invalid_argument] if [decay_steps] is not positive, if [t_mul] is
-    not at least [1.0], or if [m_mul] is not positive. *)
+    not finite and at least [1.0], or if [m_mul] is not positive. *)
 
 val one_cycle :
   max_value:float ->

@@ -286,16 +286,20 @@ let warmup_cosine_decay_refusals =
 (* Warm restarts *)
 
 (* [cycle_start n t_mul k] is "c_k = n * (t_mul^k - 1) / (t_mul - 1) (n * k for
-   t_mul = 1.)", an integer for a [t_mul] of 1 or 2. *)
-let cycle_start n t_mul k = if t_mul = 1. then n * k else n * ((1 lsl k) - 1)
+   t_mul = 1.)", an integer for a [t_mul] of 1, 2 or 3. *)
+let cycle_start n t_mul k =
+  let t = Float.to_int t_mul in
+  let rec power k = if k = 0 then 1 else t * power (k - 1) in
+  if t = 1 then n * k else n * (power k - 1) / (t - 1)
 
-(* A t_mul of 1 or 2 makes every cycle start an integer, computed exactly at
+(* A t_mul of 1, 2 or 3 makes every cycle start an integer, computed exactly at
    float32. The counters reach the start of the fourth cycle. *)
 let cosine_decay_restarts_formula =
   prop ~count:300 "cosine_decay_restarts is its formula in each cycle"
     Gen.(
       let* n, t_mul =
-        pair step_count (option (of_list ~pp:Format.pp_print_float [ 1.; 2. ]))
+        pair step_count
+          (option (of_list ~pp:Format.pp_print_float [ 1.; 2.; 3. ]))
       in
       let start = cycle_start n (Option.value t_mul ~default:1.) in
       let specials =
@@ -321,6 +325,7 @@ let cosine_decay_restarts_formula =
       cover "the second cycle" (k = 1);
       cover "the third cycle" (k = 2);
       cover "t_mul 2" (t = 2.);
+      cover "t_mul 3" (t = 3.);
       cover "m_mul other than 1" (m <> 1.);
       cover "alpha > 0" (a > 0.);
       (* In cycle k, "init_value * m_mul^k * ((1 - alpha) * (1 + cos (pi * (step
@@ -343,13 +348,14 @@ let cosine_decay_restarts_formula =
 let cosine_decay_restarts_refusals =
   cases
     "cosine_decay_restarts raises Invalid_argument if decay_steps is not \
-     positive, t_mul < 1.0, or m_mul is not positive"
+     positive, t_mul is not finite and at least 1, or m_mul is not positive"
     ~id:fst
     [
       ("decay_steps 0", (0, 1., 1.));
       ("decay_steps -1", (-1, 1., 1.));
       ("t_mul below 1", (10, Float.pred 1., 1.));
       ("t_mul nan", (10, Float.nan, 1.));
+      ("t_mul infinity", (10, Float.infinity, 1.));
       ("m_mul 0", (10, 1., 0.));
       ("m_mul -1", (10, 1., -1.));
       ("m_mul nan", (10, 1., Float.nan));

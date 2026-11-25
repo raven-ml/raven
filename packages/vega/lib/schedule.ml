@@ -117,8 +117,9 @@ let cosine_decay_restarts ~init_value ~decay_steps ?(t_mul = 1.0) ?(m_mul = 1.0)
     ?(alpha = 0.) () =
   if decay_steps <= 0 then
     invalid_arg "Schedule.cosine_decay_restarts: decay_steps must be positive";
-  if not (t_mul >= 1.0) then
-    invalid_arg "Schedule.cosine_decay_restarts: t_mul must be at least 1";
+  if not (t_mul >= 1.0 && t_mul < Float.infinity) then
+    invalid_arg
+      "Schedule.cosine_decay_restarts: t_mul must be finite and at least 1";
   if not (m_mul > 0.0) then
     invalid_arg "Schedule.cosine_decay_restarts: m_mul must be positive";
   let first = float_of_int decay_steps in
