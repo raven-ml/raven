@@ -67,11 +67,18 @@ let window read =
   let b = cpu_seconds () in
   (read (), b -. a)
 
-(* This process computes on one thread, so the CPU seconds it spent between the
-   calls cannot pass their wall time, which the window spans. [Unix.times]
-   rounds each reading to the microsecond. *)
+(* How far the CPU seconds two [Unix.times] readings count can pass the wall
+   time between them, for a process that computes on one thread. Each reading
+   rounds to the microsecond. Windows, Cygwin's included, also charges a whole
+   clock tick to the thread that runs when the tick's interrupt comes, and a
+   span of wall time [w] holds at most [w / tick + 1] interrupts; a tick lasts
+   at most 1/64 s, the default and longest interval of its timer. *)
+let cpu_slack = 2e-6 +. if Sys.win32 || Sys.cygwin then 1. /. 64. else 0.
+
+(* The CPU seconds the process spent between the calls cannot pass their wall
+   time, which the window spans, by more than [cpu_slack]. *)
 let at_least_cpu key (got, spent) =
-  at_least ~msg:key float_exact ~than:(spent -. 2e-6) (value key got)
+  at_least ~msg:key float_exact ~than:(spent -. cpu_slack) (value key got)
 
 (* Readings *)
 
