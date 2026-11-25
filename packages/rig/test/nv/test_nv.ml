@@ -1857,14 +1857,18 @@ let handover () =
 
 let deep_image = Rig_gpu_support.loader (fun () -> S.fixture "deep_sm89.cubin")
 
+(* The bytes of the local memory that serves launches on [g] of the function [f]
+   of the fixture cubin [file]. *)
+let local_of (g : A.Gpu.t) file f =
+  let pp = Format.pp_print_string in
+  let c = require_ok ~pp (A.Cubin.of_string (S.fixture file)) in
+  let k = require_some (A.Cubin.kernel c f) in
+  let l = require_ok ~pp (A.Launch.make g k) in
+  (A.Local_memory.make g (A.Launch.local_bytes l)).bytes
+
 (* The bytes of the local memory that serves [g]'s launches of deep
    (fixtures/deep.cu). *)
-let deep_local g =
-  let pp = Format.pp_print_string in
-  let c = require_ok ~pp (A.Cubin.of_string (S.fixture "deep_sm89.cubin")) in
-  let k = require_some (A.Cubin.kernel c "deep") in
-  let l = require_ok ~pp (A.Launch.make (N.capability g) k) in
-  (A.Local_memory.make (N.capability g) (A.Launch.local_bytes l)).bytes
+let deep_local g = local_of (N.capability g) "deep_sm89.cubin" "deep"
 
 (* A function the GPU has no local memory for: [deep] keeps 480 KiB a thread
    (fixtures/deep.cu), and its local memory holds that for every thread the
@@ -1923,6 +1927,390 @@ let local =
         "a function the GPU has no local memory for raises Out_of_memory, \
          having made nothing"
         no_local_memory;
+    ]
+
+(* Local memory at free_cache. Each test opens GPU 0 through rig on a path that
+   records the [Gpu] memory it gives, and runs functions through rig's images
+   and submissions alone, so that only the images set the device's need, but in
+   [locals_asked]. The local memories are the path's regions of at least the
+   driver's reserve's: the tests' buffers and code take less. Their functions
+   are locals.cu's [local0] and [local39], whose threads keep 64 and 2,560
+   bytes, and deep.cu's [shallow], 4,096. *)
+
+let locals_cubin = "locals_sm89.cubin"
+let deep_cubin = "deep_sm89.cubin"
+
+(* What a [recorded] path did: the address and bytes of each [Gpu] region it
+   gave and has not taken back, and the bytes of each [Gpu] region it gave,
+   newest first; and the bytes of [Gpu] memory it has none of, 0 for none. *)
+type record = {
+  mutable held : (int * int) list;
+  mutable made : int list;
+  mutable refused : int;
+}
+
+let new_record () = { held = []; made = []; refused = 0 }
+
+(* GPU 0's opener on NVIDIA's kernel driver, whose path [r] records. *)
+let recorded r =
+  Rig_nv_nvidia.gpu_with 0 ~wrap:(fun p ->
+      let alloc kind n =
+        if kind = N.Gpu && n = r.refused then None
+        else
+          let m = p.alloc kind n in
+          (match m with
+          | Some m when kind = N.Gpu ->
+              r.held <- (m.N.address, n) :: r.held;
+              r.made <- n :: r.made
+          | Some _ | None -> ());
+          m
+      in
+      let free (m : _ N.memory) =
+        r.held <- List.filter (fun (a, _) -> a <> m.N.address) r.held;
+        p.free m
+      in
+      { p with alloc; free })
+
+(* [(r, d)], [d] GPU 0 opened through rig on a path [r] records. Skips off
+   NVIDIA's kernel driver, whose path alone a test wraps, and ends the GPU's
+   device a test before left open. *)
+let open_recorded () =
+  if S.path () <> Some S.Kernel then
+    skip ~reason:"it records the memory of NVIDIA's kernel driver's path" ();
+  S.release ();
+  let r = new_record () in
+  (r, require_ok (Rig.open_ (recorded r)))
+
+(* [f r d] for [(r, d)] {!open_recorded}, [d] closed after. *)
+let with_recorded f =
+  let r, d = open_recorded () in
+  Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () -> f r d
+
+let gpu_of d = require_some (Rig.capability d A.key)
+
+(* The bytes of the local memory that serves [d]'s launches of [f] of the
+   fixture cubin [file]. *)
+let local_bytes d file f = local_of (gpu_of d) file f
+
+(* The bytes of the local memories [r]'s path holds for [d], in increasing
+   order: its [Gpu] regions of at least the local memory of a function with no
+   stack. *)
+let local_regions r d =
+  let least = local_bytes d "kernels_sm89.cubin" "empty" in
+  List.sort compare
+    (List.filter_map (fun (_, n) -> if n >= least then Some n else None) r.held)
+
+(* Three rounds of a full collection and a free_cache of [d], so that the
+   finalisers of what was dropped run and what it held goes back. *)
+let trimmed d =
+  for _ = 1 to 3 do
+    Gc.full_major ();
+    Rig.free_cache d
+  done
+
+(* Three rounds of a full collection and an allocation on [d], which unloads the
+   images dropped before once the work submitted before it is done, with no
+   free_cache. *)
+let collected d =
+  for _ = 1 to 3 do
+    Gc.full_major ();
+    ignore (Sys.opaque_identity (B.create d 4))
+  done
+
+let load d file = require_ok (Rig.Image.load d (S.fixture file))
+let groups = 64
+let threads = 256
+
+(* The words the threads of a function of locals.cu or deep.cu write, whose
+   array holds [w] words: thread i writes [i + i mod w] into word i. *)
+let kept w = Array.init threads (fun i -> i + (i mod w))
+
+(* A launch of [image]'s [f], of locals.cu or deep.cu, over [groups] groups of
+   [threads] threads after [waits], into a buffer of its own: its point, and the
+   words it wrote, read once the point is reached. *)
+let launch_kept ?(waits = [||]) d image f =
+  let out = B.create d (4 * threads) in
+  let s = Sub.make d [| launch_part image f ~params:12 [| refer 0 0 |] |] in
+  let v = launch_args ~groups:(groups, 1, 1) ~threads:(threads, 1, 1) 12 in
+  Bytes.set_int32_le v.Sub.params 8 (Int32.of_int threads);
+  let p = Rig.submit s ~waits ~buffers:[| out |] ~args:[| v |] in
+  let written () =
+    Rig.Point.wait p;
+    words out ~at:0 threads
+  in
+  (p, written)
+
+(* A launch of [image]'s [f], whose array holds [w] words, writes its words. *)
+let computes ~msg d image f w =
+  equal (array int) ~msg (kept w) (snd (launch_kept d image f) ())
+
+(* Loads deep's image anew, launches [shallow], which writes its words, and
+   drops the image. *)
+let[@inline never] shallow_once d =
+  computes ~msg:"shallow's words" d (load d deep_cubin) "shallow" 1024
+
+(* With every image gone, a free_cache gives back all the local memory, the
+   driver's reserve included. A function loaded after sets it up anew. *)
+let locals_all_gone () =
+  with_recorded @@ fun r d ->
+  shallow_once d;
+  trimmed d;
+  equal (list int) ~msg:"with every image gone" [] (local_regions r d);
+  shallow_once d
+
+(* A local memory a larger one replaced goes back at a free_cache once the work
+   on it is reached, with no submission after: [local0]'s, once [shallow]'s
+   replaced it, both images held. *)
+let locals_replaced () =
+  with_recorded @@ fun r d ->
+  let locals = load d locals_cubin and deep = load d deep_cubin in
+  computes ~msg:"local0's words" d locals "local0" 16;
+  computes ~msg:"shallow's words" d deep "shallow" 1024;
+  trimmed d;
+  equal (list int) ~msg:"both images held"
+    [ local_bytes d deep_cubin "shallow" ]
+    (local_regions r d);
+  ignore (Sys.opaque_identity (locals, deep))
+
+(* A free_cache replaces the local memory with one sized to the largest need of
+   the images not unloaded: [local39]'s once [shallow]'s image is gone, which
+   [local39] then runs on. *)
+let locals_shrunk () =
+  with_recorded @@ fun r d ->
+  let locals = load d locals_cubin in
+  computes ~msg:"local39's words" d locals "local39" 640;
+  shallow_once d;
+  trimmed d;
+  equal (list int) ~msg:"shallow's image gone"
+    [ local_bytes d locals_cubin "local39" ]
+    (local_regions r d);
+  computes ~msg:"local39's words after" d locals "local39" 640
+
+(* Work queued before a free_cache keeps the local memory it was placed with: a
+   [local39] launch held behind a Polled point, submitted on [shallow]'s memory
+   once [shallow]'s image went, keeps it through the free_cache that sizes a new
+   one to [local39]. A [local39] launch submitted after runs on the new one,
+   behind the held launch. Once both ran, the new one alone stays. [local0] runs
+   first, so that [local39]'s first entry comes with the held launch and no
+   memory of [local39]'s bytes was made before. *)
+let locals_queued () =
+  with_recorded @@ fun r d ->
+  let module P = Rig_support.Polled in
+  let pd, p = P.open_ "POLLED:locals" in
+  Fun.protect ~finally:(fun () -> Rig.close pd) @@ fun () ->
+  let locals = load d locals_cubin in
+  let local39 = local_bytes d locals_cubin "local39"
+  and shallow = local_bytes d deep_cubin "shallow" in
+  computes ~msg:"local0's words" d locals "local0" 16;
+  shallow_once d;
+  collected d;
+  let point = Rig.submit (Sub.make pd [||]) ~buffers:[||] ~args:[||] in
+  let held, held_words = launch_kept ~waits:[| point |] d locals "local39" in
+  Rig.free_cache d;
+  equal (list int) ~msg:"while the launch is held" [ local39; shallow ]
+    (local_regions r d);
+  let _, next_words = launch_kept d locals "local39" in
+  equal bool ~msg:"the launch, held" false (Rig.Point.reached held);
+  ignore (P.run p);
+  equal (array int) ~msg:"the held launch's words" (kept 640) (held_words ());
+  equal (array int) ~msg:"the next launch's words" (kept 640) (next_words ());
+  trimmed d;
+  equal (list int) ~msg:"once both ran" [ local39 ] (local_regions r d);
+  ignore (Sys.opaque_identity locals)
+
+(* Where the GPU has no memory for the smaller local memory, the larger stays
+   and serves: with the path short of [local39]'s bytes, the free_caches after
+   [shallow]'s image went keep [shallow]'s memory, the device lives and
+   [local39] runs on it. The next free_cache the path serves gives it back. *)
+let locals_no_room () =
+  with_recorded @@ fun r d ->
+  let locals = load d locals_cubin in
+  let local39 = local_bytes d locals_cubin "local39" in
+  computes ~msg:"local39's words" d locals "local39" 640;
+  shallow_once d;
+  r.refused <- local39;
+  trimmed d;
+  equal (list int) ~msg:"short of local39's bytes"
+    [ local_bytes d deep_cubin "shallow" ]
+    (local_regions r d);
+  equal (option string) ~msg:"the device's loss" None (Rig.lost d);
+  computes ~msg:"local39's words on shallow's memory" d locals "local39" 640;
+  r.refused <- 0;
+  trimmed d;
+  equal (list int) ~msg:"served" [ local39 ] (local_regions r d);
+  ignore (Sys.opaque_identity locals)
+
+(* A free_cache allocates no local memory where the memory serves the live need
+   already: with [local39] held, the free_caches leave its memory, the one its
+   entry allocated. *)
+let locals_kept () =
+  with_recorded @@ fun r d ->
+  let locals = load d locals_cubin in
+  let local39 = local_bytes d locals_cubin "local39" in
+  computes ~msg:"local39's words" d locals "local39" 640;
+  trimmed d;
+  Rig.free_cache d;
+  equal int ~msg:"allocations of local39's bytes" 1
+    (List.length (List.filter (Int.equal local39) r.made));
+  equal (list int) ~msg:"the local memory" [ local39 ] (local_regions r d);
+  ignore (Sys.opaque_identity locals)
+
+(* What [Rig_nv_abi.Gpu.t.local] was asked for stays until the device stops:
+   with no image, free_caches keep the memory that serves 4,660 bytes a thread,
+   a need the memory rounds up, the one the call allocated. *)
+let locals_asked () =
+  with_recorded @@ fun r d ->
+  let g = gpu_of d and n = 4660 in
+  let bytes = (A.Local_memory.make g n).bytes in
+  equal (result unit string) ~msg:"the call" (Ok ()) (g.local n);
+  trimmed d;
+  equal int ~msg:"allocations of its bytes" 1
+    (List.length (List.filter (Int.equal bytes) r.made));
+  equal (list int) ~msg:"after free_cache" [ bytes ] (local_regions r d)
+
+(* GPU 0's opener on NVIDIA's kernel driver, whose path's allocation of
+   [Atomic.get gated] bytes of [Gpu] memory sets [waiting], then waits until
+   [go] is set. *)
+let gated_gpu ~gated ~waiting ~go =
+  Rig_nv_nvidia.gpu_with 0 ~wrap:(fun p ->
+      let alloc kind n =
+        if kind = N.Gpu && n = Atomic.get gated then begin
+          Atomic.set waiting true;
+          while not (Atomic.get go) do
+            Domain.cpu_relax ()
+          done
+        end;
+        p.alloc kind n
+      in
+      { p with alloc })
+
+(* A free_cache waits for a growth of the local memory on another domain, then
+   gives back what the device retired: with [local39]'s entry held in the path's
+   allocation of its memory, a free_cache after a submission of 16,384 launches,
+   which grew the launch ring, ends only once the growth does, and the process
+   then maps what it mapped after one launch, with [locals] loaded. *)
+let locals_growth_held () =
+  if S.path () <> Some S.Kernel then
+    skip ~reason:"it holds an allocation of NVIDIA's kernel driver's path" ();
+  S.release ();
+  let gated = Atomic.make 0
+  and waiting = Atomic.make false
+  and go = Atomic.make false in
+  let d = require_ok (Rig.open_ (gated_gpu ~gated ~waiting ~go)) in
+  (* An exception lets a held allocation go too, so it fails by its message
+     rather than leaving the growth held. *)
+  let finally () =
+    Atomic.set go true;
+    Rig.close d
+  in
+  Fun.protect ~finally @@ fun () ->
+  ignore (snd (numbered_submit d 1) ());
+  let locals = load d locals_cubin in
+  trimmed d;
+  let one = mapped_bytes () in
+  ignore (snd (numbered_submit d 16_384) ());
+  Gc.full_major ();
+  Atomic.set gated (local_bytes d locals_cubin "local39");
+  let resolved = Atomic.make false and ended = Atomic.make false in
+  let growth =
+    Domain.spawn (fun () ->
+        let e = Rig.Image.resolve locals "local39" in
+        Atomic.set resolved true;
+        e)
+  in
+  while not (Atomic.get waiting || Atomic.get resolved) do
+    Domain.cpu_relax ()
+  done;
+  let trim =
+    Domain.spawn (fun () ->
+        Rig.free_cache d;
+        Atomic.set ended true)
+  in
+  (* 20 ms, watched here rather than by [still], so that both domains end before
+     any check fails. *)
+  let t0 = Rig.Profile.now () in
+  while Rig.Profile.now () - t0 < 20_000_000 && not (Atomic.get ended) do
+    Domain.cpu_relax ()
+  done;
+  let ended_early = Atomic.get ended in
+  Atomic.set go true;
+  let entry = Domain.join growth in
+  Domain.join trim;
+  equal bool ~msg:"the growth, held in its allocation" true (Atomic.get waiting);
+  equal bool ~msg:"the free_cache, ended during the growth" false ended_early;
+  ignore (require_some entry);
+  equal int ~msg:"once the growth ended" one (mapped_bytes ())
+
+(* The index of the first of [b]'s [n] bytes that differs from the pattern of
+   [seed], or [-1] ({!S.mismatch}). *)
+let mismatch_in b n seed =
+  let h = B.create Rig.host n in
+  B.copy ~src:b ~dst:h;
+  S.mismatch (H.at h) n seed
+
+(* The index of the first of [b]'s [n] bytes that is not [c], or [-1]. *)
+let other_than c b n =
+  let h = B.create Rig.host n in
+  B.copy ~src:b ~dst:h;
+  B.read h Bigarray.char (fun x ->
+      let rec from i =
+        if i = n then -1
+        else if Bigarray.Array1.get x i <> c then i
+        else from (i + 1)
+      in
+      from 0)
+
+(* A device whose local memory was withdrawn runs the driver's kernels, new
+   channels and a new function. Once every image went, a copy and a fill of 1
+   MiB within Device memory, which the driver's kernels run on the compute
+   channel; words past a channel's 262,144 entries, which make the device's
+   channels anew, whose first submission places no local memory; a copy on them;
+   then [shallow], loaded anew. Each computes right and the device lives. *)
+let locals_withdrawn () =
+  with_recorded @@ fun r d ->
+  shallow_once d;
+  trimmed d;
+  equal (list int) ~msg:"withdrawn" [] (local_regions r d);
+  let n = 1 lsl 20 in
+  let h = B.create Rig.host n in
+  S.pattern (H.at h) n 5;
+  let a = B.create d n and b = B.create d n in
+  B.copy ~src:h ~dst:a;
+  B.copy ~src:a ~dst:b;
+  equal int ~msg:"the copy's first byte that differs" (-1) (mismatch_in b n 5);
+  B.fill a 'x';
+  equal int ~msg:"the fill's first byte that differs" (-1) (other_than 'x' a n);
+  let nops = Sub.make d [| S.words (Array.make 600_000 0) |] in
+  Rig.Point.wait (Rig.submit nops ~buffers:[||] ~args:[||]);
+  S.pattern (H.at h) n 7;
+  B.copy ~src:h ~dst:a;
+  B.copy ~src:a ~dst:b;
+  equal int ~msg:"the copy on the new channels" (-1) (mismatch_in b n 7);
+  shallow_once d;
+  equal (option string) ~msg:"the device's loss" None (Rig.lost d)
+
+let local_trimmed =
+  group "local memory at free_cache"
+    [
+      test "with every image gone, free_cache gives back all local memory"
+        locals_all_gone;
+      test "free_cache gives back a replaced local memory its work passed"
+        locals_replaced;
+      test "free_cache sizes local memory to the images not unloaded"
+        locals_shrunk;
+      test "work queued before free_cache keeps its local memory" locals_queued;
+      test "where the GPU has no room for less local memory, the larger stays"
+        locals_no_room;
+      test "free_cache allocates no local memory that serves the live need"
+        locals_kept;
+      test "free_cache keeps the local memory the capability was asked for"
+        locals_asked;
+      test
+        "a device runs the driver's kernels, new channels and a new function \
+         after its local memory was withdrawn"
+        locals_withdrawn;
+      test "free_cache waits for a local memory growth, then gives back"
+        locals_growth_held;
     ]
 
 (* An object the RM refuses keeps none of the memory the path gave for it.
@@ -2879,6 +3267,7 @@ let () =
          launches;
          room;
          local;
+         local_trimmed;
          channels;
          images;
          timeline;
