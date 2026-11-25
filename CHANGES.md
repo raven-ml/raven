@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_arrow.sniff`'s refusal of a field type talon cannot hold reads
+  `column "bad" has the Arrow type interval, which talon cannot hold`, where it
+  read `column "bad" is a interval`.
 - A JSON row that is not an object fails with its text, as a value of another
   type does, and one whose bytes break the syntax fails at the byte that
   breaks it. Both failed at the row's first byte, named by that byte alone.

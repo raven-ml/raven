@@ -610,7 +610,8 @@ and plain cats path (f : field) : Type.any option =
   | Timestamp (u, ""), _ -> Some (Any (Type.wall u))
   | Timestamp (u, _), _ -> Some (Any (Type.instant u))
   | Duration u, _ -> Some (Any (Type.duration u))
-  | Unsupported s, _ -> fail "column %S is a %s, which talon cannot hold" path s
+  | Unsupported s, _ ->
+      fail "column %S has the Arrow type %s, which talon cannot hold" path s
   | Fixed_list n, [ c ] -> (
       if n < 0 then fail "column %S has a negative size" path;
       let numeric = c.encoding = None && c.extension = None in
