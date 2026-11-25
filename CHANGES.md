@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Decoder.strip` raises `Invalid_argument` for a negative `start` or `stop`,
+  which stripped nothing.
 - `Pre_tokenizer.fixed_length` raises `Invalid_argument` if its length is not
   positive. It gave no pretoken, dropping the text.
 - Normalizers keep a byte that opens no character as a character of one byte,

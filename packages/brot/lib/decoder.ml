@@ -33,6 +33,7 @@ let err_seq_missing_decoders =
 let err_unknown_type typ = strf "unknown decoder type: %s" typ
 let err_expected_object = "invalid decoder JSON: expected object"
 let err_unknown_scheme s = strf "unknown prepend_scheme '%s'" s
+let err_strip_count = "strip: start and stop must not be negative"
 
 (* Decoding *)
 
@@ -661,6 +662,7 @@ let sequence decoders = Sequence decoders
 let replace ~pattern ~by () = Replace { pattern; replacement = by }
 
 let strip ?(content = " ") ?(start = 0) ?(stop = 0) () =
+  if start < 0 || stop < 0 then invalid_arg err_strip_count;
   Strip { content; start; stop }
 
 let fuse = Fuse

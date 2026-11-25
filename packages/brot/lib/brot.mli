@@ -893,7 +893,8 @@ module Decoder : sig
 
       HuggingFace reads [content] as a single character, so {!val-to_json} on a
       decoder whose [content] is longer, or empty, writes a decoder it rejects.
-  *)
+
+      Raises [Invalid_argument] if [start] or [stop] is negative. *)
 
   val fuse : t
   (** [fuse] is a collapsing decoder that concatenates all tokens into a single

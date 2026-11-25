@@ -484,6 +484,12 @@ let strip_tests =
     cases ~id:tokens_id "strips nothing for an empty content"
       [ ([ "ab" ], "ab") ]
       (decodes (Decoder.strip ~content:"" ~start:1 ~stop:1 ()));
+    cases
+      ~id:(fun (start, stop) -> Printf.sprintf "~start:%d ~stop:%d" start stop)
+      "raises Invalid_argument for a negative start or stop"
+      [ (-1, 0); (0, -1); (min_int, 0) ]
+      (fun (start, stop) ->
+        raises_match Exn.invalid_arg (fun () -> Decoder.strip ~start ~stop ()));
   ]
 
 (* fuse *)
