@@ -141,4 +141,4 @@ val pp_node_reads : Format.formatter -> node -> unit
     lists with the tensors that may take their place, the dtypes whose scalar
     type the leaf reads as:
     [list[list[float32]] (or a tensor over float32 in place of its 1 to 2
-    innermost lists)]. *)
+     innermost lists)]. *)

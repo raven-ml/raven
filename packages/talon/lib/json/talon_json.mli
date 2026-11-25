@@ -26,11 +26,10 @@
 
     {1:syntax Syntax}
 
-    The input is UTF-8, and every value is RFC 8259 JSON: its bytes are
-    checked, including in a value no column reads, so that a read's syntax
-    errors do not depend on the columns it requests. A UTF-8 byte order mark
-    at the start of the input is not part of the first value, and line 1
-    starts after it.
+    The input is UTF-8, and every value is RFC 8259 JSON: its bytes are checked,
+    including in a value no column reads, so that a read's syntax errors do not
+    depend on the columns it requests. A UTF-8 byte order mark at the start of
+    the input is not part of the first value, and line 1 starts after it.
 
     - A string holds any Unicode scalar value. Unpaired surrogate escapes are
       refused. Control characters must be escaped.
@@ -51,10 +50,9 @@
 
     {1:values Values}
 
-    A row is an object, and another value fails the read with its line,
-    column, byte and text. A key the format does not name is skipped, and a
-    key the format names that a row lacks reads as null, like the JSON [null].
-    By type:
+    A row is an object, and another value fails the read with its line, column,
+    byte and text. A key the format does not name is skipped, and a key the
+    format names that a row lacks reads as null, like the JSON [null]. By type:
     - [bool] reads [true] and [false];
     - the integer types read a number with neither fraction nor exponent, in
       the type's range;
@@ -186,8 +184,8 @@ val file :
 (** [file ?format path] is the {!source} of the JSON file [path], named
     [json "path"], whose errors name [path]: as [format] says, or as {!sniff}
     infers from the file when [format] is absent. Each read opens the file
-    again. With [format], the call opens nothing, so the source of a named
-    pipe reads it once.
+    again. With [format], the call opens nothing, so the source of a named pipe
+    reads it once.
 
     [Error e] if no file is at [path], or, when [format] is absent, if the file
     cannot be opened or as {!sniff}. With [format], a file that cannot be opened

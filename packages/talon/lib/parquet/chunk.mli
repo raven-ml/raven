@@ -126,16 +126,15 @@ val read :
     failed, if a page header does not decode or overruns the chunk, a page fails
     its CRC or its decompression, a page or its levels hold more or fewer values
     than their header says, a level is above the leaf's maximum or in another
-    encoding than [RLE], the entries of
-    the pages of a repeated leaf do not add up to its chunk's, an encoding is
-    not one talon reads on [l]'s physical type, a value does not decode or does
-    not fit [t] (an integer outside a narrower type, named with its row, an
-    [int96] outside the unit's range or not a whole number of it, a decimal
-    outside [int64], a byte string outside a categorical's dictionary), a
-    dictionary index is out of the dictionary, the pages of a whole read do not
-    add up to the row group's rows, or the chunk's values would take more bytes
-    than an [int] counts. The message names the leaf's column, or a [nested]
-    leaf's dotted path. *)
+    encoding than [RLE], the entries of the pages of a repeated leaf do not add
+    up to its chunk's, an encoding is not one talon reads on [l]'s physical
+    type, a value does not decode or does not fit [t] (an integer outside a
+    narrower type, named with its row, an [int96] outside the unit's range or
+    not a whole number of it, a decimal outside [int64], a byte string outside a
+    categorical's dictionary), a dictionary index is out of the dictionary, the
+    pages of a whole read do not add up to the row group's rows, or the chunk's
+    values would take more bytes than an [int] counts. The message names the
+    leaf's column, or a [nested] leaf's dotted path. *)
 
 val structure :
   row_group:int ->
@@ -144,10 +143,10 @@ val structure :
   Leaf.slots ->
   elem:(int * int) option ->
   Nx.host Nx.bit_t option * Nx.host Nx.int64_t option * int
-(** [structure ~row_group ~name lv s ~elem] walks the entries of [lv] for the node of
-    slots [s]: its validity ([None] when no slot is null), its offsets when
-    [elem], its element [(repetition, definition)] levels, is given, and its
-    number of slots.
+(** [structure ~row_group ~name lv s ~elem] walks the entries of [lv] for the
+    node of slots [s]: its validity ([None] when no slot is null), its offsets
+    when [elem], its element [(repetition, definition)] levels, is given, and
+    its number of slots.
 
     Raises {!Meta.Error}, naming the column [name], if the levels are ones no
     writer produces: the first entry does not start a row, or an entry repeats

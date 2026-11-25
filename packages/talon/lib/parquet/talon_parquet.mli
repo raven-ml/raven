@@ -130,10 +130,10 @@
 type format
 (** The type for Parquet formats: the columns of a file, in schema order, each
     with its name, its Parquet type and the talon type it reads as, and the
-    codec and row-group size {!encode} writes with. One that {!sniff} gives
-    has {!val-format}'s codec and row-group size, and {!encode} writes it only
-    when each column's Parquet type is the one {!encode} writes for its talon
-    type, as for a file {!encode} wrote. *)
+    codec and row-group size {!encode} writes with. One that {!sniff} gives has
+    {!val-format}'s codec and row-group size, and {!encode} writes it only when
+    each column's Parquet type is the one {!encode} writes for its talon type,
+    as for a file {!encode} wrote. *)
 
 val sniff : Rig.Buffer.t -> (format, Talon.Error.t) result
 (** [sniff b] is the format of the Parquet file whose bytes are [b], read from
@@ -174,12 +174,11 @@ val pp_format : Format.formatter -> format -> unit
 
 (** {1:reading Reading}
 
-    A source decodes only the columns a request names and those of the
-    conjuncts it applies ({!Talon.Source}), a nested column's every leaf (a
-    column of values below its groups) when it is requested. The file's row
-    groups are its parts, each one batch of the request's columns. A batch's
-    columns are canonical ({!Talon.Column}), so {!Talon.column} takes them
-    without a copy.
+    A source decodes only the columns a request names and those of the conjuncts
+    it applies ({!Talon.Source}), a nested column's every leaf (a column of
+    values below its groups) when it is requested. The file's row groups are its
+    parts, each one batch of the request's columns. A batch's columns are
+    canonical ({!Talon.Column}), so {!Talon.column} takes them without a copy.
 
     A page's values may be in each encoding Parquet defines for their physical
     type: [PLAIN], [RLE] for booleans, a dictionary, [DELTA_BINARY_PACKED],
@@ -225,13 +224,13 @@ val pp_format : Format.formatter -> format -> unit
     chunk fails to decode. A failure in a column chunk names its row group and
     its column. A page that does not decode also gives its bytes, and a value
     that a column's layout refuses ({!Talon.Column.of_layout}) names the column
-    and the row of the row group. A failure in a nested column names the
-    column or, for a leaf, its dotted path such as [tags.list.element], and a
-    value's position among the leaf's values stands for its row. A row that
-    breaks a tensor's shape names the column, the row of the row group and the
-    level of the lists: [0] for the tensor's outermost list, a row's own list
-    or, in a list of tensors, the outer list's element, and [k] for the values
-    of [k] lists. Of several rows that break it, the earliest is named. *)
+    and the row of the row group. A failure in a nested column names the column
+    or, for a leaf, its dotted path such as [tags.list.element], and a value's
+    position among the leaf's values stands for its row. A row that breaks a
+    tensor's shape names the column, the row of the row group and the level of
+    the lists: [0] for the tensor's outermost list, a row's own list or, in a
+    list of tensors, the outer list's element, and [k] for the values of [k]
+    lists. Of several rows that break it, the earliest is named. *)
 
 val source : format -> Rig.Buffer.t -> Talon.Source.t
 (** [source f b] is the source, named [parquet], of the rows of the Parquet
@@ -334,8 +333,8 @@ val encode :
     Raises [Invalid_argument] if [q]'s columns do not write as [f]'s, names and
     types, if [f] leaves a column {{!undeclared}undeclared}, or if a column of
     [f] has a Parquet type that {!encode} does not write for its talon type,
-    such as a [required] one from {!sniff}. A format from {!val-format}
-    writes. *)
+    such as a [required] one from {!sniff}. A format from {!val-format} writes.
+*)
 
 (**/**)
 
