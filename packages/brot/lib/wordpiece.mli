@@ -49,10 +49,10 @@ val create :
 
 val from_file : ?unk_token:string -> vocab_file:string -> unit -> t
 (** [from_file ~vocab_file ()] loads a model from a BERT-style [vocab.txt] file
-    (one token per line, trimmed, its ID the line's number from 0; a blank line
-    holds the empty token). [unk_token] is as in {!create}; the others are
-    BERT's defaults: [continuing_subword_prefix = "##"],
-    [max_input_chars_per_word = 100]. *)
+    (one token per line without the white space that ends it, its ID the line's
+    number from 0; a blank line holds the empty token). [unk_token] is as in
+    {!create}; the others are BERT's defaults:
+    [continuing_subword_prefix = "##"], [max_input_chars_per_word = 100]. *)
 
 (** {1:tokenization Tokenization} *)
 

@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.from_model_file` reads a `vocab.txt` line as Hugging Face does,
+  dropping only the white space that ends it, every Unicode White_Space
+  character: it trimmed ASCII spaces at both ends, so `" c"` became `"c"`.
 - `Brot.bpe ~dropout` raises `Invalid_argument` outside [0, 1], NaN included,
   and `of_json` gives an `Error`, as Hugging Face does. NaN and negative values
   merged every pair, values past 1 skipped them all.

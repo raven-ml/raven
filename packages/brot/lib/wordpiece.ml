@@ -183,6 +183,20 @@ let create ~vocab ?(unk_token = "[UNK]") ?(continuing_subword_prefix = "##")
     max_input_chars_per_word;
   }
 
+(* [line] without the White_Space characters that end it. *)
+let trim_end line =
+  let stop = String.length line in
+  let rec kept i keep =
+    if i >= stop then keep
+    else
+      let d = Char_class.at line i ~stop in
+      let next = i + Char_class.at_len d in
+      if Char_class.at_category d = Char_class.whitespace then kept next keep
+      else kept next next
+  in
+  let keep = kept 0 0 in
+  if keep = stop then line else String.sub line 0 keep
+
 let read_file ~vocab_file =
   let vocab = Hashtbl.create 10000 in
   let ic = open_in vocab_file in
@@ -193,7 +207,7 @@ let read_file ~vocab_file =
       (try
          while true do
            (* A blank line takes an id too: an id is the line's number. *)
-           Hashtbl.replace vocab (String.trim (input_line ic)) !index;
+           Hashtbl.replace vocab (trim_end (input_line ic)) !index;
            incr index
          done
        with End_of_file -> ());

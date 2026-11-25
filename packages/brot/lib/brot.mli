@@ -1339,9 +1339,10 @@ val from_model_file :
 
     - [vocab]: path to the vocabulary file. With [merges], a [vocab.json]: a
       JSON object mapping tokens to IDs ([{"hello": 0, "world": 1}]). Without
-      [merges], a BERT-style [vocab.txt]: one token per line, trimmed, its ID
-      the line's number from 0. A blank line holds the empty token; of several
-      blank lines, the empty token takes the last one's number.
+      [merges], a BERT-style [vocab.txt]: one token per line without the
+      White_Space characters that end it, its ID the line's number from 0. A
+      blank line holds the empty token; of several blank lines, the empty token
+      takes the last one's number.
     - [merges]: path to merges file ([merges.txt]). One merge per line as
       space-separated token pairs. Lines starting with ["#version"] are skipped.
 

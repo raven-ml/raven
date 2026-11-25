@@ -886,6 +886,19 @@ let test_blank_lines () =
   equal ~msg:"the last blank" (option string) (Some "") (id_to_token t 2);
   equal ~msg:"vocab_size" int 3 (vocab_size t)
 
+(* HF's WordPiece::read_file takes each line's [trim_end], which drops every
+   White_Space character that ends it and none that starts it. *)
+let test_line_ends () =
+  let t =
+    from_model_file
+      ~vocab:(file "[UNK]\n c\u{a0}\nd\u{3000}\n\te\r\n  f  \n")
+      ()
+  in
+  equal
+    (list (option int))
+    [ Some 1; Some 2; Some 3; Some 4 ]
+    (List.map (token_to_id t) [ " c"; "d"; "\te"; "  f" ])
+
 let test_bpe_files () =
   let vocab = file {|{"a": 0, "b": 1, "ab": 2, "c": 3, "abc": 4}|} in
   let merges = file "#version: 0.2\na b\nab c\n" in
@@ -1009,6 +1022,7 @@ let () =
              line_ids;
              test "gives the empty token the last blank line's number"
                test_blank_lines;
+             test "takes off the white space that ends a line" test_line_ends;
              test "reads a vocab.json and a merges.txt, skipping #version"
                test_bpe_files;
              test "raises Sys_error for a file it cannot read" test_unreadable;
