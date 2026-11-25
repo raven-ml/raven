@@ -809,16 +809,18 @@ val contour :
     a colour bar for a continuous colour scale, stepped at the levels of a
     stepped scale ({!Scale.linear}), and otherwise one entry per guide value,
     drawn by the swatch ({!Mark.v}) of every mark that reads the scale: every
-    category of a categorical scale, and about four values of a continuous one,
-    none of which a role of area draws with an area of [0.]. A categorical scale
-    yields no legend when each channel that reads it has the data of a position
-    channel of its mark whose axis is shown in the channel's panels: that axis
-    names the categories already, so bars coloured by their own x category have
-    no legend. A guide is titled by the distinct titles that its explicit axes
-    ({!axis}, one per panel it serves) or legend ({!legend}) set, or if they set
-    none, by those of the channels that read its scale, in the order the figure
-    is written, separated by commas, and is untitled if there are none. These
-    rules are defaults ({!section-merging}).
+    category of a categorical scale, and about four values of a continuous one:
+    unless its ticks are set or another of its guides needs fewer, the major
+    ticks {!Hugin_kit.Ticks.choose} gives a guide nine labels long with no least
+    spacing, none of which a role of area draws with an area of [0.]. A
+    categorical scale yields no legend when each channel that reads it has the
+    data of a position channel of its mark whose axis is shown in the channel's
+    panels: that axis names the categories already, so bars coloured by their
+    own x category have no legend. A guide is titled by the distinct titles that
+    its explicit axes ({!axis}, one per panel it serves) or legend ({!legend})
+    set, or if they set none, by those of the channels that read its scale, in
+    the order the figure is written, separated by commas, and is untitled if
+    there are none. These rules are defaults ({!section-merging}).
 
     A guide serving several panels stands beside the smallest panel or grid
     holding them. An axis shared by the panels of a column, for x, or of a row,
@@ -1771,15 +1773,16 @@ module Mark : sig
       - [shape], the shape of the mark's data where its channels do not state
         it, such as the datum axes of {!image}. It broadcasts with the shapes of
         the channels ({!Hugin.section-data}). Defaults to [[||]].
-      - [swatch], the picture of a legend entry. It is called with one row in a
-        box one em square, onto which the projection maps the unit square, and
-        in which the roles that read the legend's scale take the entry's value,
-        constants keep theirs, colour roles bound to other data take the ink at
-        half its opacity, and other roles are unbound, so that its point is the
-        box's centre ({!points}) and its extents span the box ({!extent}). For
-        the entry [k] of a legend of [n] entries, the rows have the shape
-        [[|n|]], the index [[|k|]] and the legend's id ({!Hugin.section-ids}),
-        with which {!draw} tags the swatch. Unset, it is [draw].
+      - [swatch], the picture of a legend entry. It is called with one row in
+        the box of its legend's swatches ({!Theme.section-lengths}), onto which
+        the projection maps the unit square, and in which the roles that read
+        the legend's scale take the entry's value, constants keep theirs, colour
+        roles bound to other data take the ink at half its opacity, and other
+        roles are unbound, so that its point is the box's centre ({!points}) and
+        its extents span the box ({!extent}). For the entry [k] of a legend of
+        [n] entries, the rows have the shape [[|n|]], the index [[|k|]] and the
+        legend's id ({!Hugin.section-ids}), with which {!draw} tags the swatch.
+        Unset, it is [draw].
 
       Raises [Invalid_argument] if:
       - two bindings bind one role or roles of one name;
@@ -1864,8 +1867,8 @@ module Layout : sig
   (** [panels l] is the panels of [l], in the order of the figure. *)
 
   val warnings : t -> warning list
-  (** [warnings l] is the warnings of resolving and laying out, in the order of
-      the figure. *)
+  (** [warnings l] is the warnings of resolving ({!Resolved.warnings}), then
+      those of laying out, in the order of the figure. *)
 
   val equal : t -> t -> bool
   (** [equal l l'] is [true] iff [l] and [l'] lay out {!Resolved.equal} figures
@@ -1882,8 +1885,9 @@ end
 (** Drawings.
 
     A drawing is a laid-out figure drawn at a density: its marks reduced, read
-    and drawn, painted over the theme's paper with every mark and panel tagged
-    with its id. *)
+    and drawn, painted over the theme's paper with every mark, panel, axis,
+    header and legend tagged with its id, and each legend swatch with its
+    legend's id and entry ({!Mark.v}). Figure titles are untagged. *)
 module Drawing : sig
   type t
   (** The type for drawings. *)
@@ -1893,8 +1897,10 @@ module Drawing : sig
       paper, then the panels' marks, the guides and the titles. *)
 
   val warnings : t -> warning list
-  (** [warnings d] is the warnings of resolving, laying out and drawing, in the
-      order of the figure. *)
+  (** [warnings d] is the warnings of laying out ({!Layout.warnings}), then
+      those of drawing the marks, in the order of the figure, then those of
+      drawing the legends' swatches, side legends before inside ones. A warning
+      repeated is kept once. *)
 
   val equal : t -> t -> bool
   (** [equal d d'] is [true] iff [d] and [d'] have equal warnings and
@@ -1944,16 +1950,17 @@ val layout :
     ({!section-guides}), stacked outward from the side in tiers: axes, then
     headers, the titles of axes and headers, legends, and the titles of figures.
     A tier is one band as deep as its deepest guide, which guides share when
-    they lie apart along the side; one that overlaps an earlier one moves out to
-    a band of its own. Bands, and the rows that legend entries above or below
-    their panels wrap into, are decided at the shortest lengths the figure can
-    take. A tier reaching past an end of the side clears what the tiers below it
-    on the adjacent side reach there. A node protrudes beyond its data areas by
-    its boundary cells' protrusions, then by its bands, or by what its guides
-    reach past the ends of the adjacent sides if that is more. Titles, headers
-    and legends need their side to be as long as they are. Inside legends are no
-    tier: the panel at their place needs their width and height, each with a
-    pad on both sides, as its least width and height.
+    they lie the theme's gap ({!Theme.section-lengths}) apart along the side;
+    one that comes nearer an earlier one moves out to a band of its own. Bands,
+    and the rows that legend entries above or below their panels wrap into, are
+    decided at the shortest lengths the figure can take. A tier reaching past an
+    end of the side clears what the tiers below it on the adjacent side reach
+    there. A node protrudes beyond its data areas by its boundary cells'
+    protrusions, then by its bands, or by what its guides reach past the ends of
+    the adjacent sides if that is more. Titles, headers and legends need their
+    side to be as long as they are. Inside legends are no tier: the panel at
+    their place needs their width and height, each with a pad on both sides, as
+    its least width and height.
 
     Each grid makes each gap the largest protrusions that meet it from either
     side plus the theme's gap ({!Theme.section-lengths}), and shares the length

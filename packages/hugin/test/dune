@@ -32,7 +32,7 @@
  (name test_layout)
  (modules test_layout)
  (package hugin)
- (libraries hugin hugin.kit hugin_test_figures nx windtrap)
+ (libraries hugin hugin.font hugin.kit hugin_test_figures nx windtrap)
  (deps golden/layout.expected)
  (action
   (progn
