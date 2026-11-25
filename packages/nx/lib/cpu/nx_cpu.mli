@@ -16,7 +16,9 @@
     On x86-64 nx.cpu requires AVX2, FMA, F16C, BMI2, SSE4.2 and POPCNT, with
     the system saving the AVX registers: on a host without them, initialising
     the library raises [Failure], before any kernel can run. Other
-    architectures have none.
+    architectures have none. Its kernels need no more alignment of the
+    calling thread's stack than the platform's ABI gives, 16 bytes on
+    x86-64 Windows.
 
     A call keeps other domains waiting to collect for no longer than about
     one unloaded core's copy of 1 MiB at a time, however many operands,
