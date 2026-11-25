@@ -48,8 +48,12 @@ val y : t -> int -> float
 val area : t -> float
 (** [area r] is the signed area of [r], computed with rounding: positive if [r]
     is positively oriented and negative if negatively, unless the area is within
-    rounding error of zero, and [0.] if [r] has fewer than three points. It
-    overflows to an infinity or NaN if [r] spans more than about 10{^ 154}. *)
+    rounding error of zero, and [0.] if [r] has fewer than three points. Its
+    rounding error is below n{^ 2} ε w h, where n is [length r], ε is
+    [epsilon_float] and w and h are the width and height of [bounds r], however
+    far [r] lies from the origin, unless products of coordinate differences
+    underflow. It overflows to an infinity or NaN if [r] spans more than about
+    10{^ 154}. *)
 
 val bounds : t -> Box2.t option
 (** [bounds r] is the smallest box containing the points of [r], or [None] if

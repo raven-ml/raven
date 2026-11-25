@@ -2,19 +2,13 @@
  (names test_ring2 test_pgon2)
  (modules test_ring2 test_pgon2)
  (package hugin)
- (libraries hugin.gg hugin.gg.kit hugin_test_winding windtrap))
+ (libraries hugin.gg hugin.gg.kit windtrap))
 
 (test
  (name test_field2)
  (modules test_field2)
  (package hugin)
- (libraries
-  hugin.gg
-  hugin.gg.kit
-  hugin_test_winding
-  nx
-  rig
-  windtrap)
+ (libraries hugin.gg hugin.gg.kit hugin_test_winding nx rig windtrap)
  (action
   (progn
    (run %{test} --corrected)

@@ -7,6 +7,8 @@ open Windtrap
 open Hugin_gg
 open Hugin_gg_kit
 
+(* Witnesses print every digit, so that a failure shows the difference. *)
+
 let pp_ring ppf r =
   Format.fprintf ppf "@[<1>[";
   for i = 0 to Ring2.length r - 1 do
@@ -15,13 +17,17 @@ let pp_ring ppf r =
   done;
   Format.fprintf ppf "]@]"
 
-let pp_pgon ppf p =
+let pp_rings ppf rs =
   Format.fprintf ppf "@[<1>{%a}@]"
     (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_ring)
-    (Pgon2.rings p)
+    rs
 
 let ring = Testable.make ~pp:pp_ring ~equal:Ring2.equal
-let pgon = Testable.make ~pp:pp_pgon ~equal:Pgon2.equal
+
+let pgon =
+  Testable.make
+    ~pp:(fun ppf p -> pp_rings ppf (Pgon2.rings p))
+    ~equal:Pgon2.equal
 
 let pp_box ppf b =
   Format.fprintf ppf "[%.17g, %.17g; %.17g, %.17g]" (Box2.minx b) (Box2.miny b)
@@ -33,63 +39,56 @@ let path = Testable.make ~pp:Path.pp ~equal:Path.equal
 let of_list pts =
   Ring2.v (Array.of_list (List.map fst pts)) (Array.of_list (List.map snd pts))
 
+(* The square of side [s] from [(x0, y0)], positively oriented. *)
 let square x0 y0 s =
   Ring2.v [| x0; x0 +. s; x0 +. s; x0 |] [| y0; y0; y0 +. s; y0 +. s |]
 
-let donut = Pgon2.v [ square 0. 0. 4.; Ring2.reverse (square 1. 1. 2.) ]
+let no_point = Ring2.v [||] [||]
+
+(* A square of side 4 with a hole of side 2: a surface of area 16 - 4. *)
+let donut = [ square 0. 0. 4.; Ring2.reverse (square 1. 1. 2.) ]
 
 (* Generators *)
 
-let coord =
-  Gen.frequency
-    [
-      (3, Gen.map Float.of_int (Gen.int_range (-3) 3));
-      (1, Gen.float_range (-3.5) 3.5);
-    ]
+let int_coord = Gen.map Float.of_int (Gen.int_range (-3) 3)
+let coord = Gen.frequency [ (3, int_coord); (1, Gen.float_range (-3.5) 3.5) ]
 
-let gen_ring =
-  Gen.with_pp pp_ring
-    (Gen.map of_list
-       (Gen.list ~size:(Gen.int_range 0 6) (Gen.pair coord coord)))
+let gen_rings_of c =
+  Gen.with_pp pp_rings
+    (Gen.list ~size:(Gen.int_range 0 3)
+       (Gen.map of_list (Gen.list ~size:(Gen.int_range 0 6) (Gen.pair c c))))
 
-let gen_rings = Gen.list ~size:(Gen.int_range 0 3) gen_ring
-let gen_pgon = Gen.with_pp pp_pgon (Gen.map Pgon2.v gen_rings)
+let gen_rings = gen_rings_of coord
+
+(* Integer coordinates make every ring's area, and their sum in any order,
+   exact. *)
+let gen_int_rings = gen_rings_of int_coord
+
+(* The box from the least and greatest coordinates of the rings, [None] for no
+   point. *)
+let smallest_box rs =
+  let pts =
+    List.concat_map
+      (fun r ->
+        List.init (Ring2.length r) (fun i -> (Ring2.x r i, Ring2.y r i)))
+      rs
+  in
+  match pts with
+  | [] -> None
+  | (x, y) :: pts ->
+      let minx, miny, maxx, maxy =
+        List.fold_left
+          (fun (x0, y0, x1, y1) (x, y) ->
+            (Float.min x0 x, Float.min y0 y, Float.max x1 x, Float.max y1 y))
+          (x, y, x, y) pts
+      in
+      Some (Box2.of_pts (P2.v minx miny) (P2.v maxx maxy))
+
+(* The rings' paths, each appended after the previous ones. *)
+let paths rs =
+  List.fold_left (fun p r -> p |> Path.append (Ring2.to_path r)) Path.empty rs
 
 (* Tests *)
-
-let donut_cases () =
-  equal float_exact 12. (Pgon2.area donut);
-  equal (option box2) (Some (Box2.v 0. 0. 4. 4.)) (Pgon2.bounds donut)
-
-(* An inner ring wound like the outer one is no hole: its area counts twice. *)
-let same_orientation_is_no_hole () =
-  let p = Pgon2.v [ square 0. 0. 4.; square 1. 1. 2. ] in
-  equal float_exact 20. (Pgon2.area p)
-
-let empty_polygon () =
-  let p = Pgon2.v [] in
-  equal float_exact 0. (Pgon2.area p);
-  is_none (Pgon2.bounds p);
-  is_none (Pgon2.bounds (Pgon2.v [ Ring2.v [||] [||] ]));
-  equal path Path.empty (Pgon2.to_path p)
-
-let bounds_skip_empty_rings () =
-  let p =
-    Pgon2.v [ Ring2.v [||] [||]; square 1. 2. 3.; of_list [ (-1., 5.) ] ]
-  in
-  equal (option box2) (Some (Box2.v (-1.) 2. 5. 3.)) (Pgon2.bounds p)
-
-let area_is_sum rs =
-  equal float_exact
-    (List.fold_left (fun a r -> a +. Ring2.area r) 0. rs)
-    (Pgon2.area (Pgon2.v rs))
-
-let to_path_in_order () =
-  let a = square 0. 0. 1. and b = of_list [ (5., 5.); (6., 5.); (6., 7.) ] in
-  let expected =
-    Path.empty |> Path.append (Ring2.to_path a) |> Path.append (Ring2.to_path b)
-  in
-  equal path expected (Pgon2.to_path (Pgon2.v [ a; b ]))
 
 let to_string p = Format.asprintf "%a" Pgon2.pp p
 
@@ -97,28 +96,57 @@ let tests =
   [
     group "rings"
       [
-        prop "rings returns the rings given, in order" gen_rings (fun rs ->
+        prop "are the rings given to v, in order" gen_rings (fun rs ->
             equal (list ring) rs (Pgon2.rings (Pgon2.v rs)));
       ];
-    group "measures"
+    group "area"
       [
-        test "a square with a hole" donut_cases;
-        test "an inner ring wound alike is no hole" same_orientation_is_no_hole;
-        test "the polygon of no ring" empty_polygon;
-        test "bounds skip rings of no point" bounds_skip_empty_rings;
-        prop "area is the sum of the rings' areas" gen_rings area_is_sum;
+        prop "is the sum of the rings' areas"
+          ~examples:[ []; donut; [ square 0. 0. 4.; square 1. 1. 2. ] ]
+          gen_int_rings
+          (fun rs ->
+            equal float_exact
+              (List.fold_left (fun a r -> a +. Ring2.area r) 0. rs)
+              (Pgon2.area (Pgon2.v rs)));
+        test "is the surface's area when rings wind 0 or 1 times" (fun () ->
+            equal float_exact 12. (Pgon2.area (Pgon2.v donut)));
       ];
-    group "converting"
-      [ test "to_path appends the rings' paths in order" to_path_in_order ];
-    group "comparing and formatting"
+    group "bounds"
       [
-        prop "equal is an equivalence"
-          (Gen.pair gen_pgon gen_pgon)
-          (Law.equivalence pgon);
-        test "equal depends on the order of the rings" (fun () ->
+        prop "is the smallest box containing the rings' points"
+          ~examples:
+            [
+              [];
+              [ no_point ];
+              donut;
+              [ no_point; square 1. 2. 3.; of_list [ (-1., 5.) ] ];
+            ]
+          gen_rings
+          (fun rs ->
+            equal (option box2) (smallest_box rs) (Pgon2.bounds (Pgon2.v rs)));
+      ];
+    group "to_path"
+      [
+        prop "is the rings' paths in order"
+          ~examples:
+            [
+              []; [ square 0. 0. 1.; of_list [ (5., 5.); (6., 5.); (6., 7.) ] ];
+            ]
+          gen_rings
+          (fun rs -> equal path (paths rs) (Pgon2.to_path (Pgon2.v rs)));
+      ];
+    group "equal"
+      [
+        prop "is an equivalence" (Gen.pair gen_rings gen_rings) (fun (a, b) ->
+            Law.equivalence pgon (Pgon2.v a, Pgon2.v b));
+        test "is false for the same rings in another order" (fun () ->
             let a = square 0. 0. 1. and b = square 2. 2. 1. in
-            is_false (Pgon2.equal (Pgon2.v [ a; b ]) (Pgon2.v [ b; a ])));
-        test "pp writes the rings separated by spaces" (fun () ->
+            not_equal pgon (Pgon2.v [ a; b ]) (Pgon2.v [ b; a ]));
+      ];
+    group "pp"
+      [
+        test "formats the rings as Ring2.pp does, separated by spaces"
+          (fun () ->
             equal string "M 0 0 L 1 0 L 1 1 Z M 5 5 L 6 5 L 6 6 Z"
               (to_string
                  (Pgon2.v
