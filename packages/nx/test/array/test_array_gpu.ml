@@ -15,6 +15,7 @@ module M = Nx_array.Move
 module B = Rig.Buffer
 
 let layout = Testable.make ~pp:L.pp ~equal:L.equal
+let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
 
 let gpu = lazy (Result.to_option (Rig_gpus.first ()))
 
@@ -85,12 +86,13 @@ let test_copy () =
   List.iter
     (fun (name, v) ->
       let c = A.copy v in
-      equal ~msg:(name ^ ": device") bool true (Rig.equal d (A.device c));
+      equal ~msg:(name ^ ": device") device d (A.device c);
       equal ~msg:(name ^ ": layout") layout
         (L.contiguous (L.shape (A.layout v)))
         (A.layout c);
-      equal ~msg:(name ^ ": fresh") bool false
-        (B.overlaps (A.buffer c) (A.buffer m));
+      satisfies ~msg:name ~claim:"shares no byte with the source" pass
+        (fun c -> not (B.overlaps (A.buffer c) (A.buffer m)))
+        c;
       equal ~msg:(name ^ ": elements") (array int) (back v) (back c))
     [
       ("whole", m);
