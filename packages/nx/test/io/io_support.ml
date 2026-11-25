@@ -47,28 +47,36 @@ let loads_or_fails ~path f =
   | exception Failure m when String.starts_with ~prefix:(path ^ ": ") m -> ()
   | exception e -> failf "%s raised %s" path (Printexc.to_string e)
 
-let flip_byte s i =
-  String.mapi
-    (fun j c -> if i = j then Char.chr (Char.code c lxor 0xff) else c)
-    s
+let flip c = Char.chr (Char.code c lxor 0xff)
+let flip_byte s i = String.mapi (fun j c -> if i = j then flip c else c) s
 
-(* Every proper prefix of [whole] fails to load, naming its file. Each prefix
-   overwrites one file: a file of its own each, a 14 KiB file's prefixes made
-   and unlinked 14780 files, half the test's time. *)
+(* [write_at path pos s] writes [s] over the file [path] from byte [pos], and
+   never truncates it: Windows refuses to truncate a file whose pages an earlier
+   load mapped, until rig reclaims the load's collected buffers
+   ({!Rig_disk.section-borrows}). *)
+let write_at path pos s =
+  Out_channel.with_open_gen [ Open_wronly; Open_binary ] 0 path (fun oc ->
+      Out_channel.seek oc (Int64.of_int pos);
+      Out_channel.output_string oc s)
+
+(* Every proper prefix of [whole] fails to load, naming its file. One file grows
+   a byte at a time; a file per prefix made 14780 files for a 14 KiB input, half
+   the test's time. *)
 let prefixes_fail load whole =
   let path = temp_file () in
   for n = 0 to String.length whole - 1 do
-    write path (String.sub whole 0 n);
+    if n > 0 then write_at path (n - 1) (String.sub whole (n - 1) 1);
     fails ~path (fun () -> load path)
   done
 
-(* Every byte of [whole] below [upto], flipped, loads or fails, each flip
-   overwriting one file. *)
+(* Every byte of [whole] below [upto], flipped, loads or fails, each flip made
+   and undone in place in one file. *)
 let flips_load_or_fail load ?(upto = max_int) whole =
-  let path = temp_file () in
+  let path = file whole in
   for i = 0 to Int.min upto (String.length whole) - 1 do
-    write path (flip_byte whole i);
-    loads_or_fails ~path (fun () -> load path)
+    write_at path i (String.make 1 (flip whole.[i]));
+    loads_or_fails ~path (fun () -> load path);
+    write_at path i (String.sub whole i 1)
   done
 
 (* [drop_pages path] writes the file [path]'s dirty pages to storage and drops
