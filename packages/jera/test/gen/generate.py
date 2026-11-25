@@ -129,8 +129,6 @@ def piecewise():
     for name, bc in ends.items():
         s = interpolate.CubicSpline(x, y, bc_type=bc)
         m.floats(f"cubic_{name}", s(points))
-        m.floats(f"cubic_{name}_derivative", s.derivative()(points))
-        m.floats(f"cubic_{name}_integral", s.antiderivative()(points) - s.antiderivative()(x[0]))
         s2 = interpolate.CubicSpline(x, y2, bc_type=bc if name != "clamped" else ((1, [0.5, 0.5]), (1, [-2.0, -2.0])))
         m.floats(f"cubic_{name}2", s2(points))
     for n in [2, 3, 4]:

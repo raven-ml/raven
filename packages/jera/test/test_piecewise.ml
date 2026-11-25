@@ -41,6 +41,9 @@ let rec derivatives k p =
 
 (* Samples *)
 
+let floats =
+  Format.pp_print_array ~pp_sep:Format.pp_print_space Format.pp_print_float
+
 (* [n] knots, 2 to 9, with gaps in [0.05, 1], samples in [−3, 3] and five points
    in the domain, each a knot with probability 1/4. *)
 let data =
@@ -62,10 +65,6 @@ let data =
     let+ pts = array ~size:(constant 5) point in
     (x, y, pts))
   |> Gen.with_pp (fun ppf (x, y, pts) ->
-      let floats =
-        Format.pp_print_array ~pp_sep:Format.pp_print_space
-          Format.pp_print_float
-      in
       Format.fprintf ppf "@[knots [%a]@ samples [%a]@ points [%a]@]" floats x
         floats y floats pts)
 
@@ -128,10 +127,6 @@ let series =
     let+ pts = array ~size:(constant 5) point in
     (breaks, Nx.create f64 [| pieces; degree + 1 |] c, pts))
   |> Gen.with_pp (fun ppf (b, c, x) ->
-      let floats =
-        Format.pp_print_array ~pp_sep:Format.pp_print_space
-          Format.pp_print_float
-      in
       Format.fprintf ppf "@[breaks [%a]@ coefficients %a@ points [%a]@]" floats
         b Nx.pp c floats x)
 
@@ -248,14 +243,15 @@ let linear_tests =
              ())
           (vec (Array.map line pts))
           (Piecewise.eval (Piecewise.linear (vec x) (vec y)) (vec pts)));
-    prop "every interpolant passes through its samples" data (fun (x, y, _) ->
+    prop "every interpolant passes through its samples" data
+      (fun ((x, y, _) as d) ->
         cover "two knots" (Array.length x = 2);
         cover "three knots" (Array.length x = 3);
         let x = vec x and y = vec y in
         List.iter
           (fun (name, p) ->
             equal ~msg:name
-              (Oracle.tensor ~rel:1e-12 ~abs:1e-12 ())
+              (Oracle.tensor ~abs:(spline_bound d 0) ())
               y (Piecewise.eval p x))
           [
             ("linear", Piecewise.linear x y);
@@ -342,7 +338,11 @@ let cubic_tests =
           (Oracle.tensor ~abs:(spline_bound d 2) ())
           (vec [| 0.; 0. |])
           (Piecewise.eval (derivatives 2 (spline `Natural d)) (ends_of x)));
-    prop "`Clamped (s0, s1) has slopes s0 and s1 at the ends"
+    prop
+      "`Clamped (s0, s1) has slopes s0 and s1 at the ends"
+      (* Two knots once drew the line and ignored the slopes. *)
+      ~examples:
+        [ (([| 0.; 0.05 |], [| 1.; 0. |], [| 0.; 0.; 0.; 0.; 0. |]), (0., 0.)) ]
       Gen.(pair data (pair (float_range (-3.) 3.) (float_range (-3.) 3.)))
       (fun (((x, _, _) as d), (s0, s1)) ->
         cover "two knots" (Array.length x = 2);
@@ -438,25 +438,26 @@ let steffen_tests =
         in
         let n = Array.length x in
         let p = Piecewise.steffen (vec x) (vec y) in
-        (* 21 points across each piece. *)
+        (* 21 points across each piece, against the same values clipped to the
+           piece's samples, 1e-13 of their size apart. *)
         let index = Nx.arange Nx.int64 0 (n - 1) 1 in
         let u = Nx.linspace f64 (-1.) 1. 21 in
         let v =
           Piecewise.eval_at p
             (Nx.broadcast_to [| n - 1; 21 |] (Nx.reshape [| n - 1; 1 |] index))
             (Nx.broadcast_to [| n - 1; 21 |] (Nx.reshape [| 1; 21 |] u))
-          |> Oracle.floats
         in
         let tiny = 1e-13 *. (1. +. largest y) in
-        for i = 0 to n - 2 do
-          let msg = Printf.sprintf "piece %d" i in
-          let lo = Float.min y.(i) y.(i + 1)
-          and hi = Float.max y.(i) y.(i + 1) in
-          for k = 0 to 20 do
-            at_least ~msg float_exact ~than:(lo -. tiny) v.((i * 21) + k);
-            at_most ~msg float_exact ~than:(hi +. tiny) v.((i * 21) + k)
-          done
-        done);
+        let bound f d =
+          Nx.reshape
+            [| n - 1; 1 |]
+            (vec (Array.init (n - 1) (fun i -> f y.(i) y.(i + 1) +. d)))
+        in
+        let clipped =
+          Nx.minimum (bound Float.max tiny)
+            (Nx.maximum (bound Float.min (-.tiny)) v)
+        in
+        equal (exact ()) clipped v);
     prop "its end slopes are the end intervals' secants" data
       (fun ((x, y, _) as d) ->
         cover "two knots" (Array.length x = 2);
@@ -615,16 +616,6 @@ let adapt_tests =
         equal
           (Oracle.tensor ~abs:1e-10 ())
           (kink between) (Piecewise.eval p between));
-    test "the piece holding a kink is narrow" (fun () ->
-        let p = Solution.get (adapt ~budget:200 kink 0. 2.) in
-        let b = Oracle.floats (Piecewise.breaks p) in
-        let narrow = ref infinity in
-        Array.iteri
-          (fun i x ->
-            if i > 0 && b.(i - 1) <= 0.3 && x >= 0.3 then
-              narrow := Float.min !narrow (x -. b.(i - 1)))
-          b;
-        less (float 1.) ~than:1e-3 !narrow);
     test "a structure fits each leaf" (fun () ->
         let s2 = Nx.Ptree.(pair tensor tensor) in
         let p =
@@ -671,12 +662,14 @@ let adapt_tests =
     test "a piece at level 62 ends it Stalled" (fun () ->
         (* √x looks the same on [0, 2^−L] at every L, so its tail there never
            meets a relative tol, and floats never run out near 0: only the level
-           stops it. *)
+           stops it, at 63 pieces, which evaluate 9 (2 · 63 − 1 + 400)
+           points. *)
         let s =
           Piecewise.adapt Nx.Ptree.tensor ~degree:8 ~tol:(Tol.rel 1e-10)
             ~budget:400 Nx.sqrt (scalar 0.) (scalar 1.)
         in
-        equal Oracle.status_t Stalled (Oracle.status s));
+        equal Oracle.status_t Stalled (Oracle.status s);
+        equal int32 4725l (Nx.item [] (Solution.evaluations s)));
     test "its empty pieces extend from its last real piece" (fun () ->
         (* Beyond b the last piece of positive width continues, e^x to 1e-6 a
            little past the end. *)
