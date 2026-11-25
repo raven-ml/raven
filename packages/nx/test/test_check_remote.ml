@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* A check on a device of another machine copies whether its flags hold to the
-   host at issue, and its settling reads that copy in place. The agent is a
-   real process on the loopback (Remote_job). *)
+   host at issue, and its settling reads that copy in place. The agent is a real
+   process on the loopback (Remote_job). *)
 
 open Windtrap
 
@@ -43,6 +43,8 @@ let () =
   exit
     (run "nx check on another machine"
        [
-         test "a check copies its flags' result once, at issue"
+         test
+           "a check copies whether its flag holds to the host as it is issued, \
+            and its wait copies nothing"
            test_copied_at_issue;
        ])
