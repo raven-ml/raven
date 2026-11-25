@@ -983,16 +983,17 @@ let navigation =
             press k;
             let n = model_key st k in
             let screen = T.Terminal.screen term in
-            (* Whether the filter keeps no run, which the centre says where
-               help or the run's facts do not cover it. *)
+            (* Whether the kept filter keeps no run, which the centre says
+               where help or the run's facts do not cover it; while a
+               filter is typed the interface states nothing of it. *)
+            let hidden = n.help || n.info || n.typing in
             let says_none =
-              if n.help || n.info then None
+              if hidden then None
               else Some (T.Screen.find screen "no run matches the filter" <> [])
             in
             equal ~msg:("after " ^ key_name k)
               (pair string (option bool))
-              ( model_name n,
-                if n.help || n.info then None else Some (keeps_none n) )
+              (model_name n, if hidden then None else Some (keeps_none n))
               (observed screen, says_none);
             match path ~from:n (fun x -> x = st) with
             | Some back -> List.iter press back

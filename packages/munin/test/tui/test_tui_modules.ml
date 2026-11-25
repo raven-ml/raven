@@ -2453,7 +2453,8 @@ let watch_test =
       @-> w ^-> makes w)
       (fun dt a ->
         let a = poll a ~dt ~d:0 in
-        cover "stalled" (model_word `Running a = "stalled");
+        cover "a quiet poll leaves a running run stalled"
+          (model_word `Running a = "stalled");
         a)
       (fun dt (w, now, samples) ->
         let now = now +. dt in
@@ -2466,7 +2467,7 @@ let watch_test =
         let w = model_word st a in
         List.iter
           (fun x -> cover x (w = x))
-          [ "starting"; "running"; "live"; "writing"; "silent" ];
+          [ "starting"; "running"; "live"; "stalled"; "writing"; "silent" ];
         w)
       (fun st (w, now, _) -> Watch.word (Watch.state st (Some w) ~now))
   in
@@ -2480,6 +2481,8 @@ let watch_test =
       observe;
       observe;
       observe;
+      (* Listed twice, so that a word reads a stalled watch often. *)
+      quiet;
       quiet;
       (* Listed twice, so that a program reads the words often. *)
       word;
