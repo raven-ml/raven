@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- A trainer's `~init` carries its added tokens with their flags, and its
+  `bos_token`, `eos_token`, `pad_token` and `unk_token` where the call gives
+  none. Every token came back special, and the roles were dropped.
 - `train_unigram` scores each piece by the log of its frequency, as `unigram`
   reads scores. It wrote the frequency itself, so a model preferred more
   pieces: `"ab"` trained whole encoded as `a`, `b`.

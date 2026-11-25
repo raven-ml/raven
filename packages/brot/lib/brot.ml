@@ -1917,26 +1917,6 @@ let decode_finish s =
 
 (* Training *)
 
-let special_tokens_for_training init requested =
-  let items =
-    (match requested with
-      | Some sl -> List.map (fun (a : added_token) -> a.content) sl
-      | None -> [])
-    @
-    match init with
-    | Some tok ->
-        List.map (fun (a : added_token) -> a.content) (added_tokens tok)
-    | None -> []
-  in
-  dedup_by Fun.id items
-
-let merge_added_tokens_from_training ~requested ~trained_tokens =
-  let items =
-    (match requested with Some tokens -> tokens | None -> [])
-    @ List.map added_token trained_tokens
-  in
-  dedup_by (fun (a : added_token) -> a.content) items
-
 (* A line keeps the newline that ends it, so a corpus file's line breaks reach
    the pre-tokenizer and a byte-level model learns a token for them. *)
 let iter_lines ic f =
@@ -2008,75 +1988,95 @@ let initial_alphabet_of strs =
         else None)
     strs
 
+(* The added tokens of [init], read before the trainers' [?added_tokens] hides
+   the accessor. *)
+let inherited_tokens init = Option.fold ~none:[] ~some:added_tokens init
+
+(* A trained tokenizer keeps the added tokens and role markers the call gives
+   and, where it gives none, [init]'s, each token with the flags it first comes
+   with; [init]'s model does not carry over. [train] learns the model with the
+   added tokens first in its vocabulary. *)
+let train_with ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
+    ?eos_token ?pad_token ?unk_token train data =
+  let role given of_init =
+    match given with Some _ -> given | None -> Option.bind init of_init
+  in
+  let bos_token = role bos_token (fun t -> t.bos_token) in
+  let eos_token = role eos_token (fun t -> t.eos_token) in
+  let pad_token = role pad_token (fun t -> t.pad_token) in
+  let unk_token = role unk_token (fun t -> alg_unk_token t.algorithm) in
+  let added_tokens =
+    dedup_by
+      (fun (a : added_token) -> a.content)
+      (Option.value added_tokens ~default:[] @ inherited_tokens init)
+  in
+  let special_tokens =
+    List.map (fun (a : added_token) -> a.content) added_tokens
+  in
+  let algorithm =
+    train ~special_tokens ~unk_token (training_words ?normalizer ?pre data)
+  in
+  create ?normalizer ?pre ?post ?decoder ~added_tokens ?bos_token ?eos_token
+    ?pad_token algorithm
+
 let train_bpe ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000) ?(min_frequency = 0)
     ?limit_alphabet ?initial_alphabet ?continuing_subword_prefix
     ?end_of_word_suffix ?max_token_length data =
-  let special_tokens = special_tokens_for_training init added_tokens in
   let initial_alphabet =
     Option.value initial_alphabet ~default:[] |> initial_alphabet_of
   in
-  let words = training_words ?normalizer ?pre data in
-  let trained_model, trained_tokens =
-    Bpe.train ~min_frequency ~vocab_size ~show_progress:false ~special_tokens
-      ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-      ~end_of_word_suffix ~max_token_length ~unk_token words
-  in
-  let all_added =
-    merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
-  in
-  create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
-    ?eos_token ?pad_token (Alg_bpe trained_model)
+  train_with ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
+    ?eos_token ?pad_token ?unk_token
+    (fun ~special_tokens ~unk_token words ->
+      Alg_bpe
+        (fst
+           (Bpe.train ~min_frequency ~vocab_size ~show_progress:false
+              ~special_tokens ~limit_alphabet ~initial_alphabet
+              ~continuing_subword_prefix ~end_of_word_suffix ~max_token_length
+              ~unk_token words)))
+    data
 
 let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
     ?(min_frequency = 0) ?limit_alphabet ?initial_alphabet
     ?(continuing_subword_prefix = "##") ?end_of_word_suffix data =
-  let special_tokens = special_tokens_for_training init added_tokens in
   let initial_alphabet =
     Option.value initial_alphabet ~default:[] |> initial_alphabet_of
   in
-  let words = training_words ?normalizer ?pre data in
-  let trained_model, trained_tokens =
-    Wordpiece.train ~min_frequency ~vocab_size ~show_progress:false
-      ~special_tokens ~limit_alphabet ~initial_alphabet
-      ~continuing_subword_prefix ~end_of_word_suffix ~unk_token words
-  in
-  let all_added =
-    merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
-  in
-  create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
-    ?eos_token ?pad_token (Alg_wordpiece trained_model)
+  train_with ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
+    ?eos_token ?pad_token ?unk_token
+    (fun ~special_tokens ~unk_token words ->
+      Alg_wordpiece
+        (fst
+           (Wordpiece.train ~min_frequency ~vocab_size ~show_progress:false
+              ~special_tokens ~limit_alphabet ~initial_alphabet
+              ~continuing_subword_prefix ~end_of_word_suffix ~unk_token words)))
+    data
 
 let train_word_level ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
     ?(min_frequency = 0) data =
-  let special_tokens = special_tokens_for_training init added_tokens in
-  let words = training_words ?normalizer ?pre data in
-  let trained_model, trained_tokens =
-    Word_level.train ~vocab_size ~min_frequency ~show_progress:false
-      ~special_tokens ~unk_token words
-  in
-  let all_added =
-    merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
-  in
-  create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
-    ?eos_token ?pad_token (Alg_wordlevel trained_model)
+  train_with ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
+    ?eos_token ?pad_token ?unk_token
+    (fun ~special_tokens ~unk_token words ->
+      Alg_wordlevel
+        (fst
+           (Word_level.train ~vocab_size ~min_frequency ~show_progress:false
+              ~special_tokens ~unk_token words)))
+    data
 
 let train_unigram ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?(vocab_size = 8000) data =
-  let special_tokens = special_tokens_for_training init added_tokens in
-  let words = training_words ?normalizer ?pre data in
-  let trained_model, trained_tokens =
-    Unigram.train ~vocab_size ~show_progress:false ~special_tokens
-      ~shrinking_factor:0.75 ~unk_token ~max_piece_length:16 ~n_sub_iterations:2
-      words
-  in
-  let all_added =
-    merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
-  in
-  create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
-    ?eos_token ?pad_token (Alg_unigram trained_model)
+  train_with ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
+    ?eos_token ?pad_token ?unk_token
+    (fun ~special_tokens ~unk_token words ->
+      Alg_unigram
+        (fst
+           (Unigram.train ~vocab_size ~show_progress:false ~special_tokens
+              ~shrinking_factor:0.75 ~unk_token ~max_piece_length:16
+              ~n_sub_iterations:2 words)))
+    data
 
 (* JSON serialization *)
 

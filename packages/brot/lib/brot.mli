@@ -1749,9 +1749,12 @@ val train_bpe :
     until [vocab_size] is reached, no pair is left, or the best pair falls below
     [min_frequency].
 
-    - [init]: a tokenizer whose added and special tokens carry over into the
-      trained one. Its model does not: training always starts from an empty
-      vocabulary. Default: create new.
+    - [init]: a tokenizer whose added tokens, with their flags, role markers
+      and {!unk_token} carry over into the trained one; where the call gives the
+      same token or role, the call's holds. The trained vocabulary holds the
+      unknown token only when the added tokens do, so without it a word the
+      model cannot cover raises [Failure]. Its vocabulary does not carry over:
+      training always starts from an empty one. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. The
       alphabet is kept whole, so a [vocab_size] below its size gives the
       alphabet and the special tokens. Default: [30000].
@@ -1799,8 +1802,7 @@ val train_wordpiece :
     Learns the vocabulary with the BPE merge training of {!train_bpe}, over the
     same words, and keeps the merged tokens as WordPiece subwords.
 
-    - [init]: a tokenizer whose added and special tokens carry over into the
-      trained one. Its model does not. Default: create new.
+    - [init]: as in {!train_bpe}. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. The
       alphabet is kept whole, so a [vocab_size] below its size gives the
       alphabet and the special tokens. Default: [30000].
@@ -1839,8 +1841,7 @@ val train_word_level :
     so it holds whole pretokens and nothing is split further. Of equally
     frequent words the one first in byte order is kept first.
 
-    - [init]: a tokenizer whose added and special tokens carry over into the
-      trained one. Its model does not. Default: create new.
+    - [init]: as in {!train_bpe}. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. Default:
       [30000].
     - [min_frequency]: minimum frequency for a word to be included. Default:
@@ -1872,8 +1873,7 @@ val train_unigram :
     each scored by the log of its share of the words counted, and no subword
     piece is ever proposed. A special token scores [0.].
 
-    - [init]: a tokenizer whose added and special tokens carry over into the
-      trained one. Its model does not. Default: create new.
+    - [init]: as in {!train_bpe}. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. Default:
       [8000].
     - [unk_token]: names the model's unknown entry when [added_tokens] or [init]

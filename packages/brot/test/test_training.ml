@@ -26,7 +26,6 @@ let spelled s = String.split_on_char ' ' s
 (* The merges spelled out in [s] as ["left right, left right"]. *)
 let merge_list s = List.map String.trim (String.split_on_char ',' s)
 let sorted_vocabulary t = List.sort String.compare (List.map fst (vocab t))
-let contents tokens = List.map (fun (a : added_token) -> a.content) tokens
 
 let member name = function
   | Jsont.Object (members, _) -> (
@@ -124,17 +123,61 @@ let init () =
     ~added_tokens:[ added_token ~special:false "<p>" ]
     ~pad_token:"<pad>" ()
 
+let flags (a : added_token) =
+  Printf.sprintf
+    "%s special=%b single_word=%b lstrip=%b rstrip=%b normalized=%b" a.content
+    a.special a.single_word a.lstrip a.rstrip a.normalized
+
 let test_init_added_tokens =
-  cases "carries init's added tokens into the trained tokenizer" ~id:fst
-    trainers (fun (_, train) ->
-      equal (list string) [ "<p>"; "<pad>" ]
-        (contents (added_tokens (train ~init:(init ()) (texts [ "ab ab" ])))))
+  cases "carries init's added tokens, with their flags, and its role markers"
+    ~id:fst trainers (fun (_, train) ->
+      let init = init () in
+      let t = train ~init (texts [ "ab ab" ]) in
+      equal ~msg:"added tokens" (list string)
+        (List.map flags (added_tokens init))
+        (List.map flags (added_tokens t));
+      equal ~msg:"pad_token" (option string) (Some "<pad>") (pad_token t))
 
 let test_init_model =
   cases "starts from an empty vocabulary whatever init's model holds" ~id:fst
     trainers (fun (_, train) ->
       equal (option int) None
         (token_to_id (train ~init:(init ()) (texts [ "ab ab" ])) "zz"))
+
+(* tokenizers 0.23.1: a BPE, WordPiece or WordLevel model with unk_token
+   "[UNK]", trained in place on "ab ab", keeps its unknown token. Without
+   "[UNK]" among the trainer's special tokens, "ab zz" raises; with it, it
+   gives the tokens below. *)
+let unk_trainers =
+  [
+    ( "train_bpe",
+      (fun ~init data -> train_bpe ~init ~pre:split data),
+      [ "ab"; "[UNK]"; "[UNK]" ] );
+    ( "train_wordpiece",
+      (fun ~init data -> train_wordpiece ~init ~pre:split data),
+      [ "ab"; "[UNK]" ] );
+    ( "train_word_level",
+      (fun ~init data -> train_word_level ~init ~pre:split data),
+      [ "ab"; "[UNK]" ] );
+  ]
+
+let unk_init ?added_tokens () =
+  word_level ?added_tokens ~vocab:[ ("[UNK]", 0) ] ~unk_token:"[UNK]" ()
+
+let test_init_unk =
+  cases "takes init's unknown token, held only if init's added tokens hold it"
+    ~id:(fun (name, _, _) -> name)
+    unk_trainers
+    (fun (_, train, expected) ->
+      let bare = train ~init:(unk_init ()) (texts [ "ab ab" ]) in
+      equal ~msg:"unk_token" (option string) (Some "[UNK]") (unk_token bare);
+      raises_match (Exn.failure ~sub:"[UNK]") (fun () -> encode bare "ab zz");
+      let held =
+        train
+          ~init:(unk_init ~added_tokens:[ added_token "[UNK]" ] ())
+          (texts [ "ab ab" ])
+      in
+      equal ~msg:"held" (list string) expected (tokens held "ab zz"))
 
 (* train_bpe *)
 
@@ -677,7 +720,8 @@ let () =
              test "the lines of every file are counted" test_every_file;
              test_unreadable_file;
            ];
-         group "init" [ test_init_added_tokens; test_init_model ];
+         group "init"
+           [ test_init_added_tokens; test_init_model; test_init_unk ];
          group "train_bpe"
            [
              test "learns the vocabulary and merges tokenizers learns"
