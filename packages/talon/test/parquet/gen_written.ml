@@ -21,4 +21,4 @@ let () =
       Out_channel.with_open_bin path (fun oc ->
           let w = Bytesrw.Bytes.Writer.of_out_channel oc in
           Talon.Error.get_ok (Talon_parquet.encode f q w)))
-    Written_corpus.items
+    (Lazy.force Written_corpus.items)

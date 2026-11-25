@@ -182,7 +182,7 @@ let one_row () =
 
 (* Tables past a data page's size, whose files are not committed. *)
 let pages_int () =
-  Talon.v [ ("i", v T.int64 (opt 0.1 (ints 0 (max_int - 1))) 300_000) ]
+  Talon.v [ ("i", v T.int64 (opt 0.1 (ints 0 (max_int - 1))) 150_000) ]
 
 let pages_text () =
   let row = ref 0 in
@@ -190,7 +190,7 @@ let pages_text () =
     incr row;
     Some (Printf.sprintf "%d-%x" !row (ints 0 (max_int - 1) ()))
   in
-  Talon.v [ ("t", v T.string text 300_000) ]
+  Talon.v [ ("t", v T.string text 150_000) ]
 
 let pages_nested () =
   let rows = 21 and per_row = 20_000 in
@@ -225,30 +225,31 @@ let item ?(compression = Talon_parquet.Snappy) ?(row_group = 1 lsl 20)
   { name; table; compression; row_group; large }
 
 (* Each table is drawn in turn, so that the generator's order is the same with
-   any compiler. *)
+   any compiler, once, when a program first needs them. *)
 let items =
-  let f = flat () in
-  let nested = nested () in
-  let tensor = tensor () in
-  let stats = stats () in
-  let empty = empty () in
-  let one_row = one_row () in
-  let pages_int = pages_int () in
-  let pages_text = pages_text () in
-  let pages_nested = pages_nested () in
-  [
-    item "flat_snappy" f;
-    item "flat_none" f ~compression:Uncompressed;
-    item "flat_gzip" f ~compression:Gzip;
-    item "flat_zstd" f ~compression:Zstd;
-    item "flat_lz4" f ~compression:Lz4_raw;
-    item "row_groups" f ~row_group:10;
-    item "nested" nested;
-    item "tensor" tensor;
-    item "statistics" stats;
-    item "empty" empty;
-    item "one_row" one_row;
-    item "pages_int" pages_int ~large:true;
-    item "pages_text" pages_text ~large:true;
-    item "pages_nested" pages_nested ~row_group:14 ~large:true;
-  ]
+  lazy
+    (let f = flat () in
+     let nested = nested () in
+     let tensor = tensor () in
+     let stats = stats () in
+     let empty = empty () in
+     let one_row = one_row () in
+     let pages_int = pages_int () in
+     let pages_text = pages_text () in
+     let pages_nested = pages_nested () in
+     [
+       item "flat_snappy" f;
+       item "flat_none" f ~compression:Uncompressed;
+       item "flat_gzip" f ~compression:Gzip;
+       item "flat_zstd" f ~compression:Zstd;
+       item "flat_lz4" f ~compression:Lz4_raw;
+       item "row_groups" f ~row_group:10;
+       item "nested" nested;
+       item "tensor" tensor;
+       item "statistics" stats;
+       item "empty" empty;
+       item "one_row" one_row;
+       item "pages_int" pages_int ~large:true;
+       item "pages_text" pages_text ~large:true;
+       item "pages_nested" pages_nested ~row_group:14 ~large:true;
+     ])

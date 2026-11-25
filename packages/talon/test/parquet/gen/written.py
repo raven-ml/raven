@@ -11,8 +11,8 @@ gen_written under _build/default, which must be built. With --check nothing is
 written, and the run fails if ../golden/written.txt would change.
 
 It fails if a file's Parquet types, row groups or statistics break the format,
-and records in ../golden/written.txt, per file and column, pyarrow's type and
-every value rendered as test_writer.ml renders talon's: ints in decimal, float
+and records in ../golden/written.txt, per file, the MD5 of its bytes, and per
+column, pyarrow's type and every value rendered as test_writer.ml renders talon's: ints in decimal, float
 bits in hexadecimal, bytes in hexadecimal, nested values bracketed. A column
 past 4096 bytes of text is recorded by its MD5.
 """
@@ -202,6 +202,7 @@ def lines(large):
         name = path.stem
         assert meta.format_version == "1.0", name
         out.append(f"{name} rows {t.num_rows} groups {meta.num_row_groups}")
+        out.append(f"{name} file md5:{hashlib.md5(path.read_bytes()).hexdigest()}")
         check_statistics(name, pf)
         for i, field in enumerate(t.schema):
             if name.startswith("flat") or name == "row_groups":

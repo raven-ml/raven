@@ -1,4 +1,5 @@
 empty rows 0 groups 0
+empty file md5:7705060e48d9b340a692e9dfafa1154f
 empty column i int32
 empty values i 
 empty column s string
@@ -6,6 +7,7 @@ empty values s
 empty column l list<element: int32>
 empty values l 
 flat_gzip rows 64 groups 1
+flat_gzip file md5:aa5fbc7849ab4aa1638db0cedecd012b
 flat_gzip column bool bool
 flat_gzip values bool false true false true false true false true true true true true null false null true false true true false true false false false null true true null null false false false true false true true false true false null true false null null true false true null false true true false false false false false false true true false true true false false
 flat_gzip column int8 int8
@@ -61,6 +63,7 @@ flat_gzip values instant_us 1030644255 null 1110149468 529926498 851645126 68950
 flat_gzip column instant_ns timestamp[ns, tz=UTC]
 flat_gzip values instant_ns 130407184 null 982878347 391160643 1844841608 270331550 290267215 null 1375369561 632229298 86362430 1729949025 96242965 null 340641724 779257436 1048655201 176500853 1403862454 null 751608728 null 718081007 null 91539649 1047956845 1818936944 null 1922134655 null null 1436436163 24224933 100844517 1496705124 null null 1372016488 null 1394754700 1381498231 1250837285 1066243984 788022635 null null 895840861 1492739394 1033153313 null 378092587 1048832410 1843471105 null null 277130426 1775834508 1471760304 726989844 1473671383 327683027 1659990024 null null
 flat_lz4 rows 64 groups 1
+flat_lz4 file md5:5cb9c1ef2e2a03f00d0b06b2946832fd
 flat_lz4 column bool bool
 flat_lz4 values bool false true false true false true false true true true true true null false null true false true true false true false false false null true true null null false false false true false true true false true false null true false null null true false true null false true true false false false false false false true true false true true false false
 flat_lz4 column int8 int8
@@ -116,6 +119,7 @@ flat_lz4 values instant_us 1030644255 null 1110149468 529926498 851645126 689503
 flat_lz4 column instant_ns timestamp[ns, tz=UTC]
 flat_lz4 values instant_ns 130407184 null 982878347 391160643 1844841608 270331550 290267215 null 1375369561 632229298 86362430 1729949025 96242965 null 340641724 779257436 1048655201 176500853 1403862454 null 751608728 null 718081007 null 91539649 1047956845 1818936944 null 1922134655 null null 1436436163 24224933 100844517 1496705124 null null 1372016488 null 1394754700 1381498231 1250837285 1066243984 788022635 null null 895840861 1492739394 1033153313 null 378092587 1048832410 1843471105 null null 277130426 1775834508 1471760304 726989844 1473671383 327683027 1659990024 null null
 flat_none rows 64 groups 1
+flat_none file md5:91e5ffc768d93b75317375045761ba11
 flat_none column bool bool
 flat_none values bool false true false true false true false true true true true true null false null true false true true false true false false false null true true null null false false false true false true true false true false null true false null null true false true null false true true false false false false false false true true false true true false false
 flat_none column int8 int8
@@ -171,6 +175,7 @@ flat_none values instant_us 1030644255 null 1110149468 529926498 851645126 68950
 flat_none column instant_ns timestamp[ns, tz=UTC]
 flat_none values instant_ns 130407184 null 982878347 391160643 1844841608 270331550 290267215 null 1375369561 632229298 86362430 1729949025 96242965 null 340641724 779257436 1048655201 176500853 1403862454 null 751608728 null 718081007 null 91539649 1047956845 1818936944 null 1922134655 null null 1436436163 24224933 100844517 1496705124 null null 1372016488 null 1394754700 1381498231 1250837285 1066243984 788022635 null null 895840861 1492739394 1033153313 null 378092587 1048832410 1843471105 null null 277130426 1775834508 1471760304 726989844 1473671383 327683027 1659990024 null null
 flat_snappy rows 64 groups 1
+flat_snappy file md5:2cfe4b2a9458666e20e24a97eba81e4e
 flat_snappy column bool bool
 flat_snappy values bool false true false true false true false true true true true true null false null true false true true false true false false false null true true null null false false false true false true true false true false null true false null null true false true null false true true false false false false false false true true false true true false false
 flat_snappy column int8 int8
@@ -226,6 +231,7 @@ flat_snappy values instant_us 1030644255 null 1110149468 529926498 851645126 689
 flat_snappy column instant_ns timestamp[ns, tz=UTC]
 flat_snappy values instant_ns 130407184 null 982878347 391160643 1844841608 270331550 290267215 null 1375369561 632229298 86362430 1729949025 96242965 null 340641724 779257436 1048655201 176500853 1403862454 null 751608728 null 718081007 null 91539649 1047956845 1818936944 null 1922134655 null null 1436436163 24224933 100844517 1496705124 null null 1372016488 null 1394754700 1381498231 1250837285 1066243984 788022635 null null 895840861 1492739394 1033153313 null 378092587 1048832410 1843471105 null null 277130426 1775834508 1471760304 726989844 1473671383 327683027 1659990024 null null
 flat_zstd rows 64 groups 1
+flat_zstd file md5:94aeebbd04b25a8d4f0f2344a13f06a0
 flat_zstd column bool bool
 flat_zstd values bool false true false true false true false true true true true true null false null true false true true false true false false false null true true null null false false false true false true true false true false null true false null null true false true null false true true false false false false false false true true false true true false false
 flat_zstd column int8 int8
@@ -281,6 +287,7 @@ flat_zstd values instant_us 1030644255 null 1110149468 529926498 851645126 68950
 flat_zstd column instant_ns timestamp[ns, tz=UTC]
 flat_zstd values instant_ns 130407184 null 982878347 391160643 1844841608 270331550 290267215 null 1375369561 632229298 86362430 1729949025 96242965 null 340641724 779257436 1048655201 176500853 1403862454 null 751608728 null 718081007 null 91539649 1047956845 1818936944 null 1922134655 null null 1436436163 24224933 100844517 1496705124 null null 1372016488 null 1394754700 1381498231 1250837285 1066243984 788022635 null null 895840861 1492739394 1033153313 null 378092587 1048832410 1843471105 null null 277130426 1775834508 1471760304 726989844 1473671383 327683027 1659990024 null null
 nested rows 40 groups 1
+nested file md5:161e54b14beb1efece63a9d35f768523
 nested column ints list<element: int32>
 nested values ints [9] [null null 7] [] null null [] null [] null [9] [6 8] [] [-7 3 null] [null] null [0 -4] [null -3] [-9 -3 9] [null] null [] [null 6] null [null -8 7] [null null] [] [5] [2 -8] [-6 null 6] [null 5 -4] [null null 5] [0] null [-8 -4 -3] [null] [] [] [null 5] [6 null] [8]
 nested column texts list<element: string>
@@ -300,22 +307,27 @@ nested values cats null [null 75 75] null [null] [75 null] [] [] [null] [76 76 7
 nested column ext list<element: int32>
 nested values ext [-8 null] null [-2 null] [8 2] [-5] [3] [] [-5 6] [-5 -7] [] [] [] [6 0 null] [1] null [0] [-7] null [null 9 0] [] [0 null] [-3 0] [6 -6 2] [null -6] [-9 null -3] [-2] [0 -2 0] [2] [6 null -3] [-7] [6 -6] [5 -3 null] null [-4 -4 -1] [-1 -6] null [-4] null [] null
 one_row rows 1 groups 1
+one_row file md5:f996a20a07afb7d43b56832b9671b125
 one_row column i int64
 one_row values i 7
 one_row column s string
 one_row values s 6f6e6c79
 one_row column n double
 one_row values n null
-pages_int rows 300000 groups 1
+pages_int rows 150000 groups 1
+pages_int file md5:6657062188f419846b9ef96ab34effa1
 pages_int column i int64
-pages_int values i md5:18de7e79693852eebce70e88eca0c833
+pages_int values i md5:6c7e199b8e9d47ad062492c7789609b2
 pages_nested rows 21 groups 2
+pages_nested file md5:b1661e3848a6cd23bdc50e5047a60452
 pages_nested column l list<element: double>
-pages_nested values l md5:b16dc758a933a8a4946e35046103c6f5
-pages_text rows 300000 groups 1
+pages_nested values l md5:99654028d800f45ce5d022c88a441a23
+pages_text rows 150000 groups 1
+pages_text file md5:c4b149d1422c334a7813e128fc2fd168
 pages_text column t string
-pages_text values t md5:ebb2559e2200b651de707ceb94258321
+pages_text values t md5:40d75f98cdc568cca6ac75414ba58776
 row_groups rows 64 groups 7
+row_groups file md5:a0e655d38bdfff9e57766aebe964cb58
 row_groups column bool bool
 row_groups values bool false true false true false true false true true true true true null false null true false true true false true false false false null true true null null false false false true false true true false true false null true false null null true false true null false true true false false false false false false true true false true true false false
 row_groups column int8 int8
@@ -371,6 +383,7 @@ row_groups values instant_us 1030644255 null 1110149468 529926498 851645126 6895
 row_groups column instant_ns timestamp[ns, tz=UTC]
 row_groups values instant_ns 130407184 null 982878347 391160643 1844841608 270331550 290267215 null 1375369561 632229298 86362430 1729949025 96242965 null 340641724 779257436 1048655201 176500853 1403862454 null 751608728 null 718081007 null 91539649 1047956845 1818936944 null 1922134655 null null 1436436163 24224933 100844517 1496705124 null null 1372016488 null 1394754700 1381498231 1250837285 1066243984 788022635 null null 895840861 1492739394 1033153313 null 378092587 1048832410 1843471105 null null 277130426 1775834508 1471760304 726989844 1473671383 327683027 1659990024 null null
 statistics rows 8 groups 1
+statistics file md5:1f26bebd0a0af9fb58e06535a1dfcf41
 statistics column long_text string
 statistics values long_text 73686f7274 62626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262 61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c3a9 61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c3a9 73686f7274 61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c3a9 61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161c3a9 62626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262
 statistics column boundary string
@@ -392,5 +405,6 @@ statistics values big_u32 4294967295 null 4294967295 1 null 4294967295 429496729
 statistics column big_u64 uint64
 statistics values big_u64 null null null null 1 1 null null
 tensor rows 5 groups 1
+tensor file md5:79fa205e6104c06a700c0692028750c6
 tensor column t list<element: list<element: int32>>
 tensor values t [[0 1 2] [3 4 5]] null [[12 13 14] [15 16 17]] [[18 19 20] [21 22 23]] null
