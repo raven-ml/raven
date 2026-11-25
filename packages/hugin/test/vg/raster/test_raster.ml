@@ -1524,6 +1524,133 @@ let render_group =
           let dashed = Stroke.v ~cap:`Butt ~dash:[ 2.; 2. ] ~dash_offset 2. in
           area ~pieces:11 ~box:(2., 2.) 40.
             (coverage (render 40. 10. (Picture.stroke dashed red far))));
+      test "a butt-capped dashed stroke far wider than its pattern is drawn"
+        (fun () ->
+          (* A pen 1e17 wide covers every row of the page along its dashes,
+             which cover half of the 40 columns whatever their phase, ten
+             periods of 4: 200 pixels. Its butt caps reach nowhere along it, so
+             only the dashes across the page are walked. *)
+          let p =
+            Picture.stroke
+              (Stroke.v ~cap:`Butt ~dash:[ 2.; 2. ] 1e17)
+              red
+              (segment (-1e20) 5. 1e20 5.)
+          in
+          area ~pieces:11 ~box:(2., 10.) 200. (coverage (render 40. 10. p)));
+      cases "a dashed stroke whose caps reach past the page covers it"
+        ~id:(fun (n, _) -> n)
+        [ ("round", `Round); ("square", `Square) ]
+        (fun (_, cap) ->
+          (* Caps 5e16 long along the line: the caps of the dashes nearest the
+             page reach across it, so every pixel is covered. *)
+          let p =
+            Picture.stroke
+              (Stroke.v ~cap ~dash:[ 2.; 2. ] 1e17)
+              red
+              (segment (-1e20) 5. 1e20 5.)
+          in
+          equal float_exact 400. (coverage (render 40. 10. p)));
+      test
+        "a dash pattern finer than a thousandth of a pixel along its segment \
+         is drawn solid" (fun () ->
+          (* The map squeezes y by 1e-20: along the vertical line the period of
+             2 is 2e-20 pixels, though the map stretches x by 1. Solid, the line
+             covers the pixel column 5 down the 10 of the page. *)
+          let p =
+            Picture.transform (Affine.scale 1. 1e-20)
+              (Picture.stroke
+                 (Stroke.v ~cap:`Butt ~dash:[ 1.; 1. ] 1.)
+                 red
+                 (segment 5.5 (-1e22) 5.5 1e22))
+          in
+          equal float_exact 10. (coverage (render 10. 10. p)));
+      cases "a cap of a dash off the page reaches onto it"
+        ~id:(fun (n, _) -> n)
+        [ ("ahead of it", 7.); ("behind it", 961.) ]
+        (fun (_, dash_offset) ->
+          (* A dash of 2 every 1002 points, from (-5, 5) to (-3, 5) or from (43,
+             5) to (45, 5), and a round cap of radius 5: on the page, the part
+             of a disc 3 beyond its centre, 25 acos 0.6 - 12. *)
+          let p =
+            Picture.stroke
+              (Stroke.v ~cap:`Round ~dash:[ 2.; 1000. ] ~dash_offset 10.)
+              red
+              (segment (-1000.) 5. 1000. 5.)
+          in
+          area ~arc:16. ~box:(5., 10.)
+            ((25. *. Float.acos 0.6) -. 12.)
+            (coverage (render 40. 10. p)));
+      test "a cap of a dash through a segment's start covers the page once"
+        (fun () ->
+          (* The dash from -4 runs to -2.9, the next one starts 100 on; its
+             round cap of radius 5 reaches 2.1 onto the page: a disc's part 2.9
+             beyond its centre. *)
+          let p =
+            Picture.stroke
+              (Stroke.v ~cap:`Round ~dash:[ 6.; 100. ] ~dash_offset:4.9 10.)
+              red (segment (-4.) 5. 100. 5.)
+          in
+          let cut = 2.9 in
+          let part =
+            (25. *. Float.acos (cut /. 5.))
+            -. (cut *. Float.sqrt (25. -. (cut *. cut)))
+          in
+          area ~arc:12. ~box:(3., 10.) part (coverage (render 40. 10. p)));
+      test "a dash that ends where a skip ends leaves its gap empty" (fun () ->
+          (* Dashes of 2 every 4 from x = -3: x in [1, 3] is dashed, [-1, 1] is
+             not, across a band 4 high. *)
+          let img =
+            render 40. 10.
+              (Picture.stroke
+                 (Stroke.v ~cap:`Butt ~dash:[ 2.; 2. ] 4.)
+                 red (segment (-3.) 5. 100. 5.))
+          in
+          equal (pair int int) (0, 255) (alpha img 4 0, alpha img 4 1));
+      test "a dash that ends where a skip ends shows its start cap" (fun () ->
+          (* From x = 30, 89 into a pattern of 1 on and 100 off: a dash over x
+             in [42, 43], whose round cap of radius 5 reaches back onto the
+             page: a disc's part 2 beyond its centre. *)
+          let p =
+            Picture.stroke
+              (Stroke.v ~cap:`Round ~dash:[ 1.; 100. ] ~dash_offset:89. 10.)
+              red (segment 30. 5. 44. 5.)
+          in
+          area ~arc:16. ~box:(3., 10.)
+            ((25. *. Float.acos 0.4) -. (2. *. Float.sqrt 21.))
+            (coverage (render 40. 10. p)));
+      test "a segment back across the page keeps the phase of its path"
+        (fun () ->
+          (* From (40.5, 5) out and back along y = 7, a butt line 1 wide with
+             dashes of 2 every 4: along y = 7 a point x is 41.5 + 80 - x into
+             the pattern, so the dashes cover x in [39.5, 41.5] and every 4 to
+             the left; row 6 holds half the line's width. *)
+          let p =
+            Picture.stroke
+              (Stroke.v ~cap:`Butt ~dash:[ 2.; 2. ] 1.)
+              red
+              (Path.polyline [| 40.5; 80.; 80.; -20. |] [| 5.; 5.; 7.; 7. |])
+          in
+          let img = render 40. 10. p in
+          List.iteri
+            (fun i o ->
+              let level = Float.of_int (alpha img 6 (30 + i)) in
+              at_most
+                ~msg:(Printf.sprintf "column %d" (30 + i))
+                float_exact ~than:1.
+                (Float.abs (level -. (127.5 *. o))))
+            [ 0.; 0.5; 1.; 0.5; 0.; 0.5; 1.; 0.5; 0.; 0.5 ]);
+      prop "a butt-capped dashed stroke draws as a narrower one across the page"
+        (Gen.float_range 0. 4.) (fun dash_offset ->
+          (* The page lies within 100 of the line, so a pen 200 wide and one
+             1e17 wide put the same ink on it: their dashes across it. The
+             segment starts on the page, so the phase is known. *)
+          let stroked w =
+            render 40. 10.
+              (Picture.stroke
+                 (Stroke.v ~cap:`Butt ~dash:[ 2.; 2. ] ~dash_offset w)
+                 red (segment 0.5 5. 1e6 5.))
+          in
+          same_image ~within:1 (stroked 200.) (stroked 1e17));
       test "a line to near max_float is drawn up to the page's edge" (fun () ->
           (* Its far end, at density 2, is beyond [max_float], held at 1e15
              along x: a band 2 pixels high across the 20 of the page. *)

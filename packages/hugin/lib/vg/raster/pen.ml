@@ -38,6 +38,9 @@ type t = {
   wy0 : float;
   wx1 : float;
   wy1 : float;
+  page : float array;
+      (** The window itself, [[|x0; y0; x1; y1|]]: where a dash's ink must lie
+          to show. *)
   cur : float array;  (** The outline's first and last device points. *)
 }
 
@@ -63,6 +66,7 @@ let create cover (clip : Surface.clip) m k s =
     wy0 = float clip.y0 -. reach;
     wx1 = float clip.x1 +. reach;
     wy1 = float clip.y1 +. reach;
+    page = [| float clip.x0; float clip.y0; float clip.x1; float clip.y1 |];
     cur = Array.make 4 0.;
   }
 
@@ -353,6 +357,27 @@ let restart d =
 
 let is_dash d = d.index land 1 = 0
 
+(* [back_to_end d] is how far back from where [d] stands the last dash ended,
+   and [ended d] that dash's length. *)
+let back_to_end d =
+  let n = Array.length d.pattern and i = d.index in
+  let used = d.pattern.(i) -. d.rest in
+  if i land 1 = 1 then used else used +. d.pattern.((i + n - 1) mod n)
+
+let ended d =
+  let n = Array.length d.pattern and i = d.index in
+  d.pattern.(if i land 1 = 1 then i - 1 else (i + n - 2) mod n)
+
+(* [on_to_start d] is how far on from where [d] stands the next dash starts, and
+   [starting d] that dash's length. *)
+let on_to_start d =
+  let n = Array.length d.pattern and i = d.index in
+  if i land 1 = 1 then d.rest else d.rest +. d.pattern.((i + 1) mod n)
+
+let starting d =
+  let n = Array.length d.pattern and i = d.index in
+  d.pattern.(if i land 1 = 1 then (i + 1) mod n else (i + 2) mod n)
+
 (* Subpaths *)
 
 type subpaths = {
@@ -365,6 +390,10 @@ type subpaths = {
           the polyline of these alone. *)
   kept : points;
   last : float array;  (** The direction of the last segment dashed. *)
+  walked : float array;
+      (** How far the walk of a segment has gone, along it from the point where
+          its device line crosses the page's middle, then the origin and
+          position of the run it left. *)
 }
 
 let stroke_points s pts ~closed ~ends ~dx ~dy =
@@ -393,12 +422,114 @@ let crossing p ~x v sx sy tx ty =
   p.pt.(0) <- (i.xx *. dx) +. (i.xy *. dy) +. i.x0;
   p.pt.(1) <- (i.yx *. dx) +. (i.yy *. dy) +. i.y0
 
+(* [lone s ox oy ux uy a b] strokes, as a piece of its own, the part from [a] to
+   [b] of the line from [(ox, oy)] along [(ux, uy)]. *)
+let[@inline] lone s ox oy ux uy a b =
+  push s.piece (ox +. (ux *. a)) (oy +. (uy *. a));
+  push s.piece (ox +. (ux *. b)) (oy +. (uy *. b));
+  flush_piece s ~dx:ux ~dy:uy
+
+(* The walk of a segment's dashes is a sequence of runs along it, each walked
+   from an origin near it, so that its points keep the precision of their place:
+   positions in a run are measured from its origin, and runs are placed by their
+   distance along the segment from the point [z] where its device line crosses
+   the page's middle ([s.walked] holds how far from [z] the walk has gone, then
+   the origin and position it left the last run at). Between runs, the pattern
+   advances by the length skipped. *)
+
+(* [skip s d ~page ~ux ~uy ~gap nx ny nl] moves the walk on by [gap], not
+   walked, to the position [nl] from the origin [(nx, ny)]. A dash in progress
+   ends at its own end, and one in progress where the walk resumes starts at its
+   own start, so that every piece is a dash of the pattern, with its caps: a
+   dash across the whole gap stays one piece. Of the dashes wholly within the
+   gap, ends included, only a cap can reach the page, and with caps that reach
+   along the line the one that reaches nearest is drawn: the last to end if the
+   page lies ahead, the first to start if it lies behind. The caps of the others
+   reach less far onto it. *)
+let[@inline] skip s d ~page ~ux ~uy ~gap nx ny nl =
+  let ox = s.walked.(1) and oy = s.walked.(2) and l = s.walked.(3) in
+  let caps = match s.pen.cap with `Butt -> false | `Round | `Square -> true in
+  let across = is_dash d && d.rest > gap in
+  if is_dash d && not across then begin
+    if s.piece.n = 0 then push s.piece (ox +. (ux *. l)) (oy +. (uy *. l));
+    let e = l +. d.rest in
+    push s.piece (ox +. (ux *. e)) (oy +. (uy *. e))
+  end;
+  if not across then flush_piece s ~dx:ux ~dy:uy;
+  if caps && page = `Behind then begin
+    let on = on_to_start d and len = starting d in
+    if on +. len <= gap then lone s ox oy ux uy (l +. on) (l +. on +. len)
+  end;
+  advance d gap;
+  if caps && page = `Ahead then begin
+    let back = back_to_end d and len = ended d in
+    if back +. len < gap then lone s nx ny ux uy (nl -. back -. len) (nl -. back)
+  end;
+  if is_dash d && not across then begin
+    let a = nl -. (d.pattern.(d.index) -. d.rest) in
+    push s.piece (nx +. (ux *. a)) (ny +. (uy *. a))
+  end;
+  s.walked.(0) <- s.walked.(0) +. gap
+
+(* [run s d ~ox ~oy ~zo ~l0 ~l1 ~ux ~uy ~hi] walks the dashes from [l0] to [l1]
+   along the segment from the origin [(ox, oy)], which lies [zo] from [z],
+   skipping first to its start what the walk has not reached; [hi] is the end of
+   the page's run, from [z]. A run the walk has gone past is left out. The piece
+   of a dash still in progress at its end stays open there, to go on in a run
+   that follows on. *)
+let[@inline] run s d ~ox ~oy ~zo ~l0 ~l1 ~ux ~uy ~hi =
+  let cur = s.walked.(0) in
+  if cur <= zo +. l1 then begin
+    (* A run that the walk has reached goes on from there, with no skip, so that
+       its piece runs on across the two. *)
+    let l0 =
+      if cur < zo +. l0 then begin
+        let gap = zo +. l0 -. cur in
+        let page = if hi <= cur then `Behind else `Ahead in
+        skip s d ~page ~ux ~uy ~gap ox oy l0;
+        l0
+      end
+      else Float.min l1 (cur -. zo)
+    in
+    s.walked.(0) <- zo +. l1;
+    s.walked.(1) <- ox;
+    s.walked.(2) <- oy;
+    s.walked.(3) <- l1;
+    let pos = ref l0 and continue = ref true in
+    while !continue do
+      if is_dash d && s.piece.n = 0 then
+        push s.piece (ox +. (ux *. !pos)) (oy +. (uy *. !pos));
+      if !pos +. d.rest <= l1 then begin
+        pos := !pos +. d.rest;
+        if is_dash d then begin
+          push s.piece (ox +. (ux *. !pos)) (oy +. (uy *. !pos));
+          flush_piece s ~dx:ux ~dy:uy
+        end;
+        next d
+      end
+      else begin
+        d.rest <- d.rest -. (l1 -. !pos);
+        if is_dash d then push s.piece (ox +. (ux *. l1)) (oy +. (uy *. l1));
+        continue := false
+      end
+    done
+  end
+
 (* [dash_segment s d ax ay bx by] cuts into dashes the segment from [(ax, ay)]
-   to [(bx, by)], walking only the part that the grown window reaches. That part
-   is found and walked from the points where the segment crosses the window's
-   edges ([crossing]), so that its dashes keep the precision of their place
-   however far the segment's ends lie; only their phase carries the rounding of
-   the distance from the segment's start. *)
+   to [(bx, by)], walking only the parts that can put ink on the page.
+
+   A dash's ink is the band of its path out to half the pen's width, its caps at
+   its ends and the joins where it passes a vertex. A point of the band at arc
+   length [t] shows only if [t] lies within the page's projection onto the
+   segment, and a cap reaches no farther along it than the pen's half width. So
+   the walk covers the page's projection, grown by a pixel to absorb rounding,
+   and a pixel at each end of the segment that lies within the pen's reach of
+   the page, where its joins are; it skips the rest. Of the dashes it skips,
+   only the one whose cap reaches nearest the page can show, on each side, and
+   only through its cap: it is drawn alone. The cost is the page's extent and
+   the segment's ends in dashes, whatever the pen's width. A pattern whose
+   period, along the segment, is below a thousandth of a pixel is drawn solid
+   there. *)
 let dash_segment s d ax ay bx by =
   let p = s.pen in
   (* Halved, so that a segment longer than the floats keeps its direction. *)
@@ -409,6 +540,12 @@ let dash_segment s d ax ay bx by =
     let ux = hx /. half and uy = hy /. half in
     s.last.(0) <- ux;
     s.last.(1) <- uy;
+    (* A pixel along the segment, in the stroke's coordinates. *)
+    let m = p.m in
+    let px_len =
+      Float.hypot ((m.xx *. ux) +. (m.xy *. uy)) ((m.yx *. ux) +. (m.yy *. uy))
+    in
+    let dd = 1. /. px_len in
     let sx = dev_x p ax ay and sy = dev_y p ax ay in
     let tx = dev_x p bx by and ty = dev_y p bx by in
     (* Where the segment enters and leaves the grown window, by Liang and
@@ -440,56 +577,70 @@ let dash_segment s d ax ay bx by =
       end
     done;
     let px = !px and py = !py and qx = !qx and qy = !qy in
-    (* The walk is measured in units of [unit] times the stroke's: halves where
-       the part walked is longer than the floats in the stroke's coordinates,
-       though short on the device. *)
-    let unit = ref 1.
-    and stop = ref (((qx -. px) *. ux) +. ((qy -. py) *. uy)) in
-    if not (Float.is_finite !stop) then begin
-      unit := 0.5;
-      stop :=
-        (((0.5 *. qx) -. (0.5 *. px)) *. ux)
-        +. (((0.5 *. qy) -. (0.5 *. py)) *. uy)
-    end;
-    let unit = !unit and stop = !stop in
-    let more = (1. /. unit) -. 1. in
-    if !missed || not (stop > 0.) then begin
+    let starts = px = ax && py = ay and ends = qx = bx && qy = by in
+    if !missed || not (((qx -. px) *. ux) +. ((qy -. py) *. uy) > 0.) then begin
       flush_piece s ~dx:ux ~dy:uy;
       advance d len
     end
+    else if d.period *. px_len < 0.001 then begin
+      (* Solid: the piece in progress goes on through it. *)
+      if s.piece.n = 0 then push s.piece px py;
+      push s.piece qx qy;
+      advance d len;
+      if not ends then flush_piece s ~dx:ux ~dy:uy
+    end
     else begin
-      let start = Float.hypot (px -. ax) (py -. ay) in
-      if start > 0. then begin
-        flush_piece s ~dx:ux ~dy:uy;
-        advance d start
-      end;
-      let pos = ref 0. in
-      let continue = ref true in
-      while !continue do
-        if is_dash d && s.piece.n = 0 then
-          push s.piece
-            (px +. (ux *. !pos) +. (ux *. !pos *. more))
-            (py +. (uy *. !pos) +. (uy *. !pos *. more));
-        if !pos +. (unit *. d.rest) <= stop then begin
-          pos := !pos +. (unit *. d.rest);
-          if is_dash d then begin
-            push s.piece
-              (px +. (ux *. !pos) +. (ux *. !pos *. more))
-              (py +. (uy *. !pos) +. (uy *. !pos *. more));
-            flush_piece s ~dx:ux ~dy:uy
-          end;
-          next d
-        end
-        else begin
-          d.rest <- d.rest -. ((stop -. !pos) /. unit);
-          if is_dash d then push s.piece qx qy;
-          continue := false
-        end
+      (* A dash ended where the segment starts. *)
+      if not (is_dash d) then flush_piece s ~dx:ux ~dy:uy;
+      advance d (Float.hypot (px -. ax) (py -. ay));
+      (* [z], and the page's projection from it, a pixel wider each way. *)
+      let page = p.page in
+      let mx = Float.abs (tx -. sx) >= Float.abs (ty -. sy) in
+      crossing p ~x:mx
+        (if mx then 0.5 *. (page.(0) +. page.(2))
+         else 0.5 *. (page.(1) +. page.(3)))
+        sx sy tx ty;
+      let zx = p.pt.(0) and zy = p.pt.(1) in
+      let i = p.inv in
+      let lo = ref Float.infinity and hi = ref Float.neg_infinity in
+      for c = 0 to 3 do
+        let dx = page.(if c = 0 || c = 3 then 0 else 2) in
+        let dy = page.(if c < 2 then 1 else 3) in
+        let cx = (i.xx *. dx) +. (i.xy *. dy) +. i.x0 in
+        let cy = (i.yx *. dx) +. (i.yy *. dy) +. i.y0 in
+        let a = ((cx -. zx) *. ux) +. ((cy -. zy) *. uy) in
+        lo := Float.min !lo a;
+        hi := Float.max !hi a
       done;
-      let rest = Float.hypot (bx -. qx) (by -. qy) in
-      if rest > 0. then begin
+      let lo = !lo -. dd and hi = !hi +. dd in
+      let pz = ((px -. zx) *. ux) +. ((py -. zy) *. uy) in
+      let qz = ((qx -. zx) *. ux) +. ((qy -. zy) *. uy) in
+      s.walked.(0) <- pz;
+      s.walked.(1) <- px;
+      s.walked.(2) <- py;
+      s.walked.(3) <- 0.;
+      if starts then
+        run s d ~ox:px ~oy:py ~zo:pz ~l0:0.
+          ~l1:(Float.min dd (qz -. pz))
+          ~ux ~uy ~hi;
+      if Float.max lo pz < Float.min hi qz then
+        run s d ~ox:zx ~oy:zy ~zo:0. ~l0:(Float.max lo pz) ~l1:(Float.min hi qz)
+          ~ux ~uy ~hi;
+      if ends then
+        run s d ~ox:qx ~oy:qy ~zo:qz
+          ~l0:(Float.max (-.dd) (pz -. qz))
+          ~l1:0. ~ux ~uy ~hi
+      else begin
+        let gap = qz -. s.walked.(0) in
+        if gap > 0. then begin
+          let page = if hi <= s.walked.(0) then `Behind else `Ahead in
+          skip s d ~page ~ux ~uy ~gap qx qy 0.
+        end;
+        (* A dash in progress runs on to where the segment leaves the grown
+           window, beyond which nothing of it shows. *)
+        if is_dash d then push s.piece qx qy;
         flush_piece s ~dx:ux ~dy:uy;
-        advance d rest
+        advance d (Float.hypot (bx -. qx) (by -. qy))
       end
     end
   end
@@ -556,6 +707,7 @@ let stroke cover clip m ~pen:k s path =
         spine = (if Option.is_none dashes then kept else points ());
         kept;
         last = [| 0.; 0. |];
+        walked = Array.make 4 0.;
       }
     in
     (* A cut point lies a reach beyond [far], so its cap stays outside it. *)

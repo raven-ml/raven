@@ -33,8 +33,8 @@
       and a dash's end within that distance of a kept point moves to it. A
       solid closed subpath that would keep fewer than three points keeps all of
       them but exact repeats instead, so that it has the extent of its pen at
-      any size. A dash pattern whose period is below a thousandth of a pixel is
-      drawn solid.
+      any size. A dash pattern whose period, along a segment, is below a
+      thousandth of a pixel is drawn solid there.
     - Primitives are composited one after another, each against what the
       previous left. Two shapes that abut along an edge thus each cover part of
       the pixels on the edge, and let a little of the backdrop through there, as
