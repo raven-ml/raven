@@ -79,8 +79,11 @@ module Brownian = struct
      interval that holds it. Comparing τ with a midpoint computed in the times'
      dtype would round once the midpoint is finer than the floats near τ, and
      the descent would then carry one node's W and I with another's place.
-     Scaling [(τ − t0) / (t1 − t0)] by 2^depth is exact, so the leaf and the
-     position x in it are; τ = t1 is the end of the last leaf. *)
+     The leaf and the position x in it come from [(τ − t0) / (t1 − t0)]
+     scaled by 2^depth. The quotient rounds, the scaling does not: a node's
+     time whose quotient rounds down lands in the leaf to its left at x near
+     1, where W and I meet the next leaf's (the bump 6 x (1 − x) vanishes).
+     τ = t1 is the end of the last leaf. *)
   let point w tau =
     let dtype = Nx.dtype w.t0 in
     let span = Nx.sub w.t1 w.t0 in
