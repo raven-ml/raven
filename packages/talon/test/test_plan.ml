@@ -1072,14 +1072,19 @@ let steps =
       ("join asserted", joined ~each_right:At_most_one other_exact);
       ( "join position",
         joined ~on:Join.position (source "v" Type.[ ("v", Any float64) ]) );
-      ( "join itself",
-        fun q ->
-          Query.join ~on:(Join.keys [ "k" ])
-            (Query.select Expr.[ keep Sel.(names [ "k" ]); "m" := a ] q)
-            q );
-      ("append itself", fun q -> append q q);
       ("append a source", append (of_source s_exact));
     ]
+
+(* [twice] is the steps that read the query twice: [again], then the query. *)
+let twice =
+  [
+    ( "join itself",
+      fun again q ->
+        Query.join ~on:(Join.keys [ "k" ])
+          (Query.select Expr.[ keep Sel.(names [ "k" ]); "m" := a ] again)
+          q );
+    ("append itself", fun again q -> Query.append again q);
+  ]
 
 let starts =
   [
@@ -1092,22 +1097,34 @@ let starts =
     );
   ]
 
-(* [build (start, ops)] is the pipeline of the steps [ops] over the source
-   [start]. *)
-let build (start, ops) =
-  List.fold_left
-    (fun q op ->
-      match List.assoc op steps q with
-      | q -> q
-      | exception Invalid_argument _ -> q)
-    (of_source (List.assoc start starts))
-    ops
+(* [build_by again (start, ops)] is the pipeline of the steps [ops] over the
+   source [start], where a step of [twice] reads [again q d], [d] the pipeline
+   that built [q]. *)
+let build_by again (start, ops) =
+  let apply q built op =
+    match List.assoc_opt op twice with
+    | Some f -> f (again q (start, List.rev built)) q
+    | None -> List.assoc op steps q
+  in
+  let step (q, built) op =
+    match apply q built op with
+    | q' -> (q', op :: built)
+    | exception Invalid_argument _ -> (q, op :: built)
+  in
+  fst (List.fold_left step (of_source (List.assoc start starts), []) ops)
+
+(* [build d] is [d]'s pipeline, a step of [twice] reading the query itself, and
+   [build_tree d] the same pipeline reading a copy built again, so that it
+   reaches each step once. *)
+let build d = build_by (fun q _ -> q) d
+let rec build_tree d = build_by (fun _ d -> build_tree d) d
 
 let pipeline_gen =
   Gen.(
     pair
       (of_list ~pp:Format.pp_print_string (List.map fst starts))
-      (list ~size:(int_range 0 7) (of_list (List.map fst steps))))
+      (list ~size:(int_range 0 7)
+         (of_list (List.map fst steps @ List.map fst twice))))
   |> Gen.with_pp (fun ppf (start, ops) ->
       Format.fprintf ppf "%s: %s" start (String.concat " |> " ops))
 
@@ -1282,6 +1299,19 @@ let laws =
       prop "is idempotent" ~examples:pipeline_examples pipeline_gen idempotent;
       prop "gives equal plans for a pipeline built twice" pipeline_gen (fun d ->
           equal query_w (Query.optimize (build d)) (Query.optimize (build d)));
+      prop "gives one plan for a pipeline and its copy that shares no step"
+        ~examples:
+          [
+            ("u", [ "append itself" ]); ("e", [ "filter a > 1"; "join itself" ]);
+          ]
+        pipeline_gen
+        (fun ((_, ops) as d) ->
+          (* Query.optimize, Sharing: equal subplans become one value. *)
+          cover "a step reads the query twice"
+            (List.exists (fun op -> List.mem_assoc op twice) ops);
+          equal query_w
+            (Query.optimize (build d))
+            (Query.optimize (build_tree d)));
       prop "respects the source's answers" ~examples:model_examples model_gen
         pushdown_model;
       cases "plan work over a left fold is linear in its branches" ~id:fst
