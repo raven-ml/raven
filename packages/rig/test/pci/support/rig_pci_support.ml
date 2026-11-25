@@ -50,30 +50,17 @@ let ofd_locks = ofd_locks ()
 
 external now_ns : unit -> int = "rig_pci_test_now_ns"
 
-(* The factor RIG_TEST_TIME_SCALE names, which a profile whose build slows every
-   test sets. *)
-let time_scale =
-  match Sys.getenv_opt "RIG_TEST_TIME_SCALE" with
-  | None -> 1.
-  | Some s -> (
-      match float_of_string_opt s with
-      | Some k when k >= 1. -> k
-      | _ -> invalid_arg ("RIG_TEST_TIME_SCALE=" ^ s ^ ": not a factor >= 1"))
-
-let patience = 10. *. time_scale
-let patience_ns = int_of_float (patience *. 1e9)
-
-let poll f =
-  let t0 = now_ns () in
-  let rec go () =
-    f ()
-    || now_ns () - t0 < patience_ns
-       && begin
-         Unix.sleepf 0.0005;
-         go ()
-       end
-  in
-  go ()
+let poll what f =
+  match
+    while not (f ()) do
+      Unix.sleepf 0.0005
+    done
+  with
+  | () -> ()
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      prerr_endline ("waiting until " ^ what);
+      Printexc.raise_with_backtrace e bt
 
 (* This machine's GPUs *)
 
@@ -922,6 +909,24 @@ let holder how root bus va =
   Unix.close output;
   (pid, feed, said)
 
+(* Kills the child [pid] and waits for it, unless it has ended. A child that
+   ended is reaped here, or was already, which refuses the wait with ECHILD: its
+   pid may then name another process, which the kill must spare. *)
+let rec reap pid =
+  let rec wait () =
+    match Unix.waitpid [] pid with
+    | _ -> ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
+    | exception Unix.Unix_error (Unix.ECHILD, _, _) -> ()
+  in
+  match Unix.waitpid [ WNOHANG ] pid with
+  | 0, _ ->
+      Unix.kill pid Sys.sigkill;
+      wait ()
+  | _ -> ()
+  | exception Unix.Unix_error (Unix.EINTR, _, _) -> reap pid
+  | exception Unix.Unix_error (Unix.ECHILD, _, _) -> ()
+
 let wait_exit pid =
   let status = ref None in
   let exited () =
@@ -931,10 +936,12 @@ let wait_exit pid =
         status := Some s;
         true
   in
-  if not (poll exited) then begin
-    Unix.kill pid Sys.sigkill;
-    failf "the process %d did not exit" pid
-  end;
+  (match poll (Printf.sprintf "the process %d exits" pid) exited with
+  | () -> ()
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      reap pid;
+      Printexc.raise_with_backtrace e bt);
   match !status with
   | Some (WEXITED c) when c = refused_code ->
       skip ~reason:"the machine refused the function's memory" ()

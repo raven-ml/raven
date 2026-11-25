@@ -58,15 +58,11 @@ val ofd_locks : bool
 (** [ofd_locks] is [true] iff the system has open file description locks,
     which tell a memory file's process alive, as Linux and macOS do. *)
 
-val patience : float
-(** [patience] is 10 s, how long a test waits for what must happen: {!poll}'s
-    bound. It is multiplied by the factor [RIG_TEST_TIME_SCALE] names, which a
-    profile whose build slows every test sets, as the tsan profile does. *)
-
-val poll : (unit -> bool) -> bool
-(** [poll f] calls [f] until it is [true] or {!patience} passed, and is [true]
-    iff [f] became [true]: the hang guard of a test that waits for another
-    domain. *)
+val poll : string -> (unit -> bool) -> unit
+(** [poll what f] calls [f] until it is [true]: a test's wait for another domain
+    or process. A wait that the test's timeout ends writes [waiting until what]
+    on a line of standard error, which a failing test's report shows, and raises
+    the exception again with its backtrace. *)
 
 val now_ns : unit -> int
 (** [now_ns ()] is the monotonic clock in nanoseconds. *)
@@ -458,10 +454,15 @@ val holder :
     executable: its pid, the pipe on its standard input, and the pipe of its
     standard output, whose first line waits until it holds. *)
 
+val reap : int -> unit
+(** [reap pid] kills the child process [pid] with [SIGKILL] and waits for it,
+    unless it has ended. A child that ended is reaped then, or was already: its
+    pid may then name another process, which [reap] spares. *)
+
 val wait_exit : int -> Unix.process_status
-(** [wait_exit pid] is the status of the child [pid] once it exits. It kills
-    the child and fails the test if it has not exited within {!patience}, and
-    skips the test if it exited with {!refused_code}. *)
+(** [wait_exit pid] is the status of the child [pid] once it exits. It skips the
+    test if the child exited with {!refused_code}. A wait that the test's
+    timeout ends kills and reaps the child. *)
 
 val death : string -> Tree.fn -> unit
 (** [death root fn] checks that the memory a killed process left stays

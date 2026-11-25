@@ -943,8 +943,7 @@ let test_one_at_a_time (_, other) =
           Atomic.set about true;
           other g m 1 driver)
     in
-    equal ~msg:"the other domain reached Driver" bool true
-      (poll (fun () -> Atomic.get about));
+    poll "the other domain reaches Driver" (fun () -> Atomic.get about);
     sample ();
     Atomic.set inside false;
     Result.map (fun _ -> d) (kept h)
@@ -958,8 +957,8 @@ let test_one_at_a_time (_, other) =
 let others = [ ("an open", open_); ("a reset", reset) ]
 
 (* While GPU 0's driver starts, the main domain stops GPU 1. The driver waits
-   for it, so a stop held back by the start would never return: the driver gives
-   up after the hang guard and the test fails. *)
+   for it, so a stop held back by the start would never return: the test then
+   hangs until its timeout. *)
 let test_stop_waits answer =
   needs_flock ();
   let g, m, _ = three () in
@@ -967,15 +966,15 @@ let test_stop_waits answer =
   let inside = Atomic.make false and back = Atomic.make false in
   let start h _ =
     Atomic.set inside true;
-    Result.map (fun _ -> poll (fun () -> Atomic.get back)) (kept h)
+    Result.map
+      (fun _ -> poll "GPU 1's stop returns" (fun () -> Atomic.get back))
+      (kept h)
   in
   let d = Domain.spawn (fun () -> Driver.open_ g m 0 start) in
-  equal ~msg:"GPU 0's driver started" bool true
-    (poll (fun () -> Atomic.get inside));
+  poll "GPU 0's driver starts" (fun () -> Atomic.get inside);
   stop h1;
   Atomic.set back true;
-  equal ~msg:"stopped while GPU 0's driver started" bool true
-    (require_ok (Domain.join d))
+  require_ok (Domain.join d)
 
 (* A model
 
@@ -2804,10 +2803,8 @@ let exiting ?(mode = exit_holding) root =
   Unix.close out_w;
   Unix.close err_w;
   let exited () = fst (Unix.waitpid [ WNOHANG ] pid) <> 0 in
-  if not (poll exited) then begin
-    Unix.kill pid Sys.sigkill;
-    failf "the process holding GPUs did not exit"
-  end;
+  Rig_support.reaping pid (fun () ->
+      poll "the process holding GPUs exits" exited);
   let read fd = In_channel.input_all (Unix.in_channel_of_descr fd) in
   let out = read out_r and err = read err_r in
   Unix.close out_r;

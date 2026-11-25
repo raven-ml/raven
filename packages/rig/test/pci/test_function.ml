@@ -402,10 +402,8 @@ let test_exit (_, before) =
         status := Some s;
         true
   in
-  if not (poll exited) then begin
-    Unix.kill pid Sys.sigkill;
-    failf "the process holding %s did not exit" fn.bus
-  end;
+  Rig_support.reaping pid (fun () ->
+      poll (strf "the process holding %s exits" fn.bus) exited);
   let code = match !status with Some (WEXITED c) -> c | _ -> -1 in
   equal ~msg:"its child's exit left it mastering the bus" int 0 code;
   equal ~msg:"its own exit stopped it" hex 0
@@ -781,6 +779,24 @@ let test_not_ready () =
   ignore (open_held g m);
   equal ~msg:"the next open resets it" int 2 (Atomic.get resets)
 
+(* [with_holder how root bus va f] is [f pid said fed] for a process started as
+   [holder how root bus va] does: [said] is its output, and [fed ()] ends its
+   input, which lets a holder that waits exit. Its pipes close on the way out,
+   and a failure kills and reaps it. *)
+let with_holder how root bus va f =
+  let pid, feed, said = holder how root bus va in
+  let open_ = ref true in
+  let fed () =
+    if !open_ then begin
+      open_ := false;
+      Unix.close feed
+    end
+  in
+  Fun.protect ~finally:(fun () ->
+      fed ();
+      Unix.close said)
+  @@ fun () -> Rig_support.reaping pid (fun () -> f pid said fed)
+
 (* A reset of a GPU another process holds is refused, its memory untouched; the
    holder's exit gives the memory back. *)
 let test_reset_held () =
@@ -789,10 +805,10 @@ let test_reset_held () =
   let root = Tree.make [ fn ] in
   let va = free_base + (6 * mib) in
   ignore (frames root va mib);
-  let pid, feed, said = holder "wait" root fn.bus va in
+  with_holder "wait" root fn.bus va @@ fun pid said fed ->
   let line = In_channel.input_line (Unix.in_channel_of_descr said) in
   if line <> Some "holding" then begin
-    Unix.close feed;
+    fed ();
     ignore (wait_exit pid);
     fail "the holder did not hold the function"
   end;
@@ -800,7 +816,7 @@ let test_reset_held () =
   equal ~msg:"the holder's memory" int 1 (List.length held);
   ignore (require_error (Driver.reset (fixture_gpus ()) (Machine.at root) 0));
   equal ~msg:"kept while held" (list string) held (memory_files root);
-  Unix.close feed;
+  fed ();
   (match wait_exit pid with
   | WEXITED 0 -> ()
   | _ -> fail "the holder did not exit");
@@ -836,14 +852,13 @@ let test_released_holder how () =
   let root = Tree.make [ fn ] in
   let va = free_base + (6 * mib) in
   ignore (frames root va mib);
-  let pid, feed, said = holder how root fn.bus va in
   let reset () =
     require_ok (Driver.reset (fixture_gpus ()) (Machine.at root) 0)
   in
+  with_holder how root fn.bus va @@ fun pid said fed ->
   match how with
   | "released-die" ->
-      Unix.close feed;
-      Unix.close said;
+      fed ();
       (match wait_exit pid with
       | WSIGNALED s when s = Sys.sigkill -> ()
       | _ -> fail "the holder did not die by SIGKILL");
@@ -854,14 +869,14 @@ let test_released_holder how () =
   | _ ->
       if In_channel.input_line (Unix.in_channel_of_descr said) <> Some "holding"
       then begin
-        Unix.close feed;
+        fed ();
         ignore (wait_exit pid);
         fail "the holder did not hold the function"
       end;
       equal ~msg:"none while the holder lives" (list string) []
         (memory_files root);
       reset ();
-      Unix.close feed;
+      fed ();
       (match wait_exit pid with
       | WEXITED 0 -> ()
       | _ -> fail "the holder did not exit");
@@ -1331,14 +1346,12 @@ let test_reset_waits () =
   Function.set_config16 f 0 0xffff;
   let answering =
     Domain.spawn (fun () ->
-        poll (fun () -> String.trim (read_text file) = "1")
-        && begin
-          set_config_file root bus 0 0x1002;
-          true
-        end)
+        poll "the reset file is written" (fun () ->
+            String.trim (read_text file) = "1");
+        set_config_file root bus 0 0x1002)
   in
   let r = Function.reset f in
-  equal ~msg:"the reset file written" bool true (Domain.join answering);
+  Domain.join answering;
   equal ~msg:"the reset" (result unit string) (Ok ()) r;
   equal ~msg:"its vendor" hex 0x1002 (Function.config16 f 0)
 
@@ -2100,8 +2113,8 @@ let test_under_give_back (_, call) =
     in
     let landing () =
       Atomic.set start true;
-      ignore
-        (poll (fun () -> Atomic.get inside || Atomic.get returned) : bool)
+      poll "the release gives the function back or returns" (fun () ->
+          Atomic.get inside || Atomic.get returned)
     in
     let reached =
       Fun.protect ~finally:(fun () ->

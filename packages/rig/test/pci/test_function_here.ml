@@ -226,26 +226,42 @@ let test_vfio_fork () =
       let ready_r, ready_w = Unix.pipe () and done_r, done_w = Unix.pipe () in
       let child =
         match Unix.fork () with
-        | 0 ->
-            let ok =
-              match Function.take Machine.this b' with
-              | Ok g -> (
-                  match Function.alloc_dma g mib with
-                  | Ok (Some _) -> true
-                  | Ok None | Error _ -> false)
-              | Error _ -> false
-            in
-            ignore (Unix.write_substring ready_w (if ok then "y" else "n") 0 1);
-            ignore (Unix.read done_r (Bytes.create 1) 0 1);
-            Unix._exit 0
+        | 0 -> (
+            Unix.close ready_r;
+            Unix.close done_w;
+            try
+              let ok =
+                match Function.take Machine.this b' with
+                | Ok g -> (
+                    match Function.alloc_dma g mib with
+                    | Ok (Some _) -> true
+                    | Ok None | Error _ -> false)
+                | Error _ -> false
+              in
+              ignore
+                (Unix.write_substring ready_w (if ok then "y" else "n") 0 1);
+              ignore (Unix.read done_r (Bytes.create 1) 0 1);
+              Unix._exit 0
+            with _ -> Unix._exit 2)
         | pid -> pid
       in
+      Unix.close ready_w;
+      Unix.close done_r;
+      (* The child's end of [ready_w] is the only writer left: a child that dies
+         before it answers ends the read. *)
       let answer = Bytes.create 1 in
-      ignore (Unix.read ready_r answer 0 1);
-      let parent = Function.alloc_dma f mib in
-      ignore (Unix.write_substring done_w "x" 0 1);
-      ignore (Unix.waitpid [] child);
-      List.iter Unix.close [ ready_r; ready_w; done_r; done_w ];
+      let parent =
+        Fun.protect ~finally:(fun () ->
+            reap child;
+            Unix.close ready_r;
+            Unix.close done_w)
+        @@ fun () ->
+        ignore (Unix.read ready_r answer 0 1);
+        let parent = Function.alloc_dma f mib in
+        ignore (Unix.write_substring done_w "x" 0 1);
+        ignore (Unix.waitpid [] child);
+        parent
+      in
       equal ~msg:"the child's allocation" string "y" (Bytes.to_string answer);
       (match require_ok ~msg:"the parent's allocation" parent with
       | Some (w', _) -> Function.free_dma f w'

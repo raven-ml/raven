@@ -434,10 +434,8 @@ let ended pid =
         status := Some s;
         true
   in
-  if not (Rig_pci_support.poll exited) then begin
-    Unix.kill pid Sys.sigkill;
-    failf "the child %d did not exit" pid
-  end;
+  Rig_support.reaping pid (fun () ->
+      Rig_pci_support.poll "the child exits" exited);
   Option.get !status
 
 let pp_status ppf = function

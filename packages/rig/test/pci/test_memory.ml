@@ -2616,23 +2616,21 @@ let held f =
   Atomic.set armed true;
   let freeing = Domain.spawn (fun () -> Memory.free x.t_memory r) in
   Fun.protect ~finally:(fun () -> Atomic.set go true) (fun () ->
-      equal ~msg:"the free writes the tables" bool true
-        (poll (fun () -> Atomic.get inside));
+      poll "the free writes the tables" (fun () -> Atomic.get inside);
       f root x);
   Domain.join freeing
 
-(* [returns f] runs [f ()] on a domain of its own and is whether it returned
-   within the test's patience. The domain is joined once it has. *)
-let returns f =
+(* [returns what f] runs [f ()] on a domain of its own and joins it once [f] has
+   returned or raised. It waits as [poll what] does, which the test's timeout
+   ends where [f] never returns. *)
+let returns what f =
   let ended = Atomic.make false in
   let d =
     Domain.spawn (fun () ->
-        f ();
-        Atomic.set ended true)
+        Fun.protect ~finally:(fun () -> Atomic.set ended true) f)
   in
-  let returned = poll (fun () -> Atomic.get ended) in
-  if returned then Domain.join d;
-  returned
+  poll what (fun () -> Atomic.get ended);
+  Domain.join d
 
 (* A release that begins while a free writes the GPU's tables returns, and
    leaves the function taken while the free runs. The free gives it back as
@@ -2642,9 +2640,8 @@ let test_release_deferred () =
   held (fun r x ->
       root := r;
       gpu := Some x;
-      equal ~msg:"the release returned while the free wrote the tables" bool
-        true
-        (returns (fun () -> Function.release x.t_fn));
+      returns "the release returns while the free writes the tables" (fun () ->
+          Function.release x.t_fn);
       equal ~msg:"taken while the free writes the tables" bool true
         (taken r x));
   let x = Option.get !gpu in
@@ -2661,9 +2658,8 @@ let test_finish_waits () =
   held (fun r x ->
       root := r;
       gpu := Some x;
-      equal ~msg:"the release returned while the free wrote the tables" bool
-        true
-        (returns (fun () -> Function.release x.t_fn));
+      returns "the release returns while the free writes the tables" (fun () ->
+          Function.release x.t_fn);
       finishing :=
         Some
           (Domain.spawn (fun () ->
@@ -2699,8 +2695,7 @@ let test_finish_waits_give_back () =
           (fun () -> Function.release x.t_fn))
   in
   Fun.protect ~finally:(fun () -> Atomic.set go true) (fun () ->
-      equal ~msg:"the release gives the function back" bool true
-        (poll (fun () -> Atomic.get inside));
+      poll "the release gives the function back" (fun () -> Atomic.get inside);
       let finished = Atomic.make false in
       let finishing =
         Domain.spawn (fun () ->
@@ -2726,10 +2721,8 @@ let test_second_release () =
   held (fun r x ->
       root := r;
       gpu := Some x;
-      equal ~msg:"the first release returned" bool true
-        (returns (fun () -> Function.release x.t_fn));
-      equal ~msg:"the second release returned" bool true
-        (returns (fun () -> Memory.release x.t_memory));
+      returns "the first release returns" (fun () -> Function.release x.t_fn);
+      returns "the second release returns" (fun () -> Memory.release x.t_memory);
       equal ~msg:"taken while the free writes the tables" bool true
         (taken r x));
   let x = Option.get !gpu in
@@ -2767,10 +2760,8 @@ let test_write_used (_, request) =
   Atomic.set armed true;
   let requesting = Domain.spawn call in
   Fun.protect ~finally:(fun () -> Atomic.set go true) (fun () ->
-      equal ~msg:"the request writes the tables" bool true
-        (poll (fun () -> Atomic.get inside));
-      equal ~msg:"the release returned" bool true
-        (returns (fun () -> Function.release x.t_fn));
+      poll "the request writes the tables" (fun () -> Atomic.get inside);
+      returns "the release returns" (fun () -> Function.release x.t_fn);
       equal ~msg:"taken while the request writes the tables" bool true
         (taken root x));
   let r = Domain.join requesting in
@@ -2800,9 +2791,8 @@ let writes =
 
 (* [with_held hook] is [(root, x, did)], [x] a GPU mastering the bus with a
    region of its memory freed on a domain of its own, whose first clear of an
-   entry of the GPU's tables calls [hook root x] inside the free, and [did]
-   what the hook answered, once the free returned within the test's
-   patience. *)
+   entry of the GPU's tables calls [hook root x] inside the free, and [did] what
+   the hook answered, once the free returned. *)
 let with_held hook =
   let armed = Atomic.make false and did = Atomic.make None in
   let hooked = ref (fun () -> "no hook") in
@@ -2819,8 +2809,7 @@ let with_held hook =
   hooked := (fun () -> hook root x);
   let r = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
   Atomic.set armed true;
-  equal ~msg:"the free returned" bool true
-    (returns (fun () -> Memory.free x.t_memory r));
+  returns "the free returns" (fun () -> Memory.free x.t_memory r);
   (root, x, Atomic.get did)
 
 (* A release made inside a free, on its thread, as a callback such as an exit
@@ -2865,12 +2854,10 @@ let test_master_off_inside_free () =
         (Domain.spawn (fun () ->
              Function.release x.t_fn;
              Atomic.set released true));
-    if not (poll (fun () -> Atomic.get released)) then
-      "the release did not return"
-    else
-      match Function.set_bus_master x.t_fn false with
-      | () -> if mastering root x then "mastering" else "off"
-      | exception e -> Printexc.to_string e
+    poll "the release returns" (fun () -> Atomic.get released);
+    match Function.set_bus_master x.t_fn false with
+    | () -> if mastering root x then "mastering" else "off"
+    | exception e -> Printexc.to_string e
   in
   let root, x, did = with_held off in
   Option.iter Domain.join !releasing;
@@ -3012,15 +2999,10 @@ let test_alloc_across_stop () =
   let allocating =
     Domain.spawn (fun () -> Memory.alloc x.t_memory Host page)
   in
-  let reached, stopped =
-    Fun.protect ~finally:(fun () -> Atomic.set go true) @@ fun () ->
-    let reached = poll (fun () -> Atomic.get inside) in
-    (reached, reached && returns (fun () -> stop_open x))
-  in
-  let r = Domain.join allocating in
-  equal ~msg:"the alloc reached the machine" bool true reached;
-  equal ~msg:"the stop returned while the alloc ran" bool true stopped;
-  let r = given r in
+  ( Fun.protect ~finally:(fun () -> Atomic.set go true) @@ fun () ->
+    poll "the alloc reaches the machine" (fun () -> Atomic.get inside);
+    returns "the stop returns while the alloc runs" (fun () -> stop_open x) );
+  let r = given (Domain.join allocating) in
   equal ~msg:"the release, once the alloc returned" (list string)
     [ "release keep" ] (asked ());
   let w = host_window r in

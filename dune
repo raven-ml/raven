@@ -34,8 +34,7 @@
 ; WINDTRAP_TIMEOUT bounds every test, so a hung test fails by name and
 ; cannot block a shared watch server. Tests set no timeout of their own: the
 ; speed bar, not a limit, keeps them fast. Under tsan the bound is 15 times
-; longer, ThreadSanitizer's slowdown at most, and RIG_TEST_TIME_SCALE makes
-; rig's PCI suites wait as much longer.
+; longer, ThreadSanitizer's slowdown at most.
 ;
 ; CACHEDB and XDG_CACHE_HOME put tolk's disk cache, and the files tolk caches
 ; beside it, in a directory cache of each action's working directory, inside
@@ -98,7 +97,6 @@
   (env-vars
    (TSAN_OPTIONS
     second_deadlock_stack=1:die_after_fork=0:allocator_may_return_null=1)
-   (RIG_TEST_TIME_SCALE 15)
    (WINDTRAP_TIMEOUT 900)
    (CACHEDB cache)
    (XDG_CACHE_HOME cache))
