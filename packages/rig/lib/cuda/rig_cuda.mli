@@ -608,3 +608,10 @@ val replays : t -> int * int
 val made : t -> int
 (** [made g] is the number of chains [g]'s grows made since [g] opened; [0]
     once [g] is stopped. *)
+
+val backdate_measure : t -> unit
+(** [backdate_measure g] dates [g]'s last measure of its clock 8 s earlier than
+    it was taken, which makes it 8 s wrong. [g]'s next timed submit finds the
+    measure 8 s old and measures again. Until then a time converted against it
+    lies 8 s early, held at the end of the value converted before it. The
+    program runs no other call of [g] meanwhile. Nothing once [g] is stopped. *)

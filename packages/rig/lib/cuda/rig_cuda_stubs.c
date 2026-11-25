@@ -2036,6 +2036,14 @@ value caml_rig_cuda_made(value v_self) {
   return Val_long(atomic_load_explicit(&d->made, memory_order_relaxed));
 }
 
+/* Dates [v_self]'s last measure of its clock REFERENCE_NS earlier than it
+   was taken; nothing once stopped. */
+value caml_rig_cuda_backdate_measure(value v_self) {
+  struct device *d = Device_val(v_self);
+  if (d != NULL) d->reference_ns -= REFERENCE_NS;
+  return Val_unit;
+}
+
 /* The pieces [v_self]'s submits played through a chain and the launches
    they sent plain, since it opened; [(0, 0)] once stopped. */
 value caml_rig_cuda_replays(value v_self) {

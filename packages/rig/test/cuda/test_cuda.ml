@@ -1030,18 +1030,22 @@ let registry_is_the_process () =
   equal bool ~msg:"locked after the last free" false (S.locked p);
   H.free_pages p H.page
 
-(* A device idle past the age of its clock's measure, 8 s, measures again at
-   its next timed submit. That submission's span, and one before the idle,
+(* A device whose clock's measure is 8 s old measures again at its next timed
+   submit. [C.backdate_measure] dates the measure 8 s back, which also makes it
+   8 s wrong. A span converted against it would lie 8 s early, held at the end
+   of the span before, and last no time. That submission's span, and one before,
    lie within the host's times around their submit and their wait, up to the
-   error rig_cuda.mli states (S.clock_error). *)
-let spans_after_idle () =
+   error rig_cuda.mli states (S.clock_error), and last at least their spin. *)
+let spin_ns = 100_000
+
+let spans_after_measure () =
   let opened = Rig.Profile.now () in
   S.with_ @@ fun t ->
   let within what =
     let t0 = Rig.Profile.now () in
     let (), events =
       Rig.Profile.take (fun () ->
-          Rig.Point.wait (S.submit_work t [ S.spin t ~ns:100_000 ]))
+          Rig.Point.wait (S.submit_work t [ S.spin t ~ns:spin_ns ]))
     in
     let t1 = Rig.Profile.now () in
     let error = S.clock_error ~since:(t1 - opened) in
@@ -1056,13 +1060,16 @@ let spans_after_idle () =
     | [ (start, stop) ] ->
         at_least int ~msg:(what ^ ": the span's start") ~than:(t0 - error)
           start;
-        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + error) stop
+        at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + error) stop;
+        at_least int
+          ~msg:(what ^ ": the span's length")
+          ~than:spin_ns (stop - start)
     | spans ->
         equal int ~msg:(what ^ ": the device's spans") 1 (List.length spans)
   in
-  within "before the idle";
-  Unix.sleepf 8.5;
-  within "after the idle"
+  within "before the new measure";
+  C.backdate_measure t.g;
+  within "after the new measure"
 
 (* How long {!own_word_after_running} waits for its kernel before it gives
    the device up. *)
@@ -1126,8 +1133,8 @@ let timeline =
         unload_aside;
       test "a close of an idle device leaves the word at the last value"
         stop_idle;
-      test "a span after an idle past the clock's age lies within its window"
-        spans_after_idle;
+      test "a span after a new measure of the clock lies within its window"
+        spans_after_measure;
       test "a stop after the work ended leaves the word at the last value"
         stop_ended;
       test "a loss that stops running work leaves the GPU closed until it ends"

@@ -1039,6 +1039,9 @@ external grow_chains : int -> int = "caml_rig_cuda_grow"
 external replays_c : int -> int * int = "caml_rig_cuda_replays"
 external made_c : int -> int = "caml_rig_cuda_made" [@@noalloc]
 
+external backdate_measure_c : int -> unit = "caml_rig_cuda_backdate_measure"
+[@@noalloc]
+
 (* CUDA takes a graph's device memory in chunks of 2 MiB (measured on an RTX
    5000 Ada), the most one chain's growth asks of the device. *)
 let chunk = 2 * 1024 * 1024
@@ -1053,6 +1056,7 @@ let grow g =
 let retire _ = ()
 let replays g = replays_c g.self
 let made g = made_c g.self
+let backdate_measure g = backdate_measure_c g.self
 
 (* The load placed every function, and an entry makes nothing slow. *)
 let prepare _ _ ~still_ms:_ = true
