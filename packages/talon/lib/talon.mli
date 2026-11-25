@@ -2897,9 +2897,9 @@ module Query : sig
       such as a cast that loses a value, [only] with two values or a join
       assertion. A run fails as evaluating its optimized plan one row at a time
       would, at the first row, in that order, where a step fails, whether an
-      error or an exception. At a row, a step evaluates its outputs in order and
-      the operands of an operation from left to right, each before the
-      operation, and the first failure it meets is the run's. Which failure is
+      error or an exception. At a row, a step evaluates its outputs in order,
+      and the operands an operation computes from left to right, each before the
+      operation; the first failure it meets is the run's. Which failure is
       reported depends on the plan and its inputs' values in order, never on
       batches or cores. [e] names the step, as {!pp} prints it, and the row of
       the step's input. Over traced columns ({!section-compiled}) a step that
