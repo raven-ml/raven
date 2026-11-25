@@ -87,8 +87,11 @@ let quadratic (seed, depth, k, x, shape) =
      W(a) = x ΔW + 6 x (1 − x) H, the quadratic through ΔW that matches the
      leaf's integral (Foster, Lyons and Oberhauser, 2020, Thm 2.4), and the area
      over [a, a + x δ] is that quadratic's, x² H. [x] is read back from the
-     rounded time. Values of at most 4 summed over 13 levels round within
-     1e-12. *)
+     rounded time. Values of at most 4 summed over 13 levels give W and the
+     integral I at each end within e = 1e-12. H is their difference over δ,
+     within 2e / δ + 2e. The quadratic's side of W is then within 1.5 (2e / δ +
+     2e) + 2e, and W agrees within e (3 / δ + 7). The areas times their
+     intervals' lengths, at most δ, cancel the 1 / δ: each side is within 4e. *)
   cover "a path of depth 0" (depth = 0);
   cover "a scalar path" (shape = [||]);
   cover "a path of no components" (shape = [| 0 |]);
@@ -100,11 +103,13 @@ let quadratic (seed, depth, k, x, shape) =
   let x = (t -. a) /. leaf in
   let dw, h = Sde.Brownian.increment w (scalar a) (scalar (a +. leaf)) in
   let dw', h' = Sde.Brownian.increment w (scalar a) (scalar t) in
-  let tol = Oracle.tensor ~abs:1e-12 () in
-  equal ~msg:"W" tol
+  let e = 1e-12 in
+  equal ~msg:"W"
+    (Oracle.tensor ~abs:(e *. ((3. /. leaf) +. 7.)) ())
     (Nx.add (Nx.mul_s dw x) (Nx.mul_s h (6. *. x *. (1. -. x))))
     dw';
-  equal ~msg:"area times length" tol
+  equal ~msg:"area times length"
+    (Oracle.tensor ~abs:(8. *. e) ())
     (Nx.mul_s h ((t -. a) *. x *. x))
     (Nx.mul_s h' (t -. a))
 
@@ -130,7 +135,9 @@ let brownian_tests =
     prop
       "inside a finest interval the path is the quadratic of its increment and \
        area"
-      leaves ~count:300 quadratic;
+      leaves ~count:300
+      ~examples:[ (139, 12, 3627, 0.5, [||]) ]
+      quadratic;
     test "a query is a pure function of the key and the times" (fun () ->
         let inc w = Sde.Brownian.increment w (scalar 0.2) (scalar 0.7) in
         equal

@@ -1963,9 +1963,11 @@ module Sde : sig
         each of the path's shape; [H] is zero when [s = t]. [s] and [t] are
         scalars, in either order: for [t < s] the increment is that of [[t, s]]
         negated, and the area that of [[t, s]]. Increments over adjacent
-        intervals compose by Chen's relation. A query costs [2 (depth + 1)]
-        normal draws of the path's shape at each end; a derivative in a time
-        through the path has no meaning.
+        intervals compose by Chen's relation. [H] divides a difference of the
+        path's integrals from [t0] by [t − s], so their rounding reaches it
+        multiplied by [1 / |t − s|]. A query costs [2 (depth + 1)] normal draws
+        of the path's shape at each end; a derivative in a time through the path
+        has no meaning.
 
         Raises [Invalid_argument] through {!Nx.check} if [s] or [t] lies outside
         [[t0, t1]]. *)
