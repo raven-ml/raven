@@ -1337,6 +1337,14 @@ let iterate_tests =
           Minimize.iterates one m ~steps:60 rosenbrock (vec [| -1.2; 1. |])
         in
         equal (Oracle.tensor ~rel:1e-6 ()) (vec [| 1.; 1. |]) (Nx.get [ 59 ] xs));
+    test "the iterates of zero unknowns are rows of none" (fun () ->
+        equal (Oracle.tensor ())
+          (Nx.zeros f64 [| 3; 0 |])
+          (Minimize.iterates one
+             (Minimize.bfgs ~linear:Linear.dense)
+             ~steps:3
+             (fun x -> Nx.sum (Nx.square x))
+             (vec [||])));
     test "steps below 1 raise" (fun () ->
         invalid_with "Jera.Minimize.iterates: steps = 0 is below 1" (fun () ->
             Minimize.iterates one

@@ -1873,6 +1873,9 @@ let iterates (type x f d) (x : (x, d) Nx.Ptree.t) (m : (x, f, d) t) ~steps
   match m with
   | Gradient (kind, linear) ->
       let (Problem p) = problem fn x kind linear f start in
-      rows x start (path ~steps p.meth p.start)
+      (* A start of no unknowns is its own minimum, as in {!solve}. *)
+      if p.size = 0 then
+        rows x start (Nx.zeros_at (Nx.beside p.start.x) p.dtype [| steps; 0 |])
+      else rows x start (path ~steps p.meth p.start)
   | Levenberg_marquardt (r, linear) -> lm_path fn x r linear ~steps f start
   | Nelder_mead -> simplex_path fn x ~steps f start

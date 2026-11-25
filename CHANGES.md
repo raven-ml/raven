@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.iterates` of a gradient method on a start of no unknowns returns
+  its rows of no element, as `Minimize.solve` converges there, where it raised
+  `Invalid_argument` from `Nx.reshape`.
 - `Quad.Range.v` and `Quad.Box.v` raise `Invalid_argument` naming themselves
   and their ends' shapes when the ends do not broadcast, where `Range.v`
   raised `Nx.broadcast_arrays`'s error.
