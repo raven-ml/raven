@@ -1017,16 +1017,16 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
         (Nx.logical_not (Nx.isfinite norm))
         s.unfinite
     in
-    (* The time's resolution is the floats' spacing at the interval's larger
-       end: near t = 0 the spacing is subnormal, and a lane must stop as soon
-       there as elsewhere in the interval. *)
-    let resolution =
-      Nx.mul_s (Nx.maximum (Nx.abs a) (Nx.abs b)) (0.5 *. Num.eps dtype)
+    (* A lane stops where its step no longer moves the time, or falls below eps
+       times its first step, the problem's own scale: near t = 0 the floats'
+       spacing is subnormal, and a collapse must end as soon there as elsewhere.
+       A step that lands on its interval's end is no collapse. *)
+    let collapsed =
+      Nx.logical_and (Nx.logical_not lands)
+        (Nx.less (Nx.abs hh) (Nx.mul_s h_start (Num.eps dtype)))
     in
     let stalled =
-      Nx.logical_and stepping
-        (Nx.logical_or (Nx.equal t_end t)
-           (Nx.less (Nx.abs (Nx.sub t_end t)) resolution))
+      Nx.logical_and stepping (Nx.logical_or (Nx.equal t_end t) collapsed)
     in
     let st =
       Elementwise.settle st (Nx.logical_and stalled unfinite) Not_finite

@@ -853,8 +853,8 @@ let solve =
           (Oracle.status (solve1 f ~t0:0. ~t1:1. (scalar 1.))));
     cases "a field non-finite past t0 ends the lane Not_finite wherever t0 is"
       ~id:(Printf.sprintf "t0 = %g") [ 0.; 1. ] (fun t0 ->
-        (* Near t = 0 the floats' spacing is subnormal; the steps stop at the
-           resolution of the interval's larger end all the same. *)
+        (* Near t = 0 the floats' spacing is subnormal; the steps stop below ε
+           times the first step all the same. *)
         let f t y =
           Nx.where (Nx.greater_s t t0) (Nx.full_like y Float.nan) (Nx.neg y)
         in
@@ -865,6 +865,20 @@ let solve =
             (scalar 1.)
         in
         equal Oracle.status_t Not_finite (Oracle.status s));
+    test "a fast layer at t0 resolves on a long interval" (fun () ->
+        (* y' = −10¹² (y − 1) from 0 is 1 − e^(−10¹² t): steps near 10⁻¹³ cross
+           the layer at t = 0, far below the spacing of the floats at t1 = 10⁴,
+           then grow. The field contracts, so the error is at most the
+           estimates' sum. *)
+        let f _ y = Nx.mul_s (Nx.sub_s y 1.) (-1e12) in
+        let s =
+          Ode.solve one (kvaerno f) ~tol:stiff_tol ~budget:500 f ~t0:(scalar 0.)
+            ~t1:(scalar 1e4) (vec [| 0. |])
+        in
+        equal Oracle.status_t Converged (Oracle.status s);
+        at_most float_exact
+          ~than:(Nx.item [ 0 ] (Solution.error s))
+          (Float.abs (Nx.item [ 0 ] (Solution.get s) -. 1.)));
     test "a blow-up ends its lane Stalled" (fun () ->
         (* y' = y² from 1 is 1 / (1 − t): the steps shrink toward t = 1 until
            they fall below the time's resolution, the values still finite. *)
