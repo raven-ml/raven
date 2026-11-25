@@ -1588,8 +1588,8 @@ module Ode : sig
       [(a, b, c)] with [s] stages: stage [i] evaluates the field at
       [t + c.(i) h] on [y + h Σ_(j<i) a.(i).(j) k_j], or at the step's end
       itself where [c.(i) = 1], and the step is [y + h Σ_i b.(i) k_i]. Its
-      coefficients are given in float64 and rounded once to the time's and
-      each leaf's dtype.
+      coefficients are given in float64 and rounded once to the time's and each
+      leaf's dtype.
 
       Raises [Invalid_argument] unless [s ≥ 1], [b] and [c] have [s] elements,
       [a] has [s] rows of which row [i] has [i] elements, every coefficient is
@@ -1627,11 +1627,10 @@ module Ode : sig
       estimate, which need not shrink with the step: the step can collapse.
       {b Cost.} Per attempt, one preparation of [linear] ([n] applications of
       [derivative] and a factorisation for {!Linear.dense}), and one evaluation
-      of the field and one linear solve per Newton iteration.
-      {b Derivative.} In the answer each accepted stage is stated as a zero of
-      its stage equation through {!Rune.root}, solved by [linear], so the
-      derivative is the accepted steps' with their stages' implicit derivatives.
-  *)
+      of the field and one linear solve per Newton iteration. {b Derivative.} In
+      the answer each accepted stage is stated as a zero of its stage equation
+      through {!Rune.root}, solved by [linear], so the derivative is the
+      accepted steps' with their stages' implicit derivatives. *)
 
   (** {1:marches Marches} *)
 
@@ -1655,9 +1654,8 @@ module Ode : sig
       [at.(i)] to [at.(i+1)] takes [steps] steps of [m]: step [j] starts at
       [at.(i) + j h] with [h = (at.(i+1) − at.(i)) / steps], or at [at.(i+1)]
       where that rounds past it. Every step but the last has size [h] and ends
-      where the next starts; the last has size [at.(i+1)] minus its start,
-      never negative, and ends at [at.(i+1)] itself. [at] may decrease, to
-      march back.
+      where the next starts; the last has size [at.(i+1)] minus its start, never
+      negative, and ends at [at.(i+1)] itself. [at] may decrease, to march back.
 
       {b Error.} A method of order [p] has global error [O(h^p)] for a smooth
       field. {b Stability.} An explicit method is stable only while [h] times
@@ -1686,23 +1684,23 @@ module Ode : sig
       The solution's error is, per component, the sum of the magnitudes of the
       accepted steps' local estimates: it estimates the error the steps made,
       not the global error, which [tol] does not bound. An attempt with a
-      non-finite stage is rejected. A step below the time's resolution, or
-      below [eps] times the lane's first step with [eps] the distance from [1]
-      to the next float of the time's dtype, ends the lane [Not_finite] if the
-      last attempt rejected had a non-finite stage and [Stalled] otherwise, and
+      non-finite stage is rejected. A step below the time's resolution, or below
+      [eps] times the lane's first step with [eps] the distance from [1] to the
+      next float of the time's dtype, ends the lane [Not_finite] if the last
+      attempt rejected had a non-finite stage and [Stalled] otherwise, and
       [budget] attempted steps end it [Budget_spent]. The last step of an
       interval lands on its end exactly. {b Stability.} An explicit method's
       controller keeps [h] inside its stability region, so on a stiff field its
-      steps fall to that limit and the budget runs out first.
-      {b Cost.} Choosing the first step costs two evaluations, and each attempt
-      the method's evaluations per step. The answer evaluates the field once at
-      the start and each accepted step again; {!Solution.evaluations} counts
-      them all. Reverse mode keeps one state per time of [at] and, while it
-      reverses an interval, its carries: compiled, [budget] of them; eagerly,
-      the steps taken. {b Derivative.} The accepted steps', each a fraction [s]
-      of its interval, [h = (b − a) s]: through the initial state, the times and
-      every tracked value the field reads. A lane that did not converge returns
-      its detached estimate, with a zero derivative. *)
+      steps fall to that limit and the budget runs out first. {b Cost.} Choosing
+      the first step costs two evaluations, and each attempt the method's
+      evaluations per step. The answer evaluates the field once at the start and
+      each accepted step again; {!Solution.evaluations} counts them all. Reverse
+      mode keeps one state per time of [at] and, while it reverses an interval,
+      its carries: compiled, [budget] of them; eagerly, the steps taken.
+      {b Derivative.} The accepted steps', each a fraction [s] of its interval,
+      [h = (b − a) s]: through the initial state, the times and every tracked
+      value the field reads. A lane that did not converge returns its detached
+      estimate, with a zero derivative. *)
 
   val solve :
     ('y, 'd) Nx.Ptree.t ->
@@ -1897,13 +1895,13 @@ module Ode : sig
       [Stalled], and its report names the count that would hold it, as
       ["raise pieces to about n"]. Times of [at] that do not increase end the
       lane [Stalled] too. {b Stability.} As {!solve}'s. {b Cost.} Each attempt
-      costs one evaluation more than a solve's, its first stage, since the
-      field may jump where one step ends and the next starts. Each stage reads
-      [lags] delayed states, each a binary search of the [pieces] pieces and a
-      series of the extension's degree; the carry holds [pieces] pieces, so a
-      compiled reverse keeps [budget × pieces]. {b Derivative.} The answer
-      reads its own tracked pieces, so the derivative reaches the delayed
-      states, [history], the lags and every tracked value [f] reads.
+      costs one evaluation more than a solve's, its first stage, since the field
+      may jump where one step ends and the next starts. Each stage reads [lags]
+      delayed states, each a binary search of the [pieces] pieces and a series
+      of the extension's degree; the carry holds [pieces] pieces, so a compiled
+      reverse keeps [budget × pieces]. {b Derivative.} The answer reads its own
+      tracked pieces, so the derivative reaches the delayed states, [history],
+      the lags and every tracked value [f] reads.
 
       Raises [Invalid_argument] if [budget < 1], if [pieces < 1], if [at] is not
       a non-empty 1-D tensor, if [lags] is not a non-empty 1-D tensor, if
@@ -1928,10 +1926,9 @@ module Sde : sig
       the path's key and the node. So a path is one function of time, whatever
       the queries: marches with different steps see one path. Paths of one key,
       dtype, shape and interval agree at the nodes they share: a deeper path
-      refines a shallower one. Steps finer than
-      [(t1 − t0) / 2^depth] see, inside each finest interval, the path's mean
-      given that interval's increment and area, a quadratic, and lose their
-      stated order. *)
+      refines a shallower one. Steps finer than [(t1 − t0) / 2^depth] see,
+      inside each finest interval, the path's mean given that interval's
+      increment and area, a quadratic, and lose their stated order. *)
   module Brownian : sig
     type ('b, 'd) t
     (** The type for Brownian paths of dtype ['b]. *)
@@ -1962,11 +1959,11 @@ module Sde : sig
         [[s, t]],
         [H = (1 / (t − s)) ∫_s^t (W r − W s − (r − s) / (t − s) (W t − W s)) dr],
         each of the path's shape; [H] is zero when [s = t]. [s] and [t] are
-        scalars, in either order: for [t < s] the increment is that of
-        [[t, s]] negated, and the area that of [[t, s]]. Increments over
-        adjacent intervals compose by Chen's relation. A query costs
-        [2 (depth + 1)] normal draws of the path's shape at each end; a
-        derivative in a time through the path has no meaning.
+        scalars, in either order: for [t < s] the increment is that of [[t, s]]
+        negated, and the area that of [[t, s]]. Increments over adjacent
+        intervals compose by Chen's relation. A query costs [2 (depth + 1)]
+        normal draws of the path's shape at each end; a derivative in a time
+        through the path has no meaning.
 
         Raises [Invalid_argument] through {!Nx.check} if [s] or [t] lies outside
         [[t0, t1]]. *)

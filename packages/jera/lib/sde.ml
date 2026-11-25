@@ -78,12 +78,12 @@ module Brownian = struct
      The side taken at each level is a bit of τ's leaf, the index of the finest
      interval that holds it. Comparing τ with a midpoint computed in the times'
      dtype would round once the midpoint is finer than the floats near τ, and
-     the descent would then carry one node's W and I with another's place.
-     The leaf and the position x in it come from [(τ − t0) / (t1 − t0)]
-     scaled by 2^depth. The quotient rounds, the scaling does not: a node's
-     time whose quotient rounds down lands in the leaf to its left at x near
-     1, where W and I meet the next leaf's (the bump 6 x (1 − x) vanishes).
-     τ = t1 is the end of the last leaf. *)
+     the descent would then carry one node's W and I with another's place. The
+     leaf and the position x in it come from [(τ − t0) / (t1 − t0)] scaled by
+     2^depth. The quotient rounds, the scaling does not: a node's time whose
+     quotient rounds down lands in the leaf to its left at x near 1, where W and
+     I meet the next leaf's (the bump 6 x (1 − x) vanishes). τ = t1 is the end
+     of the last leaf. *)
   let point w tau =
     let dtype = Nx.dtype w.t0 in
     let span = Nx.sub w.t1 w.t0 in
@@ -243,8 +243,8 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
           let root = Nx.where zero (Nx.zeros_like h) root' in
           let drifted = axpy h (f t v) v in
           let support = add (g t v (Nx.mul (Nx.ones_like dw) root)) drifted in
-          (* g y ΔW + (g ȳ − g y) q with q = (ΔW² − h) / 2√h, as g y (ΔW − q)
-             + g ȳ q: g is linear in its noise, so three evaluations. *)
+          (* g y ΔW + (g ȳ − g y) q with q = (ΔW² − h) / 2√h, as g y (ΔW − q) +
+             g ȳ q: g is linear in its noise, so three evaluations. *)
           let q = Nx.div (Nx.sub (Nx.square dw) h) (Nx.mul_s root' 2.) in
           let q = Nx.where zero (Nx.zeros_like q) q in
           add (g t support q) (add (g t v (Nx.sub dw q)) drifted))
