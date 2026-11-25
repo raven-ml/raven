@@ -353,6 +353,38 @@ let test_steps_validate () =
   raises (Invalid_argument "Vega.rate: expected v >= 0.0, got -0.1") (fun () ->
       Vega.rate (-0.1))
 
+(* NaN is in no range: every argument check refuses it. *)
+let test_nan_refused () =
+  let params = vec [| 1.0 |] and p = Vec.ptree and lr = Vega.rate 0.1 in
+  let rejects name f = raises_match ~msg:name (Exn.invalid_arg ~sub:"nan") f in
+  rejects "sgd momentum" (fun () ->
+      Vega.sgd_step p ~lr ~momentum:Float.nan (Vega.sgd_init p params) ~params
+        ~grads:params);
+  rejects "adam eps" (fun () ->
+      Vega.adam_step p ~lr ~eps:Float.nan (Vega.adam_init p params) ~params
+        ~grads:params);
+  rejects "rate" (fun () -> Vega.rate Float.nan);
+  rejects "clip_by_value" (fun () -> Vega.clip_by_value p ~max:Float.nan params);
+  rejects "Loss_scale.static" (fun () ->
+      Vega.Loss_scale.static Nx.Host.on Float.nan);
+  let schedule name f =
+    raises_match ~msg:name Exn.invalid_arg (fun () ->
+        (f () : Nx.host Vega.Schedule.t))
+  in
+  let module S = Vega.Schedule in
+  schedule "exponential_decay" (fun () ->
+      S.exponential_decay ~init_value:1.0 ~decay_rate:Float.nan ~decay_steps:10);
+  schedule "cosine_decay_restarts t_mul" (fun () ->
+      S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:10 ~t_mul:Float.nan
+        ());
+  schedule "cosine_decay_restarts m_mul" (fun () ->
+      S.cosine_decay_restarts ~init_value:1.0 ~decay_steps:10 ~m_mul:Float.nan
+        ());
+  schedule "one_cycle div_factor" (fun () ->
+      S.one_cycle ~max_value:1.0 ~total_steps:10 ~div_factor:Float.nan ());
+  schedule "one_cycle final_div_factor" (fun () ->
+      S.one_cycle ~max_value:1.0 ~total_steps:10 ~final_div_factor:Float.nan ())
+
 (* A parameter structure may carry leaves that are not parameters. The canonical
    one is an RNG key, which has to sit in the structure to reach a compiled step
    as an input but is not something to optimize. Rune leaves its gradient slot
@@ -2182,6 +2214,7 @@ let tests =
         test "converges on a quadratic bowl" test_adamw_converges;
         test "sgd, adam and adamw reject bad hyperparameters"
           test_steps_validate;
+        test "a NaN argument is refused" test_nan_refused;
       ];
     group "trajectories"
       [

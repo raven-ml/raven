@@ -57,7 +57,7 @@ let cosine_decay ~init_value ~decay_steps ?(alpha = 0.) () =
 let exponential_decay ~init_value ~decay_rate ~decay_steps =
   if decay_steps <= 0 then
     invalid_arg "Schedule.exponential_decay: decay_steps must be positive";
-  if decay_rate <= 0.0 then
+  if not (decay_rate > 0.0) then
     invalid_arg "Schedule.exponential_decay: decay_rate must be positive";
   let n = count decay_steps and rate = num decay_rate in
   let init = num init_value in
@@ -117,9 +117,9 @@ let cosine_decay_restarts ~init_value ~decay_steps ?(t_mul = 1.0) ?(m_mul = 1.0)
     ?(alpha = 0.) () =
   if decay_steps <= 0 then
     invalid_arg "Schedule.cosine_decay_restarts: decay_steps must be positive";
-  if t_mul < 1.0 then
+  if not (t_mul >= 1.0) then
     invalid_arg "Schedule.cosine_decay_restarts: t_mul must be at least 1";
-  if m_mul <= 0.0 then
+  if not (m_mul > 0.0) then
     invalid_arg "Schedule.cosine_decay_restarts: m_mul must be positive";
   let first = float_of_int decay_steps in
   let n = num first and m = num m_mul and init = num init_value in
@@ -166,9 +166,9 @@ let one_cycle ~max_value ~total_steps ?(div_factor = 25.0)
     invalid_arg "Schedule.one_cycle: total_steps must be positive";
   if not (pct_start >= 0.0 && pct_start <= 1.0) then
     invalid_arg "Schedule.one_cycle: pct_start must be between 0 and 1";
-  if div_factor <= 0.0 then
+  if not (div_factor > 0.0) then
     invalid_arg "Schedule.one_cycle: div_factor must be positive";
-  if final_div_factor <= 0.0 then
+  if not (final_div_factor > 0.0) then
     invalid_arg "Schedule.one_cycle: final_div_factor must be positive";
   let warmup_steps = int_of_float (pct_start *. float_of_int total_steps) in
   let decay_steps = total_steps - warmup_steps in

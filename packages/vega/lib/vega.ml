@@ -27,16 +27,17 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
    exponent digits: 1e+006. *)
 let num x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
 
+(* Each check holds for NaN by failing its comparison: NaN is in no range. *)
 let validate_positive ctx name value =
-  if value <= 0.0 then
+  if not (value > 0.0) then
     invalid_argf "%s: expected %s > 0.0, got %s" ctx name (num value)
 
 let validate_non_negative ctx name value =
-  if value < 0.0 then
+  if not (value >= 0.0) then
     invalid_argf "%s: expected %s >= 0.0, got %s" ctx name (num value)
 
 let validate_unit_interval ctx name value =
-  if value < 0.0 || value >= 1.0 then
+  if not (value >= 0.0 && value < 1.0) then
     invalid_argf "%s: expected 0.0 <= %s < 1.0, got %s" ctx name (num value)
 
 let validate_positive_finite ctx name value =
