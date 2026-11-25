@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Pre-tokenizers and models read each byte of an overlong form, a surrogate or
+  a value above U+10FFFF as a character of one byte, as RFC 3629 asks.
+  `whitespace_split` read `"a\xe0\x80\xa0b"` as two words split by a space.
 - Pre-tokenizers split runs of letters where they end on big-endian machines,
   such as s390x. The scan of eight bytes at a time took a word's highest byte
   for its first.

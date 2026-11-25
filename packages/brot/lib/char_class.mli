@@ -36,21 +36,29 @@ val category : int -> int
 
 (** {1 Characters in a string} *)
 
+val decode : string -> int -> stop:int -> int
+(** [decode s i ~stop] is the character starting at byte [i] of [s], packed as
+    [(u lsl 3) lor n] for its scalar value [u] and byte length [n], or [-1] if
+    the byte at [i] opens no character. A character is a sequence RFC 3629
+    allows that ends before [stop]: an overlong form, a surrogate, a value above
+    U+10FFFF, a lead byte without the continuation bytes it asks for and a
+    continuation byte with no lead open none. Every reader of brot's text takes
+    a byte that opens no character as a character of one byte. *)
+
 val at : string -> int -> stop:int -> int
 (** [at s i ~stop] is the class of the character starting at byte [i] of [s]
     packed with the byte length of that character. Take it apart with {!at_len},
     {!at_category}, {!at_is_punctuation} and {!at_is_word}.
 
     No byte at or after [stop] is read and the length is always at least one, so
-    a walk over [at] terminates on any string. A UTF-8 sequence cut short by
-    [stop], a byte that cannot lead a sequence, and a sequence whose
-    continuation bytes are not continuation bytes are each one byte of category
-    {!other}. *)
+    a walk over [at] terminates on any string. A byte that opens no character,
+    as {!decode} reads it, is one byte of category {!other} that is neither
+    punctuation, a word character, a mark nor a letter of either case. *)
 
 val length : string -> int -> stop:int -> int
 (** [length s i ~stop] is the byte length of the character starting at byte [i]
-    of [s], as {!at} reads it, without its class: a lead byte with all the
-    continuation bytes it asks for before [stop], or else that one byte. *)
+    of [s], as {!at} reads it, without its class: the length {!decode} gives, or
+    [1] for a byte that opens no character. *)
 
 val at_len : int -> int
 (** [at_len d] is the byte length of the character in the result [d] of {!at}.

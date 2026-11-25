@@ -156,15 +156,8 @@ let byte_level_decode text =
   let bytes = Bytes.create len in
   let i = ref 0 and j = ref 0 and mapped = ref true in
   while !mapped && !i < len do
-    let b0 = Char.code (String.unsafe_get text !i) in
-    let code, width =
-      if b0 < 0x80 then (b0, 1)
-      else if b0 < 0xC2 || b0 >= 0xE0 || !i + 1 >= len then (-1, 1)
-      else
-        let b1 = Char.code (String.unsafe_get text (!i + 1)) in
-        if b1 land 0xC0 <> 0x80 then (-1, 1)
-        else (((b0 land 0x1F) lsl 6) lor (b1 land 0x3F), 2)
-    in
+    let d = Char_class.decode text !i ~stop:len in
+    let code, width = if d < 0 then (-1, 1) else (d lsr 3, d land 7) in
     let byte =
       if code < 0 || code >= Array.length unicode_to_byte then -1
       else Array.unsafe_get unicode_to_byte code
@@ -389,25 +382,11 @@ let cl100k_patterns =
 
 let k_stray = 4
 
-(* {!Char_class.at} accepts the sequences a decoder is to refuse — overlong
-   ones, surrogates, values above U+10FFFF — and a regular expression matches
-   none of their bytes. [d] is the result of {!Char_class.at} at [i], beyond
-   ASCII. *)
-let[@inline] decodes s i d =
-  let len = Char_class.at_len d in
-  len = 2
-  || len > 2
-     &&
-     let b0 = Char.code (String.unsafe_get s i) in
-     let b1 = Char.code (String.unsafe_get s (i + 1)) in
-     if len = 3 then not ((b0 = 0xE0 && b1 < 0xA0) || (b0 = 0xED && b1 >= 0xA0))
-     else
-       not ((b0 = 0xF0 && b1 < 0x90) || (b0 = 0xF4 && b1 >= 0x90) || b0 > 0xF4)
-
+(* Beyond ASCII, a character of one byte is a byte that opens none. *)
 let[@inline never] kind_beyond_ascii ~marks s i stop =
   let d = Char_class.at s i ~stop in
   let len = Char_class.at_len d in
-  if not (decodes s i d) then (k_stray lsl 3) lor 1
+  if len = 1 then (k_stray lsl 3) lor 1
   else if marks && Char_class.at_is_mark d then (c_letter lsl 3) lor len
   else d land 31
 
@@ -596,7 +575,7 @@ let o200k_ascii =
 
 let[@inline never] o200k_kind_beyond_ascii s i stop =
   let d = Char_class.at s i ~stop in
-  if decodes s i d then o200k_kind_of d else (k_stray lsl 3) lor 1
+  if Char_class.at_len d > 1 then o200k_kind_of d else (k_stray lsl 3) lor 1
 
 (* The character at [i] as [(kind lsl 3) lor length], the kind being one of the
    four categories, [k_stray], or for letters and marks [k_upper], [k_lower],
@@ -1219,35 +1198,20 @@ let script_of cp =
   Array.unsafe_get scripts !lo
 
 let fixed_script code =
-  if not (Uchar.is_valid code) then any
-  else if code = 0x30FC then hani
+  if code = 0x30FC then hani
   else
     let s = script_of code in
     if s = hira || s = kana then hani else if s = zzzz then any else s
 
 let script_at s i d =
-  let b = Char.code (String.unsafe_get s i) in
-  match Char_class.at_len d with
-  | 1 ->
-      if b >= 0x80 then any
-      else if b = 32 then any
-      else if Char_class.category b = Char_class.letter then latn
-      else zyyy
-  | 2 ->
-      fixed_script
-        (((b land 0x1F) lsl 6)
-        lor (Char.code (String.unsafe_get s (i + 1)) land 0x3F))
-  | 3 ->
-      fixed_script
-        (((b land 0x0F) lsl 12)
-        lor ((Char.code (String.unsafe_get s (i + 1)) land 0x3F) lsl 6)
-        lor (Char.code (String.unsafe_get s (i + 2)) land 0x3F))
-  | _ ->
-      fixed_script
-        (((b land 0x07) lsl 18)
-        lor ((Char.code (String.unsafe_get s (i + 1)) land 0x3F) lsl 12)
-        lor ((Char.code (String.unsafe_get s (i + 2)) land 0x3F) lsl 6)
-        lor (Char.code (String.unsafe_get s (i + 3)) land 0x3F))
+  let len = Char_class.at_len d in
+  if len > 1 then fixed_script (Char_class.decode s i ~stop:(i + len) lsr 3)
+  else
+    let b = Char.code (String.unsafe_get s i) in
+    if b >= 0x80 then any
+    else if b = 32 then any
+    else if Char_class.category b = Char_class.letter then latn
+    else zyyy
 
 (* A piece runs from a script change to the next one, absorbing the [any]
    characters it meets. A leading [any] run belongs to no piece and is dropped:

@@ -1635,6 +1635,43 @@ let ascends_within (t, text) =
        0 (Pre.pre_tokenize t text)
       : int)
 
+(* Sequences RFC 3629 forbids: overlong forms of a space (three and four bytes),
+   of "!" and of "A", a surrogate, a value above U+10FFFF and an F5 lead. *)
+let forbidden =
+  [ "\xe0\x80\xa0"; "\xf0\x80\x80\xa0"; "\xe0\x80\xa1"; "\xe0\x81\x81";
+    "\xed\xa0\x80"; "\xf4\x90\x80\x80"; "\xf5\x80\x80\x80" ]
+[@@ocamlformat "disable"]
+
+(* The text with each forbidden sequence replaced by as many lone continuation
+   bytes. *)
+let as_strays fragments =
+  String.concat ""
+    (List.map
+       (fun f ->
+         if List.mem f forbidden then String.make (String.length f) '\x80'
+         else f)
+       fragments)
+
+(* The pre-tokenizers that cut the text's characters. A member after
+   [byte_level] cuts the bytes' alphabet instead, where a byte is a character of
+   its own value. *)
+let reading_characters =
+  verbatim
+  @ [
+      Pre.byte_level ();
+      Pre.metaspace ();
+      Pre.sequence [ Pre.whitespace_split; Pre.metaspace () ];
+      Pre.sequence [ Pre.fixed_length 3; Pre.metaspace () ];
+    ]
+
+let reads_forbidden_as_strays ((t, fragments) : Pre.t * string list) =
+  cover "a forbidden sequence"
+    (List.exists (fun f -> List.mem f forbidden) fragments);
+  equal
+    (list (pair int int))
+    (List.map snd (Pre.pre_tokenize t (as_strays fragments)))
+    (List.map snd (Pre.pre_tokenize t (String.concat "" fragments)))
+
 let is_its_span (t, text) =
   List.iter
     (fun (piece, span) -> equal string (source text span) piece)
@@ -2140,6 +2177,17 @@ let () =
              prop ~count:1000 "gives ascending spans within the text"
                (Gen.pair (member every) bytes)
                ascends_within;
+             test "reads an overlong space as bytes of no character" (fun () ->
+                 equal pretokens
+                   [ ("a\xe0\x80\xa0b", (0, 5)) ]
+                   (Pre.pre_tokenize Pre.whitespace_split "a\xe0\x80\xa0b"));
+             prop ~count:1000
+               "reads a sequence RFC 3629 forbids as bytes of no character"
+               (Gen.pair
+                  (member reading_characters)
+                  (Gen.list ~size:(Gen.int_range 0 24)
+                     (Gen.of_list ~pp:quoted (characters @ forbidden))))
+               reads_forbidden_as_strays;
              prop ~count:1000
                "gives the bytes of its span as a pretoken nothing rewrote"
                (Gen.pair (member verbatim) bytes)

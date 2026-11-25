@@ -326,7 +326,7 @@ let walker_law =
       cover "a letter beyond ASCII after a space"
         (has_any text [ " \195\169"; " Ж"; " 日" ]);
       cover "malformed UTF-8" (not (String.is_valid_utf_8 text));
-      cover "an overlong white space character"
+      cover "an overlong form of white space"
         (has_any text [ "\xE0\x80\xA0"; "\xF0\x80\x80\xA0" ]);
       cover "a text over two batches" (String.length text > 128);
       equal ~msg:(Printf.sprintf "%S" text)

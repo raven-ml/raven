@@ -190,59 +190,65 @@ static inline intnat ascii_cat(const unsigned char *lead, intnat c)
 
 #define STRAY ((CL_OTHER << 3) | 1)
 
-/* Char_class.decode + pack: (category << 3) | byte length, or -1 with
-   [w->cp] set when the code point's class is not in the table yet. As in
-   OCaml: no byte at or after stop is read, a sequence cut short by stop, a
-   byte that cannot lead and a bad continuation are each one stray byte of
-   category other, and a decoded value above 0x10FFFF is other. */
-static intnat decode_class(walker *w, intnat i)
+/* Char_class.decode: (cp << 3) | byte length of the character at [i], or -1
+   when the byte at [i] opens none. RFC 3629's well-formed sequences, as
+   Unicode's Table 3-7 lists them, ending before [stop]: the second byte's
+   range depends on the lead, which rules out overlong forms, surrogates and
+   values above U+10FFFF. No byte at or after [stop] is read. */
+static inline intnat utf8_decode(const unsigned char *s, intnat i, intnat stop)
 {
-  const unsigned char *s = w->s;
-  intnat stop = w->stop;
-  intnat c = s[i], cp, len;
-  if (c < 0xC2) return STRAY;
+  intnat c = s[i];
+  if (c < 0x80) return (c << 3) | 1;
+  if (c < 0xC2) return -1;
   if (c < 0xE0) {
     intnat b1;
-    if (i + 1 >= stop) return STRAY;
+    if (i + 1 >= stop) return -1;
     b1 = s[i + 1];
-    if ((b1 & 0xC0) != 0x80) return STRAY;
-    cp = ((c & 0x1F) << 6) | (b1 & 0x3F);
-    len = 2;
-  } else if (c < 0xF0) {
-    intnat b1, b2;
-    if (i + 2 >= stop) return STRAY;
+    if ((b1 & 0xC0) != 0x80) return -1;
+    return ((((c & 0x1F) << 6) | (b1 & 0x3F)) << 3) | 2;
+  }
+  if (c < 0xF0) {
+    intnat b1, b2, lo, hi;
+    if (i + 2 >= stop) return -1;
     b1 = s[i + 1];
     b2 = s[i + 2];
-    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return STRAY;
-    cp = ((c & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
-    len = 3;
-  } else if (c < 0xF8) {
-    intnat b1, b2, b3;
-    if (i + 3 >= stop) return STRAY;
+    lo = c == 0xE0 ? 0xA0 : 0x80;
+    hi = c == 0xED ? 0x9F : 0xBF;
+    if (b1 < lo || b1 > hi || (b2 & 0xC0) != 0x80) return -1;
+    return ((((c & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F)) << 3)
+           | 3;
+  }
+  if (c < 0xF5) {
+    intnat b1, b2, b3, lo, hi;
+    if (i + 3 >= stop) return -1;
     b1 = s[i + 1];
     b2 = s[i + 2];
     b3 = s[i + 3];
-    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80)
-      return STRAY;
-    cp = ((c & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6)
-         | (b3 & 0x3F);
-    len = 4;
-  } else
-    return STRAY;
-  {
-    intnat cat;
-    if (cp < 128) /* an overlong form decodes below ASCII */
-      cat = ascii_cat(w->lead, cp);
-    else if (cp > 0x10FFFF)
-      cat = CL_OTHER;
-    else if (cp - 128 < w->uni_len && w->uni[cp - 128] != 0)
-      cat = w->uni[cp - 128] & 3;
-    else {
-      w->cp = cp;
+    lo = c == 0xF0 ? 0x90 : 0x80;
+    hi = c == 0xF4 ? 0x8F : 0xBF;
+    if (b1 < lo || b1 > hi || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80)
       return -1;
-    }
-    return (cat << 3) | len;
+    return ((((c & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6)
+             | (b3 & 0x3F))
+            << 3)
+           | 4;
   }
+  return -1;
+}
+
+/* Char_class.at beyond ASCII, keeping only the category: (category << 3) |
+   byte length, or -1 with [w->cp] set when the code point's class is not in
+   the table yet. A byte that opens no character is one stray byte of
+   category other. */
+static intnat decode_class(walker *w, intnat i)
+{
+  intnat u = utf8_decode(w->s, i, w->stop), cp;
+  if (u < 0) return STRAY;
+  cp = u >> 3;
+  if (cp - 128 < w->uni_len && w->uni[cp - 128] != 0)
+    return ((w->uni[cp - 128] & 3) << 3) | (u & 7);
+  w->cp = cp;
+  return -1;
 }
 
 /* Char_class.at. */
@@ -394,56 +400,13 @@ static intnat next_span(walker *w, intnat i)
 /* Char_class's mark bit in a byte of the Unicode table. */
 #define PROP_MARK 16
 
-/* Char_class.at as Pre_tokenizer.decodes refines it, beyond ASCII: the code
-   point at [i] with its byte length in [*len], or -1 for one stray byte —
-   the sequences a decoder is to refuse (overlong, surrogates, above
-   U+10FFFF) and the ones Char_class.at refuses itself. */
-static inline intnat strict_decode(walker *w, intnat i, intnat *len)
-{
-  const unsigned char *s = w->s;
-  intnat stop = w->stop;
-  intnat c = s[i];
-  if (c < 0xC2) return -1;
-  if (c < 0xE0) {
-    intnat b1;
-    if (i + 1 >= stop) return -1;
-    b1 = s[i + 1];
-    if ((b1 & 0xC0) != 0x80) return -1;
-    *len = 2;
-    return ((c & 0x1F) << 6) | (b1 & 0x3F);
-  }
-  if (c < 0xF0) {
-    intnat b1, b2;
-    if (i + 2 >= stop) return -1;
-    b1 = s[i + 1];
-    b2 = s[i + 2];
-    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80) return -1;
-    if ((c == 0xE0 && b1 < 0xA0) || (c == 0xED && b1 >= 0xA0)) return -1;
-    *len = 3;
-    return ((c & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
-  }
-  if (c < 0xF5) {
-    intnat b1, b2, b3;
-    if (i + 3 >= stop) return -1;
-    b1 = s[i + 1];
-    b2 = s[i + 2];
-    b3 = s[i + 3];
-    if ((b1 & 0xC0) != 0x80 || (b2 & 0xC0) != 0x80 || (b3 & 0xC0) != 0x80)
-      return -1;
-    if ((c == 0xF0 && b1 < 0x90) || (c == 0xF4 && b1 >= 0x90)) return -1;
-    *len = 4;
-    return ((c & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6)
-           | (b3 & 0x3F);
-  }
-  return -1;
-}
-
 /* Pre_tokenizer.kind_beyond_ascii. */
 static intnat cl100k_kind_beyond_ascii(walker *w, intnat i, int marks)
 {
-  intnat len = 1;
-  intnat cp = strict_decode(w, i, &len);
-  if (cp < 0) return CL100K_STRAY;
+  intnat u = utf8_decode(w->s, i, w->stop), cp, len;
+  if (u < 0) return CL100K_STRAY;
+  cp = u >> 3;
+  len = u & 7;
   if (cp - 128 < w->uni_len && w->uni[cp - 128] != 0) {
     intnat props = w->uni[cp - 128];
     intnat cat = (marks && (props & PROP_MARK)) ? CL_LETTER : (props & 3);
@@ -628,11 +591,11 @@ static inline intnat o200k_ascii_kind(const unsigned char *lead, intnat c)
 
 static intnat o200k_kind_beyond_ascii(walker *w, intnat i)
 {
-  intnat len = 1;
-  intnat cp = strict_decode(w, i, &len);
-  if (cp < 0) return CL100K_STRAY;
+  intnat u = utf8_decode(w->s, i, w->stop), cp;
+  if (u < 0) return CL100K_STRAY;
+  cp = u >> 3;
   if (cp - 128 < w->uni_len && w->uni[cp - 128] != 0)
-    return (o200k_kind_of(w->uni[cp - 128]) << 3) | len;
+    return (o200k_kind_of(w->uni[cp - 128]) << 3) | (u & 7);
   w->cp = cp;
   return -1;
 }
@@ -963,9 +926,8 @@ typedef struct {
    and classified by [decode_class]: every byte of it takes its category, so
    that the masks see a character where they see a byte. A character that
    crosses the batch's end, a malformed one, one the Unicode table does not
-   hold yet, white space of four bytes, and a continuation byte no character
-   of the batch opens — a stray, or the tail of a character from the batch
-   before — are bad. The
+   hold yet, and a continuation byte no character of the batch opens — a
+   stray, or the tail of a character from the batch before — are bad. The
    loop takes one turn per character, and only batches beyond ASCII come
    here. */
 static void classify_uni(walker *w, intnat scan, uint64_t hi, uni_classes *u)
@@ -979,9 +941,7 @@ static void classify_uni(walker *w, intnat scan, uint64_t hi, uni_classes *u)
     d = s[k] < 0xC0 ? -1 : decode_class(w, scan + k);
     len = d & 7;
     cat = (d >> 3) & 3;
-    /* White space of four bytes is only ever an overlong form, whose
-       give-back the masks have no lead mask for. */
-    if (d < 0 || len == 1 || k + len > 64 || (len == 4 && cat == CL_WS)) {
+    if (d < 0 || len == 1 || k + len > 64) {
       u->bad |= one;
       rest &= rest - 1;
       continue;

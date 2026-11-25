@@ -1401,9 +1401,11 @@ val encode :
     token's ID when its vocabulary holds that token's text as a piece, as
     T5's holds ["</s>"].
 
-    [text] need not be valid UTF-8: a byte that opens no whole character, a
-    lead byte without the continuation bytes it asks for or a continuation
-    byte with no lead, is read by every stage as a character of one byte.
+    [text] need not be valid UTF-8: a byte that opens no whole character, a lead
+    byte without the continuation bytes it asks for, a continuation byte with no
+    lead, or a byte of a sequence RFC 3629 forbids (an overlong form, a
+    surrogate, a value above U+10FFFF), is read by every stage as a character of
+    one byte.
 
     {!Encoding.offsets} are byte spans of [text] itself, not of the normalized
     form: a token of ["café"] under a normalizer that strips accents reports the

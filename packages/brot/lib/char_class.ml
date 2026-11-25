@@ -108,63 +108,63 @@ let[@inline] at_is_lower d = (d lsr 3) land lower <> 0
 let[@inline] pack cp len = (props cp lsl 3) lor len
 let stray = ((other lor known) lsl 3) lor 1
 
-let[@inline never] decode s i stop =
-  let c = Char.code (String.unsafe_get s i) in
-  if c < 0xC2 then stray
+(* RFC 3629's well-formed sequences, as Unicode's Table 3-7 lists them: the
+   second byte's range depends on the lead, which rules out overlong forms (E0
+   80..9F, F0 80..8F), surrogates (ED A0..BF) and values above U+10FFFF (F4
+   90..BF, F5..FF). *)
+let[@inline] byte s i = Char.code (String.unsafe_get s i)
+let[@inline] in_range b lo hi = b >= lo && b <= hi
+let[@inline] continuation b = b land 0xC0 = 0x80
+
+let decode s i ~stop =
+  let c = byte s i in
+  if c < 0x80 then (c lsl 3) lor 1
+  else if c < 0xC2 then -1
   else if c < 0xE0 then
-    if i + 1 >= stop then stray
+    if i + 1 >= stop then -1
     else
-      let b1 = Char.code (String.unsafe_get s (i + 1)) in
-      if b1 land 0xC0 <> 0x80 then stray
-      else pack (((c land 0x1F) lsl 6) lor (b1 land 0x3F)) 2
+      let b1 = byte s (i + 1) in
+      if not (continuation b1) then -1
+      else ((((c land 0x1F) lsl 6) lor (b1 land 0x3F)) lsl 3) lor 2
   else if c < 0xF0 then
-    if i + 2 >= stop then stray
+    if i + 2 >= stop then -1
     else
-      let b1 = Char.code (String.unsafe_get s (i + 1)) in
-      let b2 = Char.code (String.unsafe_get s (i + 2)) in
-      if b1 land 0xC0 <> 0x80 || b2 land 0xC0 <> 0x80 then stray
+      let b1 = byte s (i + 1) and b2 = byte s (i + 2) in
+      let lo = if c = 0xE0 then 0xA0 else 0x80 in
+      let hi = if c = 0xED then 0x9F else 0xBF in
+      if not (in_range b1 lo hi && continuation b2) then -1
       else
-        pack
-          (((c land 0x0F) lsl 12) lor ((b1 land 0x3F) lsl 6) lor (b2 land 0x3F))
-          3
-  else if c < 0xF8 then
-    if i + 3 >= stop then stray
+        (((c land 0x0F) lsl 12) lor ((b1 land 0x3F) lsl 6) lor (b2 land 0x3F))
+        lsl 3
+        lor 3
+  else if c < 0xF5 then
+    if i + 3 >= stop then -1
     else
-      let b1 = Char.code (String.unsafe_get s (i + 1)) in
-      let b2 = Char.code (String.unsafe_get s (i + 2)) in
-      let b3 = Char.code (String.unsafe_get s (i + 3)) in
-      if b1 land 0xC0 <> 0x80 || b2 land 0xC0 <> 0x80 || b3 land 0xC0 <> 0x80
-      then stray
+      let b1 = byte s (i + 1) and b2 = byte s (i + 2) and b3 = byte s (i + 3) in
+      let lo = if c = 0xF0 then 0x90 else 0x80 in
+      let hi = if c = 0xF4 then 0x8F else 0xBF in
+      if not (in_range b1 lo hi && continuation b2 && continuation b3) then -1
       else
-        pack
-          (((c land 0x07) lsl 18)
-          lor ((b1 land 0x3F) lsl 12)
-          lor ((b2 land 0x3F) lsl 6)
-          lor (b3 land 0x3F))
-          4
-  else stray
+        (((c land 0x07) lsl 18)
+        lor ((b1 land 0x3F) lsl 12)
+        lor ((b2 land 0x3F) lsl 6)
+        lor (b3 land 0x3F))
+        lsl 3
+        lor 4
+  else -1
 
 let length s i ~stop =
-  let c = Char.code (String.unsafe_get s i) in
-  if c < 0xC2 then 1
-  else
-    let n =
-      if c < 0xE0 then 2 else if c < 0xF0 then 3 else if c < 0xF8 then 4 else 1
-    in
-    if n = 1 || i + n > stop then 1
-    else begin
-      let whole = ref true in
-      for k = 1 to n - 1 do
-        if Char.code (String.unsafe_get s (i + k)) land 0xC0 <> 0x80 then
-          whole := false
-      done;
-      if !whole then n else 1
-    end
+  let d = decode s i ~stop in
+  if d < 0 then 1 else d land 7
+
+let[@inline never] at_beyond_ascii s i stop =
+  let d = decode s i ~stop in
+  if d < 0 then stray else pack (d lsr 3) (d land 7)
 
 let[@inline] at s i ~stop =
   let c = Char.code (String.unsafe_get s i) in
   if c < 0x80 then (Char.code (Bytes.unsafe_get ascii c) lsl 3) lor 1
-  else decode s i stop
+  else at_beyond_ascii s i stop
 
 (* Internals *)
 
