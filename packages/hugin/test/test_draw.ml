@@ -3217,8 +3217,7 @@ let marks_v =
             (pair (array int) int)
             (expected, numel expected)
             (rows_of ~shape bindings (fun r -> (Mark.shape r, Mark.length r))));
-      xfail ~reason:"draw calls the draw function on a panel without rows"
-      @@ test "a mark without rows is drawn in no panel" (fun () ->
+      test "a mark without rows is drawn in no panel" (fun () ->
           let m, seen =
             probe [ Mark.bind Role.x (num (f64 [||])) ] Mark.index
           in

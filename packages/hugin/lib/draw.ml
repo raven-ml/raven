@@ -532,11 +532,11 @@ type target = {
 }
 
 (* [selection m mask] is the rows of [m] that [mask] selects, [None] where it
-   selects none. The mask is read only along the leading axes it varies along:
-   along the others it selects blocks of consecutive rows, as a facet on a
-   leading axis does. *)
+   selects none, as it does in a mark of no rows. The mask is read only along
+   the leading axes it varies along: along the others it selects blocks of
+   consecutive rows, as a facet on a leading axis does. *)
 let selection m = function
-  | `All -> Some Read.All
+  | `All -> if Array.mem 0 m.shape then None else Some Read.All
   | `Mask k -> (
       let shape = m.shape and ks = Nx.shape k in
       let rank = Array.length shape and r = Array.length ks in

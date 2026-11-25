@@ -197,6 +197,8 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `draw` calls a mark's draw function only in the panels the mark has a row
+  in, as `Mark.v` says. A mark of no rows was drawn once, with no rows.
 - `Font.kerning` reads a `kern` subtable that sets the override bit as
   replacing the value the subtables before it gave a pair, as OpenType
   defines the bit. It added the value, so such a font kerned wrong.
