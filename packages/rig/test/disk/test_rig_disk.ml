@@ -1933,6 +1933,7 @@ let racing outcome accept =
   | Error e -> raise e
 
 let domain_commands =
+  let identified = once (fun () -> Lazy.force identified) in
   let opened i = snd (shelf ()).opened.(i)
   and written i = (shelf ()).written.(i) in
   [
@@ -1941,6 +1942,10 @@ let domain_commands =
       (fun i r -> sub (opened i) r)
       (fun i r ->
         let path, _ = (shelf ()).opened.(i) in
+        (* Without an identity each buffer keeps its descriptor until it is
+           collected: the buffers of earlier calls, collected here, close theirs
+           at this open, so the calls hold no more than the process's limit. *)
+        if not (identified ()) then Gc.full_major ();
         let b = of_file path in
         let at, len = clamp (B.length b) r in
         read (B.view b ~first:at ~length:len));

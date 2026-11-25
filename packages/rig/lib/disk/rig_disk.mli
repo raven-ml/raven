@@ -232,9 +232,10 @@ val barrier : file -> unit
     A file whose system gives no such identity keeps its descriptor until its
     buffers are collected, beyond the 64. Such are the files of a Linux file
     system without file handles, of FAT, exFAT or a network file system on
-    macOS, and of any other operating system. Holding many of them can
-    exhaust the process's descriptors, and then {!of_file} and {!create_file}
-    return [Error] for too many open files.
+    macOS, and of any other operating system. Holding many of them, or
+    dropping many before the collector reclaims their buffers, can exhaust
+    the process's descriptors, and then {!of_file} and {!create_file} return
+    [Error] for too many open files.
 
     The disk holds a lock while it opens or closes a descriptor, and a lock
     of the file's while a barrier syncs it, and counts both among its
