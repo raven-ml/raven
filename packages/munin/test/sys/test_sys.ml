@@ -40,26 +40,53 @@ let in_range ~low ~high key pairs =
 let non_negative key pairs =
   at_least ~msg:key float_exact ~than:0. (value key pairs)
 
-(* [second_call read] calls the new reading [read] until a call gives its pairs,
-   with [sys/cpu_busy_pct] where the system reads it: Linux counts CPU time in
-   ticks, and a window that saw none lacks the key. *)
-let second_call read =
+let cpu_seconds () =
+  let t = Unix.times () in
+  t.Unix.tms_utime +. t.Unix.tms_stime
+
+(* [burn s] computes until the process spent more than [s] seconds of CPU. *)
+let burn s =
+  let start = cpu_seconds () in
+  while cpu_seconds () -. start <= s do
+    ignore (Sys.opaque_identity (Array.make 64 0))
+  done
+
+(* Two hundredths of a second: Linux's /proc/stat counts CPU time in hundredths,
+   so a window in which this process computed that long counts some, whatever
+   the kernel's own tick. *)
+let ticks = 0.02
+
+(* [window read] calls the new reading [read] twice, computing [ticks] seconds
+   between the calls, and is the second call's pairs with the CPU seconds the
+   process spent between them. *)
+let window read =
   ignore (read ());
-  eventually ~within:5. (fun () ->
-      let got = read () in
-      mem string "sys/interval_s" (keys got);
-      if read_whole () then mem string "sys/cpu_busy_pct" (keys got);
-      got)
+  let a = cpu_seconds () in
+  burn ticks;
+  let b = cpu_seconds () in
+  (read (), b -. a)
+
+(* This process computes on one thread, so the CPU seconds it spent between the
+   calls cannot pass their wall time, which the window spans. [Unix.times]
+   rounds each reading to the microsecond. *)
+let at_least_cpu key (got, spent) =
+  at_least ~msg:key float_exact ~than:(spent -. 2e-6) (value key got)
 
 (* Readings *)
 
-let test_first_call () = equal pairs [] (Munin_sys.host () ())
+let rate_readings = [ ("host", Munin_sys.host); ("process", Munin_sys.process) ]
 
-let test_own_window () =
-  let a = Munin_sys.host () in
-  ignore (a ());
-  let b = Munin_sys.host () in
-  equal pairs [] (b ())
+let test_first_call =
+  cases "a first call gives nothing" ~id:fst rate_readings (fun (_, reading) ->
+      equal pairs [] (reading () ()))
+
+let test_own_window =
+  cases "a new reading starts its own window" ~id:fst rate_readings
+    (fun (_, reading) ->
+      let a = reading () in
+      ignore (a ());
+      let b = reading () in
+      equal pairs [] (b ()))
 
 (* The machine *)
 
@@ -85,7 +112,7 @@ let host_keys ~disks =
     @ disk_keys)
 
 let test_host_keys () =
-  let got = second_call (Munin_sys.host ()) in
+  let got, _ = window (Munin_sys.host ()) in
   if not (read_whole ()) then
     equal (list string) [ "sys/interval_s"; "sys/load_per_core" ] (keys got)
   else
@@ -93,10 +120,8 @@ let test_host_keys () =
     equal (list string) (host_keys ~disks) (keys got)
 
 let test_host_ranges () =
-  let got = second_call (Munin_sys.host ()) in
+  let got, _ = window (Munin_sys.host ()) in
   let have k = List.mem_assoc k got in
-  greater ~msg:"sys/interval_s" float_exact ~than:0.
-    (value "sys/interval_s" got);
   if have "sys/load_per_core" then non_negative "sys/load_per_core" got;
   if read_whole () then begin
     in_range ~low:0. ~high:100. "sys/cpu_busy_pct" got;
@@ -113,6 +138,9 @@ let test_host_ranges () =
   end;
   if have "sys/disk_busy_pct" then
     in_range ~low:0. ~high:100. "sys/disk_busy_pct" got
+
+let test_host_interval () =
+  at_least_cpu "sys/interval_s" (window (Munin_sys.host ()))
 
 (* A /proc/stat text whose aggregate line holds [fields]: user, nice, system,
    idle, iowait, irq, softirq, steal, guest, guest_nice, or a prefix. *)
@@ -329,22 +357,8 @@ let test_disk_cases =
 
 (* This process *)
 
-let cpu_seconds () =
-  let t = Unix.times () in
-  t.Unix.tms_utime +. t.Unix.tms_stime
-
-(* Computes until the process's CPU time has advanced. *)
-let burn () =
-  let start = cpu_seconds () in
-  while cpu_seconds () = start do
-    ignore (Sys.opaque_identity (Array.make 64 0))
-  done
-
 let test_process_keys () =
-  let read = Munin_sys.process () in
-  ignore (read ());
-  burn ();
-  let got = read () in
+  let got, _ = window (Munin_sys.process ()) in
   let rss = if read_whole () then [ "sys/proc_rss_bytes" ] else [] in
   equal (list string)
     (List.sort String.compare
@@ -361,7 +375,7 @@ let test_process_cores () =
   let t0 = cpu_seconds () in
   ignore (read ());
   let a = cpu_seconds () in
-  burn ();
+  burn 0.;
   let b = cpu_seconds () in
   let got = read () in
   let t1 = cpu_seconds () in
@@ -375,6 +389,9 @@ let test_process_cores () =
     ~than:((t1 -. t0) *. (1. +. 1e-12))
     spent
 
+let test_process_interval () =
+  at_least_cpu "sys/proc_interval_s" (window (Munin_sys.process ()))
+
 let block_bytes = 32 * 1024 * 1024
 
 let test_process_rss () =
@@ -384,7 +401,7 @@ let test_process_rss () =
   ignore (read ());
   (* Written, so resident. *)
   let block = Bytes.make block_bytes 'x' in
-  burn ();
+  burn 0.;
   let got = read () in
   ignore (Sys.opaque_identity block);
   at_least float_exact ~than:(Float.of_int block_bytes)
@@ -516,15 +533,13 @@ let () =
   exit
     (run "Munin_sys"
        [
-         group "readings"
-           [
-             test "a first call gives nothing" test_first_call;
-             test "a new reading starts its own window" test_own_window;
-           ];
+         group "readings" [ test_first_call; test_own_window ];
          group "host"
            [
              test "a second call gives the system's keys" test_host_keys;
              test "its levels and rates lie in their ranges" test_host_ranges;
+             test "sys/interval_s spans the CPU time spent within it"
+               test_host_interval;
              test_busy_cases;
              test_guest_ignored;
              test_busy_percent;
@@ -537,6 +552,8 @@ let () =
              test "a second call gives the process's keys" test_process_keys;
              test "proc_cpu_cores times the window is the CPU time it spent"
                test_process_cores;
+             test "proc_interval_s spans the CPU time spent within it"
+               test_process_interval;
              test "proc_rss_bytes counts memory the process wrote"
                test_process_rss;
            ];
