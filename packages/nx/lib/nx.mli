@@ -3736,6 +3736,15 @@ val cond :
     (default) the inverse divides by [N], under [Forward] the forward one does,
     and under [Ortho] each divides by [√N].
 
+    {!val-fft}, {!ifft}, {!rfft}, {!irfft}, {!hfft} and {!ihfft} compute by
+    their set's kernel library ({!Nx_kernel.S.c2c}, [r2c] and [c2r]) in the
+    precision their doc names, then multiply each part by [norm]'s factor [c],
+    computed at float64 and rounded to that precision. Barring overflow and
+    underflow, a result is within [c] times the bound the kernel library states
+    for its transform of those points, plus [3u] of each part's magnitude, [u]
+    that precision's unit roundoff, and, where the result's dtype is narrower,
+    its rounding into it.
+
     Each raises [Invalid_argument] if the operand is 0-d, if [axes] is empty,
     if an axis is outside the operand's rank or repeats, if [s] does not give
     one length per axis, or if a length is negative. *)
@@ -3897,6 +3906,20 @@ val dct :
     copy of [x]'s shape and dtype. It computes the formats narrower than 32
     bits at [float32] and rounds the result once.
 
+    Along one axis it computes by one complex transform of [L] points of its
+    set's kernel library. Barring overflow and underflow, the result [ŷ] before
+    [norm]'s scaling is within [‖ŷ - y‖₂ <= a (ε + b) u √L ‖x‖₂] of the exact
+    [y], [u] the unit roundoff of the precision it computes in and [ε] the
+    constant the kernel library states for that transform: type I has
+    [L = 2 (n - 1)], [a = √2] and [b = 0]; type II [L = n], [a = 2], and [b = 8]
+    at float32 and [11] at float64, from its twiddles' angles, cosines and
+    sines; type III [L = 4n], [a = √2] and [b = 0]; type IV [L = 2n] and type
+    II's [a] and [b]. Along several axes the [ε + b] add and the [a √L]
+    multiply. [norm]'s factor and [Ortho]'s end weights, [√2] and [1/√2], each
+    add [3u] of what they scale, [‖x‖₂] being that of the weighted operand where
+    [Ortho] weighs an end of [x], and a format narrower than 32 bits adds its
+    rounding into its dtype.
+
     Raises [Invalid_argument] also if type I is asked of an axis of one
     element. *)
 
@@ -3907,7 +3930,9 @@ val idct :
   (float, 's, 'd) t ->
   (float, 's, 'd) t
 (** [idct x] is the inverse of {!dct} under the same [type_] and [norm]: types
-    I and IV are their own inverses up to scale, II and III each other's.
+    I and IV are their own inverses up to scale, II and III each other's. It
+    computes as {!dct} of the type it inverts by, type III for type II and
+    II for III, within that type's bounds.
 
     Raises [Invalid_argument] as {!dct}. *)
 
@@ -3922,9 +3947,10 @@ val dst :
     [y[k] = 2 Σ_j x[j] sin (π(k + 1)(2j + 1) / 2n)], type I
     [y[k] = 2 Σ_j x[j] sin (π(j + 1)(k + 1) / (n + 1))], type III
     [y[k] = (-1)^k x[n-1] + 2 Σ_(j<n-1) x[j] sin (π(j + 1)(2k + 1) / 2n)] and
-    type IV [y[k] = 2 Σ_j x[j] sin (π(2j + 1)(2k + 1) / 4n)]. Its logical
-    length is [2 (n + 1)] for type I and [2n] otherwise, and [norm] scales and
-    narrow formats compute as {!dct}'s. *)
+    type IV [y[k] = 2 Σ_j x[j] sin (π(2j + 1)(2k + 1) / 4n)]. Its logical length
+    is [2 (n + 1)] for type I and [2n] otherwise, and [norm] scales and narrow
+    formats compute as {!dct}'s. It is within {!dct}'s bounds, its type I with
+    [L = 2 (n + 1)]. *)
 
 val idst :
   ?type_:trig_type ->
@@ -3932,7 +3958,8 @@ val idst :
   ?norm:fft_norm ->
   (float, 's, 'd) t ->
   (float, 's, 'd) t
-(** [idst x] is the inverse of {!dst} under the same [type_] and [norm]. *)
+(** [idst x] is the inverse of {!dst} under the same [type_] and [norm],
+    computed as {!idct}'s is. *)
 
 val fftfreq : (float, 's) dtype -> ?d:float -> int -> (float, 's, host) t
 (** [fftfreq dt ~d n] is the host value of the frequency of each of
