@@ -11,24 +11,31 @@ let domain () = (Domain.self () :> int)
 
 (* Synchronisation *)
 
-(* [await what cond] returns once [cond ()] holds, and fails, naming [what],
-   after ten seconds. *)
-let await what cond =
-  let deadline = Unix.gettimeofday () +. 10. in
-  while not (cond ()) do
-    if Unix.gettimeofday () > deadline then
-      failf "waited ten seconds for %s" what;
-    Unix.sleepf 0.0002
-  done
+(* A count of events that tests wait on: [bump c] records one, and
+   [until c n] returns once [c] has recorded [n]. A wait reads no clock:
+   WINDTRAP_TIMEOUT fails a test whose event never comes. *)
+type count = { mutable n : int; lock : Mutex.t; changed : Condition.t }
+
+let count () = { n = 0; lock = Mutex.create (); changed = Condition.create () }
+
+let bump c =
+  Mutex.protect c.lock (fun () ->
+      c.n <- c.n + 1;
+      Condition.broadcast c.changed)
+
+let until c n =
+  Mutex.protect c.lock (fun () ->
+      while c.n < n do
+        Condition.wait c.changed c.lock
+      done)
 
 (* [meeting n] returns a function that returns once [n] calls have reached it:
    applications that call it all run at once, on [n] domains. *)
 let meeting n =
-  let arrived = Atomic.make 0 in
+  let arrived = count () in
   fun () ->
-    Atomic.incr arrived;
-    await (Printf.sprintf "%d applications at once" n) (fun () ->
-        Atomic.get arrived >= n)
+    bump arrived;
+    until arrived n
 
 (* [spawn_all fs] runs each of [fs] on a domain of its own, all at once, and is
    their results. *)
@@ -96,13 +103,20 @@ let applies_each_element_once p () =
       equal ~msg:(Printf.sprintf "element %d" i) int 1 (Atomic.get count))
     applied
 
+(* Four applications meet, then each ends once the next has ended: they end
+   last element first. *)
 let keeps_order_of_late_finishers () =
-  let l = List.init 8 Fun.id in
+  let n = 4 in
+  let meet = meeting n and ended = Array.init n (fun _ -> count ()) in
   let f i =
-    Unix.sleepf (0.002 *. Float.of_int (8 - i));
+    meet ();
+    if i < n - 1 then until ended.(i + 1) 1;
+    bump ended.(i);
     i * 10
   in
-  equal (list int) (List.map f l) (with_parallel 4 (fun () -> Worker.map f l))
+  equal (list int)
+    (List.init n (fun i -> i * 10))
+    (with_parallel n (fun () -> Worker.map f (List.init n Fun.id)))
 
 let law =
   group "law"
@@ -145,42 +159,30 @@ let stays_on_caller p =
   in
   List.iter (equal int (domain ())) on
 
-let runs_at_most p () =
-  let g = gauge () in
-  ignore
-    (with_parallel p (fun () ->
-         Worker.map
-           (fun () -> within g (fun () -> Unix.sleepf 0.001))
-           (List.init 40 ignore)));
-  at_most int ~than:p (Atomic.get g.peak)
+(* The domains a call spawns beside its own: [f ()], and how many [f] spawned
+   on this domain. A domain runs one application at a time, so a call that
+   spawns at most [p - 1] runs at most [p] applications at once. *)
+let spawning f =
+  let before = Worker.spawns () in
+  let r = f () in
+  (r, Worker.spawns () - before)
 
-(* Callers on domains of their own, outside the budget, each call map at once:
-   the other domains of all calls are at most [p - 1]. *)
-let shares_budget () =
-  let p = 3 and callers = 3 in
-  let g = gauge () in
-  let call () =
-    with_parallel p (fun () ->
-        Worker.map
-          (fun i ->
-            within g (fun () ->
-                Unix.sleepf 0.005;
-                i))
-          (List.init 6 Fun.id))
+let runs_at_most p () =
+  let _, spawned =
+    spawning (fun () ->
+        with_parallel p (fun () -> Worker.map domain (List.init 40 ignore)))
   in
-  let results = spawn_all (List.init callers (fun _ -> call)) in
-  List.iter (equal (list int) (List.init 6 Fun.id)) results;
-  at_most int ~than:(callers + p - 1) (Atomic.get g.peak)
+  at_most int ~than:(p - 1) spawned
 
 (* [while_held p n f] is [f ()], run while a call on another caller, under
    PARALLEL=[p], holds [n] applications running at once. *)
 let while_held p n f =
   let meet = meeting n in
-  let holding = Atomic.make 0 and released = Atomic.make false in
+  let holding = count () and released = count () in
   let hold () =
     meet ();
-    Atomic.incr holding;
-    await "the release" (fun () -> Atomic.get released)
+    bump holding;
+    until released 1
   in
   let holder =
     Domain.spawn (fun () ->
@@ -188,10 +190,10 @@ let while_held p n f =
   in
   Fun.protect
     ~finally:(fun () ->
-      Atomic.set released true;
+      bump released;
       ignore (Domain.join holder))
     (fun () ->
-      await "the holding call" (fun () -> Atomic.get holding = n);
+      until holding n;
       f ())
 
 (* Under PARALLEL=3, a call of two elements holds one of the two other domains,
@@ -219,16 +221,32 @@ let gives_domains_back () =
   ignore (with_parallel 3 (fun () -> Worker.map Fun.id [ 1; 2; 3 ]));
   spreads 3
 
-(* Each application lasts, so that the domains a call spawns are all alive at
-   once. *)
-let beyond_runtime_limit () =
-  let l = List.init 300 Fun.id in
+(* A child whose runtime holds at most four domains maps 300 elements under
+   PARALLEL=300, and prints whether the call gave List.map's result and the
+   domains it spawned. Each spawned application waits for the caller's first,
+   which starts once the call has spawned what it could: the three spawned
+   domains stay alive, and every later spawn is refused. The limit is the
+   child's alone. *)
+let beyond_limit () =
+  let caller = domain () and started = count () in
   let f i =
-    Unix.sleepf 0.01;
+    if domain () = caller then bump started else until started 1;
     i + 1
   in
-  equal (list int) (List.map succ l)
-    (with_parallel 300 (fun () -> Worker.map f l))
+  let l = List.init 300 Fun.id in
+  let r, spawned = spawning (fun () -> Worker.map f l) in
+  Printf.printf "%b, %d spawned" (r = List.map succ l) spawned
+
+let parts = [ ("beyond the limit", beyond_limit) ]
+
+let beyond_runtime_limit () =
+  match
+    Disk_cache.child
+      ~env:[ ("OCAMLRUNPARAM", "d=4"); ("PARALLEL", "300") ]
+      ~cachedb:(Disk_cache.fresh ()) "beyond the limit"
+  with
+  | Ok out -> equal string "true, 3 spawned" out
+  | Error err -> failf "the child failed: %s" err
 
 (* By system number, every signal OCaml names that the system has, but those a
    fault raises and the two no thread can block. A handler that ran on a domain
@@ -283,12 +301,17 @@ exception Interrupted
 let signal_while_joining () =
   if Sys.win32 then skip ~reason:"Windows has no signal masks" ();
   let caller = domain () and meet = meeting 2 in
-  let returned = Atomic.make false and ended = Atomic.make false in
+  let returned = count () and ended = Atomic.make false in
+  (* The sleeps aim the signal at the caller's join and keep the spawned
+     application running past it, so that a call that raised before the join
+     would see it unended. No event can hold them: the handler runs once the
+     join returns, and the join waits for this application. A sleep can only
+     miss a wrong call, never fail a right one. *)
   let f () =
     meet ();
-    if domain () = caller then Atomic.set returned true
+    if domain () = caller then bump returned
     else begin
-      await "the caller's application" (fun () -> Atomic.get returned);
+      until returned 1;
       Unix.sleepf 0.05;
       Unix.kill (Unix.getpid ()) Sys.sigusr1;
       Unix.sleepf 0.05;
@@ -316,7 +339,6 @@ let domains =
       cases "runs at most PARALLEL applications at once under"
         ~id:(Printf.sprintf "PARALLEL=%d") [ 1; 2; 4 ] (fun p ->
           runs_at_most p ());
-      test "shares PARALLEL - 1 domains between concurrent calls" shares_budget;
       test "works on the calling domain alone when no domain is free" (fun () ->
           while_held 2 2 (fun () -> stays_on_caller 2));
       test "holds at most one domain fewer than its elements"
@@ -367,8 +389,7 @@ let nesting =
 let fail_at i = raise (Failed i)
 let fail_line = __LINE__ - 1
 
-(* [n] elements, of which [failing] raise; a failing element waits longer the
-   lower its index, so that later failures tend to come first. *)
+(* [n] elements, of which [failing] raise. *)
 let failure_case =
   Gen.(
     let* p, n = pair parallels (int_range 1 24) in
@@ -377,20 +398,21 @@ let failure_case =
     (p, n, first :: others))
 
 let raises_lowest (p, n, failing) =
-  let first_raised = Atomic.make None in
-  let f i =
-    if List.mem i failing then begin
-      Unix.sleepf (0.0002 *. Float.of_int (n - i));
-      ignore (Atomic.compare_and_set first_raised None (Some i));
-      fail_at i
-    end
-    else i
-  in
+  let f i = if List.mem i failing then fail_at i else i in
   let lowest = List.fold_left min n failing in
   raises (Failed lowest) (fun () ->
-      with_parallel p (fun () -> Worker.map f (List.init n Fun.id)));
-  cover "a later element raised first"
-    (match Atomic.get first_raised with Some i -> i > lowest | None -> false)
+      with_parallel p (fun () -> Worker.map f (List.init n Fun.id)))
+
+(* Two applications meet, and element 0 raises once element 1 has. *)
+let raises_lowest_after_a_later () =
+  let meet = meeting 2 and raised = count () in
+  let f i =
+    meet ();
+    if i = 0 then until raised 1 else bump raised;
+    fail_at i
+  in
+  raises (Failed 0) (fun () ->
+      with_parallel 2 (fun () -> Worker.map f [ 0; 1 ]))
 
 let raise_site bt =
   match Printexc.backtrace_slots bt with
@@ -415,19 +437,11 @@ let keeps_backtrace ~on_caller () =
         (Some ("test_worker.ml", fail_line))
         (raise_site bt)
 
-let stops_after_failure p () =
-  let n = 2000 and applied = Atomic.make 0 in
-  let f i =
-    if i = 0 then fail_at 0;
-    Atomic.incr applied;
-    Unix.sleepf 0.0002
-  in
-  raises (Failed 0) (fun () ->
-      with_parallel p (fun () -> Worker.map f (List.init n Fun.id)));
-  less int ~than:(n - 1) (Atomic.get applied)
-
 let joins_before_raising () =
   let g = gauge () and meet = meeting 4 in
+  (* The other applications sleep past the raise, as in
+     [signal_while_joining]: a call that raised before joining them would see
+     them running. *)
   let f i =
     within g (fun () ->
         meet ();
@@ -443,13 +457,14 @@ let failure =
     [
       prop "raises the exception of the lowest failing element" failure_case
         raises_lowest;
+      test
+        "raises the lowest failing element's exception when a later element \
+         raised first"
+        raises_lowest_after_a_later;
       test "raises with the backtrace of an application on another domain"
         (keeps_backtrace ~on_caller:false);
       test "raises with the backtrace of an application on the calling domain"
         (keeps_backtrace ~on_caller:true);
-      cases "stops applying f once an element raised, under"
-        ~id:(Printf.sprintf "PARALLEL=%d") [ 0; 4 ] (fun p ->
-          stops_after_failure p ());
       test "raises only after the applications it started have ended"
         joins_before_raising;
     ]
@@ -575,14 +590,13 @@ let hands_each_once (p, fn, l) =
 (* The last element's application waits for [g]'s first: [g] reaches an element
    once its own image is computed, whatever the later ones. *)
 let consumes_while_computing p () =
-  let consumed = Atomic.make false in
+  let consumed = count () in
   let n = 6 in
   let f i =
-    if i = n - 1 then
-      await "g of the first element" (fun () -> Atomic.get consumed);
+    if i = n - 1 then until consumed 1;
     i
   in
-  let g _ _ = Atomic.set consumed true in
+  let g _ _ = bump consumed in
   with_parallel p (fun () -> Worker.iter f g (List.init n Fun.id))
 
 let consumes_on_caller p =
@@ -594,13 +608,12 @@ let consumes_on_caller p =
   List.iter (equal int caller) !on
 
 let computes_at_most p () =
-  let g = gauge () in
-  with_parallel p (fun () ->
-      Worker.iter
-        (fun () -> within g (fun () -> Unix.sleepf 0.001))
-        (fun () () -> ())
-        (List.init 40 ignore));
-  at_most int ~than:p (Atomic.get g.peak)
+  let (), spawned =
+    spawning (fun () ->
+        with_parallel p (fun () ->
+            Worker.iter domain (fun () _ -> ()) (List.init 40 ignore)))
+  in
+  at_most int ~than:(p - 1) spawned
 
 (* [n] elements of which [f] raises on [failing] and [g] on [g_failing]: [g] is
    applied to the elements before the first of either, and the call raises the
@@ -624,13 +637,7 @@ exception G_failed of int
 
 let raises_first (p, n, failing, g_failing) =
   let consumed = ref [] in
-  let f i =
-    if List.mem i failing then begin
-      Unix.sleepf (0.0002 *. Float.of_int (n - i));
-      fail_at i
-    end
-    else i
-  in
+  let f i = if List.mem i failing then fail_at i else i in
   let g i _ =
     if List.mem i g_failing then raise (G_failed i);
     consumed := i :: !consumed
@@ -678,15 +685,17 @@ let raises_first (p, n, failing, g_failing) =
   cover "g raised first" (g_first < f_first);
   cover "several domains" (p > 1)
 let joins_before_raising_from_g () =
-  let g_live = gauge () and started = Atomic.make 0 in
+  let g_live = gauge () and started = count () in
+  (* The later applications sleep past the raise, as in
+     [joins_before_raising]. *)
   let f i =
     within g_live (fun () ->
-        Atomic.incr started;
+        bump started;
         if i > 0 then Unix.sleepf 0.05)
   in
   let g i () =
     if i = 0 then begin
-      await "the other applications" (fun () -> Atomic.get started >= 3);
+      until started 3;
       raise (G_failed 0)
     end
   in
@@ -700,12 +709,7 @@ let iter_sees_caller_settings () =
   let on = ref [] in
   under s (fun () ->
       with_parallel 3 (fun () ->
-          Worker.iter
-            (fun () ->
-              Unix.sleepf 0.001;
-              seen ())
-            (fun () v -> on := v :: !on)
-            (List.init 8 ignore)));
+          Worker.iter seen (fun () v -> on := v :: !on) (List.init 8 ignore)));
   List.iter (equal seen_w s) !on
 
 let streaming =
@@ -776,6 +780,7 @@ let compiling =
     ]
 
 let () =
+  Disk_cache.play parts;
   exit
     (run "Tolk.Worker"
        [ law; domains; nesting; failure; settings; streaming; compiling ])
