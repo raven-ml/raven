@@ -319,6 +319,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster` turns the caps of a dash shorter than a twentieth of a pixel
+  along its line. They took the direction of the rounding between its points,
+  which turned a square dot, or drew nothing where that rounding was subnormal.
 - `Hugin_vg_raster` draws a dash between the ends its pattern places. An end
   within a twentieth of a pixel of where the raster splits its walk, a pixel
   from either end of a segment or of the page's projection, moved there, so a

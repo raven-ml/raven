@@ -488,7 +488,12 @@ let stroke_points s pts ~closed ~ends ~dx ~dy =
   let p = s.pen in
   let ddx, ddy = strip p pts s.kept ~closed ~ends in
   if closed && s.kept.n < 3 then unstripped pts s.kept;
-  let dx, dy = if ddx = 0. && ddy = 0. then (dx, dy) else (ddx, ddy) in
+  (* A dash lies along the line its walk gives. Its points, from origins along
+     that line or mapped back from the page, only round it: two of them within a
+     twentieth of a pixel give its caps the direction of their rounding. *)
+  let dx, dy =
+    if ends || (ddx = 0. && ddy = 0.) then (dx, dy) else (ddx, ddy)
+  in
   polyline p s.kept.xs s.kept.ys s.kept.n
     ~closed:(closed && s.kept.n > 1)
     ~dx ~dy

@@ -502,6 +502,22 @@ let turned_dash () =
   area ~box:(side, side) 4. (coverage img);
   less ~msg:"alpha of pixel (5, 5)" int ~than:255 (alpha img 5 5)
 
+let short_dash_turned () =
+  (* Dashes of 0 and 1e-10 a million points out, where a point the walk places
+     from an origin along the line rounds by about 1e-10, the dash's length, in
+     no direction of the line's: both are squares turned along the line. *)
+  let at = 1e6 in
+  let dashed d =
+    render 40. 40.
+      (Picture.transform
+         (Affine.translate (10.5 -. at) (10.5 -. at))
+         (Picture.stroke
+            (Stroke.v ~cap:`Square ~dash:[ d; 100. ] 2.)
+            red
+            (segment at at (at +. 50.) (at +. 20.))))
+  in
+  same_image ~within:1 (dashed 0.) (dashed 1e-10)
+
 let turned_zigzag () =
   (* Its segments run along the diagonals, which a turn by 45 degrees lays along
      the axes. Butt caps and bevels have no round part to flatten, so the turned
@@ -654,6 +670,8 @@ let strokes =
           let p = Picture.stroke (Stroke.v ~cap ~dash:[ 0.; 4. ] 2.) red q in
           area ~arc ~pieces ~box:(2., 2.) a (coverage (render 20. 20. p)));
       test "a dash of zero length takes the direction of its line" turned_dash;
+      test "a dash too short to see takes the direction of its line"
+        short_dash_turned;
       cases "a line too short to see is a square with square caps" ~id:fst
         [ ("vertical", (0., 0.01)); ("horizontal", (0.01, 0.)) ]
         (fun (_, (dx, dy)) ->
@@ -1943,6 +1961,16 @@ let cut_by_the_page =
              ~dash_offset:5.47 8.)
           Color.black
           (segment (-100.) 50. (-2.5) 50.) );
+      (* A closed subpath one period of its pattern long, up the page's left
+         edge and back, whose last dash, of zero length, is a square at its
+         start: the page of 116 places that dash's two points the least
+         subnormal apart, a difference that gives no direction once halved. *)
+      ( 100.,
+        let e = Float.succ 0. in
+        Picture.stroke
+          (Stroke.v ~cap:`Square ~join:`Miter ~dash:[ 3.; 1. ] 1.)
+          Color.black
+          (Path.close (Path.polyline [| e; e; e; e |] [| 0.; 0.; 2.; 2. |])) );
     ]
 
 (* A stroked circle in a stamp nested in another, each position about 0.1 past
