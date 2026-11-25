@@ -238,8 +238,9 @@ module Solution : sig
       solve defines it: an estimate, never a bound. *)
 
   val evaluations : ('a, 'd) t -> 'd Nx.int32_t
-  (** [evaluations s] is each lane's count of the points at which the problem's
-      function was evaluated, of the lanes' shape. *)
+  (** [evaluations s] is each lane's count of the points at which the call
+      evaluated the problem's function for it, the answer's final pass included,
+      of the lanes' shape. *)
 
   val ptree : ('a, 'd) Nx.Ptree.t -> (('a, 'd) t, 'd) Nx.Ptree.t
   (** [ptree s] is the structure of answers of structure [s], so a compiled
@@ -355,9 +356,9 @@ module Linear : sig
     ('x, 'd) Nx.Ptree.t -> 'x t -> ('x -> 'x) -> 'x -> ('x, 'd) Solution.t
   (** [solve x s a r] is the [u] with [a u = r], found by [s].
 
-      Raises [Invalid_argument] if the float tensors of [r] differ in dtype, or
-      if [a] returns a value of another structure, dtype or shape than its
-      argument. *)
+      Raises [Invalid_argument] if [r] holds no tensor, if the float tensors of
+      [r] differ in dtype, or if [a] or [s]'s [precondition] returns a value of
+      another structure, dtype or shape than its argument. *)
 end
 
 module Root : sig
@@ -439,7 +440,8 @@ module System : sig
       the same structure, dtypes and shapes: its zero is the [x] with [f x = 0].
       The float tensors of a value are its vector, of one dtype; its other
       tensors are carried from the guess. A system is one problem, with one
-      status; {!Rune.val-vmap} gives each lane its own.
+      status; {!Rune.val-vmap} gives each lane its own. A system of no unknowns
+      converges after one evaluation of [f], at the guess.
 
       {[
       (* x² + y² = 4 and x = y, from (1, 2) *)
@@ -505,8 +507,9 @@ module System : sig
       {!Rune.root}, so its derivative is the implicit one, [−J⁻¹ ∂f/∂θ] through
       every tracked value [f] reads, with [J] rune's derivative of [f] at the
       answer, solved by [linear]; zero at a lane that did not converge. At a
-      zero where [J] is singular the derivative does not exist and is not
-      finite. *)
+      zero where [J] is singular the derivative does not exist: its solve by
+      [linear] misses the solver's bound, and the derivative raises
+      [Invalid_argument] naming the entry point. *)
 
   type 'x t
   (** The type for methods for systems on values of type ['x]. *)
@@ -568,9 +571,10 @@ module System : sig
       [m]. [linear] solves the method's linear systems and the derivative's. Its
       evaluations count the calls of [f], [budget] its iterations.
 
-      Raises [Invalid_argument] if [budget < 1], if the float tensors of [guess]
-      differ in dtype, or if [f] returns a value of another structure, dtype or
-      shape than its argument. *)
+      Raises [Invalid_argument] if [budget < 1], if [guess] holds no tensor, if
+      the float tensors of [guess] differ in dtype, or if [f] or [linear]'s
+      [precondition] returns a value of another structure, dtype or shape than
+      its argument. *)
 
   val lanes :
     tol:Tol.t ->
