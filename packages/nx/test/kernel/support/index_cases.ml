@@ -206,104 +206,116 @@ let keeps combine ~nan_a ~nan_b cmp =
 (* An expected element: its bits, or its value, any NaN for a NaN. *)
 type want = Bits of string | Value of string
 
-(* The combine of the updates [us] into [x], at [d], in order. *)
-let combined (D.Any dt as d) combine x us =
-  match us with
-  | [] -> Bits x
-  | _ -> (
-      let w = String.length x in
-      match combine with
-      | Nx_kernel.Set -> Bits (List.nth us (List.length us - 1))
-      | Add when is_narrow d ->
-          let s =
-            List.fold_left
-              (fun s u -> round32 (s +. decode d u))
-              (decode d x) us
-          in
-          Value (encode d s)
-      | Add when D.is D.Float dt ->
-          Value (List.fold_left (add_bits ~w) x us)
-      | Add when D.is D.Complex dt ->
+(* [u] combined by [combine] into [a], two elements of [d], a narrow float's
+   [Add] aside. *)
+let step (D.Any dt as d) combine a u =
+  let w = String.length a in
+  match combine with
+  | Nx_kernel.Set -> u
+  | Add when D.is D.Float dt -> add_bits ~w a u
+  | Add when D.is D.Complex dt ->
+      let h = w / 2 in
+      let part e k = String.sub e (k * h) h in
+      add_bits ~w:h (part a 0) (part u 0) ^ add_bits ~w:h (part a 1) (part u 1)
+  | Add -> int_bits d w (Int64.add (int_value d a) (int_value d u))
+  | (Max | Min) when D.is D.Boolean dt ->
+      (* Or and And of truths, stored as 0 or 1. *)
+      let op = if combine = Nx_kernel.Max then ( || ) else ( && ) in
+      if op (a <> "\000") (u <> "\000") then "\001" else "\000"
+  | Max | Min ->
+      let keep =
+        if D.is D.Complex dt then
           let h = w / 2 in
-          let part e k = String.sub e (k * h) h in
-          let sum k =
-            List.fold_left (fun s u -> add_bits ~w:h s (part u k)) (part x k) us
+          let get = if h = 4 then get32 else get64 in
+          let ra = get a 0 and ia = get a h and rb = get u 0 and ib = get u h in
+          let c = compare_floats ra rb in
+          let c = if c = 0 then compare_floats ia ib else c in
+          keeps combine
+            ~nan_a:(Float.is_nan ra || Float.is_nan ia)
+            ~nan_b:(Float.is_nan rb || Float.is_nan ib)
+            c
+        else if D.is D.Float dt then
+          let get e =
+            if is_narrow d then decode d e
+            else if w = 4 then get32 e 0
+            else get64 e 0
           in
-          Value (sum 0 ^ sum 1)
-      | Add ->
-          Bits
-            (int_bits d w
-               (List.fold_left
-                  (fun s u -> Int64.add s (int_value d u))
-                  (int_value d x) us))
-      | (Max | Min) when D.is D.Boolean dt ->
-          (* Or and And of truths, stored as 0 or 1. *)
-          let op = if combine = Nx_kernel.Max then ( || ) else ( && ) in
-          let truth e = e <> "\000" in
-          let r = List.fold_left (fun t u -> op t (truth u)) (truth x) us in
-          Bits (if r then "\001" else "\000")
-      | Max | Min ->
-          let pick a b =
-            let keep =
-              if D.is D.Complex dt then
-                let h = w / 2 in
-                let get = if h = 4 then get32 else get64 in
-                let ra = get a 0
-                and ia = get a h
-                and rb = get b 0
-                and ib = get b h in
-                let c = compare_floats ra rb in
-                let c = if c = 0 then compare_floats ia ib else c in
-                keeps combine
-                  ~nan_a:(Float.is_nan ra || Float.is_nan ia)
-                  ~nan_b:(Float.is_nan rb || Float.is_nan ib)
-                  c
-              else if D.is D.Float dt then
-                let get e =
-                  if is_narrow d then decode d e
-                  else if w = 4 then get32 e 0
-                  else get64 e 0
-                in
-                let x = get a and y = get b in
-                keeps combine ~nan_a:(Float.is_nan x) ~nan_b:(Float.is_nan y)
-                  (compare_floats x y)
-              else
-                let x = int_value d a and y = int_value d b in
-                let c =
-                  if D.is D.Signed dt then Int64.compare x y
-                  else Int64.unsigned_compare x y
-                in
-                keeps combine ~nan_a:false ~nan_b:false c
-            in
-            if keep then a else b
+          let x = get a and y = get u in
+          keeps combine ~nan_a:(Float.is_nan x) ~nan_b:(Float.is_nan y)
+            (compare_floats x y)
+        else
+          let x = int_value d a and y = int_value d u in
+          let c =
+            if D.is D.Signed dt then Int64.compare x y
+            else Int64.unsigned_compare x y
           in
-          Value (List.fold_left pick x us))
+          keeps combine ~nan_a:false ~nan_b:false c
+      in
+      if keep then a else u
+
+(* The elements of shape [s] at each index along axis [a]: its extents after [a]
+   multiplied. *)
+let inner s a = total (Array.sub s (a + 1) (Array.length s - a - 1))
+
+(* The target of each of [c]'s updates, in C order: its flat index into [into],
+   [-1] for a position outside the axis. Update [k] at index [i] targets [i]
+   with the axis replaced by its position. *)
+let targets c =
+  let ts = shape_of c.into and us = shape_of c.updates and a = c.saxis in
+  let per = inner ts a and n = ts.(a) and m = us.(a) in
+  Array.mapi
+    (fun k p ->
+      if p < 0L || p >= Int64.of_int n then -1
+      else (((k / (per * m) * n) + Int64.to_int p) * per) + (k mod per))
+    (positions c.sidx)
 
 (* The updates that land on each target of [c], in C order, so in increasing
    position along the scattered axis, each with that position. *)
 let landings c =
-  let ts = shape_of c.into and us = shape_of c.updates in
-  let ues = elements c.updates in
-  let lands = Array.make (total ts) [] in
-  Array.iteri
-    (fun k p ->
-      if p >= 0L && p < Int64.of_int ts.(c.saxis) then begin
-        let i = index_of us k in
-        let j = i.(c.saxis) in
-        i.(c.saxis) <- Int64.to_int p;
-        let t = flat ts i in
-        lands.(t) <- (j, ues.(k)) :: lands.(t)
-      end)
-    (positions c.sidx);
-  Array.map List.rev lands
+  let us = shape_of c.updates and a = c.saxis in
+  let per = inner us a and ues = elements c.updates in
+  let lands = Array.make (total (shape_of c.into)) [] in
+  let ts = targets c in
+  for k = Array.length ts - 1 downto 0 do
+    let t = ts.(k) in
+    if t >= 0 then lands.(t) <- (k / per mod us.(a), ues.(k)) :: lands.(t)
+  done;
+  lands
 
 (* The updates that land on each target of [c], in C order. *)
 let lands c = Array.map (List.map snd) (landings c)
 
+(* Each target's element of [c]'s result: [into]'s where no update lands, else
+   the combine of its updates in C order, folded into it one at a time; a narrow
+   float's Add summed in float32 and rounded once. A move's or an integer's are
+   bits, the others values, any NaN for a NaN. *)
 let scatter_expected c =
-  let d = dtype_of c.into in
-  let ls = lands c in
-  Array.mapi (fun t x -> combined d c.combine x ls.(t)) (elements c.into)
+  let (D.Any dt as d) = dtype_of c.into in
+  let xs = elements c.into and us = elements c.updates and ts = targets c in
+  let reached = Array.make (Array.length xs) false in
+  Array.iter (fun t -> if t >= 0 then reached.(t) <- true) ts;
+  let fold f acc =
+    Array.iteri (fun k t -> if t >= 0 then acc.(t) <- f acc.(t) us.(k)) ts;
+    acc
+  in
+  let result want acc =
+    Array.mapi (fun t x -> if reached.(t) then want acc.(t) else Bits x) xs
+  in
+  if c.combine = Nx_kernel.Add && is_narrow d then
+    let s =
+      fold (fun s u -> round32 (s +. decode d u)) (Array.map (decode d) xs)
+    in
+    result (fun s -> Value (encode d s)) s
+  else
+    let moved =
+      match c.combine with
+      | Nx_kernel.Set -> true
+      | Add -> not (D.is D.Float dt || D.is D.Complex dt)
+      | Max | Min -> D.is D.Boolean dt
+    in
+    result
+      (fun e -> if moved then Bits e else Value e)
+      (fold (step d c.combine) (Array.copy xs))
 
 let check_scatter c y =
   let d = dtype_of c.into in
@@ -337,13 +349,10 @@ let check_scatter c y =
 (* Whether two of [c]'s updates share a target, and whether one lands outside
    the axis. *)
 let sharing c =
-  let ps = positions c.sidx in
-  let d = (shape_of c.into).(c.saxis) in
-  let inside =
-    List.filter (fun p -> p >= 0L && p < Int64.of_int d) (Array.to_list ps)
-  in
-  ( List.length (List.sort_uniq compare inside) < List.length inside,
-    List.length inside < Array.length ps )
+  let ts = targets c in
+  let landed = Array.make (total (shape_of c.into)) 0 in
+  Array.iter (fun t -> if t >= 0 then landed.(t) <- landed.(t) + 1) ts;
+  (Array.exists (fun n -> n > 1) landed, Array.exists (fun t -> t < 0) ts)
 
 (* Laws for every library *)
 
