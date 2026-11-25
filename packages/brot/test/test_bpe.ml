@@ -1032,6 +1032,43 @@ let last_pair t ~pairs =
     pairs
     (List.sort compare (vocab t))
 
+(* Two tokenizers whose rng start alike draw alike, whatever the default state
+   of the domain that encodes. *)
+let test_dropout_rng () =
+  let make () =
+    bpe ~vocab:collide_vocab ~merges:collide_merges ~dropout:0.5
+      ~rng:(Random.State.make [| 7 |])
+      ()
+  in
+  let a = make () and b = make () in
+  Random.init 1;
+  let first = List.map (encode_ids a) long_words in
+  Random.init 2;
+  let second = List.map (encode_ids b) long_words in
+  equal (list (array int)) first second
+
+(* A normalized token that takes in the white space beside it turns a spaced
+   SentencePiece pipeline back to one that marks its spaces, so [add_tokens]
+   rebuilds the model, which then draws from a state of its own as the model it
+   was rebuilt from does. *)
+let test_dropout_add_tokens () =
+  let t =
+    bpe
+      ~normalizer:(Normalizer.replace ~pattern:" " ~replacement:sp)
+      ~vocab:(numbered [ sp; "a"; "b"; sp ^ "a"; "ab"; sp ^ "ab" ])
+      ~merges:[ (sp, "a"); ("a", "b"); (sp ^ "a", "b") ]
+      ~dropout:0.5
+      ~rng:(Random.State.make [| 7 |])
+      ()
+  in
+  let added =
+    add_tokens t
+      [ added_token ~special:false ~normalized:true ~lstrip:true "zz" ]
+  in
+  let text = String.concat " " (List.init 40 (fun _ -> "ab")) in
+  let draws t = List.map (fun _ -> encode_ids t text) [ 1; 2; 3; 4; 5 ] in
+  equal (list (array int)) (draws t) (draws added)
+
 (* brot.mli: dropout is a probability in [0; 1]. HF refuses the others with
    "Dropout should be between 0 and 1, inclusive". *)
 let test_dropout_range () =
@@ -1089,6 +1126,9 @@ let () =
                test_crossing_entry;
              test "merges at dropout 0 as without dropout" test_dropout_zero;
              full_dropout;
+             test "draws dropout from the rng given" test_dropout_rng;
+             test "draws dropout alike after add_tokens rebuilds the model"
+               test_dropout_add_tokens;
              test "refuses a dropout outside [0, 1]" test_dropout_range;
              test "emits a word vocab holds as one token under ignore_merges"
                test_ignore_merges;

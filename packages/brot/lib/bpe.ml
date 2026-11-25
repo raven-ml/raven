@@ -236,6 +236,9 @@ type state = {
   mutable st_kernel : Kernel.byte_level;
   mutable st_sp : Kernel.sp option;
   st_cursor : Bytes.t;
+  (* What dropout draws from: a state split off the model's [rng], so that no
+     two encodings running at once share one. *)
+  st_rng : Random.State.t;
 }
 
 (* Vocabulary ids of single characters in one affixed form, keyed by the
@@ -265,6 +268,8 @@ type t = {
      replaying them instead of merging them again. *)
   seeds : Bytes.t;
   dropout : float option;
+  rng : Random.State.t;
+  rng_lock : Mutex.t;
   unk_token : string option;
   continuing_subword_prefix : string option;
   end_of_word_suffix : string option;
@@ -370,7 +375,7 @@ let compact word =
     word.size <- !j
   end
 
-let apply_merges model dropout word queue =
+let apply_merges model dropout rng word queue =
   let p = match dropout with Some p -> p | None -> 0.0 in
   let use_dropout = p > 0.0 in
   let merges = model.merges in
@@ -401,7 +406,7 @@ let apply_merges model dropout word queue =
         in
         let packed = Merge_map.find merges key in
         if packed >= 0 && merge_new_id packed = new_id then
-          begin if use_dropout && Random.float 1.0 < p then begin
+          begin if use_dropout && Random.State.float rng 1.0 < p then begin
             let s = queue.skip_size in
             if s = Array.length queue.skip_keys then begin
               let new_cap = max 8 (s * 2) in
@@ -760,7 +765,7 @@ let run_merge model st text pos len =
     let queue = ensure_queue_capacity st.st_queue len in
     queue.shift <- model.pos_bits;
     st.st_queue <- queue;
-    apply_merges model model.dropout word queue
+    apply_merges model model.dropout st.st_rng word queue
   end
 
 (* Leaves the tokenization of [text.\[pos..pos+len)] in [st.st_word]. *)
@@ -847,6 +852,12 @@ let sp_kernel_tables model cache : Kernel.sp option =
 (* A state's miss before its first: see [encode_unit_into]. *)
 let no_miss : Cache.encoder = fun _ ~opaque:_ _ ~pos:_ ~len:_ -> ()
 
+(* A state of its own for an encoding under dropout, split off the model's. *)
+let state_rng model =
+  if uses_dropout model then
+    Mutex.protect model.rng_lock (fun () -> Random.State.split model.rng)
+  else model.rng
+
 (* Buffers and no cache, for building the seeds and for an encoding that finds
    every state of the model in use. *)
 let private_state model =
@@ -860,6 +871,7 @@ let private_state model =
     st_kernel = kernel_tables model Cache.none;
     st_sp = sp_kernel_tables model Cache.none;
     st_cursor = Kernel.cursor ();
+    st_rng = state_rng model;
   }
 
 (* Every vocabulary entry short enough to be keyed, tokenized by the very
@@ -918,6 +930,7 @@ let make_state model =
     st_kernel = kernel_tables model cache;
     st_sp = sp_kernel_tables model cache;
     st_cursor = Kernel.cursor ();
+    st_rng = state_rng model;
   }
 
 (* Before a kernel call: the cache doubles as it fills, from a kernel's stores
@@ -1400,6 +1413,10 @@ let get_unk_token model = model.unk_token
 let get_continuing_subword_prefix model = model.continuing_subword_prefix
 let get_end_of_word_suffix model = model.end_of_word_suffix
 let get_dropout model = model.dropout
+
+let copy_rng model =
+  Mutex.protect model.rng_lock (fun () -> Random.State.copy model.rng)
+
 let get_fuse_unk model = model.fuse_unk
 let get_byte_fallback model = model.byte_fallback
 let get_ignore_merges model = model.ignore_merges
@@ -1538,8 +1555,12 @@ let char_id chars c =
    which a table doubles past half full. *)
 let default_cache_capacity = 1048576
 
+(* The seed of the state a model made without [rng] draws from, so that its
+   dropout draws the same on every run. *)
+let default_seed = 0
+
 let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
-    ?(cache_capacity = default_cache_capacity) ?dropout ?unk_token
+    ?(cache_capacity = default_cache_capacity) ?dropout ?rng ?unk_token
     ?continuing_subword_prefix ?end_of_word_suffix ?(fuse_unk = false)
     ?(byte_fallback = false) ?(ignore_merges = false) () : t =
   if Sys.int_size < 63 then
@@ -1683,6 +1704,11 @@ let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
         | _ -> max 0 cache_capacity);
       seeds = Bytes.empty;
       dropout;
+      rng =
+        (match rng with
+        | Some rng -> rng
+        | None -> Random.State.make [| default_seed |]);
+      rng_lock = Mutex.create ();
       unk_token;
       continuing_subword_prefix;
       end_of_word_suffix;

@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.bpe` takes `?rng`, the `Random.State.t` its `dropout` draws from;
+  without it, and from `of_json`, a tokenizer draws from its own state of a
+  constant seed. Dropout drew from the encoding domain's default `Random`.
 - An added token the model does not hold takes the next free id, one past the
   largest in use, where it was numbered from `vocab_size` and could take an id
   the model holds over gapped ids. Hugging Face keeps the collision.

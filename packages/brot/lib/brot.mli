@@ -942,9 +942,10 @@ end
 
 type t
 (** The type for tokenizers. What a tokenizer gives is a function of its
-    configuration alone. It holds encoder states, the pretoken caches and
-    buffers that encodings reuse, which grow as it encodes and are freed with
-    it. One tokenizer can encode from several domains and threads at once. *)
+    configuration alone, and under {!bpe}'s [dropout] of the state of its [rng]
+    too. It holds encoder states, the pretoken caches and buffers that encodings
+    reuse, which grow as it encodes and are freed with it. One tokenizer can
+    encode from several domains and threads at once. *)
 
 type direction = [ `Left | `Right ]
 (** The type for padding and truncation directions. [`Left] operates at the
@@ -1100,6 +1101,7 @@ val bpe :
   ?merges:(string * string) list ->
   ?cache_capacity:int ->
   ?dropout:float ->
+  ?rng:Random.State.t ->
   ?continuing_subword_prefix:string ->
   ?end_of_word_suffix:string ->
   ?fuse_unk:bool ->
@@ -1163,6 +1165,13 @@ val bpe :
     - [dropout]: probability \[[0]; [1]\] of skipping merges (data
       augmentation). Raises [Invalid_argument] if it is outside \[[0]; [1]\],
       NaN included. Default: none (no dropout).
+    - [rng]: the state [dropout] draws from, which the tokenizer then owns.
+      Encodings draw from states split off it, one for each encoding that runs
+      while others do, so two tokenizers made alike from equal [rng] states give
+      the same tokens to the same texts encoded one after another. Default: a
+      state of the tokenizer's own made from a constant seed, so that its draws
+      repeat from run to run; pass [Random.State.make_self_init ()] for draws
+      that differ.
     - [continuing_subword_prefix]: prefix for non-initial subwords (e.g.,
       ["##"]). Default: none; [""] is the same as none.
     - [end_of_word_suffix]: suffix marking word boundaries (e.g., ["</w>"]).
@@ -1906,9 +1915,11 @@ val of_json : Jsont.json -> (t, string) result
     encodes as tokenizers encodes it when the same settings are passed.
 
     The numbers of [json] are taken as given. A tree decoded from text holds
-    each number as the double its text names, which can differ in the last
-    place from what {!from_file} reads off the same text. Either way a BPE
-    dropout is held in single precision, as tokenizers holds it.
+    each number as the double its text names, which can differ in the last place
+    from what {!from_file} reads off the same text. Either way a BPE dropout is
+    held in single precision, as tokenizers holds it, and draws from a state of
+    its own made from a constant seed, as {!bpe}'s default [rng], so that two
+    loads of one file draw alike.
 
     The [added_tokens] member gives the tokens matched atomically in the input.
     A missing [special] member reads as [true], and a missing [normalized] as

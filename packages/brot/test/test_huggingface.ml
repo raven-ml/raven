@@ -442,6 +442,16 @@ let test_numbers_as_given () =
 let test_json_dropout () =
   equal string "0x1.99999ap-4" (dropout (load dropout_file))
 
+(* brot.mli: a dropout read from a file draws from a state of its own made from
+   a constant seed. *)
+let test_dropout_loads () =
+  let file =
+    {|{"model":{"type":"BPE","dropout":0.5,"vocab":{"a":0,"b":1,"ab":2},"merges":[["a","b"]]},"pre_tokenizer":{"type":"WhitespaceSplit"}}|}
+  in
+  let text = String.concat " " (List.init 40 (fun _ -> "ab")) in
+  let draws t = List.map (fun _ -> ids t text) [ 1; 2; 3; 4; 5 ] in
+  equal (list (array int)) (draws (load file)) (draws (load file))
+
 (* A BPE model whose flags each change how ["abc"] is cut. *)
 let flagged_model ~byte_fallback ~fuse_unk =
   Printf.sprintf
@@ -846,6 +856,7 @@ let () =
              test_invalid_parameters;
              test "takes the numbers of a tree as given" test_numbers_as_given;
              test "holds a BPE dropout in single precision" test_json_dropout;
+             test "draws a BPE dropout alike on every load" test_dropout_loads;
              test_bpe_flags;
              test_added_token_defaults;
              test

@@ -435,7 +435,7 @@ let fit_to_pipeline ~spaces pre algorithm =
              ?continuing_subword_prefix:(if byte_level then None else prefix)
              ?end_of_word_suffix:(if byte_level then None else suffix)
              ~cache_capacity:(Bpe.get_cache_capacity model)
-             ?dropout:(Bpe.get_dropout model)
+             ?dropout:(Bpe.get_dropout model) ~rng:(Bpe.copy_rng model)
              ?unk_token:(Bpe.get_unk_token model)
              ~fuse_unk:(Bpe.get_fuse_unk model)
              ~byte_fallback:(Bpe.get_byte_fallback model)
@@ -550,7 +550,7 @@ let id_to_token t id =
 (* Algorithm constructors *)
 
 let bpe ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token ?vocab ?merges ?cache_capacity ?dropout
+    ?pad_token ?unk_token ?vocab ?merges ?cache_capacity ?dropout ?rng
     ?continuing_subword_prefix ?end_of_word_suffix ?fuse_unk ?byte_fallback
     ?ignore_merges () =
   let vocab_tbl =
@@ -568,9 +568,9 @@ let bpe ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     Alg_bpe
       (Bpe.create ~vocab:vocab_tbl
          ~merges:(Option.value merges ~default:[])
-         ~byte_level ~spaced ?cache_capacity ?dropout ?unk_token
-         ?continuing_subword_prefix ?end_of_word_suffix ?fuse_unk
-         ?byte_fallback ?ignore_merges ())
+         ~byte_level ~spaced ?cache_capacity ?dropout ?rng ?unk_token
+         ?continuing_subword_prefix ?end_of_word_suffix ?fuse_unk ?byte_fallback
+         ?ignore_merges ())
   in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token algorithm

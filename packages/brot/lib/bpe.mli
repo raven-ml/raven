@@ -50,6 +50,7 @@ val create :
   ?spaced:bool ->
   ?cache_capacity:int ->
   ?dropout:float ->
+  ?rng:Random.State.t ->
   ?unk_token:string ->
   ?continuing_subword_prefix:string ->
   ?end_of_word_suffix:string ->
@@ -99,6 +100,11 @@ val create :
       Raises [Invalid_argument] if it is outside \[[0]; [1]\], NaN included. A
       non-zero value disables the cache and [ignore_merges], both of which would
       reuse a choice that is drawn per occurrence.
+    - [rng] is the state [dropout] draws from. Each encoder state of the model
+      (see {!with_state}) draws from its own, split off [rng] when it is made,
+      so encodings running at once share none. Defaults to a state of the
+      model's own made from a constant seed, so that its draws repeat from run
+      to run.
     - [unk_token] is emitted for characters whose affixed form is not in [vocab]
       (when {!byte_fallback} is off). Encoding raises [Failure] at such a
       character when [vocab] does not hold [unk_token]. No default: without one,
@@ -275,6 +281,10 @@ val get_continuing_subword_prefix : t -> string option
 val get_end_of_word_suffix : t -> string option
 (** [get_end_of_word_suffix t] is the word-end suffix, if configured (e.g.
     ["</w>"]). *)
+
+val copy_rng : t -> Random.State.t
+(** [copy_rng t] is a copy of the state [t]'s dropout draws from, as it stands:
+    a model rebuilt from [t] draws what [t] would, from a state of its own. *)
 
 val get_dropout : t -> float option
 (** [get_dropout t] is the merge dropout probability, if configured. *)
