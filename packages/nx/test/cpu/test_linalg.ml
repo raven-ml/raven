@@ -81,35 +81,32 @@ let wide c =
   let batch = if c.seed mod 2 = 0 then [| t |] else [| 2; (t + 1) / 2 |] in
   { c with batch }
 
-(* The routines with work of their own on a matrix's threads, besides
-   their products: solves' units, LU's steps, eigh's and svd's
-   matrix-vector products and their merges' roots. *)
-let with_units =
-  [ "cholesky"; "solve"; "lu"; "eigh"; "svd"; "svd's values" ]
-
-(* The routines named in [names], each with its name and operands of [c]'s
-   matrix. *)
-let named names c =
-  let x = cholesky_operand c and ops = solve_operands c in
+(* The routines with work of their own on a matrix's threads, besides their
+   products, each with its name and operands of [c]'s matrix: solves' units,
+   LU's steps, eigh's and svd's matrix-vector products and their merges'
+   roots. *)
+let with_units c =
   let _, lu = lu_operand c in
   let _, _, s = svd_operand c in
-  List.filter
-    (fun (name, _, _) -> List.mem name names)
-    [
-      ("cholesky", Cholesky Lower, [| x |]);
-      ("solve", solve c, ops);
-      ("lu", Lu, [| lu |]);
-      ("qr", Qr (factors c), [| lu |]);
-      ("eigh", Eigh true, [| eigh_operand c |]);
-      ("svd", Svd (Some (factors c)), [| s |]);
-      ("svd's values", Svd None, [| s |]);
-      ("eig", Eig true, [| eig_operand c |]);
-    ]
+  [
+    ("cholesky", Cholesky Lower, [| cholesky_operand c |]);
+    ("solve", solve c, solve_operands c);
+    ("lu", Lu, [| lu |]);
+    ("eigh", Eigh true, [| eigh_operand c |]);
+    ("svd", Svd (Some (factors c)), [| s |]);
+    ("svd's values", Svd None, [| s |]);
+  ]
 
-(* nx.cpu computes the routines named in [names] of [c]'s matrix alone, on the
-   call's threads, and of copies of it in a wide batch, one a thread: every
-   result of every matrix of the batch has the bits of the matrix's alone. *)
-let threads_agree (b : Support.backend) names c =
+(* Every routine, each with its name and operands of [c]'s matrix. *)
+let every_routine c =
+  let _, lu = lu_operand c in
+  with_units c
+  @ [ ("qr", Qr (factors c), [| lu |]); ("eig", Eig true, [| eig_operand c |]) ]
+
+(* nx.cpu computes the [routines] of [c]'s matrix alone, on the call's threads,
+   and of copies of it in a wide batch, one a thread: every result of every
+   matrix of the batch has the bits of the matrix's alone. *)
+let threads_agree (b : Support.backend) routines c =
   let c = wide c in
   let k = count c in
   let one = { c with batch = [||] } in
@@ -129,11 +126,11 @@ let threads_agree (b : Support.backend) names c =
       match (run b r (Array.map (repeated c) ops), run b r ops) with
       | Some y, Some z -> agree msg y z
       | _ -> failf "nx.cpu declined %s at %a" msg pp_dtype c.dt)
-    (named names one)
+    (routines one)
 
-(* nx.cpu computes the routines named in [names] of [c]'s matrix on the call's
-   threads and on one thread: every result has the one thread's bits. *)
-let one_thread_agrees (b : Support.backend) names c =
+(* nx.cpu computes the [routines] of [c]'s matrix on the call's threads and on
+   one thread: every result has the one thread's bits. *)
+let one_thread_agrees (b : Support.backend) routines c =
   List.iter
     (fun (msg, r, ops) ->
       match (run b r ops, Nx_cpu.one_thread (fun () -> run b r ops)) with
@@ -144,7 +141,7 @@ let one_thread_agrees (b : Support.backend) names c =
               equal ~msg same_bits (result_bits z) (result_bits y.(j)))
             z
       | _ -> failf "nx.cpu declined %s at %a" msg pp_dtype c.dt)
-    (named names c)
+    (routines c)
 
 (* A plain contiguous case of [dt], of order [n] and [r] right-hand sides. *)
 let fixed dt n r =
@@ -163,8 +160,7 @@ let fixed dt n r =
 
 (* nx.cpu computes every routine at [dt], and a matrix of order 65, past a
    block of 64, alone gives the bits it has in a batch. *)
-let test_cpu_threads b dt =
-  threads_agree b ([ "qr"; "eig" ] @ with_units) (fixed dt 65 3)
+let test_cpu_threads b dt = threads_agree b every_routine (fixed dt 65 3)
 
 (* A matrix of order 256 and 160 right-hand sides, of the routines whose work on
    a matrix's threads goes beyond their products, gives the bits of one thread,
@@ -174,9 +170,6 @@ let test_cpu_threads b dt =
 let test_cpu_units b dt =
   if Nx_cpu.most_threads () = 1 then skip ~reason:"one thread" ();
   one_thread_agrees b with_units (fixed dt 256 160)
-
-(* One matrix of order 272, past four blocks of 64 and a partial one. *)
-let test_cpu_large b dt = law_cholesky bounds b (fixed dt 272 0)
 
 (* A routine's operand [a], right-hand sides [b] for a solve, and
    destinations [dsts], each near a fit. *)
@@ -322,23 +315,23 @@ let law_cpu_refuses (b : Support.backend) c =
   in
   cover "fits" fit;
   cover "misfits" (not fit);
-  Misfit.law ~msg:"a routine" ~what:"a shape" b ~fit dsts call
+  Misfit.law ~msg:"a routine" ~what:"a shape" b ~fit dsts call;
+  (* nx_cpu.mli: every case that fits is computed. *)
+  if fit then
+    let fresh (D.Any d, s) = A.Any (A.create Rig.host d (Iarray.of_array s)) in
+    equal ~msg:"a call that fits" answer A.Done
+      (call { Misfit.g = Fun.id } (Array.map fresh dsts))
 
-(* Routines that do not fit, by a dtype, a shape, or values of another
-   precision than [a]'s: not Done, and nothing written outside their
-   destinations. *)
+(* Routines that do not fit, by a shape, or values of another precision than
+   [a]'s: not Done, and nothing written outside their destinations. *)
 let test_cpu_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in
   let f32 = A.of_array D.Float32 [| 2; 2 |] [| 4.; 1.; 1.; 3. |] in
-  let i32 = A.of_array D.Int32 [| 2; 2 |] [| 4l; 1l; 1l; 3l |] in
   let wide = A.of_array D.Float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let tall = A.of_array D.Float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let c128 = A.of_array D.Complex128 [| 2; 2 |] (Array.make 4 Complex.one) in
   let f = D.Float32 and c = D.Complex128 in
   let misfit ~msg ~what dsts call = Misfit.check ~msg ~what b dsts call in
-  misfit ~msg:"int32" ~what:"a dtype" [| (D.Any D.Int32, [| 2; 2 |]) |]
-    (fun g ds ->
-      K.cholesky Lower ~dst:(A.expect D.Int32 ds.(0)) (g.Misfit.g i32));
   misfit ~msg:"not square" ~what:"a shape" [| (D.Any f, [| 2; 3 |]) |]
     (fun g ds -> K.cholesky Lower ~dst:(A.expect f ds.(0)) (g.Misfit.g wide));
   misfit ~msg:"a result of another shape" ~what:"a shape"
@@ -433,13 +426,40 @@ let law_guards (b : Support.backend) (c, side) =
                 want))
     routines
 
+(* [law_layouts], and qr's bits through the case's layout, which it leaves
+   out. *)
+let law_layouts_qr (b : Support.backend) c =
+  law_layouts b c;
+  let _, x = lu_operand c in
+  let qr ops = run b (Qr (factors c)) ops in
+  match (qr [| x |], qr [| laid_out c.how x |]) with
+  | Some y, Some z ->
+      equal ~msg:"qr's q" same_bits (bits y.(0)) (bits z.(0));
+      equal ~msg:"qr's r" same_bits (bits y.(1)) (bits z.(1))
+  | _ -> fail "nx.cpu declined a qr"
+
+(* A layout whose rows lie further apart than their elements: [law_layouts]
+   draws it in about one case in six. *)
+let gapped_example = { (fixed D.(Any Float64) 8 3) with how = Padded }
+
+(* One case of each layout and side the guard law covers, and one past a block
+   of 64. *)
+let guard_examples =
+  let c how n = { (fixed D.(Any Float32) n 3) with how } in
+  Support.
+    [
+      (c Reversed 17, After);
+      (c Stepped 17, After);
+      (c Transposed 17, Before);
+      (c Contiguous 65, Before);
+    ]
+
 (* The suite *)
 
 let dtype_name = Format.asprintf "%a" pp_dtype
 
-(* What nx_cpu.mli states beyond the contract: its bounds, the Upper factor's
-   bits, a solve into its operand, layout and thread invariance, and the
-   matrices its algorithms find hard. *)
+(* What nx_cpu.mli's Matrices section states, under one target table, in its
+   order. *)
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   let test name f = test name (fun () -> b.around (f b)) in
@@ -448,91 +468,222 @@ let cpu (b : Support.backend) =
   in
   group b.name
     [
-      group "each result meets its relation within its bound"
+      group "matrices"
         [
-          prop "Cholesky's factor within γ(n + 1)" case (run (law_cholesky bounds b));
-          cases "Cholesky's factor of order 272" test_cpu_large;
+          prop
+            "computes every case that fits; others are not Done and write \
+             nothing outside their results"
+            misfits
+            (run (law_cpu_refuses b));
+          test "routines of other dtypes and shapes are not Done"
+            test_cpu_refusals;
+          prop ~count:100 ~examples:guard_examples
+            "reads and writes no byte past its operands and results, whatever \
+             pages lie beside them"
+            guard_cases
+            (run (law_guards b));
+          prop ~examples:[ gapped_example ]
+            "bits are the same whatever the layout" case
+            (run (law_layouts_qr b));
+          cases
+            "bits are the same whatever the threads, every routine at every \
+             dtype"
+            test_cpu_threads;
+          cases "bits are the same whatever the threads a matrix's units run on"
+            test_cpu_units;
+        ];
+      group "cholesky"
+        [
+          prop
+            ~examples:(List.map (fun dt -> fixed dt 272 0) dtypes)
+            "the factor is within γ(n + 1)" case
+            (run (law_cholesky bounds b));
           prop "the Upper factor is the Lower one's conjugate transpose" case
             (run (law_upper b));
-          prop "a triangular solve within γ(2n)" case (run (law_solve bounds b));
-          prop "LU's factors within γ(2k)" case (run (law_lu bounds b));
-          test "LU of a pivot whose reciprocal is subnormal" (test_huge_pivot bounds);
-          prop "QR's factors within γ(k(2m + 10))" case (run (law_qr b));
-          prop "eigh's results within γ(16n)" case (run (law_eigh bounds b));
-          prop "svd's results within γ(16 max (m, n) + 100)" case
-            (run (law_svd bounds b));
-          prop
-            "svd's results on parts at the least subnormal, below the least \
-             normal and near 1"
-            spread (run (law_svd_spread bounds b));
+        ];
+      group "lu"
+        [
+          prop "the factors are within γ(2k)" case (run (law_lu bounds b));
           test
-            "svd's results within their bound on a row whose rest is below \
-             the least normal number over u"
-            test_svd_tiny_rows;
-          test "svd's results on a row whose rest is the least subnormal"
-            (test_svd_spread_row bounds);
-          cases
-            "svd's results on matrices of rank 10 at 2^400 over rows of the \
-             least subnormal"
-            (test_svd_deficient bounds);
-          cases "svd's results on 16384 matrices of order 2"
-            (test_svd_pairs bounds);
-          test "svd's vectors on a bidiagonal whose merges deflate"
-            test_svd_deflation;
-          prop "eig's results within γ(16n)" case (run (law_eig bounds b));
-          test "eig's results on a graded cycle" test_eig_graded_cycle;
-          test "eig's results on a subnormal matrix with a complex pair"
-            test_eig_subnormal_pair;
-          test "eigh's, qr's and svd's results on matrices scaled below the \
-                least normal number and near the largest"
-            (test_scaled bounds);
+            "the factors of a pivot whose reciprocal is subnormal are within \
+             their bound"
+            (test_huge_pivot bounds);
         ];
-      group "each spectrum is within its bound of the exact one"
+      group "qr"
+        [ prop "the factors are within γ(k(2m + 10))" case (run (law_qr b)) ];
+      group "solve_triangular"
         [
-          prop "eigh's eigenvalues within γ(16n) ‖a‖₂" case
-            (run (law_eigh_spectrum b));
-          test "eigh's eigenvalues at large orders" test_eigh_large;
-          test "eigh's eigenvalues through the two-stage reduction"
-            test_eigh_two_stage;
-          test "eigh's eigenvalues of a secular equation with a root beside \
-                its pole"
-            test_eigh_secular;
-          prop "svd's values within γ(16 max (m, n) + 100) ‖a‖₂" case
-            (run (law_svd_spectrum b));
-          test "svd's values at large orders" test_svd_large;
-          test "svd's values through the two-stage reduction" test_svd_two_stage;
-          prop ~examples:[ twice_i; stalls_x86 ]
-            "eig's eigenvalues of a normal matrix within γ(16n) ‖a‖_F" case
-            (run (law_eig_spectrum b));
-          test "eig's eigenvalues of two rotation blocks coupled by 2^-43"
-            test_eig_stalled;
-          test "eig's eigenvalues of a graded matrix, balanced"
-            test_eig_balanced;
-          test "eig's eigenvalues of a matrix spanning the exponent range, \
-                balanced before it is scaled"
-            test_eig_extremes;
-          test "eig's eigenvalues of Wilkinson's matrices are eigh's"
-            test_wilkinson;
-        ];
-      group "bits are a function of the values alone"
-        [
-          prop "whatever the layout" case (run (law_layouts b));
-          cases "whatever the threads, every routine at every dtype"
-            test_cpu_threads;
-          cases "whatever the threads a matrix's units run on" test_cpu_units;
+          prop "a solve is within γ(2n)" case (run (law_solve bounds b));
           prop "a solve into its operand gives a fresh destination's bits" case
             (run (law_solve_aliased b));
         ];
-      group "misfits are not Done and write nothing outside their results"
+      group "eigh"
         [
-          prop "computes what Nx_kernel.Shape fits, of any other shapes"
-            misfits (run (law_cpu_refuses b));
-          test "of dtypes and shapes" test_cpu_refusals;
+          prop "the results are within γ(16n)" case (run (law_eigh bounds b));
+          prop "the eigenvalues are within γ(16n) ‖a‖₂" case
+            (run (law_eigh_spectrum b));
+          test "the eigenvalues at large orders are within their bound"
+            test_eigh_large;
+          test
+            "the eigenvalues through the two-stage reduction are within their \
+             bound"
+            test_eigh_two_stage;
+          test
+            "the eigenvalues of a secular equation with a root beside its pole \
+             are within their bound"
+            test_eigh_secular;
         ];
-      prop ~count:100
-        "reads and writes no byte past its operands and results, whatever \
-         pages lie beside them"
-        guard_cases (run (law_guards b));
+      group "svd"
+        [
+          prop "the results are within γ(16 max (m, n) + 100)" case
+            (run (law_svd bounds b));
+          prop
+            "the results on parts at the least subnormal, below the least \
+             normal and near 1 are within their bound"
+            spread
+            (run (law_svd_spread bounds b));
+          test
+            "the results on a row whose rest is below the least normal number \
+             over u are within their bound"
+            test_svd_tiny_rows;
+          test
+            "the results on a row whose rest is the least subnormal are within \
+             their bound"
+            (test_svd_spread_row bounds);
+          cases
+            "the results on matrices of rank 10 at 2^400 over rows of the \
+             least subnormal are within their bound"
+            (test_svd_deficient bounds);
+          cases
+            "the results on 16384 matrices of order 2 are within their bound"
+            (test_svd_pairs bounds);
+          test
+            "the vectors on a bidiagonal whose merges deflate are within their \
+             bound"
+            test_svd_deflation;
+          prop "the values are within γ(16 max (m, n) + 100) ‖a‖₂" case
+            (run (law_svd_spectrum b));
+          test "the values at large orders are within their bound"
+            test_svd_large;
+          test
+            "the values through the two-stage reduction are within their bound"
+            test_svd_two_stage;
+        ];
+      group "eig"
+        [
+          prop "the results are within γ(16n)" case (run (law_eig bounds b));
+          test "the results on a graded cycle are within their bound"
+            test_eig_graded_cycle;
+          test
+            "the results on a subnormal matrix with a complex pair are within \
+             their bound"
+            test_eig_subnormal_pair;
+          prop ~examples:[ twice_i; stalls_x86 ]
+            "the eigenvalues of a normal matrix are within γ(16n) ‖a‖_F" case
+            (run (law_eig_spectrum b));
+          test
+            "the eigenvalues of two rotation blocks coupled by 2^-43 are \
+             within their bound"
+            test_eig_stalled;
+          test "the eigenvalues of a graded matrix are balanced"
+            test_eig_balanced;
+          test
+            "the eigenvalues of a matrix spanning the exponent range are \
+             balanced before it is scaled"
+            test_eig_extremes;
+          test "the eigenvalues of Wilkinson's matrices are eigh's"
+            test_wilkinson;
+        ];
+      group "scaled matrices"
+        [
+          test
+            "eigh's, qr's and svd's results on matrices scaled below the least \
+             normal number and near the largest are within their bounds"
+            (test_scaled bounds);
+        ];
+    ]
+
+(* The test hooks, run once *)
+
+(* [f ()] on another domain. *)
+let on_domain f = Domain.join (Domain.spawn f)
+
+(* An eigh of a complex128 matrix of order 257 with its vectors, through the
+   two-stage reduction under [with_two_stage 128]: x86-64's crossovers never
+   take it there, and arm64's only from 1024. *)
+let eigh_257 () =
+  let c = fixed D.(Any Complex128) 257 0 in
+  ignore (Option.get (run Support.cpu (Eigh true) [| eigh_operand c |]))
+
+let band () = Nx_cpu.two_stage_splits Nx_cpu.Band
+
+let test_two_stage_nested () =
+  if Nx_cpu.most_threads () = 1 then skip ~reason:"one thread" ();
+  Nx_cpu.with_two_stage 128 (fun () ->
+      let was = band () in
+      eigh_257 ();
+      greater int ~msg:"from order 128: a band step on several threads"
+        ~than:was (band ());
+      let was = band () in
+      Nx_cpu.with_two_stage 4096 eigh_257;
+      equal int ~msg:"inside a nested order of 4096: none" was (band ());
+      eigh_257 ();
+      greater int ~msg:"once the nested order returns: one again" ~than:was
+        (band ()))
+
+let test_two_stage_domains () =
+  if Nx_cpu.most_threads () = 1 then skip ~reason:"one thread" ();
+  Nx_cpu.with_two_stage 128 (fun () ->
+      let splits =
+        on_domain (fun () ->
+            let was = band () in
+            eigh_257 ();
+            band () - was)
+      in
+      equal int ~msg:"band steps on several threads there" 0 splits)
+
+(* An svd of a float64 matrix of order 200 with its vectors, through the
+   two-stage reduction: one Back step for u and one for vh. *)
+let test_two_back_steps () =
+  if Nx_cpu.most_threads () = 1 then skip ~reason:"one thread" ();
+  Nx_cpu.with_two_stage 128 (fun () ->
+      let c = fixed D.(Any Float64) 200 200 in
+      let _, _, s = svd_operand c in
+      let was = Nx_cpu.two_stage_splits Nx_cpu.Back in
+      ignore
+        (Option.get (run Support.cpu (Svd (Some Nx_kernel.Reduced)) [| s |]));
+      equal int (was + 2) (Nx_cpu.two_stage_splits Nx_cpu.Back))
+
+let test_one_thread () =
+  equal int ~msg:"under one_thread" 1 (Nx_cpu.one_thread Nx_cpu.most_threads);
+  equal int ~msg:"after a nested one_thread returns" 1
+    (Nx_cpu.one_thread (fun () ->
+         Nx_cpu.one_thread ignore;
+         Nx_cpu.most_threads ()))
+
+let test_one_thread_domains () =
+  let host = Nx_cpu.most_threads () in
+  if host = 1 then skip ~reason:"one thread" ();
+  equal int host (Nx_cpu.one_thread (fun () -> on_domain Nx_cpu.most_threads))
+
+let hooks =
+  group "test hooks"
+    [
+      cases
+        "with_two_stage raises Invalid_argument for an order below 128 but 0"
+        ~id:string_of_int [ -1; 1; 127 ] (fun n ->
+          raises_match Exn.invalid_arg (fun () ->
+              Nx_cpu.with_two_stage n ignore));
+      cases "with_two_stage takes 0 and 128" ~id:string_of_int [ 0; 128 ]
+        (fun n -> Nx_cpu.with_two_stage n ignore);
+      test "with_two_stage's nested order holds until it returns"
+        test_two_stage_nested;
+      test "with_two_stage leaves another domain's order" test_two_stage_domains;
+      test "two_stage_splits counts an svd with vectors' two Back steps"
+        test_two_back_steps;
+      test "most_threads is 1 under one_thread, nested ones included"
+        test_one_thread;
+      test "one_thread leaves another domain's threads" test_one_thread_domains;
     ]
 
 (* The references' division *)
@@ -594,6 +745,7 @@ let () =
     (Windtrap.run "nx_cpu.linalg"
        (List.map cpu Support.cpus
        @ [
+           hooks;
            prop "the bit references' complex division is Fdiv's" quotients
              law_divd;
          ]))
