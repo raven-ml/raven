@@ -589,16 +589,6 @@ let numbers_tests =
           Session.finish s;
           equal (list sample) expected
             (samples_of (History.series (history store s) "m")));
-      test "a decimal that strtod misreads somewhere reads back exactly"
-        (fun () ->
-          let store = new_store () in
-          let line =
-            {|{"type":"metrics","time":2.0,"step":0,"values":{"a":3.839223843572815e-239}}|}
-          in
-          let run = written_run store (text_of_lines [ start_line; line ]) in
-          equal float_exact
-            (Float.of_string "0x1.fffffffffffffp-793")
-            (Metric.value (History.series (History.read run) "a") 0));
     ]
 
 (* Values records, in the layout munin writes and in another: members reordered,
@@ -1842,6 +1832,16 @@ let history_tests =
           equal ~msg:"first follow kept" (list sample) (series_of records "a")
             (samples_of (History.series final "a")));
       surviving_test;
+      test "a decimal that strtod misreads somewhere reads back exactly"
+        (fun () ->
+          let store = new_store () in
+          let line =
+            {|{"type":"metrics","time":2.0,"step":0,"values":{"a":3.839223843572815e-239}}|}
+          in
+          let run = written_run store (text_of_lines [ start_line; line ]) in
+          equal float_exact
+            (Float.of_string "0x1.fffffffffffffp-793")
+            (Metric.value (History.series (History.read run) "a") 0));
       test "a replaced log is read again from its start" (fun () ->
           let store = new_store () in
           let run =
