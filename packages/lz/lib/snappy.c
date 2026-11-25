@@ -22,6 +22,7 @@
 
 #include <string.h>
 
+#include "byteorder.h"
 #include "snappy.h"
 
 /* Format constants (format_description.txt) */
@@ -38,39 +39,7 @@ enum { LITERAL = 0, COPY_1 = 1, COPY_2 = 2, COPY_4 = 3 };
    longer one keeps it in the 1 to 4 bytes after the tag. */
 #define SHORT_LITERAL 60
 
-/* Loads */
-
-static inline uint32_t le32(const uint8_t *p) {
-  uint32_t v;
-  memcpy(&v, p, 4);
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap32(v);
-#endif
-  return v;
-}
-
-static inline uint64_t le64(const uint8_t *p) {
-  uint64_t v;
-  memcpy(&v, p, 8);
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap64(v);
-#endif
-  return v;
-}
-
-static inline void store32(uint8_t *p, uint32_t v) {
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap32(v);
-#endif
-  memcpy(p, &v, 4);
-}
-
-static inline void store64(uint8_t *p, uint64_t v) {
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap64(v);
-#endif
-  memcpy(p, &v, 8);
-}
+/* Copies */
 
 static inline void copy8(uint8_t *dst, const uint8_t *src) {
   memcpy(dst, src, 8);
@@ -160,8 +129,8 @@ static inline void expand(uint8_t *op, size_t off, size_t len) {
     copy8(op, from);
     copy8(op + 8, from + 8);
   } else {
-    uint64_t pattern = le64(from) & ((UINT64_C(1) << (8 * off)) - 1);
-    store64(op, pattern * spread[off]);
+    uint64_t pattern = lz_load_le64(from) & ((UINT64_C(1) << (8 * off)) - 1);
+    lz_store_le64(op, pattern * spread[off]);
     copy8(op + 8, op + 8 - period8[off]);
   }
   if (len <= 16) return;
@@ -236,7 +205,7 @@ enum lz_status lz_snappy_decode(struct lz_io *io, struct lz_error *err) {
       if (tag % 4 == COPY_4) break;
       uint32_t e = tags[tag];
       size_t len = e & 0xff;
-      size_t off = (e & 0x700) + (le32(ip + 1) & trailer_mask[e >> 11]);
+      size_t off = (e & 0x700) + (lz_load_le32(ip + 1) & trailer_mask[e >> 11]);
       if (off - 1 >= (size_t)(op - dst)) break;
       ip += (tag % 4) + 1;
       if (off >= 16)
@@ -357,7 +326,8 @@ static inline size_t match_length(const uint8_t *a, const uint8_t *b,
                                   const uint8_t *end, uint64_t *after) {
   const uint8_t *start = b;
   if (end - b >= 16) {
-    uint64_t lo = le64(b), hi = le64(b + 4), x = le64(a) ^ lo;
+    uint64_t lo = lz_load_le64(b), hi = lz_load_le64(b + 4);
+    uint64_t x = lz_load_le64(a) ^ lo;
     if (x != 0) {
       int k = __builtin_ctzll(x) >> 3;
       *after = k < 4 ? lo >> (8 * k) : hi >> (8 * (k - 4));
@@ -365,10 +335,10 @@ static inline size_t match_length(const uint8_t *a, const uint8_t *b,
     }
   }
   while (end - b >= 8) {
-    uint64_t x = le64(a) ^ le64(b);
+    uint64_t x = lz_load_le64(a) ^ lz_load_le64(b);
     if (x != 0) {
       b += __builtin_ctzll(x) >> 3;
-      if (end - b >= 8) *after = le64(b);
+      if (end - b >= 8) *after = lz_load_le64(b);
       return (size_t)(b - start);
     }
     a += 8;
@@ -378,7 +348,7 @@ static inline size_t match_length(const uint8_t *a, const uint8_t *b,
     a++;
     b++;
   }
-  if (end - b >= 8) *after = le64(b);
+  if (end - b >= 8) *after = lz_load_le64(b);
   return (size_t)(b - start);
 }
 
@@ -411,11 +381,11 @@ static inline uint8_t *literal(uint8_t *op, const uint8_t *lit, size_t len,
    the element. */
 static inline uint8_t *copy_element(uint8_t *op, size_t off, size_t len) {
   if (len <= 11 && off < 2048) {
-    store32(op, (uint32_t)(COPY_1 | (len - 4) << 2 | (off >> 8) << 5 |
-                           (off & 0xff) << 8));
+    lz_store_le32(op, (uint32_t)(COPY_1 | (len - 4) << 2 | (off >> 8) << 5 |
+                                 (off & 0xff) << 8));
     return op + 2;
   }
-  store32(op, (uint32_t)(COPY_2 | (len - 1) << 2 | off << 8));
+  lz_store_le32(op, (uint32_t)(COPY_2 | (len - 1) << 2 | off << 8));
   return op + 3;
 }
 
@@ -458,11 +428,11 @@ static inline const uint8_t *scan(uint16_t *table, int bits,
   if (limit - p >= SKIP_START) {
     for (int i = 0; i < SKIP_START; i++) {
       candidate = look(table, bits, in, p, bytes);
-      if (le32(candidate) == bytes) {
+      if (lz_load_le32(candidate) == bytes) {
         *pp = p;
         return candidate;
       }
-      bytes = le32(++p);
+      bytes = lz_load_le32(++p);
     }
     skip = 2 * SKIP_START;
   }
@@ -471,12 +441,12 @@ static inline const uint8_t *scan(uint16_t *table, int bits,
     skip += skip >> SKIP_SHIFT;
     if (next > limit) return NULL;
     candidate = look(table, bits, in, p, bytes);
-    if (le32(candidate) == bytes) {
+    if (lz_load_le32(candidate) == bytes) {
       *pp = p;
       return candidate;
     }
     p = next;
-    bytes = le32(p);
+    bytes = lz_load_le32(p);
   }
 }
 
@@ -500,7 +470,7 @@ static uint8_t *fragment(const uint8_t *in, size_t n, uint8_t *op,
 
   /* [bytes] holds the 4 bytes at [p]. */
   const uint8_t *limit = end - INPUT_MARGIN, *p = in + 1;
-  uint32_t bytes = le32(p);
+  uint32_t bytes = lz_load_le32(p);
   for (;;) {
     const uint8_t *candidate = scan(table, bits, in, limit, &p, bytes);
     if (!candidate) return literal(op, lit, end - lit, false);
@@ -514,10 +484,10 @@ static uint8_t *fragment(const uint8_t *in, size_t n, uint8_t *op,
       lit = p;
       if (p >= limit)
         return lit < end ? literal(op, lit, end - lit, false) : op;
-      look(table, bits, in, p - 1, le32(p - 1));
+      look(table, bits, in, p - 1, lz_load_le32(p - 1));
       bytes = (uint32_t)after;
       candidate = look(table, bits, in, p, bytes);
-      if (le32(candidate) != bytes) break;
+      if (lz_load_le32(candidate) != bytes) break;
     }
     p++;
     bytes = (uint32_t)(after >> 8);

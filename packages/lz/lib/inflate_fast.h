@@ -22,7 +22,7 @@
 
 #define FILL()                                                               \
   do {                                                                       \
-    bb |= load64(in) << (bl & 63);                                           \
+    bb |= lz_load_le64(in) << (bl & 63);                                     \
     in += (56 & ~bl) >> 3;                                                   \
     bl |= 56;                                                                \
   } while (0)

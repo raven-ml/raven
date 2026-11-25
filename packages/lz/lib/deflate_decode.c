@@ -51,6 +51,7 @@
 
 #include <string.h>
 
+#include "byteorder.h"
 #include "checksum.h"
 
 #if defined(__GNUC__) || defined(__clang__)
@@ -279,15 +280,6 @@ static void load_fixed(struct lz_deflate_dec *st) {
 
 static inline uint64_t low(uint64_t x, unsigned n) {
   return x & ((UINT64_C(1) << n) - 1);
-}
-
-static inline uint64_t load64(const uint8_t *p) {
-  uint64_t v;
-  memcpy(&v, p, 8);
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap64(v);
-#endif
-  return v;
 }
 
 /* The byte holding bit [bit], counted from the call's first input byte:

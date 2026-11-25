@@ -126,7 +126,7 @@ ZE_INLINE void bw_addm(struct bw *b, uint64_t v, unsigned n) {
    64. */
 ZE_INLINE void bw_flush(struct bw *b, bool check) {
   unsigned k = b->n >> 3;
-  ze_wr64(b->p, b->acc);
+  lz_store_le64(b->p, b->acc);
   b->p += k;
   b->acc = (b->acc >> (4 * k)) >> (4 * k);
   b->n &= 7;
@@ -142,7 +142,7 @@ ZE_INLINE size_t bw_close(struct bw *b) {
   bw_add(b, 1, 1);
   size_t len = (size_t)(b->p - b->dst) + ((b->n + 7) >> 3);
   if (b->over || len > (size_t)(b->lim - b->dst)) return 0;
-  ze_wr64(b->p, b->acc);
+  lz_store_le64(b->p, b->acc);
   return len;
 }
 
@@ -157,7 +157,7 @@ static unsigned hist(unsigned count[256], const uint8_t *s, size_t n,
   memset(c, 0, sizeof c);
   size_t i = 0;
   for (; i + 16 <= n; i += 16) {
-    uint64_t a = ze_rd64(s + i), b = ze_rd64(s + i + 8);
+    uint64_t a = lz_load_le64(s + i), b = lz_load_le64(s + i + 8);
     for (int k = 0; k < 8; k += 2) {
       c[0][(a >> (8 * k)) & 0xff]++;
       c[1][(a >> (8 * k + 8)) & 0xff]++;
@@ -821,11 +821,11 @@ static void huf_header(uint8_t *dst, unsigned type, size_t n, size_t c) {
     return;
   }
   if (n < 16384) {
-    ze_wr32(dst, (uint32_t)(type | (2u << 2) | (n << 4) | (c << 18)));
+    lz_store_le32(dst, (uint32_t)(type | (2u << 2) | (n << 4) | (c << 18)));
     return;
   }
   uint64_t v = type | (3u << 2) | ((uint64_t)n << 4) | ((uint64_t)c << 22);
-  ze_wr32(dst, (uint32_t)v);
+  lz_store_le32(dst, (uint32_t)v);
   dst[4] = (uint8_t)(v >> 32);
 }
 

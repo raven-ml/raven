@@ -40,6 +40,7 @@
 
 #include <string.h>
 
+#include "byteorder.h"
 #include "checksum.h"
 
 #if defined(__SSE2__)
@@ -56,12 +57,6 @@
 #define likely(x) (x)
 #define unlikely(x) (x)
 #define INLINE static inline
-#endif
-
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-#define BIG_ENDIAN_HOST 1
-#else
-#define BIG_ENDIAN_HOST 0
 #endif
 
 /* The format (RFC 1951) */
@@ -209,44 +204,14 @@ _Static_assert(STEP_DATA + 5 * (STEP_DATA / MIN_BLOCK + 1) + 1 + 10 + 8 <=
 
 /* Bytes */
 
-INLINE uint32_t le32(const uint8_t *p) {
-  uint32_t v;
-  memcpy(&v, p, 4);
-#if BIG_ENDIAN_HOST
-  v = __builtin_bswap32(v);
-#endif
-  return v;
-}
-
-INLINE uint32_t ld32(const uint8_t *p) {
-  uint32_t v;
-  memcpy(&v, p, 4);
-  return v;
-}
-
-INLINE uint64_t ld64(const uint8_t *p) {
-  uint64_t v;
-  memcpy(&v, p, 8);
-  return v;
-}
-
-INLINE void put64le(uint8_t *p, uint64_t v) {
-#if BIG_ENDIAN_HOST
-  v = __builtin_bswap64(v);
-#endif
-  memcpy(p, &v, 8);
+/* [first_diff x] is the index of the first byte that differs in two
+   little-endian words, given their XOR, which is not 0. */
+INLINE uint32_t first_diff(uint64_t x) {
+  return (unsigned)__builtin_ctzll(x) >> 3;
 }
 
 /* [extend a b n max] is the length of the common prefix of [a] and [b],
    known to be at least [n] and taken at most to [max]. */
-INLINE uint32_t first_diff(uint64_t x) {
-#if BIG_ENDIAN_HOST
-  return (unsigned)__builtin_clzll(x) >> 3;
-#else
-  return (unsigned)__builtin_ctzll(x) >> 3;
-#endif
-}
-
 INLINE uint32_t extend(const uint8_t *a, const uint8_t *b, uint32_t n,
                        uint32_t max) {
   uint32_t i = n;
@@ -254,18 +219,20 @@ INLINE uint32_t extend(const uint8_t *a, const uint8_t *b, uint32_t n,
 
   /* Most matches end within 32 bytes: four words with no bound test. */
   if (likely(max - i >= 32)) {
-    if ((x = ld64(a + i) ^ ld64(b + i)) != 0) return i + first_diff(x);
-    if ((x = ld64(a + i + 8) ^ ld64(b + i + 8)) != 0)
+    if ((x = lz_load_le64(a + i) ^ lz_load_le64(b + i)) != 0)
+      return i + first_diff(x);
+    if ((x = lz_load_le64(a + i + 8) ^ lz_load_le64(b + i + 8)) != 0)
       return i + 8 + first_diff(x);
-    if ((x = ld64(a + i + 16) ^ ld64(b + i + 16)) != 0)
+    if ((x = lz_load_le64(a + i + 16) ^ lz_load_le64(b + i + 16)) != 0)
       return i + 16 + first_diff(x);
-    if ((x = ld64(a + i + 24) ^ ld64(b + i + 24)) != 0)
+    if ((x = lz_load_le64(a + i + 24) ^ lz_load_le64(b + i + 24)) != 0)
       return i + 24 + first_diff(x);
     i += 32;
   }
 
   for (; max - i >= 8; i += 8)
-    if ((x = ld64(a + i) ^ ld64(b + i)) != 0) return i + first_diff(x);
+    if ((x = lz_load_le64(a + i) ^ lz_load_le64(b + i)) != 0)
+      return i + first_diff(x);
 
   while (i < max && a[i] == b[i]) i++;
   return i;
@@ -335,7 +302,7 @@ static void mf_fill(mpos *t, size_t n) {
 static void hc_clear(struct hc *mf, const uint8_t *buf, size_t from,
                      size_t end) {
   for (size_t p = from; p + 4 <= end; p++) {
-    uint32_t s = le32(buf + p);
+    uint32_t s = lz_load_le32(buf + p);
     mf->h3[hash(s & 0xFFFFFF, H3_BITS)] = NIL;
     mf->h4[hash(s, H4_BITS)] = NIL;
   }
@@ -345,7 +312,7 @@ static void hc_clear(struct hc *mf, const uint8_t *buf, size_t from,
 static void ht_clear(struct ht *mf, const uint8_t *buf, size_t from,
                      size_t end) {
   for (size_t p = from; p + 4 <= end; p++) {
-    mpos *const bucket = mf->tab[hash(le32(buf + p), HT_BITS)];
+    mpos *const bucket = mf->tab[hash(lz_load_le32(buf + p), HT_BITS)];
     bucket[0] = bucket[1] = NIL;
   }
 }
@@ -402,7 +369,7 @@ NOINLINE uint32_t hc_walk_on(const struct hc *mf, const uint8_t *base,
                              uint32_t best, uint32_t max, uint32_t nice,
                              uint32_t left, const uint8_t **qp) {
   const mpos *const links = mf->next + WSIZE;
-  const uint32_t w0 = ld32(in);
+  const uint32_t w0 = lz_load_le32(in);
   const uint8_t *q = *qp;
   uint32_t wl = 0;
 
@@ -411,7 +378,7 @@ NOINLINE uint32_t hc_walk_on(const struct hc *mf, const uint8_t *base,
     if (unlikely(c <= floor)) goto done;
     const uint8_t *m = base + c;
     c = links[c];
-    if (unlikely(ld32(m) == w0)) {
+    if (unlikely(lz_load_le32(m) == w0)) {
       best = extend(in, m, 4, max);
       q = m;
       if (best >= nice || --left == 0) goto done;
@@ -421,18 +388,18 @@ NOINLINE uint32_t hc_walk_on(const struct hc *mf, const uint8_t *base,
   }
 
 longer:
-  wl = ld32(in + best - 3);
+  wl = lz_load_le32(in + best - 3);
   for (;;) {
     if (unlikely(c <= floor)) goto done;
     const uint8_t *m = base + c;
     c = links[c];
-    if (unlikely(ld32(m + best - 3) == wl) && ld32(m) == w0) {
+    if (unlikely(lz_load_le32(m + best - 3) == wl) && lz_load_le32(m) == w0) {
       uint32_t len = extend(in, m, 4, max);
       if (len > best) {
         best = len;
         q = m;
         if (best >= nice) goto done;
-        wl = ld32(in + best - 3);
+        wl = lz_load_le32(in + best - 3);
       }
     }
     if (unlikely(--left == 0)) goto done;
@@ -477,7 +444,7 @@ INLINE uint32_t hc_find(struct hc *mf, const uint8_t **basep,
   *s4 = (mpos)cur;
   mf->next[WSIZE + cur] = (mpos)c;
 
-  const uint32_t s = le32(in + 1);
+  const uint32_t s = lz_load_le32(in + 1);
   *h3p = hash(s & 0xFFFFFF, H3_BITS);
   *h4p = hash(s, H4_BITS);
   PREFETCHW(&mf->h3[*h3p]);
@@ -495,27 +462,29 @@ INLINE uint32_t hc_find(struct hc *mf, const uint8_t **basep,
   const uint8_t *q = NULL;
   if (best < 3) {
     got = 3;
-    if (((le32(base + c3) ^ le32(in)) & 0xFFFFFF) == 0) q = base + c3;
+    if (((lz_load_le32(base + c3) ^ lz_load_le32(in)) & 0xFFFFFF) == 0)
+      q = base + c3;
   }
 
   /* The chain, newest first. A candidate longer than [got] matches [in]
      on the 4 bytes ending at [got], which rejects most at one load; the
      first 4 bytes then confirm it. */
   const mpos *const links = mf->next + WSIZE;
-  const uint32_t w0 = ld32(in);
-  uint32_t wt = ld32(in + got - 3);
+  const uint32_t w0 = lz_load_le32(in);
+  uint32_t wt = lz_load_le32(in + got - 3);
   uint32_t walk = long_ && depth > SHORT_WALK ? SHORT_WALK : depth;
   for (; walk > 0; walk--) {
     if (c <= floor) goto searched;
     const uint8_t *m = base + c;
     c = links[c];
-    if (likely(ld32(m + got - 3) != wt) || ld32(m) != w0) continue;
+    if (likely(lz_load_le32(m + got - 3) != wt) || lz_load_le32(m) != w0)
+      continue;
     uint32_t len = extend(in, m, 4, max);
     if (len <= got) continue;
     got = len;
     q = m;
     if (got >= nice) goto searched;
-    wt = ld32(in + got - 3);
+    wt = lz_load_le32(in + got - 3);
   }
   if (long_ && depth > SHORT_WALK && c > floor)
     got = hc_walk_on(mf, base, in, c, (int32_t)floor, got, max, nice,
@@ -551,7 +520,7 @@ INLINE void hc_skip(struct hc *mf, const uint8_t **basep, const uint8_t *in,
     mf->h3[h3] = (mpos)cur;
     mf->next[WSIZE + cur] = mf->h4[h4];
     mf->h4[h4] = (mpos)cur;
-    uint32_t s = le32(++in);
+    uint32_t s = lz_load_le32(++in);
     h3 = hash(s & 0xFFFFFF, H3_BITS);
     h4 = hash(s, H4_BITS);
   }
@@ -579,21 +548,21 @@ INLINE uint32_t ht_find(struct ht *mf, const uint8_t **basep,
   const ptrdiff_t newer = bucket[0], older = bucket[1];
   bucket[1] = (mpos)newer;
   bucket[0] = (mpos)cur;
-  *h = hash(le32(in + 1), HT_BITS);
+  *h = hash(lz_load_le32(in + 1), HT_BITS);
   PREFETCHW(mf->tab[*h]);
 
   /* The older is out of the window whenever the newer is. */
   if (newer <= floor) return 0;
-  const uint32_t w0 = ld32(in);
+  const uint32_t w0 = lz_load_le32(in);
   const uint8_t *q = base + newer;
   uint32_t len = 0;
-  if (ld32(q) == w0) {
+  if (lz_load_le32(q) == w0) {
     len = extend(in, q, 4, max);
     if (len >= nice) goto found;
   }
   if (older > floor) {
     const uint8_t *m = base + older;
-    if (ld32(m) == w0) {
+    if (lz_load_le32(m) == w0) {
       uint32_t l = extend(in, m, 4, max);
       if (l > len) {
         len = l;
@@ -628,14 +597,14 @@ INLINE void ht_skip(struct ht *mf, const uint8_t **basep, const uint8_t *in,
       mpos *const bucket = mf->tab[hv];
       bucket[1] = bucket[0];
       bucket[0] = (mpos)cur;
-      hv = hash(le32(++in), HT_BITS);
+      hv = hash(lz_load_le32(++in), HT_BITS);
     }
   }
   for (; cur < stop; cur++) {
     mpos *const bucket = mf->tab[hv];
     bucket[1] = bucket[0];
     bucket[0] = (mpos)cur;
-    hv = hash(le32(++in), HT_BITS);
+    hv = hash(lz_load_le32(++in), HT_BITS);
   }
   *h = hv;
 }
@@ -945,7 +914,7 @@ struct out {
 #define DRAIN()                                                              \
   do {                                                                       \
     if (likely(end - p >= 8)) {                                              \
-      put64le(p, acc);                                                       \
+      lz_store_le64(p, acc);                                                 \
       p += n >> 3;                                                           \
       acc >>= n & ~7u;                                                       \
       n &= 7;                                                                \
@@ -1399,7 +1368,7 @@ static void prime(struct lz_deflate_tables *e, const uint8_t *buf,
   }
   e->h[0] = e->h[1] = 0;
   if (end - e->pos < 4) return;
-  uint32_t s = le32(buf + e->pos);
+  uint32_t s = lz_load_le32(buf + e->pos);
   e->h[0] =
       e->parser == FASTEST ? hash(s, HT_BITS) : hash(s & 0xFFFFFF, H3_BITS);
   e->h[1] = hash(s, H4_BITS);

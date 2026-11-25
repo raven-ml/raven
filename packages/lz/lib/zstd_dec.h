@@ -21,11 +21,8 @@
 
 #include <string.h>
 
+#include "byteorder.h"
 #include "zstd.h"
-
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
-#error "the zstd decoder reads little-endian words natively"
-#endif
 
 #if defined(__GNUC__)
 #define LZ_LIKELY(x) __builtin_expect(!!(x), 1)
@@ -52,26 +49,8 @@
 
 enum { LZ_ZSTD_GENERIC, LZ_ZSTD_WITH_BMI2 };
 
-static inline uint16_t lz_le16(const uint8_t *p) {
-  uint16_t v;
-  memcpy(&v, p, 2);
-  return v;
-}
-
 static inline uint32_t lz_le24(const uint8_t *p) {
   return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16;
-}
-
-static inline uint32_t lz_le32(const uint8_t *p) {
-  uint32_t v;
-  memcpy(&v, p, 4);
-  return v;
-}
-
-static inline uint64_t lz_le64(const uint8_t *p) {
-  uint64_t v;
-  memcpy(&v, p, 8);
-  return v;
 }
 
 /* [lz_high32 x] is the index of the highest set bit of [x], which is not
@@ -107,7 +86,7 @@ static inline bool lz_bits_init(struct lz_bits *b, const uint8_t *s,
   b->start = s;
   if (n >= 8) {
     b->p = s + n - 8;
-    b->c = lz_le64(b->p);
+    b->c = lz_load_le64(b->p);
     b->used = mark;
     return true;
   }
@@ -136,7 +115,7 @@ LZ_INLINE void lz_bits_reload(struct lz_bits *b) {
   if (LZ_UNLIKELY(n > room)) n = room;
   b->p -= n;
   b->used -= 8 * (unsigned)n;
-  b->c = lz_le64(b->p);
+  b->c = lz_load_le64(b->p);
 }
 
 static inline bool lz_bits_done(const struct lz_bits *b) {

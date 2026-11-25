@@ -24,6 +24,7 @@
 
 #include <string.h>
 
+#include "byteorder.h"
 #include "lzw.h"
 
 /* Codes (section 13) */
@@ -43,15 +44,6 @@ static inline unsigned width(unsigned next) {
   return next < 511 ? 9 : next < 1023 ? 10 : next < 2047 ? 11 : WIDEST;
 }
 
-static inline uint64_t be64(const uint8_t *p) {
-  uint64_t v;
-  memcpy(&v, p, 8);
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-  v = __builtin_bswap64(v);
-#endif
-  return v;
-}
-
 /* [peek src len bit w code] sets [code] to the [w] bits of [src] from bit
    [bit], the first bit the most significant of byte 0, and is false when
    [src] ends before them. */
@@ -59,7 +51,7 @@ static inline bool peek(const uint8_t *src, size_t len, size_t bit,
                         unsigned w, uint32_t *code) {
   size_t byte = bit >> 3;
   uint64_t v;
-  if (len >= 8 && byte <= len - 8) v = be64(src + byte);
+  if (len >= 8 && byte <= len - 8) v = lz_load_be64(src + byte);
   else {
     if (bit + w > (uint64_t)len * 8) return false;
     v = 0;

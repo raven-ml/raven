@@ -163,7 +163,9 @@ static size_t huf_table(uint16_t *t, const uint8_t *s, size_t n,
    at most 11 - n1. The run of a symbol of length n1 starts at a multiple
    of 2^(11 - n1), so its j-th cell continues with the code at j << n1
    whatever the symbol: one row per length serves every symbol of that
-   length. */
+   length. A cell holds the first symbol in bits 0-7, the second in bits
+   8-15, the bits they take in bits 16-23 and their count in bits
+   24-31: its low 16 bits, stored little-endian, are the output. */
 static void huf_double(uint32_t *t2, const uint16_t *t1) {
   uint32_t rows[HUF_CELLS];
   bool built[HUF_LOG + 1] = {false};
@@ -185,6 +187,15 @@ static void huf_double(uint32_t *t2, const uint16_t *t1) {
     for (uint32_t j = 0; j < len; j++) t2[i + j] = s1 | row[j];
     i += len;
   }
+}
+
+/* [put_pair o cell] writes the two symbols of a double-symbol cell at
+   [o]: the cell's low 16 bits, little-endian. It copies from the 32-bit
+   cell itself, where lz_store_le16 would copy a 16-bit value: from that,
+   clang spills more registers in the four-lane loop. */
+LZ_INLINE void put_pair(uint8_t *o, uint32_t cell) {
+  if (LZ_BIG_ENDIAN) cell = __builtin_bswap32(cell);
+  memcpy(o, &cell, 2);
 }
 
 /* Streams with the checked reader */
@@ -213,7 +224,7 @@ LZ_INLINE void one_x2(const uint32_t *t2, const uint16_t *t1,
     lz_bits_reload(b);
     for (int i = 0; i < 4 && end - op >= 2; i++) {
       uint32_t c = t2[(b->c << (b->used & 63)) >> (64 - HUF_LOG)];
-      memcpy(op, &c, 2);
+      put_pair(op, c);
       b->used += (c >> 16) & 0xFF;
       op += c >> 24;
     }
@@ -248,13 +259,13 @@ struct lane {
 LZ_INLINE void lane_start(struct lane *l, const uint8_t *s, size_t n) {
   unsigned mark = 8 - lz_high32(s[n - 1]);
   l->p = s + n - 8;
-  l->w = (lz_le64(l->p) | 1) << mark;
+  l->w = (lz_load_le64(l->p) | 1) << mark;
 }
 
 LZ_INLINE void lane_refill(struct lane *l) {
   unsigned taken = (unsigned)__builtin_ctzll(l->w);
   l->p -= taken >> 3;
-  l->w = (lz_le64(l->p) | 1) << (taken & 7);
+  l->w = (lz_load_le64(l->p) | 1) << (taken & 7);
 }
 
 /* [lane_bits l s] is the checked reader where [l] stands on the stream at
@@ -263,7 +274,7 @@ LZ_INLINE struct lz_bits lane_bits(const struct lane *l, const uint8_t *s) {
   struct lz_bits b;
   b.start = s;
   b.p = l->p;
-  b.c = lz_le64(l->p);
+  b.c = lz_load_le64(l->p);
   b.used = (unsigned)__builtin_ctzll(l->w);
   return b;
 }
@@ -283,7 +294,7 @@ LZ_INLINE uint8_t *burst_x2(const uint32_t *t, struct lane *l, uint8_t *o) {
   uint64_t w = l->w;
   for (int j = 0; j < 5; j++) {
     uint32_t cell = t[w >> (64 - HUF_LOG)];
-    memcpy(o, &cell, 2);
+    put_pair(o, cell);
     w <<= (cell >> 16) & 63;
     o += cell >> 24;
   }
@@ -316,9 +327,9 @@ LZ_INLINE bool four_body(const struct lz_zstd_dec *st, bool x2, uint8_t *out,
                          size_t n, const uint8_t *s, size_t len,
                          struct lz_zstd_fail *f) {
   size_t size[4];
-  size[0] = lz_le16(s);
-  size[1] = lz_le16(s + 2);
-  size[2] = lz_le16(s + 4);
+  size[0] = lz_load_le16(s);
+  size[1] = lz_load_le16(s + 2);
+  size[2] = lz_load_le16(s + 4);
   size_t three = size[0] + size[1] + size[2];
   if (three + 6 >= len) return refused(f, 0, jump_past);
   size[3] = len - 6 - three;
@@ -445,7 +456,7 @@ long lz_zstd_literals(struct lz_zstd_dec *st, const uint8_t *s, size_t n,
   if (type < 2) {
     size_t head = format == 1 ? 2 : format == 3 ? 3 : 1;
     if (n < head) return lz_zstd_fail(f, LZ_MALFORMED, 0, header_past);
-    size_t size = format == 1   ? lz_le16(s) >> 4
+    size_t size = format == 1   ? lz_load_le16(s) >> 4
                   : format == 3 ? lz_le24(s) >> 4
                                 : (size_t)s[0] >> 3;
     if (size > st->block_max)
@@ -478,7 +489,7 @@ long lz_zstd_literals(struct lz_zstd_dec *st, const uint8_t *s, size_t n,
   static const uint8_t bits[4] = {10, 10, 14, 18};
   size_t head = heads[format];
   if (n < head) return lz_zstd_fail(f, LZ_MALFORMED, 0, header_past);
-  uint64_t h = format < 2 ? lz_le24(s) : lz_le32(s);
+  uint64_t h = format < 2 ? lz_le24(s) : lz_load_le32(s);
   if (format == 3) h |= (uint64_t)s[4] << 32;
   size_t mask = ((size_t)1 << bits[format]) - 1;
   size_t size = (size_t)(h >> 4) & mask;

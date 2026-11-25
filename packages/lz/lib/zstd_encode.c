@@ -291,7 +291,7 @@ static void put_header(struct sink *o, const struct ze_params *p, bool sized,
                        uint64_t n) {
   uint8_t h[14];
   size_t k = 4;
-  ze_wr32(h, MAGIC);
+  lz_store_le32(h, MAGIC);
   uint8_t wd = (uint8_t)((p->wlog - MIN_WLOG) << 3);
   if (!sized) {
     h[k++] = 0x04;
@@ -313,11 +313,11 @@ static void put_header(struct sink *o, const struct ze_params *p, bool sized,
     k += 2;
     break;
   case 2:
-    ze_wr32(h + k, (uint32_t)n);
+    lz_store_le32(h + k, (uint32_t)n);
     k += 4;
     break;
   default:
-    ze_wr64(h + k, n);
+    lz_store_le64(h + k, n);
     k += 8;
     break;
   }
@@ -410,7 +410,7 @@ static size_t cut(struct ze_work *w, const uint8_t *src, size_t left) {
     uint16_t *h = w->cum[k + 1];
     memcpy(h, w->cum[k], sizeof w->cum[k]);
     for (size_t i = 0; i < span; i += 8 * r->step) {
-      uint64_t x = ze_rd64(p + i);
+      uint64_t x = lz_load_le64(p + i);
       for (unsigned b = 0; b < 64; b += 8) h[(x >> b) & 0xff]++;
     }
   }
@@ -572,7 +572,7 @@ static bool fix(struct ze_work *w, int level, bool sized, uint64_t n) {
 
 static void put_checksum(struct sink *o, struct ze_work *w) {
   uint8_t c[4];
-  ze_wr32(c, (uint32_t)lz_xxh64_digest(&w->xxh));
+  lz_store_le32(c, (uint32_t)lz_xxh64_digest(&w->xxh));
   put(o, c, 4);
 }
 

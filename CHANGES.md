@@ -3542,6 +3542,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Lz (new)
 
+- lz runs on big-endian machines, such as s390x, where it decodes and
+  encodes the same bytes as on little-endian ones.
 - A Zstandard decoder (`Lz.Zstd.decoder`) sizes the block and literals it
   holds outside the OCaml heap to the frame's Block_Maximum_Size, 128 KiB for
   a 64 KiB frame where it took 256 KiB, and tells the collector of them.
@@ -3549,8 +3551,7 @@ its lock and from samples the dashboard saw arrive.
   it holds as it allocates it: about 1.5 MiB for a 64 KiB stream, where it
   told of its level's largest, up to 49 MiB, when made. A program that makes
   an encoder for each short stream runs far fewer major cycles.
-- lz is not available on s390x: its Zstandard decoder reads little-endian
-  words natively. `lz.bytesrw` needs bytesrw 0.4.1, for `Bytes.Writer.make'`.
+- `lz.bytesrw` needs bytesrw 0.4.1, for `Bytes.Writer.make'`.
 - Add `Lz.Lzf.decode`, LZF as liblzf's decoder reads it, the compression
   of h5py's HDF5 filter 32000. A match before the block's start is
   `Malformed`.

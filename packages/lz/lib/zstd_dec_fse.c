@@ -8,7 +8,7 @@ static uint32_t peek(const uint8_t *s, size_t n, size_t bit) {
   size_t i = bit >> 3;
   uint64_t v = 0;
   if (i + 8 <= n) {
-    v = lz_le64(s + i);
+    v = lz_load_le64(s + i);
   } else {
     for (size_t k = 0; k < 8 && i + k < n; k++) v |= (uint64_t)s[i + k] << (8 * k);
   }

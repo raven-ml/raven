@@ -362,7 +362,7 @@ static enum lz_status step(struct lz_zstd_dec *st, struct lz_io *io,
       if (prefix(b, n + k) < n + k)
         return fail(st, err, LZ_MALFORMED, st->frame_at, bad_magic);
       if (!take(st, io, 4, st->unit, &p)) return starved(io, final, err);
-      st->stage = lz_le32(p) == FRAME_MAGIC ? DESCRIPTOR : SKIP_SIZE;
+      st->stage = lz_load_le32(p) == FRAME_MAGIC ? DESCRIPTOR : SKIP_SIZE;
       break;
     }
 
@@ -445,7 +445,7 @@ static enum lz_status step(struct lz_zstd_dec *st, struct lz_io *io,
 
     case CHECKSUM:
       if (!take(st, io, 4, st->unit, &p)) return starved(io, final, err);
-      if (lz_le32(p) != (uint32_t)lz_xxh64_digest(&st->hash))
+      if (lz_load_le32(p) != (uint32_t)lz_xxh64_digest(&st->hash))
         return fail(st, err, LZ_MALFORMED, here(st, io) - 4, bad_check);
       st->stage = END;
       break;
@@ -456,7 +456,7 @@ static enum lz_status step(struct lz_zstd_dec *st, struct lz_io *io,
 
     case SKIP_SIZE:
       if (!take(st, io, 4, st->unit, &p)) return starved(io, final, err);
-      st->skip = lz_le32(p);
+      st->skip = lz_load_le32(p);
       st->stage = SKIP;
       break;
 

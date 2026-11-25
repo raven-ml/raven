@@ -79,15 +79,15 @@ static const uint64_t prime8 = 0xCF1BBCDCB7A56463ULL;
 ZE_INLINE size_t hash(const uint8_t *p, unsigned hlog, unsigned mls) {
   switch (mls) {
   case 5:
-    return (size_t)(((ze_rd64(p) << 24) * prime5) >> (64 - hlog));
+    return (size_t)(((lz_load_le64(p) << 24) * prime5) >> (64 - hlog));
   case 6:
-    return (size_t)(((ze_rd64(p) << 16) * prime6) >> (64 - hlog));
+    return (size_t)(((lz_load_le64(p) << 16) * prime6) >> (64 - hlog));
   case 7:
-    return (size_t)(((ze_rd64(p) << 8) * prime7) >> (64 - hlog));
+    return (size_t)(((lz_load_le64(p) << 8) * prime7) >> (64 - hlog));
   case 8:
-    return (size_t)((ze_rd64(p) * prime8) >> (64 - hlog));
+    return (size_t)((lz_load_le64(p) * prime8) >> (64 - hlog));
   default:
-    return (size_t)((ze_rd32(p) * prime4) >> (32 - hlog));
+    return (size_t)((lz_load_le32(p) * prime4) >> (32 - hlog));
   }
 }
 
@@ -97,7 +97,7 @@ ZE_INLINE size_t count(const uint8_t *ip, const uint8_t *m,
                        const uint8_t *end) {
   const uint8_t *start = ip;
   while (ip + 8 <= end) {
-    uint64_t d = ze_rd64(ip) ^ ze_rd64(m);
+    uint64_t d = lz_load_le64(ip) ^ lz_load_le64(m);
     if (d) return (size_t)(ip - start) + ((unsigned)__builtin_ctzll(d) >> 3);
     ip += 8;
     m += 8;
@@ -216,7 +216,7 @@ ZE_INLINE void reps_swap(struct reps *r) {
 /* [rep_at p u] holds when the offset [u] is usable and the 4 bytes at [p]
    recur [u] back. */
 ZE_INLINE bool rep_at(const uint8_t *p, uint32_t u) {
-  return u != 0 && ze_rd32(p - u) == ze_rd32(p);
+  return u != 0 && lz_load_le32(p - u) == lz_load_le32(p);
 }
 
 /* Fast */
@@ -228,10 +228,10 @@ ZE_INLINE bool rep_at(const uint8_t *p, uint32_t u) {
    the window, and the result the same. */
 ZE_INLINE bool cand4(const uint8_t *base, uint32_t j, uint32_t floor,
                      const uint8_t *p, bool cmov) {
-  if (!cmov) return j >= floor && ze_rd32(base + j) == ze_rd32(p);
+  if (!cmov) return j >= floor && lz_load_le32(base + j) == lz_load_le32(p);
   bool in = j >= floor;
   uint32_t k = in ? j : floor;
-  return in & (ze_rd32(base + k) == ze_rd32(p));
+  return in & (lz_load_le32(base + k) == lz_load_le32(p));
 }
 
 ZE_INLINE size_t fast(struct ze_match *ms, struct ze_seqs *ss,
@@ -400,21 +400,21 @@ ZE_INLINE size_t dfast(struct ze_match *ms, struct ze_seqs *ss,
         hashed = false;
         break;
       }
-      if (jl >= floor && ze_rd64(base + jl) == ze_rd64(p)) {
+      if (jl >= floor && lz_load_le64(base + jl) == lz_load_le64(p)) {
         x = p;
         m = base + jl;
         len = 8 + count(p + 8, m + 8, end);
         hashed = true;
         break;
       }
-      if (js >= floor && ze_rd32(base + js) == ze_rd32(p)) {
+      if (js >= floor && lz_load_le32(base + js) == lz_load_le32(p)) {
         /* The next position's long candidate, as the table holds it now,
            wins when it is longer. */
         x = p;
         m = base + js;
         len = 4 + count(p + 4, m + 4, end);
         uint32_t jq = jlq;
-        if (jq > floor && ze_rd64(base + jq) == ze_rd64(q)) {
+        if (jq > floor && lz_load_le64(base + jq) == lz_load_le64(q)) {
           size_t lq = 8 + count(q + 8, base + jq + 8, end);
           if (lq > len) {
             x = q;
@@ -498,7 +498,7 @@ ZE_INLINE uint64_t row_mask(const uint8_t *tags, uint8_t tag, unsigned head,
 #else
   const uint64_t ones = 0x0101010101010101ULL, high = 0x8080808080808080ULL;
   for (unsigned i = 0; i < entries; i += 8) {
-    uint64_t x = ze_rd64(tags + i) ^ (ones * tag);
+    uint64_t x = lz_load_le64(tags + i) ^ (ones * tag);
     uint64_t z = ~(((x & ~high) + ~high) | x) & high;
     m |= ((z >> 7) * 0x0102040810204080ULL >> 56) << i;
   }
@@ -664,8 +664,8 @@ ZE_INLINE size_t row_search(struct ze_match *ms, const uint8_t *ip,
     /* A candidate is longer only if it matches up to byte [best]: the 4
        bytes ending there reject most in one load, the 4 at its start the
        rest. */
-    if (ze_rd32(m + best - 3) != ze_rd32(ip + best - 3) ||
-        ze_rd32(m) != ze_rd32(ip))
+    if (lz_load_le32(m + best - 3) != lz_load_le32(ip + best - 3) ||
+        lz_load_le32(m) != lz_load_le32(ip))
       continue;
     size_t len = 4 + count(ip + 4, m + 4, iend);
     if (len > best) {

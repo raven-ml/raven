@@ -35,6 +35,7 @@
 
 #include <string.h>
 
+#include "byteorder.h"
 #include "checksum.h"
 
 /* The block format's constants. */
@@ -485,14 +486,10 @@ static inline uint32_t hash(const uint8_t *p) {
   return (uint32_t)(((le64(p) << 24) * 889523592379ull) >> (64 - HASH_LOG));
 }
 
-/* The index of the first byte that differs in two 8-byte words read from
-   memory, given their XOR, which is not 0. */
+/* The index of the first byte that differs in two little-endian 8-byte
+   words, given their XOR, which is not 0. */
 static inline size_t first_difference(uint64_t x) {
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  return (size_t)(__builtin_clzll(x) >> 3);
-#else
   return (size_t)(__builtin_ctzll(x) >> 3);
-#endif
 }
 
 /* The number of bytes from [p] and [q] that agree, up to [limit]. The
@@ -502,15 +499,15 @@ static inline size_t agree(const uint8_t *p, const uint8_t *q,
   const uint8_t *const start = p;
   uint64_t a, b;
   if (limit - p >= 8) {
-    memcpy(&a, p, 8);
-    memcpy(&b, q, 8);
+    a = lz_load_le64(p);
+    b = lz_load_le64(q);
     if (a != b) return first_difference(a ^ b);
     p += 8;
     q += 8;
   }
   while (limit - p >= 8) {
-    memcpy(&a, p, 8);
-    memcpy(&b, q, 8);
+    a = lz_load_le64(p);
+    b = lz_load_le64(q);
     if (a != b) return (size_t)(p - start) + first_difference(a ^ b);
     p += 8;
     q += 8;

@@ -461,7 +461,8 @@ long lz_zstd_sequences(struct lz_zstd_dec *st, const uint8_t *s, size_t n,
   if (count >= 128) {
     h = count == 255 ? 3 : 2;
     if (n < h) return lz_zstd_fail(f, LZ_MALFORMED, (int64_t)at, header_past);
-    count = count == 255 ? lz_le16(s + 1) + 0x7F00u : ((count - 128) << 8) + s[1];
+    count = count == 255 ? lz_load_le16(s + 1) + 0x7F00u
+                         : ((count - 128) << 8) + s[1];
   }
 
   if (count == 0) {

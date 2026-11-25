@@ -1,12 +1,14 @@
 /* CRC-32 for arm64 hosts: with the CRC32 instructions alone, and folded
    with PMULL (the folding of checksum_clmul.h, whose arithmetic PMULL
-   shares with PCLMULQDQ) where the host has both. Empty elsewhere, and
+   shares with PCLMULQDQ) where the host has both. Empty elsewhere, on
+   big-endian arm64, whose vector lanes the folding does not order, and
    where the C compiler lacks the extensions.
 
    CRC32X and its narrower forms advance the CRC-32 register, held
    inverted, by 8, 4, 2 or 1 bytes (Arm ARM, CRC32X): the tail of a fold
    and the vector it leaves are read with them. */
 
+#include "byteorder.h"
 #include "checksum_paths.h"
 
 #if defined(__aarch64__) && !defined(__ARM_BIG_ENDIAN) && \
@@ -15,35 +17,17 @@
 #include <arm_acle.h>
 #include <arm_neon.h>
 
-static inline uint64_t load64(const uint8_t *p) {
-  uint64_t v;
-  __builtin_memcpy(&v, p, sizeof v);
-  return v;
-}
-
-static inline uint32_t load32(const uint8_t *p) {
-  uint32_t v;
-  __builtin_memcpy(&v, p, sizeof v);
-  return v;
-}
-
-static inline uint16_t load16(const uint8_t *p) {
-  uint16_t v;
-  __builtin_memcpy(&v, p, sizeof v);
-  return v;
-}
-
 /* The register [r] advanced over [n] bytes, 8 at a time. */
 static inline uint32_t crc_words(uint32_t r, const uint8_t *p, size_t n) {
   for (; n >= 32; p += 32, n -= 32) {
-    r = __crc32d(r, load64(p));
-    r = __crc32d(r, load64(p + 8));
-    r = __crc32d(r, load64(p + 16));
-    r = __crc32d(r, load64(p + 24));
+    r = __crc32d(r, lz_load_le64(p));
+    r = __crc32d(r, lz_load_le64(p + 8));
+    r = __crc32d(r, lz_load_le64(p + 16));
+    r = __crc32d(r, lz_load_le64(p + 24));
   }
-  for (; n >= 8; p += 8, n -= 8) r = __crc32d(r, load64(p));
-  if (n & 4) r = __crc32w(r, load32(p)), p += 4;
-  if (n & 2) r = __crc32h(r, load16(p)), p += 2;
+  for (; n >= 8; p += 8, n -= 8) r = __crc32d(r, lz_load_le64(p));
+  if (n & 4) r = __crc32w(r, lz_load_le32(p)), p += 4;
+  if (n & 2) r = __crc32h(r, lz_load_le16(p)), p += 2;
   if (n & 1) r = __crc32b(r, *p);
   return r;
 }

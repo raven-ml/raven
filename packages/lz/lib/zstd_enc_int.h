@@ -19,6 +19,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "byteorder.h"
 #include "zstd_enc.h"
 
 #if defined(__GNUC__)
@@ -128,40 +129,7 @@ struct ze_defaults {
   struct ze_fse ll, of, ml;
 };
 
-/* Little-endian loads and stores, whatever the host's order, so that the
-   bytes written never depend on the machine. */
-ZE_INLINE uint64_t ze_rd64(const uint8_t *p) {
-  uint64_t v;
-  memcpy(&v, p, 8);
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap64(v);
-#endif
-  return v;
-}
-
-ZE_INLINE uint32_t ze_rd32(const uint8_t *p) {
-  uint32_t v;
-  memcpy(&v, p, 4);
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap32(v);
-#endif
-  return v;
-}
-
-ZE_INLINE void ze_wr64(uint8_t *p, uint64_t v) {
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap64(v);
-#endif
-  memcpy(p, &v, 8);
-}
-
-ZE_INLINE void ze_wr32(uint8_t *p, uint32_t v) {
-#if defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-  v = __builtin_bswap32(v);
-#endif
-  memcpy(p, &v, 4);
-}
-
+/* The 24-bit fields of block and literals headers, little-endian. */
 ZE_INLINE void ze_wr24(uint8_t *p, uint32_t v) {
   p[0] = (uint8_t)v;
   p[1] = (uint8_t)(v >> 8);
