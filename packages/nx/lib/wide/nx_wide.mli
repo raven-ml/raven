@@ -12,8 +12,11 @@
     where operands and results are zero or of magnitude between [2^-969] and
     [2^969] at float64 ([2^-102] and [2^102] at float32), where every error term
     is a normal float. A number whose sum is infinite or NaN is held as that sum
-    with a zero [lo]; an operation on it gives the float result of the [hi]
-    words with a zero [lo], and comparisons compare [hi], so NaN compares false.
+    with a zero [lo]. Where the float operation on the [hi] words is not finite,
+    the result is that float with a zero [lo]. Comparisons of non-finite numbers
+    compare [hi], so NaN compares false. A zero result is [+0], but where the
+    float operation on the [hi] words gives a zero, whose sign it has: [x - x]
+    is [+0], [-0 * x] is [-0] and the floor of [-0] is [-0].
 
     Operations broadcast as nx's arithmetic does and compute where their
     operands lie. Each is a fixed program of nx's elementwise operations, with
