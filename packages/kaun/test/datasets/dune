@@ -1,4 +1,4 @@
 (test
  (name test_datasets)
  (package kaun)
- (libraries kaun.datasets nx windtrap))
+ (libraries kaun.datasets nx unix windtrap))

@@ -14,7 +14,11 @@
     ]}
 
     Datasets are downloaded on demand and cached locally under
-    [$RAVEN_CACHE_ROOT/datasets/] (or [$XDG_CACHE_HOME/raven/datasets/]). *)
+    [$RAVEN_CACHE_ROOT/datasets/] (or [$XDG_CACHE_HOME/raven/datasets/]).
+    Downloading requires [curl] on the [PATH], which runs without reading the
+    user's curl configuration files: a proxy or a CA bundle is set through
+    curl's environment variables, such as [https_proxy] and
+    [CURL_CA_BUNDLE]. *)
 
 val mnist :
   ?fashion:bool ->

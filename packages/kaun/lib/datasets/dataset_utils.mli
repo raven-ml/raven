@@ -6,7 +6,8 @@
 (** The cache, download and unpacking steps the dataset loaders share.
 
     Downloads run [curl] and extraction runs [tar], each found on [PATH] and run
-    without a shell. Each blocks until its program exits. Progress is logged to
+    without a shell; curl reads none of the user's curl configuration files.
+    Each blocks until its program exits. Progress is logged to
     the [kaun.datasets] source. *)
 
 val mkdir_p : string -> unit

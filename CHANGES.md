@@ -4703,6 +4703,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun_datasets` runs curl with `-q` first, so its downloads read no
+  `~/.curlrc`: an `-o` there wrote the file elsewhere and the load failed.
+  A proxy or CA bundle set there no longer applies; set `https_proxy` or
+  `CURL_CA_BUNDLE` instead.
 - `Kaun.Batch_norm.apply` takes running statistics of their own float
   dtype, independent of the parameters' and the input's, so a
   half-precision model can keep float32 statistics, as `Batch_norm.Stats`

@@ -86,7 +86,9 @@ let run prog args =
 
 let curl_download ~url ~dest () =
   mkdir_p (Filename.dirname dest);
-  match run "curl" [ "-L"; "--fail"; "-s"; "-o"; dest; url ] with
+  (* [-q] first: curl reads no ~/.curlrc, whose options, such as [-o], would
+     act on the download. *)
+  match run "curl" [ "-q"; "-L"; "--fail"; "-s"; "-o"; dest; url ] with
   | None -> failwith "curl not found on PATH"
   | Some (Unix.WEXITED 0) -> ()
   | Some _ ->

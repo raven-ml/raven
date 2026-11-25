@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Nothing here touches the network: each test seeds a temporary cache with the
-   files a loader would otherwise download, and runs with no [curl] on
-   [PATH]. *)
+   files a loader would otherwise download, and runs with no [curl] on [PATH]
+   or a stand-in that fails. *)
 
 open Windtrap
 
@@ -100,6 +100,28 @@ let download_error () =
   ignore (fresh_root ());
   raises_match (fun e -> Exn.failure e) (fun () -> Kaun_datasets.mnist ())
 
+(* curl reads ~/.curlrc before its arguments unless [-q] comes first (man curl,
+   [-q]); an option there, such as [-o], would act on the download. A [curl] alone on [PATH] writes its arguments to a log, one per
+   line, and fails as curl does on a 404. *)
+let reads_no_curlrc () =
+  if Sys.win32 then skip ~reason:"the curl stand-in is a shell script" ();
+  ignore (fresh_root ());
+  let bin = temp_dir ~prefix:"bin" () in
+  let log = Filename.concat (temp_dir ~prefix:"curl" ()) "arguments" in
+  let curl = Filename.concat bin "curl" in
+  Out_channel.with_open_bin curl (fun oc ->
+      Printf.fprintf oc "#!/bin/sh\nprintf '%%s\\n' \"$@\" > %s\nexit 22\n"
+        (Filename.quote log));
+  Unix.chmod curl 0o755;
+  setenv "PATH" (Some bin);
+  raises_match (fun e -> Exn.failure e) (fun () -> Kaun_datasets.mnist ());
+  let first =
+    if Sys.file_exists log then
+      In_channel.with_open_bin log In_channel.input_line
+    else None
+  in
+  equal ~msg:"curl's first argument" (option string) (Some "-q") first
+
 let selects_fashion () =
   let root = fresh_root () in
   seed_mnist ~first_label:0 (dataset_dir root "mnist");
@@ -159,6 +181,7 @@ let () =
              test "gives images in [0, 1] by default" normalizes;
              test "reads Fashion-MNIST when fashion is true" selects_fashion;
              test "raises Failure on a download error" download_error;
+             test "runs curl without the user's configuration" reads_no_curlrc;
              cases "raises Failure on a file of the wrong magic number" ~id:fst
                [
                  ( "images",
