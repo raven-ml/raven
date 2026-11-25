@@ -17,6 +17,11 @@
 
    [gc ROOT] collects the store and prints the number of entries it removed.
 
+   [fifo ROOT FILE] opens the FIFO FILE for writing, which returns once a reader
+   has opened it, prints "opened", and writes a version's tombstone into it once
+   a line reaches its standard input. An alarm ends it after 10 s, so a reader
+   that never opens FILE does not hold the test.
+
    The modes below run under a limit on file sizes that the parent set, with
    SIGXFSZ ignored, which would kill the child before the write can fail.
 
@@ -72,6 +77,14 @@ let () =
       ignore (Session.resume ~provenance run ~step:0);
       print_endline "taken";
       ignore (In_channel.input_all stdin)
+  | "fifo" ->
+      ignore (Unix.alarm 10);
+      let fd = Unix.openfile Sys.argv.(3) [ Unix.O_WRONLY; Unix.O_CLOEXEC ] 0 in
+      print_endline "opened";
+      ignore (In_channel.input_line stdin);
+      let tombstone = {|{"format":1,"time":1.0,"deleted":true}|} ^ "\n" in
+      ignore (Unix.write_substring fd tombstone 0 (String.length tombstone));
+      Unix.close fd
   | "gc" -> print_endline (string_of_int (Store.gc store))
   | "refused" -> (
       Sys.set_signal Sys.sigxfsz Sys.Signal_ignore;

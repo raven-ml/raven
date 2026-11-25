@@ -383,10 +383,11 @@ v}
  "metadata":{"framework":"kaun"}}
 v}
 
-    [aliases/<alias>] holds a version number and a line feed. A writer sets
-    an alias by replacing its file whole, as it replaces notes. Aliases
-    and version numbers live apart, so an alias spelled as a number names
-    an alias.
+    [aliases/<alias>] holds a version number and a line feed. A writer sets an
+    alias by replacing its file whole, as it replaces notes. Aliases and version
+    numbers live apart, so an alias spelled as a number names an alias. An alias
+    of a deleted version names nothing, since its number names nothing ever
+    again, and a collector removes it ({!section-blobs}).
 
     {1:blobs Blobs}
 
@@ -404,17 +405,17 @@ v}
     to its digest's name. A blob present under its name is therefore
     complete, and a reader may check it by computing its digest again.
 
-    A writer that publishes a version holds a shared lock on [lock] from
-    before it writes the blob until the version file exists, and a writer
-    that sets an alias or deletes a version holds it while it replaces the
-    file. A {e collector} holds an exclusive lock on [lock] while it
-    removes the blobs that no version names and the [.]-named entries
-    under [blobs/] and [artifacts/]. While it holds the lock no such write
-    is in progress, so it removes nothing a version will name and no file
-    a writer is about to rename. It also removes what a deletion cut short
-    left ({!section-resume}): the [.]-named entries of [runs/], and the run
-    directories that hold [.deleted] and no log. Neither is a run, and no
-    writer adds to either.
+    A writer that publishes a version holds a shared lock on [lock] from before
+    it writes the blob until the version file exists, and a writer that sets an
+    alias or deletes a version holds it while it replaces the file. A
+    {e collector} holds an exclusive lock on [lock] while it removes the blobs
+    that no version names, the aliases of deleted versions and the [.]-named
+    entries under [blobs/] and [artifacts/]. While it holds the lock no such
+    write is in progress, so it removes nothing a version will name and no file
+    a writer is about to rename. It also removes what a deletion cut short left
+    ({!section-resume}): the [.]-named entries of [runs/], and the run
+    directories that hold [.deleted] and no log. Neither is a run, and no writer
+    adds to either.
 
     {1:durability Durability}
 

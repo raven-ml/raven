@@ -2021,7 +2021,6 @@ let history_tests =
 type model = {
   mutable versions : (int * string * bool) list;
   mutable best : int option;
-  mutable stored : string list;
 }
 
 let content = Gen.of_list ~pp:Format.pp_print_string [ "a"; "b" ]
@@ -2036,24 +2035,78 @@ let select_gen =
         | `Latest -> "latest"
         | `Version n -> "version " ^ string_of_int n
         | `Alias a -> "alias " ^ a))
-    [ `Latest; `Version 1; `Version 2; `Version 3; `Alias "best" ]
+    [ `Latest; `Version 1; `Version 2; `Version 3 ]
 
-(* A store with a file of each content, and a session per domain that
-   publishes. *)
-let store_w : (model, Store.t * string) abstract = abstract "s"
+(* A store with a file of each content, and a session per domain that publishes.
+   Whatever the calls, the store they leave breaks no rule of the format. *)
+let store_w : (model, Store.t * string) abstract =
+  abstract
+    ~release:(fun (store, _) ->
+      equal ~msg:"check" (list string) [] (List.map fst (Store.check store)))
+    "s"
 
 let session_w : (model, Session.t) abstract =
   abstract ~release:(fun s -> Session.finish s) "p"
 
+(* What [Store.artifact] selects, as the model and the store give it: the
+   version and its digest. *)
+let selected = option (pair int string)
+
+let select_ref sel m =
+  let live n = if alive m n then Some n else None in
+  let n =
+    match sel with
+    | `Latest ->
+        List.fold_left
+          (fun acc (n, _, live) -> if live then Some n else acc)
+          None m.versions
+    | `Version n -> live n
+    | `Alias _ -> Option.bind m.best live
+  in
+  Option.map
+    (fun n ->
+      let _, c, _ = List.find (fun (n', _, _) -> n' = n) m.versions in
+      (n, "blake2b-256:" ^ hex c))
+    n
+
+(* A blob may go once its version is deleted, so the selection reads the
+   version's digest and not its blob. *)
+let select_sys sel (store, _) =
+  Option.map
+    (fun a -> (Artifact.version a, Artifact.digest a))
+    (Store.artifact store "ckpt" sel)
+
+let alias_gen =
+  Gen.of_list
+    ~pp:(fun ppf _ -> Format.pp_print_string ppf "alias best")
+    [ `Alias "best" ]
+
+(* [dangling_alias store] is the path of the alias "best" of "x", which names a
+   version since deleted. *)
+let dangling_alias store =
+  let s = start store in
+  let a = Session.log_artifact s ~name:"x" (source "1") in
+  Session.finish s;
+  Store.set_alias store a "best";
+  Store.delete_artifact store a;
+  Filename.concat (Store.root store) "artifacts/x/aliases/best"
+
 let artifact_tests =
   group "artifacts"
     [
+      (* Two sessions publish one name at once in most programs, so the claim
+         this reaches on every run is that their numbers are distinct, from 1.
+         The rest holds in every order but is reached by chance; the sequential
+         tests below hold the cases a race could leave. About a second: each
+         publication syncs its blob, its version file and the producing run's
+         log (Munin.Store_format, durability), and fewer than 20 programs leave
+         a command uncalled on some seeds. *)
       stateful ~count:20 ~domains:2
-        "publications, aliases, deletions and gc read as some order left them"
+        "publications, aliases and deletions read as some order left them"
         [
           command "open"
             (Gen.unit @-> makes store_w)
-            (fun () -> { versions = []; best = None; stored = [] })
+            (fun () -> { versions = []; best = None })
             (fun () ->
               let dir = temp_dir () in
               List.iter
@@ -2070,41 +2123,21 @@ let artifact_tests =
             (fun c m ->
               let n = List.length m.versions + 1 in
               m.versions <- m.versions @ [ (n, c, true) ];
-              if not (List.mem c m.stored) then m.stored <- c :: m.stored;
               n)
             (fun c s ->
               let dir = Filename.dirname (Store.root (Session.store s)) in
               Artifact.version
                 (Session.log_artifact s ~name:"ckpt" (Filename.concat dir c)));
           command "select"
-            (select_gen @-> store_w
-            ^-> returns (option (triple int string string)))
-            (fun sel m ->
-              let n =
-                match sel with
-                | `Latest ->
-                    List.fold_left
-                      (fun acc (n, _, live) -> if live then Some n else acc)
-                      None m.versions
-                | `Version n -> if alive m n then Some n else None
-                | `Alias _ ->
-                    Option.bind m.best (fun n ->
-                        if alive m n then Some n else None)
-              in
-              Option.map
-                (fun n ->
-                  let _, c, _ =
-                    List.find (fun (n', _, _) -> n' = n) m.versions
-                  in
-                  (n, "blake2b-256:" ^ hex c, c))
-                n)
-            (fun sel (store, _) ->
-              Option.map
-                (fun a ->
-                  ( Artifact.version a,
-                    Artifact.digest a,
-                    read_file (Artifact.path a) ))
-                (Store.artifact store "ckpt" sel));
+            (select_gen @-> store_w ^-> returns selected)
+            select_ref select_sys;
+          command "select alias"
+            (alias_gen @-> store_w ^-> returns selected)
+            select_ref select_sys;
+          (* The listing reads the numbers, then each version's file, so it can
+             see a version deleted after a later one was published and miss that
+             later one (Store.artifacts): it runs where no write runs beside
+             it. *)
           command "versions"
             (store_w ^-> returns (list int))
             (fun m ->
@@ -2113,10 +2146,9 @@ let artifact_tests =
                 m.versions)
             (fun (store, _) ->
               List.map Artifact.version (Store.artifacts ~name:"ckpt" store));
-          (* Setting and deleting look the version up first, so they run where
-             no call runs beside them. *)
+          (* A version deleted before the call is refused; one deleted during it
+             leaves the alias naming nothing, as if set first. *)
           command "alias"
-            ~pre:(fun _ _ -> true)
             (number @-> store_w ^-> returns bool)
             (fun n m ->
               if alive m n then (
@@ -2125,28 +2157,24 @@ let artifact_tests =
               else false)
             (fun n (store, _) ->
               match Store.artifact store "ckpt" (`Version n) with
-              | Some a ->
-                  Store.set_alias store a "best";
-                  true
-              | None -> false);
+              | None -> false
+              | Some a -> (
+                  match Store.set_alias store a "best" with
+                  | () -> true
+                  | exception Failure _ -> false));
           command "delete"
-            ~pre:(fun _ _ -> true)
-            (number @-> store_w ^-> returns bool)
+            (number @-> store_w ^-> returns unit)
             (fun n m ->
               if alive m n then (
                 m.versions <-
                   List.map
                     (fun (n', c, live) -> (n', c, live && n' <> n))
                     m.versions;
-                if m.best = Some n then m.best <- None;
-                true)
-              else false)
+                if m.best = Some n then m.best <- None))
             (fun n (store, _) ->
-              match Store.artifact store "ckpt" (`Version n) with
-              | Some a ->
-                  Store.delete_artifact store a;
-                  true
-              | None -> false);
+              Option.iter
+                (Store.delete_artifact store)
+                (Store.artifact store "ckpt" (`Version n)));
           command "unalias"
             (store_w ^-> returns unit)
             (fun m -> m.best <- None)
@@ -2156,17 +2184,6 @@ let artifact_tests =
             (fun m ->
               match m.best with Some n -> [ ("best", n) ] | None -> [])
             (fun (store, _) -> Store.aliases store "ckpt");
-          (* A blob no version names is removed. *)
-          command "gc"
-            (store_w ^-> returns int)
-            (fun m ->
-              let named c =
-                List.exists (fun (_, c', live) -> live && c' = c) m.versions
-              in
-              let unnamed = List.filter (fun c -> not (named c)) m.stored in
-              m.stored <- List.filter named m.stored;
-              List.length unnamed)
-            (fun (store, _) -> Store.gc store);
         ];
       test "a version reads back what its publication gave" (fun () ->
           let store = new_store () in
@@ -2189,6 +2206,104 @@ let artifact_tests =
           equal ~msg:"created" float_exact (Artifact.created_at a)
             (Artifact.created_at b);
           equal ~msg:"path" string (Artifact.path a) (Artifact.path b));
+      test "an alias of a deleted version names nothing" (fun () ->
+          let store = new_store () in
+          ignore (dangling_alias store);
+          equal (option int) None
+            (Option.map Artifact.version
+               (Store.artifact store "x" (`Alias "best"))));
+      test "aliases leaves out an alias of a deleted version" (fun () ->
+          let store = new_store () in
+          ignore (dangling_alias store);
+          equal (list (pair string int)) [] (Store.aliases store "x"));
+      test "a deletion leaves its version's aliases until gc" (fun () ->
+          let store = new_store () in
+          let alias = dangling_alias store in
+          equal (list string) [ "best" ]
+            (Array.to_list (Sys.readdir (Filename.dirname alias))));
+      test "gc removes a blob no version names and keeps a named one" (fun () ->
+          let store = new_store () in
+          let s = start store in
+          let v1 = Session.log_artifact s ~name:"x" (source "1") in
+          let v2 = Session.log_artifact s ~name:"x" (source "2") in
+          Session.finish s;
+          Store.delete_artifact store v1;
+          ignore (Store.gc store);
+          equal (list string)
+            [ Filename.basename (Artifact.path v2) ]
+            (Array.to_list (Sys.readdir (Filename.dirname (Artifact.path v1)))));
+      test "an alias moved while its old version is deleted reads the new"
+        (fun () ->
+          if Sys.win32 then skip ~reason:"Windows has no mkfifo" ();
+          (* A FIFO in place of version 1 holds the reader after it read the
+             alias, which names 1: meanwhile version 2 is published, the alias
+             moves to it, and 1 is written deleted, as a "best" checkpoint moves
+             on and the old one is pruned. *)
+          let store = new_store () in
+          let dir = Filename.concat (Store.root store) "artifacts/x" in
+          mkdir_p (Store.root store);
+          mkdir_p (Filename.dirname dir);
+          mkdir_p dir;
+          mkdir_p (Filename.concat dir "aliases");
+          write_file (Filename.concat dir "aliases/best") "1\n";
+          let first = Filename.concat dir "1.json" in
+          Unix.mkfifo first 0o644;
+          let read = ref None in
+          let reader =
+            Thread.create
+              (fun () -> read := Store.artifact store "x" (`Alias "best"))
+              ()
+          in
+          let pid, stdin, out = spawn [ "fifo"; Store.root store; first ] in
+          let opened = In_channel.input_line out in
+          if opened <> Some "opened" then (
+            (try
+               Unix.close
+                 (Unix.openfile first [ Unix.O_WRONLY; Unix.O_NONBLOCK ] 0)
+             with Unix.Unix_error _ -> ());
+            Thread.join reader;
+            ignore (Unix.waitpid [] pid);
+            fail "the reader never opened version 1's file");
+          let s = start store in
+          let v2 = Session.log_artifact s ~name:"x" (source "2") in
+          Session.finish s;
+          Store.set_alias store v2 "best";
+          ignore (Unix.write_substring stdin "go\n" 0 3);
+          Unix.close stdin;
+          Thread.join reader;
+          wait pid;
+          close_in out;
+          equal (option int)
+            (Some (Artifact.version v2))
+            (Option.map Artifact.version !read));
+      test "gc removes an alias of a deleted version" (fun () ->
+          let store = new_store () in
+          let alias = dangling_alias store in
+          ignore (Store.gc store);
+          equal (list string) []
+            (Array.to_list (Sys.readdir (Filename.dirname alias))));
+      test "check passes an alias of a deleted version" (fun () ->
+          let store = new_store () in
+          ignore (dangling_alias store);
+          equal (list string) [] (List.map fst (Store.check store)));
+      test "set_alias refuses a version its store cannot read" (fun () ->
+          let store = new_store () and other = new_store () in
+          let s = start other in
+          let a = Session.log_artifact s ~name:"x" (source "1") in
+          Session.finish s;
+          raises_match Exn.failure (fun () -> Store.set_alias store a "best"));
+      test "set_alias refuses a deleted version" (fun () ->
+          let store = new_store () in
+          let s = start store in
+          let a = Session.log_artifact s ~name:"x" (source "1") in
+          Session.finish s;
+          Store.delete_artifact store a;
+          raises_match Exn.failure (fun () -> Store.set_alias store a "best");
+          let aliases =
+            Filename.concat (Store.root store) "artifacts/x/aliases"
+          in
+          equal ~msg:"alias files" (list string) []
+            (try Array.to_list (Sys.readdir aliases) with Sys_error _ -> []));
       test "an alias spelled as a number names an alias" (fun () ->
           let store = new_store () in
           let s = start store in

@@ -263,17 +263,18 @@ Artifacts: name, version, digest, size, run, step, aliases.
   munin: alias takes NAME VERSION ALIAS
   [1]
 
-Deleting version 2 removes the aliases that name it and leaves its blob,
-which gc removes.
+Deleting version 2 leaves its blob, and its alias, which names nothing and
+which `munin artifacts` leaves out; gc removes both.
 
   $ munin alias --root store mnist-ckpt 2 latest
   $ munin rm-artifact --root store mnist-ckpt 2
   $ ls store/artifacts/mnist-ckpt/aliases
   best
+  latest
   $ munin artifacts --root store | ids
   mnist-ckpt	1	blake2b-256:188e41df655bfeffb5654aeab18124803449b498d61874eca09a2159c6172669	3	BASE	4	best
   $ munin gc --root store
-  removed 1
+  removed 2
   $ munin gc --root store
   removed 0
 

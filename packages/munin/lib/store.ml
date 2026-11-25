@@ -211,6 +211,22 @@ let alias_target s name alias =
   | Some text -> int_of_string_opt (String.trim text)
   | None | (exception Sys_error _) -> None
 
+(* [resolve s name alias] is the version [alias] names, if alive. An alias of a
+   deleted version names nothing; but one read just before a set_alias moved it
+   on and the deletion of the version it named is read again, and the resolution
+   starts over while the alias changes, as a scan for the latest starts over
+   while numbers appear. *)
+let rec resolve s name alias =
+  match alias_target s name alias with
+  | None -> None
+  | Some n -> (
+      match Version.load ~root:s.root name n with
+      | `Version a -> Some a
+      | `Deleted | `Missing -> (
+          match alias_target s name alias with
+          | Some n' when n' <> n -> resolve s name alias
+          | _ -> None))
+
 let artifact s name sel =
   if not (File.is_segment name) then None
   else
@@ -221,18 +237,28 @@ let artifact s name sel =
     in
     match sel with
     | `Version n -> version n
-    | `Alias a ->
-        if File.is_segment a then Option.bind (alias_target s name a) version
-        else None
+    | `Alias a -> if File.is_segment a then resolve s name a else None
     | `Latest ->
         List.find_map version (List.rev (Version.numbers ~root:s.root name))
 
+(* [alias_files s name] is each alias file of [name] and the number it holds,
+   whether that version is alive or not. *)
+let alias_files s name =
+  File.entries (alias_dir s name)
+  |> List.filter_map (fun a ->
+      Option.map (fun n -> (a, n)) (alias_target s name a))
+
+let is_deleted s name n =
+  match Version.load ~root:s.root name n with `Deleted -> true | _ -> false
+
+(* An alias that names a deleted version names nothing: numbers are never
+   reused, so it can name nothing else. *)
 let aliases s name =
   if not (File.is_segment name) then []
   else
     File.entries (alias_dir s name)
     |> List.filter_map (fun a ->
-        Option.map (fun n -> (a, n)) (alias_target s name a))
+        Option.map (fun v -> (a, Artifact.version v)) (resolve s name a))
 
 (* An alias and a tombstone are written through a [.]-named temporary under
    [artifacts/], which gc removes under its exclusive lock: their writers hold
@@ -241,21 +267,28 @@ let aliases s name =
 let set_alias s a alias =
   if not (File.is_segment alias) then
     invalid_arg (Printf.sprintf "Store.set_alias: %S is not a name" alias);
+  let name = Artifact.name a and n = Artifact.version a in
   Version.with_lock s.root `Shared @@ fun () ->
+  (match Version.load ~root:s.root name n with
+  | `Version _ -> ()
+  | `Deleted ->
+      failwith
+        (Printf.sprintf "Store.set_alias: version %d of %s is deleted" n name)
+  | `Missing ->
+      failwith
+        (Printf.sprintf "Store.set_alias: version %d of %s cannot be read in %s"
+           n name s.root));
   File.replace
-    (Filename.concat (alias_dir s (Artifact.name a)) alias)
-    (string_of_int (Artifact.version a) ^ "\n")
+    (Filename.concat (alias_dir s name) alias)
+    (string_of_int n ^ "\n")
 
 let remove_alias s ~name alias =
   if File.is_segment name && File.is_segment alias then
     File.remove_tree (Filename.concat (alias_dir s name) alias)
 
+(* The tombstone alone: from then on the version's aliases name nothing, and gc
+   removes them under its exclusive lock, which no set_alias can race. *)
 let delete_artifact s a =
-  let name = Artifact.name a in
-  List.iter
-    (fun (alias, n) ->
-      if n = Artifact.version a then remove_alias s ~name alias)
-    (aliases s name);
   Version.with_lock s.root `Shared @@ fun () -> Version.tombstone ~root:s.root a
 
 (* Maintenance *)
@@ -302,7 +335,18 @@ let gc s =
     |> List.map (Filename.concat runs)
     |> List.filter Listing.deleted
   in
-  let removed = unnamed @ leftovers @ dot_entries runs in
+  let dangling =
+    List.concat_map
+      (fun n ->
+        List.filter_map
+          (fun (alias, v) ->
+            if is_deleted s n v then
+              Some (Filename.concat (alias_dir s n) alias)
+            else None)
+          (alias_files s n))
+      (Version.names ~root:s.root)
+  in
+  let removed = unnamed @ leftovers @ dangling @ dot_entries runs in
   List.iter File.remove_tree removed;
   List.iter remove_in_place deleted;
   List.length removed + List.length deleted
@@ -413,8 +457,8 @@ let check s =
           match alias_target s name alias with
           | Some n
             when match Version.load ~root:s.root name n with
-                 | `Version _ -> true
-                 | _ -> false ->
+                 | `Version _ | `Deleted -> true
+                 | `Missing -> false ->
               ()
           | _ -> add p "an alias that names no version")
         (File.entries (Filename.concat d "aliases")))

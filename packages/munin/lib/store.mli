@@ -132,11 +132,14 @@ val artifact :
     latest ({!Store_format.section-artifacts}), the version numbered [n], or the
     version the alias names. It is [None] if there is no such version or it was
     deleted. A version file that does not follow
-    {!Store_format.section-artifacts} is no version, and {!check} names it. *)
+    {!Store_format.section-artifacts} is no version, and {!check} names it.
+    While others publish, delete and alias versions, [`Alias] is the version it
+    selects at some instant during the call. *)
 
 val aliases : t -> string -> (string * int) list
-(** [aliases s name] is [name]'s aliases and the numbers of the versions
-    they name, sorted by alias. *)
+(** [aliases s name] is [name]'s aliases and the numbers of the versions they
+    name, sorted by alias. An alias that names nothing
+    ({!Store_format.section-artifacts}) is left out. *)
 
 val set_alias : t -> Artifact.t -> string -> unit
 (** [set_alias s a alias] makes [alias] name the version [a] of its
@@ -144,26 +147,30 @@ val set_alias : t -> Artifact.t -> string -> unit
     at once, the last to finish wins.
 
     Raises [Invalid_argument] if [alias] is not a name
-    ({!Store_format.section-names}). *)
+    ({!Store_format.section-names}), and [Failure] if [a] is deleted or its
+    version file cannot be read. A deletion of [a] that runs at once may leave
+    [alias] naming nothing ({!Store_format.section-artifacts}). *)
 
 val remove_alias : t -> name:string -> string -> unit
 (** [remove_alias s ~name alias] removes [name]'s alias [alias], if it
     has one. *)
 
 val delete_artifact : t -> Artifact.t -> unit
-(** [delete_artifact s a] deletes the version [a] and the aliases that name
-    it. Its number never names another version. Its blob stays until a
-    {!gc} finds that no version names it. *)
+(** [delete_artifact s a] deletes the version [a]. Its number never names
+    another version, and the aliases that name it name nothing
+    ({!Store_format.section-artifacts}). Its blob and those aliases stay until a
+    {!gc} removes them. *)
 
 (** {1:maintenance Maintenance} *)
 
 val gc : t -> int
-(** [gc s] removes the blobs of [s] that no version names, the [.]-named work
-    that crashed writers left under [blobs/] and [artifacts/], and what a
-    {!delete_run} cut short left under [runs/], and is the number of entries it
-    removed. It waits for the publications in progress, and those that start
-    wait for it ({!Store_format.section-blobs}). On a missing root it does
-    nothing and creates nothing. *)
+(** [gc s] removes the blobs of [s] that no version names, the aliases of
+    deleted versions, the [.]-named work that crashed writers left under
+    [blobs/] and [artifacts/], and what a {!delete_run} cut short left under
+    [runs/], and is the number of entries it removed. It waits for the
+    publications in progress, and those that start wait for it
+    ({!Store_format.section-blobs}). On a missing root it does nothing and
+    creates nothing. *)
 
 val check : t -> (string * string) list
 (** [check s] is each path of [s] that breaks the format, with what is
@@ -177,7 +184,7 @@ val check : t -> (string * string) list
       one whose [rules] and [length] match its log but whose statistics
       differ from the log's ({!Store_format.section-stats});
     - a file under a run's [files/] that no record names;
-    - an alias that names no version;
+    - an alias whose number names no version, deleted or not;
     - a version whose blob is missing, or whose blob's content does not
       match its digest;
     - a [.]-named entry a writer left;
