@@ -2391,14 +2391,19 @@ let iterates_tests =
           (Oracle.tensor ~rel:1e-8 ())
           (vec [| 2.; -1.3 |])
           (Nx.get [ 39 ] xs));
-    test "the iterates of zero unknowns are rows of none" (fun () ->
+    cases "the iterates of zero unknowns are rows of none" ~id:fst
+      (("nelder_mead", Minimize.nelder_mead) :: gradient_methods)
+      (fun (_, m) ->
         equal (Oracle.tensor ())
           (Nx.zeros f64 [| 3; 0 |])
-          (Minimize.iterates one
-             (Minimize.bfgs ~linear:Linear.dense)
-             ~steps:3
+          (Minimize.iterates one m ~steps:3
              (fun x -> Nx.sum (Nx.square x))
              (vec [||])));
+    test "levenberg_marquardt's iterates of zero unknowns are rows of none"
+      (fun () ->
+        equal (Oracle.tensor ())
+          (Nx.zeros f64 [| 3; 0 |])
+          (Minimize.iterates one lm ~steps:3 Fun.id (vec [||])));
     test "the iterates are detached" (fun () ->
         equal (Oracle.tensor ~abs:0. ())
           (vec [| 0.; 0. |])

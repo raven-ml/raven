@@ -21,6 +21,13 @@ let dot u v =
   if width uv = 1 then Nx.reshape (lanes uv) uv
   else Nx.reshape (lanes uv) (Num.sum_rows (rows uv))
 
+(* Each lane's largest magnitude, as a column: 0 for a vector of no component,
+   whose maximum has no term. *)
+let top v =
+  if width v = 0 then
+    Nx.zeros_at (Nx.beside v) (Nx.dtype v) (Array.append (lanes v) [| 1 |])
+  else Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs v)
+
 (* Whether every component of each lane holds. *)
 let every b =
   if width b = 1 then Nx.reshape (lanes b) b else Nx.all ~axes:[ -1 ] b
@@ -29,8 +36,7 @@ let every b =
    zeros or with an infinite component divides by a finite, positive number. *)
 let largest v =
   let dtype = Nx.dtype v in
-  Nx.clamp ~min:(Num.tiny dtype) ~max:(Num.huge dtype)
-    (Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs v))
+  Nx.clamp ~min:(Num.tiny dtype) ~max:(Num.huge dtype) (top v)
 
 (* The squares are summed on the vector divided by its largest magnitude: the
    squares of components of 10⁻¹⁷⁰ are below the floats' range. *)
@@ -47,7 +53,7 @@ let norm v =
    nor overflows. *)
 let descends g d =
   let scaled v =
-    let m = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs v) in
+    let m = top v in
     Nx.div v (Nx.where (Nx.equal_s m 0.) (Nx.ones_like m) m)
   in
   Nx.less_s (dot (scaled g) (scaled d)) 0.
@@ -461,7 +467,7 @@ let size ~x ~f delta =
     match f with
     | Paired f -> Nx.equal_s f 0.
     | Solved f ->
-        let m = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs f) in
+        let m = top f in
         Nx.broadcast_to (Nx.shape delta)
           (Nx.logical_or (Nx.equal_s m 0.)
              (Nx.greater_equal_s m (tiny /. Num.eps dtype)))
@@ -482,8 +488,7 @@ let error q ~x ~f delta =
    resolution of a coupled problem's gradient, however finely its small
    components are represented. *)
 let within_ulp x step =
-  let top = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs x) in
-  every (Nx.less_equal (Nx.abs step) (Nx.mul_s top (Num.eps (Nx.dtype x))))
+  every (Nx.less_equal (Nx.abs step) (Nx.mul_s (top x) (Num.eps (Nx.dtype x))))
 
 (* A step at the floats' resolution: within one unit of [x]'s last place in
    every component, so it moves the estimate by rounding at most, as a step that
@@ -672,8 +677,7 @@ let condition (c, c') =
 
 let resolution ~kappa answer =
   let dtype = Nx.dtype answer in
-  let top = Nx.max ~axes:[ -1 ] ~keepdims:true (Nx.abs answer) in
-  Nx.mul (Nx.mul_s (column kappa) (Num.eps dtype)) top
+  Nx.mul (Nx.mul_s (column kappa) (Num.eps dtype)) (top answer)
 
 let iterations ~budget extra step (s, aux) =
   let carry =

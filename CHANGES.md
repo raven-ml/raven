@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Minimize.iterates` of `levenberg_marquardt`, `lbfgs` and `newton` on a
+  start of no unknowns returns its rows of no element, as `bfgs`'s does, where
+  each raised `Invalid_argument` from a reshape or a maximum of no term.
 - An Ode solve whose steps fall below the time's resolution because every
   larger attempt met a non-finite field ends `Not_finite`, where it ended
   `Stalled` with a report that the solution may blow up. `jera.mli` promised

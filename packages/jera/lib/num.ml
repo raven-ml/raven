@@ -140,7 +140,8 @@ let matvec a v =
   let n = Nx.dim (-1) a in
   let lead = Array.sub (Nx.shape a) 0 (Nx.ndim a - 1) in
   let products = Nx.mul a (Nx.unsqueeze ~axes:[ -2 ] v) in
-  Nx.reshape lead (sum_rows (Nx.reshape [| -1; n |] products))
+  let rows = Array.fold_left ( * ) 1 lead in
+  Nx.reshape lead (sum_rows (Nx.reshape [| rows; n |] products))
 
 let gram a b =
   let p = Nx.dim 0 a and q = Nx.dim 0 b and n = Nx.dim 1 a in

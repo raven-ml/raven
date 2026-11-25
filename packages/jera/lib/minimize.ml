@@ -50,10 +50,10 @@ let bracket ~tol f ~lo ~hi =
   let st0 = Nx.full_at (Nx.beside a0) Nx.int32 (Nx.shape a0) running in
   let st0 = settle st0 (Nx.logical_not (Nx.isfinite f0)) Not_finite in
   (* The least distance between two evaluations, Brent's [localmin] as the
-     Fortran [fmin] states it: √ε |x| plus a third of [tol]'s scale. Closer
-     than √ε |x|, values of [f] differ by about its rounding near a minimum,
-     so they no longer order the points; the smallest normal float keeps a
-     step at [x = 0]. *)
+     Fortran [fmin] states it: √ε |x| plus a third of [tol]'s scale. Closer than
+     √ε |x|, values of [f] differ by about its rounding near a minimum, so they
+     no longer order the points; the smallest normal float keeps a step at [x =
+     0]. *)
   let least x =
     Nx.add_s
       (Nx.add (Nx.mul_s (Nx.abs x) root_eps) (Nx.div_s (Tol.scale tol x) 3.))
@@ -1873,9 +1873,6 @@ let iterates (type x f d) (x : (x, d) Nx.Ptree.t) (m : (x, f, d) t) ~steps
   match m with
   | Gradient (kind, linear) ->
       let (Problem p) = problem fn x kind linear f start in
-      (* A start of no unknowns is its own minimum, as in {!solve}. *)
-      if p.size = 0 then
-        rows x start (Nx.zeros_at (Nx.beside p.start.x) p.dtype [| steps; 0 |])
-      else rows x start (path ~steps p.meth p.start)
+      rows x start (path ~steps p.meth p.start)
   | Levenberg_marquardt (r, linear) -> lm_path fn x r linear ~steps f start
   | Nelder_mead -> simplex_path fn x ~steps f start
