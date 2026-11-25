@@ -41,12 +41,12 @@ let low_precision : type b. (float, b) Nx.dtype -> bool = function
 
 let apply ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
     ~training x =
-  if momentum < 0.0 || momentum > 1.0 then
+  if not (momentum >= 0.0 && momentum <= 1.0) then
     Format.kasprintf invalid_arg
       "Batch_norm.apply: momentum must be in [0, 1], got %a"
       (Nx.Dtype.pp_value Nx.float64)
       momentum;
-  if eps <= 0.0 then
+  if not (eps > 0.0) then
     Format.kasprintf invalid_arg
       "Batch_norm.apply: eps must be positive, got %a"
       (Nx.Dtype.pp_value Nx.float64)

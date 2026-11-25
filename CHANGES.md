@@ -4703,6 +4703,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Batch_norm.apply` refuses a NaN `momentum` or `eps`, and
+  `Kaun.Rope.make`, `llama3` and `yarn` a NaN argument, as they refuse one
+  out of range. A NaN momentum made every running statistic NaN without an
+  error, and a NaN `theta` at `head_dim` 2 gave a frequency of 1.
 - `Kaun.Attention.attend ~dropout` computes one `Nx.attention`, keeping the
   pairs its mask keeps, where it computed two, over the kept pairs and, for
   their share of the softmax, over the dropped ones. Results' bits change.

@@ -40,7 +40,7 @@ let base ~fn ~theta ~head_dim =
   if head_dim <= 0 || head_dim mod 2 <> 0 then
     Printf.ksprintf invalid_arg
       "Rope.%s: head_dim must be positive and even, got %d" fn head_dim;
-  if theta <= 0.0 then
+  if not (theta > 0.0) then
     Format.kasprintf invalid_arg "Rope.%s: theta must be positive, got %a" fn
       (Nx.Dtype.pp_value Nx.float64)
       theta;
@@ -52,11 +52,11 @@ let make ?(theta = 10000.0) ~head_dim ~context () =
 
 let llama3 ~theta ~head_dim ~factor ~low_freq_factor ~high_freq_factor
     ~original_context ~context =
-  if factor <= 0.0 || low_freq_factor <= 0.0 || original_context <= 0 then
+  if (not (factor > 0.0 && low_freq_factor > 0.0)) || original_context <= 0 then
     invalid_arg
       "Rope.llama3: factor, low_freq_factor and original_context must be \
        positive";
-  if high_freq_factor <= low_freq_factor then
+  if not (high_freq_factor > low_freq_factor) then
     invalid_arg "Rope.llama3: high_freq_factor must exceed low_freq_factor";
   let original = float_of_int original_context in
   let low_wavelen = original /. low_freq_factor in
@@ -77,11 +77,11 @@ let llama3 ~theta ~head_dim ~factor ~low_freq_factor ~high_freq_factor
 
 let yarn ~theta ~head_dim ~factor ~beta_fast ~beta_slow ~original_context
     ~context =
-  if factor < 1.0 || beta_slow <= 0.0 || original_context <= 0 then
+  if (not (factor >= 1.0 && beta_slow > 0.0)) || original_context <= 0 then
     invalid_arg
       "Rope.yarn: factor must be at least 1 and beta_slow and original_context \
        positive";
-  if beta_fast <= beta_slow then
+  if not (beta_fast > beta_slow) then
     invalid_arg "Rope.yarn: beta_fast must exceed beta_slow";
   let dim = float_of_int head_dim in
   (* The pair that makes [turns] full turns over the original context. *)
