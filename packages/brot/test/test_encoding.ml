@@ -6,805 +6,359 @@
 open Windtrap
 open Brot
 
-let make_word_tokenizer ?(added_tokens = []) ?(vocab = []) () =
-  word_level ~pre:Pre_tokenizer.whitespace ~added_tokens ~vocab ()
+(* An encoding whose every column is a function of the token's ID, so that an
+   operation that moves one column out of step with the others changes the
+   encoding. [type_id], when given, is every token's type ID. *)
+let numbered ?type_id ?overflowing ids =
+  let ids = Array.of_list ids in
+  let column f = Array.map f ids in
+  let type_of id = Option.value type_id ~default:(id mod 3) in
+  Encoding.create ~ids ~type_ids:(column type_of) ~tokens:(column string_of_int)
+    ~words:(column (fun id -> if id mod 4 = 3 then None else Some (id / 2)))
+    ~offsets:(column (fun id -> (id, id + 1)))
+    ~special_tokens_mask:(column (fun id -> id land 1))
+    ~attention_mask:(column (fun id -> (id lsr 1) land 1))
+    ?overflowing ()
 
-let words = List.mapi (fun id word -> (word, id))
+let positions n = List.init n Fun.id
 
-let test_encode_simple () =
-  let tokenizer = make_word_tokenizer ~vocab:(words [ "hello"; "world" ]) () in
-  let ids = encode tokenizer "hello world hello" |> Encoding.ids in
-  equal ~msg:"encoded length" int 3 (Array.length ids);
-  equal ~msg:"repeated token same id" bool true (ids.(0) = ids.(2))
+let rec same a b =
+  Encoding.ids a = Encoding.ids b
+  && Encoding.type_ids a = Encoding.type_ids b
+  && Encoding.tokens a = Encoding.tokens b
+  && Encoding.word_ids a = Encoding.word_ids b
+  && Encoding.offsets a = Encoding.offsets b
+  && Encoding.special_tokens_mask a = Encoding.special_tokens_mask b
+  && Encoding.attention_mask a = Encoding.attention_mask b
+  && List.equal same (Encoding.overflowing a) (Encoding.overflowing b)
 
-let test_encode_with_vocab () =
-  let tokenizer = make_word_tokenizer ~vocab:(words [ "hello"; "world" ]) () in
-  let ids = encode tokenizer "hello world" |> Encoding.ids |> Array.to_list in
-  equal ~msg:"encoded with vocab" (list int) [ 0; 1 ] ids
+let rec pp_encoding ppf enc =
+  Format.fprintf ppf "@[<v>%a" Encoding.pp enc;
+  List.iteri
+    (fun i window -> Format.fprintf ppf "@,window %d:@,%a" i pp_encoding window)
+    (Encoding.overflowing enc);
+  Format.fprintf ppf "@]"
 
-let test_encode_unknown_tokens () =
-  let tokenizer =
-    make_word_tokenizer
-      ~added_tokens:[ added_token "<unk>" ]
-      ~vocab:(words [ "hello" ]) ()
-  in
-  let ids =
-    encode tokenizer "hello unknown world" |> Encoding.ids |> Array.to_list
-  in
-  equal ~msg:"encoded something" bool true (List.length ids > 0)
+(* Two encodings are equal when their seven columns and their windows are. *)
+let encoding = Testable.make ~pp:pp_encoding ~equal:same
 
-let test_encode_empty () =
-  let tokenizer = make_word_tokenizer () in
-  let ids = encode tokenizer "" |> Encoding.ids |> Array.to_list in
-  equal ~msg:"encode empty" (list int) [] ids
+let direction =
+  Gen.of_list
+    ~pp:(fun ppf d ->
+      Format.pp_print_string ppf
+        (match d with `Left -> "`Left" | `Right -> "`Right"))
+    [ `Right; `Left ]
 
-let test_encode_batch_simple () =
-  let tokenizer =
-    make_word_tokenizer ~vocab:(words [ "hello"; "world"; "hi"; "there" ]) ()
-  in
-  let encodings = encode_batch tokenizer [ "hello world"; "hi there" ] in
-  equal ~msg:"batch size" int 2 (List.length encodings);
-  let first = List.hd encodings in
-  equal ~msg:"first encoding has ids" bool true
-    (Array.length (Encoding.ids first) > 0)
+(* Encoding.truncate, from the .mli: with [`Right] the first [max_length] IDs
+   are kept and the rest is cut into windows of [max_length] that overlap the
+   one before by [stride], walking right; the last window stops at the end.
+   [`Left] is the same cut of the reversed IDs, read backwards. *)
+let rec windows ~max_length ~stride ids =
+  let window = List.filteri (fun i _ -> i < max_length) ids in
+  if List.length ids <= max_length then [ window ]
+  else
+    let step = max_length - stride in
+    window
+    :: windows ~max_length ~stride (List.filteri (fun i _ -> i >= step) ids)
 
-let test_encode_batch_with_padding () =
-  let tokenizer =
-    make_word_tokenizer
-      ~added_tokens:[ added_token "<pad>" ]
-      ~vocab:(words [ "hello"; "world"; "hi"; "there" ])
-      ()
-  in
-  let padding =
-    {
-      length = `Fixed 5;
-      direction = `Right;
-      pad_id = None;
-      pad_type_id = None;
-      pad_token = Some "<pad>";
-    }
-  in
-  let encodings = encode_batch tokenizer ~padding [ "hello"; "hi there" ] in
-  let first = Encoding.ids (List.nth encodings 0) in
-  let second = Encoding.ids (List.nth encodings 1) in
-  equal ~msg:"first padded length" int 5 (Array.length first);
-  equal ~msg:"second padded length" int 5 (Array.length second)
+let cut ~direction ~max_length ~stride ids =
+  match direction with
+  | `Right -> windows ~max_length ~stride ids
+  | `Left -> List.map List.rev (windows ~max_length ~stride (List.rev ids))
 
-let test_encode_batch_empty () =
-  let tokenizer = make_word_tokenizer () in
-  let encodings = encode_batch tokenizer [] in
-  equal ~msg:"empty batch" int 0 (List.length encodings)
+(* Encoding.pad, from the .mli: [target_length - length enc] padding tokens,
+   each with the padding's ID, type ID and token, no word, the span (0, 0),
+   attention 0 and special 1, after the tokens or, with [`Left], before them;
+   each window padded the same way. *)
+let pad_id = 100
+let pad_type_id = 7
+let pad_token = "<pad>"
 
-let test_decode_simple () =
-  let tokenizer = make_word_tokenizer ~vocab:(words [ "hello"; "world" ]) () in
-  let decoded = decode tokenizer [| 0; 1 |] in
-  equal ~msg:"decoded text" string "hello world" decoded
+let rec padded ~target_length ~direction enc =
+  let n = max 0 (target_length - Encoding.length enc) in
+  let place column fill =
+    let padding = Array.make n fill in
+    match direction with
+    | `Right -> Array.append column padding
+    | `Left -> Array.append padding column
+  in
+  Encoding.create
+    ~ids:(place (Encoding.ids enc) pad_id)
+    ~type_ids:(place (Encoding.type_ids enc) pad_type_id)
+    ~tokens:(place (Encoding.tokens enc) pad_token)
+    ~words:(place (Encoding.word_ids enc) None)
+    ~offsets:(place (Encoding.offsets enc) (0, 0))
+    ~special_tokens_mask:(place (Encoding.special_tokens_mask enc) 1)
+    ~attention_mask:(place (Encoding.attention_mask enc) 0)
+    ~overflowing:
+      (List.map (padded ~target_length ~direction) (Encoding.overflowing enc))
+    ()
 
-let test_decode_with_special () =
-  let tokenizer =
-    make_word_tokenizer
-      ~added_tokens:[ added_token "<bos>"; added_token "<eos>" ]
-      ~vocab:[ ("<bos>", 0); ("<eos>", 1); ("hello", 2) ]
-      ()
-  in
-  (* <bos>=0, <eos>=1, hello=2 *)
-  let decoded = decode tokenizer [| 0; 2; 1 |] in
-  equal ~msg:"decoded with special" string "<bos> hello <eos>" decoded
+(* empty *)
 
-let test_decode_skip_special () =
-  let tokenizer =
-    make_word_tokenizer
-      ~added_tokens:[ added_token "<bos>"; added_token "<eos>" ]
-      ~vocab:[ ("<bos>", 0); ("<eos>", 1); ("hello", 2) ]
-      ()
-  in
-  let decoded = decode ~skip_special_tokens:true tokenizer [| 0; 2; 1 |] in
-  equal ~msg:"decoded without special" string "hello" decoded
+let test_empty () = equal encoding (numbered []) Encoding.empty
 
-let test_chars_model () =
-  let tokenizer = chars () in
-  let ids = encode tokenizer "abc" |> Encoding.ids |> Array.to_list in
-  equal ~msg:"char ids" (list int) [ 97; 98; 99 ] ids
+(* create *)
 
-(* Offsets and word ids.
+let accessors_return_arrays ids =
+  let n = List.length ids in
+  let ids = Array.of_list ids in
+  let type_ids = Array.map (fun id -> id + 1) ids in
+  let tokens = Array.map string_of_int ids in
+  let words = Array.map (fun id -> Some (id + 2)) ids in
+  let offsets = Array.map (fun id -> (id, id + 3)) ids in
+  let special_tokens_mask = Array.make n 1 in
+  let attention_mask = Array.make n 0 in
+  let enc =
+    Encoding.create ~ids ~type_ids ~tokens ~words ~offsets ~special_tokens_mask
+      ~attention_mask ()
+  in
+  equal ~msg:"ids" (array int) ids (Encoding.ids enc);
+  equal ~msg:"type_ids" (array int) type_ids (Encoding.type_ids enc);
+  equal ~msg:"tokens" (array string) tokens (Encoding.tokens enc);
+  equal ~msg:"word_ids" (array (option int)) words (Encoding.word_ids enc);
+  equal ~msg:"offsets" (array (pair int int)) offsets (Encoding.offsets enc);
+  equal ~msg:"special_tokens_mask" (array int) special_tokens_mask
+    (Encoding.special_tokens_mask enc);
+  equal ~msg:"attention_mask" (array int) attention_mask
+    (Encoding.attention_mask enc);
+  equal ~msg:"overflowing" (list encoding) [] (Encoding.overflowing enc)
 
-   Every expectation below was read off HuggingFace [tokenizers] first. *)
+let test_create_keeps_arrays () =
+  let ids = [| 1; 2 |] in
+  let enc =
+    Encoding.create ~ids ~type_ids:[| 0; 0 |] ~tokens:[| "a"; "b" |]
+      ~words:[| None; None |]
+      ~offsets:[| (0, 1); (1, 2) |]
+      ~special_tokens_mask:[| 0; 0 |] ~attention_mask:[| 1; 1 |] ()
+  in
+  ids.(0) <- 7;
+  equal ~msg:"after a change to the array given" (array int) [| 7; 2 |]
+    (Encoding.ids enc);
+  (Encoding.ids enc).(1) <- 8;
+  equal ~msg:"after a change to the array returned" (array int) [| 7; 8 |]
+    (Encoding.ids enc)
 
-let offsets_of tokenizer text =
-  encode tokenizer ~add_special_tokens:false text
-  |> Encoding.offsets |> Array.to_list
-
-let words_of tokenizer text =
-  encode tokenizer ~add_special_tokens:false text
-  |> Encoding.word_ids |> Array.to_list
-
-(* Normalizing moves the text around, and offsets are reported on the text as it
-   was given: ["café"] normalizes to ["cafe"], four bytes standing for five. *)
-let accent_free =
-  Normalizer.sequence [ Normalizer.nfd; Normalizer.strip_accents ]
-
-let test_offsets_through_normalizer () =
-  let tokenizer =
-    word_level ~normalizer:accent_free ~pre:Pre_tokenizer.whitespace
-      ~vocab:(words [ "cafe"; "x" ])
-      ()
-  in
-  equal ~msg:"ids" (array int) [| 0; 1 |]
-    (Encoding.ids (encode tokenizer ~add_special_tokens:false "café x"));
-  equal ~msg:"offsets"
-    (list (pair int int))
-    [ (0, 5); (6, 7) ]
-    (offsets_of tokenizer "café x")
-
-(* A byte-level pre-tokenizer hands the model the raw bytes of a pretoken, so
-   its spans are those of the input and the space it marks as [Ġ] is one byte of
-   it. *)
-let test_offsets_byte_level () =
-  let tokenizer =
-    bpe
-      ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
-      ~vocab:[ ("a", 0); ("Ġb", 1); ("Ġ", 2); ("b", 3) ]
-      ~merges:[ ("Ġ", "b") ]
-      ()
-  in
-  equal ~msg:"ids" (array int) [| 0; 1 |]
-    (Encoding.ids (encode tokenizer ~add_special_tokens:false "a b"));
-  equal ~msg:"offsets"
-    (list (pair int int))
-    [ (0, 1); (1, 3) ]
-    (offsets_of tokenizer "a b")
-
-(* A byte that belongs to no character — a continuation byte with no lead
-   before it, a lead cut short — stands for itself, and the bytes of a
-   character all stand for the character. Through the GPT-2 walker and through
-   a cl100k split. *)
-let test_offsets_of_stray_bytes () =
-  let byte_vocab =
-    List.map
-      (fun (s, b) -> (s, Char.code b))
-      [
-        ("R", 'R');
-        ("a", 'a');
-        ("\u{122}", '\x80');
-        ("\u{c3}", '\xC3');
-        ("\u{a9}", '\xA9');
-        ("\u{e2}", '\xE2');
-        ("\u{124}", '\x82');
-      ]
-  in
-  let cl100k =
-    {re|(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+|re}
-  in
-  let pipelines =
-    [
-      ("GPT-2", Pre_tokenizer.byte_level ~add_prefix_space:false ());
-      ( "cl100k",
-        Pre_tokenizer.sequence
-          [
-            Pre_tokenizer.split_regex ~pattern:cl100k ~behavior:`Isolated ();
-            Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:false ();
-          ] );
-    ]
-  in
-  List.iter
-    (fun (name, pre) ->
-      let tokenizer = bpe ~pre ~vocab:byte_vocab ~merges:[] () in
-      let case text offsets =
-        equal
-          ~msg:(Printf.sprintf "%s %S" name text)
-          (list (pair int int))
-          offsets
-          (offsets_of tokenizer text)
-      in
-      case "R\x80" [ (0, 1); (1, 2) ];
-      case "R\x80\x80a" [ (0, 1); (1, 2); (2, 3); (3, 4) ];
-      case "\xC3\xA9\x80" [ (0, 2); (0, 2); (2, 3) ];
-      case "a\xE2\x82" [ (0, 1); (1, 2); (2, 3) ];
-      case "\xE2\x82R" [ (0, 1); (1, 2); (2, 3) ])
-    pipelines
-
-(* Word ids number the pretokens of a text from zero. An added token is one
-   pretoken of its own, and takes the span it matched. *)
-let test_word_ids () =
-  let tokenizer =
-    make_word_tokenizer
-      ~added_tokens:[ added_token "<s>" ]
-      ~vocab:(words [ "a"; "b" ])
-      ()
-  in
-  equal ~msg:"word ids"
-    (list (option int))
-    [ Some 0; Some 1; Some 2 ]
-    (words_of tokenizer "a <s> b");
-  equal ~msg:"offsets"
-    (list (pair int int))
-    [ (0, 1); (2, 5); (6, 7) ]
-    (offsets_of tokenizer "a <s> b")
-
-(* The tokens a post-processor inserts belong to no word and cover nothing. *)
-let test_word_ids_of_special_tokens () =
-  let tokenizer =
-    word_level ~pre:Pre_tokenizer.whitespace
-      ~post:
-        (Post_processor.template ~single:"[CLS] $A"
-           ~special_tokens:[ ("[CLS]", 2) ]
-           ())
-      ~vocab:(words [ "a"; "b" ])
-      ()
-  in
-  let encoding = encode tokenizer "a b" in
-  equal ~msg:"word ids"
-    (list (option int))
-    [ None; Some 0; Some 1 ]
-    (Array.to_list (Encoding.word_ids encoding));
-  equal ~msg:"offsets"
-    (list (pair int int))
-    [ (0, 0); (0, 1); (2, 3) ]
-    (Array.to_list (Encoding.offsets encoding))
-
-(* A metaspace after a whitespace split marks each word on its own, and every
-   token is placed through the alignment of the marking: a marker that was
-   prepended stands at the character it opens. Every expectation is the output
-   of HuggingFace on the same vocabulary. *)
-let test_offsets_of_a_rewriting_pre_tokenizer () =
-  let m = "\u{2581}" in
-  let vocab =
-    [
-      ("<unk>", 0.0);
-      (m, -3.0);
-      (m ^ "a", -1.0);
-      (m ^ "b", -1.0);
-      ("a", -2.0);
-      ("b", -2.0);
-      ("!", -2.0);
-      (m ^ "!", -1.5);
-      ("ab", -2.5);
-    ]
-  in
-  let tokenizer pre = unigram ~pre ~vocab ~unk_id:0 () in
-  let case t text tokens offsets =
-    let encoding = encode t ~add_special_tokens:false text in
-    equal
-      ~msg:(Printf.sprintf "%S: tokens" text)
-      (list string) tokens
-      (Array.to_list (Encoding.tokens encoding));
-    equal
-      ~msg:(Printf.sprintf "%S: offsets" text)
-      (list (pair int int))
-      offsets
-      (Array.to_list (Encoding.offsets encoding))
-  in
-  let t5 =
-    tokenizer
-      (Pre_tokenizer.sequence
-         [ Pre_tokenizer.whitespace_split; Pre_tokenizer.metaspace () ])
-  in
-  case t5 "" [] [];
-  case t5 "a b" [ m ^ "a"; m ^ "b" ] [ (0, 1); (2, 3) ];
-  case t5 " a" [ m ^ "a" ] [ (1, 2) ];
-  case t5 "a " [ m ^ "a" ] [ (0, 1) ];
-  case t5 "a  b" [ m ^ "a"; m ^ "b" ] [ (0, 1); (3, 4) ];
-  case t5 "ab" [ m ^ "a"; "b" ] [ (0, 1); (1, 2) ];
-  case t5 "a!b" [ m ^ "a"; "!"; "b" ] [ (0, 1); (1, 2); (2, 3) ];
-  case t5 (m ^ "a") [ m ^ "a" ] [ (0, 4) ];
-  (* The unknown token stands for the whole run of characters no piece
-     covers. *)
-  case t5 "\u{65e5}\u{672c} \u{8a9e}" [ m; "<unk>"; m; "<unk>" ]
-    [ (0, 3); (0, 6); (7, 10); (7, 10) ];
-  let punctuated =
-    tokenizer
-      (Pre_tokenizer.sequence
-         [
-           Pre_tokenizer.whitespace_split;
-           Pre_tokenizer.metaspace ();
-           Pre_tokenizer.punctuation ();
-         ])
-  in
-  case punctuated "a!b" [ m ^ "a"; "!"; "b" ] [ (0, 1); (1, 2); (2, 3) ];
-  case punctuated "b!" [ m ^ "b"; "!" ] [ (0, 1); (1, 2) ]
-
-(* On [`First] the marker goes to the piece that opens the document alone: not
-   to one that white space or an added token comes before, and not to the first
-   piece of a document whose normalizer took away its opening bytes. Every
-   expectation is the output of HuggingFace. *)
-let test_prepend_first () =
-  let m = "\u{2581}" in
-  let vocab = words [ "[UNK]"; m ^ "a"; m ^ "b"; "a"; "b"; m ^ "ab"; "ab" ] in
-  let first = Pre_tokenizer.metaspace ~prepend_scheme:`First () in
-  let split_first =
-    Pre_tokenizer.sequence [ Pre_tokenizer.whitespace_split; first ]
-  in
-  let tokenizer ?normalizer ?(added_tokens = []) pre =
-    word_level ?normalizer ~pre ~added_tokens ~vocab ()
-  in
-  let case t text tokens offsets =
-    let encoding = encode t ~add_special_tokens:false text in
-    equal
-      ~msg:(Printf.sprintf "%S: tokens" text)
-      (list string) tokens
-      (Array.to_list (Encoding.tokens encoding));
-    equal
-      ~msg:(Printf.sprintf "%S: offsets" text)
-      (list (pair int int))
-      offsets
-      (Array.to_list (Encoding.offsets encoding));
-    equal
-      ~msg:(Printf.sprintf "%S: encode_ids agrees" text)
-      (array int) (Encoding.ids encoding)
-      (encode_ids t ~add_special_tokens:false text)
-  in
-  let added = tokenizer ~added_tokens:[ added_token "<s>" ] split_first in
-  case added "a b" [ m ^ "a"; "b" ] [ (0, 1); (2, 3) ];
-  case added " a b" [ "a"; "b" ] [ (1, 2); (3, 4) ];
-  case added "a<s>b" [ m ^ "a"; "<s>"; "b" ] [ (0, 1); (1, 4); (4, 5) ];
-  case added "<s>b" [ "<s>"; "b" ] [ (0, 3); (3, 4) ];
-  case added " a<s>b" [ "a"; "<s>"; "b" ] [ (1, 2); (2, 5); (5, 6) ];
-  case added "a <s> b" [ m ^ "a"; "<s>"; "b" ] [ (0, 1); (2, 5); (6, 7) ];
-  let alone = tokenizer ~added_tokens:[ added_token "<s>" ] first in
-  case alone "a<s>b" [ m ^ "a"; "<s>"; "b" ] [ (0, 1); (1, 4); (4, 5) ];
-  case alone "<s>b" [ "<s>"; "b" ] [ (0, 3); (3, 4) ];
-  let stripped = tokenizer ~normalizer:(Normalizer.strip ()) split_first in
-  case stripped "  a b" [ "a"; "b" ] [ (2, 3); (4, 5) ];
-  case stripped "a b" [ m ^ "a"; "b" ] [ (0, 1); (2, 3) ];
-  let lowered = tokenizer ~normalizer:Normalizer.lowercase split_first in
-  case lowered "A b" [ m ^ "a"; "b" ] [ (0, 1); (2, 3) ];
-  (* An added token matched on the normalized text opens the document just as
-     one matched on the raw text does. *)
-  let normalized =
-    tokenizer
-      ~added_tokens:[ added_token ~normalized:true ~special:false "[X]" ]
-      first
-  in
-  case normalized "[X]b" [ "[X]"; "b" ] [ (0, 3); (3, 4) ];
-  case normalized "b[X]a" [ m ^ "b"; "[X]"; "a" ] [ (0, 1); (1, 4); (4, 5) ];
-  (* The pieces path — here a fixed-length member the walkers cannot take —
-     follows the same rule, added tokens and normalizer included. *)
-  let fixed =
-    Pre_tokenizer.sequence
-      [ Pre_tokenizer.whitespace_split; Pre_tokenizer.fixed_length 2; first ]
-  in
-  let pieces = tokenizer ~added_tokens:[ added_token "<s>" ] fixed in
-  case pieces "ab a" [ m ^ "ab"; "a" ] [ (0, 2); (3, 4) ];
-  case pieces "ab<s>ab" [ m ^ "ab"; "<s>"; "ab" ] [ (0, 2); (2, 5); (5, 7) ];
-  case pieces "<s>ab" [ "<s>"; "ab" ] [ (0, 3); (3, 5) ];
-  case pieces " ab" [ "ab" ] [ (1, 3) ];
-  let stripped_pieces = tokenizer ~normalizer:(Normalizer.strip ()) fixed in
-  case stripped_pieces "  ab a" [ "ab"; "a" ] [ (2, 4); (5, 6) ];
-  case stripped_pieces "ab a" [ m ^ "ab"; "a" ] [ (0, 2); (3, 4) ]
-
-(* A model other than BPE cannot match raw bytes, so behind a byte-level
-   pre-tokenizer it is handed the encoded pieces and matches its vocabulary in
-   byte-level form, as HuggingFace does. Every expectation is HuggingFace's but
-   the one marked. *)
-let test_byte_level_behind_a_non_bpe_model () =
-  let g = "\u{120}" in
-  let case t text tokens offsets =
-    let encoding = encode t ~add_special_tokens:false text in
-    equal
-      ~msg:(Printf.sprintf "%S: tokens" text)
-      (list string) tokens
-      (Array.to_list (Encoding.tokens encoding));
-    equal
-      ~msg:(Printf.sprintf "%S: offsets" text)
-      (list (pair int int))
-      offsets
-      (Array.to_list (Encoding.offsets encoding));
-    equal
-      ~msg:(Printf.sprintf "%S: encode_ids agrees" text)
-      (array int) (Encoding.ids encoding)
-      (encode_ids t ~add_special_tokens:false text)
-  in
-  let split_then_bytes =
-    Pre_tokenizer.sequence
-      [ Pre_tokenizer.whitespace_split; Pre_tokenizer.byte_level () ]
-  in
-  let vocab =
-    [
-      ("<unk>", 0.0);
-      (g ^ "a", -1.0);
-      (g ^ "b", -1.0);
-      ("a", -2.0);
-      ("b", -2.0);
-      (g ^ "ab", -1.5);
-    ]
-  in
-  let unigram = unigram ~pre:split_then_bytes ~vocab ~unk_id:0 () in
-  case unigram "a b" [ g ^ "a"; g ^ "b" ] [ (0, 1); (2, 3) ];
-  case unigram "ab b" [ g ^ "ab"; g ^ "b" ] [ (0, 2); (3, 4) ];
-  case unigram " a" [ g ^ "a" ] [ (1, 2) ];
-  let wordpiece =
-    wordpiece ~pre:split_then_bytes
-      ~vocab:(words [ "[UNK]"; g ^ "a"; g ^ "b"; "##b"; g ^ "ab" ])
-      ~unk_token:"[UNK]" ()
-  in
-  case wordpiece "a b" [ g ^ "a"; g ^ "b" ] [ (0, 1); (2, 3) ];
-  (* The pieces of an encoding pre-tokenizer are placed whole, so the two tokens
-     of one share its span; HuggingFace has [(0, 2)] and [(2, 3)] here. *)
-  case wordpiece "abb" [ g ^ "ab"; "##b" ] [ (0, 3); (0, 3) ];
-  let word_level =
-    word_level ~pre:split_then_bytes
-      ~vocab:(words [ "[UNK]"; g ^ "a"; g ^ "b"; g ^ "ab" ])
-      ()
-  in
-  case word_level "a b" [ g ^ "a"; g ^ "b" ] [ (0, 1); (2, 3) ];
-  case word_level "ab b" [ g ^ "ab"; g ^ "b" ] [ (0, 2); (3, 4) ];
-  (* Alone, and without its prefix space, the byte-level pre-tokenizer is walked
-     for BPE; the other models are still handed pieces. *)
-  let alone =
-    Brot.unigram ~pre:(Pre_tokenizer.byte_level ()) ~vocab ~unk_id:0 ()
-  in
-  case alone "a b" [ g ^ "a"; g ^ "b" ] [ (0, 1); (1, 3) ];
-  let plain =
-    Brot.unigram
-      ~pre:
-        (Pre_tokenizer.sequence
-           [
-             Pre_tokenizer.whitespace_split;
-             Pre_tokenizer.byte_level ~add_prefix_space:false ();
-           ])
-      ~vocab:[ ("<unk>", 0.0); ("a", -1.0); ("b", -1.0); ("ab", -1.5) ]
-      ~unk_id:0 ()
-  in
-  case plain "a b" [ "a"; "b" ] [ (0, 1); (2, 3) ];
-  case plain "ab b" [ "ab"; "b" ] [ (0, 2); (3, 4) ]
-
-(* A run of characters no entry covers is one unknown token — or, with fusing
-   off, one per character — that stands for the whole run: the tokens after it
-   are placed where they are, not one character on. Every expectation is the
-   output of HuggingFace. *)
-let test_offsets_of_unknown_runs () =
-  let zw = "\u{200b}\u{200c}" in
-  let text = "a" ^ zw ^ "b" ^ zw ^ "c" in
-  let case t text tokens offsets =
-    let encoding = encode t ~add_special_tokens:false text in
-    equal
-      ~msg:(Printf.sprintf "%S: tokens" text)
-      (list string) tokens
-      (Array.to_list (Encoding.tokens encoding));
-    equal
-      ~msg:(Printf.sprintf "%S: offsets" text)
-      (list (pair int int))
-      offsets
-      (Array.to_list (Encoding.offsets encoding))
-  in
-  let fused = [ (0, 1); (1, 7); (7, 8); (8, 14); (14, 15) ] in
-  (* HuggingFace spells a Unigram unknown token as the run itself, where brot
-     reports the entry: the token strings are not compared here. *)
-  let fusing =
-    unigram
-      ~vocab:[ ("<unk>", 0.0); ("a", -1.0); ("b", -1.0); ("c", -1.0) ]
-      ~unk_id:0 ()
-  in
-  let encoding = encode fusing ~add_special_tokens:false text in
-  equal ~msg:"unigram: ids" (list int) [ 1; 0; 2; 0; 3 ]
-    (Array.to_list (Encoding.ids encoding));
-  equal ~msg:"unigram: offsets"
-    (list (pair int int))
-    fused
-    (Array.to_list (Encoding.offsets encoding));
-  let bpe ~fuse_unk =
-    bpe
-      ~vocab:[ ("<unk>", 0); ("a", 1); ("b", 2); ("c", 3) ]
-      ~merges:[] ~unk_token:"<unk>" ~fuse_unk ()
-  in
-  case (bpe ~fuse_unk:true) text [ "a"; "<unk>"; "b"; "<unk>"; "c" ] fused;
-  case (bpe ~fuse_unk:false) text
-    [ "a"; "<unk>"; "<unk>"; "b"; "<unk>"; "<unk>"; "c" ]
-    [ (0, 1); (1, 4); (4, 7); (7, 8); (8, 11); (11, 14); (14, 15) ];
-  (* The unknown token as a literal match of its own entry is placed as any
-     entry, whether alone or in a fused run that spells one. *)
-  let literal =
-    unigram ~vocab:[ ("<unk>", 0.0); ("a", -1.0); ("b", -1.0) ] ~unk_id:0 ()
-  in
-  case literal "a<unk>b" [ "a"; "<unk>"; "b" ] [ (0, 1); (1, 6); (6, 7) ];
-  case literal
-    ("a<unk>" ^ zw ^ "b")
-    [ "a"; "<unk>"; "b" ]
-    [ (0, 1); (1, 12); (12, 13) ];
-  let split = Pre_tokenizer.whitespace_split in
-  case
-    (wordpiece ~pre:split
-       ~vocab:(words [ "[UNK]"; "a"; "b"; "##b" ])
-       ~unk_token:"[UNK]" ())
-    "ab xyz ba"
-    [ "a"; "##b"; "[UNK]"; "[UNK]" ]
-    [ (0, 1); (1, 2); (3, 6); (7, 9) ];
-  case
-    (word_level ~pre:split ~vocab:(words [ "<unk>"; "a" ]) ())
-    "a xyz <unk>" [ "a"; "<unk>"; "<unk>" ]
-    [ (0, 1); (2, 5); (6, 11) ]
-
-(* A byte-level member after a whitespace split prepends its space to each word
-   and the model is handed each on its own; the space stands at the character it
-   opens. Every expectation is the output of HuggingFace. *)
-let test_offsets_of_byte_level_after_a_walker () =
-  let tokenizer =
-    bpe
-      ~pre:
-        (Pre_tokenizer.sequence
-           [ Pre_tokenizer.whitespace_split; Pre_tokenizer.byte_level () ])
-      ~vocab:
-        [ ("\u{120}a", 0); ("\u{120}b", 1); ("a", 2); ("b", 3); ("\u{120}", 4) ]
-      ~merges:[] ()
-  in
-  let case text tokens offsets =
-    let encoding = encode tokenizer ~add_special_tokens:false text in
-    equal
-      ~msg:(Printf.sprintf "%S: tokens" text)
-      (list string) tokens
-      (Array.to_list (Encoding.tokens encoding));
-    equal
-      ~msg:(Printf.sprintf "%S: offsets" text)
-      (list (pair int int))
-      offsets
-      (Array.to_list (Encoding.offsets encoding))
-  in
-  let g = "\u{120}" in
-  case "a b" [ g; "a"; g; "b" ] [ (0, 1); (0, 1); (2, 3); (2, 3) ];
-  case " a  b" [ g; "a"; g; "b" ] [ (1, 2); (1, 2); (4, 5); (4, 5) ];
-  case "ab" [ g; "a"; "b" ] [ (0, 1); (0, 1); (1, 2) ]
-
-let test_encode_ids_matches_encode () =
-  let tokenizer =
-    word_level ~normalizer:accent_free ~pre:Pre_tokenizer.whitespace
-      ~vocab:(words [ "cafe"; "x" ])
-      ()
-  in
-  List.iter
-    (fun text ->
-      equal ~msg:(Printf.sprintf "%S" text) (array int)
-        (Encoding.ids (encode tokenizer ~add_special_tokens:false text))
-        (encode_ids tokenizer ~add_special_tokens:false text))
-    [ ""; "x"; "café x"; "  x  "; "café café x" ]
-
-(* Truncation.
-
-   HuggingFace truncates before the post-processor runs, so the tokens it adds
-   fit inside [max_length] instead of pushing content out. A pair gives up
-   tokens from whichever of the two is longer, the first one on a tie. *)
-
-let bounded_tokenizer () =
-  word_level ~pre:Pre_tokenizer.whitespace
-    ~post:(Post_processor.bert ~cls:("[CLS]", 8) ~sep:("[SEP]", 9))
-    ~vocab:(words [ "a"; "b"; "c"; "d"; "e"; "f"; "[PAD]" ])
-    ~pad_token:"[PAD]" ()
-
-let test_truncation_budgets_special_tokens () =
-  let tokenizer = bounded_tokenizer () in
-  let ids ?(add_special_tokens = true) max_length =
-    Encoding.ids
-      (encode tokenizer ~add_special_tokens ~truncation:(truncation max_length)
-         "a b c d e")
-  in
-  equal ~msg:"[CLS] and [SEP] come out of the budget" (array int)
-    [| 8; 0; 1; 9 |] (ids 4);
-  equal ~msg:"without them the budget is all content" (array int)
-    [| 0; 1; 2; 3 |]
-    (ids ~add_special_tokens:false 4);
-  equal ~msg:"a budget the text fits in changes nothing" (array int)
-    [| 8; 0; 1; 2; 3; 4; 9 |] (ids 32)
-
-(* Four tokens against three for a budget of five: the shorter sequence cannot
-   keep all three, so the budget is halved and the odd token goes to the first.
-   Removing one token at a time from the longer would give the odd token to the
-   second instead, which is what pins the rule rather than the arithmetic. *)
-let test_truncation_of_a_pair () =
-  let tokenizer = bounded_tokenizer () in
-  let encode max_length =
-    encode tokenizer ~truncation:(truncation max_length) ~pair:"e f a" "a b c d"
-  in
-  equal ~msg:"three against two" (array int)
-    [| 8; 0; 1; 2; 9; 4; 5; 9 |]
-    (Encoding.ids (encode 8));
-  equal ~msg:"one each" (array int) [| 8; 0; 9; 4; 9 |]
-    (Encoding.ids (encode 5))
-
-(* The windows of a pair are combined as HuggingFace combines them: each window
-   of the first sequence against the second's kept part and then against each of
-   its windows, and last the first's kept part against each window of the
-   second. Expected values from tokenizers 0.23.1 on the same pipeline. *)
-let test_pair_windows () =
-  let tokenizer = bounded_tokenizer () in
-  let encode max_length =
-    encode tokenizer ~truncation:(truncation max_length) ~pair:"e f a" "a b c d"
-  in
-  equal ~msg:"three against two"
-    (list (array int))
-    [ [| 8; 3; 9; 4; 5; 9 |]; [| 8; 3; 9; 0; 9 |]; [| 8; 0; 1; 2; 9; 0; 9 |] ]
-    (List.map Encoding.ids (Encoding.overflowing (encode 8)));
-  equal ~msg:"one each"
-    (list (array int))
-    [
-      [| 8; 1; 9; 4; 9 |];
-      [| 8; 1; 9; 5; 9 |];
-      [| 8; 1; 9; 0; 9 |];
-      [| 8; 2; 9; 4; 9 |];
-      [| 8; 2; 9; 5; 9 |];
-      [| 8; 2; 9; 0; 9 |];
-      [| 8; 3; 9; 4; 9 |];
-      [| 8; 3; 9; 5; 9 |];
-      [| 8; 3; 9; 0; 9 |];
-      [| 8; 0; 9; 5; 9 |];
-      [| 8; 0; 9; 0; 9 |];
-    ]
-    (List.map Encoding.ids (Encoding.overflowing (encode 5)))
-
-(* An overflowing window is a sequence of its own, so it carries the same
-   special tokens as the one it was cut from. HuggingFace tokenizes only up to
-   [max_length] tokens — rounded up to a whole pretoken — when truncation is
-   configured, so the windows cover what is left of those, not of the whole
-   text: here tokens [e] and [f] are never tokenized at all. *)
-let test_truncation_overflowing () =
-  let tokenizer = bounded_tokenizer () in
-  let encoding = encode tokenizer ~truncation:(truncation 4) "a b c d e f" in
-  equal ~msg:"first window" (array int) [| 8; 0; 1; 9 |] (Encoding.ids encoding);
-  equal ~msg:"the rest, wrapped"
-    (list (array int))
-    [ [| 8; 2; 3; 9 |] ]
-    (List.map Encoding.ids (Encoding.overflowing encoding));
-  equal ~msg:"a window's mask" (array int) [| 1; 0; 0; 1 |]
-    (Encoding.special_tokens_mask (List.hd (Encoding.overflowing encoding)))
-
-(* Successive windows overlap by [stride] tokens and stop at the last tokenized
-   pretoken. Expected values from tokenizers 0.23.1 on the same pipeline. *)
-let test_truncation_stride () =
-  let tokenizer = bounded_tokenizer () in
-  let windows truncation text =
-    List.map Encoding.ids
-      (Encoding.overflowing (encode tokenizer ~truncation text))
-  in
-  equal ~msg:"stride 1"
-    (list (array int))
-    [ [| 8; 1; 2; 9 |]; [| 8; 2; 3; 9 |] ]
-    (windows (truncation ~stride:1 4) "a b c d e f");
-  equal ~msg:"stride 2"
-    (list (array int))
-    [ [| 8; 1; 2; 3; 9 |]; [| 8; 2; 3; 4; 9 |] ]
-    (windows (truncation ~stride:2 5) "a b c d e f")
-
-let test_truncation_stride_invalid () =
-  raises ~msg:"stride at max_length"
-    (Invalid_argument
-       "truncation: stride must be non-negative and less than max_length")
-    (fun () -> ignore (truncation ~stride:4 4));
-  raises ~msg:"negative stride"
-    (Invalid_argument
-       "truncation: stride must be non-negative and less than max_length")
-    (fun () -> ignore (truncation ~stride:(-1) 4))
-
-(* [encode_ids] skips the encoding when the post-processor only wraps the
-   sequence, so it has to answer exactly what reading the ids off one does. *)
-let test_encode_ids_matches_encode_with_specials () =
-  let tokenizer = bounded_tokenizer () in
-  List.iter
-    (fun (label, truncation, padding) ->
-      List.iter
-        (fun text ->
-          equal
-            ~msg:(Printf.sprintf "%s %S" label text)
-            (array int)
-            (Encoding.ids (encode tokenizer ?truncation ?padding text))
-            (encode_ids tokenizer ?truncation ?padding text))
-        [ ""; "a"; "a b c"; "a b c d e f"; "a zz b" ])
-    [
-      ("plain", None, None);
-      ("truncated", Some (truncation 4), None);
-      ("padded", None, Some (padding (`Fixed 8)));
-      ("both", Some (truncation 4), Some (padding (`Fixed 8)));
-    ]
-
-(* Truncating from the left keeps the {e last} tokens, which is what HuggingFace
-   does. With no post-processor the budget is all of [max_length], so nothing
-   past the tokenized pretokens is left to window: tokenizers 0.23.1 reports no
-   overflow here. *)
-let test_truncation_from_the_left () =
-  let tokenizer =
-    make_word_tokenizer ~vocab:(words [ "a"; "b"; "c"; "d" ]) ()
-  in
-  let truncation = truncation ~direction:`Left 2 in
-  let encoding = encode tokenizer ~truncation "a b c d" in
-  equal ~msg:"the last two" (array int) [| 2; 3 |] (Encoding.ids encoding);
-  equal ~msg:"no window"
-    (list (array int))
-    []
-    (List.map Encoding.ids (Encoding.overflowing encoding));
-  equal ~msg:"encode_ids agrees" (array int) [| 2; 3 |]
-    (encode_ids tokenizer ~truncation "a b c d")
-
-(* [Encoding.truncate] itself windows the whole encoding: the walk steps by
-   [max_length - stride] and stops with the window that reaches the end. *)
-let test_truncate_windows () =
-  let tokenizer =
-    make_word_tokenizer ~vocab:(words [ "a"; "b"; "c"; "d"; "e" ]) ()
-  in
-  let encoding =
-    encode tokenizer ~add_special_tokens:false "a b c d e a b c d e"
-  in
-  let truncated = Encoding.truncate encoding ~max_length:4 ~stride:2 in
-  equal ~msg:"kept" (array int) [| 0; 1; 2; 3 |] (Encoding.ids truncated);
-  equal ~msg:"windows stop at the end"
-    (list (array int))
-    [ [| 2; 3; 4; 0 |]; [| 4; 0; 1; 2 |]; [| 1; 2; 3; 4 |] ]
-    (List.map Encoding.ids (Encoding.overflowing truncated));
-  raises ~msg:"stride must be under max_length"
-    (Invalid_argument "Encoding.truncate: stride must be less than max_length")
-    (fun () -> ignore (Encoding.truncate encoding ~max_length:4 ~stride:4))
-
-let test_create_validates_lengths () =
-  raises ~msg:"short tokens"
-    (Invalid_argument "Encoding.create: arrays must all have the same length")
-    (fun () ->
-      ignore
-        (Encoding.create ~ids:[| 1; 2 |] ~type_ids:[| 0; 0 |] ~tokens:[| "a" |]
-           ~words:[| None; None |]
-           ~offsets:[| (0, 1); (1, 2) |]
-           ~special_tokens_mask:[| 0; 0 |] ~attention_mask:[| 1; 1 |] ()))
-
-(* An unknown token stands for whatever the identifiers around it do not
-   describe, so one in the middle of a pretoken takes the bytes between its
-   neighbours rather than none at all. *)
-let test_offsets_of_an_unknown_token () =
-  let tokenizer =
-    bpe
-      ~vocab:[ ("<unk>", 100); ("<0x61>", 0); ("b", 1) ]
-      ~merges:[] ~unk_token:"<unk>" ~byte_fallback:true ()
-  in
-  equal ~msg:"tokens" (array string)
-    [| "<0x61>"; "<unk>"; "b" |]
-    (Encoding.tokens (encode tokenizer ~add_special_tokens:false "zab"));
-  equal ~msg:"offsets"
-    (list (pair int int))
-    [ (0, 1); (1, 2); (2, 3) ]
-    (offsets_of tokenizer "zab")
-
-let test_truncation_without_a_post_processor () =
-  let tokenizer = make_word_tokenizer ~vocab:(words [ "a"; "b"; "c" ]) () in
-  equal ~msg:"the whole budget is content" (array int) [| 0; 1 |]
-    (Encoding.ids (encode tokenizer ~truncation:(truncation 2) "a b c"))
-
-let suite =
+let columns =
   [
-    test "encode simple" test_encode_simple;
-    test "encode with vocab" test_encode_with_vocab;
-    test "encode unknown tokens" test_encode_unknown_tokens;
-    test "encode empty" test_encode_empty;
-    test "batch simple" test_encode_batch_simple;
-    test "batch with padding" test_encode_batch_with_padding;
-    test "batch empty request" test_encode_batch_empty;
-    test "decode simple" test_decode_simple;
-    test "decode with special" test_decode_with_special;
-    test "decode skip special" test_decode_skip_special;
-    test "chars model" test_chars_model;
-    test "offsets through a normalizer" test_offsets_through_normalizer;
-    test "offsets of a byte-level pipeline" test_offsets_byte_level;
-    test "offsets of bytes that belong to no character"
-      test_offsets_of_stray_bytes;
-    test "word ids" test_word_ids;
-    test "word ids of special tokens" test_word_ids_of_special_tokens;
-    test "offsets of a rewriting pre-tokenizer"
-      test_offsets_of_a_rewriting_pre_tokenizer;
-    test "prepend on first" test_prepend_first;
-    test "byte level behind a non-BPE model"
-      test_byte_level_behind_a_non_bpe_model;
-    test "offsets of unknown runs" test_offsets_of_unknown_runs;
-    test "offsets of byte level after a walker"
-      test_offsets_of_byte_level_after_a_walker;
-    test "encode_ids matches encode" test_encode_ids_matches_encode;
-    test "truncation budgets the special tokens"
-      test_truncation_budgets_special_tokens;
-    test "truncation of a pair" test_truncation_of_a_pair;
-    test "pair windows" test_pair_windows;
-    test "truncation from the left" test_truncation_from_the_left;
-    test "truncate windows the whole encoding" test_truncate_windows;
-    test "create validates the array lengths" test_create_validates_lengths;
-    test "offsets of an unknown token" test_offsets_of_an_unknown_token;
-    test "truncation keeps the overflowing windows" test_truncation_overflowing;
-    test "truncation windows overlap by the stride" test_truncation_stride;
-    test "stride must be under max_length" test_truncation_stride_invalid;
-    test "encode_ids matches encode with special tokens"
-      test_encode_ids_matches_encode_with_specials;
-    test "truncation without a post-processor"
-      test_truncation_without_a_post_processor;
+    "ids";
+    "type_ids";
+    "tokens";
+    "words";
+    "offsets";
+    "special_tokens_mask";
+    "attention_mask";
   ]
 
-let () = exit (run "Encoding tests" [ group "encoding" suite ])
+let create_with_short short =
+  let length column = if column = short then 1 else 2 in
+  raises
+    (Invalid_argument "Encoding.create: arrays must all have the same length")
+    (fun () ->
+      Encoding.create
+        ~ids:(Array.make (length "ids") 0)
+        ~type_ids:(Array.make (length "type_ids") 0)
+        ~tokens:(Array.make (length "tokens") "")
+        ~words:(Array.make (length "words") None)
+        ~offsets:(Array.make (length "offsets") (0, 0))
+        ~special_tokens_mask:(Array.make (length "special_tokens_mask") 0)
+        ~attention_mask:(Array.make (length "attention_mask") 1)
+        ())
+
+(* concat *)
+
+(* Part [i] carries the window [100 + i], so the result shows whose windows it
+   kept. *)
+let concatenates parts =
+  cover "no parts" (parts = []);
+  cover "an empty part" (List.mem [] parts);
+  cover "three parts" (List.length parts = 3);
+  let window i = [ numbered [ 100 + i ] ] in
+  let expected =
+    match parts with
+    | [] -> numbered []
+    | _ -> numbered ~overflowing:(window 0) (List.concat parts)
+  in
+  equal encoding expected
+    (Encoding.concat
+       (List.mapi (fun i ids -> numbered ~overflowing:(window i) ids) parts))
+
+(* special_tokens_mask *)
+
+(* Hugging Face's tokenizers 0.23.1 gives [0, 0, 0] for both. *)
+let test_added_token_unmasked () =
+  let mask special =
+    let t =
+      bpe
+        ~vocab:[ ("a", 0); ("b", 1) ]
+        ~merges:[]
+        ~added_tokens:[ added_token ~special "<s>" ]
+        ()
+    in
+    Encoding.special_tokens_mask (encode t "a<s>b")
+  in
+  equal ~msg:"special" (array int) [| 0; 0; 0 |] (mask true);
+  equal ~msg:"not special" (array int) [| 0; 0; 0 |] (mask false)
+
+(* with_type_id *)
+
+let retypes (ids, type_id) =
+  let window = [ numbered [ 99 ] ] in
+  equal encoding
+    (numbered ~type_id ~overflowing:window ids)
+    (Encoding.with_type_id (numbered ~overflowing:window ids) type_id)
+
+(* truncate *)
+
+(* [enc] carries a window of its own, [99], which only the cut at [max_length =
+   0] keeps. *)
+let truncates (n, max_length, stride, direction) =
+  let truncated = n > max_length in
+  (* The values discarded here are the domain of the raise law below. *)
+  assume (not (truncated && max_length > 0 && stride >= max_length));
+  let enc = numbered ~overflowing:[ numbered [ 99 ] ] (positions n) in
+  let expected =
+    if not truncated then enc
+    else if max_length = 0 then numbered ~overflowing:[ enc ] []
+    else
+      match cut ~direction ~max_length ~stride (positions n) with
+      | kept :: windows ->
+          numbered ~overflowing:(List.map (fun w -> numbered w) windows) kept
+      | [] -> assert false
+  in
+  let windows = Encoding.overflowing expected in
+  cover "unchanged" (not truncated);
+  cover "max_length 0" (truncated && max_length = 0);
+  cover "windows overlap"
+    (truncated && max_length > 0 && stride > 0 && List.length windows >= 2);
+  cover "last window shorter"
+    (truncated && max_length > 0
+    && List.exists (fun w -> Encoding.length w < max_length) windows);
+  cover "`Left" (truncated && max_length > 0 && direction = `Left);
+  equal encoding expected (Encoding.truncate ~stride ~direction enc ~max_length)
+
+let raises_on_wide_stride (max_length, wider, longer, direction) =
+  let enc = numbered (positions (max_length + 1 + longer)) in
+  raises
+    (Invalid_argument "Encoding.truncate: stride must be less than max_length")
+    (fun () ->
+      Encoding.truncate ~stride:(max_length + wider) ~direction enc ~max_length)
+
+(* pad *)
+
+let pads (n, window, target_length, direction) =
+  let window = numbered (List.init window (fun i -> 50 + i)) in
+  let enc = numbered ~overflowing:[ window ] (positions n) in
+  cover "padded" (n < target_length);
+  cover "kept, window padded"
+    (n >= target_length && Encoding.length window < target_length);
+  cover "`Left" (n < target_length && direction = `Left);
+  cover "negative target_length" (target_length < 0);
+  equal encoding
+    (padded ~target_length ~direction enc)
+    (Encoding.pad enc ~target_length ~pad_id ~pad_type_id ~pad_token ~direction)
+
+(* pp *)
+
+let test_pp () =
+  let enc =
+    Encoding.create ~ids:[| 101; 7592 |] ~type_ids:[| 0; 1 |]
+      ~tokens:[| "[CLS]"; "hello" |] ~words:[| None; Some 0 |]
+      ~offsets:[| (0, 0); (0, 5) |]
+      ~special_tokens_mask:[| 1; 0 |] ~attention_mask:[| 1; 1 |] ()
+  in
+  expect (Format.asprintf "%a" Encoding.pp enc)
+  @@ __POS_OF__
+       {|
+    Index Token     ID Offsets       Word  Type  Attn  Special
+    0     [CLS]    101 (   0,   0)     -     0     1        1
+    1     hello   7592 (   0,   5)     0     1     1        0
+    |}
+
+let test_pp_empty () =
+  expect (Format.asprintf "%a" Encoding.pp Encoding.empty)
+  @@ __POS_OF__
+       {|
+    Index Token     ID Offsets       Word  Type  Attn  Special
+    |}
+
+let ids = Gen.(list ~size:(int_range 0 6) (int_range 0 20))
+
+let () =
+  exit
+    (run "Encoding"
+       [
+         group "empty" [ test "has no tokens" test_empty ];
+         group "create"
+           [
+             prop "each accessor returns the array given" ids
+               accessors_return_arrays;
+             test "keeps the arrays it is given" test_create_keeps_arrays;
+             cases "arrays of different lengths raise Invalid_argument"
+               ~id:Fun.id columns create_with_short;
+           ];
+         group "concat"
+           [
+             prop ~examples:[ [] ]
+               "is the parts in order, with the first part's overflowing"
+               Gen.(
+                 list ~size:(int_range 0 3)
+                   (list ~size:(int_range 0 3) (int_range 0 20)))
+               concatenates;
+           ];
+         group "special_tokens_mask"
+           [
+             test "is 0 for an added token found in the input"
+               test_added_token_unmasked;
+           ];
+         group "is_empty"
+           [
+             prop ~examples:[ [] ] "holds iff there are no tokens" ids
+               (fun ids ->
+                 cover "empty" (ids = []);
+                 satisfies ~claim:"is_empty iff there are no ids"
+                   (pair (list int) bool)
+                   (fun (ids, is_empty) -> is_empty = (ids = []))
+                   (ids, Encoding.is_empty (numbered ids)));
+           ];
+         group "length"
+           [
+             prop "is the number of tokens" ids (fun ids ->
+                 equal int (List.length ids) (Encoding.length (numbered ids)));
+           ];
+         group "with_type_id"
+           [
+             prop "sets every type ID and keeps the rest"
+               Gen.(pair ids (int_range 0 3))
+               retypes;
+           ];
+         group "truncate"
+           [
+             prop ~count:1100
+               ~examples:[ (10, 4, 2, `Right) ]
+               "keeps max_length tokens and windows the rest by stride"
+               Gen.(
+                 quad (int_range 0 8) (int_range 0 7) (int_range 0 6) direction)
+               truncates;
+             prop ~count:600
+               "raises Invalid_argument when it truncates and stride is not \
+                less than max_length"
+               Gen.(
+                 quad (int_range 1 6) (int_range 0 6) (int_range 0 6) direction)
+               raises_on_wide_stride;
+           ];
+         group "pad"
+           [
+             prop ~count:400
+               "extends to target_length with padding tokens, windows too"
+               Gen.(
+                 quad (int_range 0 4) (int_range 0 4) (int_range (-1) 6)
+                   direction)
+               pads;
+           ];
+         group "pp"
+           [
+             test "prints a row per token" test_pp;
+             test "prints the header alone for no tokens" test_pp_empty;
+           ];
+       ])

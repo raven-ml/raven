@@ -18,12 +18,12 @@
   test_unigram_load
   test_wordpiece
   test_hf_tokenizers
-  test_processors
   test_pretokenizers
   test_json
   test_pretoken_cache
   test_float_text
-  test_tiktoken)
+  test_tiktoken
+  test_post_processor)
  (modules
   test_tokenization
   test_vocab
@@ -34,12 +34,12 @@
   test_unigram_load
   test_wordpiece
   test_hf_tokenizers
-  test_processors
   test_pretokenizers
   test_json
   test_pretoken_cache
   test_float_text
-  test_tiktoken)
+  test_tiktoken
+  test_post_processor)
  (package brot)
  (deps
   (glob_files support/parity/*)

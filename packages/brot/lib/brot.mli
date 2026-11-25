@@ -69,13 +69,15 @@ module Encoding : sig
       {!val-truncate} and {!val-pad}. All parallel arrays ({!val-ids},
       {!val-type_ids}, {!val-tokens}, {!val-word_ids}, {!val-offsets},
       {!val-special_tokens_mask}, {!val-attention_mask}) share the same length,
-      equal to {!val-length}.
+      equal to {!val-length}. {!val-create} keeps the arrays it is given and the
+      accessors return the encoding's own arrays, so mutating one changes the
+      encoding.
 
       {!val-tokens}, {!val-word_ids} and {!val-offsets} are derived when they
       are first asked for and kept afterwards: a caller that only reads
-      {!val-ids} pays for none of them. Deriving is a mutation: do not race the
-      first read of {!val-tokens}, {!val-offsets} or {!val-word_ids} from
-      several domains — read them from one domain, or read them before sharing.
+      {!val-ids} pays for none of them. Deriving is a mutation, so do not race
+      the first read of {!val-tokens}, {!val-offsets} or {!val-word_ids} from
+      several domains. Read them from one domain, or read them before sharing.
   *)
 
   type t
@@ -106,8 +108,8 @@ module Encoding : sig
 
   val concat : t list -> t
   (** [concat encs] is the encoding with the tokens of each element of [encs] in
-      order. {!val-overflowing} is taken from the first element. Allocates once
-      rather than creating intermediate arrays per pair. *)
+      order. Each element keeps its {!val-word_ids}. {!val-overflowing} is taken
+      from the first element. [concat []] is {!val-empty}. *)
 
   (** {1:access Accessors} *)
 
@@ -137,15 +139,16 @@ module Encoding : sig
   val special_tokens_mask : t -> int array
   (** [special_tokens_mask enc] is [1] for special tokens ([CLS], [SEP],
       padding) and [0] for content tokens. An added token found in the input is
-      [0], special or not: only what a post-processor inserts is masked. *)
+      [0], special or not. Only the tokens a post-processor inserts, and
+      padding, are masked. *)
 
   val attention_mask : t -> int array
   (** [attention_mask enc] is [1] for real tokens and [0] for padding tokens. *)
 
   val overflowing : t -> t list
-  (** [overflowing enc] is the list of overflow encodings produced by
-      {!val-truncate} when the input exceeds [max_length]. Each element is a
-      sliding window over the excess tokens. *)
+  (** [overflowing enc] is the list of windows {!val-truncate} cut off [enc].
+      The windows of an encoding from {!Brot.encode} went through its
+      post-processor too; {!Brot.truncation} says how they are cut. *)
 
   val is_empty : t -> bool
   (** [is_empty enc] is [true] iff [enc] has no tokens. *)
@@ -169,12 +172,14 @@ module Encoding : sig
       split into windows of [max_length] tokens overlapping the previous window
       by [stride] (default [0]) and stored in {!val-overflowing}, walking away
       from the kept tokens; the last window stops at the encoding's edge, so it
-      may be shorter. If [length enc <= max_length], [enc] is returned
-      unchanged. When [max_length] is [0], all tokens move to {!val-overflowing}
-      and {!val-empty} is returned.
+      may be shorter. Each window has no {!val-overflowing} of its own, and
+      [enc]'s is dropped. If [length enc <= max_length], [enc] is returned
+      unchanged. When [max_length] is [0] and [enc] has tokens, {!val-empty} is
+      returned, with [enc] itself, and its {!val-overflowing}, as the one
+      window.
 
-      Raises [Invalid_argument] if [enc] is truncated and [stride] is not less
-      than [max_length]. *)
+      Raises [Invalid_argument] if [max_length > 0], [enc] is truncated and
+      [stride] is not less than [max_length]. *)
 
   val pad :
     t ->
@@ -184,14 +189,15 @@ module Encoding : sig
     pad_token:string ->
     direction:[ `Left | `Right ] ->
     t
-  (** [pad enc ~target_length ~pad_id ~pad_type_id ~pad_token ~direction]
-      extends [enc] to exactly [target_length] tokens.
+  (** [pad enc ~target_length ~pad_id ~pad_type_id ~pad_token ~direction] is
+      [enc] with padding tokens added up to [target_length] tokens, after its
+      tokens or, when [direction] is [`Left], before them. An [enc] of
+      [target_length] tokens or more keeps its tokens as they are.
 
-      Padding tokens have {!val-attention_mask} [0] and
-      {!val-special_tokens_mask} [1]. If [length enc >= target_length], [enc] is
-      returned unchanged. Padding is applied recursively to {!val-overflowing}
-      encodings. When [direction] is [`Left], {!val-offsets} are shifted
-      accordingly. *)
+      Each padding token has ID [pad_id], type ID [pad_type_id], token
+      [pad_token], no word, the span [(0, 0)], {!val-attention_mask} [0] and
+      {!val-special_tokens_mask} [1]. Each encoding of {!val-overflowing} is
+      padded the same way, whatever the length of [enc]. *)
 
   (** {1:fmt Formatting} *)
 
@@ -650,30 +656,37 @@ module Post_processor : sig
       Single: [<s> A </s>]. Pair: [<s> A </s> </s> B </s>]. All type IDs are
       [0].
 
-      [trim_offsets] removes leading and trailing whitespace from the offsets of
-      byte-level tokens; it defaults to [true]. [add_prefix_space] tells the
-      trimming that a single leading space on a token that starts at offset [0]
-      was added by the pre-tokenizer and must be kept; it defaults to [true]. *)
+      [trim_offsets] and [add_prefix_space] trim the offsets of byte-level
+      tokens as {!byte_level}'s do. Both default to [true]. *)
 
   val byte_level : ?add_prefix_space:bool -> ?trim_offsets:bool -> unit -> t
-  (** [byte_level ()] is a byte-level post-processor that adjusts character
-      offsets for byte-level encoding.
+  (** [byte_level ()] trims the byte offsets of byte-level tokens. It inserts no
+      token.
 
-      [trim_offsets] removes leading and trailing whitespace from offsets.
-      Defaults to [true]. [add_prefix_space] tells the trimming that a single
-      leading space on a token that starts at offset [0] was added by the
-      pre-tokenizer and must be kept; it defaults to [true]. *)
+      [trim_offsets] moves a token's span past each leading, and before each
+      trailing, U+0120 (the encoded space) or White_Space character of the
+      token. An encoded tab or newline is a letter and stays. A token of nothing
+      else keeps an empty span, at its end, or at its start when its leading
+      space is kept. [add_prefix_space] keeps the leading space of a token that
+      has exactly one, which the pre-tokenizer added, when the token is the
+      first of a sequence or starts at offset [0]. Both default to [true]. *)
 
   val template :
     single:string -> ?pair:string -> ?special_tokens:token list -> unit -> t
   (** [template ~single ()] is a template-based post-processor.
 
       Templates use [$A] and [$B] as sequence placeholders and literal special
-      token names (e.g. [[CLS]]). Type IDs can be specified with a colon suffix:
-      [$A:0], [[SEP]:1].
+      token names (e.g. [[CLS]]). A colon suffix sets a piece's type ID, as in
+      [$A:0] or [[SEP]:1]; a piece without one has type ID [0]. [$a], [$b] and
+      [$] are [$A], [$B] and [$A], and [$n] is [$A:n]. A token is named by its
+      text, so one whose text holds [:] cannot appear.
 
       [pair] must reference both [$A] and [$B]; it defaults to ["$A:0 $B:1"].
-      [special_tokens] defaults to [[]]. *)
+      [special_tokens] defaults to [[]].
+
+      Raises [Invalid_argument] if a template names a token not in
+      [special_tokens] or has a suffix that is not a non-negative integer, or if
+      [pair] lacks [$A] or [$B]. *)
 
   val sequence : t list -> t
   (** [sequence processors] chains [processors] left-to-right. *)
@@ -690,9 +703,12 @@ module Post_processor : sig
       may override. Offsets are not shifted: each sequence keeps the offsets
       into its own text.
 
-      When [~add_special_tokens] is [false], no special token is inserted, but
-      everything else still happens: the two sequences are still merged, type
-      IDs are still assigned, and byte-level offsets are still trimmed. *)
+      When [~add_special_tokens] is [false], no special token is inserted. The
+      two sequences are still merged, type IDs still assigned and byte-level
+      offsets still trimmed.
+
+      Raises [Invalid_argument] if [pair] is absent and [t] holds a template
+      whose [single] names [$B]. *)
 
   val added_tokens : t -> is_pair:bool -> int
   (** [added_tokens t ~is_pair] is the number of special tokens [t] adds. Useful
@@ -708,7 +724,11 @@ module Post_processor : sig
   val of_json : Jsont.json -> (t, string) result
   (** [of_json json] is a post-processor from HuggingFace [tokenizer.json]
       format. Errors if [json] is not an object, has a missing or unknown
-      ["type"] field, or has invalid parameters. *)
+      ["type"] field, or has invalid parameters.
+
+      A missing ["trim_offsets"] or ["add_prefix_space"] is [true], a missing
+      ["single"] is ["$A"], and a missing or [null] ["pair"] is ["$A:0 $B:1"]. A
+      template may also be a string in {!template}'s syntax. *)
 
   val to_json : t -> Jsont.json
   (** [to_json t] is [t] serialized to HuggingFace [tokenizer.json] format. *)
