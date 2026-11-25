@@ -198,6 +198,16 @@ let near_simple_zero m (d, (c, (x0, (order, k)))) =
   if is Converged s then
     at_most float_exact ~than:(1. +. (1. /. k)) (distance k s c)
 
+(* Five unknowns, at whose shallow-by-2 derivative a contraction read over the
+   last two undamped steps alone once converged 1e-12 from the zero. *)
+let five =
+  let a =
+    Nx.add
+      (Nx.mul_s (Nx.eye f64 5) 7.)
+      (Nx.sin (Nx.reshape [| 5; 5 |] (Nx.arange_f f64 0. 25. 1.)))
+  in
+  (a, vec [| 1.3; -0.4; 1.9; -1.7; 0.2 |])
+
 (* Newton *)
 
 let newton_tests =
@@ -355,6 +365,7 @@ let newton_tests =
         equal Oracle.status_t Converged (Oracle.status s);
         within_tight z (Solution.best s));
     prop "a derivative too shallow, by up to 2, converges only at the zero"
+      ~examples:[ (five, 0.5) ]
       Gen.(pair system (float_range 0.5 1.))
       (fun ((a, z), shallow) ->
         (* Steps [1 / shallow] times too long: the undamped map x + δ / shallow
@@ -375,6 +386,18 @@ let newton_tests =
         cover "converges" (is Converged s);
         if is Converged s then
           equal (Oracle.tensor ~rel:1e-10 ~abs:1e-12 ()) z (Solution.get s));
+    test "a step that overflows where f is finite keeps a finite best"
+      (fun () ->
+        (* A derivative of 1e-310 sends the full step from 0 to ∞, where tanh is
+           1; no shortened step lowers |f| short of the floats' range. *)
+        let f x = Nx.sub_s (Nx.tanh x) 0.5 in
+        let s =
+          System.solve one
+            (System.newton ~derivative:(fun _ dx -> Nx.mul_s dx 1e-310))
+            ~linear:Linear.dense ~tol:tight ~budget:5 f (vec [| 0. |])
+        in
+        satisfies ~claim:"is finite" float_exact Float.is_finite
+          (Nx.item [ 0 ] (Solution.best s)));
     test "x² + 1 = 0 stalls at the minimum of |f|" (fun () ->
         let s = newton (fun x -> Nx.add_s (Nx.square x) 1.) (vec [| 0.5 |]) in
         equal Oracle.status_t Stalled (Oracle.status s));
@@ -384,7 +407,7 @@ let newton_tests =
         let z = vec [| 0.5; -1.; 0.2 |] in
         let f b = Solution.get (newton (field a b) (Nx.zeros f64 [| 3 |])) in
         within_tight z (Rune.jit' f (rhs a z)));
-    test "compiled with a banded solver equals eager" (fun () ->
+    test "compiled with a banded solver agrees with eager to tol" (fun () ->
         Compiled.here ();
         (* Bratu's problem on 16 nodes, h = 1/17, below its critical λ. The
            band's probe and factors are taken inside the search's loop. *)
@@ -896,6 +919,22 @@ let solve_tests =
     test "an f of another shape raises" (fun () ->
         raises_from "Jera.System.solve" (fun () ->
             newton (fun x -> Nx.concatenate ~axis:0 [ x; x ]) (vec [| 1. |])));
+    test "a guess that holds no tensor raises" (fun () ->
+        raises_from "Jera.System.solve" (fun () ->
+            System.solve Nx.Ptree.unit System.broyden ~linear:Linear.dense
+              ~tol:tight ~budget:5 Fun.id ()));
+    test "a precondition of another shape raises" (fun () ->
+        let linear =
+          Linear.cg ~rel:1e-12 ~budget:10 ~precondition:(fun u ->
+              Nx.concatenate ~axis:0 [ u; u ])
+        in
+        raises_from "Jera.System.solve" (fun () ->
+            newton ~linear (fun x -> Nx.sub_s x 1.) (vec [| 0.; 0. |])));
+    test "a failed linear solve ends the lane Stalled" (fun () ->
+        (* cg on J = −I, which is not positive-definite. *)
+        let linear = Linear.cg ~rel:1e-12 ~budget:10 ~precondition:Fun.id in
+        let s = newton ~linear (fun x -> Nx.rsub_s 1. x) (vec [| 0.; 0. |]) in
+        equal Oracle.status_t Stalled (Oracle.status s));
   ]
 
 (* Lanes *)
@@ -992,32 +1031,26 @@ let lane_tests =
       lane_systems (fun (a, z) ->
         (* Newton's search with a direct solve per lane, bit for bit. *)
         let b = Nx.add (apply a z) (Nx.sin z) in
-        let alone (a, (b, x0)) =
+        let alone i =
+          let a = Nx.get [ i ] a and b = Nx.get [ i ] b in
           let f x = Nx.sub (Nx.add (Nx.matmul a x) (Nx.sin x)) b in
           let jac x = Nx.add a (Nx.mul (Nx.eye f64 (Nx.dim 0 x)) (Nx.cos x)) in
-          let s =
-            System.solve one
-              (System.newton ~derivative:(fun x dx -> Nx.matmul (jac x) dx))
-              ~linear:Linear.dense ~tol:tight ~budget:50 f x0
-          in
-          (Solution.best s, (Solution.is Converged s, Solution.evaluations s))
+          System.solve one
+            (System.newton ~derivative:(fun x dx -> Nx.matmul (jac x) dx))
+            ~linear:Linear.dense ~tol:tight ~budget:50 f
+            (Nx.zeros_like (Nx.get [ i ] z))
         in
-        let lanes = in_lanes a b (Nx.zeros_like z) in
         let read s =
           (Solution.best s, (Solution.is Converged s, Solution.evaluations s))
         in
-        let answer =
-          Oracle.structure Nx.Ptree.(pair tensor (pair tensor tensor))
-        in
-        if Nx.dim 0 z > 0 then
-          equal answer
-            (Rune.vmap
-               Nx.Ptree.(
-                 pair tensor (pair tensor tensor)
-                 @-> returns (pair tensor (pair tensor tensor)))
-               alone
-               (a, (b, Nx.zeros_like z)))
-            (read lanes));
+        let lanes = List.init (Nx.dim 0 z) (fun i -> read (alone i)) in
+        if lanes <> [] then
+          equal
+            (Oracle.structure Nx.Ptree.(pair tensor (pair tensor tensor)))
+            ( Nx.stack (List.map fst lanes),
+              ( Nx.stack (List.map (fun (_, (c, _)) -> c) lanes),
+                Nx.stack (List.map (fun (_, (_, n)) -> n) lanes) ) )
+            (read (in_lanes a b (Nx.zeros_like z))));
     prop "seeded lanes two steps from rounding converge"
       ~examples:rounding_lanes lane_systems (fun (a, z) ->
         let b = Nx.add (apply a z) (Nx.sin z) in
