@@ -14,14 +14,48 @@ let wide x = Nx.item [] (Nx.cast Nx.float64 x)
 
 type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
 
-(* Within the rounding of nx's special functions: a few hundred ulps of the
-   terms, absolutely near zero. *)
-let close = float_rel ~rel:1e-12 ~abs:1e-12
-let support_w = Testable.make ~pp:Norn.Support.pp ~equal:Norn.Support.equal
+let std = D.normal ~loc:(f64 0.) ~scale:(f64 1.)
 
-(* A distribution, printed by [D.pp], for [satisfies]. *)
-let dist () = Testable.make ~pp:D.pp ~equal:(fun _ _ -> false)
-let valid d = Nx.item [] (D.valid d)
+(* Two normal components, at 0 and 1. *)
+let two = D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(f64 1.)
+
+(* An hmm of [n] steps over [two]'s states, every logit 0. *)
+let hmm2 n =
+  D.hmm
+    ~initial:(vec [| 0.; 0. |])
+    ~transition:(Nx.zeros Nx.float64 [| 2; 2 |])
+    n two
+
+let trials_3_7 = Nx.create Nx.int32 [| 2 |] [| 3l; 7l |]
+
+let softplus v =
+  if v > 0. then v +. Float.log1p (Float.exp (-.v))
+  else Float.log1p (Float.exp v)
+
+let sigmoid l = Float.exp (-.softplus (-.l))
+let log_sigmoid l = -.softplus (-.l)
+
+let logsumexp xs =
+  let m = Array.fold_left Float.max Float.neg_infinity xs in
+  if m = Float.neg_infinity then m
+  else
+    m +. Float.log (Array.fold_left (fun a x -> a +. Float.exp (x -. m)) 0. xs)
+
+let half_log_2pi = 0.5 *. Float.log (2. *. Float.pi)
+
+(* norn.mli's bound on a truncation's log density [v]: [64 ε (1 + |log f| + |log
+   m|)], [log f] the base's at the point and [log m = log f - v] the log
+   mass. *)
+let truncation_bound eps ~base ~v =
+  64. *. eps *. (1. +. Float.abs base +. Float.abs (base -. v))
+
+(* norn.mli's bound on a quantile [x] read from the tail [m], [f] the density at
+   [x]: [64 ε (|x| + (1 + |log m|) m / f)]. *)
+let quantile_bound ~x ~log_m ~log_f =
+  64. *. epsilon_float
+  *. (Float.abs x +. (Float.exp (log_m -. log_f) *. (1. +. Float.abs log_m)))
+
+let support_w = Testable.make ~pp:Norn.Support.pp ~equal:Norn.Support.equal
 
 (* gen/dist.py's goldens *)
 
@@ -155,6 +189,14 @@ let integrate f =
 let pullback d u =
   let x, ld = Norn.Bij.forward (D.coords d) u in
   Nx.exp (Nx.add (D.factors d x) ld)
+
+(* A pullback through coords holds the target's mass between the bijector's
+   saturation points (norn.mli, Bij's totality), and the rule is exact to
+   rounding. Two cases leave most beyond them: beta_u's density [(1 - x)^(-1/2)
+   / π] past interval's saturation at [1 - x ≈ ε] holds [2 √ε / π ≈ 9.5e-9], and
+   lkj at [η = 1/2], whose density in [u] is [sech u / π], past cholesky_corr's
+   where [tanh u] rounds to 1, [|u| ≈ 18.4], holds [4 e^-18.4 / π ≈ 1.3e-8]. *)
+let saturated_mass = 2e-8
 
 (* Validation on use *)
 
@@ -290,8 +332,6 @@ let validation =
 
 (* Continuous families *)
 
-(* Continuous densities *)
-
 (* The bound norn.mli states on a log density [f]: [ε (16 |f| + 48 Λ + 12 M)],
    for [ε] the dtype's epsilon and the family's [Λ] and [M] at the exact
    parameters and point. *)
@@ -333,18 +373,6 @@ let log1p_square z =
   let z = Float.abs z in
   if z > 1. then (2. *. Float.log z) +. Float.log1p ((1. /. z) ** 2.)
   else Float.log1p (z *. z)
-
-let softplus v =
-  if v > 0. then v +. Float.log1p (Float.exp (-.v))
-  else Float.log1p (Float.exp v)
-
-let logsumexp xs =
-  let m = Array.fold_left Float.max Float.neg_infinity xs in
-  if m = Float.neg_infinity then m
-  else
-    m +. Float.log (Array.fold_left (fun a x -> a +. Float.exp (x -. m)) 0. xs)
-
-let half_log_2pi = 0.5 *. Float.log (2. *. Float.pi)
 
 (* The terms [t] of a closed-form family's log density as norn.mli writes it, at
    a golden line's arguments: its bound is [8 ε Σ |t|]. *)
@@ -819,7 +847,7 @@ let continuous_scores =
 let compiled_densities =
   Windtrap.cases "a compiled density is within its bound"
     ~id:(fun family -> family)
-    [ "gamma"; "inverse_gamma"; "beta"; "student_t"; "dirichlet" ]
+    [ "gamma"; "inverse_gamma"; "beta"; "student_t"; "dirichlet"; "von_mises" ]
     (fun family ->
       Compiled.here ();
       let rows =
@@ -854,6 +882,8 @@ let compiled_densities =
                  ~loc:(Nx.zeros Nx.float64 [| n |])
                  ~scale:(col 1))
               (col 2)
+        | "von_mises" ->
+            D.factors (D.von_mises ~loc:(col 0) ~concentration:p) (col 2)
         | _ ->
             (* Points back on the simplex, as [density_at] puts them. *)
             let x = simplex 3 in
@@ -861,15 +891,28 @@ let compiled_densities =
               (D.dirichlet ~concentration:p)
               (Nx.div x (Nx.sum ~axes:[ 1 ] ~keepdims:true x))
       in
-      let p = if family = "dirichlet" then simplex 0 else col 0 in
+      let p =
+        match family with
+        | "dirichlet" -> simplex 0
+        | "von_mises" -> col 1
+        | _ -> col 0
+      in
       let compiled = Nx.to_array (Rune.jit' density p) in
       List.iteri
         (fun i a ->
-          let logs, off = density_terms family a in
+          let tol =
+            if List.mem family saddle_point then
+              let logs, off = density_terms family a in
+              density_bound epsilon_float v.(i) ~logs ~off
+            else
+              8. *. epsilon_float
+              *. List.fold_left
+                   (fun s t -> s +. Float.abs t)
+                   0. (closed_terms family a)
+          in
           equal
             ~msg:(String.concat " " (List.map (Printf.sprintf "%h") a))
-            (float (density_bound epsilon_float v.(i) ~logs ~off))
-            v.(i) compiled.(i))
+            (float tol) v.(i) compiled.(i))
         args)
 
 (* At float16 [z²] overflows from [z = 256], where [-z² / 2] is still a float16
@@ -878,7 +921,6 @@ let compiled_densities =
 let float16_squares =
   let h = Nx.scalar Nx.float16 in
   let at d x = Nx.item [] (Nx.cast Nx.float64 (D.factors d (h x))) in
-  let half_log_2pi = 0.5 *. Float.log (2. *. Float.pi) in
   let tol v = float (8. *. 0x1p-10 *. Float.abs v) in
   Windtrap.cases "a float16 log density holds where z² overflows"
     ~id:(fun (name, _, _) -> name)
@@ -924,10 +966,10 @@ let cauchy_tails =
 let cauchy = group "cauchy" [ cauchy_tails ]
 
 (* Far in a Student t's tail, [z = (x - loc) / scale] or [z / √ν] overflows
-   where its log density does not: [c - ((ν + 1) / 2) log1p (z² / ν)], [c]
-   its normaliser less [log scale], is read with [log1p (z² / ν)] as
-   [2 (log d - log s) + log1p ((s / d)²)], [s = scale √ν]. The bound is
-   norn.mli's, [ε (16 |f| + 48 Λ)], [Λ = 1 + |log ν| + |log scale|]. *)
+   where its log density does not: [c - ((ν + 1) / 2) log1p (z² / ν)], [c] its
+   normaliser less [log scale], is read with [log1p (z² / ν)] as [2 (log d - log
+   s) + log1p ((s / d)²)], [s = scale √ν]. The bound is norn.mli's, [ε (16 |f| +
+   48 Λ)], [Λ = 1 + |log ν| + |log scale|]. *)
 let student_t_tails =
   Windtrap.cases "a Student t's log density far past where z overflows"
     ~id:(fun (df, d, s) -> Printf.sprintf "df %g, x - loc %g, scale %g" df d s)
@@ -935,12 +977,15 @@ let student_t_tails =
     (fun (df, d, s) ->
       let root = Float.sqrt df in
       let c =
-        lgamma ((df +. 1.) /. 2.) -. lgamma (df /. 2.)
+        lgamma ((df +. 1.) /. 2.)
+        -. lgamma (df /. 2.)
         -. (0.5 *. (Float.log df +. Float.log Float.pi))
         -. Float.log s
       in
       let s' = s *. root in
-      let l = (2. *. (Float.log d -. Float.log s')) +. Float.log1p ((s' /. d) ** 2.) in
+      let l =
+        (2. *. (Float.log d -. Float.log s')) +. Float.log1p ((s' /. d) ** 2.)
+      in
       let exact = c -. ((df +. 1.) /. 2. *. l) in
       let logs = 1. +. alog df +. alog s in
       equal
@@ -1055,8 +1100,15 @@ let dirichlet =
           let one i =
             item (D.factors (D.dirichlet ~concentration:(row i a)) (row i x))
           in
-          equal (array float_exact)
-            [| one 0; one 1 |]
+          let rows = [| one 0; one 1 |] in
+          (* a batch may sum each row in another order: a rounding of each
+             term *)
+          equal
+            (array
+               (float
+                  (16. *. epsilon_float
+                  *. (1. +. Float.abs rows.(0) +. Float.abs rows.(1)))))
+            rows
             (Nx.to_array (D.factors (D.dirichlet ~concentration:a) x)));
       narrow_dirichlet_draws;
       test "fewer than two components raise naming dirichlet" (fun () ->
@@ -1078,8 +1130,7 @@ let mvn =
       test "a scale_tril of another length raises naming mvn" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Dist.mvn:") (fun () ->
               D.mvn ~loc ~scale_tril:(Nx.eye Nx.float64 3)));
-      test "a dtype other than float32 and float64 raises naming mvn"
-        (fun () ->
+      test "a dtype other than float32 and float64 raises naming mvn" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Dist.mvn:") (fun () ->
               D.mvn
                 ~loc:(Nx.zeros Nx.float16 [| 2 |])
@@ -1155,19 +1206,10 @@ let von_mises =
                (D.factors
                   (D.von_mises ~loc:(f64 0.) ~concentration:(f64 k))
                   (f64 x))));
-      test "a compiled density is the eager one" (fun () ->
-          Compiled.here ();
-          let xs = vec [| -3.; 0.; 1.; 1.0001; 3.1 |] in
-          let f k =
-            D.factors
-              (D.iid [| 5 |] (D.von_mises ~loc:(f64 1.) ~concentration:k))
-              xs
-          in
-          equal
-            (array (float_rel ~rel:1e-14 ~abs:1e-14))
-            (Nx.to_array (f (f64 300.)))
-            (Nx.to_array (Rune.jit' f (f64 300.))));
-      (* [∂κ f = cos (x - loc) - I₁(κ) / I₀(κ)]. *)
+      (* [∂κ f = cos (x - loc) - I₁(κ) / I₀(κ)]: Rune's derivative of [-2κ sin²
+         ((x - loc) / 2) - log (2π i0e κ)] sums [2 sin²], at most [2], and
+         [i0e'/i0e], at most [1], each within a few roundings, and nx's ratio
+         [i1e / i0e] adds as many: [64 ε] holds them. *)
       prop "the score of its concentration is cos (x - loc) - I₁ / I₀"
         Gen.(
           pair
@@ -1184,7 +1226,7 @@ let von_mises =
                  (f64 k))
           in
           let r = item (Nx.div (Nx.i1e (f64 k)) (Nx.i0e (f64 k))) in
-          equal (float 1e-12) (Float.cos (x -. 0.2) -. r) g);
+          equal (float (64. *. epsilon_float)) (Float.cos (x -. 0.2) -. r) g);
     ]
 
 let matrix n xs = Nx.create Nx.float64 [| n; n |] xs
@@ -1263,13 +1305,13 @@ let lkj =
             let l, ld = Norn.Bij.forward (D.coords d) u in
             Nx.exp (Nx.add (D.factors d l) ld)
           in
-          equal (float 1e-8) 1. (integrate f));
+          equal (float saturated_mass) 1. (integrate f));
       Windtrap.cases "an off-diagonal correlation of its draws is a scaled beta"
         ~id:(fun (n, eta, _) -> Printf.sprintf "n = %d, η = %g" n eta)
         [ (3, 2., 31); (5, 0.8, 32) ]
         (fun (n, eta, key) ->
           let _, _, r = correlation n eta key in
-          at_most (float 1e-9)
+          at_most float_exact
             ~than:(threshold (Printf.sprintf "lkj_%d" n))
             (chi_square (Printf.sprintf "lkj_%d" n) r));
       (* At a small [η] and many rows the last diagonals near [0], where [√(1 -
@@ -1299,7 +1341,8 @@ let lkj =
             (Array.for_all Float.is_finite)
             (Nx.to_array (Nx.cast Nx.float64 (D.factors d l))));
       (* [∂η f = Σ_(i >= 2) 2 log L_ii - Σ_k (ψ(η + (n - 1 - k) / 2) - ψ(η + (n
-         - 1) / 2))]. *)
+         - 1) / 2))], its terms each within 16 ulps (nx's digamma) and its sum
+         within a rounding of each: [64 ε] of their magnitudes. *)
       test "the score of its concentration" (fun () ->
           let n = 4 in
           let l, _, _ = correlation n 1.5 33 in
@@ -1317,28 +1360,62 @@ let lkj =
               for i = 1 to n - 1 do
                 logs := !logs +. (2. *. Float.log (Nx.item [ i; i ] l))
               done;
-              let norm = ref 0. in
+              let norm = ref 0. and terms = ref (Float.abs !logs) in
               for k = 1 to n - 1 do
-                norm :=
-                  !norm
-                  +. digamma (eta +. (float_of_int (n - 1 - k) /. 2.))
-                  -. digamma (eta +. (float_of_int (n - 1) /. 2.))
+                let a = digamma (eta +. (float_of_int (n - 1 - k) /. 2.)) in
+                let b = digamma (eta +. (float_of_int (n - 1) /. 2.)) in
+                norm := !norm +. a -. b;
+                terms := !terms +. Float.abs a +. Float.abs b
               done;
               let expected = !logs -. !norm in
-              equal (float (1e-12 *. (1. +. Float.abs !logs))) expected g)
+              equal (float (64. *. epsilon_float *. !terms)) expected g)
             [ 0.3; 1.; 7.; 1e5 ]);
-      test "a compiled density is the eager one" (fun () ->
+      (* gen/dist.py's factors of 2 × 2, one program over their concentrations,
+         each within the bound. Rows of float32 values are put back on the unit
+         circle, as the eager test reads them. *)
+      test "a compiled density is within its bound" (fun () ->
           Compiled.here ();
-          let l, _, _ = correlation 3 2. 34 in
-          let f eta =
-            D.factors
-              (D.iid [| draws |] (D.lkj_cholesky 3 ~concentration:eta))
-              l
+          let rows =
+            List.filter_map
+              (function
+                | [ _; "2"; eta; _; _; l21; l22; v ] ->
+                    Some
+                      ( float_of_string eta,
+                        float_of_string l21,
+                        float_of_string l22,
+                        float_of_string v )
+                | _ -> None)
+              (lines "lkj")
           in
-          equal
-            (array (float_rel ~rel:1e-13 ~abs:1e-13))
-            (Nx.to_array (f (f64 2.)))
-            (Nx.to_array (Rune.jit' f (f64 2.))));
+          let factor (_, l21, l22, _) =
+            [|
+              1.; 0.; Float.copy_sign (Float.sqrt (1. -. (l22 *. l22))) l21; l22;
+            |]
+          in
+          let ls =
+            Nx.create Nx.float64
+              [| List.length rows; 2; 2 |]
+              (Array.concat (List.map factor rows))
+          in
+          let etas =
+            vec (Array.of_list (List.map (fun (e, _, _, _) -> e) rows))
+          in
+          let compiled =
+            Nx.to_array
+              (Rune.jit'
+                 (fun eta -> D.factors (D.lkj_cholesky 2 ~concentration:eta) ls)
+                 etas)
+          in
+          List.iteri
+            (fun i (eta, _, l22, v) ->
+              let terms =
+                Float.abs v +. Float.abs (((2. *. eta) -. 2.) *. Float.log l22)
+              in
+              equal
+                ~msg:(Printf.sprintf "η = %g" eta)
+                (float (16. *. epsilon_float *. terms))
+                v compiled.(i))
+            rows);
       (* A row's squared norm within [4 n ε] of one counts as in the support:
          [0.0625] at bfloat16 for [n = 2]. Its values of [0.6], [0.83] and
          [0.85] are [0.6015625], [0.83203125] and [0.8515625], so the rows'
@@ -1355,16 +1432,30 @@ let lkj =
           in
           if inside then satisfies ~claim:"finite" float_exact Float.is_finite f
           else equal float_exact Float.neg_infinity f);
-      test "a vector of concentrations is batch axes" (fun () ->
-          let l = matrix 2 [| 1.; 0.; 0.6; 0.8 |] in
-          let one eta =
-            item (D.factors (D.lkj_cholesky 2 ~concentration:(f64 eta)) l)
+      (* One matrix against concentrations [0.5; 3]: each factor the scalar
+         concentration's, within a rounding of each term (a batch may sum in
+         another order). *)
+      Windtrap.cases "a vector of concentrations is batch axes"
+        ~id:(fun n -> Printf.sprintf "n = %d" n)
+        [ 2; 3 ]
+        (fun n ->
+          let l =
+            if n = 2 then matrix 2 [| 1.; 0.; 0.6; 0.8 |]
+            else Nx.eye Nx.float64 3
           in
-          equal (array float_exact)
-            [| one 0.5; one 3. |]
+          let one eta =
+            item (D.factors (D.lkj_cholesky n ~concentration:(f64 eta)) l)
+          in
+          let rows = [| one 0.5; one 3. |] in
+          equal
+            (array
+               (float
+                  (4. *. epsilon_float
+                  *. (1. +. Float.abs rows.(0) +. Float.abs rows.(1)))))
+            rows
             (Nx.to_array
                (D.factors
-                  (D.lkj_cholesky 2 ~concentration:(vec [| 0.5; 3. |]))
+                  (D.lkj_cholesky n ~concentration:(vec [| 0.5; 3. |]))
                   l)));
       test "a matrix off the support has density -inf" (fun () ->
           let d = D.lkj_cholesky 2 ~concentration:(f64 2.) in
@@ -1383,12 +1474,6 @@ let lkj =
     ]
 
 (* Discrete families *)
-
-let sigmoid l =
-  if l < 0. then
-    let e = Float.exp l in
-    e /. (1. +. e)
-  else 1. /. (1. +. Float.exp (-.l))
 
 (* [dt]'s epsilon and least subnormal. *)
 let eps_of (type b) (dt : (float, b) Nx.dtype) =
@@ -1464,8 +1549,6 @@ let golden_masses =
                   | _ -> failwith "dist.golden: a malformed mass line")
                 rows))
         (families "mass"))
-
-let log_sigmoid l = -.Float.log1p (Float.exp (-.l))
 
 let classic family a b x =
   let terms =
@@ -1957,9 +2040,23 @@ let binomial_mass =
       cover "a finite logit" (Float.is_finite l);
       let d = D.binomial ~trials:(i32 n) ~logits:(f64 l) in
       let xs = Nx.arange Nx.int32 0 (n + 1) 1 in
-      let mass = Nx.sum (Nx.exp (D.factors d xs)) in
-      (* Each of at most 301 terms within a few hundred ulps. *)
-      equal (float 1e-11) 1. (item mass))
+      let f = D.factors d xs in
+      (* Each mass within its bound, ε (24 |f| + 9 |x - m|) relatively, and the
+         sum's rounding within ε per term. *)
+      let m = float_of_int n *. sigmoid l in
+      let tol =
+        Array.fold_left ( +. )
+          (float_of_int (n + 1) *. epsilon_float)
+          (Array.mapi
+             (fun x f ->
+               if Float.is_finite f then
+                 Float.exp f *. epsilon_float
+                 *. ((24. *. Float.abs f)
+                    +. (9. *. Float.abs (float_of_int x -. m)))
+               else 0.)
+             (Nx.to_array f))
+      in
+      equal (float tol) 1. (item (Nx.sum (Nx.exp f))))
 
 let binomial_bernoulli =
   prop "a binomial of one trial is a bernoulli" logit (fun l ->
@@ -2025,11 +2122,7 @@ let binomial =
       binomial_moments;
       binomial_edges;
       test "a count above an element's trials has factor -inf" (fun () ->
-          let d =
-            D.binomial
-              ~trials:(Nx.create Nx.int32 [| 2 |] [| 3l; 7l |])
-              ~logits:(f64 0.)
-          in
+          let d = D.binomial ~trials:trials_3_7 ~logits:(f64 0.) in
           let seven = D.binomial ~trials:(i32 7) ~logits:(f64 0.) in
           equal (array float_exact)
             [| Float.neg_infinity; item (D.factors seven (i32 5)) |]
@@ -2083,16 +2176,15 @@ let iid =
                (D.iid [| 4; 2 |]
                   (D.dirichlet ~concentration:(vec [| 1.5; 2.; 0.7 |])))));
       test "of no copy has log density 0" (fun () ->
-          let d = D.iid [| 0 |] (D.normal ~loc:(f64 0.) ~scale:(f64 1.)) in
+          let d = D.iid [| 0 |] std in
           equal float_exact 0.
             (item (D.log_density d (Nx.zeros Nx.float64 [| 0 |]))));
       test "a negative length raises naming iid" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Dist.iid:") (fun () ->
-              D.iid [| 2; -1 |] (D.normal ~loc:(f64 0.) ~scale:(f64 1.))));
+              D.iid [| 2; -1 |] std));
     ]
 
 let sorted =
-  let std = D.normal ~loc:(f64 0.) ~scale:(f64 1.) in
   group "sorted"
     [
       test "its density is n! times the product" (fun () ->
@@ -2159,9 +2251,7 @@ let transform =
             equal (float (16. *. epsilon_float *. terms)) expected t_x
           else equal float_exact expected t_x);
       test "a value outside its bijector's image has density -inf" (fun () ->
-          let t =
-            D.transform Norn.Bij.exp (D.normal ~loc:(f64 0.) ~scale:(f64 1.))
-          in
+          let t = D.transform Norn.Bij.exp std in
           equal float_exact Float.neg_infinity (item (D.factors t (f64 (-1.)))));
     ]
 
@@ -2189,12 +2279,10 @@ let truncation =
                             let b =
                               item (D.factors (continuous_case base) (f64 x))
                             in
-                            let log_mass = b -. v in
                             equal
                               ~msg:(Printf.sprintf "x = %h" x)
                               (float
-                                 (64. *. epsilon_float
-                                 *. (1. +. Float.abs b +. Float.abs log_mass)))
+                                 (truncation_bound epsilon_float ~base:b ~v))
                               v f
                           else
                             equal
@@ -2239,36 +2327,69 @@ let truncation =
             Float.exp (-.(t *. t) /. 2.) /. Float.sqrt (2. *. Float.pi)
           in
           let cdf t = item (Nx.ndtr (f64 t)) in
-          (* The mass from the smaller tails, which keep its digits. *)
-          let mass =
-            if a > 0. then cdf (-.a) -. cdf (-.b) else cdf b -. cdf a
+          (* The mass from the smaller tails, which keep its digits, as their
+             difference: it loses [(F₁ + F₂) / mass] of [ε], which the ratio
+             carries; each term is within a few roundings, [64 ε]. *)
+          let f1, f2 =
+            if a > 0. then (cdf (-.a), cdf (-.b)) else (cdf b, cdf a)
           in
+          let mass = f1 -. f2 in
           let ratio = (phi b -. phi a) /. mass in
           let expected = x +. ratio in
+          let spread = 1. +. ((f1 +. f2) /. mass) in
           equal
-            (float (1e-12 *. (1. +. Float.abs x +. Float.abs ratio)))
+            (float
+               (64. *. epsilon_float
+               *. (1. +. Float.abs x +. (Float.abs ratio *. spread))))
             expected g);
-      (* A Laplace base, whose tails are closed forms: the truncation's own
-         operations are those of any base, and a normal's tails, read at each of
-         the quantile's Newton steps, compile to a kernel of 700 KB that took a
-         loaded runner past 60 s. *)
-      test "a compiled density and quantile are the eager ones" (fun () ->
+      (* gen/dist.py's truncated laplace on (-50, -40), whose tails are closed
+         forms: a normal's, read at each of the quantile's Newton steps, compile
+         to a kernel of 700 KB that took a loaded runner past 60 s. One program
+         over the golden's points, one over its p, each within the bound
+         norn.mli states eagerly. *)
+      test "a compiled density and quantile are within their bounds" (fun () ->
           Compiled.here ();
-          let d loc =
-            D.truncated ~low:(f64 20.) ~high:(f64 25.)
-              (D.iid [| 5 |] (D.laplace ~loc ~scale:(f64 2.)))
+          let d = continuous_case "truncated_laplace" in
+          let base = continuous_case "laplace" in
+          let rows kind =
+            List.map floats (List.assoc "truncated_laplace" (families kind))
           in
-          let xs = vec [| 19.; 20.; 20.5; 23.; 25. |] in
-          let ps = vec [| 1e-12; 0.1; 0.5; 0.9; 1. -. 1e-9 |] in
-          let loc = f64 0.5 in
-          equal
-            (array (float_rel ~rel:1e-13 ~abs:1e-13))
-            (Nx.to_array (D.factors (d loc) xs))
-            (Nx.to_array (Rune.jit' (fun l -> D.factors (d l) xs) loc));
-          equal
-            (array (float_rel ~rel:1e-13 ~abs:1e-13))
-            (Nx.to_array (D.quantile (d loc) ps))
-            (Nx.to_array (Rune.jit' (fun l -> D.quantile (d l) ps) loc)));
+          let column i rows =
+            vec (Array.of_list (List.map (fun r -> List.nth r i) rows))
+          in
+          let points = rows "logpdf" in
+          let densities =
+            Nx.to_array (Rune.jit' (D.factors d) (column 0 points))
+          in
+          List.iteri
+            (fun i r ->
+              match r with
+              | [ x; v ] when Float.is_finite v ->
+                  let b = item (D.factors base (f64 x)) in
+                  equal
+                    ~msg:(Printf.sprintf "x = %h" x)
+                    (float (truncation_bound epsilon_float ~base:b ~v))
+                    v densities.(i)
+              | [ x; v ] ->
+                  equal
+                    ~msg:(Printf.sprintf "x = %h" x)
+                    float_exact v densities.(i)
+              | _ -> failwith "dist.golden: a malformed logpdf line")
+            points;
+          let ps = rows "ppf" in
+          let quantiles =
+            Nx.to_array (Rune.jit' (D.quantile d) (column 0 ps))
+          in
+          List.iteri
+            (fun i r ->
+              match r with
+              | [ p; v; log_m; log_f ] ->
+                  equal
+                    ~msg:(Printf.sprintf "p = %h" p)
+                    (float (quantile_bound ~x:v ~log_m ~log_f))
+                    v quantiles.(i)
+              | _ -> failwith "dist.golden: a malformed ppf line")
+            ps);
       test "a bound outside the support leaves no mass and raises" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"log mass between the bounds")
             (fun () ->
@@ -2290,7 +2411,6 @@ let truncation =
          window's middle times its width elsewhere: at [30] the log density
          moves by [3e-5] across it, [4e-11] in the mass. *)
       test "a narrow window's mass is its density's integral" (fun () ->
-          let std = D.normal ~loc:(f64 0.) ~scale:(f64 1.) in
           let erf v = item (Nx.erf (f64 v)) in
           let log_phi v =
             (-0.5 *. v *. v) -. (0.5 *. Float.log (2. *. Float.pi))
@@ -2308,28 +2428,42 @@ let truncation =
             in
             Nx.item [] (Nx.cast Nx.float64 (D.factors d (c x)))
           in
-          equal ~msg:"float32 [0, 1e-5]" (float 1e-5) (exact 0. 1e-5 5e-6)
+          let f32 = (Nx.Dtype.float_format Nx.float32).epsilon in
+          let bound eps x v =
+            float (truncation_bound eps ~base:(log_phi x) ~v)
+          in
+          let v = exact 0. 1e-5 5e-6 in
+          equal ~msg:"float32 [0, 1e-5]" (bound f32 5e-6 v) v
             (at Nx.float32 0. 1e-5 5e-6);
-          equal ~msg:"float32 [0, 1e-8]" (float 1e-5) (exact 0. 1e-8 5e-9)
+          let v = exact 0. 1e-8 5e-9 in
+          equal ~msg:"float32 [0, 1e-8]" (bound f32 5e-9 v) v
             (at Nx.float32 0. 1e-8 5e-9);
           (* At float64 the erf difference cancels too: across the window the
              log density moves by [3e-10], so the mass is [φ] at its middle
              times its width, exact in floats (Sterbenz). *)
           let l = 0.3 and h = 0.3 +. 1e-9 in
           let mid = (l +. h) /. 2. in
-          equal ~msg:"float64 [0.3, 0.3 + 1e-9]" (float 1e-12)
-            (log_phi mid -. (log_phi mid +. Float.log (h -. l)))
-            (at Nx.float64 l h mid);
+          let v = log_phi mid -. (log_phi mid +. Float.log (h -. l)) in
+          equal ~msg:"float64 [0.3, 0.3 + 1e-9]"
+            (bound epsilon_float mid v)
+            v (at Nx.float64 l h mid);
           let l = 30. and h = 30. +. 1e-6 in
           let mid = (l +. h) /. 2. in
-          equal ~msg:"float64 [30, 30 + 1e-6]" (float 1e-9)
+          (* the reference's own error, [4e-11] in the mass, adds to the
+             bound *)
+          equal ~msg:"float64 [30, 30 + 1e-6]"
+            (float
+               (truncation_bound epsilon_float ~base:(log_phi mid)
+                  ~v:(-.Float.log (h -. l))
+               +. 4e-11))
             (-.Float.log (h -. l))
             (item
                (D.factors
                   (D.truncated ~low:(f64 l) ~high:(f64 h) std)
                   (f64 mid))));
-      (* The stated limit: the log density is the base's less the log mass,
-         within [ε] of their magnitude, [5e11] at [10^6] standard deviations. *)
+      (* At bounds 10^6 standard deviations out the base's log density and the
+         log mass are both about [-5e11]: float32 and float64 each within
+         norn.mli's bound of the exact value. *)
       test "far bounds keep the base's absolute precision" (fun () ->
           let at (type b) (dt : (float, b) Nx.dtype) =
             let c = Nx.scalar dt in
@@ -2339,7 +2473,12 @@ let truncation =
             Nx.item [] (Nx.cast Nx.float64 (D.factors d (c 1e6)))
           in
           let eps = (Nx.Dtype.float_format Nx.float32).epsilon in
-          equal (float (4. *. eps *. 5e11)) (at Nx.float64) (at Nx.float32));
+          let v = at Nx.float64 and base = -5e11 in
+          equal
+            (float
+               (truncation_bound eps ~base ~v
+               +. truncation_bound epsilon_float ~base ~v))
+            v (at Nx.float32));
       test "no bound raises naming truncated" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Dist.truncated:") (fun () ->
               D.truncated normal));
@@ -2358,10 +2497,11 @@ let truncation =
             (item (D.factors (D.truncated ~low:(f64 (-1.)) normal) (f64 0.)))
             f.(0));
       test "a window of no mass is not valid" (fun () ->
-          satisfies ~claim:"not valid" (dist ())
-            (fun d -> not (valid d))
-            (D.truncated ~high:(f64 (-1.))
-               (D.gamma ~concentration:(f64 2.) ~rate:(f64 1.))));
+          let d =
+            D.truncated ~high:(f64 (-1.))
+              (D.gamma ~concentration:(f64 2.) ~rate:(f64 1.))
+          in
+          equal (array bool) [| false |] [| Nx.item [] (D.valid d) |]);
     ]
 
 let mixture =
@@ -2383,6 +2523,8 @@ let mixture =
           let expected =
             Float.log ((w.(0) *. p (-1.) 0.5) +. (w.(1) *. p 2. 1.))
           in
+          (* two normal terms within [8 ε Σ |t|] of moderate terms, their
+             weights and log-sum-exp a few roundings more *)
           equal
             (float (8. *. epsilon_float *. (1. +. Float.abs expected)))
             expected
@@ -2424,7 +2566,8 @@ let mixture =
           equal (array int) [| 3 |] (Nx.shape (D.factors d x));
           let m = D.membership d x in
           equal (array int) [| 3; 2 |] (Nx.shape m);
-          equal (float 1e-15) 0.5 (Nx.item [ 1; 0 ] m));
+          (* two equal joint terms: a softmax of one rounding each *)
+          equal (float (2. *. epsilon_float)) 0.5 (Nx.item [ 1; 0 ] m));
       test "its draws have its shape" (fun () ->
           let d =
             D.mixture
@@ -2435,7 +2578,7 @@ let mixture =
           equal (array int) [| 5 |]
             (Nx.shape (D.sample (Nx.Rng.key 0) (D.iid [| 5 |] d))));
       test "a mixture over trials has the density of its components" (fun () ->
-          let trials = Nx.create Nx.int32 [| 2 |] [| 3l; 7l |] in
+          let trials = trials_3_7 in
           let d =
             D.mixture
               ~logits:(vec [| 0.; 0. |])
@@ -2482,12 +2625,6 @@ let path_density init trans e z =
   done;
   !s
 
-let logsumexp_list xs =
-  let m = List.fold_left Float.max Float.neg_infinity xs in
-  if m = Float.neg_infinity then m
-  else
-    m +. Float.log (List.fold_left (fun a x -> a +. Float.exp (x -. m)) 0. xs)
-
 (* A row of logits with at least one finite. *)
 let logits k =
   Gen.(
@@ -2523,7 +2660,14 @@ let normal_lp y l =
 (* The log density summed over every state sequence. *)
 let brute k n init trans locs ys =
   let e = Array.map (fun y -> Array.map (normal_lp y) locs) ys in
-  logsumexp_list (List.map (path_density init trans e) (enumerate k n))
+  logsumexp
+    (Array.of_list (List.map (path_density init trans e) (enumerate k n)))
+
+(* The forward algorithm and the enumeration each sum [n] steps of [k]-term
+   log-sum-exps, each within a few roundings of the running magnitude, which [1
+   + |v|] bounds: [32 n k ε (1 + |v|)] holds both. *)
+let hmm_bound n k v =
+  32. *. float_of_int (n * k) *. epsilon_float *. (1. +. Float.abs v)
 
 let hmm_tests =
   group "hmm"
@@ -2538,10 +2682,7 @@ let hmm_tests =
                trans);
           let d = hmm_of k n init trans locs in
           let v = brute k n init trans locs ys in
-          equal
-            (float (1e-12 *. (1. +. Float.abs v)))
-            v
-            (item (D.log_density d (vec ys))));
+          equal (float (hmm_bound n k v)) v (item (D.log_density d (vec ys))));
       prop "its membership is each step's state's posterior" gen_hmm
         (fun (k, n, init, trans, locs, ys) ->
           let d = hmm_of k n init trans locs in
@@ -2550,7 +2691,8 @@ let hmm_tests =
           let e = Array.map (fun y -> Array.map (normal_lp y) locs) ys in
           let paths = enumerate k n in
           let total =
-            logsumexp_list (List.map (path_density init trans e) paths)
+            logsumexp
+              (Array.of_list (List.map (path_density init trans e) paths))
           in
           for t = 0 to n - 1 do
             for j = 0 to k - 1 do
@@ -2562,7 +2704,7 @@ let hmm_tests =
                     else a)
                   0. paths
               in
-              equal (float 1e-12) p (Nx.item [ t; j ] m)
+              equal (float (hmm_bound n k total)) p (Nx.item [ t; j ] m)
             done
           done);
       (* Central differences of the enumeration at [h = 1e-5]: truncation near
@@ -2604,8 +2746,12 @@ let hmm_tests =
           let d =
             D.hmm ~initial ~transition:(Nx.zeros Nx.float64 [| 2; 2 |]) 1 comps
           in
-          equal close
-            (item (D.log_density (D.mixture ~logits:initial comps) (f64 0.7)))
+          let v =
+            item (D.log_density (D.mixture ~logits:initial comps) (f64 0.7))
+          in
+          equal
+            (float (hmm_bound 1 2 v))
+            v
             (item (D.log_density d (vec [| 0.7 |]))));
       test "a chain that alternates is drawn and read as one" (fun () ->
           let ninf = Float.neg_infinity in
@@ -2663,7 +2809,7 @@ let hmm_tests =
           within !firsts m (soft 0.4 (-0.3));
           within stay.(0) from.(0) (soft 1.2 (-0.3));
           within stay.(1) from.(1) (soft 0. 0.5));
-      test "a compiled density and membership are the eager ones" (fun () ->
+      test "a compiled density and membership are the enumeration's" (fun () ->
           Compiled.here ();
           let ys = vec [| 0.3; -1.; 2.; 2.5; -0.7; 0.1; 1.9; -2. |] in
           let d tr =
@@ -2676,13 +2822,33 @@ let hmm_tests =
             Nx.create Nx.float64 [| 3; 3 |]
               [| 1.; 0.; -1.; 0.2; 0.8; 0.; -2.; 0.; 1. |]
           in
-          equal close
-            (item (D.log_density (d tr) ys))
-            (item (Rune.jit' (fun tr -> D.log_density (d tr) ys) tr));
+          (* Against the enumeration of its 3^8 state sequences. *)
+          let init = [| 0.; 0.5; -1. |] and locs = [| -1.; 0.5; 2. |] in
+          let rows =
+            [| [| 1.; 0.; -1. |]; [| 0.2; 0.8; 0. |]; [| -2.; 0.; 1. |] |]
+          in
+          let ys' = Nx.to_array ys in
+          let v = brute 3 8 init rows locs ys' in
           equal
-            (array (float 1e-13))
-            (Nx.to_array (D.membership (d tr) ys))
-            (Nx.to_array (Rune.jit' (fun tr -> D.membership (d tr) ys) tr)));
+            (float (hmm_bound 8 3 v))
+            v
+            (item (Rune.jit' (fun tr -> D.log_density (d tr) ys) tr));
+          let e = Array.map (fun y -> Array.map (normal_lp y) locs) ys' in
+          let paths = enumerate 3 8 in
+          let m = Rune.jit' (fun tr -> D.membership (d tr) ys) tr in
+          for t = 0 to 7 do
+            for j = 0 to 2 do
+              let p =
+                List.fold_left
+                  (fun a z ->
+                    if List.nth z t = j then
+                      a +. Float.exp (path_density init rows e z -. v)
+                    else a)
+                  0. paths
+              in
+              equal (float (hmm_bound 8 3 v)) p (Nx.item [ t; j ] m)
+            done
+          done);
       test "iid copies are independent sequences" (fun () ->
           let d =
             D.hmm
@@ -2693,12 +2859,18 @@ let hmm_tests =
           in
           let x = Nx.create Nx.int32 [| 2; 3 |] [| 0l; 1l; 12l; 9l; 8l; 1l |] in
           let f = D.factors (D.iid [| 2 |] d) x in
-          equal (array close)
+          let rows =
             [|
               item (D.log_density d (Nx.get [ 0 ] x));
               item (D.log_density d (Nx.get [ 1 ] x));
             |]
-            (Nx.to_array f);
+          in
+          equal
+            (array
+               (float
+                  (hmm_bound 3 2
+                     (Float.max (Float.abs rows.(0)) (Float.abs rows.(1))))))
+            rows (Nx.to_array f);
           equal (array int) [| 2; 3; 2 |]
             (Nx.shape (D.membership (D.iid [| 2 |] d) x)));
       test "a value's steps must be the hmm's" (fun () ->
@@ -2706,8 +2878,7 @@ let hmm_tests =
             D.hmm
               ~initial:(vec [| 0.; 0. |])
               ~transition:(Nx.zeros Nx.float64 [| 2; 2 |])
-              n
-              (D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(f64 1.))
+              n two
           in
           let x = vec [| 0.1; 0.2; 0.3; 0.4; 0.5 |] in
           List.iter
@@ -2729,8 +2900,7 @@ let hmm_tests =
           raises_match (Exn.invalid_arg ~sub:"Norn.Dist.hmm:") (fun () ->
               D.hmm
                 ~initial:(Nx.zeros Nx.float64 [| k |])
-                ~transition:(Nx.zeros Nx.float64 ts) n
-                (D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(f64 1.))));
+                ~transition:(Nx.zeros Nx.float64 ts) n two));
     ]
 
 (* Eliminators *)
@@ -2778,78 +2948,54 @@ let factors =
           equal (array float_exact) [| one 0.; one 1.; one 2. |] (Nx.to_array f));
     ]
 
-(* A family whose draws are a closed form of a standard draw [u] and its
-   parameter [θ], with the derivative of the draw [x] in [θ]: [x = loc + scale
-   u] has [∂x/∂loc = 1] and [∂x/∂scale = (x - loc) / scale]. *)
-type reparameterised = {
-  name : string;
-  draw :
-    (float, Nx.float64_elt, Nx.host) Nx.t ->
-    (float, Nx.float64_elt, Nx.host) Nx.t;
-  slope : float -> float;
-}
+(* A family of an open support at [dt], at gen/dist.py's parameters. *)
+let open_family (type b) (dt : (float, b) Nx.dtype) name :
+    ((float, b, Nx.host) Nx.t, b, Nx.host) D.t =
+  let s = Nx.scalar dt in
+  match name with
+  | "uniform" -> D.uniform ~low:(s (-1.)) ~high:(s 3.)
+  | "exponential" -> D.exponential ~rate:(s 1.7)
+  | "half_normal" -> D.half_normal ~scale:(s 1.5)
+  | "half_cauchy" -> D.half_cauchy ~scale:(s 2.)
+  | "lognormal" -> D.lognormal ~loc:(s 0.) ~scale:(s 8.)
+  | "gamma" -> D.gamma ~concentration:(s 0.0625) ~rate:(s 1.)
+  | "beta" -> D.beta ~a:(s 0.0625) ~b:(s 0.0625)
+  | "truncated" ->
+      D.truncated ~low:(s 60.5) ~high:(s 61.)
+        (D.normal ~loc:(s 0.5) ~scale:(s 2.))
+  | _ -> failwith name
 
-let reparameterised theta =
-  let k = Nx.Rng.key 3 in
-  let draws d = D.sample k (D.iid [| 5 |] d) in
-  let one = f64 1. in
-  [
-    {
-      name = "normal loc";
-      draw = (fun loc -> draws (D.normal ~loc ~scale:(f64 2.)));
-      slope = (fun _ -> 1.);
-    };
-    {
-      name = "normal scale";
-      draw = (fun scale -> draws (D.normal ~loc:one ~scale));
-      slope = (fun x -> (x -. 1.) /. theta);
-    };
-    {
-      name = "cauchy scale";
-      draw = (fun scale -> draws (D.cauchy ~loc:one ~scale));
-      slope = (fun x -> (x -. 1.) /. theta);
-    };
-    {
-      name = "laplace scale";
-      draw = (fun scale -> draws (D.laplace ~loc:one ~scale));
-      slope = (fun x -> (x -. 1.) /. theta);
-    };
-    {
-      name = "logistic scale";
-      draw = (fun scale -> draws (D.logistic ~loc:one ~scale));
-      slope = (fun x -> (x -. 1.) /. theta);
-    };
-    {
-      name = "student_t scale";
-      draw = (fun scale -> draws (D.student_t ~df:(f64 3.) ~loc:one ~scale));
-      slope = (fun x -> (x -. 1.) /. theta);
-    };
-    {
-      name = "half_normal scale";
-      draw = (fun scale -> draws (D.half_normal ~scale));
-      slope = (fun x -> x /. theta);
-    };
-    {
-      name = "half_cauchy scale";
-      draw = (fun scale -> draws (D.half_cauchy ~scale));
-      slope = (fun x -> x /. theta);
-    };
-    {
-      name = "exponential rate";
-      draw = (fun rate -> draws (D.exponential ~rate));
-      slope = (fun x -> -.x /. theta);
-    };
-    {
-      name = "lognormal loc";
-      draw = (fun loc -> draws (D.lognormal ~loc ~scale:one));
-      slope = (fun x -> x);
-    };
-    {
-      name = "uniform high";
-      draw = (fun high -> draws (D.uniform ~low:one ~high));
-      slope = (fun x -> (x -. 1.) /. (theta -. 1.));
-    };
-  ]
+(* At a narrow dtype one draw in a few hundred rounds onto a bound, so 4000
+   draws per row reach it. *)
+let draws_inside =
+  Windtrap.cases "a draw lies in the open support, at every dtype"
+    ~id:(fun (name, Dtype dt) -> name ^ " at " ^ Nx.Dtype.name dt)
+    (List.concat_map
+       (fun name ->
+         List.map
+           (fun d -> (name, d))
+           [
+             Dtype Nx.float64;
+             Dtype Nx.float32;
+             Dtype Nx.float16;
+             Dtype Nx.bfloat16;
+           ])
+       [
+         "uniform";
+         "exponential";
+         "half_normal";
+         "half_cauchy";
+         "lognormal";
+         "gamma";
+         "beta";
+         "truncated";
+       ])
+    (fun (name, Dtype dt) ->
+      let d = D.iid [| 4000 |] (open_family dt name) in
+      let f = D.factors d (D.sample (Nx.Rng.key 17) d) in
+      satisfies ~claim:"every draw's factor finite" (array float_exact)
+        (Array.for_all Float.is_finite)
+        (Nx.to_array (Nx.cast Nx.float64 f)))
 
 (* Goodness of fit: Pearson's chi-square over the bins of gen/dist.py, whose
    thresholds hold the family-wise false-alarm rate of these tests at 1%. Each
@@ -2882,66 +3028,62 @@ let fit =
                   (chi_square name (draws_of name))))
         (families "threshold"))
 
-(* A family of an open support at [dt], at gen/dist.py's parameters. *)
-let open_family (type b) (dt : (float, b) Nx.dtype) name :
-    ((float, b, Nx.host) Nx.t, b, Nx.host) D.t =
-  let s = Nx.scalar dt in
-  match name with
-  | "uniform" -> D.uniform ~low:(s (-1.)) ~high:(s 3.)
-  | "exponential" -> D.exponential ~rate:(s 1.7)
-  | "half_normal" -> D.half_normal ~scale:(s 1.5)
-  | "half_cauchy" -> D.half_cauchy ~scale:(s 2.)
-  | "lognormal" -> D.lognormal ~loc:(s 0.) ~scale:(s 8.)
-  | "gamma" -> D.gamma ~concentration:(s 0.0625) ~rate:(s 1.)
-  | "beta" -> D.beta ~a:(s 0.0625) ~b:(s 0.0625)
-  | "truncated" -> D.truncated ~low:(s 60.5) ~high:(s 61.) (D.normal ~loc:(s 0.5) ~scale:(s 2.))
-  | _ -> failwith name
-
-(* At a narrow dtype one draw in a few hundred rounds onto a bound, so 4000
-   draws per row reach it. *)
-let draws_inside =
-  Windtrap.cases "a draw lies in the open support, at every dtype"
-    ~id:(fun (name, Dtype dt) -> name ^ " at " ^ Nx.Dtype.name dt)
-    (List.concat_map
-       (fun name ->
-         List.map (fun d -> (name, d))
-           [ Dtype Nx.float64; Dtype Nx.float32; Dtype Nx.float16; Dtype Nx.bfloat16 ])
-       [ "uniform"; "exponential"; "half_normal"; "half_cauchy"; "lognormal"; "gamma"; "beta"; "truncated" ])
-    (fun (name, Dtype dt) ->
-      let d = D.iid [| 4000 |] (open_family dt name) in
-      let f = D.factors d (D.sample (Nx.Rng.key 17) d) in
-      satisfies ~claim:"every draw's factor finite" (array float_exact)
-        (Array.for_all Float.is_finite)
-        (Nx.to_array (Nx.cast Nx.float64 f)))
-
-let sample =
-  group "sample"
+(* A draw [x] of a family of parameter [θ = 2.5], [u] a standard draw: [x = loc
+   + θ u] has [∂x/∂θ = (x - loc) / θ], and so on. The rows' other parameters are
+   [1]. *)
+let reparameterised =
+  let theta = 2.5 and one = f64 1. in
+  let k = Nx.Rng.key 3 in
+  Windtrap.cases "a draw's derivative in its parameter is the closed form's"
+    ~id:(fun (name, _, _) -> name)
     [
+      ("normal loc", (fun t -> D.normal ~loc:t ~scale:one), fun _ -> 1.);
+      ( "normal scale",
+        (fun t -> D.normal ~loc:one ~scale:t),
+        fun x -> (x -. 1.) /. theta );
+      ( "cauchy scale",
+        (fun t -> D.cauchy ~loc:one ~scale:t),
+        fun x -> (x -. 1.) /. theta );
+      ( "laplace scale",
+        (fun t -> D.laplace ~loc:one ~scale:t),
+        fun x -> (x -. 1.) /. theta );
+      ( "logistic scale",
+        (fun t -> D.logistic ~loc:one ~scale:t),
+        fun x -> (x -. 1.) /. theta );
+      ( "student_t scale",
+        (fun t -> D.student_t ~df:(f64 3.) ~loc:one ~scale:t),
+        fun x -> (x -. 1.) /. theta );
+      ( "half_normal scale",
+        (fun t -> D.half_normal ~scale:t),
+        fun x -> x /. theta );
+      ( "half_cauchy scale",
+        (fun t -> D.half_cauchy ~scale:t),
+        fun x -> x /. theta );
+      ( "exponential rate",
+        (fun t -> D.exponential ~rate:t),
+        fun x -> -.x /. theta );
+      ("lognormal loc", (fun t -> D.lognormal ~loc:t ~scale:one), fun x -> x);
+      ( "uniform high",
+        (fun t -> D.uniform ~low:one ~high:t),
+        fun x -> (x -. 1.) /. (theta -. 1.) );
+    ]
+    (fun (_, family, slope) ->
       (* Each draw is a product or sum of a few roundings: its derivative within
          [16 ε] of the closed form's magnitude. *)
-      prop "a draw's derivative in its parameter is the closed form's"
-        Gen.(pair (int_range 0 10) (float_range 1.5 4.))
-        (fun (i, theta) ->
-          let r = List.nth (reparameterised theta) i in
-          List.iteri (fun j c -> cover c.name (i = j)) (reparameterised theta);
-          let x = Nx.to_array (r.draw (f64 theta)) in
-          let g = item (Rune.grad' (fun t -> Nx.sum (r.draw t)) (f64 theta)) in
-          let expected = Array.fold_left (fun a x -> a +. r.slope x) 0. x in
-          let scale =
-            Array.fold_left (fun a x -> a +. Float.abs (r.slope x)) 1. x
-          in
-          equal ~msg:r.name (float (16. *. epsilon_float *. scale)) expected g);
-      fit;
-      draws_inside;
-    ]
+      let draws t = D.sample k (D.iid [| 5 |] (family t)) in
+      let x = Nx.to_array (draws (f64 theta)) in
+      let g = item (Rune.grad' (fun t -> Nx.sum (draws t)) (f64 theta)) in
+      let scale = Array.fold_left (fun a x -> a +. Float.abs (slope x)) 1. x in
+      equal
+        (float (16. *. epsilon_float *. scale))
+        (Array.fold_left (fun a x -> a +. slope x) 0. x)
+        g)
 
-(* Each case's quantiles at gen/dist.py's p, in one call. A quantile read from
-   its smaller tail is within about [ε m / f] of the exact one, [m] and [f] the
-   tail and the density of the case's base at the quantile (norn.mli, truncated;
-   the base's own inverse otherwise); gen/dist.py gives their logarithms. Where
-   the tail is held as its logarithm, as a truncation's Newton steps hold it,
-   its error is [ε |log m|] relatively, which scales [m / f] by [1 + |log m|].
-   [64 ε] holds that and the arithmetic around it. *)
+let sample = group "sample" [ reparameterised; fit; draws_inside ]
+
+(* Each case's quantiles at gen/dist.py's p, in one call, within norn.mli's
+   bound: [m] and [f] the tail and the density of the case's base at the
+   quantile, which gen/dist.py gives as logarithms. *)
 let quantile_golden =
   test "is mpmath's at gen/dist.py's p" (fun () ->
       List.iter
@@ -2955,13 +3097,9 @@ let quantile_golden =
                 (fun i row ->
                   match row with
                   | [ p; v; log_m; log_f ] ->
-                      let spread =
-                        Float.exp (log_m -. log_f) *. (1. +. Float.abs log_m)
-                      in
                       equal
                         ~msg:(Printf.sprintf "p = %h" p)
-                        (float
-                           (64. *. epsilon_float *. (Float.abs v +. spread)))
+                        (float (quantile_bound ~x:v ~log_m ~log_f))
                         v xs.(i)
                   | _ -> failwith "dist.golden: a malformed ppf line")
                 rows))
@@ -3414,9 +3552,12 @@ let laplace_quantile =
     (fun p ->
       cover "at the median" (p = 0.5);
       let d = D.laplace ~loc:(f64 0.3) ~scale:(f64 1.3) in
+      (* the derivative of [loc + scale log (2p)] or its mirror: a quotient and
+         a product, a few roundings *)
       equal
-        (float_rel ~rel:1e-12 ~abs:0.)
-        (2.6 /. (1. -. Float.abs ((2. *. p) -. 1.)))
+        (float_rel ~rel:(8. *. epsilon_float) ~abs:0.)
+        (* [1 - |2p - 1|] is [2 min (p, 1 - p)], read without cancelling *)
+        (1.3 /. Float.min p (1. -. p))
         (item (Rune.grad' (D.quantile d) (f64 p))))
 
 (* The quantile's derivative in [p] is [1 / f(x)] at [x = quantile p]: their
@@ -3489,62 +3630,20 @@ let quantile =
       Windtrap.cases "a family without a quantile raises naming quantile"
         ~id:(fun (name, _) -> name)
         [
-          ( "student_t",
-            fun () ->
-              D.quantile
-                (D.student_t ~df:(f64 1.) ~loc:(f64 0.) ~scale:(f64 1.))
-                (f64 0.5) );
-          ( "von_mises",
-            fun () ->
-              D.quantile
-                (D.von_mises ~loc:(f64 0.) ~concentration:(f64 1.))
-                (f64 0.5) );
-          ( "dirichlet",
-            fun () ->
-              D.quantile
-                (D.dirichlet ~concentration:(vec [| 1.; 1. |]))
-                (f64 0.5) );
+          ("student_t", D.student_t ~df:(f64 1.) ~loc:(f64 0.) ~scale:(f64 1.));
+          ("von_mises", D.von_mises ~loc:(f64 0.) ~concentration:(f64 1.));
+          ("dirichlet", D.dirichlet ~concentration:(vec [| 1.; 1. |]));
           ( "mvn",
-            fun () ->
-              D.quantile
-                (D.mvn
-                   ~loc:(vec [| 0.; 0. |])
-                   ~scale_tril:(Nx.eye Nx.float64 2))
-                (f64 0.5) );
-          ( "lkj_cholesky",
-            fun () ->
-              D.quantile (D.lkj_cholesky 2 ~concentration:(f64 1.)) (f64 0.5) );
-          ( "sorted",
-            fun () ->
-              D.quantile
-                (D.sorted 2 (D.normal ~loc:(f64 0.) ~scale:(f64 1.)))
-                (f64 0.5) );
-          ( "transform",
-            fun () ->
-              D.quantile
-                (D.transform Norn.Bij.exp
-                   (D.normal ~loc:(f64 0.) ~scale:(f64 1.)))
-                (f64 0.5) );
-          ( "mixture",
-            fun () ->
-              D.quantile
-                (D.mixture
-                   ~logits:(vec [| 0.; 0. |])
-                   (D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(f64 1.)))
-                (f64 0.5) );
-          ( "hmm",
-            fun () ->
-              D.quantile
-                (D.hmm
-                   ~initial:(vec [| 0.; 0. |])
-                   ~transition:(Nx.zeros Nx.float64 [| 2; 2 |])
-                   2
-                   (D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(f64 1.)))
-                (f64 0.5) );
+            D.mvn ~loc:(vec [| 0.; 0. |]) ~scale_tril:(Nx.eye Nx.float64 2) );
+          ("lkj_cholesky", D.lkj_cholesky 2 ~concentration:(f64 1.));
+          ("sorted", D.sorted 2 std);
+          ("transform", D.transform Norn.Bij.exp std);
+          ("mixture", D.mixture ~logits:(vec [| 0.; 0. |]) two);
+          ("hmm", hmm2 2);
         ]
-        (fun (_, f) ->
+        (fun (_, d) ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Dist.quantile:") (fun () ->
-              ignore (f ())));
+              D.quantile d (f64 0.5)));
     ]
 
 let bij_name b = Format.asprintf "%a" Norn.Bij.pp b
@@ -3554,55 +3653,41 @@ let coords =
     [
       Windtrap.cases "is the bijector onto each family's support" ~id:fst
         [
-          ("normal", ("identity", fun () -> D.coords (continuous_case "normal")));
-          ("gamma", ("exp", fun () -> D.coords (continuous_case "gamma")));
-          ( "half_cauchy",
-            ("exp", fun () -> D.coords (continuous_case "half_cauchy")) );
-          ("beta", ("interval", fun () -> D.coords (continuous_case "beta")));
-          ( "uniform",
-            ("interval", fun () -> D.coords (continuous_case "uniform")) );
-          ( "von_mises",
-            ("interval", fun () -> D.coords (continuous_case "von_mises")) );
+          ("normal", ("identity", continuous_case "normal"));
+          ("gamma", ("exp", continuous_case "gamma"));
+          ("half_cauchy", ("exp", continuous_case "half_cauchy"));
+          ("beta", ("interval", continuous_case "beta"));
+          ("uniform", ("interval", continuous_case "uniform"));
+          ("von_mises", ("interval", continuous_case "von_mises"));
           ( "dirichlet",
-            ( "simplex",
-              fun () -> D.coords (D.dirichlet ~concentration:(vec [| 1.; 2. |]))
-            ) );
+            ("simplex", D.dirichlet ~concentration:(vec [| 1.; 2. |])) );
           ( "lkj_cholesky",
-            ( "cholesky_corr",
-              fun () -> D.coords (D.lkj_cholesky 3 ~concentration:(f64 1.)) ) );
+            ("cholesky_corr", D.lkj_cholesky 3 ~concentration:(f64 1.)) );
           ( "truncated on both sides",
-            ("interval", fun () -> D.coords (continuous_case "truncated_normal"))
-          );
+            ("interval", continuous_case "truncated_normal") );
           ( "truncated below",
-            ( "greater",
-              fun () -> D.coords (continuous_case "truncated_normal_far") ) );
-          ( "truncated above",
-            ( "less",
-              fun () -> D.coords (continuous_case "truncated_normal_below") ) );
+            ("greater", continuous_case "truncated_normal_far") );
+          ("truncated above", ("less", continuous_case "truncated_normal_below"));
           ( "sorted half_normal",
-            ( "compose(exp, ordered)",
-              fun () -> D.coords (D.sorted 3 (D.half_normal ~scale:(f64 1.))) )
+            ("compose(exp, ordered)", D.sorted 3 (D.half_normal ~scale:(f64 1.)))
           );
           ( "hmm, as a mixture",
             ( "interval",
-              fun () ->
-                D.coords
-                  (D.hmm
-                     ~initial:(vec [| 0.; 0. |])
-                     ~transition:(Nx.zeros Nx.float64 [| 2; 2 |])
-                     3
-                     (D.uniform
-                        ~low:(vec [| 0.; 2. |])
-                        ~high:(vec [| 1.; 5. |]))) ) );
+              D.hmm
+                ~initial:(vec [| 0.; 0. |])
+                ~transition:(Nx.zeros Nx.float64 [| 2; 2 |])
+                3
+                (D.uniform ~low:(vec [| 0.; 2. |]) ~high:(vec [| 1.; 5. |])) )
+          );
         ]
-        (fun (_, (name, b)) -> equal string name (bij_name (b ())));
+        (fun (_, (name, d)) -> equal string name (bij_name (D.coords d)));
       (* Every case gen/dist.py takes a quantile of, the Student t and the von
          Mises. *)
       test "the pullback through coords integrates to one" (fun () ->
           List.iter
             (fun name ->
               subtest name (fun () ->
-                  equal (float 1e-8) 1.
+                  equal (float saturated_mass) 1.
                     (integrate (pullback (continuous_case name)))))
             (List.map fst (families "ppf")
             @ [ "student_t"; "von_mises"; "von_mises_flat" ]));
@@ -3619,7 +3704,8 @@ let coords =
               (D.uniform ~low:(vec [| 0.; 2. |]) ~high:(vec [| 1.; 5. |]))
           in
           let x, _ = Norn.Bij.forward (D.coords d) (f64 0.) in
-          equal (float 1e-15) 2.5 (item x));
+          (* [0 + 5 sigmoid 0], exact *)
+          equal float_exact 2.5 (item x));
       test "checks the parameters" (fun () ->
           raises_match
             (Exn.invalid_arg ~sub:"Norn.Dist.coords: uniform: high - low")
@@ -3682,7 +3768,7 @@ let membership =
     [
       test "a normal has no latent variable" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Dist.membership:") (fun () ->
-              D.membership (D.normal ~loc:(f64 0.) ~scale:(f64 1.)) (f64 0.)));
+              D.membership std (f64 0.)));
     ]
 
 (* Observers *)
@@ -3694,42 +3780,14 @@ let family =
         [
           ( "iid keeps its argument's",
             ( "dirichlet",
-              fun () ->
-                D.family
-                  (D.iid [| 2 |]
-                     (D.dirichlet ~concentration:(vec [| 1.; 1. |]))) ) );
-          ( "sorted",
-            ( "sorted",
-              fun () ->
-                D.family (D.sorted 2 (D.normal ~loc:(f64 0.) ~scale:(f64 1.)))
-            ) );
-          ( "transform",
-            ( "transform",
-              fun () ->
-                D.family
-                  (D.transform Norn.Bij.exp
-                     (D.normal ~loc:(f64 0.) ~scale:(f64 1.))) ) );
-          ( "truncated",
-            ( "truncated",
-              fun () -> D.family (continuous_case "truncated_normal") ) );
-          ( "mixture",
-            ( "mixture",
-              fun () ->
-                D.family
-                  (D.mixture
-                     ~logits:(vec [| 0.; 0. |])
-                     (D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(f64 1.))) ) );
-          ( "hmm",
-            ( "hmm",
-              fun () ->
-                D.family
-                  (D.hmm
-                     ~initial:(vec [| 0.; 0. |])
-                     ~transition:(Nx.zeros Nx.float64 [| 2; 2 |])
-                     2
-                     (D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(f64 1.))) ) );
+              D.iid [| 2 |] (D.dirichlet ~concentration:(vec [| 1.; 1. |])) ) );
+          ("sorted", ("sorted", D.sorted 2 std));
+          ("transform", ("transform", D.transform Norn.Bij.exp std));
+          ("truncated", ("truncated", continuous_case "truncated_normal"));
+          ("mixture", ("mixture", D.mixture ~logits:(vec [| 0.; 0. |]) two));
+          ("hmm", ("hmm", hmm2 2));
         ]
-        (fun (_, (name, f)) -> equal string name (f ()));
+        (fun (_, (name, d)) -> equal string name (D.family d));
     ]
 
 let shape =
@@ -3739,47 +3797,21 @@ let shape =
         ~id:fst
         [
           ( "normal",
-            ( [| 3 |],
-              fun () ->
-                D.shape (D.normal ~loc:(vec [| 0.; 1.; 2. |]) ~scale:(f64 1.))
-            ) );
+            ([| 3 |], D.normal ~loc:(vec [| 0.; 1.; 2. |]) ~scale:(f64 1.)) );
           ( "dirichlet",
-            ( [| 3 |],
-              fun () ->
-                D.shape (D.dirichlet ~concentration:(vec [| 1.; 1.; 1. |])) ) );
+            ([| 3 |], D.dirichlet ~concentration:(vec [| 1.; 1.; 1. |])) );
           ( "mvn",
             ( [| 2 |],
-              fun () ->
-                D.shape
-                  (D.mvn
-                     ~loc:(vec [| 0.; 0. |])
-                     ~scale_tril:(Nx.eye Nx.float64 2)) ) );
-          ( "lkj_cholesky",
-            ( [| 4; 4 |],
-              fun () -> D.shape (D.lkj_cholesky 4 ~concentration:(f64 1.)) ) );
-          ( "sorted",
-            ( [| 5 |],
-              fun () ->
-                D.shape (D.sorted 5 (D.normal ~loc:(f64 0.) ~scale:(f64 1.))) )
+              D.mvn ~loc:(vec [| 0.; 0. |]) ~scale_tril:(Nx.eye Nx.float64 2) )
           );
-          ( "hmm",
-            ( [| 6 |],
-              fun () ->
-                D.shape
-                  (D.hmm
-                     ~initial:(vec [| 0.; 0. |])
-                     ~transition:(Nx.zeros Nx.float64 [| 2; 2 |])
-                     6
-                     (D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(f64 1.))) ) );
+          ( "lkj_cholesky",
+            ([| 4; 4 |], D.lkj_cholesky 4 ~concentration:(f64 1.)) );
+          ("sorted", ([| 5 |], D.sorted 5 std));
+          ("hmm", ([| 6 |], hmm2 6));
           ( "transform simplex",
-            ( [| 3 |],
-              fun () ->
-                D.shape
-                  (D.transform Norn.Bij.simplex
-                     (D.iid [| 2 |] (D.normal ~loc:(f64 0.) ~scale:(f64 1.))))
-            ) );
+            ([| 3 |], D.transform Norn.Bij.simplex (D.iid [| 2 |] std)) );
         ]
-        (fun (_, (s, f)) -> equal (array int) s (f ()));
+        (fun (_, (s, d)) -> equal (array int) s (D.shape d));
     ]
 
 (* Two software devices on the host: the parameters on the second, a key on the
@@ -3818,19 +3850,15 @@ let transform_support =
         (D.support
            (D.transform Norn.Bij.exp (D.uniform ~low:(f64 0.) ~high:(f64 1.))));
       equal support_w (Norn.Support.Greater 0.)
-        (D.support
-           (D.transform Norn.Bij.exp (D.normal ~loc:(f64 0.) ~scale:(f64 1.))));
+        (D.support (D.transform Norn.Bij.exp std));
       equal support_w (Norn.Support.Simplex 3)
-        (D.support
-           (D.transform Norn.Bij.simplex
-              (D.iid [| 2 |] (D.normal ~loc:(f64 0.) ~scale:(f64 1.))))))
+        (D.support (D.transform Norn.Bij.simplex (D.iid [| 2 |] std))))
 
 let per_element_interval =
   test "a per-element interval's image holds every element's" (fun () ->
       (* Element i maps (0, 1) onto (low_i + w_i sigmoid 0, low_i + w_i sigmoid
          1), w_i = high_i - low_i; the support is their hull. *)
       let low = [| 0.; 0. |] and high = [| 1.; 10. |] in
-      let sigmoid x = 1. /. (1. +. Float.exp (-.x)) in
       let at x i = low.(i) +. ((high.(i) -. low.(i)) *. sigmoid x) in
       let b = Norn.Bij.interval ~low:(vec low) ~high:(vec high) in
       let base = D.uniform ~low:(vec [| 0.; 0. |]) ~high:(vec [| 1.; 1. |]) in
@@ -3838,7 +3866,9 @@ let per_element_interval =
         | Norn.Support.Interval (a, b) -> Some (a, b)
         | _ -> None
       in
-      equal (pair close close)
+      (* each bound a few roundings of values below 10 *)
+      let near = float (64. *. epsilon_float) in
+      equal (pair near near)
         (Float.min (at 0. 0) (at 0. 1), Float.max (at 1. 0) (at 1. 1))
         (require_match interval (D.support (D.transform b base))))
 
@@ -3881,10 +3911,7 @@ let support =
               fun () -> D.support (D.lkj_cholesky 3 ~concentration:(f64 1.)) )
           );
           ( "sorted",
-            ( Norn.Support.Ordered,
-              fun () ->
-                D.support (D.sorted 2 (D.normal ~loc:(f64 0.) ~scale:(f64 1.)))
-            ) );
+            (Norn.Support.Ordered, fun () -> D.support (D.sorted 2 std)) );
           ( "bernoulli",
             ( Norn.Support.Boolean,
               fun () -> D.support (D.bernoulli ~logits:(f64 0.)) ) );
@@ -3898,10 +3925,7 @@ let support =
           ( "binomial of trials 3 and 7",
             ( Norn.Support.Integer_interval (0, 7),
               fun () ->
-                D.support
-                  (D.binomial
-                     ~trials:(Nx.create Nx.int32 [| 2 |] [| 3l; 7l |])
-                     ~logits:(f64 0.)) ) );
+                D.support (D.binomial ~trials:trials_3_7 ~logits:(f64 0.)) ) );
           ( "truncated on both sides",
             ( Norn.Support.Interval (-1., 3.),
               fun () -> D.support (continuous_case "truncated_normal") ) );
@@ -3927,9 +3951,7 @@ let support =
                 D.support
                   (D.mixture
                      ~logits:(vec [| 0.; 0. |])
-                     (D.binomial
-                        ~trials:(Nx.create Nx.int32 [| 2 |] [| 3l; 7l |])
-                        ~logits:(f64 0.))) ) );
+                     (D.binomial ~trials:trials_3_7 ~logits:(f64 0.))) ) );
           ( "mixture of uniforms",
             ( Norn.Support.Interval (0., 5.),
               fun () ->
@@ -3993,11 +4015,8 @@ let bounds =
                 lo_hi (D.iid [| 1 |] (continuous_case "truncated_normal")) ) );
           ( "binomial per element",
             ( ([| 0.; 0. |], [| 3.; 7. |]),
-              fun () ->
-                lo_hi
-                  (D.binomial
-                     ~trials:(Nx.create Nx.int32 [| 2 |] [| 3l; 7l |])
-                     ~logits:(f64 0.)) ) );
+              fun () -> lo_hi (D.binomial ~trials:trials_3_7 ~logits:(f64 0.))
+            ) );
           ( "a mixture over trials",
             ( ([| 0. |], [| 7. |]),
               fun () ->
@@ -4005,9 +4024,7 @@ let bounds =
                   (D.iid [| 1 |]
                      (D.mixture
                         ~logits:(vec [| 0.; 0. |])
-                        (D.binomial
-                           ~trials:(Nx.create Nx.int32 [| 2 |] [| 3l; 7l |])
-                           ~logits:(f64 0.)))) ) );
+                        (D.binomial ~trials:trials_3_7 ~logits:(f64 0.)))) ) );
           ( "a mixture of no component",
             ( ([| inf |], [| -.inf |]),
               fun () ->
@@ -4078,61 +4095,78 @@ let check =
 let infinite_positive =
   let inf = f64 Float.infinity and one = f64 1. and zero = f64 0. in
   [
-    ("normal scale", fun () -> D.valid (D.normal ~loc:zero ~scale:inf));
-    ("half_normal scale", fun () -> D.valid (D.half_normal ~scale:inf));
-    ("lognormal scale", fun () -> D.valid (D.lognormal ~loc:zero ~scale:inf));
-    ( "student_t df",
-      fun () -> D.valid (D.student_t ~df:inf ~loc:zero ~scale:one) );
-    ( "student_t scale",
-      fun () -> D.valid (D.student_t ~df:one ~loc:zero ~scale:inf) );
-    ("cauchy scale", fun () -> D.valid (D.cauchy ~loc:zero ~scale:inf));
-    ("half_cauchy scale", fun () -> D.valid (D.half_cauchy ~scale:inf));
-    ("laplace scale", fun () -> D.valid (D.laplace ~loc:zero ~scale:inf));
-    ("logistic scale", fun () -> D.valid (D.logistic ~loc:zero ~scale:inf));
-    ("exponential rate", fun () -> D.valid (D.exponential ~rate:inf));
-    ( "gamma concentration",
-      fun () -> D.valid (D.gamma ~concentration:inf ~rate:one) );
-    ("gamma rate", fun () -> D.valid (D.gamma ~concentration:one ~rate:inf));
+    ("normal scale", D.valid (D.normal ~loc:zero ~scale:inf));
+    ("half_normal scale", D.valid (D.half_normal ~scale:inf));
+    ("lognormal scale", D.valid (D.lognormal ~loc:zero ~scale:inf));
+    ("student_t df", D.valid (D.student_t ~df:inf ~loc:zero ~scale:one));
+    ("student_t scale", D.valid (D.student_t ~df:one ~loc:zero ~scale:inf));
+    ("cauchy scale", D.valid (D.cauchy ~loc:zero ~scale:inf));
+    ("half_cauchy scale", D.valid (D.half_cauchy ~scale:inf));
+    ("laplace scale", D.valid (D.laplace ~loc:zero ~scale:inf));
+    ("logistic scale", D.valid (D.logistic ~loc:zero ~scale:inf));
+    ("exponential rate", D.valid (D.exponential ~rate:inf));
+    ("gamma concentration", D.valid (D.gamma ~concentration:inf ~rate:one));
+    ("gamma rate", D.valid (D.gamma ~concentration:one ~rate:inf));
     ( "inverse_gamma concentration",
-      fun () -> D.valid (D.inverse_gamma ~concentration:inf ~scale:one) );
+      D.valid (D.inverse_gamma ~concentration:inf ~scale:one) );
     ( "inverse_gamma scale",
-      fun () -> D.valid (D.inverse_gamma ~concentration:one ~scale:inf) );
-    ("beta a", fun () -> D.valid (D.beta ~a:inf ~b:one));
-    ("beta b", fun () -> D.valid (D.beta ~a:one ~b:inf));
+      D.valid (D.inverse_gamma ~concentration:one ~scale:inf) );
+    ("beta a", D.valid (D.beta ~a:inf ~b:one));
+    ("beta b", D.valid (D.beta ~a:one ~b:inf));
     ( "dirichlet concentration",
-      fun () ->
-        D.valid (D.dirichlet ~concentration:(vec [| 1.; Float.infinity |])) );
+      D.valid (D.dirichlet ~concentration:(vec [| 1.; Float.infinity |])) );
     ( "mvn scale_tril's diagonal",
-      fun () ->
-        D.valid
-          (D.mvn
-             ~loc:(vec [| 0.; 0. |])
-             ~scale_tril:
-               (Nx.create Nx.float64 [| 2; 2 |]
-                  [| 1.; 0.; 0.; Float.infinity |])) );
+      D.valid
+        (D.mvn
+           ~loc:(vec [| 0.; 0. |])
+           ~scale_tril:
+             (Nx.create Nx.float64 [| 2; 2 |] [| 1.; 0.; 0.; Float.infinity |]))
+    );
     ( "neg_binomial dispersion",
-      fun () -> D.valid (D.neg_binomial ~mean:one ~dispersion:inf) );
+      D.valid (D.neg_binomial ~mean:one ~dispersion:inf) );
   ]
 
 let valid =
+  let reads v = [| Nx.item [] v |] in
   group "valid"
     [
       Windtrap.cases "a parameter of +inf is outside (0, inf)" ~id:fst
         infinite_positive (fun (_, v) ->
-          satisfies ~claim:"not valid" bool not (Nx.item [] (v ())));
+          equal (array bool) [| false |] (reads v));
       test "parameters inside their domains are valid" (fun () ->
-          satisfies ~claim:"valid" (dist ()) valid
-            (D.normal ~loc:(f64 0.) ~scale:(f64 1.)));
-      test "NaN logits are not valid" (fun () ->
-          satisfies ~claim:"not valid" (dist ())
-            (fun d -> not (valid d))
-            (D.bernoulli ~logits:(f64 Float.nan)));
-      test "one bad element of a vector makes the scalar false" (fun () ->
-          let v =
-            D.valid (D.normal ~loc:(f64 0.) ~scale:(vec [| 1.; -1.; 2. |]))
-          in
-          equal (array int) [||] (Nx.shape v);
-          equal (array bool) [| false |] (Nx.to_array (Nx.reshape [| 1 |] v)));
+          equal (array bool) [| true |] (reads (D.valid std)));
+      Windtrap.cases "is false where a parameter is outside its domain" ~id:fst
+        [
+          ("NaN logits", D.valid (D.bernoulli ~logits:(f64 Float.nan)));
+          ( "one bad element of a vector",
+            D.valid (D.normal ~loc:(f64 0.) ~scale:(vec [| 1.; -1.; 2. |])) );
+          ( "a mixture's bad component",
+            D.valid
+              (D.mixture
+                 ~logits:(vec [| 0.; 0. |])
+                 (D.normal ~loc:(vec [| 0.; 1. |]) ~scale:(vec [| 1.; -1. |])))
+          );
+          ( "a mixture's NaN logit",
+            D.valid (D.mixture ~logits:(vec [| 0.; Float.nan |]) two) );
+          ( "iid copies of a bad distribution",
+            D.valid (D.iid [| 3 |] (D.half_normal ~scale:(f64 (-1.)))) );
+          ( "a checked distribution",
+            D.valid
+              (D.check ~unless:(Nx.scalar Nx.bool true) "interpreter"
+                 (D.normal ~loc:(f64 0.) ~scale:(f64 (-1.)))) );
+          ( "a NaN below scale_tril's diagonal",
+            D.valid
+              (D.mvn
+                 ~loc:(vec [| 0.; 0. |])
+                 ~scale_tril:
+                   (Nx.create Nx.float64 [| 2; 2 |] [| 1.; 0.; Float.nan; 1. |]))
+          );
+        ]
+        (fun (_, v) -> equal (array bool) [| false |] (reads v));
+      test "is a scalar over every element" (fun () ->
+          equal (array int) [||]
+            (Nx.shape
+               (D.valid (D.normal ~loc:(f64 0.) ~scale:(vec [| 1.; -1.; 2. |])))));
       test "under a map it is one value per lane" (fun () ->
           let v =
             Rune.vmap
@@ -4141,36 +4175,6 @@ let valid =
               (vec [| 1.; -1.; 2. |])
           in
           equal (array bool) [| true; false; true |] (Nx.to_array v));
-      test "a mixture is not valid with a bad component or NaN logits"
-        (fun () ->
-          let components scale = D.normal ~loc:(vec [| 0.; 1. |]) ~scale in
-          satisfies ~claim:"not valid" (dist ())
-            (fun d -> not (valid d))
-            (D.mixture
-               ~logits:(vec [| 0.; 0. |])
-               (components (vec [| 1.; -1. |])));
-          satisfies ~claim:"not valid" (dist ())
-            (fun d -> not (valid d))
-            (D.mixture
-               ~logits:(vec [| 0.; Float.nan |])
-               (components (vec [| 1.; 1. |]))));
-      test "iid copies are valid as their distribution is" (fun () ->
-          satisfies ~claim:"not valid" (dist ())
-            (fun d -> not (valid d))
-            (D.iid [| 3 |] (D.half_normal ~scale:(f64 (-1.)))));
-      test "a checked distribution still reads as not valid" (fun () ->
-          let d =
-            D.check ~unless:(Nx.scalar Nx.bool true) "interpreter"
-              (D.normal ~loc:(f64 0.) ~scale:(f64 (-1.)))
-          in
-          satisfies ~claim:"not valid" (dist ()) (fun d -> not (valid d)) d);
-      test "a NaN below the diagonal of scale_tril is not valid" (fun () ->
-          satisfies ~claim:"not valid" (dist ())
-            (fun d -> not (valid d))
-            (D.mvn
-               ~loc:(vec [| 0.; 0. |])
-               ~scale_tril:
-                 (Nx.create Nx.float64 [| 2; 2 |] [| 1.; 0.; Float.nan; 1. |])));
     ]
 
 let () =
