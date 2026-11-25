@@ -93,7 +93,7 @@ let one_hots =
   group "one_hot"
     [
       prop "one where the element names the class" ids law_one_hot;
-      test "a float or a negative count raises" (fun () ->
+      test "raises on a float or a negative number of classes" (fun () ->
           invalid ~by:"Nx.one_hot" (fun () ->
               Nx.one_hot ~num_classes:2 (Nx.zeros Nx.float32 [| 2 |]));
           invalid ~by:"Nx.one_hot" (fun () ->
@@ -244,31 +244,90 @@ let test_combine_narrow () =
   in
   equal float_exact 2050. (Nx.item [ 2 ] y)
 
-let test_patch_errors () =
-  let x = Nx.zeros Nx.float32 [| 4; 4 |] in
-  let ex ?(kernel = [| 2 |]) ?(stride = [| 1 |]) ?(dilation = [| 1 |])
-      ?(padding = [| (0, 0) |]) x =
-    Nx.extract_patches ~kernel_size:kernel ~stride ~dilation ~padding x
-  in
-  let by = "Nx.extract_patches" in
-  invalid ~by (fun () -> ex ~kernel:[||] ~stride:[||] ~dilation:[||] ~padding:[||] x);
-  invalid ~by (fun () -> ex ~stride:[| 1; 1 |] x);
-  invalid ~by (fun () -> ex ~kernel:[| 0 |] x);
-  invalid ~by (fun () -> ex ~stride:[| 0 |] x);
-  invalid ~by (fun () -> ex ~dilation:[| 0 |] x);
-  invalid ~by (fun () -> ex ~padding:[| (-1, 0) |] x);
-  invalid ~by (fun () -> ex ~kernel:[| 1; 1; 1 |] ~stride:[| 1; 1; 1 |]
-                  ~dilation:[| 1; 1; 1 |] ~padding:[| (0, 0); (0, 0); (0, 0) |] x);
-  let by = "Nx.combine_patches" in
-  let co ?(out = [| 4 |]) p =
-    Nx.combine_patches ~output_size:out ~kernel_size:[| 2 |] ~stride:[| 1 |]
-      ~dilation:[| 1 |] ~padding:[| (0, 0) |] p
-  in
-  invalid ~by (fun () -> co ~out:[| 4; 4 |] (Nx.zeros Nx.float32 [| 2; 3 |]));
-  invalid ~by (fun () -> co ~out:[| -1 |] (Nx.zeros Nx.float32 [| 2; 3 |]));
-  invalid ~by (fun () -> co (Nx.zeros Nx.float32 [| 3 |]));
-  invalid ~by (fun () -> co (Nx.zeros Nx.float32 [| 2; 4 |]));
-  invalid ~by (fun () -> co (Nx.zeros Nx.bool [| 2; 3 |]))
+(* A float32 sum of the elements landing at one position, from [+0], keeps a
+   sum's bound: within [γ(β(c)) Σ|t|] of the exact sum of its [c] terms
+   (nx_kernel.mli, Bounds), the exact sum at float64 within [c 2^-53 Σ|t|].
+   Terms whose order changes the bits. *)
+let float_sums =
+  Gen.with_pp
+    (fun ppf (g, _) -> pp_geometry ppf g)
+    (let open Gen in
+     let* g = geometry in
+     let s = patches_shape g in
+     let+ ts =
+       array
+         ~size:(constant (numel s))
+         (of_list [ 1e7; -1e7; 1.; 0.1; 3.3; -2.5e-3; -0. ])
+     in
+     (g, Nx.create Nx.float32 s ts))
+
+let law_float_sum (g, p) =
+  let n = numel g.lead * numel g.spatial in
+  let sum = Array.make n 0.
+  and mag = Array.make n 0.
+  and terms = Array.make n 0 in
+  let ps = Nx.to_array p in
+  List.iter
+    (fun (e, o) ->
+      Option.iter
+        (fun o ->
+          sum.(o) <- sum.(o) +. ps.(e);
+          mag.(o) <- mag.(o) +. Float.abs ps.(e);
+          terms.(o) <- terms.(o) + 1)
+        o)
+    (taps g);
+  cover "a position of several terms" (Array.exists (fun c -> c > 1) terms);
+  let y = Nx.to_array (combine g p) in
+  let u = 0x1p-24 in
+  let beta c = (((5 * Int.min c 256) + 3) / 4) + ((c + 127) / 128) in
+  let gamma k = Float.of_int k *. u /. (1. -. (Float.of_int k *. u)) in
+  Array.iteri
+    (fun o v ->
+      let c = terms.(o) in
+      let tol = (gamma (beta c) +. (Float.of_int c *. 0x1p-53)) *. mag.(o) in
+      at_most
+        ~msg:(Printf.sprintf "position %d" o)
+        float_exact ~than:tol
+        (Nx_support.gap v sum.(o)))
+    y
+
+(* Each clause of the geometry the patches refuse: kernel sizes, strides,
+   dilations and paddings over [4; 4], and an output size and patches. *)
+let extract_refusals =
+  [
+    ("no kernel axis", ([||], [||], [||], [||]));
+    ("a stride per kernel axis", ([| 2 |], [| 1; 1 |], [| 1 |], [| (0, 0) |]));
+    ("a size below 1", ([| 0 |], [| 1 |], [| 1 |], [| (0, 0) |]));
+    ("a stride below 1", ([| 2 |], [| 0 |], [| 1 |], [| (0, 0) |]));
+    ("a dilation below 1", ([| 2 |], [| 1 |], [| 0 |], [| (0, 0) |]));
+    ("a negative padding", ([| 2 |], [| 1 |], [| 1 |], [| (-1, 0) |]));
+    ( "fewer axes than the kernel",
+      ([| 1; 1; 1 |], [| 1; 1; 1 |], [| 1; 1; 1 |], [| (0, 0); (0, 0); (0, 0) |])
+    );
+  ]
+
+let extract_refused (_, (kernel_size, stride, dilation, padding)) =
+  invalid ~by:"Nx.extract_patches" (fun () ->
+      Nx.extract_patches ~kernel_size ~stride ~dilation ~padding
+        (Nx.zeros Nx.float32 [| 4; 4 |]))
+
+let combine_refusals =
+  [
+    ("an output size per kernel axis", ([| 4; 4 |], [| 2; 3 |]));
+    ("a negative output size", ([| -1 |], [| 2; 3 |]));
+    ("fewer than two axes", ([| 4 |], [| 3 |]));
+    ("last axes other than P and L", ([| 4 |], [| 2; 4 |]));
+  ]
+
+let combine_by ~output_size p =
+  Nx.combine_patches ~output_size ~kernel_size:[| 2 |] ~stride:[| 1 |]
+    ~dilation:[| 1 |]
+    ~padding:[| (0, 0) |]
+    p
+
+let combine_refused (_, (output_size, s)) =
+  invalid ~by:"Nx.combine_patches" (fun () ->
+      combine_by ~output_size (Nx.zeros Nx.float32 s))
 
 let patches =
   group "patches"
@@ -278,8 +337,16 @@ let patches =
       prop "combine_patches adds each element where extract_patches reads it"
         combined test_combine;
       prop "combine_patches is extract_patches' adjoint" adjoint law_adjoint;
+      prop "a float combine is within a sum's bound of the exact sum" float_sums
+        law_float_sum;
       test "narrow floats combine at float32" test_combine_narrow;
-      test "a misused geometry raises" test_patch_errors;
+      cases "extract_patches raises on each clause of its geometry" ~id:fst
+        extract_refusals extract_refused;
+      cases "combine_patches raises on each clause of its geometry" ~id:fst
+        combine_refusals combine_refused;
+      test "combine_patches raises on booleans" (fun () ->
+          invalid ~by:"Nx.combine_patches" (fun () ->
+              combine_by ~output_size:[| 4 |] (Nx.zeros Nx.bool [| 2; 3 |])));
     ]
 
 (* Correlation *)
@@ -357,7 +424,12 @@ let cover_correlation c =
   cover "an empty axis of x" (Array.exists (( = ) 0) c.xs);
   cover "batch axes" (c.x_lead <> [||]);
   cover "an even kernel, Same"
-    (c.mode = `Same && Array.exists (fun k -> k mod 2 = 0) c.ks)
+    (c.mode = `Same && Array.exists (fun k -> k mod 2 = 0) c.ks);
+  (* [m / 2] and [(m - 1) / 2] differ where an even [x] lies below the
+     kernel. *)
+  cover "an even x below the kernel, Same"
+    (c.mode = `Same
+    && Array.exists2 (fun n k -> n > 0 && n mod 2 = 0 && k > n) c.xs c.ks)
 
 let law_correlate (c, x, kernel) =
   cover_correlation c;
@@ -440,61 +512,46 @@ let law_energy (Complex_dtype dt, parts) =
   let y = (Nx.to_array (Nx.cast Nx.complex128 (Nx.correlate x x))).(0) in
   let reference = Float.of_int n *. 0x1p-53 *. e in
   at_most ~msg:"imaginary part" float_exact ~than:((u *. e) +. reference)
-    (Float.abs y.im);
+    (Nx_support.gap y.im 0.);
   at_most ~msg:"real part" float_exact
     ~than:((Float.of_int (n + 2) *. u *. e) +. reference)
-    (Float.abs (y.re -. e))
+    (Nx_support.gap y.re e)
 
-(* numpy.correlate's results (numpy 2.3.4, golden/correlate.golden) on
-   one-axis complex operands of small integer parts, exact in either complex
-   dtype. *)
-let golden = "golden/correlate.golden"
+(* Named geometries a draw can miss: an empty axis of x under an even kernel,
+   and an even x below a longer kernel, both under Same. *)
+let named_correlations =
+  let f64 = Nx.create Nx.float64 in
+  [
+    ( { x_lead = [||]; xs = [| 0 |]; ks = [| 2 |]; mode = `Same },
+      f64 [| 0 |] [||],
+      f64 [| 2 |] [| 1.; -3. |] );
+    ( { x_lead = [||]; xs = [| 2 |]; ks = [| 3 |]; mode = `Same },
+      f64 [| 2 |] [| 2.; -1. |],
+      f64 [| 3 |] [| 1.; 3.; -2. |] );
+  ]
 
-let numpy_cases () =
-  let path = Filename.concat (Filename.dirname Sys.executable_name) golden in
-  let lines = In_channel.with_open_text path In_channel.input_lines in
-  let parts tag line =
-    match String.split_on_char ' ' line with
-    | t :: vs when t = tag ->
-        let vs = Array.of_list (List.map float_of_string vs) in
-        Array.init (Array.length vs / 2) (fun i ->
-            { Complex.re = vs.(2 * i); im = vs.((2 * i) + 1) })
-    | _ -> failf "%s: a %s line %S" golden tag line
-  in
-  let mode = function
-    | "full" -> `Full
-    | "same" -> `Same
-    | "valid" -> `Valid
-    | m -> failf "%s: a mode %S" golden m
-  in
-  let check (type s) (dt : (Complex.t, s) D.t) m x k y =
-    let v a = Nx.create dt [| Array.length a |] a in
-    equal_elements dt y (Nx.to_array (Nx.correlate ~padding:m (v x) (v k)))
-  in
-  let rec go n = function
-    | [] -> n
-    | header :: x :: k :: y :: rest ->
-        let x = parts "x" x and k = parts "kernel" k and y = parts "y" y in
-        (match String.split_on_char ' ' header with
-        | [ "case"; "complex64"; m ] -> check D.Complex64 (mode m) x k y
-        | [ "case"; "complex128"; m ] -> check D.Complex128 (mode m) x k y
-        | _ -> failf "%s: a case header %S" golden header);
-        go (n + 1) rest
-    | _ -> failf "%s: a truncated case" golden
-  in
-  (* Two dtypes, nine pairs of lengths, three modes. *)
-  equal ~msg:"cases read" int 54 (go 0 lines)
+let named_complex =
+  List.map2
+    (fun dt ((c, _, _) as reals) ->
+      let im = Nx.create Nx.float64 c.xs (Array.make (numel c.xs) 2.) in
+      let kim =
+        Nx.create Nx.float64 c.ks (Array.init (numel c.ks) Float.of_int)
+      in
+      (dt, reals, im, kim))
+    [ Complex_dtype D.Complex64; Complex_dtype D.Complex128 ]
+    named_correlations
 
 let f64 = Nx.create Nx.float64
 
 let correlations =
   group "correlate"
     [
-      prop "each kept value sums the kernel's products with x, zeros outside"
+      prop ~examples:named_correlations
+        "each kept value sums the kernel's products with x, zeros outside"
         correlation law_correlate;
-      prop "complex products take the kernel's conjugate" complex_correlation
+      prop ~examples:named_complex
+        "complex products take the kernel's conjugate" complex_correlation
         law_complex;
-      test "complex values are numpy.correlate's" numpy_cases;
       prop "a complex signal with itself is real at lag zero but for rounding"
         (Gen.with_pp
            (fun ppf (Complex_dtype dt, x) ->
@@ -519,10 +576,13 @@ let correlations =
           let x = Nx.create Nx.int8 [| 2 |] [| 100; 100 |] in
           equal (array int) [| -56 |]
             (Nx.to_array (Nx.correlate x (Nx.create Nx.int8 [| 2 |] [| 1; 1 |]))));
-      test "misuse raises" (fun () ->
+      test "raises on fewer axes than the kernel, an empty kernel, booleans"
+        (fun () ->
           let by = "Nx.correlate" in
           invalid ~by (fun () ->
-              Nx.correlate (Nx.zeros Nx.float32 [| 3 |]) (Nx.zeros Nx.float32 [| 2; 2 |]));
+              Nx.correlate
+                (Nx.zeros Nx.float32 [| 3 |])
+                (Nx.zeros Nx.float32 [| 2; 2 |]));
           invalid ~by (fun () ->
               Nx.correlate (Nx.zeros Nx.float32 [| 3 |]) (Nx.zeros Nx.float32 [| 0 |]));
           invalid ~by (fun () ->
@@ -551,5 +611,4 @@ let test_dead_names () =
 
 let names = group "errors" [ test "a dead operand names the function called" test_dead_names ]
 
-let () =
-  exit (run "nx windows" [ one_hots; patches; correlations; names ])
+let () = exit (run "nx patches" [ one_hots; patches; correlations; names ])
