@@ -67,7 +67,7 @@ let value : Value.t -> string = function
   | `Float x -> num x
   | `String s -> str s
 
-let values kvs = obj (List.map (fun (k, v) -> member k v) kvs)
+let fields kvs = obj (List.map (fun (k, v) -> member k v) kvs)
 
 (* A run of the sweep: its learning rate sets how low its losses go, and a run
    diverges from [nan_from] on. *)
@@ -99,7 +99,8 @@ type run = {
   tags : string list;
   notes : string option;
   started : float;
-  records : string list; (* every record after the start, in order *)
+  records : string list Lazy.t;
+      (* every record after the start, in order, made when first written *)
   updated : float; (* the log's modification time *)
   status : Run.status; (* the status it reads with *)
   sweep : sweep option; (* the curves a sweep run logs *)
@@ -141,7 +142,7 @@ let start_record r =
       | None -> [])
     @ [
         member "params"
-          (values (List.map (fun (k, v) -> (k, value v)) r.params));
+          (fields (List.map (fun (k, v) -> (k, value v)) r.params));
         member "provenance" (provenance r);
       ])
 
@@ -167,7 +168,7 @@ let samples_record kind ~time ~step kvs =
       member "type" (str kind);
       member "time" (num time);
       member "step" (string_of_int step);
-      member "values" (values (List.map (fun (k, x) -> (k, num x)) kvs));
+      member "values" (fields (List.map (fun (k, x) -> (k, num x)) kvs));
     ]
 
 let end_record ~time status =
@@ -358,7 +359,9 @@ let sweep_records w ~start ~upto ~ended =
 
 let sweep_run ~id ~name ~started ~pid ~commit ~dirty ~tags ?notes w ~upto ~ended
     ?(status = `Silent) () =
-  let records, updated = sweep_records w ~start:started ~upto ~ended in
+  let records = lazy (fst (sweep_records w ~start:started ~upto ~ended)) in
+  let last = started +. 22. +. (Float.of_int upto /. w.rate) in
+  let updated = match ended with None -> last | Some _ -> last +. 31. in
   let status =
     match ended with Some (e, _) -> (e :> Run.status) | None -> status
   in
@@ -504,7 +507,40 @@ let eager_hawk =
 
 (* The MLP runs log their loss every 50 steps and evaluate every epoch of 469
    steps, without readings. *)
-let mlp ~id ~name ~started ~pid ~hidden ~seed ~floor ~upto ~ended =
+let rec mlp ~id ~name ~started ~pid ~hidden ~seed ~floor ~upto ~ended =
+  let time_of s = started +. 3. +. (Float.of_int s /. 9.5) in
+  let updated =
+    match ended with Some _ -> time_of upto +. 1. | None -> time_of upto
+  in
+  let records = lazy (mlp_records ~started ~seed ~floor ~upto ~ended) in
+  {
+    id;
+    experiment = "mnist-mlp";
+    name;
+    steps = Some 4690;
+    params =
+      [
+        ("lr", `Float 0.1);
+        ("batch", `Int 64);
+        ("hidden", `Int hidden);
+        ("opt", `String "sgd");
+      ];
+    command = [ "./mlp.exe"; "--hidden"; string_of_int hidden ];
+    cwd = "/home/ada/src/resnet";
+    host = "gpu-01";
+    pid;
+    commit;
+    dirty = false;
+    tags = [];
+    notes = None;
+    started;
+    records;
+    updated;
+    status = (match ended with Some e -> (e :> Run.status) | None -> `Crashed);
+    sweep = None;
+  }
+
+and mlp_records ~started ~seed ~floor ~upto ~ended =
   let time_of s = started +. 3. +. (Float.of_int s /. 9.5) in
   let loss s =
     floor
@@ -542,39 +578,9 @@ let mlp ~id ~name ~started ~pid ~hidden ~seed ~floor ~upto ~ended =
            (fun (a, _) (b, _) -> Float.compare a b)
            (train @ evals))
   in
-  let records, updated =
-    match ended with
-    | Some status ->
-        ( records @ [ end_record ~time:(time_of upto +. 1.) status ],
-          time_of upto +. 1. )
-    | None -> (records, time_of upto)
-  in
-  {
-    id;
-    experiment = "mnist-mlp";
-    name;
-    steps = Some 4690;
-    params =
-      [
-        ("lr", `Float 0.1);
-        ("batch", `Int 64);
-        ("hidden", `Int hidden);
-        ("opt", `String "sgd");
-      ];
-    command = [ "./mlp.exe"; "--hidden"; string_of_int hidden ];
-    cwd = "/home/ada/src/resnet";
-    host = "gpu-01";
-    pid;
-    commit;
-    dirty = false;
-    tags = [];
-    notes = None;
-    started;
-    records;
-    updated;
-    status = (match ended with Some e -> (e :> Run.status) | None -> `Crashed);
-    sweep = None;
-  }
+  match ended with
+  | Some status -> records @ [ end_record ~time:(time_of upto +. 1.) status ]
+  | None -> records
 
 let mlp_wide =
   mlp ~id:"20261031T162010Z-44c0de1a" ~name:"mlp-wide" ~started:1793463610.0
@@ -610,7 +616,7 @@ let warm_start =
        ~pid:48977 ~commit ~dirty:false ~tags:[] base ~upto:0 ~ended:None
        ~status:`Running ())
     with
-    records = declarations ~time:(started +. 0.5);
+    records = lazy (declarations ~time:(started +. 0.5));
     updated = started +. 0.5;
   }
 
@@ -634,13 +640,36 @@ let quiet_heron =
     ~ended:(Some (`Killed, false))
     ()
 
+(* Short runs of the sweep, for the tests whose claim needs a run's state,
+   metrics and readings but not its length: 600 steps, every metric and
+   reading of a sweep run. [short_running]'s writer holds it; the others
+   finished before it started. *)
+let short ~id ~name ~started ?status ended =
+  sweep_run ~id ~name ~started ~pid:4300 ~commit ~dirty:false ~tags:[] base
+    ~upto:600 ~ended ?status ()
+
+let short_running =
+  short ~id:"20261101T121000Z-5a5a0001" ~name:"tidy-otter"
+    ~started:(now -. 400.) ~status:`Running None
+
+let short_amber =
+  short ~id:"20261101T113000Z-5a5a0002" ~name:"amber-fox"
+    ~started:(now -. 3000.)
+    (Some (`Finished, true))
+
+let short_brisk =
+  short ~id:"20261101T110000Z-5a5a0003" ~name:"brisk-wren"
+    ~started:(now -. 4800.)
+    (Some (`Finished, true))
+
 let states = [ warm_start; far_node; lost_node; quiet_heron ]
 let runs = sweep @ [ mlp_wide; mlp_base ]
 
 (* Writing *)
 
 let mkdir path = if not (Sys.file_exists path) then Sys.mkdir path 0o755
-let log_text r = String.concat "\n" (start_record r :: r.records) ^ "\n"
+let log_text r =
+  String.concat "\n" (start_record r :: Lazy.force r.records) ^ "\n"
 
 let run_dir store id =
   Filename.concat (Filename.concat (Store.root store) "runs") id
@@ -790,3 +819,85 @@ let feed store r ~step ~time =
   let log = log_path store r.id in
   write_file ~flags:[ Unix.O_APPEND ] log (record ^ "\n");
   Unix.utimes log time time
+
+(* The tests' own runs *)
+
+(* Logs of runs a test writes for itself: a start without git or host at
+   [started] seconds, the metrics [declare]d at 1 s, then the records given,
+   whose samples are at 2 s, resumes at 3 s and end at 4 s. *)
+
+let law_provenance =
+  obj
+    [
+      member "command" {|["t"]|};
+      member "cwd" (str "/");
+      member "pid" "1";
+      member "ocaml" (str "5");
+      member "raven" (str "t");
+      member "os" (str "t");
+      member "arch" (str "t");
+      member "seeds" "{}";
+      member "env" "{}";
+    ]
+
+let declare ?goal ?step_metric key =
+  metric_record ~time:1. ?goal ?step_metric key
+
+(* [values step kvs] logs the metrics [kvs] at [step]; [sample (step, v)]
+   logs [m]. *)
+let values ?(time = 2.) step kvs = samples_record "metrics" ~time ~step kvs
+let sample (step, v) = values step [ ("m", v) ]
+let reading ~time step kvs = samples_record "reading" ~time ~step kvs
+
+let resume step =
+  obj
+    [
+      member "type" (str "resume");
+      member "time" (num 3.);
+      member "step" (string_of_int step);
+      member "provenance" law_provenance;
+    ]
+
+let finished = end_record ~time:4. `Finished
+
+(* The ids of the logs a process wrote, so that each is new. *)
+let logs = ref 0
+
+(* [write_log store records] writes a run of [records] into [store], with
+   the metric [m] declared unless [declare] says otherwise, and is its id
+   and its log's path. *)
+let write_log store ?goal ?steps ?declare:declared ?(started = 1)
+    ?(experiment = "law") ?name ?id ?(params = []) records =
+  let declared = Option.value declared ~default:[ declare ?goal "m" ] in
+  incr logs;
+  let id =
+    match id with
+    | Some i -> i
+    | None -> Printf.sprintf "20261101T000000Z-%08x" !logs
+  in
+  mkdir (Store.root store);
+  mkdir (Filename.concat (Store.root store) "runs");
+  mkdir (run_dir store id);
+  let start =
+    obj
+      ([
+         member "type" (str "start");
+         member "time" (num (Float.of_int started));
+         member "format" "1";
+         member "experiment" (str experiment);
+       ]
+      @ (match name with Some n -> [ member "name" (str n) ] | None -> [])
+      @ (match steps with
+        | Some n -> [ member "steps" (string_of_int n) ]
+        | None -> [])
+      @ [
+          member "params" (fields (List.map (fun (k, v) -> (k, value v)) params));
+          member "provenance" law_provenance;
+        ])
+  in
+  let log = log_path store id in
+  Out_channel.with_open_bin log (fun oc ->
+      List.iter
+        (fun l -> output_string oc (l ^ "\n"))
+        ((start :: declared) @ records));
+  (id, log)

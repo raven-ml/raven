@@ -12,14 +12,6 @@ module T = Matrix_test
 
 (* Stores *)
 
-(* The stores live under a directory that the tests make the home, so that a
-   screen names one as [~/store], and times print in UTC. *)
-let home = Filename.temp_dir "munin_tui" ""
-
-let () =
-  Unix.putenv "HOME" home;
-  Unix.putenv "TZ" "UTC"
-
 let rec remove path =
   match (Unix.lstat path).st_kind with
   | Unix.S_DIR ->
@@ -28,35 +20,39 @@ let rec remove path =
   | _ -> Sys.remove path
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
 
-(* The stores that tests share stay until the end, with the writers that hold
-   their runs: those let go first, since Windows removes no file a process holds
-   open. Fixture's own [at_exit] runs after this one. *)
-let () =
-  at_exit (fun () ->
-      Fixture.release ();
-      remove home)
-
 let child = Filename.concat (Sys.getcwd ()) "../support/child.exe"
 
 (* [with_store ?name runs f] is [f store], [store] a store of [runs] at
-   [~/name], which it removes after with the writers that hold its runs. The
-   root is joined with [/], which Windows also takes, so that a screen names it
-   as [~/name] there too. *)
+   [~/name], the home being the test's own directory, and lets the writers
+   that hold its runs go after. The root is joined with [/], which Windows
+   also takes, so that a screen names it as [~/name] there too. *)
 let with_store ?(name = "store") runs f =
-  let root = home ^ "/" ^ name in
-  let store = Fixture.make ~child root runs in
-  Fun.protect
-    ~finally:(fun () ->
-      Fixture.release ();
-      remove root)
-    (fun () -> f store)
+  let home = temp_dir () in
+  setenv "HOME" (Some home);
+  let store = Fixture.make ~child (home ^ "/" ^ name) runs in
+  Fun.protect ~finally:Fixture.release (fun () -> f store)
+
+(* The directory of the stores that the cases of one law share, which the
+   process removes as it ends, after the writers that hold their runs let
+   go, since Windows removes no file a process holds open. *)
+let shared =
+  lazy
+    (let dir = Filename.temp_dir "munin_tui" "" in
+     at_exit (fun () ->
+         Fixture.release ();
+         remove dir);
+     dir)
+
+(* [shared_store name runs] is a store of [runs] in [shared]. *)
+let shared_store name runs =
+  Fixture.make ~child (Filename.concat (Lazy.force shared) name) runs
 
 let id_of r = r.Fixture.id
 
 (* A test whose expected screen shows a crashed run: on a system whose writers
    record no boot, such as Windows, the fixture holds no crashed run. *)
 let needs_crashed () =
-  if not (Fixture.boots ~child home) then
+  if not (Fixture.boots ~child (Lazy.force shared)) then
     skip ~reason:"no run reads crashed where writers record no boot identity" ()
 
 (* Screens *)
@@ -80,6 +76,7 @@ let send term s = function
    started on [screen] and read [store] once, then [script] ran, a second
    passed, and the dashboard took [keys], each followed by a second. *)
 let show ?(script = ignore) ?profile ~cols ~rows store screen keys =
+  setenv "TZ" (Some "UTC");
   let term = T.Terminal.create ?profile ~cols ~rows () in
   (elapsed := fun () -> 0);
   let app = Munin_tui.app ~clock store screen in
@@ -262,65 +259,19 @@ let states_test =
       let lines =
         [
           first Fixture.states Fixture.warm_start;
-          first Fixture.runs tidy;
-          first Fixture.runs tidy ~script:arrives;
-          first Fixture.runs tidy ~script:stalls;
+          first [ tidy ] tidy;
+          first [ tidy ] tidy ~script:arrives;
+          first [ tidy ] tidy ~script:stalls;
           first Fixture.states Fixture.far_node ~script:(fun store _ ->
               feed store Fixture.far_node ~step:3200);
           first Fixture.states Fixture.lost_node;
-          first Fixture.runs Fixture.mlp_base;
-          first Fixture.runs Fixture.amber_fox;
-          first Fixture.runs Fixture.eager_hawk;
+          first [ Fixture.mlp_base ] Fixture.mlp_base;
+          first [ Fixture.amber_fox ] Fixture.amber_fox;
+          first [ Fixture.eager_hawk ] Fixture.eager_hawk;
           first Fixture.states Fixture.quiet_heron;
         ]
       in
       golden "states" (String.concat "\n" lines ^ "\n"))
-
-(* Logs written from the format's text, for the tests that need a run of their
-   own: a start, the metric "m", then [records]. *)
-let law_runs = ref 0
-
-let metric_record ?(goal = "") ?(step_metric = "") key =
-  Printf.sprintf {|{"type":"metric","time":1.0,"key":"%s"%s%s}|} key
-    (if goal = "" then "" else Printf.sprintf {|,"goal":"%s"|} goal)
-    (if step_metric = "" then ""
-     else Printf.sprintf {|,"step_metric":"%s"|} step_metric)
-
-let write_log store ?goal ?steps ?declare ?(started = 1) ?(experiment = "law") ?name ?id
-    ?(params = "{}") records =
-  let declare = Option.value declare ~default:[ metric_record ?goal "m" ] in
-  incr law_runs;
-  let id = match id with Some i -> i | None -> Printf.sprintf "20261101T000000Z-%08x" !law_runs in
-  let dir = Filename.concat (Store.root store) "runs" in
-  List.iter
-    (fun d -> if not (Sys.file_exists d) then Sys.mkdir d 0o755)
-    [ Store.root store; dir ];
-  Sys.mkdir (Filename.concat dir id) 0o755;
-  let start =
-    Printf.sprintf
-      {|{"type":"start","time":%d.0,"format":1,"experiment":"%s",%s%s"params":%s,"provenance":{"command":["t"],"cwd":"/","pid":1,"ocaml":"5","raven":"t","os":"t","arch":"t","seeds":{},"env":{}}}|}
-      started experiment
-      (match name with Some n -> Printf.sprintf {|"name":"%s",|} n | None -> "")
-      (match steps with
-      | Some n -> Printf.sprintf {|"steps":%d,|} n
-      | None -> "")
-      params
-  in
-  let log = Filename.concat (Filename.concat dir id) "events.jsonl" in
-  Out_channel.with_open_bin log (fun oc ->
-      List.iter
-        (fun l -> output_string oc (l ^ "\n"))
-        ((start :: declare) @ records));
-  (id, log)
-
-let sample_record (step, v) =
-  Printf.sprintf {|{"type":"metrics","time":2.0,"step":%d,"values":{"m":%s}}|}
-    step (Fixture.num v)
-
-let resume_record step =
-  Printf.sprintf
-    {|{"type":"resume","time":3.0,"step":%d,"provenance":{"command":["t"],"cwd":"/","pid":1,"ocaml":"5","raven":"t","os":"t","arch":"t","seeds":{},"env":{}}}|}
-    step
 
 (* Laws of the reduction *)
 
@@ -332,13 +283,14 @@ let pairs l =
       List.combine (List.filteri (fun k _ -> k < List.length rest) l) rest
 
 (* The laws' runs, written from the format's text. *)
-let laws = lazy (Store.open_ ~root:(Filename.concat home "laws") ())
+let laws =
+  lazy (Store.open_ ~root:(Filename.concat (Lazy.force shared) "laws") ())
 
 (* [series_of samples] is the series of a run that logged [samples], each a step
    and a value, under one key. *)
 let series_of samples =
   let store = Lazy.force laws in
-  let id, _ = write_log store (List.map sample_record samples) in
+  let id, _ = Fixture.write_log store (List.map Fixture.sample samples) in
   let h = History.read ~series:[ "m" ] (Option.get (Store.run store id)) in
   History.series h "m"
 
@@ -884,11 +836,11 @@ let extend =
       let store = Lazy.force laws in
       let first = List.filteri (fun k _ -> k < cut) samples in
       let rest = List.filteri (fun k _ -> k >= cut) samples in
-      let id, log = write_log store (List.map sample_record first) in
+      let id, log = Fixture.write_log store (List.map Fixture.sample first) in
       let h = History.read ~series:[ "m" ] (Option.get (Store.run store id)) in
       Out_channel.with_open_gen [ Open_append; Open_binary ] 0o644 log
         (fun oc ->
-          List.iter (fun r -> output_string oc (sample_record r ^ "\n")) rest);
+          List.iter (fun r -> output_string oc (Fixture.sample r ^ "\n")) rest);
       let h' = History.follow h in
       let s0 = History.series h "m" and s1 = History.series h' "m" in
       let whole = reduce g s1 in
@@ -1421,15 +1373,14 @@ let facts r =
   let key = if r.has then "m" else "n" in
   let samples =
     List.map
-      (fun st ->
-        Printf.sprintf {|{"type":"metrics","time":2.0,"step":%d,"values":{"%s":1}}|} st key)
+      (fun st -> Fixture.values st [ (key, 1.) ])
       (List.sort_uniq compare [ 0; r.last ])
   in
   let ended =
-    match r.life with Ended -> [ Fixture.end_record ~time:4. `Finished ] | Writing | Silent -> []
+    match r.life with Ended -> [ Fixture.finished ] | Writing | Silent -> []
   in
-  let declare = [ metric_record "m"; metric_record "n" ] in
-  let id, _ = write_log store ?steps:r.steps ~declare (samples @ ended) in
+  let declare = [ Fixture.declare "m"; Fixture.declare "n" ] in
+  let id, _ = Fixture.write_log store ?steps:r.steps ~declare (samples @ ended) in
   let run = Option.get (Store.run store id) in
   (* An arrival at the poll's time: the run reads [writing]. *)
   let watch =
@@ -1827,7 +1778,7 @@ let stalled_end =
           ~started:(Fixture.now -. 100.) ~pid:4242 ~commit:Fixture.commit ~dirty:false ~tags:[]
           Fixture.base ~upto:150 ~ended:None ~status:`Running ()
       in
-      let store = Fixture.make ~child (Filename.concat home "stalled") [ r ] in
+      with_store ~name:"stalled" [ r ] @@ fun store ->
       let run = Option.get (Store.run store r.id) in
       (* Samples arrived at 0 and 1 s, and none for 999 s since. *)
       let watch =
@@ -1904,7 +1855,7 @@ let ticks_of =
    values] is what a poll knows of a run that logged [values] under [m]. *)
 let logged values =
   let store = Lazy.force laws in
-  let id, _ = write_log store (List.mapi (fun st v -> sample_record (st, v)) values) in
+  let id, _ = Fixture.write_log store (List.mapi (fun st v -> Fixture.sample (st, v)) values) in
   let r = Option.get (Store.run store id) in
   Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r)) ~hint:None ~watch:None
     ~pauses:[] r
@@ -2200,17 +2151,6 @@ let cadence =
           at_most ~msg Windtrap.int ~than:cadence_rows (abs (bottom - bottom')))
         a b)
 
-let values_record step kvs =
-  Printf.sprintf {|{"type":"metrics","time":2.0,"step":%d,"values":{%s}}|} step
-    (String.concat ","
-       (List.map
-          (fun (k, v) -> Printf.sprintf {|"%s":%s|} k (Fixture.num v))
-          kvs))
-
-let reading_record ~time step kvs =
-  Printf.sprintf {|{"type":"reading","time":%s,"step":%d,"values":{%s}}|} (Fixture.num time) step
-    (String.concat "," (List.map (fun (k, v) -> Printf.sprintf {|"%s":%s|} k (Fixture.num v)) kvs))
-
 (* Runs: the filter and the best value of each experiment *)
 
 (* The runs pane: the text of each row before the pane's rule. *)
@@ -2236,6 +2176,9 @@ let shown screen =
   in
   go 1 []
 
+(* The rows read the main store and write nothing to it. *)
+let filter_store = lazy (shared_store "filter" Fixture.runs)
+
 let filter =
   cases "the filter keeps the rows that match each word"
     ~id:(fun (f, _) -> f)
@@ -2259,7 +2202,7 @@ let filter =
     ]
     (fun (f, expected) ->
       if List.mem "mlp-base" expected then needs_crashed ();
-      with_store Fixture.runs @@ fun store ->
+      let store = Lazy.force filter_store in
       let screen =
         show ~cols:160 ~rows:48 store Munin_tui.Runs
           [ char '/'; Text f; Key Enter ]
@@ -2285,8 +2228,8 @@ let short_of_steps =
   test "a run short of its steps never reads 100%" (fun () ->
       with_store ~name:"short" [] @@ fun store ->
       let id, _ =
-        write_log store ~goal:"minimize" ~steps:20000
-          [ sample_record (0, 1.); sample_record (19950, 0.5) ]
+        Fixture.write_log store ~goal:`Minimize ~steps:20000
+          [ Fixture.sample (0, 1.); Fixture.sample (19950, 0.5) ]
       in
       let run = show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [] in
       let runs = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
@@ -2319,12 +2262,12 @@ let paired =
     (fun (_, marked, value) ->
       with_store ~name:"paired" [] @@ fun store ->
       ignore
-        (write_log store ~goal:"minimize" ~started:1
-           (List.map (fun st -> sample_record (st, 0.)) marked));
+        (Fixture.write_log store ~goal:`Minimize ~started:1
+           (List.map (fun st -> Fixture.sample (st, 0.)) marked));
       ignore
-        (write_log store ~goal:"minimize" ~started:2
+        (Fixture.write_log store ~goal:`Minimize ~started:2
            (List.init 100 (fun k ->
-                sample_record (k * 10, Float.of_int (k * 10) /. 1000.))));
+                Fixture.sample (k * 10, Float.of_int (k * 10) /. 1000.))));
       (* The cursor's run, the newest, is the first row: overlay the second,
          come back and open the strips. *)
       let screen =
@@ -2350,18 +2293,18 @@ let all_orphans =
   test "the run's facts list a run whose metric is all orphans" (fun () ->
       with_store ~name:"orphaned" [] @@ fun store ->
       let id, _ =
-        write_log store
+        Fixture.write_log store
           ~declare:
             [
-              metric_record ~goal:"minimize" "m";
-              metric_record ~goal:"maximize" "val/acc";
+              Fixture.declare ~goal:`Minimize "m";
+              Fixture.declare ~goal:`Maximize "val/acc";
             ]
           [
-            sample_record (100, 1.);
-            values_record 900 [ ("val/acc", 0.5) ];
-            resume_record 500;
-            sample_record (600, 0.5);
-            {|{"type":"end","time":4.0,"status":"finished"}|};
+            Fixture.sample (100, 1.);
+            Fixture.values 900 [ ("val/acc", 0.5) ];
+            Fixture.resume 500;
+            Fixture.sample (600, 0.5);
+            Fixture.finished;
           ]
       in
       let screen =
@@ -2399,7 +2342,7 @@ let nav_count =
       List.iteri
         (fun e experiment ->
           for k = 1 to 11 do
-            ignore (write_log store ~experiment ~started:((e * 11) + k) [])
+            ignore (Fixture.write_log store ~experiment ~started:((e * 11) + k) [])
           done)
         [ "first"; "second"; "third" ];
       let screen = show ~cols:90 ~rows:30 store Munin_tui.Runs (times 11 (char 'j')) in
@@ -2421,13 +2364,6 @@ let nav_count =
    tidy-otter while the dashboard watches, then takes the keys, and reads
    tidy-otter's glyph back in the runs pane, [●] for live. *)
 let held =
-  (* Two runs, so that j and k move the cursor off tidy-otter and back. *)
-  let store =
-    lazy
-      (Fixture.make ~child (Filename.concat home "held")
-         [ Fixture.tidy_otter; Fixture.amber_fox ])
-  in
-  let step = ref 12400 in
   let key_gen =
     Gen.with_pp
       (fun ppf ks ->
@@ -2452,9 +2388,10 @@ let held =
   in
   prop ~count:30 "a live run stays live through depths and cursor moves"
     key_gen (fun keys ->
-      let store = Lazy.force store in
-      step := !step + 50;
-      let script _ = feed store Fixture.tidy_otter ~step:!step in
+      (* Two runs, so that j and k move the cursor off tidy-otter and
+         back. *)
+      with_store Fixture.[ short_running; short_amber ] @@ fun store ->
+      let script _ = feed store Fixture.short_running ~step:650 in
       cover "the keys open a run" (List.mem (Key Enter) keys);
       let screen =
         show ~script ~cols:120 ~rows:40 store Munin_tui.Runs
@@ -2486,10 +2423,10 @@ let held =
    is never missed. Any fold of it would fail and name the run. *)
 let kept_pane =
   test "a cursor back on an ended run reads nothing of it" (fun () ->
-      with_store Fixture.runs @@ fun store ->
+      with_store Fixture.[ short_running; short_amber; short_brisk ] @@ fun store ->
       let log =
         Filename.concat
-          (Run.dir (Option.get (Store.run store (id_of Fixture.amber_fox))))
+          (Run.dir (Option.get (Store.run store (id_of Fixture.short_amber))))
           "events.jsonl"
       in
       let term = T.Terminal.create ~cols:160 ~rows:48 () in
@@ -2525,10 +2462,10 @@ let kept_pane =
 let ended_away =
   test "a cursor back on a run that ended away draws its last samples"
     (fun () ->
-      with_store Fixture.runs @@ fun store ->
+      with_store [ Fixture.short_amber ] @@ fun store ->
       let s =
         Session.start ~store ~experiment:"late" ~name:"late-end" ~steps:100
-          ~provenance:(Provenance.detect ~cwd:home ())
+          ~provenance:(Provenance.detect ~cwd:"/" ())
           ()
       in
       (* A metric of no smoothing, so that the legend gives the raw value. *)
@@ -2568,10 +2505,10 @@ let ended_away =
    is what it draws of the same run read whole after its end. *)
 let ended_between =
   let late ~between keys =
-    with_store Fixture.runs @@ fun store ->
+    with_store [ Fixture.short_amber ] @@ fun store ->
     let s =
       Session.start ~store ~experiment:"late" ~name:"late-end" ~steps:100
-        ~provenance:(Provenance.detect ~cwd:home ())
+        ~provenance:(Provenance.detect ~cwd:"/" ())
         ()
     in
     let loss = Session.metric s ~goal:`Minimize "val/loss" in
@@ -2632,7 +2569,7 @@ let glyphs =
   let facts values =
     let store = Lazy.force laws in
     let id, _ =
-      write_log store (List.mapi (fun st v -> sample_record (st, v)) values)
+      Fixture.write_log store (List.mapi (fun st v -> Fixture.sample (st, v)) values)
     in
     let r = Option.get (Store.run store id) in
     Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r))
@@ -2849,9 +2786,10 @@ let depth_test =
      depths need one. *)
   let store =
     lazy
-      (let store = Store.open_ ~root:(Filename.concat home "depths") () in
+      (let root = Filename.concat (Lazy.force shared) "depths" in
+       let store = Store.open_ ~root () in
        let id, _ =
-         write_log store (List.init 20 (fun i -> sample_record (i, 1.)))
+         Fixture.write_log store (List.init 20 (fun i -> Fixture.sample (i, 1.)))
        in
        (store, id))
   in
@@ -2955,7 +2893,7 @@ let depth_test =
    from its status bar. *)
 let after_keys keys =
   with_store ~name:"after-keys" [] @@ fun store ->
-  ignore (write_log store (List.init 20 (fun i -> sample_record (i, 1.))));
+  ignore (Fixture.write_log store (List.init 20 (fun i -> Fixture.sample (i, 1.))));
   observed (show ~cols:120 ~rows:40 store Munin_tui.Runs keys)
 
 (* The depths in a fixed order: each Enter one deeper, to zoom, and each Esc
@@ -2996,7 +2934,7 @@ let typed_q =
    the text typed is in its line, and Enter keeps it. *)
 let hidden_filter =
   test "the filter shows the runs pane where it is hidden" (fun () ->
-      with_store ~name:"hidden" Fixture.runs @@ fun store ->
+      with_store ~name:"hidden" Fixture.[ short_running; short_amber ] @@ fun store ->
       List.iter
         (fun (what, cols, rows, hide) ->
           let typing = show ~cols ~rows store Munin_tui.Runs (hide @ [ char '/'; Text "cifar" ]) in
@@ -3038,8 +2976,8 @@ let strips screen =
    or ended: the readings the run pane gives, in its order. *)
 let machine_strips =
   test "an ended run's strips end with its machine's readings" (fun () ->
-      with_store Fixture.runs @@ fun store ->
-      let start = Munin_tui.Run (Some (id_of Fixture.amber_fox)) in
+      with_store [ Fixture.short_amber ] @@ fun store ->
+      let start = Munin_tui.Run (Some (id_of Fixture.short_amber)) in
       let screen = show ~cols:120 ~rows:40 store start (Key Enter :: times 30 (Key Down)) in
       let labels, _ = strips screen in
       let last = List.filteri (fun i _ -> i >= List.length labels - 4) labels in
@@ -3051,8 +2989,8 @@ let strips_scroll =
   (* One run, whose strips are its own beside any other. *)
   let store =
     lazy
-      (Fixture.make ~child (Filename.concat home "strips")
-         [ Fixture.tidy_otter ])
+      (shared_store "strips"
+         [ Fixture.short_running ])
   in
   let move = Gen.of_list ~pp:(fun ppf k -> Format.pp_print_string ppf (if k = "j" then "down" else "up")) [ "j"; "k" ] in
   (* Twelve moves down pass the strips 20 rows show, so every case scrolls;
@@ -3064,7 +3002,7 @@ let strips_scroll =
       let moves = down @ moves in
       let term = T.Terminal.create ~cols:120 ~rows:20 () in
       (elapsed := fun () -> 0);
-      let start = Munin_tui.Run (Some (id_of Fixture.tidy_otter)) in
+      let start = Munin_tui.Run (Some (id_of Fixture.short_running)) in
       let app = Munin_tui.app ~clock (Lazy.force store) start in
       Mosaic_test.run term app @@ fun s ->
       (elapsed := fun () -> T.now s);
@@ -3133,18 +3071,18 @@ let last_dot ink = List.fold_left (fun e (c, _, _) -> max e c) (-1) ink
 let shared_axis =
   test "the strips share one x axis" (fun () ->
       with_store ~name:"shared" [] @@ fun store ->
-      let declare = [ metric_record "m"; metric_record "n" ] in
-      let ended = Fixture.end_record ~time:4. `Finished in
+      let declare = [ Fixture.declare "m"; Fixture.declare "n" ] in
+      let ended = Fixture.finished in
       ignore
-        (write_log store ~declare ~started:1
-           (List.init 51 (fun k -> values_record (k * 100) [ ("m", 1.) ]) @ [ ended ]));
+        (Fixture.write_log store ~declare ~started:1
+           (List.init 51 (fun k -> Fixture.values (k * 100) [ ("m", 1.) ]) @ [ ended ]));
       let cursor k =
         [
-          values_record (k * 100) [ ("m", 0.); ("n", 0.) ];
-          reading_record ~time:2. (k * 100) [ ("dev/CUDA:0/used_bytes", 1e9) ];
+          Fixture.values (k * 100) [ ("m", 0.); ("n", 0.) ];
+          Fixture.reading ~time:2. (k * 100) [ ("dev/CUDA:0/used_bytes", 1e9) ];
         ]
       in
-      ignore (write_log store ~declare ~started:2 (List.concat (List.init 31 cursor) @ [ ended ]));
+      ignore (Fixture.write_log store ~declare ~started:2 (List.concat (List.init 31 cursor) @ [ ended ]));
       (* The cursor's run, the newest, is the first row: overlay the second,
          come back and open the strips. *)
       let screen =
@@ -3167,14 +3105,14 @@ let shared_axis =
 let reading_steps =
   test "a reading is drawn at its step" (fun () ->
       with_store ~name:"reading-steps" [] @@ fun store ->
-      let declare = [ metric_record "m"; metric_record "n" ] in
+      let declare = [ Fixture.declare "m"; Fixture.declare "n" ] in
       let vram = "dev/CUDA:0/used_bytes" in
-      let n = List.init 101 (fun k -> values_record (k * 10) [ ("n", 1.) ]) in
+      let n = List.init 101 (fun k -> Fixture.values (k * 10) [ ("n", 1.) ]) in
       let paired k =
-        [ values_record (k * 10) [ ("m", 1.) ]; reading_record ~time:2. (k * 10) [ (vram, 1e9) ] ]
+        [ Fixture.values (k * 10) [ ("m", 1.) ]; Fixture.reading ~time:2. (k * 10) [ (vram, 1e9) ] ]
       in
-      let read = (reading_record ~time:2. 0 [ (vram, 1e9) ] :: n) @ List.concat (List.init 31 (fun k -> paired (30 + k))) in
-      let id, _ = write_log store ~declare (read @ [ Fixture.end_record ~time:4. `Finished ]) in
+      let read = (Fixture.reading ~time:2. 0 [ (vram, 1e9) ] :: n) @ List.concat (List.init 31 (fun k -> paired (30 + k))) in
+      let id, _ = Fixture.write_log store ~declare (read @ [ Fixture.finished ]) in
       let strips = strip_ink (show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [ Key Enter ]) in
       equal ~msg:"the strips" (list string) [ "m"; "n"; "VRAM" ] (List.map fst strips);
       let first ink = List.fold_left (fun e (c, _, _) -> min e c) max_int ink in
@@ -3192,18 +3130,17 @@ let resumed_log store ~crashed =
       (List.init (((upto - from) / 50) + 1) (fun k ->
            let step = from + (k * 50) in
            [
-             Printf.sprintf {|{"type":"metrics","time":%s,"step":%d,"values":{"m":1}}|}
-               (Fixture.num time) step;
-             reading_record ~time step [ (vram, gb *. 1e9) ];
+             Fixture.values ~time step [ ("m", 1.) ];
+             Fixture.reading ~time step [ (vram, gb *. 1e9) ];
            ]))
   in
   let records =
     attempt ~time:crashed ~from:450 ~upto:700 20.
-    @ [ resume_record 400 ]
+    @ [ Fixture.resume 400 ]
     @ attempt ~time:3.5 ~from:400 ~upto:1000 1.
-    @ [ Fixture.end_record ~time:4. `Finished ]
+    @ [ Fixture.finished ]
   in
-  fst (write_log store records)
+  fst (Fixture.write_log store records)
 
 (* A resume abandons the history after its step: the strips draw the
    history the run kept: [resumed_log]'s machine strip draws a constant
@@ -3255,9 +3192,9 @@ let strips_whole =
   (* One run, whose strips are its own beside any other. *)
   let store =
     lazy
-      (Fixture.make ~child (Filename.concat home "whole") [ Fixture.tidy_otter ])
+      (shared_store "whole" [ Fixture.short_running ])
   in
-  let start = Munin_tui.Run (Some (id_of Fixture.tidy_otter)) in
+  let start = Munin_tui.Run (Some (id_of Fixture.short_running)) in
   let every =
     lazy (fst (strips (show ~cols:120 ~rows:100 (Lazy.force store) start [ Key Enter ])))
   in
@@ -3341,9 +3278,9 @@ type path = { phase : phase; cursor : int; chosen : bool }
 
 let data_path_test =
   (* Three runs, so that the cursor's moves meet both ends of the list. *)
-  let runs = Fixture.[ tidy_otter; amber_fox; brisk_wren ] in
+  let runs = Fixture.[ short_running; short_amber; short_brisk ] in
   let store =
-    lazy (Fixture.make ~child (Filename.concat home "path") runs)
+    lazy (shared_store "path" runs)
   in
   let last = List.length runs - 1 in
   let path = abstract "p" in
@@ -3432,11 +3369,11 @@ let no_sample =
     "a run without a metric sample says why the charts are missing"
     [
       ("without an end", [], "no metric sample yet");
-      ("ended", [ {|{"type":"end","time":4.0,"status":"finished"}|} ], "the run logged no metric");
+      ("ended", [ Fixture.finished ], "the run logged no metric");
     ]
     (fun (_, records, says) ->
       with_store ~name:"no-sample" [] @@ fun store ->
-      ignore (write_log store ~declare:[] records);
+      ignore (Fixture.write_log store ~declare:[] records);
       let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
       let row text = match T.Screen.find screen text with (y, _) :: _ -> Some y | [] -> None in
       equal (option int) (row "¹ runs") (row says);
@@ -3455,7 +3392,7 @@ let no_sample =
 let no_others =
   test "r with no other run to draw adds no legend entry" (fun () ->
       with_store ~name:"no-others" [] @@ fun store ->
-      ignore (write_log store (List.init 20 (fun i -> sample_record (i, Float.of_int i))));
+      ignore (Fixture.write_log store (List.init 20 (fun i -> Fixture.sample (i, Float.of_int i))));
       let before_r = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
       let after_r = show ~cols:120 ~rows:40 store Munin_tui.Runs [ char 'r' ] in
       let others sc = List.length (T.Screen.find sc "others") in
@@ -3469,7 +3406,7 @@ let same_names =
   test "runs of one name are told apart by their ids" (fun () ->
       with_store ~name:"same-names" [] @@ fun store ->
       let run ?name () =
-        fst (write_log store ?name (List.init 20 (fun i -> sample_record (i, Float.of_int i))))
+        fst (Fixture.write_log store ?name (List.init 20 (fun i -> Fixture.sample (i, Float.of_int i))))
       in
       let ids = List.init 3 (fun _ -> run ~name:"cnn-adam" ()) in
       let lone = run ~name:"lone" () in
@@ -3505,8 +3442,8 @@ let long_suffixes =
       with_store ~name:"long-suffixes" [] @@ fun store ->
       let run id =
         ignore
-          (write_log store ~name:"cnn-adam" ~id
-             (List.init 20 (fun i -> sample_record (i, Float.of_int i))))
+          (Fixture.write_log store ~name:"cnn-adam" ~id
+             (List.init 20 (fun i -> Fixture.sample (i, Float.of_int i))))
       in
       run "20261101T000000Z-00a12345";
       run "20261101T000000Z-00b12345";
@@ -3534,11 +3471,11 @@ let long_suffixes =
 let run_none_newest =
   test "Run None opens on the newest run without an end" (fun () ->
       with_store ~name:"run-none" [] @@ fun store ->
-      let samples = List.init 20 (fun i -> sample_record (i, Float.of_int i)) in
-      ignore (write_log store ~name:"going" ~started:1 samples);
+      let samples = List.init 20 (fun i -> Fixture.sample (i, Float.of_int i)) in
+      ignore (Fixture.write_log store ~name:"going" ~started:1 samples);
       ignore
-        (write_log store ~name:"ended" ~started:2
-           (samples @ [ {|{"type":"end","time":4.0,"status":"finished"}|} ]));
+        (Fixture.write_log store ~name:"ended" ~started:2
+           (samples @ [ Fixture.finished ]));
       let screen = show ~cols:120 ~rows:40 store (Munin_tui.Run None) [] in
       equal (option string) (Some "going") (run_pane_name screen))
 
@@ -3547,9 +3484,9 @@ let run_none_newest =
 let run_none_waits =
   test "Run None waits for a run to start" (fun () ->
       with_store ~name:"run-none-waits" [] @@ fun store ->
-      let samples = List.init 20 (fun i -> sample_record (i, Float.of_int i)) in
-      let ended = {|{"type":"end","time":4.0,"status":"finished"}|} in
-      ignore (write_log store ~name:"ended" ~started:1 (samples @ [ ended ]));
+      let samples = List.init 20 (fun i -> Fixture.sample (i, Float.of_int i)) in
+      let ended = Fixture.finished in
+      ignore (Fixture.write_log store ~name:"ended" ~started:1 (samples @ [ ended ]));
       let term = T.Terminal.create ~cols:120 ~rows:40 () in
       (elapsed := fun () -> 0);
       let app = Munin_tui.app ~clock store (Munin_tui.Run None) in
@@ -3558,7 +3495,7 @@ let run_none_waits =
         (elapsed := fun () -> T.now s);
         T.advance s second;
         let waiting = T.Terminal.screen term in
-        ignore (write_log store ~name:"late" ~started:2 samples);
+        ignore (Fixture.write_log store ~name:"late" ~started:2 samples);
         T.advance s (2 * second);
         (waiting, T.Terminal.screen term)
       in
@@ -3619,7 +3556,7 @@ let no_blanks s = String.concat "" (String.split_on_char ' ' s)
    drawn once. *)
 let long_screens =
   lazy
-    (with_store ~name:"long" [ long_run; Fixture.amber_fox ] @@ fun store ->
+    (with_store ~name:"long" [ long_run; Fixture.short_amber ] @@ fun store ->
      let at = Munin_tui.Run (Some long_run.id) in
      List.map
        (fun (name, cols, rows, keys) -> (name, show ~cols ~rows store at keys))
@@ -3684,18 +3621,21 @@ let value_screens =
       "train/accuracy_top1";
     ]
   in
-  let goal k = if holds "loss" k then "minimize" else "maximize" in
+  let goal k = if holds "loss" k then `Minimize else `Maximize in
   let value k s = if holds "loss" k then 1. /. s else 0.9 -. (0.5 /. s) in
   lazy
     (with_store ~name:"long-values" [] @@ fun store ->
      ignore
-       (write_log store
+       (Fixture.write_log store
           ~params:
-            {|{"learning_rate":0.0004213752718364,"weight_decay":0.00031622776601683794}|}
-          ~declare:(List.map (fun k -> metric_record ~goal:(goal k) k) keys)
+            [
+              ("learning_rate", `Float 0.0004213752718364);
+              ("weight_decay", `Float 0.00031622776601683794);
+            ]
+          ~declare:(List.map (fun k -> Fixture.declare ~goal:(goal k) k) keys)
           (List.init 40 (fun i ->
                let s = Float.of_int (i + 1) in
-               values_record ((i + 1) * 100)
+               Fixture.values ((i + 1) * 100)
                  (List.map (fun k -> (k, value k s)) keys))));
      List.map
        (fun (name, cols, rows, keys) ->
@@ -3804,8 +3744,8 @@ let hint_test =
   (* Two runs, so that the keys that move the cursor change the screen. *)
   let store =
     lazy
-      (Fixture.make ~child (Filename.concat home "hints")
-         [ Fixture.tidy_otter; Fixture.amber_fox ])
+      (shared_store "hints"
+         [ Fixture.short_running; Fixture.short_amber ])
   in
   (* [session keys] is the screen after [keys], and whether the dashboard
      quit. *)
@@ -3874,7 +3814,9 @@ let hint_test =
 (* The status bar at any width: the hints that fit, leaving from the last,
    and [? keys] always. *)
 let hints_fit =
-  let store = lazy (Fixture.make ~child (Filename.concat home "hints-fit") Fixture.runs) in
+  let store =
+    lazy (shared_store "hints-fit" Fixture.[ short_running; short_amber ])
+  in
   let bar cols = hints (show ~cols ~rows:24 (Lazy.force store) Munin_tui.Runs []) in
   let all = lazy (bar 200) in
   cases ~id:string_of_int "the status bar keeps ? keys and drops hints from the last"
@@ -3902,7 +3844,9 @@ let hints_fit =
    the first three hints and [? keys] exactly, all four show, and one column
    less drops the third. *)
 let hints_exact =
-  let store = lazy (Fixture.make ~child (Filename.concat home "hints-exact") Fixture.runs) in
+  let store =
+    lazy (shared_store "hints-exact" Fixture.[ short_running; short_amber ])
+  in
   let screen cols = show ~cols ~rows:24 (Lazy.force store) Munin_tui.Runs [] in
   test "a hint that fits whole shows" (fun () ->
       let wide = screen 200 in
@@ -3928,8 +3872,8 @@ let no_values_line =
   test "a run without values has no line of them" (fun () ->
       with_store ~name:"no-values" [] @@ fun store ->
       ignore
-        (write_log store ~declare:[ metric_record "score" ]
-           (List.init 20 (fun i -> values_record i [ ("score", Float.of_int i) ])));
+        (Fixture.write_log store ~declare:[ Fixture.declare "score" ]
+           (List.init 20 (fun i -> Fixture.values i [ ("score", Float.of_int i) ])));
       let screen = show ~cols:80 ~rows:24 store Munin_tui.Runs [] in
       let row text = match T.Screen.find screen text with (y, _) :: _ -> Some y | [] -> None in
       equal (option int) (Option.map (( + ) 2) (row "‹ ")) (row "score"))
@@ -3941,8 +3885,8 @@ let strip_keys =
       with_store ~name:"strip-keys" [] @@ fun store ->
       let keys = [ "train/samples_per_s"; "m" ] in
       ignore
-        (write_log store ~declare:(List.map (fun k -> metric_record k) keys)
-           (List.init 20 (fun i -> values_record i (List.map (fun k -> (k, Float.of_int i)) keys))));
+        (Fixture.write_log store ~declare:(List.map (fun k -> Fixture.declare k) keys)
+           (List.init 20 (fun i -> Fixture.values i (List.map (fun k -> (k, Float.of_int i)) keys))));
       let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Key Enter ] in
       equal ~msg:"whole" int 1
         (List.length (T.Screen.find screen "train/samples_per_s "));
@@ -3955,8 +3899,8 @@ let zoom_units =
   cases ~id:(fun (name, _, _) -> name) "zoom gives a reading in its unit"
     [ ("mem_used_bytes", [], " GiB"); ("cpu_busy_pct", [ Key Up ], "%") ]
     (fun (key, up, unit) ->
-      with_store Fixture.runs @@ fun store ->
-      let script _ = feed store Fixture.tidy_otter ~step:12400 in
+      with_store [ Fixture.short_running ] @@ fun store ->
+      let script _ = feed store Fixture.short_running ~step:650 in
       (* The machine's strips end the list: the last is RAM, CPU busy before. *)
       let keys = [ Key Enter ] @ times 30 (Key Down) @ up @ [ Key Enter ] in
       let screen = show ~script ~cols:120 ~rows:40 store Munin_tui.Runs keys in
@@ -3981,8 +3925,8 @@ let banner_names =
       with_store ~name:"banner" [] @@ fun store ->
       let value k i = if k = "a" && i >= 5 then a else if k = "b" && i >= 7 then b else Float.of_int i in
       ignore
-        (write_log store ~declare:[ metric_record "a"; metric_record "b" ]
-           (List.init 10 (fun i -> values_record i [ ("a", value "a" i); ("b", value "b" i) ])));
+        (Fixture.write_log store ~declare:[ Fixture.declare "a"; Fixture.declare "b" ]
+           (List.init 10 (fun i -> Fixture.values i [ ("a", value "a" i); ("b", value "b" i) ])));
       let screen = show ~cols:160 ~rows:48 store Munin_tui.Runs [] in
       if T.Screen.find screen says = [] then
         failf "no %S in:\n%s" says
@@ -3994,8 +3938,8 @@ let zoom_window_whole =
   test "zoom's window gives its steps whole" (fun () ->
       with_store ~name:"window" [] @@ fun store ->
       ignore
-        (write_log store
-           (List.init 41 (fun i -> sample_record (i * 50_000, Float.of_int i)))
+        (Fixture.write_log store
+           (List.init 41 (fun i -> Fixture.sample (i * 50_000, Float.of_int i)))
         );
       let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Key Enter; Key Enter; char '+' ] in
       let y, x = match T.Screen.find screen "showing" with p :: _ -> p | [] -> fail "no window" in
@@ -4026,11 +3970,11 @@ let y_per_metric =
     (fun (_, keys, key, log) ->
       with_store ~name:"scales" [] @@ fun store ->
       ignore
-        (write_log store
-           ~declare:[ metric_record ~goal:"minimize" "m"; metric_record "w" ]
+        (Fixture.write_log store
+           ~declare:[ Fixture.declare ~goal:`Minimize "m"; Fixture.declare "w" ]
            (List.init 100 (fun i ->
                 let t = Float.of_int i /. 99. in
-                values_record i [ ("m", 10. ** (3. *. t)); ("w", 1. +. t) ])));
+                Fixture.values i [ ("m", 10. ** (3. *. t)); ("w", 1. +. t) ])));
       let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs keys in
       (* Zoom's title: the metric, then its notes. *)
       let notes =
