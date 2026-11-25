@@ -143,20 +143,87 @@ let stable c xs =
     (fun i j -> c xs.(i) xs.(j))
     (List.init (Array.length xs) Fun.id)
 
+(* Views *)
+
+(* How a value lies: contiguous; every axis flipped; every axis read at a step
+   of 2; from an offset of one slice along axis 0; or one slice along axis 0
+   repeated, a stride of 0. *)
+type lanes_view = Plain | Flipped | Strided | Offset | Repeated
+
+let lanes_views = [ Plain; Flipped; Strided; Offset; Repeated ]
+
+let lanes_view_name = function
+  | Plain -> "plain"
+  | Flipped -> "flipped"
+  | Strided -> "strided"
+  | Offset -> "offset"
+  | Repeated -> "repeated"
+
+let numel s = Array.fold_left ( * ) 1 s
+
+(* The elements [xs] of shape [s] broadcast to shape [b], in C order. *)
+let spread s xs b =
+  Array.init (numel b) (fun k ->
+      let i = index b k in
+      let p = ref 0 in
+      Array.iteri (fun a e -> p := (!p * e) + if e = 1 then 0 else i.(a)) s;
+      xs.(!p))
+
+(* [xs] of shape [s] with each slice along axis 0 its first, as a [Repeated]
+   view reads them. *)
+let repeated s xs =
+  if Array.length xs = 0 then xs
+  else
+    let one = Array.copy s in
+    one.(0) <- 1;
+    spread one xs s
+
+(* [xs] of shape [s] as [view] lays them out. A [Repeated] view reads the first
+   slice along axis 0 alone. *)
+let laid dt s xs view =
+  let n = Array.length xs and zero = D.zero dt in
+  match view with
+  | Plain -> Nx.create dt s xs
+  | Flipped -> Nx.flip (Nx.create dt s (Array.init n (fun i -> xs.(n - 1 - i))))
+  | Strided ->
+      (* [xs] at the even indices of a value twice as long on every axis. *)
+      let w = Array.map (fun d -> 2 * d) s in
+      let at i =
+        if Array.exists (fun c -> c mod 2 = 1) i then zero
+        else
+          let p = ref 0 in
+          Array.iteri (fun a c -> p := (!p * s.(a)) + (c / 2)) i;
+          xs.(!p)
+      in
+      let x = Nx.create dt w (Array.init (numel w) (fun k -> at (index w k))) in
+      Nx.slice (Array.to_list (Array.map (fun d -> Nx.Rs (0, 2 * d, 2)) s)) x
+  | Offset ->
+      let w = Array.copy s in
+      w.(0) <- s.(0) + 1;
+      let x = Array.append (Array.make (numel w - n) zero) xs in
+      Nx.slice [ Nx.R (1, s.(0) + 1) ] (Nx.create dt w x)
+  | Repeated ->
+      let one = Array.copy s in
+      one.(0) <- 1;
+      let first =
+        Array.init (numel one) (fun i -> if i < n then xs.(i) else zero)
+      in
+      Nx.broadcast_to s (Nx.create dt one first)
+
 (* sort, argsort, top_k *)
 
 type sort_case =
   | Sort_case :
-      ('v, 's) D.t * int array * int * bool * int * 'v array
+      ('v, 's) D.t * int array * int * bool * int * 'v array * lanes_view
       -> sort_case
 
 let sort_case =
   let open Gen in
   with_pp
-    (fun ppf (Sort_case (dt, s, a, d, k, _)) ->
-      Format.fprintf ppf "%s %a axis %d%s k %d" (D.name dt) pp_ints s a
+    (fun ppf (Sort_case (dt, s, a, d, k, _, view)) ->
+      Format.fprintf ppf "%s %a axis %d%s k %d %s" (D.name dt) pp_ints s a
         (if d then " descending" else "")
-        k)
+        k (lanes_view_name view))
     (let* (D.Any dt) = of_list all in
      let* r = int_range 1 3 in
      let* s = shape r in
@@ -164,67 +231,96 @@ let sort_case =
      let* d = bool in
      let n = s.(if a < 0 then a + r else a) in
      let* k = int_range 0 n in
-     let+ vs = values dt (Array.fold_left ( * ) 1 s) in
-     Sort_case (dt, s, a, d, k, vs))
+     let* vs = values dt (Array.fold_left ( * ) 1 s) in
+     let+ view = of_list lanes_views in
+     Sort_case (dt, s, a, d, k, vs, view))
 
-let law_sort (Sort_case (dt, s, a, descending, k, vs)) =
-  let x, xs = made dt s vs in
+(* An array's elements as bits, in C order: its bytes, or for a dtype packed
+   below a byte each element's value, which is its bits there. *)
+let bits (type v s) (x : (v, s, Nx.host) Nx.t) : int array =
+  match Nx.dtype x with
+  | D.Int4 -> Nx.to_array x
+  | D.Uint4 -> Nx.to_array x
+  | D.Bit -> Array.map Bool.to_int (Nx.to_array x)
+  | D.Float4_e2m1fn ->
+      Array.map (fun v -> Int64.to_int (Int64.bits_of_float v)) (Nx.to_array x)
+  | _ -> Nx_support.bytes (Option.get (Nx.Repr.array ~by:"test" x))
+
+(* Each slice's positions are a stable sort of its elements in the sort order,
+   or its reverse; the values are the elements at those positions, bit for bit;
+   top_k is the descending sort's first k. *)
+let law_sort (Sort_case (dt, s, a, descending, k, vs, view)) =
+  let x = laid dt s vs view in
+  let xs = Nx.to_array x in
   let r = Array.length s in
   let a' = if a < 0 then a + r else a in
   let c = cmp dt in
   let order = if descending then fun u v -> c v u else c in
-  let values, positions = Nx.sort ~descending ~axis:a x in
-  let tv, tp = Nx.top_k ~k ~axis:a x in
-  let vs' = Nx.to_array values and ps = Nx.to_array positions in
-  let tvs = Nx.to_array tv and tps = Nx.to_array tp in
-  let kept = Array.copy s in
-  kept.(a') <- k;
-  equal ~msg:"top_k shape" (array int) kept (Nx.shape tv);
   cover "ties"
     (Array.length xs > List.length (List.sort_uniq c (Array.to_list xs)));
+  List.iter
+    (fun w -> cover (lanes_view_name w) (view = w && Array.length xs > 0))
+    lanes_views;
+  let values, positions = Nx.sort ~descending ~axis:a x in
+  let ps = Nx.to_array positions in
+  equal ~msg:"values, bit for bit" (array int)
+    (bits (Nx.take_along_axis ~axis:a positions x))
+    (bits values);
+  let tv, tp = Nx.top_k ~k ~axis:a x in
+  let kept = Array.copy s in
+  kept.(a') <- k;
+  equal ~msg:"top_k's shape" (array int) kept (Nx.shape tv);
+  let tps = Nx.to_array tp in
   List.iter2
     (fun slice top ->
       let here = Array.of_list (List.map (fun p -> xs.(p)) slice) in
-      let want = stable order here in
-      let got = List.map (fun p -> Int64.to_int ps.(p)) slice in
-      equal ~msg:"positions" (list int) want got;
-      List.iter2
-        (fun p i -> equal ~msg:"values" int 0 (c vs'.(p) here.(i)))
-        slice want;
-      let dwant =
-        List.filteri (fun j _ -> j < k) (stable (fun u v -> c v u) here)
-      in
-      equal ~msg:"top_k positions" (list int) dwant
-        (List.map (fun p -> Int64.to_int tps.(p)) top);
-      List.iter2
-        (fun p i -> equal ~msg:"top_k values" int 0 (c tvs.(p) here.(i)))
-        top dwant)
+      equal ~msg:"positions" (list int) (stable order here)
+        (List.map (fun p -> Int64.to_int ps.(p)) slice);
+      equal ~msg:"top_k's positions" (list int)
+        (List.filteri (fun j _ -> j < k) (stable (fun u v -> c v u) here))
+        (List.map (fun p -> Int64.to_int tps.(p)) top))
     (slices s a') (slices kept a');
+  equal ~msg:"top_k's values, bit for bit" (array int)
+    (bits (Nx.take_along_axis ~axis:a tp x))
+    (bits tv);
   equal ~msg:"argsort" (array int64) ps
     (Nx.to_array (Nx.argsort ~descending ~axis:a x))
 
-let test_sort_cases () =
+(* The doc's orders: stable ascending; descending as its exact reverse, NaN
+   first and [+0.] before [-0.]; top_k's greatest first, a NaN before every
+   number, complex by real then imaginary part. *)
+let test_sort_rows () =
   let f32 xs = Nx.create Nx.float32 [| Array.length xs |] xs in
+  let bits x = Array.map Int64.bits_of_float (Nx.to_array x) in
   let v, p = Nx.sort (Nx.create Nx.int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |]) in
-  equal (array int32) [| 1l; 1l; 3l; 4l; 5l |] (Nx.to_array v);
-  equal (array int64) [| 1L; 3L; 0L; 2L; 4L |] (Nx.to_array p);
+  equal ~msg:"ascending" (array int32) [| 1l; 1l; 3l; 4l; 5l |] (Nx.to_array v);
+  equal ~msg:"ascending positions" (array int64) [| 1L; 3L; 0L; 2L; 4L |]
+    (Nx.to_array p);
   let v, _ = Nx.sort ~descending:true (f32 [| 1.; nan; -0.; 0. |]) in
-  equal int 0
-    (compare
-       (List.map Int64.bits_of_float [ 1.; 0.; -0. ])
-       (List.map Int64.bits_of_float (List.tl (Array.to_list (Nx.to_array v)))));
-  equal bool true (Float.is_nan (Nx.to_array v).(0));
+  equal ~msg:"descending" (array float_exact) [| nan; 1.; 0.; -0. |]
+    (Nx.to_array v);
+  equal ~msg:"descending, +0. before -0." (array int64)
+    (Array.map Int64.bits_of_float [| 1.; 0.; -0. |])
+    (Array.sub (bits v) 1 3);
   let v, p = Nx.top_k ~k:2 (f32 [| 3.; 1.; 4.; 1.; 5. |]) in
-  equal (array float_exact) [| 5.; 4. |] (Nx.to_array v);
-  equal (array int64) [| 4L; 2L |] (Nx.to_array p);
-  equal (array int) [| 0 |] (Nx.shape (fst (Nx.top_k ~k:0 (f32 [| 1. |]))));
+  equal ~msg:"top_k" (array float_exact) [| 5.; 4. |] (Nx.to_array v);
+  equal ~msg:"top_k positions" (array int64) [| 4L; 2L |] (Nx.to_array p);
+  equal ~msg:"top_k, a NaN first" (array float_exact) [| nan; 2. |]
+    (Nx.to_array (fst (Nx.top_k ~k:2 (f32 [| 1.; 2.; nan |]))));
+  equal ~msg:"top_k of none" (array int) [| 0 |]
+    (Nx.shape (fst (Nx.top_k ~k:0 (f32 [| 1. |]))));
   let z =
     Nx.create Nx.complex128 [| 3 |]
       Complex.[| one; { re = 1.; im = -1. }; zero |]
   in
-  equal (array int64) [| 0L; 1L |] (Nx.to_array (snd (Nx.top_k ~k:2 z)));
+  equal ~msg:"complex, by real then imaginary part" (array int64) [| 0L; 1L |]
+    (Nx.to_array (snd (Nx.top_k ~k:2 z)))
+
+let test_sort_refusals () =
+  let f32 xs = Nx.create Nx.float32 [| Array.length xs |] xs in
   invalid ~by:"Nx.top_k" (fun () -> Nx.top_k ~k:2 (f32 [| 1. |]));
   invalid ~by:"Nx.top_k" (fun () -> Nx.top_k ~k:(-1) (f32 [| 1. |]));
+  invalid ~by:"Nx.top_k" (fun () -> Nx.top_k ~k:0 ~axis:1 (f32 [| 1. |]));
   invalid ~by:"Nx.sort" (fun () -> Nx.sort (Nx.scalar Nx.int8 1));
   invalid ~by:"Nx.argsort" (fun () -> Nx.argsort ~axis:1 (f32 [| 1. |]))
 
@@ -243,40 +339,105 @@ let key_case =
 
 let widths = [ D.Any D.Uint8; D.Any D.Uint16; D.Any D.Uint32; D.Any D.Uint64 ]
 
+(* The float a key of [w] bits reads [dt]'s values in, with the unsigned integer
+   of its width: [dt] itself at its own width, bfloat16 at 16 bits,
+   float8_e4m3fn for float4_e2m1fn at 8, else float16, float32, float64. *)
+type width_float = Wf : (float, 'r) D.t * ('k, 'q) D.t -> width_float
+
+let float_of_width (type s) (dt : (float, s) D.t) w =
+  match (w, dt) with
+  | 16, D.Bfloat16 -> Wf (D.Bfloat16, D.Uint16)
+  | 8, D.Float8_e5m2 -> Wf (D.Float8_e5m2, D.Uint8)
+  | 8, _ -> Wf (D.Float8_e4m3fn, D.Uint8)
+  | 16, _ -> Wf (D.Float16, D.Uint16)
+  | 32, _ -> Wf (D.Float32, D.Uint32)
+  | _ -> Wf (D.Float64, D.Uint64)
+
+(* The keys nx.mli's formulas give [x]'s elements at [w] bits, as unsigned
+   words: an integer's value with the sign bit flipped where signed, a boolean's
+   [0] or [1], a float's bits in the float of the width, all flipped where its
+   sign bit is set and only the sign bit elsewhere, every NaN all ones. *)
+let formula (type v s) (x : (v, s, Nx.host) Nx.t) w : int64 array =
+  let mask = if w = 64 then -1L else Int64.(sub (shift_left 1L w) 1L) in
+  let sign = Int64.shift_left 1L (w - 1) in
+  let flip b =
+    if Int64.logand b sign <> 0L then Int64.logand (Int64.lognot b) mask
+    else Int64.logxor b sign
+  in
+  match Nx.dtype x with
+  | D.Uint64 -> Nx.to_array (Nx.bitcast Nx.int64 x)
+  | dt -> (
+      match D.kind dt with
+      | D.Float ->
+          let (Wf (fw, uk)) = float_of_width dt w in
+          let f = Nx.cast fw x in
+          let b = Nx.to_array (Nx.cast Nx.int64 (Nx.bitcast uk f)) in
+          Array.mapi
+            (fun i v -> if Float.is_nan v then mask else flip b.(i))
+            (Nx.to_array f)
+      | D.Signed ->
+          Array.map
+            (fun v -> Int64.logand (Int64.add v sign) mask)
+            (Nx.to_array (Nx.cast Nx.int64 x))
+      | _ -> Nx.to_array (Nx.cast Nx.int64 x))
+
+(* Keys compare, unsigned, as their elements sort and are equal iff they are;
+   each is nx.mli's formula; [bitwise_not] of a key reverses its order. *)
 let law_key (Key_case (dt, vs)) =
   let x, xs = made dt [| Array.length vs |] vs in
   let c = cmp dt in
   List.iter
     (fun (D.Any kd) ->
       if D.bits kd >= D.bits dt then begin
-        let k = Nx.to_array (Nx.cast Nx.uint64 (Nx.order_key kd x)) in
+        let key = Nx.order_key kd x in
+        let k = Nx.to_array (Nx.cast Nx.int64 (Nx.cast Nx.uint64 key)) in
+        let nk =
+          Nx.to_array
+            (Nx.cast Nx.int64 (Nx.cast Nx.uint64 (Nx.bitwise_not key)))
+        in
+        equal
+          ~msg:(D.name kd ^ ", the formula")
+          (array int64)
+          (formula x (D.bits kd))
+          k;
         Array.iteri
           (fun i u ->
             Array.iteri
               (fun j v ->
-                equal ~msg:(D.name kd) int
-                  (compare (c u v) 0)
-                  (compare (Int64.unsigned_compare k.(i) k.(j)) 0))
+                let order = compare (c u v) 0 in
+                equal ~msg:(D.name kd) int order
+                  (compare (Int64.unsigned_compare k.(i) k.(j)) 0);
+                equal
+                  ~msg:(D.name kd ^ ", bitwise_not")
+                  int (-order)
+                  (compare (Int64.unsigned_compare nk.(i) nk.(j)) 0))
               xs)
           xs
       end)
     widths
 
-let test_key_cases () =
+(* The doc's keys: [-0.] just below [+0.], every NaN all ones, an int64 cast
+   keeping a signed integer's key, a float of a narrower format keyed through
+   float16 at 16 bits. *)
+let test_key_rows () =
   let i8 = Nx.create Nx.int8 [| 3 |] [| -128; 0; 127 |] in
-  equal (array int) [| 0; 128; 255 |] (Nx.to_array (Nx.order_key Nx.uint8 i8));
+  equal ~msg:"int8 at 8 bits" (array int) [| 0; 128; 255 |]
+    (Nx.to_array (Nx.order_key Nx.uint8 i8));
   let f = Nx.create Nx.float64 [| 4 |] [| -0.; 0.; nan; -.nan |] in
-  equal (array int64)
+  equal ~msg:"float64's zeros and NaNs" (array int64)
     [| Int64.max_int; Int64.min_int; -1L; -1L |]
     (Nx.to_array (Nx.order_key Nx.uint64 f));
   let i = Nx.create Nx.int32 [| 3 |] [| -5l; 0l; 7l |] in
-  equal (array int64)
+  equal ~msg:"an int64 cast" (array int64)
     (Nx.to_array (Nx.order_key Nx.uint64 i))
     (Nx.to_array (Nx.order_key Nx.uint64 (Nx.cast Nx.int64 i)));
   let h = Nx.create Nx.float8_e4m3fn [| 4 |] [| -2.; -0.; 0.5; nan |] in
-  equal (array int)
+  equal ~msg:"float8_e4m3fn at 16 bits" (array int)
     (Nx.to_array (Nx.order_key Nx.uint16 h))
-    (Nx.to_array (Nx.order_key Nx.uint16 (Nx.cast Nx.float16 h)));
+    (Nx.to_array (Nx.order_key Nx.uint16 (Nx.cast Nx.float16 h)))
+
+let test_key_refusals () =
+  let i = Nx.create Nx.int32 [| 3 |] [| -5l; 0l; 7l |] in
   invalid ~by:"Nx.order_key" (fun () -> Nx.order_key Nx.uint8 i);
   invalid ~by:"Nx.order_key" (fun () -> Nx.order_key Nx.int64 i);
   invalid ~by:"Nx.order_key" (fun () ->
@@ -377,42 +538,86 @@ let law_search (Search_case (dt, s, vs, t, ws, sorted)) =
           got
       else
         Array.iter
-          (fun p -> equal bool true (p >= 0L && p <= Int64.of_int m))
+          (fun p ->
+            at_least ~msg:"a count" int64 ~than:0L p;
+            at_most ~msg:"a count" int64 ~than:(Int64.of_int m) p)
           got)
     [ (`Left, fun d -> d < 0); (`Right, fun d -> d <= 0) ]
 
-let test_search_cases () =
+(* The doc's knots: [-0.] counts as [+0.], NaN past every number. *)
+let test_search_rows () =
   let f64 xs = Nx.create Nx.float64 [| Array.length xs |] xs in
   let knots = f64 [| 0.; 1.; 1.; 2. |] and x = f64 [| -0.; 1.; 1.5; nan |] in
-  equal (array int64) [| 0L; 1L; 3L; 4L |]
+  equal ~msg:"`Left" (array int64) [| 0L; 1L; 3L; 4L |]
     (Nx.to_array (Nx.searchsorted ~side:`Left knots x));
-  equal (array int64) [| 1L; 3L; 3L; 4L |]
-    (Nx.to_array (Nx.searchsorted ~side:`Right knots x));
+  equal ~msg:"`Right" (array int64) [| 1L; 3L; 3L; 4L |]
+    (Nx.to_array (Nx.searchsorted ~side:`Right knots x))
+
+let test_lexsort_rows () =
+  equal ~msg:"no column" (array int64) [| 0L; 1L; 2L |]
+    (Nx.to_array (Nx.lexsort (Nx.zeros Nx.int8 [| 3; 0 |])));
+  invalid ~by:"Nx.lexsort" (fun () ->
+      Nx.lexsort (Nx.zeros Nx.int8 [| 1; 1; 1 |]));
+  invalid ~by:"Nx.lexsort" (fun () ->
+      Nx.lexsort (Nx.create Nx.complex64 [| 1 |] [| Complex.one |]))
+
+let test_search_refusals () =
   let m = Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
   invalid ~by:"Nx.searchsorted" (fun () ->
       Nx.searchsorted ~side:`Left m (Nx.create Nx.int32 [| 1 |] [| 1l |]));
   invalid ~by:"Nx.searchsorted" (fun () ->
+      Nx.searchsorted ~side:`Left m (Nx.zeros Nx.int32 [| 1; 3 |]));
+  invalid ~by:"Nx.searchsorted" (fun () ->
       Nx.searchsorted ~side:`Left (Nx.scalar Nx.int32 1l) m);
-  invalid ~by:"Nx.lexsort" (fun () ->
-      Nx.lexsort (Nx.zeros Nx.int8 [| 1; 1; 1 |]));
-  equal (array int64) [| 0L; 1L; 2L |]
-    (Nx.to_array (Nx.lexsort (Nx.zeros Nx.int8 [| 3; 0 |])))
+  let z = Nx.create Nx.complex64 [| 1 |] [| Complex.one |] in
+  invalid ~by:"Nx.searchsorted" (fun () -> Nx.searchsorted ~side:`Left z z)
+
+(* The operations [f] applies, by name, each computed eagerly. *)
+let operations f =
+  let log = ref [] in
+  Nx.Prim.interpret ~name:"test.order" Extent
+    (fun _ ~by op ->
+      log := Nx.Prim.name op :: !log;
+      Nx.Prim.eval ~by op)
+    (fun _ -> ignore (f ()));
+  List.rev !log
+
+let count name f = List.length (List.filter (String.equal name) (operations f))
+
+(* [⌈log₂ (m + 1)⌉]. *)
+let rounds m =
+  let rec go r = if m lsr r = 0 then r else go (r + 1) in
+  go 0
+
+(* What nx.mli counts: lexsort sorts once per column, top_k sorts once, and a
+   search of [m] keys takes [⌈log₂ (m + 1)⌉] rounds, each a gather. *)
+let test_counts () =
+  List.iter
+    (fun w ->
+      equal
+        ~msg:(Printf.sprintf "lexsort of %d columns" w)
+        int w
+        (count "Sort" (fun () -> Nx.lexsort (Nx.zeros Nx.int32 [| 5; w |]))))
+    [ 0; 1; 2; 3; 4 ];
+  equal ~msg:"top_k" int 1
+    (count "Sort" (fun () -> Nx.top_k ~k:2 (Nx.zeros Nx.int32 [| 3; 6 |])));
+  List.iter
+    (fun m ->
+      let s = Nx.create Nx.int32 [| m |] (Array.init m Int32.of_int) in
+      let v = Nx.create Nx.int32 [| 3 |] [| 0l; 4l; 9l |] in
+      equal
+        ~msg:(Printf.sprintf "searchsorted of %d keys" m)
+        int (rounds m)
+        (count "Gather" (fun () -> Nx.searchsorted ~side:`Left s v));
+      let s = Nx.reshape [| 1; m |] s and v = Nx.reshape [| 1; 3 |] v in
+      equal
+        ~msg:(Printf.sprintf "searchsorted_along_axis of %d keys" m)
+        int (rounds m)
+        (count "Gather" (fun () ->
+             Nx.searchsorted_along_axis ~axis:1 ~side:`Right s v)))
+    [ 1; 2; 3; 7; 8; 9 ]
 
 (* searchsorted_along_axis *)
-
-(* How a value lies: contiguous; every axis flipped; every axis read at a step
-   of 2; from an offset of one slice along axis 0; or one slice along axis 0
-   repeated, a stride of 0. *)
-type lanes_view = Plain | Flipped | Strided | Offset | Repeated
-
-let lanes_views = [ Plain; Flipped; Strided; Offset; Repeated ]
-
-let lanes_view_name = function
-  | Plain -> "plain"
-  | Flipped -> "flipped"
-  | Strided -> "strided"
-  | Offset -> "offset"
-  | Repeated -> "repeated"
 
 type along_case =
   | Along_case : {
@@ -424,6 +629,7 @@ type along_case =
       ws : 'v array;
       sorted : bool;
       view : lanes_view;
+      cut : bool;  (** Whether [s] is also searched split along [axis]. *)
     }
       -> along_case
 
@@ -457,67 +663,16 @@ let along_case =
      let* vs = values dt (Array.fold_left ( * ) 1 s) in
      let* ws = values dt (Array.fold_left ( * ) 1 t) in
      let* sorted = frequency [ (4, constant true); (1, constant false) ] in
-     let+ view = of_list lanes_views in
-     Along_case { dt; axis; s; vs; t; ws; sorted; view })
-
-let numel s = Array.fold_left ( * ) 1 s
-
-(* The elements [xs] of shape [s] broadcast to shape [b], in C order. *)
-let spread s xs b =
-  Array.init (numel b) (fun k ->
-      let i = index b k in
-      let p = ref 0 in
-      Array.iteri (fun a e -> p := (!p * e) + if e = 1 then 0 else i.(a)) s;
-      xs.(!p))
-
-(* [xs] of shape [s] with each slice along axis 0 its first, as a [Repeated]
-   view reads them. *)
-let repeated s xs =
-  if Array.length xs = 0 then xs
-  else
-    let one = Array.copy s in
-    one.(0) <- 1;
-    spread one xs s
-
-(* [xs] of shape [s] as [view] lays them out. A [Repeated] view reads the first
-   slice along axis 0 alone. *)
-let laid dt s xs view =
-  let n = Array.length xs and zero = D.zero dt in
-  match view with
-  | Plain -> Nx.create dt s xs
-  | Flipped ->
-      Nx.flip (Nx.create dt s (Array.init n (fun i -> xs.(n - 1 - i))))
-  | Strided ->
-      (* [xs] at the even indices of a value twice as long on every axis. *)
-      let w = Array.map (fun d -> 2 * d) s in
-      let at i =
-        if Array.exists (fun c -> c mod 2 = 1) i then zero
-        else
-          let p = ref 0 in
-          Array.iteri (fun a c -> p := (!p * s.(a)) + (c / 2)) i;
-          xs.(!p)
-      in
-      let x =
-        Nx.create dt w (Array.init (numel w) (fun k -> at (index w k)))
-      in
-      Nx.slice (Array.to_list (Array.map (fun d -> Nx.Rs (0, 2 * d, 2)) s)) x
-  | Offset ->
-      let w = Array.copy s in
-      w.(0) <- s.(0) + 1;
-      let x = Array.append (Array.make (numel w - n) zero) xs in
-      Nx.slice [ Nx.R (1, s.(0) + 1) ] (Nx.create dt w x)
-  | Repeated ->
-      let one = Array.copy s in
-      one.(0) <- 1;
-      let first =
-        Array.init (numel one) (fun i -> if i < n then xs.(i) else zero)
-      in
-      Nx.broadcast_to s (Nx.create dt one first)
+     let* view = of_list lanes_views in
+     let+ cut = bool in
+     Along_case { dt; axis; s; vs; t; ws; sorted; view; cut })
 
 let has_nan (type v s) (dt : (v, s) D.t) (xs : v array) =
   match D.kind dt with D.Float -> Array.exists Float.is_nan xs | _ -> false
 
-let law_along (Along_case { dt; axis; s; vs; t; ws; sorted; view }) =
+module S2 = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
+
+let law_along (Along_case { dt; axis; s; vs; t; ws; sorted; view; cut }) =
   let r = Array.length s in
   let a = if axis < 0 then axis + r else axis in
   let c = numeric dt in
@@ -563,6 +718,17 @@ let law_along (Along_case { dt; axis; s; vs; t; ws; sorted; view }) =
   let x = laid dt s xs view and v = laid dt t wv view in
   let search side = Nx.searchsorted_along_axis ~axis ~side x v in
   let left = search `Left and right = search `Right in
+  cover "lanes split along the axis" (cut && m > 1 && sought);
+  if cut then begin
+    (* Over a cut axis, as take_along_axis gathers. *)
+    let split = Nx.place (S2.split ~axis:a) x in
+    List.iter
+      (fun (side, here) ->
+        equal ~msg:"lanes split along the axis" (array int64) (Nx.to_array here)
+          (Nx.to_array
+             (Nx.searchsorted_along_axis ~axis ~side split (Nx.place S2.on v))))
+      [ (`Left, left); (`Right, right) ]
+  end;
   equal ~msg:"`Left's shape" (array int) b (Nx.shape left);
   equal ~msg:"`Right's shape" (array int) b (Nx.shape right);
   let lo = lanes b (Nx.to_array left) and hi = lanes b (Nx.to_array right) in
@@ -630,37 +796,30 @@ let test_along_cases () =
 
 type unique_case = Unique_case : rows_case * int option -> unique_case
 
-(* Integer rows whose values span about twice as many as there are rows and
-   1024 more, where nx.cpu's numbering moves from a direct table to a hash
-   table: [n] rows of one column, or of two whose second holds one value, the
-   first taking [r] values, one either side of [2n + 1024] or on it, from a
-   drawn value up, values that may wrap past the dtype's greatest. *)
-let near_case =
-  let open Gen in
-  let ints =
-    List.filter
-      (fun (D.Any dt) ->
-        (D.is D.Signed dt || D.is D.Unsigned dt) && D.bits dt >= 16)
-      keyed
+(* Rows of int32 keys taking [2n + 1023], [2n + 1024] and [2n + 1025] values for
+   [n = 100], and int16 rows of two columns taking [2n + 1024], either side of
+   where nx.cpu's numbering moves from a direct table to a hash. *)
+let near_rows =
+  let n = 100 in
+  let column d =
+    let r = (2 * n) + 1024 + d in
+    Array.init n (fun i ->
+        if i = 0 then 0 else if i = 1 then r - 1 else i * 37 mod r)
   in
-  let* (D.Any dt) = of_list ints in
-  let* n = int_range 3 300 in
-  let* r = map (fun d -> (2 * n) + 1024 + d) (int_range (-1) 1) in
-  let* two = bool in
-  let* base = value dt in
-  let+ steps = array ~size:(constant (n - 2)) (int_range 0 (r - 1)) in
-  (* The least and greatest steps hold, so that the column takes [r] values. *)
-  let steps = Array.append [| 0; r - 1 |] steps in
-  let column = Array.map Int64.of_int steps in
-  let column =
-    let pair i = if i mod 2 = 0 then column.(i / 2) else 0L in
-    if two then Array.init (2 * n) pair else column
-  in
-  let m = Array.length column in
-  let up = Nx.cast dt (Nx.create Nx.int64 [| m |] column) in
-  let x = Nx.add (Nx.full dt [| m |] base) up in
-  let s = if two then [| n; 2 |] else [| n |] in
-  Unique_case (Rows_case (dt, s, Nx.to_array x), None)
+  List.map
+    (fun d ->
+      Unique_case
+        (Rows_case (D.Int32, [| n |], Array.map Int32.of_int (column d)), None))
+    [ -1; 0; 1 ]
+  @ [
+      Unique_case
+        ( Rows_case
+            ( D.Int16,
+              [| n; 2 |],
+              Array.init (2 * n) (fun j ->
+                  if j mod 2 = 0 then (column 0).(j / 2) - 600 else 7) ),
+          None );
+    ]
 
 (* A case's rows, each made its first. *)
 let one_key (Rows_case (dt, s, vs)) =
@@ -714,35 +873,7 @@ let unique_case =
      in
      Unique_case (r, size))
 
-let near_cases = Gen.with_pp pp_unique near_case
-
-(* The number of values the rows of [x] can take, the product of its columns'
-   spans of the words Nx.unique numbers, or [max_int] past it: the bits of
-   [int64] and [uint64] keys, the order keys of others. *)
-let values_taken (type v s) (x : (v, s, Nx.host) Nx.t) =
-  let n = Nx.dim 0 x in
-  let k : (int64, Nx.uint64_elt, Nx.host) Nx.t =
-    match Nx.dtype x with
-    | D.Int64 -> Nx.bitcast Nx.uint64 x
-    | D.Uint64 -> x
-    | _ -> Nx.order_key Nx.uint64 x
-  in
-  let k = if Nx.ndim x = 1 then Nx.reshape [| n; 1 |] k else k in
-  if n = 0 then 0
-  else
-    let lo = Nx.to_array (Nx.min ~axes:[ 0 ] k)
-    and hi = Nx.to_array (Nx.max ~axes:[ 0 ] k) in
-    let times acc j =
-      let span = Int64.sub hi.(j) lo.(j) in
-      if Int64.unsigned_compare span (Int64.of_int max_int) >= 0 then max_int
-      else
-        let s = Int64.to_int span + 1 in
-        if acc > max_int / s then max_int else acc * s
-    in
-    List.fold_left times 1 (List.init (Array.length lo) Fun.id)
-
-(* [near] covers [near_case]'s rows, the other cases' sizes and keys. *)
-let law_unique ~near (Unique_case (Rows_case (dt, s, vs), size)) =
+let law_unique (Unique_case (Rows_case (dt, s, vs), size)) =
   let x, xs = made dt s vs in
   let rs = rows s xs in
   let c = lex (cmp dt) in
@@ -769,21 +900,13 @@ let law_unique ~near (Unique_case (Rows_case (dt, s, vs), size)) =
   let pad f d =
     Array.init l (fun j -> if j < k then f (List.nth !groups j) else d)
   in
-  let r = values_taken x and n = s.(0) in
-  let edge = (2 * n) + 1024 in
-  if near then begin
-    cover "rows taking 2n + 1023 values" (r = edge - 1);
-    cover "rows taking 2n + 1024 values" (r = edge);
-    cover "rows taking 2n + 1025 values" (r = edge + 1)
-  end
-  else begin
-    cover "padded" (l > k);
-    cover "cut" (l < k);
-    cover "sized to its keys" (size = Some k);
-    cover "no size" (size = None);
-    cover "one key of many rows" (k = 1 && n > 1);
-    cover "every row its own key" (k = n && n > 1)
-  end;
+  let n = s.(0) in
+  cover "padded" (l > k);
+  cover "cut" (l < k);
+  cover "sized to its keys" (size = Some k);
+  cover "no size" (size = None);
+  cover "one key of many rows" (k = 1 && n > 1);
+  cover "every row its own key" (k = n && n > 1);
   equal ~msg:"ids" (array int64) ids (Nx.to_array g.ids);
   equal ~msg:"count" int64 (Int64.of_int k) (Nx.item [] g.count);
   equal ~msg:"first" (array int64)
@@ -793,34 +916,55 @@ let law_unique ~near (Unique_case (Rows_case (dt, s, vs), size)) =
     (pad (fun (_, n) -> Int64.of_int !n) 0L)
     (Nx.to_array g.counts)
 
-type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
-
-let mark i ~by op = Nx.Prim.results ~by (fun _ f -> Nx.Prim.traced i f Mark) op
-
-let test_unique_cases () =
+(* The doc's groups: by first appearance, every NaN one group and the zeros two,
+   none of no key. *)
+let test_unique_rows () =
   let g = Nx.unique (Nx.create Nx.int32 [| 6 |] [| 7l; 3l; 7l; 7l; 5l; 3l |]) in
-  equal (array int64) [| 0L; 1L; 0L; 0L; 2L; 1L |] (Nx.to_array g.ids);
-  equal (array int64) [| 0L; 1L; 4L |] (Nx.to_array g.first);
-  equal (array int64) [| 3L; 2L; 1L |] (Nx.to_array g.counts);
+  equal ~msg:"ids" (array int64)
+    [| 0L; 1L; 0L; 0L; 2L; 1L |]
+    (Nx.to_array g.ids);
+  equal ~msg:"first" (array int64) [| 0L; 1L; 4L |] (Nx.to_array g.first);
+  equal ~msg:"counts" (array int64) [| 3L; 2L; 1L |] (Nx.to_array g.counts);
   let f = Nx.create Nx.float32 [| 5 |] [| nan; -0.; 0.; -.nan; 0. |] in
-  equal (array int64) [| 0L; 1L; 2L; 0L; 2L |] (Nx.to_array (Nx.unique f).ids);
+  equal ~msg:"NaNs and zeros" (array int64) [| 0L; 1L; 2L; 0L; 2L |]
+    (Nx.to_array (Nx.unique f).ids);
   let e = Nx.unique (Nx.zeros Nx.int8 [| 0 |]) in
-  equal int64 0L (Nx.item [] e.count);
-  equal (array int) [| 0 |] (Nx.shape e.first);
+  equal ~msg:"no key, its count" int64 0L (Nx.item [] e.count);
+  equal ~msg:"no key, its groups" (array int) [| 0 |] (Nx.shape e.first)
+
+let test_unique_refusals () =
+  let f = Nx.create Nx.float32 [| 2 |] [| nan; 0. |] in
   invalid ~by:"Nx.unique" (fun () -> Nx.unique ~size:(-1) f);
+  invalid ~by:"Nx.unique" (fun () -> Nx.unique (Nx.zeros Nx.int8 [| 1; 1; 1 |]));
   invalid ~by:"Nx.unique" (fun () ->
-      Nx.unique (Nx.create Nx.complex64 [| 1 |] [| Complex.one |]));
-  let x = Nx.create Nx.int32 [| 3 |] [| 1l; 1l; 2l |] in
-  Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
-      let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
-      raises_match
-        (Exn.invalid_arg ~sub:"Nx.unique: the value is traced by test.order")
-        (fun () -> Nx.unique t);
-      raises_match
-        (Exn.invalid_arg ~sub:"Nx.positions: the value is traced by test.order")
-        (fun () -> Nx.positions t);
-      ignore (Nx.unique ~size:2 t);
-      ignore (Nx.positions ~size:4 t))
+      Nx.unique (Nx.create Nx.complex64 [| 1 |] [| Complex.one |]))
+
+(* An unsized unique numbers its keys in one Unique asking for [min n (max 4096
+   (n / 16))] entries. *)
+let test_unique_one () =
+  List.iter
+    (fun n ->
+      let x =
+        Nx.create Nx.int32 [| n |]
+          (Array.init n (fun i -> Int32.of_int (i mod 5)))
+      in
+      let sizes = ref [] in
+      let rule : type r. Nx.Prim.interpretation -> by:string -> r Nx.Prim.t -> r
+          =
+       fun _ ~by op ->
+        (match op with
+        | Nx.Prim.Unique { size; _ } -> sizes := size :: !sizes
+        | _ -> ());
+        Nx.Prim.eval ~by op
+      in
+      Nx.Prim.interpret ~name:"test.order" Extent rule (fun _ ->
+          ignore (Nx.unique x));
+      equal
+        ~msg:(Printf.sprintf "%d keys" n)
+        (list int)
+        [ Int.min n (Int.max 4096 (n / 16)) ]
+        !sizes)
+    [ 0; 3; 5000; 70_000 ]
 
 (* Groups over many keys: 70,000 int32 keys of three values, the later
    two first appearing past 25,000. *)
@@ -864,6 +1008,32 @@ let test_unique_many () =
     (Array.map (fun (_, c) -> Int64.of_int !c) first)
     (Nx.to_array g.counts);
   equal ~msg:"count" int64 (Int64.of_int (Array.length first)) (Nx.item [] g.count)
+
+(* Lengths that are data *)
+
+type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
+
+let mark i ~by op = Nx.Prim.results ~by (fun _ f -> Nx.Prim.traced i f Mark) op
+
+(* A traced value's length cannot be read: each function raises naming itself,
+   and with [size] reads nothing and returns. *)
+let test_traced () =
+  let x = Nx.create Nx.int32 [| 6 |] [| 1l; 1l; 2l; 0l; 0l; 3l |] in
+  let named by =
+    Exn.invalid_arg ~sub:(by ^ ": the value is traced by test.order")
+  in
+  Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
+      let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
+      raises_match (named "Nx.unique") (fun () -> Nx.unique t);
+      raises_match (named "Nx.positions") (fun () -> Nx.positions t);
+      raises_match (named "Nx.argwhere") (fun () -> Nx.argwhere t);
+      raises_match (named "Nx.nonzero") (fun () -> Nx.nonzero t);
+      raises_match (named "Nx.extract") (fun () -> Nx.extract t x);
+      ignore (Nx.unique ~size:2 t);
+      ignore (Nx.positions ~size:4 t);
+      ignore (Nx.argwhere ~size:2 t);
+      ignore (Nx.nonzero ~size:2 t);
+      ignore (Nx.extract ~size:2 t x))
 
 (* positions *)
 
@@ -1003,8 +1173,15 @@ let test_positions_cases () =
   equal (array int64) [| 1L; 2L; 2L |]
     (Nx.to_array
        (Nx.positions ~size:3 (Nx.create Nx.bool [| 2 |] [| false; true |])));
+  (* Along an axis of c's length a pad is out of range: take reads zero. *)
+  let c = Nx.create Nx.int32 [| 3 |] [| 1l; 0l; 1l |] in
+  let v = Nx.create Nx.float64 [| 3 |] [| 5.; 6.; 7. |] in
+  equal ~msg:"take at the pads" (array float_exact) [| 5.; 7.; 0.; 0. |]
+    (Nx.to_array (Nx.take ~axis:0 (Nx.positions ~size:4 c) v));
   invalid ~by:"Nx.positions" (fun () ->
       Nx.positions (Nx.zeros Nx.float32 [| 2 |]));
+  invalid ~by:"Nx.positions" (fun () ->
+      Nx.positions (Nx.create Nx.complex64 [| 1 |] [| Complex.one |]));
   invalid ~by:"Nx.positions" (fun () ->
       Nx.positions (Nx.zeros Nx.bool [| 2; 2 |]));
   invalid ~by:"Nx.positions" (fun () ->
@@ -1085,13 +1262,7 @@ let test_argwhere_cases () =
   equal (array int) [| 3; 2 |] (Nx.shape (Nx.argwhere t));
   equal (array int) [| 1; 0 |] (Nx.shape (Nx.argwhere (Nx.scalar Nx.bool true)));
   equal (array int) [| 0; 0 |] (Nx.shape (Nx.argwhere (Nx.scalar Nx.bool false)));
-  invalid ~by:"Nx.argwhere" (fun () -> Nx.argwhere ~size:(-1) t);
-  Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
-      let x = Nx.Prim.traced i (Nx.Prim.form t) Mark in
-      raises_match
-        (Exn.invalid_arg ~sub:"Nx.argwhere: the value is traced by test.order")
-        (fun () -> Nx.argwhere x);
-      ignore (Nx.argwhere ~size:2 x))
+  invalid ~by:"Nx.argwhere" (fun () -> Nx.argwhere ~size:(-1) t)
 
 (* nonzero *)
 
@@ -1126,13 +1297,8 @@ let test_nonzero_cases () =
       equal (array int64) [| 1L; 0L; 2L; 3L |] (Nx.to_array c)
   | _ -> fail "two axes");
   invalid ~by:"Nx.nonzero" (fun () -> Nx.nonzero (Nx.scalar Nx.bool true));
-  invalid ~by:"Nx.nonzero" (fun () -> Nx.nonzero ~size:(-1) t);
-  Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
-      let x = Nx.Prim.traced i (Nx.Prim.form t) Mark in
-      raises_match
-        (Exn.invalid_arg ~sub:"Nx.nonzero: the value is traced by test.order")
-        (fun () -> Nx.nonzero x);
-      ignore (Nx.nonzero ~size:2 x))
+  invalid ~by:"Nx.nonzero" (fun () -> Nx.nonzero ~size:(-1) t)
+
 
 (* extract *)
 
@@ -1207,13 +1373,8 @@ let test_extract_cases () =
   invalid ~by:"Nx.extract" (fun () ->
       Nx.extract ~size:(-1) (Nx.zeros Nx.bool [| 6 |]) x);
   invalid ~by:"Nx.extract" (fun () ->
-      Nx.extract ~fill:300 (Nx.zeros Nx.bool [| 2 |]) (Nx.zeros Nx.uint8 [| 2 |]));
-  Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
-      let c = Nx.Prim.traced i (Nx.Prim.form (Nx.zeros Nx.bool [| 6 |])) Mark in
-      raises_match
-        (Exn.invalid_arg ~sub:"Nx.extract: the value is traced by test.order")
-        (fun () -> Nx.extract c x);
-      ignore (Nx.extract ~size:2 c x))
+      Nx.extract ~fill:300 (Nx.zeros Nx.bool [| 2 |])
+        (Nx.zeros Nx.uint8 [| 2 |]))
 
 (* quantile *)
 
@@ -1249,15 +1410,53 @@ let quantile_case =
        in
        Quantile_case (dt, eps, s, a, qs, vs)
      in
+     (* Each float dtype, with the unit roundoff of the precision it
+        interpolates in. *)
      one_of
        [
-         case D.Float64 0x1p-52; case D.Float32 0x1p-22; case D.Float16 0x1p-10;
+         case D.Float64 0x1p-53;
+         case D.Float32 0x1p-24;
+         case D.Float16 0x1p-24;
+         case D.Bfloat16 0x1p-24;
+         case D.Float8_e4m3fn 0x1p-24;
+         case D.Float8_e5m2 0x1p-24;
+         case D.Float4_e2m1fn 0x1p-24;
        ])
 
-let law_quantile (Quantile_case (dt, eps, s, a, qs, vs)) =
+(* [(1 - f) a + f b] at float64, to far below an ulp: each product and the
+   difference [1 - f] split into a rounded part and its exact error. *)
+let lerp_exact a b f =
+  let two_product x y =
+    let p = x *. y in
+    (p, Float.fma x y (-.p))
+  in
+  let g = 1. -. f in
+  let g_err = 1. -. g -. f in
+  let p, pe = two_product g a and q, qe = two_product f b in
+  let sum = p +. q in
+  let err =
+    if Float.abs p >= Float.abs q then p -. sum +. q else q -. sum +. p
+  in
+  sum +. (err +. pe +. qe +. (g_err *. a))
+
+(* Each quantile is [(1 - f) a + f b] between the order statistics around [h = q
+   (n - 1)] rounded at float64, [a] exactly where the fraction, rounded to the
+   interpolation's precision, is zero or [a = b], and an infinity or a NaN as
+   that sum of infinities gives it. Elsewhere it is within nx.mli's [3u (|a| +
+   |b|)] at float64 and [4u (|a| + |b|)] at float32 of the sum at the float64
+   fraction, and a narrow format's rounding once into its dtype, half its
+   spacing at the result, or its least subnormal below its normal range. The
+   float64 reference is double-word (lerp_exact), the float32 one plain float64,
+   both far below the bound. *)
+(* Ends below the normal range, whose midpoint, half the least subnormal,
+   rounds. *)
+let subnormal_ends =
+  Quantile_case
+    (D.Float64, 0x1p-53, [| 2 |], None, [| 0.5 |], [| 0.; 0x1p-1074 |])
+
+let law_quantile (Quantile_case (dt, u, s, a, qs, vs)) =
   let x, xs = made dt s vs in
-  (* The least subnormal of the dtype, a subnormal result's error. *)
-  let least = (D.float_format dt).min_normal *. (D.float_format dt).epsilon in
+  let fmt = D.float_format dt in
   let s', a' =
     match a with None -> ([| Array.length xs |], 0) | Some a -> (s, a)
   in
@@ -1271,6 +1470,7 @@ let law_quantile (Quantile_case (dt, eps, s, a, qs, vs)) =
   let g = Nx.to_array got in
   let sl = slices s' a' in
   let per = List.length sl in
+  cover "a narrow float" (D.bits dt < 32);
   Array.iteri
     (fun j q ->
       List.iteri
@@ -1282,24 +1482,38 @@ let law_quantile (Quantile_case (dt, eps, s, a, qs, vs)) =
           let n = Array.length sorted in
           let h = q *. Float.of_int (n - 1) in
           let lo = Float.to_int (Float.floor h) in
-          let u = sorted.(lo) and v = sorted.(Stdlib.min (lo + 1) (n - 1)) in
-          (* The fraction as the interpolation's format holds it. *)
+          let a = sorted.(lo) and b = sorted.(Stdlib.min (lo + 1) (n - 1)) in
           let f = h -. Float.floor h in
-          let f =
+          let rounded =
             if D.bits dt = 64 then f
             else Int32.float_of_bits (Int32.bits_of_float f)
           in
-          let want =
-            if f = 0. || u = v then u else ((1. -. f) *. u) +. (f *. v)
-          in
           let r = g.((j * per) + i) in
-          if Float.is_nan want then equal ~msg:"NaN" bool true (Float.is_nan r)
-          else if f = 0. || u = v || not (Float.is_finite want) then
-            equal ~msg:"exact" int 0 (float_cmp want r)
-          else
-            at_most ~msg:"error" float_exact
-              ~than:((eps *. (Float.abs u +. Float.abs v)) +. least)
-              (Float.abs (r -. want)))
+          let msg = Printf.sprintf "q %h of %d" q n in
+          if rounded = 0. || a = b then equal ~msg float_exact a r
+          else if not (Float.is_finite a && Float.is_finite b) then
+            (* Beside an infinity or a NaN, [a + b]. *)
+            equal ~msg float_exact (a +. b) r
+          else begin
+            cover "an interpolated value" true;
+            let want =
+              if D.bits dt = 64 then lerp_exact a b f
+              else ((1. -. f) *. a) +. (f *. b)
+            in
+            let k = if D.bits dt = 64 then 3. else 4. in
+            let spacing =
+              Float.max fmt.min_normal (Float.abs want) *. fmt.epsilon
+            in
+            let into = if D.bits dt < 32 then spacing /. 2. else 0. in
+            (* Below the normal range each of the [k] roundings errs by up to
+               the precision's least subnormal: nx.mli's bound is barring
+               underflow. *)
+            let least = if D.bits dt = 64 then 0x1p-1074 else 0x1p-149 in
+            at_most ~msg float_exact
+              ~than:
+                ((k *. ((u *. (Float.abs a +. Float.abs b)) +. least)) +. into)
+              (Nx_support.gap r want)
+          end)
         sl)
     qs
 
@@ -1336,8 +1550,7 @@ let law_quantile_each (Quantile_case (dt, _, s, a, qs, vs)) =
       List.iter
         (fun c -> equal_elements dt want (Array.sub c (j * per) per))
         (copies got))
-    qs;
-  equal ~msg:"copies" int 2 (List.length (copies got))
+    qs
 
 let test_quantile_cases () =
   let x = Nx.create Nx.float64 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
@@ -1396,9 +1609,27 @@ let coord =
         (1, of_list specials);
       ])
 
-let law_histogram (es, (xs, ys), ws) =
+type coordinates = Coordinates : (float, 's) D.t -> coordinates
+
+(* Points counted into their cells and weights summed there, coordinates and
+   edges of one float dtype, weights of float64. *)
+(* The edges, halves in [-3, 3], and the coordinates, quarters, are exact
+   in each dtype drawn. *)
+let law_histogram (Coordinates dt, (es, (xs, ys), ws)) =
   let f64 a = Nx.create Nx.float64 [| Array.length a |] a in
-  let e1, e2 = es in
+  let made a =
+    let x = Nx.create dt [| Array.length a |] a in
+    (x, Nx.to_array x)
+  in
+  let (e1t, e1), (e2t, e2) = (made (fst es), made (snd es)) in
+  let (xt, xs), (yt, ys) = (made xs, made ys) in
+  let on_last e x = x = e.(Array.length e - 1) in
+  cover "a point on the last edge"
+    (Array.exists (on_last e1) xs || Array.exists (on_last e2) ys);
+  cover "a NaN coordinate" (Array.exists Float.is_nan xs);
+  cover "-0. on an edge"
+    (Array.exists (fun x -> x = 0. && Float.sign_bit x && Array.mem 0. e1) xs);
+  cover "a narrow coordinate" (D.bits dt < 32);
   let bin e x =
     let m = Array.length e in
     if not (x >= e.(0) && x <= e.(m - 1)) then None
@@ -1418,7 +1649,7 @@ let law_histogram (es, (xs, ys), ws) =
       | Some a, Some b -> want.((a * n2) + b) <- want.((a * n2) + b) +. ws.(i)
       | _ -> ())
     xs;
-  let dims = [ (f64 e1, f64 xs); (f64 e2, f64 ys) ] in
+  let dims = [ (e1t, xt); (e2t, yt) ] in
   equal ~msg:"weighted" (array float_exact) want
     (Nx.to_array (Nx.weighted_histogram ~weights:(f64 ws) dims));
   let counts = Array.make (n1 * n2) 0L in
@@ -1435,13 +1666,30 @@ let law_histogram (es, (xs, ys), ws) =
 
 let histogram_case =
   let open Gen in
+  let* dt =
+    of_list
+      [
+        Coordinates D.Float64;
+        Coordinates D.Float32;
+        Coordinates D.Float16;
+        Coordinates D.Bfloat16;
+        Coordinates D.Float8_e4m3fn;
+      ]
+  in
   let* e1 = edges_gen in
   let* e2 = edges_gen in
   let* n = int_range 0 12 in
   let* xs = array ~size:(constant n) coord in
   let* ys = array ~size:(constant n) coord in
   let+ ws = array ~size:(constant n) (float_range (-2.) 2.) in
-  ((e1, e2), (xs, ys), ws)
+  (dt, ((e1, e2), (xs, ys), ws))
+
+(* [-0.] on the edge [0.], points on each last edge and a NaN. *)
+let histogram_edges =
+  ( Coordinates D.Float64,
+    ( ([| -1.; 0.; 1. |], [| 0.; 2. |]),
+      ([| -0.; 1.; nan |], [| 0.5; 2.; 1. |]),
+      [| 1.; 2.; 3. |] ) )
 
 let test_histogram_cases () =
   let e = Nx.create Nx.float64 [| 4 |] [| 0.; 1.; 2.; 3. |] in
@@ -1519,38 +1767,48 @@ let () =
        [
          group "sort argsort top_k"
            [
-             prop "a stable sort of each slice" sort_case law_sort;
-             test "cases" test_sort_cases;
+             prop ~count:200
+               "a stable sort of each slice, its values its positions' \
+                elements bit for bit, top_k its descending first k"
+               sort_case law_sort;
+             test "the doc's orders" test_sort_rows;
+             test "raises on an axis outside the rank or k outside [0, n]"
+               test_sort_refusals;
            ];
          group "order_key"
            [
-             prop "keys compare as the sort order" key_case law_key;
-             test "cases" test_key_cases;
+             prop "keys compare as the sort order and are its formulas" key_case
+               law_key;
+             test "the doc's keys" test_key_rows;
+             test "raises on complex, a dtype not of the four, a narrower one"
+               test_key_refusals;
            ];
          group "lexsort searchsorted"
            [
              prop "lexsort is a stable sort of the rows" rows_case law_lexsort;
-             prop "searchsorted counts the keys before" search_case law_search;
-             test "cases" test_search_cases;
+             test
+               "lexsort of no column leaves every row; raises on 3-d or complex"
+               test_lexsort_rows;
+             prop "searchsorted counts the keys before, or before or equal"
+               search_case law_search;
+             test "the doc's knots" test_search_rows;
+             test "raises on 0-d or complex keys, rows of another width"
+               test_search_refusals;
+             test "the doc's counts of sorts and gathers" test_counts;
            ];
          group "searchsorted_along_axis"
            [
              (* Each view, and a lane of no key, is about one case in ten. *)
              prop ~count:400 "each lane is searchsorted of that lane alone"
                along_case law_along;
-             test "cases" test_along_cases;
+             test "the doc's lanes and refusals" test_along_cases;
            ];
-         group "unique"
+         group "lengths that are data"
            [
-             prop ~count:200 "groups in order of first appearance" unique_case
-               (law_unique ~near:false);
-             prop
-               "groups in order of first appearance, over rows of about 2n + \
-                1024 values"
-               near_cases (law_unique ~near:true);
-             test "cases" test_unique_cases;
-             test "70,000 keys" test_unique_long;
-             test "50,000 groups of 80,000 keys" test_unique_many;
+             test
+               "a traced length raises naming the function, unless size fixes \
+                it"
+               test_traced;
            ];
          group "positions"
            [
@@ -1558,36 +1816,52 @@ let () =
                 case in eight. *)
              prop ~count:300 "each index repeated its count" count_case
                law_positions;
-             test "cases" test_positions_cases;
-             test "9000 positions" test_positions_long;
+             test "the doc's positions, pads past the counts and refusals"
+               test_positions_cases;
+             test "9000 positions, with and without a size" test_positions_long;
            ];
          group "argwhere"
            [
              prop "the coordinates of each element other than zero"
                argwhere_case law_argwhere;
-             test "cases" test_argwhere_cases;
+             test "the doc's coordinates and refusals" test_argwhere_cases;
            ];
          group "nonzero extract"
            [
              prop "nonzero is argwhere's columns" argwhere_case law_nonzero;
-             test "nonzero cases" test_nonzero_cases;
+             test "nonzero's columns, pads and refusals" test_nonzero_cases;
              prop "extract reads where the condition is not zero" extract_case
                law_extract;
-             test "extract cases" test_extract_cases;
+             test "extract's elements, fill and refusals" test_extract_cases;
+           ];
+         group "unique"
+           [
+             prop ~count:200 ~examples:near_rows
+               "groups in order of first appearance" unique_case law_unique;
+             test "the doc's groups" test_unique_rows;
+             test "raises on a negative size, 3-d or complex keys"
+               test_unique_refusals;
+             test "one Unique numbers an unsized unique's keys" test_unique_one;
+             test "groups 70,000 keys past the first numbering's 4096 entries"
+               test_unique_long;
+             test "50,000 groups of 80,000 keys" test_unique_many;
            ];
          group "quantile"
            [
-             prop "interpolated order statistics" quantile_case law_quantile;
-             prop "each probability as alone, on two devices" quantile_case
-               law_quantile_each;
-             test "cases" test_quantile_cases;
+             prop ~examples:[ subnormal_ends ]
+               "interpolates between order statistics within its bound"
+               quantile_case law_quantile;
+             prop "each probability as alone, by one probability's kernels"
+               quantile_case law_quantile_each;
+             test "the doc's quantiles and refusals" test_quantile_cases;
              test "between finite statistics the interpolation is finite"
                test_quantile_finite;
            ];
          group "histogram"
            [
-             prop "points counted into their cells" histogram_case law_histogram;
-             test "cases" test_histogram_cases;
+             prop ~examples:[ histogram_edges ]
+               "points counted into their cells" histogram_case law_histogram;
+             test "the doc's cells and refusals" test_histogram_cases;
              test "counts are exact in narrow coordinates"
                test_histogram_narrow_counts;
            ];
