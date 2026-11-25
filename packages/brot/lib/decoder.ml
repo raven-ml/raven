@@ -34,15 +34,36 @@ let err_unknown_type typ = strf "unknown decoder type: %s" typ
 let err_expected_object = "invalid decoder JSON: expected object"
 let err_unknown_scheme s = strf "unknown prepend_scheme '%s'" s
 let err_strip_count = "strip: start and stop must not be negative"
+let err_metaspace = "metaspace: the replacement must be one character"
 
 (* Decoding *)
+
+(* [by] before every character of [s] and at its end, unless [s] is empty: the
+   occurrences of an empty pattern, as in {!Normalizer.replace}. A byte that
+   opens no character is a character of one byte. *)
+let insert_all ~by s =
+  let len = String.length s in
+  if len = 0 then s
+  else begin
+    let buf = Buffer.create (len + ((len + 1) * String.length by)) in
+    let i = ref 0 in
+    while !i < len do
+      let n = Char_class.length s !i ~stop:len in
+      Buffer.add_string buf by;
+      Buffer.add_substring buf s !i n;
+      i := !i + n
+    done;
+    Buffer.add_string buf by;
+    Buffer.contents buf
+  end
 
 (* Literal string replacement without regex overhead. Returns [s] unchanged when
    [pattern] does not occur—no allocation on the fast path. *)
 let replace_all ~pattern ~by s =
   let plen = String.length pattern in
   let slen = String.length s in
-  if plen = 0 || plen > slen then s
+  if plen = 0 then insert_all ~by s
+  else if plen > slen then s
   else
     let match_at i =
       let rec check j =
@@ -75,10 +96,16 @@ let replace_all ~pattern ~by s =
       if !i < slen then Buffer.add_substring buf s !i (slen - !i);
       Buffer.contents buf
 
+(* [replace_all] as Rust's [str::replace] reads an empty pattern, which also
+   occurs once in an empty [s]. Hugging Face's BPEDecoder and CTC replace so,
+   where its Replace leaves an empty token empty. *)
+let replace_str ~pattern ~by s =
+  if pattern = "" && s = "" then by else replace_all ~pattern ~by s
+
 (* The suffix marks the end of a word, so it stands for the space that follows
    it—except on the last token, where no space follows. *)
 let bpe_piece ~suffix ~last token =
-  replace_all ~pattern:suffix ~by:(if last then "" else " ") token
+  replace_str ~pattern:suffix ~by:(if last then "" else " ") token
 
 let decode_bpe ~suffix tokens =
   match tokens with
@@ -231,7 +258,7 @@ let ctc_piece ~pad_token ~word_delimiter_token ~cleanup token =
   let token = replace_all ~pattern:pad_token ~by:"" token in
   let token =
     if cleanup then
-      replace_all ~pattern:word_delimiter_token ~by:" " (cleanup_piece token)
+      replace_str ~pattern:word_delimiter_token ~by:" " (cleanup_piece token)
     else token
   in
   if String.equal token "" then None else Some token
@@ -339,6 +366,8 @@ type collapse = Bytes_collapse of string | Fuse_collapse
    [0] once the text has moved past them. *)
 type text_stage =
   | Replace_text of { pattern : string; by : string; held : string }
+  | Insert_text of { by : string; held : string; seen : bool; empty : bool }
+  | Drop_empty of { seen : bool }
   | Strip_text of { content : string; leading : int; stop : int; held : string }
   | Whole_text of { decoder : t; held : string list }
 
@@ -348,14 +377,15 @@ type stream = {
   text : text_stage list;
 }
 
-(* Whether [pattern] occurs in [text]. *)
+(* Whether [pattern] occurs in [text]. An empty one occurs in any text, as
+   {!replace_str} reads it. *)
 let contains ~pattern text =
   let plen = String.length pattern in
   let rec from i =
     i + plen <= String.length text
     && (String.sub text i plen = pattern || from (i + 1))
   in
-  plen > 0 && from 0
+  plen = 0 || from 0
 
 let run_bytes run = String.of_seq (List.to_seq (List.rev run))
 
@@ -432,25 +462,27 @@ let sequence_length c =
   | b when b >= 0xf0 && b <= 0xf4 -> 4
   | _ -> 0
 
+(* Whether the bytes from [i] to the end are the start of a character, which a
+   later byte may complete. [get_utf_8_uchar] reads a maximal ill-formed
+   subpart, so a sequence that reaches the end and is shorter than its lead byte
+   asks is a start. *)
+let unfinished bytes i =
+  let d = String.get_utf_8_uchar bytes i in
+  let next = i + Uchar.utf_decode_length d in
+  next >= String.length bytes
+  && (not (Uchar.utf_decode_is_valid d))
+  && next - i < sequence_length bytes.[i]
+
 (* Where the bytes stop decoding the same whatever follows them: before a last
-   sequence that is the start of a character, which a later byte may complete.
-   An ill-formed sequence decodes the same whatever follows it, so it is given
-   its replacement character at once, as is a stray [\xff] or [\x80].
-   [get_utf_8_uchar] reads a maximal ill-formed subpart, so a sequence that
-   reaches the end and is shorter than its lead byte asks is a start. *)
+   sequence that is the start of a character. An ill-formed sequence decodes the
+   same whatever follows it, so it is given its replacement character at once,
+   as is a stray [\xff] or [\x80]. *)
 let settled bytes =
   let len = String.length bytes in
   let rec scan i =
     if i >= len then len
-    else
-      let d = String.get_utf_8_uchar bytes i in
-      let next = i + Uchar.utf_decode_length d in
-      if
-        next >= len
-        && (not (Uchar.utf_decode_is_valid d))
-        && next - i < sequence_length bytes.[i]
-      then i
-      else scan next
+    else if unfinished bytes i then i
+    else scan (i + Uchar.utf_decode_length (String.get_utf_8_uchar bytes i))
   in
   scan 0
 
@@ -510,6 +542,28 @@ let replace_some ~pattern ~by text ~final =
   let cut = scan 0 in
   (Buffer.contents buf, String.sub text cut (len - cut))
 
+(* [insert_all] on the characters of [text] no later byte can change, and the
+   rest. [seen] is whether text came before, which the end then follows, and
+   [empty] whether the end follows an empty text too, as in {!replace_str},
+   while the token is [present]. *)
+let insert_some ~by ~empty ~present text ~seen ~final =
+  let len = String.length text in
+  let buf = Buffer.create (2 * len) in
+  let rec scan i =
+    if i >= len then len
+    else if (not final) && unfinished text i then i
+    else begin
+      let n = Char_class.length text i ~stop:len in
+      Buffer.add_string buf by;
+      Buffer.add_substring buf text i n;
+      scan (i + n)
+    end
+  in
+  let cut = scan 0 in
+  if final && (seen || len > 0 || (empty && present)) then
+    Buffer.add_string buf by;
+  (Buffer.contents buf, String.sub text cut (len - cut))
+
 (* [strip_token] on as much of [text] as decides it. The occurrences at the
    start are cut as they arrive. A later end cuts at most [stop] occurrences,
    so a byte can only be cut there when what runs from it to the end of
@@ -538,36 +592,51 @@ let strip_some ~content ~leading ~stop text ~final =
         (String.sub rest 0 cut, 0, String.sub rest cut (n - cut))
       end
 
-let text_step stage text ~final =
+(* [present] is whether the one token is still there: a [ctc] that empties it
+   drops it, so a later empty pattern finds no token to occur in. *)
+let text_step stage text ~final ~present =
   match stage with
   | Replace_text { pattern; by; held } ->
       let out, held = replace_some ~pattern ~by (held ^ text) ~final in
-      (Replace_text { pattern; by; held }, out)
+      (Replace_text { pattern; by; held }, out, present)
+  | Insert_text { by; held; seen; empty } ->
+      let text = held ^ text in
+      let out, held = insert_some ~by ~empty ~present text ~seen ~final in
+      (Insert_text { by; held; seen = seen || text <> ""; empty }, out, present)
+  | Drop_empty { seen } ->
+      let seen = seen || text <> "" in
+      (Drop_empty { seen }, text, present && ((not final) || seen))
   | Strip_text { content; leading; stop; held } ->
       let out, leading, held =
         strip_some ~content ~leading ~stop (held ^ text) ~final
       in
-      (Strip_text { content; leading; stop; held }, out)
+      (Strip_text { content; leading; stop; held }, out, present)
   | Whole_text { decoder; held } ->
       let held = text :: held in
       if final then
         ( Whole_text { decoder; held = [] },
-          decode decoder [ String.concat "" (List.rev held) ] )
-      else (Whole_text { decoder; held }, "")
+          decode decoder [ String.concat "" (List.rev held) ],
+          present )
+      else (Whole_text { decoder; held }, "", present)
 
-let rec feed_text stages text ~final =
-  match stages with
-  | [] -> ([], text)
-  | stage :: rest ->
-      let stage, out = text_step stage text ~final in
-      let rest, out = feed_text rest out ~final in
-      (stage :: rest, out)
+let feed_text stages text ~final =
+  let rec feed stages text ~present =
+    match stages with
+    | [] -> ([], text)
+    | stage :: rest ->
+        let stage, out, present = text_step stage text ~final ~present in
+        let rest, out = feed rest out ~present in
+        (stage :: rest, out)
+  in
+  feed stages text ~present:true
 
 (* What a decoder after a collapse does to the one token it is given, which is
    both the first and the last. *)
 let rec text_stages decoder =
-  let replace pattern by =
-    if pattern = "" then [] else [ Replace_text { pattern; by; held = "" } ]
+  let replace ?(empty = false) pattern by =
+    if pattern <> "" then [ Replace_text { pattern; by; held = "" } ]
+    else if by <> "" then [ Insert_text { by; held = ""; seen = false; empty } ]
+    else []
   in
   let cleanups () =
     List.concat_map (fun (pattern, by) -> replace pattern by)
@@ -581,7 +650,10 @@ let rec text_stages decoder =
       replace replacement (if prepend_scheme <> `Never then "" else " ")
   | CTC { pad_token; word_delimiter_token; cleanup } ->
       replace pad_token ""
-      @ if cleanup then cleanups () @ replace word_delimiter_token " " else []
+      @ (if cleanup then
+           cleanups () @ replace ~empty:true word_delimiter_token " "
+         else [])
+      @ [ Drop_empty { seen = false } ]
   | Replace { pattern; replacement } -> replace pattern replacement
   | Strip { content; start; stop } ->
       if content = "" then []
@@ -651,7 +723,16 @@ let byte_fallback = Byte_fallback
 let wordpiece ?(prefix = "##") ?(cleanup = true) () =
   Word_piece { prefix; cleanup }
 
+(* Whether [s] is one well-formed character. *)
+let is_one_character s =
+  let stop = String.length s in
+  stop > 0
+  &&
+  let d = Char_class.decode s 0 ~stop in
+  d >= 0 && d land 7 = stop
+
 let metaspace ?(replacement = "\xe2\x96\x81") ?(prepend_scheme = `Always) () =
+  if not (is_one_character replacement) then invalid_arg err_metaspace;
   Metaspace { replacement; prepend_scheme }
 
 let ctc ?(pad_token = "<pad>") ?(word_delimiter_token = "|") ?(cleanup = true)
@@ -811,13 +892,11 @@ let rec of_json = function
             scheme_of_string
               (string_field fields "prepend_scheme" ~default:"always")
           in
-          Ok
-            (Metaspace
-               {
-                 replacement =
-                   string_field fields "replacement" ~default:"\xe2\x96\x81";
-                 prepend_scheme;
-               })
+          let replacement =
+            string_field fields "replacement" ~default:"\xe2\x96\x81"
+          in
+          if not (is_one_character replacement) then Error err_metaspace
+          else Ok (Metaspace { replacement; prepend_scheme })
       | Some (Jsont.String ("CTC", _)) ->
           Ok
             (CTC

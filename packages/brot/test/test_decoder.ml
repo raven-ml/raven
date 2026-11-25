@@ -66,6 +66,15 @@ let bpe_tests =
     cases ~id:tokens_id "reads the suffix it is given"
       [ ([ "a@"; "b@" ], "a b"); ([ "a</w>"; "b" ], "a</w>b") ]
       (decodes (Decoder.bpe ~suffix:"@" ()));
+    cases ~id:tokens_id
+      "reads an empty suffix as one before every character and at the end of \
+       every token"
+      [
+        ([ "ab"; "cd" ], " a b cd");
+        ([ "ab"; ""; "cd" ], " a b  cd");
+        ([ ""; "" ], " ");
+      ]
+      (decodes (Decoder.bpe ~suffix:"" ()));
   ]
 
 (* byte_level *)
@@ -333,6 +342,11 @@ let metaspace_tests =
     cases ~id:tokens_id "reads the marker it is given"
       [ ([ "_a"; "_b" ], "a b"); ([ marker ^ "a" ], marker ^ "a") ]
       (decodes (Decoder.metaspace ~replacement:"_" ()));
+    cases ~id:(Printf.sprintf "%S")
+      "raises Invalid_argument unless the replacement is one character"
+      [ ""; "ab"; "__"; "\x81" ] (fun replacement ->
+        raises_match Exn.invalid_arg (fun () ->
+            Decoder.metaspace ~replacement ()));
   ]
 
 (* ctc *)
@@ -386,6 +400,16 @@ let ctc_tests =
         ([ "a"; "a"; "[PAD]"; "a"; "_"; "b" ], "aa b"); ([ "<pad>|" ], "<pad>|");
       ]
       (decodes (Decoder.ctc ~pad_token:"[PAD]" ~word_delimiter_token:"_" ()));
+    cases ~id:tokens_id
+      "reads an empty delimiter as one before every character and at the end \
+       of every token"
+      [
+        ([ "ab"; "cd" ], " a b  c d ");
+        ([ "" ], " ");
+        ([ "a"; "" ], " a  ");
+        ([ "ab"; ""; "cd" ], " a b   c d ");
+      ]
+      (decodes (Decoder.ctc ~word_delimiter_token:"" ()));
   ]
 
 (* sequence *)
@@ -452,6 +476,11 @@ let replace_tests =
     cases ~id:tokens_id "replaces left to right without overlap"
       [ ([ "aaa" ], "ba"); ([ "a.a" ], "a.a") ]
       (decodes (Decoder.replace ~pattern:"aa" ~by:"b" ()));
+    cases ~id:tokens_id
+      "inserts the replacement before every character and at the end for an \
+       empty pattern"
+      [ ([ "ab" ], "_a_b_"); ([ "a"; "" ], "_a_") ]
+      (decodes (Decoder.replace ~pattern:"" ~by:"_" ()));
   ]
 
 (* strip *)
@@ -591,6 +620,13 @@ let of_json_tests =
           (write_decoder (Decoder.replace ~pattern:"a" ~by:"" ()))
           (write_decoder
              (read_decoder {|{"type":"Replace","pattern":{"String":"a"}}|})));
+    cases ~id:Fun.id
+      "errors on a Metaspace whose replacement is not one character"
+      [
+        {|{"type":"Metaspace","replacement":"ab"}|};
+        {|{"type":"Metaspace","replacement":""}|};
+      ] (fun text ->
+        is_error ~pp:Decoder.pp (Decoder.of_json (json_of_text text)));
     cases ~id:Fun.id "errors on a missing member its constructor requires"
       [ {|{"type":"Replace","content":"b"}|} ] (fun text ->
         is_error ~pp:Decoder.pp (Decoder.of_json (json_of_text text)));

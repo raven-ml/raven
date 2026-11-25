@@ -2031,6 +2031,7 @@ let stream_decoders =
   [
     ("bpe", Decoder.bpe ());
     ("bpe a", Decoder.bpe ~suffix:"a" ());
+    ("bpe empty", Decoder.bpe ~suffix:"" ());
     ("byte_level", Decoder.byte_level);
     ("byte_fallback", Decoder.byte_fallback);
     ("wordpiece", Decoder.wordpiece ());
@@ -2039,9 +2040,11 @@ let stream_decoders =
     ("metaspace never", Decoder.metaspace ~prepend_scheme:`Never ());
     ("ctc", Decoder.ctc ());
     ("ctc no cleanup", Decoder.ctc ~cleanup:false ());
+    ("ctc empty", Decoder.ctc ~word_delimiter_token:"" ());
     ("replace marker", Decoder.replace ~pattern:m ~by:" " ());
     ("replace ab", Decoder.replace ~pattern:"ab" ~by:"x" ());
     ("replace aa", Decoder.replace ~pattern:"aa" ~by:"a" ());
+    ("replace empty", Decoder.replace ~pattern:"" ~by:"_" ());
     ("strip start", Decoder.strip ~start:1 ());
     ("strip stop", Decoder.strip ~stop:2 ());
     ("strip ab", Decoder.strip ~content:"ab" ~start:1 ~stop:1 ());
@@ -2055,7 +2058,9 @@ let collapses = [ "byte_level"; "fuse" ]
 let immediate =
   List.filter
     (fun name ->
-      not (List.mem name ([ "bpe"; "bpe a"; "byte_fallback" ] @ collapses)))
+      not
+        (List.mem name
+           ([ "bpe"; "bpe a"; "bpe empty"; "byte_fallback" ] @ collapses)))
     (List.map fst stream_decoders)
 
 let stream_tokens =

@@ -803,7 +803,12 @@ module Decoder : sig
       tokens; {!val-byte_level} and {!val-fuse} collapse the whole list into one
       token. The distinction matters when composing decoders with
       {!val-sequence}: a collapsing decoder hides token boundaries from the
-      decoders that follow it. *)
+      decoders that follow it.
+
+      An empty string to replace, a [bpe] [suffix], a [ctc] token or a [replace]
+      [pattern], occurs before every character of a token and at its end. In an
+      empty token it occurs once under [bpe] and [ctc], and not at all under
+      [replace], as in {!Normalizer.replace}. *)
 
   type t
   (** The type for decoders. *)
@@ -858,9 +863,8 @@ module Decoder : sig
       the two prepending to the same first token. [prepend_scheme] defaults to
       [`Always].
 
-      HuggingFace reads [replacement] as a single character, so {!val-to_json}
-      on a decoder whose [replacement] is longer, or empty, writes a decoder it
-      rejects. *)
+      Raises [Invalid_argument] if [replacement] is not exactly one well-formed
+      UTF-8 character. *)
 
   val ctc :
     ?pad_token:string ->
@@ -883,7 +887,8 @@ module Decoder : sig
 
   val replace : pattern:string -> by:string -> unit -> t
   (** [replace ~pattern ~by ()] replaces every literal occurrence of [pattern]
-      with [by] in each token. *)
+      with [by] in each token. An empty [pattern] occurs before every character
+      and at the end of each token that is not empty. *)
 
   val strip : ?content:string -> ?start:int -> ?stop:int -> unit -> t
   (** [strip ~content ~start ~stop ()] removes up to [start] leading and [stop]

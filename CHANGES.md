@@ -5573,6 +5573,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- An empty `Decoder.bpe` suffix, `Decoder.ctc` delimiter or `Decoder.replace`
+  pattern occurs before every character and at the end of a token, as in
+  Hugging Face; it occurred nowhere.
+- `Decoder.metaspace` raises `Invalid_argument` unless its replacement is one
+  character, as `Pre_tokenizer.metaspace` does; `Decoder.of_json` errors.
 - `Decoder.strip` raises `Invalid_argument` for a negative `start` or `stop`,
   which stripped nothing.
 - `Pre_tokenizer.fixed_length` raises `Invalid_argument` if its length is not
