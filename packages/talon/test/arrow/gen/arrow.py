@@ -388,6 +388,7 @@ def refused_files(out):
     for name, table in tables.items():
         write_file(out / (name + ".arrow"), table)
     replaced_in_file(out / "refused_dict_replaced.arrow")
+    decimal_precision(out / "refused_decimal_precision.arrows")
     shared_id(out / "refused_shared_id.arrows")
     write_stream(out / "refused_zero_null.arrows", zero_null_table())
     (out / "refused_bomb.arrows").write_bytes(schema_bomb(40))
@@ -635,6 +636,19 @@ def replaced_in_file(path):
             break
         at = first + meta_len + length
     assert deltas == 1
+    path.write_bytes(bytes(b))
+
+
+def decimal_precision(path):
+    """A stream of a decimal32 whose precision, 10, its 32 bits cannot hold:
+    a decimal32(9, 0) written, its precision changed."""
+    write_stream(path, pa.table({"d": pa.array([Decimal(1)], pa.decimal32(9, 0))}))
+    b = bytearray(path.read_bytes())
+    schema = fb_target(b, fb_field(b, frames(b)[0][2], 2))
+    fields = fb_target(b, fb_field(b, schema, 1))
+    field = fb_target(b, fields + 4)
+    decimal = fb_target(b, fb_field(b, field, 3))
+    struct.pack_into("<i", b, fb_field(b, decimal, 0), 10)
     path.write_bytes(bytes(b))
 
 

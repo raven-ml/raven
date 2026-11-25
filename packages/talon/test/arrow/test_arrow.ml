@@ -152,6 +152,7 @@ let refused =
       ("refused_ree.arrow", "bad");
       ("refused_list_view.arrow", "bad");
       ("refused_nested.arrow", "outer.bad");
+      ("refused_decimal_precision.arrows", "d");
       ("refused_dict_replaced.arrow", "c");
       ("refused_shared_id.arrows", "x");
     ]

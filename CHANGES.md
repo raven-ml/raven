@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_arrow.sniff` names the column of a type the Arrow format does not
+  define, such as a `decimal32` of precision 10, as its interface says:
+  `column "d": a decimal of 32 bits has precision 10`. It named only the file.
 - `Talon_parquet.with_type`'s refusal of a column of lists over a number type
   or `bool` names the tensors it reads as too: `reads as
   list[list[list[float32]]], or a tensor over float32 in place of its 1 to 3

@@ -317,20 +317,27 @@ let encoding_of d =
   in
   { id = int64 d 0 0; index_bits; index_signed }
 
-(* [field budget t]: a children vector may repeat an entry, so that a few bytes
-   describe a huge tree. Each field takes 4 bytes of a tree, which [budget]
-   counts down from the size of the metadata. *)
-let rec field budget t =
+(* [field budget parent t]: a children vector may repeat an entry, so that a
+   few bytes describe a huge tree. Each field takes 4 bytes of a tree, which
+   [budget] counts down from the size of the metadata. A type that is not
+   Arrow's names the field's path below [parent]. *)
+let rec field budget parent t =
   if !budget = 0 then fail "the schema has more fields than bytes";
   decr budget;
   let raw = kv_pairs t 6 in
   let meta name = List.assoc_opt name raw in
   let reserved (k, _) = k = extension_name || k = extension_metadata in
+  let name = str t 0 in
+  let path = if parent = "" then name else parent ^ "." ^ name in
+  let arrow =
+    try type_of (int8 t 2 0) (table t 3)
+    with Malformed m -> fail "column %S: %s" path m
+  in
   {
-    name = str t 0;
-    arrow = type_of (int8 t 2 0) (table t 3);
+    name;
+    arrow;
     encoding = Option.map encoding_of (table t 4);
-    children = List.map (field budget) (tables t 5);
+    children = List.map (field budget path) (tables t 5);
     metadata = List.filter (fun kv -> not (reserved kv)) raw;
     extension =
       Option.map
@@ -342,7 +349,7 @@ let rec field budget t =
 let schema t =
   let budget = ref ((t.last - t.first) / 4) in
   {
-    fields = List.map (field budget) (tables t 1);
+    fields = List.map (field budget "") (tables t 1);
     metadata = kv_pairs t 2;
     little = int16 t 0 0 = 0;
   }
