@@ -3,16 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Folds through every kernel library the host runs: a fold is the padded load's
-   adjoint over integers, and each part of a float or complex fold within its
-   bound of the exact sum at each index. nx.cpu's: each result element
-   against a reference that sums, with no +0 before the first, the elements
-   the load reads from it in C order of their taps, +0 where it reads none,
-   bit for bit or both NaN, through views of the operand, at every dtype but
-   the booleans, on the job's threads as on one; its maps of padded loads,
-   through the same geometry: a loaded element is the element the fold adds
-   it into, or the fill; its refusals; and no byte read or written past the
-   operand or the result. *)
+(* Folds through every kernel library the host runs: each result element against
+   a reference that sums, with no +0 before the first, the elements the load
+   reads from it in C order of their taps, +0 where it reads none, bit for bit
+   or both NaN, through views of the operand, at every dtype but the booleans,
+   on the job's threads as on one; each part of a float or complex fold within
+   its bound of the exact sum; maps of padded loads through the same geometry, a
+   loaded element the element the fold adds it into, or the fill; its declines
+   and refusals; and, on nx.cpu, no byte read or written past the operand or the
+   result. *)
 
 open Windtrap
 open Elements
@@ -77,6 +76,24 @@ let pad_dtype dtypes =
   let bytes = List.filter (fun (D.Any d) -> D.bits d >= 8) dtypes in
   if bytes = [] then weighted dtypes
   else Gen.frequency [ (7, weighted bytes); (1, weighted dtypes) ]
+
+(* A finite number of full precision within 2^±4 in magnitude: sums of three or
+   more such have bits that depend on the order of their terms. *)
+let mixed rs =
+  Float.ldexp (Random.State.float rs 2. -. 1.) (Random.State.int rs 9 - 4)
+
+(* An operand's element: {!Elements.element}'s half the time, else, at float32,
+   float64 and the complex dtypes, a [mixed] number. *)
+let term d rs =
+  let mixed () = mixed rs in
+  if Random.State.bool rs then element d rs
+  else
+    match d with
+    | D.Any D.Float32 -> f32 (mixed ())
+    | D.Any D.Float64 -> f64 (mixed ())
+    | D.Any D.Complex64 -> f32 (mixed ()) ^ f32 (mixed ())
+    | D.Any D.Complex128 -> f64 (mixed ()) ^ f64 (mixed ())
+    | _ -> element d rs
 
 (* [last], where given, draws the result's last extent. *)
 let case_gen ?(dtypes = folded) ?last () =
@@ -165,7 +182,7 @@ let case_gen ?(dtypes = folded) ?last () =
   | None -> None
   | Some xs ->
       let rs = Random.State.make [| seed |] in
-      let x = operand d xs v (fun _ -> element d rs) in
+      let x = operand d xs v (fun _ -> term d rs) in
       Some { shape; pad; x; views = view_names v; load }
 
 (* Folds into a destination of other elements: the fold writes each. *)
@@ -202,27 +219,6 @@ let target c xi =
   in
   if Array.exists (fun v -> v < 0) i then None else Some (flat c.shape i)
 
-(* Prog.Add on two elements of [d]: floats of 32 and 64 bits by
-   {!Elements.add_bits}, complex numbers part by part so, integers wrapping,
-   and narrow floats as nx.cpu's map of one [Add] adds two elements, which
-   test_kernels holds to nx_kinds.h's. *)
-let add (D.Any dt as d) a b =
-  if D.Any D.Float32 = d || D.Any D.Float64 = d then
-    add_bits ~w:(String.length a) a b
-  else if D.is D.Complex dt then
-    let w = String.length a / 2 in
-    let part at = add_bits ~w (String.sub a at w) (String.sub b at w) in
-    part 0 ^ part w
-  else if D.is D.Signed dt || D.is D.Unsigned dt then
-    int_bits d (String.length a) (Int64.add (int_value d a) (int_value d b))
-  else
-    let (A.Any x) = of_elements d [| 1 |] [| a |] in
-    let y = A.expect (A.dtype x) (of_elements d [| 1 |] [| b |]) in
-    let dst = A.create Rig.host (A.dtype x) [| 1 |] in
-    match Support.map2 (module Nx_cpu) (Binary Add) ~dst x y with
-    | A.Done -> (elements (A.Any dst)).(0)
-    | r -> failf "an add answered %a" Nx_array_support.pp_answer r
-
 (* The number of the operand's elements the load reads from each result
    index. *)
 let reached c =
@@ -252,34 +248,57 @@ let tiny (D.Any dt) e =
       small ((b lsr 7) land 0xFF) (b land 0x7F)
   | _ -> false
 
-(* The fold's result by its reference, and for each element whether an
-   addition into it took or gave a [tiny] element. *)
-let reference c =
+(* [a] plus [b], element by element, two arrays of [d] and shape [s], by
+   nx.cpu's map of Prog.Add, which test_kernels holds to nx_kinds.h's. *)
+let added d s a b =
+  let (A.Any x) = of_elements d s a in
+  let y = A.expect (A.dtype x) (of_elements d s b) in
+  let dst = A.create Rig.host (A.dtype x) (Iarray.of_array s) in
+  match Support.map2 (module Nx_cpu) (Binary Add) ~dst x y with
+  | A.Done -> elements (A.Any dst)
+  | r -> failf "an add answered %a" Nx_array_support.pp_answer r
+
+(* The fold's result by its reference, and for each element whether an addition
+   into it took or gave a [tiny] element. It adds a tap at a time: at one tap
+   the load reads each result index from one operand index at most, so a tap's
+   additions are one elementwise Add over the result. An element's first term is
+   taken as it is, with no +0 before it. Where [reversed], the taps come in the
+   other order, an association no library states. *)
+let reference ?(reversed = false) c =
   let d = dtype_of c.x in
   let xs = shape_of c.x and es = elements c.x in
   let r = Array.length c.shape and nw = Iarray.length c.pad.windows in
-  let acc = Array.make (total c.shape) None in
-  let under = Array.make (total c.shape) false in
+  let n = total c.shape in
+  let acc = Array.make n (zero d) and held = Array.make n false in
+  let under = Array.make n false in
   let taps = Array.sub xs r nw and outer = Array.sub xs 0 r in
   for t = 0 to total taps - 1 do
-    let j = index_of taps t in
+    let j = index_of taps (if reversed then total taps - 1 - t else t) in
+    let term = Array.make n (zero d) and hit = Array.make n false in
     for k = 0 to total outer - 1 do
       let xi = Array.append (index_of outer k) j in
       match target c xi with
       | None -> ()
       | Some y ->
-          let e = es.(flat xs xi) in
-          acc.(y) <-
-            Some
-              (match acc.(y) with
-              | None -> e
-              | Some a ->
-                  let s = add d a e in
-                  if tiny d a || tiny d e || tiny d s then under.(y) <- true;
-                  s)
+          term.(y) <- es.(flat xs xi);
+          hit.(y) <- true
+    done;
+    let sums =
+      if Array.exists2 ( && ) hit held then added d c.shape acc term else term
+    in
+    for y = 0 to n - 1 do
+      if hit.(y) && held.(y) then begin
+        let a = acc.(y) and e = term.(y) and s = sums.(y) in
+        if tiny d a || tiny d e || tiny d s then under.(y) <- true;
+        acc.(y) <- s
+      end
+      else if hit.(y) then begin
+        acc.(y) <- term.(y);
+        held.(y) <- true
+      end
     done
   done;
-  (Array.map (function None -> zero d | Some a -> a) acc, under)
+  (acc, under)
 
 (* [y] has the elements [want], bit for bit or both NaN, but where [b]
    flushes, at the elements [under] marks. *)
@@ -348,48 +367,33 @@ let law_reference (b : Support.backend) = function
        cover "a narrow float" (work && is_narrow (D.Any d));
        cover "sub-byte" (work && D.bits d < 8);
        cover "complex" (work && D.is D.Complex d));
+      let want = reference c in
+      (* The values tell the taps' order apart: some element's sum differs from
+         the reversed taps', neither a NaN. *)
+      let d = dtype_of c.x in
+      let other = fst (reference ~reversed:true c) in
+      cover "a float element whose sum the taps' order changes"
+        (let (D.Any dt) = d in
+         (D.is D.Float dt || D.is D.Complex dt)
+         && Array.exists2
+              (fun a b -> a <> b && not (nan_of d a || nan_of d b))
+              (fst want) other);
       match fold_on b c with
       | None -> failf "%s declined a fold" b.name
-      | Some y -> agrees b c y)
+      | Some y -> agrees_with b c y want)
 
-(* Σ load(a) · x = Σ a · fold(x) over wrapping int64. *)
-let law_adjoint (b : Support.backend) = function
-  | None -> assume false
-  | Some c -> (
-      let d = D.Any D.Int64 in
-      let rs = Random.State.make [| 5 |] in
-      let ints s =
-        operand d s
-          (plain (Array.length s))
-          (fun _ ->
-            int_bits d 8 (Int64.of_int (Random.State.int rs 2001 - 1000)))
-      in
-      let c = { c with x = ints (shape_of c.x) } in
-      match fold_on b c with
-      | None -> ()
-      | Some f ->
-          let a = Array.map (int_value d) (elements (ints c.shape)) in
-          let xs = shape_of c.x
-          and es = Array.map (int_value d) (elements c.x) in
-          let lhs = ref 0L in
-          for k = 0 to total xs - 1 do
-            match target c (index_of xs k) with
-            | None -> ()
-            | Some y -> lhs := Int64.add !lhs (Int64.mul a.(y) es.(k))
-          done;
-          let fs = Array.map (int_value d) (elements f) in
-          let rhs = ref 0L in
-          Array.iteri (fun i v -> rhs := Int64.add !rhs (Int64.mul a.(i) v)) fs;
-          equal int64 !lhs !rhs)
-
-(* Each part of a float or complex fold's element is within γ(n - 1) Σ|x|
-   of the exact sum of the [n] parts it adds, where they are finite and
-   their magnitudes' sum is below half the dtype's largest float, so that
-   no sum overflows. Where [b] flushes, each addition reads a subnormal
-   operand as a zero and gives a zero for a subnormal result, so each of
-   the n terms and each of the n - 1 sums may lose less than the least
-   normal number, 2^-126, and the later additions round those losses: the
-   bound adds (1 + γ(n - 1)) (2n - 1) 2^-126. *)
+(* Each part of a float or complex fold's element is within γ(n - 1) Σ|x| of the
+   exact sum of the [n] parts it adds, where they are finite and their
+   magnitudes' sum is below half the dtype's largest float, so that no sum
+   overflows. Where [b] flushes, each addition reads a subnormal operand as a
+   zero and gives a zero for a subnormal result, so each of the n terms and each
+   of the n - 1 sums may lose less than the least normal number, 2^-126, and the
+   later additions round those losses: the bound adds (1 + γ(n - 1)) (2n - 1)
+   2^-126. The exact sum is a TwoSum pair [hi + lo]: [hi]'s errors are exact,
+   and [lo] adds two a term, each at most [u'] times the magnitudes' sum [mag],
+   [u'] float64's unit roundoff, so its [k]th of [2n] roundings errs by at most
+   [k u'² mag], and the pair is within [n (2n + 1) u'² mag], below [2n (n + 2)
+   u'² mag], of the exact sum. *)
 let law_bound (b : Support.backend) = function
   | None -> assume false
   | Some c -> (
@@ -445,15 +449,19 @@ let law_bound (b : Support.backend) = function
                     ((2. *. n) +. 1.) *. 0x1p-126
                   else 0.
                 in
-                let bound =
-                  (g *. mag) +. (0x1p-100 *. mag) +. ((1. +. g) *. flushed)
+                let slack =
+                  Float.of_int (2 * List.length t * (List.length t + 2))
+                  *. 0x1p-106 *. mag
                 in
-                if not (Float.abs (got i -. exact) <= bound) then
+                let bound = (g *. mag) +. slack +. ((1. +. g) *. flushed) in
+                (* Each part subtracted, so that rounding [exact] adds no
+                   error. *)
+                let off = got i -. !hi -. !lo in
+                if not (Float.abs off <= bound) then
                   bad :=
                     Printf.sprintf
                       "element %d, part %d: %h is %h from %h, past %h"
-                      (i / parts) (i mod parts) (got i) (got i -. exact) exact
-                      bound
+                      (i / parts) (i mod parts) (got i) off exact bound
                     :: !bad
               end)
             terms;
@@ -545,10 +553,17 @@ let test_wide_windows (b : Support.backend) () =
   in
   fold far (D.Any D.Float32) [| 1 |]
 
-(* A convolution's input gradient, large enough for the job's threads, at
-   float32, int4 and bfloat16, the last two from views of the operand; then
-   one padded along its batch axis, whose result starts whole on the job's
-   threads. *)
+(* A convolution's input gradient on nx.cpu's threads, at float32, int4 and
+   bfloat16, the last two through views of the operand. nx.cpu gives a job a
+   thread for each 128 KiB of its cost (job.c), a fold's four bytes of work for
+   each byte it adds or reads (assemble.c), so each fold by slabs, whose units
+   add slabs of the result alone, int4's of an odd number of elements, which
+   share a byte with their neighbours', is worth 2.8 to 4.5 threads. A result
+   whose units miss some slab starts whole first, a walk of its bytes, a
+   sub-byte dtype's elements, that takes a second thread from 256 KiB: each fold
+   cropped to one batch row starts a result of 3 2^17 or more, from an operand
+   of that row alone. A worker of one core runs each on one thread, where the
+   test checks the sums alone. *)
 let test_threads (b : Support.backend) () =
   let w axis = { M.axis; size = 3; step = 1; dilation = 1 } in
   let conv lo0 =
@@ -569,19 +584,16 @@ let test_threads (b : Support.backend) () =
     | None -> failf "%s declined a fold" b.name
     | Some y -> agrees b c y
   in
-  let slabs = conv 0 and whole = conv 1 in
-  fold slabs (D.Any D.Float32) [| 8; 16; 20; 20 |] (plain 6);
-  (* Slabs of an odd number of int4 elements: neighbouring units' results
-     share a byte. *)
-  fold slabs (D.Any D.Int4) [| 8; 16; 21; 21 |]
-    { (plain 6) with stepped = true };
-  fold slabs (D.Any D.Bfloat16) [| 8; 16; 21; 21 |]
-    { (plain 6) with reversed = Some 3 };
-  fold whole (D.Any D.Float32) [| 2; 16; 40; 40 |] (plain 6);
-  fold whole (D.Any D.Int4) [| 4; 16; 63; 63 |]
-    { (plain 6) with stepped = true };
-  fold whole (D.Any D.Bfloat16) [| 2; 16; 41; 41 |]
-    { (plain 6) with reversed = Some 3 }
+  let slabs = conv 0 and cropped shape = conv (1 - shape.(0)) in
+  let stepped = { (plain 6) with stepped = true }
+  and reversed = { (plain 6) with reversed = Some 3 } in
+  fold slabs (D.Any D.Float32) [| 4; 8; 8; 8 |] (plain 6);
+  fold slabs (D.Any D.Int4) [| 8; 8; 9; 9 |] stepped;
+  fold slabs (D.Any D.Bfloat16) [| 4; 8; 9; 9 |] reversed;
+  let whole d shape v = fold (cropped shape) d shape v in
+  whole (D.Any D.Float32) [| 12; 16; 24; 24 |] (plain 6);
+  whole (D.Any D.Int4) [| 16; 8; 59; 59 |] stepped;
+  whole (D.Any D.Bfloat16) [| 13; 16; 32; 32 |] reversed
 
 (* Rows longer than a slot of float32, of a narrow float and of int4: they add
    through their carrier a piece at a time. *)
@@ -610,33 +622,62 @@ let test_long_rows (b : Support.backend) () =
       | Some y -> agrees b c y)
     D.[ Any Bfloat16; Any Int4 ]
 
-(* A fold or a map's padded load that does not fit, by a shape, a pad of
-   another rank or booleans, which Prog.Add does not take: not Done, and
-   nothing written outside the destination. *)
-let test_misfits (b : Support.backend) () =
-  let module K = (val b.kernels) in
+(* Folds and a map's padded load that do not fit, by a shape, a pad of another
+   rank or booleans, which Prog.Add does not take: each with its misfit's class,
+   its destination's dtype and shape, and its call by a library, the operand,
+   made on the host, on the library's device. *)
+let misfits =
   let p =
     { Nx_kernel.lo = [| 1 |]; hi = [| 1 |]; interior = [| 0 |]; windows = [||] }
   in
   let f32 = D.Any D.Float32 in
-  let on_b x = Kernels_cases.on b x in
-  let x = on_b (A.of_array D.Float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]) in
-  let fold ~msg ~what (D.Any d as dt) s x =
-    Misfit.check ~msg ~what b [| (dt, s) |] (fun g ds ->
-        K.fold p ~dst:(A.expect d ds.(0)) (g.Misfit.g (A.expect d (A.Any x))))
+  let floats n =
+    A.Any (A.of_array D.Float32 [| n |] (Array.init n Float.of_int))
   in
-  fold ~msg:"an operand of another shape" ~what:"a shape" f32 [| 3 |]
-    (on_b (A.of_array D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |]));
-  fold ~msg:"a destination of another shape" ~what:"a shape" f32 [| 4 |] x;
-  let id = Nx_kernel.Prog.v ~ins:[| f32 |] [| In 0 |] ~outs:[| 0 |] in
-  let bad = { p with lo = [| 1; 0 |] } in
-  Misfit.check ~msg:"a map's pad of another rank" ~what:"an attribute" b
-    [| (f32, [| 7 |]) |]
-    (fun g ds ->
-      K.map id ~dsts:(Iarray.of_array ds)
-        [| Padded { x = g.Misfit.g x; fill = 0.; pad = bad } |]);
-  fold ~msg:"booleans" ~what:"a dtype" (D.Any D.Bool) [| 3 |]
-    (on_b (A.of_array D.Bool [| 5 |] [| true; false; true; false; true |]))
+  let fold (A.Any x) (b : Support.backend) (g : Misfit.guard) ds =
+    let module K = (val b.kernels) in
+    let x = g.g (Support.on b x) in
+    K.fold p ~dst:(A.expect (A.dtype x) ds.(0)) x
+  in
+  let map (b : Support.backend) (g : Misfit.guard) ds =
+    let module K = (val b.kernels) in
+    let id = Nx_kernel.Prog.v ~ins:[| f32 |] [| In 0 |] ~outs:[| 0 |] in
+    let x = g.g (Support.on b (A.expect D.Float32 (floats 5))) in
+    let pad = { p with lo = [| 1; 0 |] } in
+    K.map id ~dsts:(Iarray.of_array ds) [| Padded { x; fill = 0.; pad } |]
+  in
+  let bools =
+    A.Any (A.of_array D.Bool [| 5 |] [| true; false; true; false; true |])
+  in
+  [
+    ( "an operand of another shape",
+      "a shape",
+      [| (f32, [| 3 |]) |],
+      fold (floats 4) );
+    ( "a destination of another shape",
+      "a shape",
+      [| (f32, [| 4 |]) |],
+      fold (floats 5) );
+    ("a map's pad of another rank", "an attribute", [| (f32, [| 7 |]) |], map);
+    ("booleans", "a dtype", [| (D.Any D.Bool, [| 3 |]) |], fold bools);
+  ]
+
+(* Not Done, and nothing written outside the destination. *)
+let check_misfit (b : Support.backend) (msg, what, dsts, call) =
+  Misfit.check ~msg ~what b dsts (call b)
+
+(* A destination over its operand's bytes, one element on: the door refuses the
+   fold as Overlapping. *)
+let test_overlapping (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let all = A.create b.device D.Float32 [| 7 |] in
+  let from start count =
+    Option.get (A.move (M.Slice [| { M.start; count; step = 1 } |]) all)
+  in
+  let p =
+    { Nx_kernel.lo = [| 1 |]; hi = [| 1 |]; interior = [| 0 |]; windows = [||] }
+  in
+  equal answer A.Overlapping (K.fold p ~dst:(from 1 4) (from 0 6))
 
 (* The suite *)
 
@@ -649,9 +690,11 @@ let cases_of ?dtypes ?last () =
 
 let cases = cases_of ()
 let all_cases = cases_of ~dtypes:D.all ()
-let floats = D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
 
-let int_cases = cases_of ~dtypes:[ D.Any D.Int64 ] ()
+let float_cases =
+  cases_of
+    ~dtypes:D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
+    ()
 
 (* Guard pages *)
 
@@ -687,27 +730,29 @@ let law_guards (b : Support.backend) (c, side) =
         (same_guarded ~any_nan:true side ~call [| c.x |]
            [| (dtype_of c.x, c.shape) |])
 
-(* A fold at each dtype [b] states it computes nothing on declines. *)
-let test_declines (b : Support.backend) () =
+(* A fold at a dtype [b] states it computes nothing on declines before any
+   write, its destination's bytes as they were; at another it is Done. *)
+let test_declines (b : Support.backend) (D.Any dt as d) =
   let module K = (val b.kernels) in
   let p =
     { Nx_kernel.lo = [| 1 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] }
   in
-  List.iter
-    (fun (D.Any dt as d) ->
-      if not (b.arith d) then
-        let rs = Random.State.make [| 3 |] in
-        let x =
-          Support.on b (A.expect dt (operand d [| 4 |] (plain 1) (fun _ -> element d rs)))
-        in
-        let dst = A.create b.device dt [| 3 |] in
-        equal ~msg:(D.name dt) answer A.Declined (K.fold p ~dst x))
-    folded
+  let rs = Random.State.make [| 3 |] in
+  let drawn s =
+    Support.on b (A.expect dt (operand d s (plain 1) (fun _ -> element d rs)))
+  in
+  let x = drawn [| 4 |] and dst = drawn [| 3 |] in
+  let before = elements (A.Any dst) in
+  if b.arith d then equal answer A.Done (K.fold p ~dst x)
+  else begin
+    equal ~msg:"the answer" answer A.Declined (K.fold p ~dst x);
+    equal ~msg:"the destination" (array string) before (elements (A.Any dst))
+  end
 
-(* A fold of 1s by windows of 3 taps, one tap the least subnormal, at
-   float32 and bfloat16: the reference comparison leaves out the one
-   element that tap reaches, and holds the other 15 bit for bit. *)
-let test_left_out (b : Support.backend) () =
+(* Folds of 1s by windows of 3 taps, one tap the least subnormal, at float32 and
+   bfloat16: a library that flushes adds it as a zero into the one element it
+   reaches, and the other 15 have the reference's bits. *)
+let subnormal_taps =
   let p =
     {
       Nx_kernel.lo = [| 1 |];
@@ -726,17 +771,12 @@ let test_left_out (b : Support.backend) () =
       operand d [| 16; 3 |] (plain 2) (fun k ->
           if k = at then bits least else one)
     in
-    let c = { shape = [| 16 |]; pad = p; x; views = []; load = plain 1 } in
-    let want, under = reference c in
-    let (D.Any dt) = d in
-    equal ~msg:(D.name dt) (array bool) (Array.init 16 (fun i -> i = 5)) under;
-    match fold_on b c with
-    | None -> failf "%s declined a fold" b.name
-    | Some y -> agrees_with b c y (want, under)
+    { shape = [| 16 |]; pad = p; x; views = []; load = plain 1 }
   in
-  fold (D.Any D.Float32) ~one:(f32 1.) ~least:1;
-  if b.arith (D.Any D.Bfloat16) then
-    fold (D.Any D.Bfloat16) ~one:"\x80\x3f" ~least:1
+  [
+    fold (D.Any D.Float32) ~one:(f32 1.) ~least:1;
+    fold (D.Any D.Bfloat16) ~one:"\x80\x3f" ~least:1;
+  ]
 
 (* Two float32 terms whose exact sum, 2^-125 - 1.5 2^-126 = 2^-127, is
    subnormal: a backend that flushes gives +0. The two windows of 2 taps
@@ -756,11 +796,13 @@ let subnormal_sum =
   in
   { shape = [| 1 |]; pad = p; x; views = []; load = plain 1 }
 
-(* Folds of 3 slabs, each 4 elements windowed by [w] along the last axis:
-   at complex64, of windows of 2 taps; at bfloat16, of windows of 1 tap 2
-   apart, which leave elements no tap reaches; and at int4. The draws reach
-   a narrow float, complex64 and slabs started per unit one case in 9 to 11
-   where float64 and complex128 are declined. *)
+(* Folds of 3 slabs, each 4 elements windowed by [w] along the last axis: at
+   complex64, of windows of 2 taps; at bfloat16, of windows of 1 tap 2 apart,
+   which leave elements no tap reaches; and at int4. The draws reach a narrow
+   float, complex64 and slabs started per unit one case in 9 to 11 where float64
+   and complex128 are declined. At float32, 3 rows of 8 elements under windows
+   of 4 taps over [mixed] numbers, whose sums the taps' order changes, which the
+   draws reach about one case in 110. *)
 let fold_examples =
   let slabs d (w : M.window) =
     let zeros = Iarray.of_array [| 0; 0 |] in
@@ -774,50 +816,86 @@ let fold_examples =
     { shape; pad; x; views = []; load = plain 2 }
   in
   let w size step = { M.axis = 1; size; step; dilation = 1 } in
+  let ordered =
+    let zeros = Iarray.of_array [| 0; 0 |] in
+    let pad =
+      {
+        Nx_kernel.lo = zeros;
+        hi = zeros;
+        interior = zeros;
+        windows = [| w 4 1 |];
+      }
+    in
+    let shape = [| 3; 8 |] in
+    let xs = Option.get (loaded pad shape) in
+    let rs = Random.State.make [| 5 |] in
+    let x =
+      operand (D.Any D.Float32) xs
+        (plain (Array.length xs))
+        (fun _ -> f32 (mixed rs))
+    in
+    { shape; pad; x; views = []; load = plain 2 }
+  in
   [
     slabs (D.Any D.Complex64) (w 2 1);
     slabs (D.Any D.Bfloat16) (w 1 2);
     slabs (D.Any D.Int4) (w 2 1);
+    ordered;
   ]
 
-let suite (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  (* Cases at the dtypes [b] computes on. *)
-  let cases_on dtypes = cases_of ~dtypes:(List.filter b.arith dtypes) () in
-  let cases = cases_on folded and float_cases = cases_on floats in
-  group b.name
+let suite (d : Support.declared) =
+  let around f x =
+    let b = Support.opened d in
+    b.around (fun () -> f b x)
+  in
+  (* A case of a dtype the library states it computes nothing on is no case of
+     the law. *)
+  let computed law c =
+    let b = Support.opened d in
+    (match c with
+    | Some c when not (b.arith (dtype_of c.x)) -> assume false
+    | _ -> ());
+    b.around (fun () -> law b c)
+  in
+  let some = List.map Option.some in
+  group d.label
     [
-      prop "a fold is the padded load's adjoint" int_cases (run (law_adjoint b));
-      prop
-        "each part of a float fold is within γ(n - 1) Σ|x| of the exact sum, \
-         and the flushes' losses where it flushes"
-        ~examples:[ Some subnormal_sum ] float_cases (run (law_bound b));
-      test "declines the dtypes it computes nothing on" (fun () ->
-          b.around (test_declines b));
-      group "sums each element's taps in order, +0 where none"
+      group "fold"
         [
+          group "sums each element's taps in order, +0 where none"
+            [
+              prop
+                ~examples:(some (fold_examples @ subnormal_taps))
+                "at every dtype, through views" cases (computed law_reference);
+              test "a convolution's input gradient on the job's threads"
+                (fun () -> around test_threads ());
+              test "four windows, and a step and padding past 2^30" (fun () ->
+                  around test_wide_windows ());
+              test "rows longer than a slot, at bfloat16 and int4" (fun () ->
+                  around test_long_rows ());
+            ];
           prop
-            ~examples:
-              (List.filter_map
-                 (fun c ->
-                   if b.arith (dtype_of c.x) then Some (Some c) else None)
-                 fold_examples)
-            "at every dtype, through views" cases (run (law_reference b));
-          test "a convolution's gradient on the job's threads" (fun () ->
-              b.around (test_threads b));
-          test "four windows, and a step past 2^30" (fun () ->
-              b.around (test_wide_windows b));
-          test "long rows of narrow dtypes" (fun () ->
-              b.around (test_long_rows b));
-          test "a subnormal tap leaves out the one element it reaches"
-            (fun () -> b.around (test_left_out b));
+            "each part of a float fold is within γ(n - 1) Σ|x| of the exact \
+             sum, and the flushes' losses where it flushes"
+            ~examples:[ Some subnormal_sum ] float_cases (computed law_bound);
+          prop
+            "a Padded load reads at each index the element the fold adds it \
+             into, or the fill"
+            all_cases (around law_load);
+          Windtrap.cases
+            ~id:(fun (D.Any dt) -> D.name dt)
+            "declines exactly the dtypes it computes nothing on, before any \
+             write"
+            folded (around test_declines);
+          Windtrap.cases
+            ~id:(fun (msg, _, _, _) -> msg)
+            "a call of shapes, pads or dtypes that do not fit is not Done and \
+             writes nothing outside its destination"
+            misfits (around check_misfit);
+          test
+            "a destination over its operand's bytes is refused as Overlapping"
+            (fun () -> around test_overlapping ());
         ];
-      prop "a map's padded load reads what the fold adds into" all_cases
-        (run (law_load b));
-      test
-        "a call of shapes, pads or dtypes that do not fit is not Done and \
-         writes nothing outside its destination"
-        (fun () -> b.around (test_misfits b));
     ]
 
 (* Guard pages lie on host memory. *)
@@ -838,10 +916,12 @@ let cpu (b : Support.backend) =
    them. Each case runs through CUDA, then through rig.nv. A NaN agrees
    with any NaN: nx_cuda.mli leaves a NaN result's sign and payload
    unspecified. *)
-let nv_laws (first : Support.backend) (nv : Support.backend) =
-  let agree call = Elements.agree first nv call in
+let nv_laws (first : Support.declared) (nv : Support.declared) =
+  let agree call =
+    Elements.agree (Support.opened first) (Support.opened nv) call
+  in
   let some = function Some y -> [| y |] | None -> [||] in
-  group nv.name
+  group nv.label
     [
       group "bits are cuda's, any NaN for a NaN"
         [
@@ -853,15 +933,19 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
 
 let () =
   let nv =
-    match (Support.gpus (), Support.nv ()) with
-    | first :: _, Some nv -> [ nv_laws first nv ]
+    match (Support.declared_cuda, Support.declared_nv) with
+    | Some first, Some nv -> [ nv_laws first nv ]
     | _ -> []
   in
   exit
     (Windtrap.run "nx_kernel.fold"
        (List.map suite
-          (Support.backends ()
-          @ Option.to_list (Support.amd ())
-          @ Option.to_list (Support.metal ()))
+          (Support.declare Support.cpu
+          :: List.filter_map Fun.id
+               [
+                 Support.declared_cuda;
+                 Support.declared_amd;
+                 Support.declared_metal;
+               ])
        @ [ cpu Support.cpu ]
        @ nv))
