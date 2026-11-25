@@ -26,8 +26,6 @@ type work = Rig_gpu_support.work = {
   init : Sub.t -> Sub.args option;
 }
 
-let patience_ns = 10_000_000_000
-
 (* Bytes *)
 
 let pattern n seed =
@@ -96,11 +94,11 @@ let empty_point d = Rig.submit (Sub.make d [||]) ~buffers:[||] ~args:[||]
 let copy_part ~dst src =
   Rig_gpu_support.work Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
 
-(* Returns once [f ()] holds, failing after 10 s of the monotonic clock. *)
+(* Returns once [f ()] holds. A wait that the test's timeout ends prints
+   [what]. *)
 let await what f =
-  let t0 = Rig.Profile.now () in
+  Rig_support.naming ("waiting until " ^ what) @@ fun () ->
   while not (f ()) do
-    if Rig.Profile.now () - t0 > patience_ns then failf "%s within 10 s" what;
     Domain.cpu_relax ()
   done
 
