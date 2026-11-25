@@ -167,7 +167,9 @@ let () =
 ```
 
 Without a scheme, a continuous scale takes the theme's scheme, viridis by
-default, and a band scale the theme's palette, tableau10 by default.
+default, and a band scale the theme's palette. The default theme's palette
+is tableau10 darkened so that each colour reads on white paper; `Theme.dark`
+keeps tableau10.
 
 `map_range` applies a function to a channel's values after its scale and
 role have mapped them. Text drawn over coloured cells reads on each cell

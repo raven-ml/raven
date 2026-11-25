@@ -145,15 +145,18 @@ let () =
   |> save ~theme:print ~size:(Size.figure (Size.mm 85.) (Size.mm 40.)) "column.pdf"
 ```
 
-`Theme.dark` sets light ink on dark paper, and a scheme for continuous
-colour scales that starts at viridis's middle, since its darkest colours
-would fade into the paper. `Theme.talk` and `Theme.poster` enlarge text and
-every length for slides and posters. Presets are themes like any other,
-combined through their accessors:
+`Theme.dark` sets light ink on dark paper, tableau10 for categories, and a
+scheme for continuous colour scales that starts at viridis's middle, since
+its darkest colours would fade into the paper. The default theme's palette
+is tableau10 darkened to read on white paper. `Theme.talk` and
+`Theme.poster` enlarge text and every length for slides and posters.
+Presets are themes like any other, combined through their accessors:
 
 ```ocaml
 let slides =
-  Theme.(v ~ink:(ink dark) ~paper:(paper dark) ~scheme:(scheme dark) ~size:(size talk) ())
+  Theme.(
+    v ~ink:(ink dark) ~paper:(paper dark) ~palette:(palette dark)
+      ~scheme:(scheme dark) ~size:(size talk) ())
 
 let () = decay |> save ~theme:Theme.dark "dark.png"
 let () = decay |> save ~theme:slides ~size:(Size.figure 576. 384.) "slide.png"

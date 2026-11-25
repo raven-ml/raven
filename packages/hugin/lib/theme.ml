@@ -21,8 +21,29 @@ type t = {
   locale : Locale.t;
 }
 
+(* Tableau 10 for white paper: each colour keeps its hue and reads at 3:1 or
+   more, and neighbours stay apart for normal vision and under protanopia and
+   deuteranopia. test/gen/palette.py derives it. *)
+let light_palette =
+  let byte n = Float.of_int (n land 0xff) /. 255. in
+  let rgb n = Color.v (byte (n lsr 16)) (byte (n lsr 8)) (byte n) in
+  Scheme.palette
+    (Array.map rgb
+       [|
+         0x4e79a7;
+         0xde7c09;
+         0xe15759;
+         0x60a09b;
+         0x418837;
+         0xb29100;
+         0x9f6b92;
+         0xd87984;
+         0x936c56;
+         0x9d938e;
+       |])
+
 let v ?(ink = Color.gray 0.1) ?(paper = Color.white) ?accent ?(size = 10.)
-    ?(fonts = [ Font.regular; Font.bold ]) ?(palette = Scheme.tableau10)
+    ?(fonts = [ Font.regular; Font.bold ]) ?(palette = light_palette)
     ?(scheme = Scheme.viridis) ?(locale = Locale.default) () =
   if not (is_pos size) then
     err "Theme.v" "size %a is not finite and positive" Float_print.pp size;
@@ -42,7 +63,8 @@ let dark_scheme =
          Scheme.color Scheme.viridis (0.4 +. (0.05 *. Float.of_int i))))
 
 let dark =
-  v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ~scheme:dark_scheme ()
+  v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ~palette:Scheme.tableau10
+    ~scheme:dark_scheme ()
 
 let talk = v ~size:16. ()
 let poster = v ~size:20. ()

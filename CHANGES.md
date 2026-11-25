@@ -319,6 +319,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Theme.v`'s default palette is Tableau 10 darkened to read on white paper:
+  each colour keeps its hue and contrasts at 3:1 or more, where five fell below
+  it and yellow to 1.6:1. `Theme.dark` keeps `Scheme.tableau10`.
 - `Hugin_vg_raster` draws a subpath whose points lie a few subnormals apart with
   its pen's extent and direction. An open one drew no square caps or turned
   them, and a closed one with round joins drew a disc up to √2 too wide.

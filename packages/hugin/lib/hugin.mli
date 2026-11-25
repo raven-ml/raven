@@ -1280,8 +1280,15 @@ module Theme : sig
         others are fallbacks for the characters it lacks
         ({!Text.Layout.section-faces}). Defaults to
         [[ Font.regular; Font.bold ]].
-      - [palette], the scheme of band scales that set none. Defaults to
-        {!Scheme.tableau10}.
+      - [palette], the scheme of band scales that set none. Defaults to the
+        {!Scheme.palette} of [#4e79a7], [#de7c09], [#e15759], [#60a09b],
+        [#418837], [#b29100], [#9f6b92], [#d87984], [#936c56] and [#9d938e]:
+        {!Scheme.tableau10} darkened to read on white paper. Each colour keeps
+        its Oklch hue and contrasts with white at [3:1] or more, as marks must
+        with their background. Neighbours, the colours of classes [i] and
+        [i + 1] and the last and the first, are at an Oklab distance of [0.11]
+        or more, and of [0.07] or more for viewers with protanopia or
+        deuteranopia; any two colours are at [0.07] or more.
       - [scheme], the scheme of continuous scales that set none. Defaults to
         {!Scheme.viridis}.
       - [locale], the strings tick labels and the [text] role write numbers
@@ -1295,15 +1302,25 @@ module Theme : sig
 
   (** {1:presets Presets}
 
-      Presets are themes of {!v}, combined by their accessors:
-      [Theme.(v ~ink:(ink dark) ~paper:(paper dark) ~size:(size talk) ())] is a
-      dark theme for slides. *)
+      Presets are themes of {!v}, combined by their accessors. A dark theme for
+      slides:
+      {[
+      Theme.(
+        v ~ink:(ink dark) ~paper:(paper dark) ~palette:(palette dark)
+          ~scheme:(scheme dark) ~size:(size talk) ())
+      ]} *)
 
   val dark : t
-  (** [dark] is [v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ~scheme ()]:
-      light ink on dark paper. [scheme] is the ramp ({!Scheme.ramp}) of the
-      colours of {!Scheme.viridis} at [0.4], [0.45], …, [1.], which contrast
-      with the paper at [3:1] or more. *)
+  (** [dark] is light ink on dark paper:
+      {[
+      v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1) ~palette:Scheme.tableau10
+        ~scheme ()
+      ]}
+      Every colour of {!Scheme.tableau10} contrasts with the paper at [3:1] or
+      more, and its colours are as far apart as those of {!v}'s default palette.
+      [scheme] is the ramp ({!Scheme.ramp}) of the colours of {!Scheme.viridis}
+      at [0.4], [0.45], …, [1.], which contrast with the paper at [3:1] or more.
+  *)
 
   val talk : t
   (** [talk] is [v ~size:16. ()], for slides: text and every length derived from

@@ -1089,19 +1089,105 @@ let first s = (Scheme.colors 1 s).(0)
 (* The colours of viridis that [Theme.dark]'s scheme ramps through. *)
 let dark_stops = List.init 13 (fun i -> 0.4 +. (0.05 *. Float.of_int i))
 
+(* The palette Theme.v states for white paper. *)
+let light_palette =
+  Scheme.palette
+    (Array.map
+       (fun s -> Result.get_ok (Color.of_hex s))
+       [|
+         "#4e79a7";
+         "#de7c09";
+         "#e15759";
+         "#60a09b";
+         "#418837";
+         "#b29100";
+         "#9f6b92";
+         "#d87984";
+         "#936c56";
+         "#9d938e";
+       |])
+
+(* sRGB's transfer function, from an encoded component to a linear one and
+   back. *)
+let linear v =
+  if v <= 0.04045 then v /. 12.92 else Float.pow ((v +. 0.055) /. 1.055) 2.4
+
+let encode v =
+  if v <= 0.0031308 then 12.92 *. v
+  else (1.055 *. Float.pow v (1. /. 2.4)) -. 0.055
+
 (* WCAG 2.2's relative luminance of an opaque sRGB colour, and the contrast
    ratio of two colours. *)
 let luminance c =
-  let lin v =
-    if v <= 0.04045 then v /. 12.92 else Float.pow ((v +. 0.055) /. 1.055) 2.4
-  in
-  (0.2126 *. lin (Color.r c))
-  +. (0.7152 *. lin (Color.g c))
-  +. (0.0722 *. lin (Color.b c))
+  (0.2126 *. linear (Color.r c))
+  +. (0.7152 *. linear (Color.g c))
+  +. (0.0722 *. linear (Color.b c))
 
 let contrast a b =
   let la = luminance a and lb = luminance b in
   (Float.max la lb +. 0.05) /. (Float.min la lb +. 0.05)
+
+(* Protanopia and deuteranopia as Machado, Oliveira and Fernandes simulate them
+   at severity 1: a matrix on linear sRGB, the result clipped to the gamut. *)
+let protanopia =
+  [|
+    [| 0.152286; 1.052583; -0.204868 |];
+    [| 0.114503; 0.786281; 0.099216 |];
+    [| -0.003882; -0.048116; 1.051998 |];
+  |]
+
+let deuteranopia =
+  [|
+    [| 0.367322; 0.860646; -0.227968 |];
+    [| 0.280085; 0.672501; 0.047413 |];
+    [| -0.011820; 0.042940; 0.968881 |];
+  |]
+
+let simulate m c =
+  let l = [| linear (Color.r c); linear (Color.g c); linear (Color.b c) |] in
+  let row i =
+    let v =
+      (m.(i).(0) *. l.(0)) +. (m.(i).(1) *. l.(1)) +. (m.(i).(2) *. l.(2))
+    in
+    encode (Float.min 1. (Float.max 0. v))
+  in
+  Color.v (row 0) (row 1) (row 2)
+
+(* The Euclidean distance of two colours in Oklab. *)
+let distance c c' =
+  let l, a, b = Color.to_oklab c and l', a', b' = Color.to_oklab c' in
+  Float.sqrt
+    (((l -. l') *. (l -. l'))
+    +. ((a -. a') *. (a -. a'))
+    +. ((b -. b') *. (b -. b')))
+
+(* The colours of the palettes of the default and dark themes, each with the
+   name of its theme, as neighbours, classes i and i + 1 and the last and the
+   first, and as any two. *)
+let themes = [ ("default", Theme.default); ("dark", Theme.dark) ]
+
+let neighbours =
+  List.concat_map
+    (fun (name, th) ->
+      let cs = Scheme.table (Theme.palette th) in
+      let n = Array.length cs in
+      List.init n (fun i -> (name, cs.(i), cs.((i + 1) mod n))))
+    themes
+
+let any_two =
+  List.concat_map
+    (fun (name, th) ->
+      let cs = Array.to_list (Scheme.table (Theme.palette th)) in
+      List.concat
+        (List.mapi
+           (fun i c ->
+             List.filteri (fun j _ -> j > i) cs
+             |> List.map (fun c' -> (name, c, c')))
+           cs))
+    themes
+
+let pair_id (name, c, c') =
+  Printf.sprintf "%s: %s and %s" name (Color.to_hex c) (Color.to_hex c')
 
 (* [blend a get c c'] is the component [get] of [c] at opacity [a] over the
    opaque [c'], composited on encoded components as viewers do. *)
@@ -1129,7 +1215,7 @@ let theme_ =
           equal color (first Scheme.tableau10) (Theme.accent th);
           equal float_exact 10. (Theme.size th);
           equal (list font) [ Font.regular; Font.bold ] (Theme.fonts th);
-          equal scheme Scheme.tableau10 (Theme.palette th);
+          equal scheme light_palette (Theme.palette th);
           equal scheme Scheme.viridis (Theme.scheme th);
           equal locale Locale.default (Theme.locale th);
           equal theme (Theme.v ()) th);
@@ -1143,6 +1229,7 @@ let theme_ =
             (fun () ->
               let stops = List.map (Scheme.color Scheme.viridis) dark_stops in
               Theme.v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1)
+                ~palette:Scheme.tableau10
                 ~scheme:(Scheme.ramp (Array.of_list stops))
                 ()),
             Theme.dark );
@@ -1182,6 +1269,29 @@ let theme_ =
           let paper = Theme.paper Theme.dark in
           at_least float_exact ~than:3. (contrast c paper);
           greater float_exact ~than:(luminance paper) (luminance c));
+      cases
+        "default's palette and accent contrast with its paper at 3:1 or more"
+        ~id:fst
+        (("accent", Theme.accent Theme.default)
+        :: List.map
+             (fun c -> ("palette " ^ Color.to_hex c, c))
+             (Array.to_list (Scheme.table (Theme.palette Theme.default))))
+        (fun (_, c) ->
+          at_least float_exact ~than:3. (contrast c (Theme.paper Theme.default)));
+      cases "palette neighbours are 0.11 apart in Oklab or more" ~id:pair_id
+        neighbours (fun (_, c, c') ->
+          at_least float_exact ~than:0.11 (distance c c'));
+      cases
+        "palette neighbours are 0.07 apart in Oklab or more under protanopia \
+         and deuteranopia"
+        ~id:pair_id neighbours (fun (_, c, c') ->
+          at_least float_exact ~than:0.07
+            (distance (simulate protanopia c) (simulate protanopia c'));
+          at_least float_exact ~than:0.07
+            (distance (simulate deuteranopia c) (simulate deuteranopia c')));
+      cases "any two palette colours are 0.07 apart in Oklab or more"
+        ~id:pair_id any_two (fun (_, c, c') ->
+          at_least float_exact ~than:0.07 (distance c c'));
       prop "dark's scheme contrasts with its paper at 3:1 or more"
         (Gen.float_range 0. 1.) (fun u ->
           let paper = Theme.paper Theme.dark in
