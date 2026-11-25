@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Truth, bits and float classes, elementwise: each function against the
-   element its doc states, computed in OCaml from the operands' elements, at
-   every dtype it takes over values drawn from bytes. *)
+(* Truth, bits and float classes, elementwise: each function against the element
+   its doc states, computed in OCaml from the operands' elements, at every dtype
+   it takes over values drawn from bytes. *)
 
 open Windtrap
 open Nx_support
@@ -15,16 +15,51 @@ module L = Nx_array.Layout
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
 
-(* A host value of [dt] and shape [s] over drawn bytes: NaNs, signed zeros,
-   infinities and extremes among its elements, and bool bytes other than 0 and
-   1, each of which is [true]. *)
+(* Floats a predicate breaks on, which drawn bytes rarely give. *)
+let pool = [| nan; -0.; 0.; infinity; neg_infinity; 1. |]
+
+(* [x] with the elements [picks] names replaced from [pool], a complex number's
+   two parts each: a float's or complex number's elements, else [x] itself. *)
+let with_specials (type v s) (dt : (v, s) D.t) (x : (v, s, Nx.host) Nx.t) picks
+    : (v, s, Nx.host) Nx.t =
+  let pick i default =
+    match picks.(i mod Array.length picks) with
+    | Some k -> pool.(k)
+    | None -> default
+  in
+  match D.kind dt with
+  | D.Float ->
+      Nx.create dt (Nx.shape x)
+        (Array.mapi (fun i v -> pick i v) (Nx.to_array x))
+  | D.Complex ->
+      Nx.create dt (Nx.shape x)
+        (Array.mapi
+           (fun i v ->
+             {
+               Complex.re = pick (2 * i) v.Complex.re;
+               im = pick ((2 * i) + 1) v.im;
+             })
+           (Nx.to_array x))
+  | D.Signed | D.Unsigned | D.Boolean -> x
+
+(* A host value of [dt] and shape [s] over drawn bytes: half of a float's
+   elements, or of a complex number's parts, from [pool], extremes among the
+   others, and bool bytes other than 0 and 1, each of which is [true]. *)
 let drawn (type v s) (dt : (v, s) D.t) s : (v, s, Nx.host) Nx.t Gen.t =
   let open Gen in
   let n = Array.fold_left ( * ) 1 s in
-  let+ data = string_of ~size:(constant (D.bytes dt n)) char in
-  Nx.Repr.of_array Nx.Host.v
-    (A.v dt (L.contiguous (Iarray.of_array s))
-       (Rig.Buffer.of_string (if data = "" then "\000" else data)))
+  let+ data = string_of ~size:(constant (D.bytes dt n)) char
+  and+ picks =
+    array
+      ~size:(constant ((2 * n) + 1))
+      (frequency [ (1, constant None); (1, map Option.some (int_range 0 5)) ])
+  in
+  with_specials dt
+    (Nx.Repr.of_array Nx.Host.v
+       (A.v dt
+          (L.contiguous (Iarray.of_array s))
+          (Rig.Buffer.of_string (if data = "" then "\000" else data))))
+    picks
 
 let shape =
   Gen.array ~size:(Gen.int_range 0 3)
@@ -32,13 +67,14 @@ let shape =
        [ (1, Gen.constant 0); (1, Gen.constant 1); (4, Gen.int_range 2 4) ])
 
 type one = One : ('v, 's) D.t * ('v, 's, Nx.host) Nx.t -> one
-type two = Two : ('v, 's) D.t * ('v, 's, Nx.host) Nx.t * ('v, 's, Nx.host) Nx.t -> two
+
+type two =
+  | Two : ('v, 's) D.t * ('v, 's, Nx.host) Nx.t * ('v, 's, Nx.host) Nx.t -> two
 
 let pp_value ppf x =
   Format.fprintf ppf "%a %a" D.pp (Nx.dtype x) pp_ints (Nx.shape x)
 
-let of_dtypes dts =
-  Gen.of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) dts
+let of_dtypes dts = Gen.of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) dts
 
 let one dts =
   Gen.with_pp
@@ -53,7 +89,8 @@ let one dts =
    it. *)
 let two =
   Gen.with_pp
-    (fun ppf (Two (_, a, b)) -> Format.fprintf ppf "%a, %a" pp_value a pp_value b)
+    (fun ppf (Two (_, a, b)) ->
+      Format.fprintf ppf "%a, %a" pp_value a pp_value b)
     (let open Gen in
      let* (D.Any dt) = of_dtypes D.all in
      let* s = shape in
@@ -64,7 +101,9 @@ let two =
      Two (dt, a, b))
 
 let all = D.all
-let integers = List.filter (fun (D.Any dt) -> D.is D.Signed dt || D.is D.Unsigned dt) all
+
+let integers =
+  List.filter (fun (D.Any dt) -> D.is D.Signed dt || D.is D.Unsigned dt) all
 
 (* Truth *)
 
@@ -86,10 +125,14 @@ let broadcast2 a b =
   | _ -> assert false
 
 let law_logical
-    (f : 'v 's. ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t)
+    (f :
+      'v 's.
+      ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t)
     op (Two (dt, a, b)) =
   let xs, ys = broadcast2 a b in
-  let expected = Array.map2 (fun x y -> of_truth dt (op (truth dt x) (truth dt y))) xs ys in
+  let expected =
+    Array.map2 (fun x y -> of_truth dt (op (truth dt x) (truth dt y))) xs ys
+  in
   equal_elements dt expected (Nx.to_array (f a b))
 
 let law_not (One (dt, x)) =
@@ -134,33 +177,34 @@ let law_bool_bytes (a, b) =
     (Nx.to_array (Nx.count a'))
     (Nx.to_array (Nx.count a))
 
+(* A NaN, which is not zero, and a negative zero, which is. *)
+let nan_and_zero =
+  let x = Nx.create Nx.float32 [| 3 |] [| nan; -0.; 2. |] in
+  [ Two (D.Float32, x, x) ]
+
 let truths =
   group "truth"
     [
       prop "logical_and is one where both are true" two
         (law_logical (fun a b -> Nx.logical_and a b) ( && ));
-      prop "logical_or is one where either is true" two
+      prop "logical_or is one where either is true" ~examples:nan_and_zero two
         (law_logical (fun a b -> Nx.logical_or a b) ( || ));
       prop "logical_xor is one where exactly one is true" two
         (law_logical (fun a b -> Nx.logical_xor a b) ( <> ));
       prop "logical_not is one where x is zero" (one all) law_not;
       prop "a bool byte other than 0 or 1 reads as true" bools law_bool_bytes;
-      test "a NaN and a negative zero" (fun () ->
-          let x = Nx.create Nx.float32 [| 3 |] [| nan; -0.; 2. |] in
-          equal (array float_exact) [| 1.; 0.; 1. |]
-            (Nx.to_array (Nx.logical_or x x)));
     ]
 
 (* Bits *)
 
 (* [x]'s elements as int64 integers, by the cast's modulo rule, and back. *)
 let int64s x = Nx.to_array (Nx.cast Nx.int64 x)
-
 let of_int64s dt s vs = Nx.to_array (Nx.cast dt (Nx.create Nx.int64 s vs))
 
 let law_not_bits (One (dt, x)) =
   let flipped = Array.map Int64.lognot (int64s x) in
-  equal_elements dt (of_int64s dt (Nx.shape x) flipped)
+  equal_elements dt
+    (of_int64s dt (Nx.shape x) flipped)
     (Nx.to_array (Nx.bitwise_not x))
 
 let law_lshift (One (dt, x), n) =
@@ -168,10 +212,12 @@ let law_lshift (One (dt, x), n) =
   let shifted =
     Array.map (fun v -> if n >= 64 then 0L else Int64.shift_left v n) (int64s x)
   in
-  equal_elements dt (of_int64s dt (Nx.shape x) shifted) (Nx.to_array (Nx.lshift x n))
+  equal_elements dt
+    (of_int64s dt (Nx.shape x) shifted)
+    (Nx.to_array (Nx.lshift x n))
 
-(* A signed integer shifts arithmetically, an unsigned one logically: its
-   int64 is never negative but for uint64's, which shifts logically there. *)
+(* A signed integer shifts arithmetically, an unsigned one logically: its int64
+   is never negative but for uint64's, which shifts logically there. *)
 let law_rshift (One (dt, x), n) =
   let w = D.bits dt in
   cover "no shift" (n = 0);
@@ -214,8 +260,8 @@ let integer_shift =
      in
      (x, n))
 
-(* Each integer dtype at each count the law names, and one past the width,
-   over [0], [±1] and the dtype's least and greatest. *)
+(* Each integer dtype at each count the law names, and one past the width, over
+   [0], [±1] and the dtype's least and greatest. *)
 let shift_examples =
   List.concat_map
     (fun (D.Any dt) ->
@@ -240,11 +286,14 @@ let bits =
         law_not_bits;
       test "bitwise_not of booleans is not" (fun () ->
           equal (array bool) [| true; false |]
-            (Nx.to_array (Nx.bitwise_not (Nx.create Nx.bool [| 2 |] [| false; true |]))));
+            (Nx.to_array
+               (Nx.bitwise_not (Nx.create Nx.bool [| 2 |] [| false; true |]))));
       test "bitwise_not of a bit is not" (fun () ->
           equal (array bool) [| true; false |]
-            (Nx.to_array (Nx.bitwise_not (Nx.create Nx.bit [| 2 |] [| false; true |]))));
-      prop "lshift is multiplication by 2^n modulo the width" integer_shift
+            (Nx.to_array
+               (Nx.bitwise_not (Nx.create Nx.bit [| 2 |] [| false; true |]))));
+      prop ~examples:shift_examples
+        "lshift is multiplication by 2^n modulo the width" integer_shift
         law_lshift;
       prop ~examples:shift_examples
         "rshift divides by 2^n toward negative infinity" integer_shift
@@ -252,23 +301,29 @@ let bits =
       cases "refusals"
         ~id:(fun (n, _, _) -> n)
         [
-          ("bitwise_not of a float", "Nx.bitwise_not",
-            fun () -> ignore (Nx.bitwise_not (Nx.zeros Nx.float32 [| 1 |])));
-          ("lshift of a negative count", "Nx.lshift",
-            fun () -> ignore (Nx.lshift (Nx.zeros Nx.int32 [| 1 |]) (-1)));
-          ("lshift of a boolean", "Nx.lshift",
-            fun () -> ignore (Nx.lshift (Nx.zeros Nx.bool [| 1 |]) 1));
-          ("rshift of a negative count", "Nx.rshift",
-            fun () -> ignore (Nx.rshift (Nx.zeros Nx.uint8 [| 1 |]) (-2)));
-          ("rshift of a float", "Nx.rshift",
-            fun () -> ignore (Nx.rshift (Nx.zeros Nx.float64 [| 1 |]) 2));
+          ( "bitwise_not of a float",
+            "Nx.bitwise_not",
+            fun () -> ignore (Nx.bitwise_not (Nx.zeros Nx.float32 [| 1 |])) );
+          ( "lshift of a negative count",
+            "Nx.lshift",
+            fun () -> ignore (Nx.lshift (Nx.zeros Nx.int32 [| 1 |]) (-1)) );
+          ( "lshift of a boolean",
+            "Nx.lshift",
+            fun () -> ignore (Nx.lshift (Nx.zeros Nx.bool [| 1 |]) 1) );
+          ( "rshift of a negative count",
+            "Nx.rshift",
+            fun () -> ignore (Nx.rshift (Nx.zeros Nx.uint8 [| 1 |]) (-2)) );
+          ( "rshift of a float",
+            "Nx.rshift",
+            fun () -> ignore (Nx.rshift (Nx.zeros Nx.float64 [| 1 |]) 2) );
         ]
         (fun (_, by, f) -> invalid ~by f);
     ]
 
 (* Float classes *)
 
-let classify (type v s) (dt : (v, s) D.t) (p : float -> bool) join other (v : v) =
+let classify (type v s) (dt : (v, s) D.t) (p : float -> bool) join other (v : v)
+    =
   match D.kind dt with
   | D.Float -> p v
   | D.Complex -> join (p v.Complex.re) (p v.im)
@@ -283,16 +338,23 @@ let law_class (f : 'v 's. ('v, 's, Nx.host) Nx.t -> Nx.host Nx.bool_t) p join
 let classes =
   group "float classes"
     [
-      prop "isnan" (one all) (law_class (fun x -> Nx.isnan x) Float.is_nan ( || ) false);
+      prop "isnan" (one all)
+        (law_class (fun x -> Nx.isnan x) Float.is_nan ( || ) false);
       prop "isinf" (one all)
-        (law_class (fun x -> Nx.isinf x) (fun v -> Float.abs v = infinity) ( || ) false);
-      prop "isfinite" (one all) (law_class (fun x -> Nx.isfinite x) Float.is_finite ( && ) true);
+        (law_class
+           (fun x -> Nx.isinf x)
+           (fun v -> Float.abs v = infinity)
+           ( || ) false);
+      prop "isfinite" (one all)
+        (law_class (fun x -> Nx.isfinite x) Float.is_finite ( && ) true);
       test "float8_e5m2's largest finite value and its infinity" (fun () ->
           let x =
-            Nx.bitcast Nx.float8_e5m2 (Nx.create Nx.uint8 [| 3 |] [| 0x7b; 0x7c; 0xfc |])
+            Nx.bitcast Nx.float8_e5m2
+              (Nx.create Nx.uint8 [| 3 |] [| 0x7b; 0x7c; 0xfc |])
           in
           equal (array bool) [| false; true; true |] (Nx.to_array (Nx.isinf x));
-          equal (array bool) [| true; false; false |] (Nx.to_array (Nx.isfinite x)));
+          equal (array bool) [| true; false; false |]
+            (Nx.to_array (Nx.isfinite x)));
       test "a format without infinities saturates, so nothing is infinite"
         (fun () ->
           let x = Nx.create Nx.float8_e4m3fn [| 2 |] [| 448.; nan |] in
@@ -311,22 +373,30 @@ let law_clamp (One (dt, x), (lo, hi)) =
   in
   let lo = pick lo and hi = pick hi in
   let expected =
-    let v = match lo with None -> x | Some lo -> Nx.maximum x (Nx.scalar dt lo) in
+    let v =
+      match lo with None -> x | Some lo -> Nx.maximum x (Nx.scalar dt lo)
+    in
     match hi with None -> v | Some hi -> Nx.minimum v (Nx.scalar dt hi)
   in
-  equal_elements dt (Nx.to_array expected) (Nx.to_array (Nx.clamp ?min:lo ?max:hi x))
+  equal_elements dt (Nx.to_array expected)
+    (Nx.to_array (Nx.clamp ?min:lo ?max:hi x))
 
 let clamps =
   group "clamp"
     [
       prop "clamp is minimum of maximum, each bound left out not applied"
-        (Gen.pair (one all) (Gen.pair (Gen.option Gen.nat) (Gen.option Gen.nat)))
+        (Gen.pair (one all)
+           (Gen.pair (Gen.option Gen.nat) (Gen.option Gen.nat)))
         law_clamp;
       test "a crossed pair of bounds gives the upper" (fun () ->
           equal (array int) [| 2; 2 |]
-            (Nx.to_array (Nx.clamp ~min:5 ~max:2 (Nx.create Nx.int8 [| 2 |] [| 0; 9 |]))));
+            (Nx.to_array
+               (Nx.clamp ~min:5 ~max:2 (Nx.create Nx.int8 [| 2 |] [| 0; 9 |]))));
       test "clamp keeps a NaN" (fun () ->
-          let y = Nx.clamp ~min:0. ~max:1. (Nx.create Nx.float32 [| 3 |] [| nan; -2.; 3. |]) in
+          let y =
+            Nx.clamp ~min:0. ~max:1.
+              (Nx.create Nx.float32 [| 3 |] [| nan; -2.; 3. |])
+          in
           equal (array float_exact) [| nan; 0.; 1. |] (Nx.to_array y));
       test "clamp refuses an int outside the dtype" (fun () ->
           invalid ~by:"Nx.clamp" (fun () ->
@@ -431,7 +501,7 @@ let nan_to_nums =
             (Nx.to_array (Nx.nan_to_num x)));
       test "an integer value is itself" (fun () ->
           let x = Nx.create Nx.int8 [| 2 |] [| -128; 127 |] in
-          equal bool true (Nx.nan_to_num x == x));
+          satisfies ~claim:"x itself" pass (fun y -> y == x) (Nx.nan_to_num x));
     ]
 
 (* Whole values *)
@@ -440,7 +510,8 @@ let nan_to_nums =
    drawn afresh, or one of another shape. *)
 let pair =
   Gen.with_pp
-    (fun ppf (Two (_, a, b)) -> Format.fprintf ppf "%a, %a" pp_value a pp_value b)
+    (fun ppf (Two (_, a, b)) ->
+      Format.fprintf ppf "%a, %a" pp_value a pp_value b)
     (let open Gen in
      let* (D.Any dt) = of_dtypes D.all in
      let* s = shape in
@@ -473,8 +544,10 @@ let law_array_equal (Two (_, a, b)) =
   cover "two shapes" (Nx.shape a <> Nx.shape b);
   cover "no element" (Array.length (Nx.to_array a) = 0);
   let r = Nx.array_equal a b in
-  equal (array int) [||] (Nx.shape r);
-  equal bool expected (Nx.item [] r)
+  equal
+    (Windtrap.pair (array int) bool)
+    ([||], expected)
+    (Nx.shape r, Nx.item [] r)
 
 let wholes =
   group "array_equal"
@@ -482,13 +555,14 @@ let wholes =
       prop "true iff one shape and equal at every index" pair law_array_equal;
       test "a NaN is unequal to itself; -0. equals +0." (fun () ->
           let x = Nx.create Nx.float32 [| 2 |] [| nan; 1. |] in
-          equal bool false (Nx.item [] (Nx.array_equal x x));
+          equal (array bool) [| false |] (Nx.to_array (Nx.array_equal x x));
           let z = Nx.create Nx.float64 [| 1 |] [| -0. |] in
-          equal bool true
-            (Nx.item [] (Nx.array_equal z (Nx.create Nx.float64 [| 1 |] [| 0. |]))));
+          equal (array bool) [| true |]
+            (Nx.to_array
+               (Nx.array_equal z (Nx.create Nx.float64 [| 1 |] [| 0. |]))));
       test "shapes that broadcast are unequal" (fun () ->
           let a = Nx.ones Nx.int8 [| 1; 3 |] and b = Nx.ones Nx.int8 [| 3 |] in
-          equal bool false (Nx.item [] (Nx.array_equal a b)));
+          equal (array bool) [| false |] (Nx.to_array (Nx.array_equal a b)));
     ]
 
 let () =
