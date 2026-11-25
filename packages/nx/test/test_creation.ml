@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Leaves, host values made from numbers, each against the elements its doc
-   states, at every dtype; their [_at] forms at their placements; and the
-   creations beside a reference, at its placement. *)
+(* nx.mli's Creation: host values made from numbers, each against the elements
+   its doc states, at every dtype; their [_at] forms at their placements; the
+   forms beside a reference; and creations on a set without kernels. *)
 
 open Windtrap
 open Nx_support
@@ -28,10 +28,26 @@ let of_float64 (type v s) (dt : (v, s) D.t) f : v =
 
 let dtype = Gen.of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) D.all
 
-let float_dtype =
+(* The float dtypes, as [(float, 's) D.t]. *)
+type float_dt = F : (float, 's) D.t -> float_dt
+
+let float_dts =
+  [
+    F D.Float64;
+    F D.Float32;
+    F D.Float16;
+    F D.Bfloat16;
+    F D.Float8_e4m3fn;
+    F D.Float8_e5m2;
+    F D.Float4_e2m1fn;
+  ]
+
+let float_dtype = Gen.of_list ~pp:(fun ppf (F dt) -> D.pp ppf dt) float_dts
+
+let narrow_dtype =
   Gen.of_list
-    ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt)
-    (List.filter (fun (D.Any dt) -> D.is D.Float dt) D.all)
+    ~pp:(fun ppf (F dt) -> D.pp ppf dt)
+    (List.filter (fun (F dt) -> D.bits dt < 64) float_dts)
 
 let shape =
   Gen.array ~size:(Gen.int_range 0 3)
@@ -41,31 +57,25 @@ let shape =
 
 let numel s = Array.fold_left ( * ) 1 s
 
-let contains s w =
-  let n = String.length w in
-  let rec at i =
-    i + n <= String.length s && (String.sub s i n = w || at (i + 1))
-  in
-  at 0
-
-(* A refusal in nx's words: its message starts with the function the user
-   called and names no function of the layers below. *)
+(* A raise in nx's words: the message starts with the function the user called
+   and names no function of the layers below it. *)
 let named ~by f =
   match f () with
   | () -> failf "%s raised nothing" by
   | exception Invalid_argument m ->
-      let n = Int.min (String.length by + 2) (String.length m) in
-      let start = String.sub m 0 n in
-      let below = [ "Nx_array"; "Nx_kernel"; "Layout."; "Move."; "Prog." ] in
-      equal ~msg:m (pair string (list string)) (by ^ ": ", [])
-        (start, List.filter (contains m) below)
+      starts_with ~prefix:(by ^ ": ") m;
+      List.iter
+        (fun sub -> not_contains ~sub m)
+        [ "Nx_array"; "Nx_kernel"; "Layout."; "Move."; "Prog." ]
 
-(* Each refusal raises naming its function; cases are numbered to name them. *)
-let refusals l =
-  cases "refusals"
-    ~id:(fun (n, _, _) -> n)
-    (List.mapi (fun i (by, f) -> (Printf.sprintf "%d %s" i by, by, f)) l)
-    (fun (_, by, f) -> named ~by f)
+(* Raises, each row the function, a reason and a call. *)
+let raise_rows rows =
+  cases "raises naming itself"
+    ~id:(fun (by, why, _) -> by ^ ", " ^ why)
+    rows
+    (fun (by, _, f) -> named ~by f)
+
+let r by why f = (by, why, fun () -> ignore (f ()))
 
 (* Past the array layer's limits: 33 axes, and extents other than 0 whose
    product is 2^54. *)
@@ -74,12 +84,14 @@ let huge = [| 0; 1 lsl 27; 1 lsl 27 |]
 
 (* Fills *)
 
-let law_ones (D.Any dt, s) =
+let law_zeros_ones (D.Any dt, s) =
   cover "no element" (numel s = 0);
   cover "rank 0" (s = [||]);
-  let x = Nx.ones dt s in
-  equal (array int) s (Nx.shape x);
-  equal_elements dt (Array.make (numel s) (D.one dt)) (Nx.to_array x)
+  let x = Nx.zeros dt s and y = Nx.ones dt s in
+  equal ~msg:"zeros' shape" (array int) s (Nx.shape x);
+  equal_elements dt (Array.make (numel s) (D.zero dt)) (Nx.to_array x);
+  equal ~msg:"ones' shape" (array int) s (Nx.shape y);
+  equal_elements dt (Array.make (numel s) (D.one dt)) (Nx.to_array y)
 
 (* One value of [dt] from drawn bytes: any of the format's, NaN, signed zeros,
    infinities and extremes among them. *)
@@ -94,7 +106,9 @@ let drawn (type v s) (dt : (v, s) D.t) : v Gen.t =
     | _ -> data
   in
   Nx_array.get
-    (Nx_array.v dt (Nx_array.Layout.contiguous [||]) (Rig.Buffer.of_string data))
+    (Nx_array.v dt
+       (Nx_array.Layout.contiguous [||])
+       (Rig.Buffer.of_string data))
     [||]
 
 type filled = Filled : ('v, 's) D.t * int array * 'v -> filled
@@ -115,12 +129,14 @@ let law_full (Filled (dt, s, v)) =
 
 let test_full_stores () =
   let x = Nx.full Nx.float16 [| 2 |] 0.1 in
-  equal (array float_exact) (Array.make 2 (D.of_float D.Float16 0.1)) (Nx.to_array x);
+  equal (array float_exact)
+    (Array.make 2 (D.of_float D.Float16 0.1))
+    (Nx.to_array x);
   equal (array float_exact) [| 448.; 448. |]
     (Nx.to_array (Nx.full Nx.float8_e4m3fn [| 2 |] 1e6))
 
-(* float8_e5m2's stores about its largest finite value, 57344: the value past
-   it is 65536, so 61440 is the tie, which rounds to the even code, infinity. *)
+(* float8_e5m2's stores about its largest finite value, 57344: the value past it
+   is 65536, so 61440 is the tie, which rounds to the even code, infinity. *)
 let e5m2_overflow =
   [
     (57344., 57344.);
@@ -151,53 +167,58 @@ let test_e5m2_store (_, store) =
         (Nx.to_array (store x)))
     e5m2_overflow
 
-let fills =
-  group "fills"
+let zeros_ones =
+  group "zeros and ones"
     [
-      cases "float8_e5m2 overflows to infinity" ~id:fst e5m2_stores
-        test_e5m2_store;
-      prop "ones is one at every element" (Gen.pair dtype shape) law_ones;
-      prop "full is its value at every element" filled law_full;
-      test "full stores a float by the conversion rule" test_full_stores;
-      refusals
+      prop "are zero and one at every element" (Gen.pair dtype shape)
+        law_zeros_ones;
+      raise_rows
         [
-          ("Nx.ones", fun () -> ignore (Nx.ones Nx.float32 [| 2; -1 |]));
-          ("Nx.full", fun () -> ignore (Nx.full Nx.uint8 [| 2 |] 256));
-          ("Nx.full", fun () -> ignore (Nx.full Nx.int4 [| 2 |] (-9)));
-          ("Nx.zeros", fun () -> ignore (Nx.zeros Nx.float32 [| -1 |]));
-          ("Nx.zeros", fun () -> ignore (Nx.zeros Nx.float32 ranked));
-          ("Nx.zeros", fun () -> ignore (Nx.zeros Nx.float32 huge));
-          ("Nx.full", fun () -> ignore (Nx.full Nx.uint8 ranked 0));
-          ("Nx.full", fun () -> ignore (Nx.full Nx.uint8 huge 0));
-          ("Nx.scalar", fun () -> ignore (Nx.scalar Nx.uint8 256));
-          ("Nx.create", fun () -> ignore (Nx.create Nx.float32 [| -1 |] [||]));
-          ("Nx.create", fun () -> ignore (Nx.create Nx.float32 ranked [| 0. |]));
-          ("Nx.create", fun () -> ignore (Nx.create Nx.float32 huge [||]));
-          ("Nx.create", fun () -> ignore (Nx.create Nx.float32 [| 2 |] [| 0. |]));
-          ("Nx.create", fun () -> ignore (Nx.create Nx.uint8 [| 1 |] [| 300 |]));
-          ("Nx.create", fun () -> ignore (Nx.create Nx.int4 [| 2 |] [| 0; -9 |]));
-          ("Nx.init", fun () -> ignore (Nx.init Nx.float32 ranked (fun _ -> 0.)));
-          ("Nx.init", fun () -> ignore (Nx.init Nx.float32 huge (fun _ -> 0.)));
-          ("Nx.init", fun () -> ignore (Nx.init Nx.uint8 [| 1 |] (fun _ -> 300)));
-          ( "Nx.map_item",
-            fun () -> ignore (Nx.map_item (fun _ -> 300) (Nx.zeros Nx.uint8 [| 1 |])) );
-          ("Nx.add_s", fun () -> ignore (Nx.add_s (Nx.zeros Nx.uint8 [| 1 |]) 300));
-          ("Nx.clamp", fun () -> ignore (Nx.clamp ~max:300 (Nx.zeros Nx.uint8 [| 1 |])));
-          ("Nx.Rng.uniform", fun () -> ignore (Nx.Rng.uniform Nx.float32 [| -1 |]));
-          ("Nx.Rng.uniform", fun () -> ignore (Nx.Rng.uniform Nx.float32 ranked));
-          ("Nx.Rng.uniform", fun () -> ignore (Nx.Rng.uniform Nx.float32 huge));
-        ]
+          r "Nx.ones" "a negative extent" (fun () ->
+              Nx.ones Nx.float32 [| 2; -1 |]);
+          r "Nx.zeros" "a negative extent" (fun () ->
+              Nx.zeros Nx.float32 [| -1 |]);
+          r "Nx.zeros" "33 axes" (fun () -> Nx.zeros Nx.float32 ranked);
+          r "Nx.zeros" "extents past 2^53" (fun () -> Nx.zeros Nx.float32 huge);
+        ];
+    ]
 
+let full =
+  group "full"
+    [
+      prop "is its value at every element" filled law_full;
+      test "stores a float as Dtype.of_float does" test_full_stores;
+      cases
+        "stores float8_e5m2's overflow as infinity, however a float becomes one"
+        ~id:fst e5m2_stores test_e5m2_store;
+      raise_rows
+        [
+          r "Nx.full" "an int above uint8" (fun () ->
+              Nx.full Nx.uint8 [| 2 |] 256);
+          r "Nx.full" "an int below int4" (fun () ->
+              Nx.full Nx.int4 [| 2 |] (-9));
+          r "Nx.full" "33 axes" (fun () -> Nx.full Nx.uint8 ranked 0);
+          r "Nx.full" "extents past 2^53" (fun () -> Nx.full Nx.uint8 huge 0);
+        ];
+    ]
+
+let scalar =
+  group "scalar"
+    [
+      raise_rows
+        [
+          r "Nx.scalar" "an int above uint8" (fun () -> Nx.scalar Nx.uint8 256);
+        ];
     ]
 
 (* Ranges *)
 
 type ranged = Ranged : ('v, 's) D.t * int * int * int -> ranged
 
-(* Bounds a dtype holds, small enough for every integer dtype: start and stop
-   in [0, 7], steps from -3 to 3 but 0. A quarter of these are booleans, one
-   dtype among many. Beside them, one case in five descends a boolean from
-   above 1, a range it can't hold, so that every run reaches one. *)
+(* Bounds a dtype holds, small enough for every integer dtype: start and stop in
+   [0, 7], steps from -3 to 3 but 0. A quarter of these are booleans, one dtype
+   among many. Beside them, one case in five descends a boolean from above 1, a
+   range it can't hold, so that every run reaches one. *)
 let ranged =
   Gen.with_pp
     (fun ppf (Ranged (dt, a, b, c)) ->
@@ -234,19 +255,22 @@ let law_arange (Ranged (dt, start, stop, step)) =
     | _ -> true
   in
   cover "out of a boolean's range" (not in_range);
-  if not in_range then invalid ~by:"Nx.arange" (fun () -> Nx.arange dt start stop step)
+  if not in_range then
+    invalid ~by:"Nx.arange" (fun () -> Nx.arange dt start stop step)
   else
     equal_elements dt
       (Array.of_list (List.map (of_int64 dt) vs))
       (Nx.to_array (Nx.arange dt start stop step))
 
 let test_arange_bounds () =
-  equal (array int) [| 253; 254; 255 |] (Nx.to_array (Nx.arange Nx.uint8 253 256 1));
+  equal (array int) [| 253; 254; 255 |]
+    (Nx.to_array (Nx.arange Nx.uint8 253 256 1));
   equal (array int) [| -8; 7 |] (Nx.to_array (Nx.arange Nx.int4 (-8) 8 15));
   equal (array int64)
     [| Int64.of_int (max_int - 1) |]
     (Nx.to_array (Nx.arange Nx.int64 (max_int - 1) max_int 1));
-  equal (array int64) [| Int64.of_int max_int |]
+  equal (array int64)
+    [| Int64.of_int max_int |]
     (Nx.to_array (Nx.arange Nx.int64 max_int (max_int - 1) (-1)));
   (* Across the whole range, where [stop - start] overflows [int], in either
      direction. *)
@@ -257,55 +281,63 @@ let test_arange_bounds () =
     (Array.map Int64.of_int [| max_int; max_int - (1 lsl 62) |])
     (Nx.to_array (Nx.arange Nx.int64 max_int min_int (-(1 lsl 62))))
 
-let law_arange_f (D.Any dt, (start, (stop, step))) =
+let law_arange_f (F dt, (start, (stop, (sign, step)))) =
   let start = Float.of_int start /. 4. and stop = Float.of_int stop /. 4. in
-  let step = Float.of_int step /. 8. in
-  assume (step <> 0.);
+  let step = Float.of_int (if sign then step else -step) /. 8. in
   let n = Stdlib.max 0 (Float.to_int (Float.ceil ((stop -. start) /. step))) in
   cover "empty" (n = 0);
   let expected =
-    Array.init n (fun i -> of_float64 dt (Float.fma (Float.of_int i) step start))
+    Array.init n (fun i ->
+        of_float64 dt (Float.fma (Float.of_int i) step start))
   in
-  match D.kind dt with
-  | D.Float -> equal_elements dt expected (Nx.to_array (Nx.arange_f dt start stop step))
-  | _ -> ()
+  equal_elements dt expected (Nx.to_array (Nx.arange_f dt start stop step))
 
-(* With [endpoint] and two values or more, the ends are [start] and [stop] as
-   stored, and every value lies between them. *)
-let law_linspace (D.Any dt, (n, (start, (stop, endpoint)))) =
+(* The ends are [start] and [stop] as stored, the value at [i] between them is
+   [start + i d] by one fma, [d = (stop - start) / div] rounded, and every value
+   lies between the ends. *)
+let law_linspace (F dt, (n, (start, (stop, endpoint)))) =
   let start = Float.of_int start /. 3. and stop = Float.of_int stop /. 7. in
-  match D.kind dt with
-  | D.Float ->
-      let x = Nx.to_array (Nx.linspace dt ~endpoint start stop n) in
-      equal int n (Array.length x);
-      cover "one value" (n = 1);
-      if n >= 1 then equal_elements dt [| D.of_float dt start |] [| x.(0) |];
-      if endpoint && n >= 2 then
-        equal_elements dt [| D.of_float dt stop |] [| x.(n - 1) |];
-      let lo = D.of_float dt (Float.min start stop)
-      and hi = D.of_float dt (Float.max start stop) in
-      Array.iter (fun v -> equal bool true (v >= lo && v <= hi)) x;
-      let reference i =
-        let div = if endpoint then n - 1 else n in
-        let step =
-          if div > 0 then (stop -. start) /. Float.of_int div else 0.
-        in
-        if endpoint && n >= 2 && i = n - 1 then stop
-        else Float.fma (Float.of_int i) step start
-      in
-      equal_elements dt (Array.init n (fun i -> of_float64 dt (reference i))) x
-  | _ -> ()
+  let x = Nx.to_array (Nx.linspace dt ~endpoint start stop n) in
+  cover "no value" (n = 0);
+  cover "one value" (n = 1);
+  cover "without the end" (not endpoint);
+  equal ~msg:"count" int n (Array.length x);
+  let lo = D.of_float dt (Float.min start stop)
+  and hi = D.of_float dt (Float.max start stop) in
+  Array.iter
+    (fun v ->
+      at_least ~msg:"above the lower end" float_exact ~than:lo v;
+      at_most ~msg:"below the upper end" float_exact ~than:hi v)
+    x;
+  let div = Float.of_int (if endpoint then n - 1 else n) in
+  let reference i =
+    if i = 0 then start
+    else if endpoint && n >= 2 && i = n - 1 then stop
+    else Float.fma (Float.of_int i) ((stop -. start) /. div) start
+  in
+  equal_elements dt (Array.init n (fun i -> of_float64 dt (reference i))) x
 
-let test_linspace_ints () =
-  equal (array int) [| 0; 2; 5; 7; 10 |] (Nx.to_array (Nx.linspace Nx.int32 0. 10. 5 |> Nx.cast Nx.int16));
-  equal (array float_exact) [| 0.; 2.; 4.; 6.; 8. |]
-    (Nx.to_array (Nx.linspace Nx.float64 ~endpoint:false 0. 10. 5));
-  equal (array float_exact) [| 3. |] (Nx.to_array (Nx.linspace Nx.float64 3. 10. 1));
-  equal (array float_exact) [||] (Nx.to_array (Nx.linspace Nx.float64 3. 10. 0))
+(* Into a dtype other than a float's, each float64 value is stored as cast
+   stores it: integers truncate, a boolean is true where non-zero. *)
+let test_linspace_into () =
+  equal ~msg:"int32" (array int32)
+    (Nx.to_array (Nx.cast Nx.int32 (Nx.linspace Nx.float64 0. 10. 5)))
+    (Nx.to_array (Nx.linspace Nx.int32 0. 10. 5));
+  equal ~msg:"int32's values" (array int32) [| 0l; 2l; 5l; 7l; 10l |]
+    (Nx.to_array (Nx.linspace Nx.int32 0. 10. 5));
+  equal ~msg:"uint8 from -1." (array int)
+    (Nx.to_array (Nx.cast Nx.uint8 (Nx.linspace Nx.float64 (-1.) 3. 5)))
+    (Nx.to_array (Nx.linspace Nx.uint8 (-1.) 3. 5));
+  equal ~msg:"bool" (array bool)
+    (Nx.to_array (Nx.cast Nx.bool (Nx.linspace Nx.float64 0. 1. 3)))
+    (Nx.to_array (Nx.linspace Nx.bool 0. 1. 3));
+  equal_elements Nx.complex64
+    (Nx.to_array (Nx.cast Nx.complex64 (Nx.linspace Nx.float64 (-1.) 0.5 4)))
+    (Nx.to_array (Nx.linspace Nx.complex64 (-1.) 0.5 4))
 
-(* The values linspace's doc states: the first is [start], bits included,
-   and the value at [i] is [start + i d] by one fma, [d = (stop - start) /
-   div] rounded, as if float64 had no overflow. *)
+(* The values linspace's doc states: the first is [start], bits included, and
+   the value at [i] is [start + i d] by one fma, [d] the difference rounded,
+   divided by [div] and rounded again, as if float64 had no overflow. *)
 let linspace_rows =
   let m = max_float in
   [
@@ -318,6 +350,11 @@ let linspace_rows =
     ( "-max_float to max_float, 4 values without the end",
       (false, -.m, m, 4),
       [ -.m; -.m /. 2.; 0.; m /. 2. ] );
+    (* Rounded once from the exact quotient, value 1 would end in d57. *)
+    ( "-0.1 to 1292132180748160.5, 4 values, d rounded twice",
+      (true, -0.1, 1292132180748160.5, 4),
+      [ -0.1; 0x1.87baa7e0f7d56p+48; 0x1.87baa7e0f7d57p+49; 1292132180748160.5 ]
+    );
   ]
 
 let test_linspace_row (_, (endpoint, start, stop, n), want) =
@@ -333,41 +370,44 @@ let test_logspace () =
   equal (array float_exact) [| 1.; 2.; 4. |]
     (Nx.to_array (Nx.logspace Nx.bfloat16 ~endpoint:false ~base:2. 0. 3. 3))
 
-(* The ends are [start] and [stop] as stored, and each value is
-   [start (stop / start)^(i / div)] stored once: within one step of [dt] of
-   that value at float64 stored, or 2{^-40} of it at float64. Far ends put
-   [stop / start] past float64's range. *)
-let law_geomspace
-    (D.Any dt, (n, ((far, flip), ((m1, m2), ((a, b), endpoint))))) =
-  match D.kind dt with
-  | D.Float ->
-      let ea, eb =
-        if far then (-(600 + a), 600 + b) else ((a mod 41) - 20, (b mod 41) - 20)
+(* Below float64, the ends are [start] and [stop] as stored, and each value is
+   [start (stop / start)^(i / div)] stored once: within one float of [dt] of the
+   float64 value [exp (log start + e (log stop - log start))] stored, whose own
+   error, a few thousand float64 roundings at most, lies far below one float of
+   float32 or narrower. Far ends put [stop / start] past float64's range.
+   float64 is held to its bound against exact rows below. *)
+let law_geomspace (F dt, (n, ((far, flip), ((m1, m2), ((a, b), endpoint))))) =
+  let ea, eb =
+    if far then (-(600 + a), 600 + b) else ((a mod 41) - 20, (b mod 41) - 20)
+  in
+  let start = Float.ldexp (Float.of_int m1) ea
+  and stop = Float.ldexp (Float.of_int m2) eb in
+  let start, stop = if flip then (stop, start) else (start, stop) in
+  cover "a ratio past float64's range" far;
+  cover "one value" (n = 1);
+  let x = Nx.to_array (Nx.geomspace dt ~endpoint start stop n) in
+  equal ~msg:"count" int n (Array.length x);
+  if n >= 1 then equal_elements dt [| D.of_float dt start |] [| x.(0) |];
+  if endpoint && n >= 2 then
+    equal_elements dt [| D.of_float dt stop |] [| x.(n - 1) |];
+  let div = if endpoint then n - 1 else n in
+  let f = D.float_format dt in
+  let lo = Float.log start in
+  Array.iteri
+    (fun i v ->
+      let e = if div > 0 then Float.of_int i /. Float.of_int div else 0. in
+      let r = D.of_float dt (Float.exp (lo +. (e *. (Float.log stop -. lo)))) in
+      (* An infinite reference, a store past the dtype's range, allows no
+         distance: the value must be that infinity. *)
+      let bound =
+        if Float.is_finite r then
+          (f.epsilon *. Float.abs r) +. (f.min_normal *. f.epsilon)
+        else 0.
       in
-      let start = Float.ldexp (Float.of_int m1) ea
-      and stop = Float.ldexp (Float.of_int m2) eb in
-      let start, stop = if flip then (stop, start) else (start, stop) in
-      cover "a ratio past float64's range" far;
-      cover "one value" (n = 1);
-      let x = Nx.to_array (Nx.geomspace dt ~endpoint start stop n) in
-      equal int n (Array.length x);
-      if n >= 1 then equal_elements dt [| D.of_float dt start |] [| x.(0) |];
-      if endpoint && n >= 2 then
-        equal_elements dt [| D.of_float dt stop |] [| x.(n - 1) |];
-      let div = if endpoint then n - 1 else n in
-      let f = D.float_format dt in
-      let rel = Float.max f.epsilon (Float.ldexp 1. (-40)) in
-      let lo = Float.log start in
-      Array.iteri
-        (fun i v ->
-          let e = if div > 0 then Float.of_int i /. Float.of_int div else 0. in
-          let r = D.of_float dt (Float.exp (lo +. (e *. (Float.log stop -. lo)))) in
-          if not (Float.equal v r) then
-            at_most ~msg:(Printf.sprintf "value %d of %g" i r) float_exact
-              ~than:((rel *. Float.abs r) +. (f.min_normal *. f.epsilon))
-              (Float.abs (v -. r)))
-        x
-  | _ -> ()
+      at_most
+        ~msg:(Printf.sprintf "value %d of %g" i r)
+        float_exact ~than:bound (gap v r))
+    x
 
 (* geomspace's bound, [(7 + 10 |ln r|) u] of the exact value, relative, before
    its store, [r = stop / start] and [u] float64's unit roundoff. A row of
@@ -392,8 +432,7 @@ let test_geomspace_bound () =
         ~msg:
           (Printf.sprintf "geomspace %h %h %d, value %d%s" start stop n i
              (if endpoint then "" else " without the end"))
-        float_exact ~than:bound
-        (Float.abs (v -. row.value)))
+        float_exact ~than:bound (gap v row.value))
     (Nx_support.golden "geomspace" Nx.float64)
 
 let test_geomspace () =
@@ -401,70 +440,130 @@ let test_geomspace () =
     (Nx.to_array (Nx.geomspace Nx.float32 1. 1000. 4));
   equal (array float_exact) [| 1.; 2.; 4.; 8. |]
     (Nx.to_array (Nx.geomspace Nx.float32 ~endpoint:false 1. 16. 4));
-  equal (array float_exact) [| 3. |] (Nx.to_array (Nx.geomspace Nx.float64 3. 10. 1));
-  equal (array float_exact) [||] (Nx.to_array (Nx.geomspace Nx.float64 3. 10. 0))
+  equal (array float_exact) [| 3. |]
+    (Nx.to_array (Nx.geomspace Nx.float64 3. 10. 1));
+  equal (array float_exact) [||]
+    (Nx.to_array (Nx.geomspace Nx.float64 3. 10. 0))
 
-let ranges =
-  group "ranges"
+let arange =
+  group "arange"
     [
-      prop "arange is start, start + step, ... before stop" ranged law_arange;
-      test "arange reaches its dtype's bounds" test_arange_bounds;
-      prop "arange_f is start + i step rounded once"
+      prop
+        "is start, start + step, ... before stop, stored as cast stores an \
+         int64"
+        ~examples:[ Ranged (D.Int32, 3, 4, 1) ]
+        ranged law_arange;
+      test "reaches its dtype's bounds" test_arange_bounds;
+      raise_rows
+        [
+          r "Nx.arange" "step 0" (fun () -> Nx.arange Nx.int32 0 4 0);
+          r "Nx.arange" "a value above uint8" (fun () ->
+              Nx.arange Nx.uint8 0 300 1);
+          r "Nx.arange" "a value below uint8" (fun () ->
+              Nx.arange Nx.uint8 2 (-2) (-1));
+          r "Nx.arange" "a boolean past 1" (fun () -> Nx.arange Nx.bool 0 3 1);
+          r "Nx.arange" "more than max_int values" (fun () ->
+              Nx.arange Nx.int64 min_int max_int 1);
+          r "Nx.arange" "more than max_int values, descending" (fun () ->
+              Nx.arange Nx.int64 max_int min_int (-1));
+          r "Nx.arange" "more than 2^53 values" (fun () ->
+              Nx.arange Nx.int64 0 (1 lsl 54) 1);
+        ];
+    ]
+
+let arange_f =
+  group "arange_f"
+    [
+      prop "is start + i step rounded once, then stored"
         (Gen.pair float_dtype
            (Gen.pair (Gen.int_range (-8) 8)
-              (Gen.pair (Gen.int_range (-8) 8) (Gen.int_range (-5) 5))))
+              (Gen.pair (Gen.int_range (-8) 8)
+                 (Gen.pair Gen.bool (Gen.int_range 1 5)))))
         law_arange_f;
-      prop "linspace keeps its ends and lies between them"
+      raise_rows
+        [
+          r "Nx.arange_f" "step 0" (fun () -> Nx.arange_f Nx.float32 0. 1. 0.);
+          r "Nx.arange_f" "an infinite count" (fun () ->
+              Nx.arange_f Nx.float32 0. infinity 1.);
+          r "Nx.arange_f" "a NaN count" (fun () ->
+              Nx.arange_f Nx.float32 nan 1. 1.);
+          r "Nx.arange_f" "more than 2^53 values" (fun () ->
+              Nx.arange_f Nx.float64 0. 0x1p54 1.);
+        ];
+    ]
+
+let linspace =
+  group "linspace"
+    [
+      prop "keeps its ends, steps by one fma and lies between its ends"
+        ~examples:
+          [
+            (F D.Float64, (0, (3, (7, true))));
+            (F D.Float32, (1, (-6, (14, true))));
+            (F D.Float64, (5, (0, (70, false))));
+          ]
         (Gen.pair float_dtype
            (Gen.pair (Gen.int_range 0 7)
               (Gen.pair (Gen.int_range (-20) 20)
                  (Gen.pair (Gen.int_range (-20) 20) Gen.bool))))
         law_linspace;
-      test "linspace into integers, without its end, of one and of none"
-        test_linspace_ints;
-      cases "linspace is start, then start + i d by one fma"
+      cases "is start, then start + i d by one fma, past float64's range"
         ~id:(fun (id, _, _) -> id)
         linspace_rows test_linspace_row;
-      test "logspace is exact at exact powers" test_logspace;
-      prop "geomspace keeps its ends and its ratio"
-        (Gen.pair float_dtype
+      test "stores into other dtypes as cast stores a float64"
+        test_linspace_into;
+      raise_rows
+        [
+          r "Nx.linspace" "a negative count" (fun () ->
+              Nx.linspace Nx.float32 0. 1. (-1));
+          r "Nx.linspace" "more than 2^53 values" (fun () ->
+              Nx.linspace Nx.float32 0. 1. (1 lsl 54));
+        ];
+    ]
+
+let logspace =
+  group "logspace"
+    [
+      test "is exact at exact powers" test_logspace;
+      raise_rows
+        [
+          r "Nx.logspace" "a negative count" (fun () ->
+              Nx.logspace Nx.float32 0. 1. (-1));
+          r "Nx.logspace" "more than 2^53 values" (fun () ->
+              Nx.logspace Nx.float32 0. 1. (1 lsl 54));
+        ];
+    ]
+
+let geomspace =
+  group "geomspace"
+    [
+      prop "keeps its ends and is one float of its ratio's power, below float64"
+        ~examples:
+          [ (F D.Float32, (1, ((false, false), ((3, 5), ((10, 30), true))))) ]
+        (Gen.pair narrow_dtype
            (Gen.pair (Gen.int_range 0 7)
-              (Gen.pair (Gen.pair Gen.bool Gen.bool)
+              (Gen.pair
+                 (Gen.pair Gen.bool Gen.bool)
                  (Gen.pair
                     (Gen.pair (Gen.int_range 1 7) (Gen.int_range 1 7))
                     (Gen.pair
                        (Gen.pair (Gen.int_range 0 400) (Gen.int_range 0 400))
                        Gen.bool)))))
         law_geomspace;
-      test "geomspace at exact powers, of one and of none" test_geomspace;
-      test "geomspace is within its bound of the exact value"
+      test "is within its bound of the exact value at float64"
         test_geomspace_bound;
-      refusals
+      test "is exact at exact powers, of one value and of none" test_geomspace;
+      raise_rows
         [
-          ("Nx.geomspace", fun () -> ignore (Nx.geomspace Nx.float32 0. 1. 3));
-          ("Nx.geomspace", fun () -> ignore (Nx.geomspace Nx.float32 (-1.) (-2.) 3));
-          ("Nx.geomspace", fun () -> ignore (Nx.geomspace Nx.float32 1. infinity 3));
-          ("Nx.geomspace", fun () -> ignore (Nx.geomspace Nx.float32 1. 2. (-1)));
-          ("Nx.arange", fun () -> ignore (Nx.arange Nx.int32 0 4 0));
-          ("Nx.arange", fun () -> ignore (Nx.arange Nx.uint8 0 300 1));
-          ("Nx.arange", fun () -> ignore (Nx.arange Nx.uint8 2 (-2) (-1)));
-          ("Nx.arange", fun () -> ignore (Nx.arange Nx.bool 0 3 1));
-          ("Nx.arange", fun () -> ignore (Nx.arange Nx.int64 min_int max_int 1));
-          ("Nx.arange", fun () -> ignore (Nx.arange Nx.int64 max_int min_int (-1)));
-          ("Nx.arange_f", fun () -> ignore (Nx.arange_f Nx.float32 0. 1. 0.));
-          ("Nx.arange_f", fun () -> ignore (Nx.arange_f Nx.float32 0. infinity 1.));
-          ("Nx.arange_f", fun () -> ignore (Nx.arange_f Nx.float32 nan 1. 1.));
-          ("Nx.linspace", fun () -> ignore (Nx.linspace Nx.float32 0. 1. (-1)));
-          ("Nx.logspace", fun () -> ignore (Nx.logspace Nx.float32 0. 1. (-1)));
-          ("Nx.eye", fun () -> ignore (Nx.eye Nx.float32 (-1)));
-          ("Nx.eye", fun () -> ignore (Nx.eye ~m:(-2) Nx.float32 2));
-          ("Nx.eye", fun () -> ignore (Nx.eye Nx.float32 (1 lsl 27)));
-          ("Nx.arange", fun () -> ignore (Nx.arange Nx.int64 0 (1 lsl 54) 1));
-          ("Nx.arange_f", fun () -> ignore (Nx.arange_f Nx.float64 0. 0x1p54 1.));
-          ("Nx.linspace", fun () -> ignore (Nx.linspace Nx.float32 0. 1. (1 lsl 54)));
-          ("Nx.logspace", fun () -> ignore (Nx.logspace Nx.float32 0. 1. (1 lsl 54)));
-        ]
-
+          r "Nx.geomspace" "a zero start" (fun () ->
+              Nx.geomspace Nx.float32 0. 1. 3);
+          r "Nx.geomspace" "negative ends" (fun () ->
+              Nx.geomspace Nx.float32 (-1.) (-2.) 3);
+          r "Nx.geomspace" "an infinite end" (fun () ->
+              Nx.geomspace Nx.float32 1. infinity 3);
+          r "Nx.geomspace" "a negative count" (fun () ->
+              Nx.geomspace Nx.float32 1. 2. (-1));
+        ];
     ]
 
 (* Eye *)
@@ -501,25 +600,32 @@ let law_eye_at (D.Any dt, (n, (m, k))) =
 let eye =
   group "eye"
     [
-      prop "eye is one where column - row = k"
+      prop "is one where column - row = k"
         (Gen.pair dtype
            (Gen.pair (Gen.int_range 0 4)
               (Gen.pair (Gen.int_range 0 4) (Gen.int_range (-5) 5))))
         law_eye;
-      prop "eye_at holds eye's elements wherever it lies"
+      prop "holds its elements at eye_at wherever it lies"
         (Gen.pair dtype
            (Gen.pair (Gen.int_range 0 5)
               (Gen.pair (Gen.int_range 0 5) (Gen.int_range (-7) 7))))
         law_eye_at;
-      test "eye defaults to the square main diagonal" (fun () ->
+      test "defaults to the square main diagonal" (fun () ->
           equal (array int32) [| 1l; 0l; 0l; 1l |]
             (Nx.to_array (Nx.eye Nx.int32 2)));
+      raise_rows
+        [
+          r "Nx.eye" "a negative n" (fun () -> Nx.eye Nx.float32 (-1));
+          r "Nx.eye" "a negative m" (fun () -> Nx.eye ~m:(-2) Nx.float32 2);
+          r "Nx.eye" "extents past 2^53" (fun () ->
+              Nx.eye Nx.float32 (1 lsl 27));
+        ];
     ]
 
 (* Placements *)
 
-(* A creation's host form and its [_at] form: [lies p] is where the [_at]
-   form at [p] lies, [p] itself but for a 0-d value. *)
+(* A creation's host form and its [_at] form: [lies p] is where the [_at] form
+   at [p] lies, [p] itself but for a 0-d value. *)
 type pair =
   | Pair : {
       name : string;
@@ -585,8 +691,8 @@ let pairs =
       { f = (fun p -> Nx.hann_at p Nx.float64 6) };
   ]
 
-(* The host form lies on the host; the [_at] form at a split lies there,
-   each device holding its window, and holds the host form's elements. *)
+(* The host form lies on the host; the [_at] form at a split lies there, each
+   device holding its window, and holds the host form's elements. *)
 let test_pair (Pair { dtype; host; at; lies; _ }) =
   let h = host () in
   equal ~msg:"host form" (placement ()) Nx.Host.on (Nx.placement h);
@@ -605,14 +711,16 @@ let test_pair (Pair { dtype; host; at; lies; _ }) =
   in
   Iarray.iteri
     (fun j a ->
-      equal ~msg:(Printf.sprintf "device %d's window" j) (array int) (window j)
+      equal
+        ~msg:(Printf.sprintf "device %d's window" j)
+        (array int) (window j)
         (Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout a))))
     (Nx.Repr.shards ~by:"test" y);
   equal_elements dtype (Nx.to_array h) (Nx.to_array y)
 
-(* Placements over two devices, and shapes of up to three axes: an [_at]
-   form lies at its placement where the shape has every axis it cuts, and
-   raises naming itself elsewhere. *)
+(* Placements over two devices, and shapes of up to three axes: an [_at] form
+   lies at its placement where the shape has every axis it cuts, and raises
+   naming itself elsewhere. *)
 let placement_gen =
   Gen.of_list ~pp:Nx.Placement.pp
     [
@@ -652,41 +760,34 @@ let test_scalar_at_uncut () =
       Nx.Placement.mesh mesh [ (1, [ "x" ]) ];
     ]
 
-(* An operation over host creations, and a movement of one, lie on the host. *)
-let test_host_computed () =
-  let c = Nx.zeros Nx.float32 [| 2 |] in
-  equal ~msg:"an operation" (placement ()) Nx.Host.on
-    (Nx.placement (Nx.add c c));
-  equal ~msg:"a movement" (placement ()) Nx.Host.on
-    (Nx.placement (Nx.reshape [| 1; 2 |] c))
-
-let placements =
-  group "placements"
+let at_forms =
+  group "_at forms"
     [
-      test "what host creations compute lies on the host" test_host_computed;
-      cases "each creation's host form and _at form"
+      cases
+        "each holds its host form's elements at a split, each device its window"
         ~id:(fun (Pair { name; _ }) -> name)
         pairs test_pair;
-      prop "full_at lies at its placement"
+      prop
+        "full_at lies at its placement, or raises naming itself where it cuts \
+         an axis the shape lacks"
         (Gen.pair placement_gen (Gen.pair shape (Gen.float_range (-4.) 4.)))
         law_at;
-      test "scalar_at at a cut placement lies whole on each device"
+      test "scalar_at lies whole on each device however its placement cuts"
         test_scalar_at_uncut;
-      refusals
+      raise_rows
         [
-          ( "Nx.zeros_at",
-            fun () ->
-              ignore (Nx.zeros_at (S2.split ~axis:1) Nx.float32 [| 4 |]) );
-          ( "Nx.arange_at",
-            fun () -> ignore (Nx.arange_at (S2.split ~axis:1) Nx.int32 0 4 1) );
-          ( "Nx.eye_at",
-            fun () -> ignore (Nx.eye_at (S2.split ~axis:2) Nx.float32 3) );
-          ( "Nx.hann_at",
-            fun () -> ignore (Nx.hann_at (S2.split ~axis:1) Nx.float32 8) );
-          ( "Nx.ones_at",
-            fun () -> ignore (Nx.ones_at S2.on Nx.float32 [| -1 |]) );
-          ( "Nx.full_at",
-            fun () -> ignore (Nx.full_at S2.on Nx.uint8 [| 2 |] 256) );
+          r "Nx.zeros_at" "a cut of an axis the shape lacks" (fun () ->
+              Nx.zeros_at (S2.split ~axis:1) Nx.float32 [| 4 |]);
+          r "Nx.arange_at" "a cut of an axis the shape lacks" (fun () ->
+              Nx.arange_at (S2.split ~axis:1) Nx.int32 0 4 1);
+          r "Nx.eye_at" "a cut of an axis the shape lacks" (fun () ->
+              Nx.eye_at (S2.split ~axis:2) Nx.float32 3);
+          r "Nx.hann_at" "a cut of an axis the shape lacks" (fun () ->
+              Nx.hann_at (S2.split ~axis:1) Nx.float32 8);
+          r "Nx.ones_at" "a negative extent, as ones" (fun () ->
+              Nx.ones_at S2.on Nx.float32 [| -1 |]);
+          r "Nx.full_at" "an int above uint8, as full" (fun () ->
+              Nx.full_at S2.on Nx.uint8 [| 2 |] 256);
         ];
     ]
 
@@ -705,27 +806,26 @@ let test_like_placement () =
   equal (array float_exact) (Array.make 8 1.) (Nx.to_array (Nx.ones_like x));
   equal (array float_exact) [| 2. |] (Nx.to_array (Nx.scalar_like x 2.))
 
-(* [beside x] is [x]'s placement uncut, and a value of another shape made
-   there combines with [x] however [x] is cut. *)
+(* [beside x] is [x]'s placement uncut, and a value of another shape made there
+   combines with [x] however [x] is cut. *)
 let law_beside p =
   let cut = not (Nx.Placement.equal (Nx.Placement.uncut p) p) in
   cover "a cut placement" cut;
   cover "an uncut placement" (not cut);
-  let x = Nx.place p (Nx.arange_f Nx.float32 0. 24. 1. |> Nx.reshape [| 2; 3; 4 |]) in
+  let x =
+    Nx.place p (Nx.arange_f Nx.float32 0. 24. 1. |> Nx.reshape [| 2; 3; 4 |])
+  in
   equal (placement ()) (Nx.Placement.uncut p) (Nx.beside x);
   let k = Nx.arange_f_at (Nx.beside x) Nx.float32 0. 4. 1. in
   let want = Array.init 24 (fun i -> Float.of_int (i + (i mod 4))) in
   equal (array float_exact) want (Nx.to_array (Nx.add x k))
 
-(* A sub-byte fill is one kernel call on a device of nx.cpu's kernels. *)
+(* A sub-byte reference on a set with kernels: full_like holds its value at
+   every element, an odd count of them. *)
 let test_like_sub_byte () =
   let check (type v s) (dt : (v, s) D.t) (v : v) =
     let x = Nx.place Count.on (Nx.zeros dt [| 13 |]) in
-    C.reset ();
-    let y = Nx.full_like x v in
-    let got = Nx.to_array y in
-    equal ~msg:(D.name dt ^ " in one kernel call") int 1 (C.calls ());
-    equal_elements dt (Array.make 13 v) got
+    equal_elements dt (Array.make 13 v) (Nx.to_array (Nx.full_like x v))
   in
   check D.Int4 (-7);
   check D.Uint4 11;
@@ -734,41 +834,52 @@ let test_like_sub_byte () =
 
 let test_like_host () =
   let x = Nx.create Nx.bool [| 2 |] [| false; false |] in
-  equal bool true
-    (Nx.Placement.equal Nx.Host.on (Nx.placement (Nx.ones_like x)));
+  equal (placement ()) Nx.Host.on (Nx.placement (Nx.ones_like x));
   equal (array bool) [| true; true |] (Nx.to_array (Nx.ones_like x))
 
 let like =
-  group "beside a reference"
+  group "_like forms"
     [
-      test "a split reference: a like is split, scalar_like whole on each"
+      test "of a split reference are split, scalar_like whole on each device"
         test_like_placement;
-      test "a host reference gives host values" test_like_host;
-      prop "beside is the uncut placement, and combines" placement_gen
-        law_beside;
-      test "a sub-byte reference fills in one kernel call" test_like_sub_byte;
-      refusals
+      test "of a host reference are host values" test_like_host;
+      test "hold a sub-byte value at every element" test_like_sub_byte;
+      raise_rows
         [
-          ("Nx.full_like", fun () -> ignore (Nx.full_like (Nx.zeros Nx.uint4 [| 1 |]) 16));
-          ("Nx.scalar_like", fun () -> ignore (Nx.scalar_like (Nx.zeros Nx.int8 [| 1 |]) 128));
-          ( "Nx.add",
-            fun () ->
-              let x = Nx.place (S2.split ~axis:0) (Nx.zeros Nx.float32 [| 4; 3 |]) in
-              ignore (Nx.add x (Nx.arange_at (Nx.placement x) Nx.float32 0 3 1)) );
-        ]
+          r "Nx.full_like" "an int above uint4" (fun () ->
+              Nx.full_like (Nx.zeros Nx.uint4 [| 1 |]) 16);
+          r "Nx.scalar_like" "an int above int8" (fun () ->
+              Nx.scalar_like (Nx.zeros Nx.int8 [| 1 |]) 128);
+        ];
+    ]
 
+let beside =
+  group "beside"
+    [
+      prop "is the uncut placement, where a value of another shape combines"
+        placement_gen law_beside;
+      raise_rows
+        [
+          (* The doc's example: at [placement x], a vector is cut along its own
+             axis, which [add x] reads along axis 1. *)
+          r "Nx.add" "a vector made at a split value's placement" (fun () ->
+              let x =
+                Nx.place (S2.split ~axis:0) (Nx.zeros Nx.float32 [| 4; 3 |])
+              in
+              Nx.add x (Nx.arange_at (Nx.placement x) Nx.float32 0 3 1));
+        ];
     ]
 
 (* Without kernels *)
 
-(* A set no kernel library computes on, as a GPU set is outside a compiler:
-   a software device and a device that does not run on the host. *)
+(* A set no kernel library computes on, as a GPU set is outside a compiler: a
+   software device and a device that does not run on the host. *)
 let off = Nx_array_support.off_host ()
 
 module Bare = (val Nx.devices [ m 3; off ])
 
-(* [Bare]'s placements: whole on each device, cut along an axis, and each
-   device alone. *)
+(* [Bare]'s placements: whole on each device, cut along an axis, and each device
+   alone. *)
 let bare_placements =
   [
     ("on", Bare.on);
@@ -804,9 +915,9 @@ let bare_gen =
     ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
     (("split ~axis:1", Bare.split ~axis:1) :: bare_placements)
 
-(* The fills and the forms beside a reference, at every dtype and at
-   [Bare]'s placements, are their host values placed there: on no element,
-   on one, and over windows a cut leaves uneven or empty. *)
+(* The fills and the forms beside a reference, at every dtype and at [Bare]'s
+   placements, are their host values placed there: on no element, on one, and
+   over windows a cut leaves uneven or empty. *)
 let law_bare ((name, p), (D.Any dt, s)) =
   let axis = if name = "split ~axis:0" then 0 else 1 in
   let cut = String.starts_with ~prefix:"split" name in
@@ -837,9 +948,7 @@ let law_bare ((name, p), (D.Any dt, s)) =
 let law_bare_eye ((name, p), (D.Any dt, (n, (m, k)))) =
   cover "an odd count of elements" (n * m mod 2 = 1);
   cover "a sub-byte dtype" (D.bits dt < 8);
-  same_as ~msg:name dt
-    (Nx.place p (Nx.eye ~m ~k dt n))
-    (Nx.eye_at ~m ~k p dt n)
+  same_as ~msg:name dt (Nx.place p (Nx.eye ~m ~k dt n)) (Nx.eye_at ~m ~k p dt n)
 
 let mib = 1 lsl 20
 
@@ -868,10 +977,10 @@ let last_byte x =
   Rig.Buffer.blit_to_bytes b (Rig.Buffer.length b - 1) last 0 1;
   Char.code (Bytes.get last 0)
 
-(* A creation of more than a slab off the host, 32 MiB a slab, holds its
-   host form's bits: slabs that cut rows of every axis, and float4 runs that
-   start inside a byte and end on an odd count, whose last byte keeps its
-   spare bits zero. *)
+(* A creation of more than a slab off the host, 32 MiB a slab, holds its host
+   form's bits: slabs that cut rows of every axis, and float4 runs that start
+   inside a byte and end on an odd count, whose last byte keeps its spare bits
+   zero. *)
 let test_bare_slabs () =
   let p = Nx.Placement.device Bare.v off in
   let key = Nx.Rng.key 7 in
@@ -887,9 +996,9 @@ let test_bare_slabs () =
     y;
   equal ~msg:"spare bits" int 0 (last_byte y lsr 4)
 
-(* A creation larger than the host may hold lies on the device: off the host
-   the host holds a slab and its staging, about 64 MiB, of a 128 MiB window,
-   and on a software device, whose memory the host addresses, none. *)
+(* A creation larger than the host may hold lies on the device: off the host the
+   host holds a slab and its staging, about 64 MiB, of a 128 MiB window, and on
+   a software device, whose memory the host addresses, none. *)
 let test_bare_budget () =
   let n = 128 * mib / 4 in
   let want = Nx.arange Nx.int32 0 n 1 in
@@ -903,12 +1012,12 @@ let test_bare_budget () =
   let y = under_host_budget 0 (fun () -> Nx.arange_at soft Nx.int32 0 n 1) in
   equal_on_host ~msg:"software device" want y
 
-(* A creation whose bytes are all one byte sets them on the device, with no
-   host memory: under a host budget of no more than the host holds, each
-   holds its host form's elements, a sub-byte one's spare bits zero, and
-   float8's -0, the one byte 0x80, its own bits; while a value of other
-   bytes, computed on the host, raises: 1.5, and -0 of float32, float16 and
-   bfloat16, whose zero bytes are not all of them. *)
+(* A creation whose bytes are all one byte sets them on the device, with no host
+   memory: under a host budget of no more than the host holds, each holds its
+   host form's elements, a sub-byte one's spare bits zero, and float8's -0, the
+   one byte 0x80, its own bits; while a value of other bytes, computed on the
+   host, raises: 1.5, and -0 of float32, float16 and bfloat16, whose zero bytes
+   are not all of them. *)
 let test_bare_fill () =
   let p = Nx.Placement.device Bare.v off in
   let made =
@@ -941,9 +1050,9 @@ let test_bare_fill () =
   raises "float16 -0" Nx.float16 (-0.);
   raises "bfloat16 -0" Nx.bfloat16 (-0.)
 
-(* The operations an extent receives while [f] runs, each as its name and
-   its count of operands: one of no operands computes, and the first that
-   reads an operand ends [f]. *)
+(* The operations an extent receives while [f] runs, each as its name and its
+   count of operands: one of no operands computes, and the first that reads an
+   operand ends [f]. *)
 exception Reads
 
 let staged f =
@@ -988,8 +1097,8 @@ let test_bare_interpreted (Pair { dtype; host; at; lies; _ }) =
   same_as ~msg:"Values" dtype want (under Values (fun () -> at p));
   same_as ~msg:"Extent" dtype want (under Extent (fun () -> at p))
 
-(* An operation whose result needs no element of its operands, as [f] of
-   values placed at a placement. *)
+(* An operation whose result needs no element of its operands, as [f] of values
+   placed at a placement. *)
 type shortcut =
   | Shortcut : {
       name : string;
@@ -1028,11 +1137,7 @@ let shortcuts =
             x);
       };
     shortcut "conv with no tap" f64
-      {
-        f =
-          (fun p ->
-            Nx.conv (zeros p [| 1; 4; 3 |]) (zeros p [| 2; 0; 3 |]));
-      };
+      { f = (fun p -> Nx.conv (zeros p [| 1; 4; 3 |]) (zeros p [| 2; 0; 3 |])) };
     shortcut "lexsort of rows of no column" Nx.int64
       { f = (fun p -> Nx.lexsort (zeros p [| 3; 0 |])) };
     shortcut "array_equal of two shapes" Nx.bool
@@ -1062,10 +1167,10 @@ let test_shortcut (Shortcut { name; dtype; f }) =
   named ~by (fun () -> ignore (f Bare.on));
   same_as ~msg:"with kernels" dtype (Nx.place S2.on (f Nx.Host.on)) (f S2.on)
 
-(* Over operands cut along an axis or read through strided and broadcast
-   views, on a set with kernels, each holds its host result's elements and
-   lies where the routing rule puts it: a cut of an axis the result keeps
-   cuts it alike, and one the result drops closes whole on each device. *)
+(* Over operands cut along an axis or read through strided and broadcast views,
+   on a set with kernels, each holds its host result's elements and lies where
+   the routing rule puts it: a cut of an axis the result keeps cuts it alike,
+   and one the result drops closes whole on each device. *)
 let test_shortcut_views () =
   let f64 = Nx.float64 in
   let split a x = Nx.place (S2.split ~axis:a) x in
@@ -1073,7 +1178,8 @@ let test_shortcut_views () =
   let cut x = split 0 x in
   let check msg dt at host y =
     equal ~msg:(msg ^ ": placement") (placement ()) at (Nx.placement y);
-    equal ~msg (elements dt) (Array.to_list (Nx.to_array host))
+    equal ~msg (elements dt)
+      (Array.to_list (Nx.to_array host))
       (Array.to_list (Nx.to_array y))
   in
   let z s = Nx.zeros f64 s in
@@ -1090,7 +1196,8 @@ let test_shortcut_views () =
   check "matrix_rank, a split batch" Nx.int64 rows
     (Nx.matrix_rank (z [| 2; 3; 0 |]))
     (Nx.matrix_rank (cut (z [| 2; 3; 0 |])));
-  check "pinv, a split batch" f64 rows (Nx.pinv (z [| 2; 0; 3 |]))
+  check "pinv, a split batch" f64 rows
+    (Nx.pinv (z [| 2; 0; 3 |]))
     (Nx.pinv (cut (z [| 2; 0; 3 |])));
   check "lexsort, split rows of no column" Nx.int64 rows
     (Nx.lexsort (z [| 4; 0 |]))
@@ -1099,8 +1206,8 @@ let test_shortcut_views () =
   check "pad of no element, a cut of a kept axis" f64 (S2.split ~axis:2)
     (Nx.pad widths 5. (z [| 2; 0; 5 |]))
     (Nx.pad widths 5. (split 2 (z [| 2; 0; 5 |])));
-  (* The channels, which a convolution sums: their cut closes, as with
-     taps, though the result has as many channels. *)
+  (* The channels, which a convolution sums: their cut closes, as with taps,
+     though the result has as many channels. *)
   let x = z [| 1; 4; 3 |] and w = z [| 3; 0; 3 |] in
   check "conv with no tap, cut channels" f64 S2.on (Nx.conv x w)
     (Nx.conv (split 2 x) (whole w));
@@ -1114,9 +1221,9 @@ let test_shortcut_views () =
     (Nx.isinf (Nx.transpose ints))
     (Nx.isinf (Nx.transpose (cut ints)))
 
-(* A shortcut whose result's shape is not its operand's loops over one
-   position per lane it keeps, however large the operand: here a broadcast
-   view of 10^8 elements. *)
+(* A shortcut whose result's shape is not its operand's loops over one position
+   per lane it keeps, however large the operand: here a broadcast view of 10^8
+   elements. *)
 let test_shortcut_cost () =
   let row = Nx.place Count.on (Nx.ones Nx.float32 [| 10_000 |]) in
   let big = Nx.broadcast_to [| 10_000; 10_000 |] row in
@@ -1125,8 +1232,8 @@ let test_shortcut_cost () =
   less ~msg:"positions" int ~than:10 (C.positions ());
   equal (array bool) [| false |] (Nx.to_array y)
 
-(* Under an extent, a shortcut over a concrete operand on [Bare] reaches
-   the interpretation with its operand. *)
+(* Under an extent, a shortcut over a concrete operand on [Bare] reaches the
+   interpretation with its operand. *)
 let test_shortcut_received () =
   let a = Nx.zeros_at Bare.on Nx.float64 [| 3; 3 |] in
   equal
@@ -1134,9 +1241,8 @@ let test_shortcut_received () =
     [ ("Map", 1) ]
     (staged (fun () -> ignore (Nx.matrix_power a 0)))
 
-(* A donated value another operation consumed is dead: a predicate of an
-   integer value, which reads no element of it, still raises, naming
-   itself. *)
+(* A donated value another operation consumed is dead: a predicate of an integer
+   value, which reads no element of it, still raises, naming itself. *)
 let test_predicate_dead () =
   let dead () =
     let x = Nx.create Nx.int32 [| 2 |] [| 1l; 2l |] in
@@ -1147,7 +1253,7 @@ let test_predicate_dead () =
   invalid ~by:"Nx.isfinite" (fun () -> Nx.isfinite (dead ()))
 
 let bare =
-  group "without kernels"
+  group "a set without kernels"
     [
       cases "each _at form is its host form placed"
         ~id:(fun (Pair { name; _ }) -> name)
@@ -1167,18 +1273,17 @@ let bare =
       prop "eye_at is its host form placed"
         ~examples:
           [
-            (("off the host", Nx.Placement.device Bare.v off),
-              (D.Any D.Int4, (3, (5, 1))));
-            (("split ~axis:1", Bare.split ~axis:1),
-              (D.Any D.Float4_e2m1fn, (1, (7, 0))));
+            ( ("off the host", Nx.Placement.device Bare.v off),
+              (D.Any D.Int4, (3, (5, 1))) );
+            ( ("split ~axis:1", Bare.split ~axis:1),
+              (D.Any D.Float4_e2m1fn, (1, (7, 0))) );
           ]
         (Gen.pair bare_gen
            (Gen.pair dtype
               (Gen.pair (Gen.int_range 0 5)
                  (Gen.pair (Gen.int_range 0 9) (Gen.int_range (-3) 3)))))
         law_bare_eye;
-      test "a creation of many slabs holds its host form's bits"
-        test_bare_slabs;
+      test "a creation of many slabs holds its host form's bits" test_bare_slabs;
       test "a creation larger than the host's budget lies on the device"
         test_bare_budget;
       test "a creation of one repeated byte sets it on the device"
@@ -1188,8 +1293,7 @@ let bare =
         shortcuts test_shortcut;
       test "a shortcut over cut and strided operands holds its elements"
         test_shortcut_views;
-      test "a shortcut's work does not grow with its operand"
-        test_shortcut_cost;
+      test "a shortcut's work does not grow with its operand" test_shortcut_cost;
       test "under an extent, a shortcut is received with its operand"
         test_shortcut_received;
       test "a predicate of a dead integer value raises" test_predicate_dead;
@@ -1202,5 +1306,44 @@ let bare =
         pairs test_bare_interpreted;
     ]
 
+(* Shapes the values section refuses, for the functions of other sections that
+   make a shape from numbers. *)
+let other_shapes =
+  group "shapes past the layout's limits"
+    [
+      raise_rows
+        [
+          r "Nx.create" "33 axes" (fun () ->
+              Nx.create Nx.float32 ranked [| 0. |]);
+          r "Nx.create" "extents past 2^53" (fun () ->
+              Nx.create Nx.float32 huge [||]);
+          r "Nx.init" "33 axes" (fun () ->
+              Nx.init Nx.float32 ranked (fun _ -> 0.));
+          r "Nx.init" "extents past 2^53" (fun () ->
+              Nx.init Nx.float32 huge (fun _ -> 0.));
+          r "Nx.Rng.uniform" "33 axes" (fun () ->
+              Nx.Rng.uniform Nx.float32 ranked);
+          r "Nx.Rng.uniform" "extents past 2^53" (fun () ->
+              Nx.Rng.uniform Nx.float32 huge);
+        ];
+    ]
+
 let () =
-  exit (run "nx creation" [ fills; ranges; eye; placements; like; bare ])
+  exit
+    (run "nx creation"
+       [
+         zeros_ones;
+         full;
+         scalar;
+         arange;
+         arange_f;
+         linspace;
+         logspace;
+         geomspace;
+         eye;
+         at_forms;
+         like;
+         beside;
+         bare;
+         other_shapes;
+       ])
