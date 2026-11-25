@@ -1018,6 +1018,115 @@ let typed_q =
     ]
     (fun (_, (keys, shown)) -> equal string shown (after_keys keys))
 
+(* Six runs of one experiment, [r1] the oldest, each with samples of [m]. *)
+let six store =
+  List.iter
+    (fun k ->
+      ignore
+        (Fixture.write_log store ~started:k
+           ~name:(Printf.sprintf "r%d" k)
+           (List.init 20 (fun i -> Fixture.sample (i, Float.of_int (i * k))))))
+    [ 1; 2; 3; 4; 5; 6 ]
+
+(* The names of the runs pane's rows, top to bottom. *)
+let listed screen =
+  List.filter_map
+    (fun y ->
+      List.find_opt
+        (fun w -> String.length w = 2 && w.[0] = 'r')
+        (String.split_on_char ' ' (pane screen y)))
+    (List.init (T.Screen.rows screen) Fun.id)
+
+(* The names the legend gives, on the row of its first entry: the word
+   after each [━ ]. *)
+let legend screen =
+  match List.filter (fun (_, x) -> x > 42) (T.Screen.find screen "━ ") with
+  | (y, _) :: _ ->
+      let rec names r =
+        match before r "━ " with
+        | None -> []
+        | Some head ->
+            let rest =
+              String.sub r (String.length head + String.length "━ ")
+                (String.length r - String.length head - String.length "━ ")
+            in
+            List.hd (String.split_on_char ' ' rest) :: names rest
+      in
+      names (from 42 (T.Screen.row screen y))
+  | [] -> []
+
+let six_keys =
+  cases
+    ~id:(fun (name, _, _) -> name)
+    "each key does what the keys table says"
+    [
+      ("G the last run", [ char 'G' ], `Cursor "r1");
+      ("g the first run", [ char 'G'; char 'g' ], `Cursor "r6");
+      ("] the next run at strips", [ Key Enter; char ']' ], `Cursor "r5");
+      ( "[ the previous run at strips",
+        [ Key Enter; char ']'; char '[' ],
+        `Cursor "r6" );
+      ( "o orders by name",
+        [ char 'o'; char 'o' ],
+        `Listed [ "r1"; "r2"; "r3"; "r4"; "r5"; "r6" ] );
+      ("e folds the experiment", [ char 'e' ], `Listed []);
+      (* Five overlays asked for: the fifth, r1, is refused. *)
+      ( "space overlays four runs at most",
+        List.concat (times 5 [ char 'j'; Text " " ]) @ [ char 'g' ],
+        `Legend [ "r2"; "r3"; "r4"; "r5"; "r6" ] );
+      ( "c clears the overlays",
+        [ char 'j'; Text " "; char 'k'; char 'c' ],
+        `Legend [ "r6" ] );
+      ( "Esc at charts clears the overlays",
+        [ char 'j'; Text " "; char 'k'; Key Escape ],
+        `Legend [ "r6" ] );
+    ]
+    (fun (_, keys, expected) ->
+      with_store ~name:"six" [] @@ fun store ->
+      six store;
+      let sc = show ~cols:160 ~rows:48 store Munin_tui.Runs keys in
+      match expected with
+      | `Cursor name -> equal (option string) (Some name) (run_pane_name sc)
+      | `Listed names -> equal (list string) names (listed sc)
+      | `Legend names ->
+          equal (list string) names (List.sort String.compare (legend sc)))
+
+(* [run] reads the store before it asks for a terminal. *)
+let unknown_run =
+  test "run is an error for a run the store lacks" (fun () ->
+      with_store [] @@ fun store ->
+      is_error (Munin_tui.run store (Munin_tui.Run (Some "absent"))))
+
+(* [tree root] is each file under [root], with its size and modification
+   time. *)
+let tree root =
+  let rec walk path acc =
+    let st = Unix.lstat path in
+    match st.st_kind with
+    | Unix.S_DIR ->
+        Array.fold_left
+          (fun acc e -> walk (Filename.concat path e) acc)
+          acc (Sys.readdir path)
+    | _ -> (path, (st.st_size, st.st_mtime)) :: acc
+  in
+  List.sort compare (walk root [])
+
+let never_writes =
+  test "the dashboard never writes the store" (fun () ->
+      with_store Fixture.[ short_running; short_amber ] @@ fun store ->
+      let before = tree (Store.root store) in
+      ignore
+        (show ~cols:120 ~rows:40 store Munin_tui.Runs
+           [
+             Key Enter; Key Enter; char '+'; Key Escape; char 'i'; Key Escape;
+             char '?'; Key Escape; Text " "; char 'r'; char 's'; char 'y';
+             char 'o'; char 'e'; char '/'; char 'x'; Key Escape;
+           ]);
+      equal
+        (list (pair string (pair int float_exact)))
+        before
+        (tree (Store.root store)))
+
 (* Where the runs pane is hidden, the filter shows it while it is typed:
    the text typed is in its line, and Enter keeps it. *)
 let hidden_filter =
@@ -2096,6 +2205,7 @@ let () =
        [
          group "dashboard"
            [
+             never_writes;
              info_pid;
              info_command;
              banner_whole;
@@ -2149,6 +2259,7 @@ let () =
              depth_keys;
              shown_over;
              typed_q;
+             six_keys;
              hint_test;
              y_per_metric;
              resumed_cursor;
@@ -2157,6 +2268,7 @@ let () =
            [
              run_none_newest;
              run_none_waits;
+             unknown_run;
              held;
              kept_pane;
              ended_away;

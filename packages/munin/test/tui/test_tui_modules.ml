@@ -12,6 +12,7 @@ open Munin
 module Reduce = Munin_tui.Reduce
 module Plot = Munin_tui.Plot
 module Watch = Munin_tui.Watch
+module Numbers = Munin_tui.Numbers
 
 let rec remove path =
   match (Unix.lstat path).st_kind with
@@ -20,6 +21,10 @@ let rec remove path =
       Unix.rmdir path
   | _ -> Sys.remove path
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+
+(* The reference for round numbers: the C library's reading of the decimal
+   [m] e [k], correctly rounded. *)
+let decimal_text m k = float_of_string (Printf.sprintf "%de%d" m k)
 
 (* The store of the runs the laws write, one or two a case, which the
    process removes as it ends. *)
@@ -1557,6 +1562,72 @@ let bounds =
 
 (* A y axis's ticks are round numbers: the powers of ten of a log domain,
    the multiples of a 1-2-5 step of a linear one. *)
+let smoothables =
+  cases ~id:fst "a key is smoothed by default when it starts with train/"
+    [ ("train/loss", true); ("val/loss", false); ("train", false);
+      ("val/train/loss", false) ]
+    (fun (key, expected) -> equal bool expected (Plot.smoothable key))
+
+let taus =
+  cases
+    ~id:(fun ((lo, hi), _) -> Printf.sprintf "(%g, %g)" lo hi)
+    "smoothing's time constant is a thirtieth of the domain"
+    [ ((0., 300.), 10.); ((100., 400.), 10.); ((0., 1.), 1. /. 30.) ]
+    (fun (domain, expected) ->
+      equal (float_rel ~rel:1e-15 ~abs:0.) expected (Plot.tau domain))
+
+(* A linear axis's ticks: in the domain, ascending, the multiples of one
+   step of 1, 2 or 5 times a power of ten, at most [most], each labelled. *)
+let tick_steps =
+  let gen =
+    Gen.(
+      let* lo = float_range (-1e4) 1e4 in
+      let* e = int_range (-8) 8 in
+      let* width = float_range 1. 10. in
+      let+ most = int_range 2 12 in
+      (lo, lo +. (width *. (10. ** Float.of_int e)), most))
+  in
+  prop "a linear axis's ticks are the domain's multiples of a round step"
+    (Gen.with_pp
+       (fun ppf (lo, hi, most) -> Format.fprintf ppf "(%h, %h), %d" lo hi most)
+       gen)
+    (fun (lo, hi, most) ->
+      let ticks = Plot.y_ticks ~log:false ~most (lo, hi) in
+      cover "ticks" (List.length ticks >= 2);
+      at_most ~msg:"their count" int ~than:most (List.length ticks);
+      List.iter
+        (fun t -> if t < lo || t > hi then failf "the tick %h is outside" t)
+        ticks;
+      equal ~msg:"ascending" (list float_exact)
+        (List.sort_uniq Float.compare ticks) ticks;
+      if ticks <> [] then begin
+        not_equal ~msg:"labelled" (option unit) None
+          (Option.map ignore (Numbers.tick ticks));
+        match ticks with
+        | a :: b :: _ ->
+            (* Some step [m] × 10^k gives each tick as the float nearest its
+               multiple n × m × 10^k, the [n]s consecutive. *)
+            let k0 = Numbers.decade (b -. a) in
+            let multiples (m, k) =
+              let unit = decimal_text m k in
+              let ns = List.map (fun t -> Float.to_int (Float.round (t /. unit))) ticks in
+              List.for_all2 (fun t n -> decimal_text (n * m) k = t) ticks ns
+              && List.for_all2 (fun n n' -> n' = n + 1)
+                   (List.filteri (fun i _ -> i < List.length ns - 1) ns)
+                   (List.tl ns)
+            in
+            let steps =
+              List.concat_map
+                (fun k -> List.map (fun m -> (m, k)) [ 1; 2; 5 ])
+                [ k0 - 1; k0; k0 + 1 ]
+            in
+            satisfies ~claim:"the multiples of 1, 2 or 5 times a power of ten"
+              (list float_exact)
+              (fun _ -> List.exists multiples steps)
+              ticks
+        | _ -> ()
+      end)
+
 let ticks_of =
   cases
     ~id:(fun (log, most, (lo, hi), _) ->
@@ -1656,6 +1727,9 @@ let values_printed =
       ("9.99996e-05", (9.99996e-5, "0.0001000"));
       ("9.998e-05", (9.998e-5, "9.998e-05"));
       ("NaN", (Float.nan, "NaN"));
+      ("inf", (Float.infinity, "inf"));
+      ("-inf", (Float.neg_infinity, "-inf"));
+      ("-0.", (-0., "0"));
       ("348513", (348513., "348513"));
       ("-999999", (-999999., "-999999"));
       ("348500", (348500., "348500"));
@@ -1775,12 +1849,55 @@ let differences =
       equal (option string) expected
         (Munin_tui.Numbers.difference key ~value ~other))
 
+let decimals =
+  prop "decimal m k is the float nearest m × 10^k"
+    ~examples:[ (1, 22); (1, 23); (1, -324); (2, 308); (1, 309); (5, -325) ]
+    Gen.(
+      with_pp
+        (fun ppf (m, k) -> Format.fprintf ppf "%de%d" m k)
+        (pair (int_range (-1_000_000) 1_000_000) (int_range (-340) 330)))
+    (fun (m, k) -> equal float_exact (decimal_text m k) (Numbers.decimal m k))
+
+let decades =
+  prop "decade x is the k with 10^k <= |x| < 10^(k+1)"
+    ~examples:[ 1.; 10.; 1e22; Float.pred 1e22; 5e-324; Float.max_float; 0.1 ]
+    Gen.float
+    (fun x ->
+      assume (x <> 0.);
+      let k = Numbers.decade x in
+      at_most ~msg:"10^k" float_exact ~than:(Float.abs x) (Numbers.decimal 1 k);
+      less ~msg:"10^(k+1)" float_exact ~than:(Numbers.decimal 1 (k + 1))
+        (Float.abs x))
+
+(* [bound]'s candidates are 1, 2 and 5 times the powers of ten: the least at
+   or above [x] is among those of its decade and the next. *)
+let rounds =
+  prop "bound x is the least 1, 2 or 5 times a power of ten at or above x"
+    Gen.(frequency [ (3, float_range 0. 1e6); (1, float) ])
+    (fun x ->
+      let b = Munin_tui.Facts.bound x in
+      if not (x > 0.) then equal ~msg:"at or below 0" float_exact 1. b
+      else
+        let k = Numbers.decade x in
+        let candidates =
+          List.concat_map
+            (fun k -> List.map (fun m -> decimal_text m k) [ 1; 2; 5 ])
+            [ k; k + 1 ]
+        in
+        let above = List.filter (fun c -> c >= x) candidates in
+        let expected =
+          match List.filter Float.is_finite above with
+          | [] -> Float.max_float
+          | l -> List.fold_left Float.min Float.infinity l
+        in
+        equal float_exact expected b)
+
 let counts =
   prop "a count prints with a separator every three digits"
     ~examples:[ 0; 999; 1000; -1000; max_int; min_int ]
     Gen.int
     (fun n ->
-      let s = Munin_tui.Numbers.count n in
+      let s = Numbers.count n in
       let digits = String.concat "" (String.split_on_char ',' s) in
       equal ~msg:"without separators" string (string_of_int n) digits;
       let groups =
@@ -1790,6 +1907,118 @@ let counts =
       equal ~msg:"the groups after the first" (list int)
         (List.map (fun _ -> 3) (List.tl groups))
         (List.map String.length (List.tl groups)))
+
+let elisions =
+  let gen =
+    Gen.(
+      let segment = string_of ~size:(int_range 1 8) (of_list [ 'a'; 'b'; '_' ]) in
+      let* key = map (String.concat "/") (list ~size:(int_range 1 4) segment) in
+      let+ w = int_range 0 (String.length key + 2) in
+      (w, key))
+  in
+  prop "an elided key fits, and keeps its last segment when it can"
+    (Gen.with_pp (fun ppf (w, k) -> Format.fprintf ppf "%d, %S" w k) gen)
+    (fun (w, key) ->
+      let e = Numbers.elide w key in
+      at_most ~msg:e int ~than:w (Numbers.width e);
+      if String.length key <= w then equal ~msg:"whole" string key e
+      else
+        let last =
+          match String.rindex_opt key '/' with
+          | Some i -> String.sub key i (String.length key - i)
+          | None -> key
+        in
+        cover "the last segment kept" (String.ends_with ~suffix:last e);
+        cover "cut" (w > 0 && String.ends_with ~suffix:"…" e))
+
+(* Ticks at the multiples of a 1, 2 or 5 step: those [tick] labels read
+   back exactly in six cells, in one notation. *)
+let tick_law =
+  let gen =
+    Gen.(
+      let* m = of_list [ 1; 2; 5 ] in
+      let* k = int_range (-12) 12 in
+      let* first = int_range (-20) 20 in
+      let+ n = int_range 1 6 in
+      List.init n (fun i -> decimal_text ((first + i) * m) k))
+  in
+  prop "a tick label gives its tick exactly in six cells"
+    (Gen.with_pp
+       (fun ppf xs ->
+         Format.pp_print_list ~pp_sep:Format.pp_print_space
+           (fun ppf x -> Format.fprintf ppf "%g" x)
+           ppf xs)
+       gen)
+    (fun xs ->
+      match Numbers.tick xs with
+      | None -> ()
+      | Some label ->
+          cover "labelled" true;
+          List.iter
+            (fun x ->
+              let l = label x in
+              at_most ~msg:l int ~than:6 (Numbers.width l);
+              equal ~msg:l (option float_exact) (Some x) (label_value l))
+            xs)
+
+(* The rest of the module's sentences, by their examples. *)
+let metrics =
+  cases ~id:(fun (k, x, _) -> Printf.sprintf "%s %g" k x)
+    "an accuracy in [0;1] prints as a percentage, any other metric as a value"
+    [ ("val/acc", 0.954, "95.40%"); ("loss", 0.5, "0.5000"); ("acc", 1.5, "1.500") ]
+    (fun (key, x, expected) -> equal string expected (Numbers.metric key x))
+
+let givens =
+  cases ~id:Fun.id "a given value prints in the fewest digits that read back"
+    [ "0.1"; "0.0004213752718364"; "5e-324"; "NaN"; "-inf" ]
+    (fun text ->
+      equal string text (Numbers.given (float_of_string text)))
+
+let compacts =
+  cases ~id:snd "an axis prints a step compactly"
+    [ (500., "500"); (1500., "1.5k"); (12500., "12.5k"); (3e6, "3M") ]
+    (fun (x, expected) -> equal string expected (Numbers.compact x))
+
+let percents_of =
+  cases
+    ~id:(fun (s, t, _) -> Printf.sprintf "%d of %d" s t)
+    "progress is rounded down, 100% once the steps are reached"
+    [ (19950, 20000, "99%"); (20000, 20000, "100%"); (20001, 20000, "100%");
+      (5, 0, "") ]
+    (fun (s, t, expected) -> equal string expected (Numbers.percent_of s t))
+
+let percents =
+  cases ~id:snd "a percentage has one decimal below 10"
+    [ (7.5, "7.5%"); (71., "71%") ]
+    (fun (x, expected) -> equal string expected (Numbers.percent x))
+
+let gibs =
+  test "bytes print in GiB with one decimal" (fun () ->
+      equal string "1.5" (Numbers.gib (1.5 *. 1073741824.)))
+
+(* 51,720 s is 14:22 on 1970-01-01, in UTC. *)
+let clocks =
+  cases ~id:(fun (name, _, _) -> name)
+    "a time of day has its date unless it is today's"
+    [ ("today", 51720., "14:22"); ("another day", 200000., "Jan 1 14:22") ]
+    (fun (_, now, expected) ->
+      setenv "TZ" (Some "UTC");
+      equal string expected (Numbers.clock ~now 51720.))
+
+let dates =
+  test "a date gives the time to the second" (fun () ->
+      setenv "TZ" (Some "UTC");
+      equal string "Jan 1 14:22:05" (Numbers.date 51725.))
+
+let widths =
+  cases ~id:fst "a width is the cells a text takes"
+    [
+      ("a", ("a", 1));
+      ("a wide glyph", ("漢", 2));
+      ("a combining mark", ("é", 1));
+      ("empty", ("", 0));
+    ]
+    (fun (_, (text, cells)) -> equal int cells (Numbers.width text))
 
 let spans =
   cases ~id:fst "a span prints in two units, or seconds below a minute"
@@ -1896,6 +2125,160 @@ let cadence =
           at_most ~msg Windtrap.int ~than:cadence_rows (abs (top - top'));
           at_most ~msg Windtrap.int ~than:cadence_rows (abs (bottom - bottom')))
         a b)
+
+(* Theme *)
+
+module Theme = Munin_tui.Theme
+
+let depths = [ `Truecolor; `Ansi256; `Ansi16; `Ansi8; `Mono; `Plain ]
+
+let depth_name = function
+  | `Truecolor -> "direct colour"
+  | `Ansi256 -> "256 colours"
+  | `Ansi16 -> "16 colours"
+  | `Ansi8 -> "8 colours"
+  | `Mono -> "no colour"
+  | `Plain -> "plain"
+
+let colourless = function `Mono | `Plain -> true | _ -> false
+let reversed (st : Matrix.Ansi.Style.t) = Matrix.Ansi.Attr.mem Inverse st.attrs
+
+let style =
+  Testable.make ~pp:Matrix.Ansi.Style.pp ~equal:Matrix.Ansi.Style.equal
+
+let token_name : Theme.token -> string = function
+  | Raise -> "Raise"
+  | Sel -> "Sel"
+  | Line -> "Line"
+  | Line2 -> "Line2"
+  | Dim -> "Dim"
+  | Mid -> "Mid"
+  | Fg -> "Fg"
+  | Hi -> "Hi"
+  | Live -> "Live"
+  | Fail -> "Fail"
+  | Warn -> "Warn"
+
+let tokens = Theme.[ Raise; Sel; Line; Line2; Dim; Mid; Fg; Hi; Live; Fail; Warn ]
+
+let coloured_depths =
+  cases ~id:depth_name "a look without colour keeps bold and faint alone"
+    depths
+    (fun depth ->
+      let t = theme depth in
+      equal ~msg:"coloured" bool (not (colourless depth)) (Theme.coloured t);
+      equal ~msg:"the cursor's row reversed" bool (colourless depth)
+        (reversed (Theme.sel t));
+      if colourless depth then begin
+        let coloured_tokens =
+          List.filter
+            (fun tok -> (Theme.fg t tok).fg <> None || Theme.bg t tok <> None)
+            tokens
+        in
+        equal ~msg:"tokens with a colour" (list string) []
+          (List.map token_name coloured_tokens)
+      end)
+
+(* With 16 or 8 colours a token is an entry of the 16 or the terminal's
+   default. *)
+let sixteen_entries =
+  cases ~id:depth_name "with 16 or 8 colours a token is one of the 16"
+    [ `Ansi16; `Ansi8 ]
+    (fun depth ->
+      let t = theme depth in
+      let entry (c : Matrix.Ansi.Color.t option) =
+        match Option.map Matrix.Ansi.Color.intent c with
+        | None | Some Default -> true
+        | Some (Indexed i) -> i < 16
+        | Some Rgb -> false
+      in
+      let names p = List.map token_name (List.filter p tokens) in
+      equal ~msg:"text not of the 16" (list string) []
+        (names (fun tok -> not (entry (Theme.fg t tok).fg)));
+      equal ~msg:"backgrounds not of the 16" (list string) []
+        (names (fun tok -> not (entry (Theme.bg t tok)))))
+
+let run_colours =
+  prop "a run's colour is taken modulo the run colours"
+    Gen.(
+      with_pp
+        (fun ppf (d, i) -> Format.fprintf ppf "%s, %d" (depth_name d) i)
+        (pair (of_list depths) (int_range (-50) 50)))
+    (fun (depth, i) ->
+      let t = theme depth in
+      equal style (Theme.run t i) (Theme.run t (i + Theme.runs)))
+
+let schemes =
+  test "a dark and a light terminal take different colours" (fun () ->
+      let look scheme =
+        Theme.make { scheme; depth = `Truecolor; background = None }
+      in
+      not_equal ~msg:"text" (option string)
+        (Option.map Matrix.Ansi.Color.to_hex (Theme.fg (look `Dark) Fg).fg)
+        (Option.map Matrix.Ansi.Color.to_hex (Theme.fg (look `Light) Fg).fg))
+
+(* What a poll knows of a run of [experiment] that declared [declared],
+   each with a sample at step 0, and gave [params]. *)
+let known ?(experiment = "law") ?(params = []) declared =
+  let store = Lazy.force laws in
+  let id, _ =
+    Fixture.write_log store ~experiment ~params
+      ~declare:
+        (List.map (fun (key, goal) -> Fixture.declare ?goal key) declared)
+      [ Fixture.values 0 (List.map (fun (k, _) -> (k, 1.)) declared) ]
+  in
+  let r = Option.get (Store.run store id) in
+  Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r)) ~hint:None
+    ~watch:None ~pauses:[] r
+
+let key_metrics =
+  cases
+    ~id:(fun (name, _, _) -> name)
+    "an experiment's key metric is the first loss with a goal outside train/, \
+     else the first goal outside it, else the first goal, else the first"
+    [
+      ( "a loss outside train/",
+        [ ("train/loss", Some `Minimize); ("val/acc", Some `Maximize);
+          ("val/loss", Some `Minimize) ],
+        Some "val/loss" );
+      ( "a goal outside train/",
+        [ ("train/loss", Some `Minimize); ("val/acc", Some `Maximize) ],
+        Some "val/acc" );
+      ( "a goal",
+        [ ("train/loss", Some `Minimize); ("train/acc", Some `Maximize) ],
+        Some "train/acc" );
+      ("the first", [ ("b", None); ("a", None) ], Some "a");
+      ("no metric", [], None);
+    ]
+    (fun (_, declared, expected) ->
+      equal (list (option string)) [ expected ]
+        (List.map
+           (fun (e : Munin_tui.Facts.experiment) -> e.key)
+           (Munin_tui.Facts.experiments [ known declared ])))
+
+let varying =
+  test "an experiment's varying params differ between its runs, a missing one \
+        counting" (fun () ->
+      let run params = known ~params [ ("m", None) ] in
+      let runs =
+        [
+          run [ ("lr", `Float 0.1); ("batch", `Int 64); ("opt", `String "sgd") ];
+          run [ ("lr", `Float 0.2); ("batch", `Int 64) ];
+        ]
+      in
+      equal (list (list string)) [ [ "lr"; "opt" ] ]
+        (List.map
+           (fun (e : Munin_tui.Facts.experiment) ->
+             List.sort String.compare e.varying)
+           (Munin_tui.Facts.experiments runs)))
+
+let experiment_order =
+  test "experiments come in the order of their first run" (fun () ->
+      let run experiment = known ~experiment [ ("m", None) ] in
+      equal (list string) [ "a"; "b" ]
+        (List.map
+           (fun (e : Munin_tui.Facts.experiment) -> e.name)
+           (Munin_tui.Facts.experiments [ run "a"; run "b"; run "a" ])))
 
 (* A run's glyph, for each state with and without a sample that is not
    finite: the facts of a run that logged a NaN, and of one that did not,
@@ -2027,10 +2410,27 @@ let watch_test =
           let w = model_word st a in
           List.iter
             (fun x -> cover x (w = x))
-            [ "running"; "live"; "stalled"; "writing"; "silent" ];
+            [ "starting"; "running"; "live"; "stalled"; "writing"; "silent" ];
           w)
         (fun st (w, now, _) -> Watch.word (Watch.state st (Some w) ~now));
+      command "last_arrival"
+        (w ^-> returns (option float_exact))
+        (fun a -> match a.times with t :: _ -> Some t | [] -> None)
+        (fun (w, _, _) -> Watch.last_arrival w);
     ]
+
+(* Which states a writer may still log in, and which ended badly. *)
+let live_broken =
+  cases ~id:Watch.word "a state is live while a writer may log, broken when it failed"
+    Watch.
+      [
+        Starting; Running; Live; Stalled; Writing; Silent; Crashed; Finished;
+        Failed; Killed;
+      ]
+    (fun st ->
+      let live = List.mem st Watch.[ Starting; Running; Live; Writing ] in
+      let broken = List.mem st Watch.[ Failed; Crashed ] in
+      equal (pair bool bool) (live, broken) (Watch.live st, Watch.broken st))
 
 (* Before a poll watched it, a run's state is its status alone. *)
 let unwatched =
@@ -2071,7 +2471,10 @@ let () =
              x_domain_law;
              zoom_window;
              log_choice;
+             smoothables;
+             taus;
              ticks_of;
+             tick_steps;
              matching;
              binned;
              rising;
@@ -2095,9 +2498,24 @@ let () =
              differences;
              difference_fits;
              tick_labels;
+             tick_law;
              spans;
+             decimals;
+             decades;
              counts;
+             elisions;
+             metrics;
+             givens;
+             compacts;
+             percents_of;
+             percents;
+             gibs;
+             clocks;
+             dates;
+             widths;
            ];
-         group "Facts" [ bounds; glyphs ];
-         group "Watch" [ watch_test; unwatched ];
+         group "Facts"
+           [ bounds; rounds; glyphs; key_metrics; varying; experiment_order ];
+         group "Theme" [ coloured_depths; sixteen_entries; run_colours; schemes ];
+         group "Watch" [ watch_test; unwatched; live_broken ];
        ])
