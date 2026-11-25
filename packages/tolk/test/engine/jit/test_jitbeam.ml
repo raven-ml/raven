@@ -85,9 +85,17 @@ let alike (beam, width) (beam', width') =
   equal (list (pair string string)) ~msg:"settings" s s';
   equal (list int) ~msg:"widths" w w'
 
+(* [Jit.width ?beam ()] with BEAM at [width]. *)
+let width ?beam beam_setting =
+  Setting.context [ B (Setting.beam, beam_setting) ] (fun () ->
+      Jit.width ?beam ())
+
 let unset =
   group "JITBEAM unset"
     [
+      under None "the width is the beam given, or else BEAM's" (fun () ->
+          equal (list int) [ 4; 2; 0 ]
+            [ width ~beam:4 2; width 2; width 0 ]);
       under None "a width given and BEAM's alike compile alike" (fun () ->
           alike (Some 2, 5) (None, 2));
       under None "BEAM at 0 searches no kernel" (fun () ->
@@ -103,6 +111,9 @@ let unset =
 let three =
   group "JITBEAM=3"
     [
+      under (Some "3") "the width is the beam given, or else JITBEAM's"
+        (fun () ->
+          equal (list int) [ 4; 3; 3 ] [ width ~beam:4 2; width 2; width 0 ]);
       under (Some "3") "a width given and JITBEAM's alike compile alike"
         (fun () -> alike (Some 3, 1) (None, 0));
       under (Some "3") "a kernel is searched with JITBEAM's width, not BEAM's"
@@ -126,6 +137,9 @@ let three =
 let zero =
   group "JITBEAM=0"
     [
+      under (Some "0") "the width is the beam given, or else JITBEAM's"
+        (fun () ->
+          equal (list int) [ 4; 0 ] [ width ~beam:4 2; width 2 ]);
       under (Some "0") "no kernel is searched whatever BEAM is" (fun () ->
           equal (list int) [] (searched 2));
     ]

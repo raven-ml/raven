@@ -300,20 +300,8 @@ let test_symbolic_jit =
 
 let cases = test_jit @ test_jit_cases @ test_jit_footguns @ test_symbolic_jit
 
-(* One case of each kind runs by default: kernels on the host, an input that a
-   kernel writes, held buffers without inputs, copies to a software device, a
-   held constant of Python's data, and a variable. Compiling the others takes
-   seconds. *)
-let by_default =
-  [ "add"; "assign"; "implicit_io"; "transfers"; "held_constant"; "plus1" ]
-
 let per_case name tests =
-  group name
-    (List.map
-       (fun case ->
-         (if List.mem case by_default then Fun.id else slow)
-         @@ group case (tests case))
-       cases)
+  group name (List.map (fun case -> group case (tests case)) cases)
 
 (* A capture binds the variables its calls read. *)
 let captures =

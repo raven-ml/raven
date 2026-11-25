@@ -1856,7 +1856,7 @@ and its replay in `J › replay › recorded › c`.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `engine/jit.py` `jit_lower` | inputs become parameters of their slots, held buffers stay out of the plan, the schedule compiles with `JITBEAM`'s width | every case; `J › jit_lower › drawn` (four laws); `JB` (six tests) |
+| tinygrad: `engine/jit.py` `jit_lower` | inputs become parameters of their slots, held buffers stay out of the plan, the schedule compiles with `JITBEAM`'s width | every case; `J › jit_lower › drawn` (four laws); `JB`, `Jit.width` among them |
 | tinygrad: runtime/test_jit.py::TestJit::test_jit_input_view | an input read through a view | `input_view` |
 | tinygrad: runtime/test_jit.py::TestJit::test_global_counters_jit | three chained kernels, and the counters a replay adds to | `chain_of_three`; the counters dropped: `GlobalCounters` is not ported, a run's work is its `DEBUG=2` lines (`EN`) |
 | tinygrad: runtime/test_jit.py::TestJit::test_jit_assign, test_jit_assign_int8; runtime/test_jit_footguns.py::TestJitCorrectBehavior::test_input_mutation_consistent | a kernel adds one to its input on every call | `assign`, `assign_int8` (each replay's later runs accumulate) |
