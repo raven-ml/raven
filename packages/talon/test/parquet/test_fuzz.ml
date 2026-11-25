@@ -45,15 +45,8 @@ let corpus =
     ("nested_maps.snappy.parquet", []);
   ]
 
-let file_bytes =
-  let files =
-    List.map
-      (fun (name, _) ->
-        let path = Filename.concat "support" name in
-        (name, In_channel.with_open_bin path In_channel.input_all))
-      corpus
-  in
-  fun name -> List.assoc name files
+let file_bytes name =
+  In_channel.with_open_bin (Filename.concat "support" name) In_channel.input_all
 
 let names = List.map fst corpus
 let pick = Gen.of_list ~pp:Format.pp_print_string names
@@ -272,14 +265,9 @@ let mutated =
       prop "with bits flipped"
         Gen.(triple pick region bits)
         (fun (name, r, bits) -> decode_mutated name (flip r bits));
-      prop "cut short"
-        Gen.(pair pick nat)
-        (fun (name, k) ->
-          let s = file_bytes name in
-          collect
-            (decode (List.assoc name corpus)
-               (String.sub s 0 (k mod String.length s))));
-      prop "with bytes removed"
+      (* One case in eight reaches a failing read: 300 cases miss it with a
+         probability of 2e-17. *)
+      prop ~count:300 "with bytes removed"
         Gen.(quad pick region nat (int_range 1 64))
         (fun (name, r, k, len) -> decode_mutated name (excise r k len));
       prop "with another file's footer"
@@ -318,7 +306,7 @@ let mutated =
     ]
 
 let footers =
-  prop "A footer cut short fails sniff"
+  prop "a footer cut short fails sniff"
     Gen.(pair pick nat)
     (fun (name, k) ->
       let s = file_bytes name in
