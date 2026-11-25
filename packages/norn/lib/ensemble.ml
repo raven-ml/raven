@@ -82,7 +82,7 @@ let scale = 2.
    toward or away from a walker of the group's other half, the density evaluated
    on the moving half only, and is the walkers' positions, log densities and
    acceptance probabilities, [0] in the held half. *)
-let half (type f) u lp e keys j position (lp0 : (float, f, 'd) Nx.t) =
+let half (type f) u lp e keys walkers j position (lp0 : (float, f, 'd) Nx.t) =
   let dt = Nx.dtype lp0 in
   let n = (Nx.shape lp0).(0) / e in
   let h = n / 2 in
@@ -95,6 +95,7 @@ let half (type f) u lp e keys j position (lp0 : (float, f, 'd) Nx.t) =
   let x, others = split u position in
   let l, held_lp = split P.tensor lp0 in
   let keys, _ = split Nx.Rng.ptree keys in
+  let walkers, _ = split P.tensor walkers in
   let x = ungrouped u x and l = ungrouped P.tensor l in
   let draw i =
     Rune.vmap
@@ -131,7 +132,7 @@ let half (type f) u lp e keys j position (lp0 : (float, f, 'd) Nx.t) =
       partner x
   in
   let ly = lp y in
-  Rows.check_range "Norn.Ensemble.step" ly;
+  Rows.check_range "Norn.Ensemble.step" ~index:(ungrouped P.tensor walkers) ly;
   let d = Rows.elements u (e * m) x in
   let log_ratio =
     Nx.add (Nx.mul_s (Nx.log z) (float_of_int (d - 1))) (Nx.sub ly l)
@@ -214,10 +215,13 @@ let step u lp k (s : (_, _, 'd) state) =
   let take p v = P.map p (fun _ t -> Nx.take ~axis:0 perm t) v in
   let untake p v = P.map p (fun _ t -> Nx.take ~axis:0 back t) v in
   let keys' = take Nx.Rng.ptree keys in
+  (* The walker each row of the shuffled walkers is, for errors. *)
+  let walkers = Nx.cast Nx.int32 perm in
   let x, l, first =
-    half u lp s.ensembles keys' 0 (take u s.position) (take P.tensor s.lp)
+    half u lp s.ensembles keys' walkers 0 (take u s.position)
+      (take P.tensor s.lp)
   in
-  let x, l, second = half u lp s.ensembles keys' 1 x l in
+  let x, l, second = half u lp s.ensembles keys' walkers 1 x l in
   let l = untake P.tensor l in
   {
     s with

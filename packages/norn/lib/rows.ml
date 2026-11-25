@@ -167,10 +167,15 @@ let evaluate u lp x =
   in
   (l, g)
 
-(* The density's value is finite or -inf at a finite position. *)
-let check_range context l =
+(* The density's value is finite or -inf at a finite position. Row [r] of [l] is
+   chain [index.(r)], by default chain [r]. *)
+let check_range context ?index l =
   let c = (Nx.shape l).(0) in
-  let chain = Nx.arange_at (Nx.beside l) Nx.int32 0 c 1 in
+  let chain =
+    match index with
+    | Some index -> index
+    | None -> Nx.arange_at (Nx.beside l) Nx.int32 0 c 1
+  in
   let ok =
     Nx.logical_not
       (Nx.logical_or (Nx.isnan l)

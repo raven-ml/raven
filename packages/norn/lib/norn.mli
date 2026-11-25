@@ -1631,7 +1631,8 @@ module Ensemble : sig
     ('u, 'f, 'd) state
   (** [step u lp k s] is one transition of every walker from [s].
 
-      Raises [Invalid_argument] if [lp] is NaN or [+inf] at a walker. *)
+      Raises [Invalid_argument] if [lp] is NaN or [+inf] at a walker, naming
+      it. *)
 
   val warmup :
     ('u, 'd) Nx.Ptree.t ->

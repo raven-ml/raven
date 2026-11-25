@@ -93,6 +93,26 @@ let straggler =
 let transitions =
   group "transitions"
     [
+      (* Walker 5 starts at x0 = 1e6, the others in [0, 1]. Its moves land past
+         5e5 + 1, where the density is NaN off its start, unless its stretch is
+         within 1e-6 of 1/2; a move of another walker toward it ends below 5e5 +
+         0.5. *)
+      test "a density NaN at a walker is refused, naming it" (fun () ->
+          let lp x =
+            let a = Nx.slice [ Nx.A; Nx.I 0 ] x in
+            let off =
+              Nx.logical_and (Nx.greater_s a 500_001.) (Nx.not_equal_s a 1e6)
+            in
+            Nx.where off (Nx.full_like a Float.nan)
+              (Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.square x)) (-0.5))
+          in
+          let x = Nx.abs (start 8) in
+          let x = Nx.set [ Nx.I 5; Nx.I 0 ] (Nx.scalar Nx.float64 1e6) x in
+          raises
+            (Invalid_argument
+               "Norn.Ensemble.step: the density is nan at chain 5, a finite \
+                position") (fun () ->
+              E.step t lp (Nx.Rng.key 4) (E.init t lp x)));
       test "a transition calls the density once on each moving half" (fun () ->
           let x = Nx.concatenate ~axis:0 [ start 8; start 8 ] in
           let s = E.init t ~ensembles:2 banana x in

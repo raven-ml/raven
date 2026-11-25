@@ -97,9 +97,10 @@ val at_rows :
     [lp] reads zeros there, since a density need not answer outside the
     reals. *)
 
-val check_range : string -> (float, 'f, 'd) Nx.t -> unit
-(** [check_range context l] raises through {!Nx.check} at a chain whose log
-    density [l] is NaN or [+inf]. *)
+val check_range : string -> ?index:'d Nx.int32_t -> (float, 'f, 'd) Nx.t -> unit
+(** [check_range context ?index l] raises through {!Nx.check} at a chain whose
+    log density [l] is NaN or [+inf], naming it. Row [r] of [l] is the chain
+    [index.(r)], by default [r]. *)
 
 val check_density :
   string ->

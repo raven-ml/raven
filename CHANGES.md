@@ -85,6 +85,8 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Ensemble.step` names the walker at which the density is NaN or `+inf`. It
+  named a row of the shuffled half the density was called on, another walker.
 - `Dist.cauchy` and `Dist.half_cauchy` keep a finite log density far in their
   tails, where `(x - loc) / scale` squared or itself overflows: at `x - loc =
   1` and `scale = 1e-160` it was `-inf` and is now `-369.6`.
