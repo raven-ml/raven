@@ -625,6 +625,8 @@ let held =
                (1, constant (Text "]"));
              ]))
   in
+  (* Each case starts a writer and runs a session of up to 18 s of polls,
+     about 50 ms: the law's time is its 30 sessions. *)
   prop ~count:30 "a live run stays live through depths and cursor moves"
     key_gen (fun keys ->
       (* Two runs, so that j and k move the cursor off tidy-otter and
@@ -1485,12 +1487,22 @@ type phase = Idle | Reading | Again
 type path = { phase : phase; cursor : int; chosen : bool }
 
 let data_path_test =
-  (* Three runs, so that the cursor's moves meet both ends of the list. *)
-  let runs = Fixture.[ short_running; short_amber; short_brisk ] in
+  (* Three runs of a few samples, so that the cursor's moves meet both ends
+     of the list: the newest without an end, the others ended. *)
   let store =
-    lazy (shared_store "path" runs)
+    lazy
+      (let root = Filename.concat (Lazy.force shared) "path" in
+       let store = Store.open_ ~root () in
+       let samples = List.init 20 (fun i -> Fixture.sample (i, 1.)) in
+       List.iter
+         (fun (started, ended) ->
+           ignore
+             (Fixture.write_log store ~started
+                (samples @ if ended then [ Fixture.finished ] else [])))
+         [ (1, true); (2, true); (3, false) ];
+       store)
   in
-  let last = List.length runs - 1 in
+  let last = 2 in
   let path = abstract "p" in
   (* The system: the calls so far, replayed on a fresh dashboard each time,
      and the number of polls that wait after the last. *)
@@ -1530,14 +1542,18 @@ let data_path_test =
         waiting !p)
       (call `Tick)
   in
-  stateful ~count:30 ~steps:10
+  (* Each call replays every call before it on a fresh dashboard, so a
+     program of [steps] calls costs steps²/2 sessions: few steps and more
+     programs reach the cover at less cost. *)
+  stateful ~count:80 ~steps:8
     "one poll runs at a time, and the asks meanwhile make one after it"
     [
       command "start"
         (Gen.unit @-> makes path)
         (fun () -> ref { phase = Reading; cursor = 0; chosen = false })
         (fun () -> ref []);
-      (* Listed twice, so that asks pile up while a poll runs. *)
+      (* Listed thrice, so that asks pile up while a poll runs. *)
+      tick;
       tick;
       tick;
       command "key"
@@ -1949,7 +1965,9 @@ let meaning ~from word =
   | _ -> "changed"
 
 let hint_test =
-  (* Two runs, so that the keys that move the cursor change the screen. *)
+  (* Two runs, so that the keys that move the cursor change the screen. A
+     key's outcome is a session replayed from the start, one or two a hint:
+     about a hundred sessions, the test's time. *)
   let store =
     lazy
       (shared_store "hints"
