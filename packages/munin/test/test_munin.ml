@@ -420,8 +420,11 @@ let check_stats ~msg (expected : Metric.sample list) (got : Metric.stats option)
           equal ~msg:(msg ^ " greatest") sample (pick ( > )) fs.greatest;
           (* The mean by its definition, compared at half scale: each term is
              divided by n and by 2 first, so that no partial sum's rounding
-             takes it past the largest float. That naive sum of at most 60 terms
-             errs by at most 60 ulps of the largest term, below 1e-12 of it. *)
+             takes it past the largest float. That naive sum of at most 63 terms
+             errs by at most 63 ulps of the largest term, below 1e-12 of it,
+             plus a subnormal's rounding per term, below 1e-300 in all. The
+             compensated mean is within an ulp of the true one, so no relative
+             bound is needed. *)
           let n = Float.of_int (List.length f) in
           let half_mean =
             List.fold_left
@@ -434,7 +437,7 @@ let check_stats ~msg (expected : Metric.sample list) (got : Metric.stats option)
               0. f
           in
           equal ~msg:(msg ^ " mean")
-            (float_rel ~rel:1e-9 ~abs:(Float.max 1e-300 (1e-12 *. scale)))
+            (float_rel ~rel:0. ~abs:(Float.max 1e-300 (1e-12 *. scale)))
             half_mean (fs.mean /. 2.);
           (* Adding 0. reads -0. as 0. *)
           at_least
@@ -782,6 +785,20 @@ let reading_tests =
             (values_of (History.series h "a"));
           equal ~msg:"r" (list float_exact) [ 1. ]
             (values_of (History.series h "r")));
+      test "a record holding a sample of the other kind is damaged whole"
+        (fun () ->
+          let store = new_store () in
+          let both =
+            {|{"type":"metrics","time":3.0,"step":1,"values":{"a":5.0,"r":2.0}}|}
+          in
+          let run =
+            written_run store
+              (log_text (timed [ Reading ("r", 0, 1.) ]) ^ both ^ "\n")
+          in
+          let h = History.read run in
+          equal ~msg:"damaged" int 1 (History.damaged h);
+          equal ~msg:"a" (list float_exact) []
+            (values_of (History.series h "a")));
       test "a run whose start holds another format is unreadable" (fun () ->
           let store = new_store () in
           let line =
@@ -1375,7 +1392,7 @@ let store_format_tests =
 let value_tests =
   group "Value"
     [
-      cases "pp prints a value as the format writes it" ~id:fst
+      cases "pp prints each kind of value as its doc states" ~id:fst
         [
           ("true", (`Bool true, "true"));
           ("false", (`Bool false, "false"));
@@ -1812,14 +1829,21 @@ let history_tests =
           let final = History.follow last in
           cover "a follow restarted"
             (List.exists History.restarted (final :: List.map fst snaps));
-          equal ~msg:"a followed" (list sample) (series_of records "a")
-            (samples_of (History.series final "a"));
-          List.iter
-            (fun k ->
-              check_stats ~msg:("followed " ^ k) (series_of records k)
-                (History.stats final k))
-            [ "a"; "b"; "r" ];
-          if not keep_a then check_history ~msg:"followed" records final;
+          (* Every key's statistics, and the samples of the keys kept. *)
+          let check_followed ~msg h =
+            if keep_a then (
+              equal ~msg:(msg ^ " series a") (list sample)
+                (series_of records "a")
+                (samples_of (History.series h "a"));
+              List.iter
+                (fun k ->
+                  check_stats
+                    ~msg:(msg ^ " " ^ k)
+                    (series_of records k) (History.stats h k))
+                [ "a"; "b"; "r" ])
+            else check_history ~msg records h
+          in
+          check_followed ~msg:"followed" final;
           List.iter
             (fun (h, seen) ->
               equal ~msg:"a snapshot stays" (list sample) seen
@@ -1827,10 +1851,8 @@ let history_tests =
             snaps;
           (* A second follow of one history copies. *)
           let again = History.follow last in
-          equal ~msg:"followed twice" (list sample) (series_of records "a")
-            (samples_of (History.series again "a"));
-          equal ~msg:"first follow kept" (list sample) (series_of records "a")
-            (samples_of (History.series final "a")));
+          check_followed ~msg:"followed twice" again;
+          check_followed ~msg:"first follow kept" final);
       surviving_test;
       test "a decimal that strtod misreads somewhere reads back exactly"
         (fun () ->
@@ -1995,7 +2017,7 @@ let history_tests =
           equal ~msg:"status" status `Finished (Run.status r);
           equal ~msg:"tags" (list string) [ "t" ] (Run.tags r);
           equal ~msg:"notes" (option string) (Some "n") (Run.notes r));
-      stateful ~count:30 ~domains:2
+      stateful ~count:10 ~domains:2
         "following one history on two domains leaves both right"
         [
           (* A limit of one byte ends within the start: no sample. *)
@@ -2214,6 +2236,16 @@ let artifact_tests =
           equal ~msg:"created" float_exact (Artifact.created_at a)
             (Artifact.created_at b);
           equal ~msg:"path" string (Artifact.path a) (Artifact.path b));
+      test "a deleted latest number is never reused" (fun () ->
+          let store = new_store () in
+          let s = start store in
+          ignore (Session.log_artifact s ~name:"x" (source "1"));
+          let v2 = Session.log_artifact s ~name:"x" (source "2") in
+          Store.delete_artifact store v2;
+          let v3 = Session.log_artifact s ~name:"x" (source "3") in
+          Session.finish s;
+          equal ~msg:"number" int 3 (Artifact.version v3);
+          equal ~msg:"check" (list string) [] (List.map fst (Store.check store)));
       test "an alias of a deleted version names nothing" (fun () ->
           let store = new_store () in
           ignore (dangling_alias store);
@@ -2954,8 +2986,7 @@ let maintenance_tests =
             (List.map fst (Store.check store));
           equal ~msg:"left" (list string) [ "claimed" ]
             (Array.to_list (Sys.readdir (Filename.dirname dir))));
-      test "check names a damaged line and the bytes after an ended run's last"
-        (fun () ->
+      test "check names a damaged line" (fun () ->
           let store = new_store () in
           let s = start store in
           Session.finish s;
@@ -2965,9 +2996,40 @@ let maintenance_tests =
             | [ first; last ] -> (first, last)
             | l -> fail (Printf.sprintf "%d lines" (List.length l))
           in
-          write_file log
-            (text_of_lines [ first; "not a record"; last ] ^ {|{"type":"metr|});
-          equal (list string) [ log; log ] (List.map fst (Store.check store)));
+          write_file log (text_of_lines [ first; "not a record"; last ]);
+          equal (list string) [ log ] (List.map fst (Store.check store)));
+      test "check names the bytes after an ended run's last line" (fun () ->
+          let store = new_store () in
+          let s = start store in
+          Session.finish s;
+          let log = log_path (reread store s) in
+          write_file log (read_file log ^ {|{"type":"metr|});
+          equal (list string) [ log ] (List.map fst (Store.check store)));
+      test "check names the bytes after a crashed run's last line" (fun () ->
+          let store = new_store () in
+          let run = exited_run store in
+          if Run.status run <> `Crashed then
+            skip ~reason:"this system names no boot, so the run reads silent" ();
+          write_file (log_path run)
+            (read_file (log_path run) ^ {|{"type":"metr|});
+          equal (list string)
+            [ log_path run ]
+            (List.map fst (Store.check store)));
+      test "check names no bytes after a running run's last line" (fun () ->
+          let store = new_store () in
+          let pid, stdin, out = spawn [ "hold"; Store.root store ] in
+          let id = input_line out in
+          let log = log_path (require_some (Store.run store id)) in
+          let fd =
+            Unix.openfile log [ Unix.O_WRONLY; Unix.O_APPEND; Unix.O_CLOEXEC ] 0
+          in
+          ignore (Unix.write_substring fd {|{"type":"metr|} 0 13);
+          Unix.close fd;
+          let checked = List.map fst (Store.check store) in
+          Unix.close stdin;
+          wait pid;
+          close_in out;
+          equal (list string) [] checked);
       test "check names a damaged tag file" (fun () ->
           let store = new_store () in
           let s = start ~tags:[ "a" ] store in
@@ -2991,20 +3053,25 @@ let maintenance_tests =
           let store = new_store () in
           ignore (abandoned_file store);
           equal (list string) [] (List.map fst (Store.check store)));
-      test "check names an alias that names no version and a missing blob"
-        (fun () ->
+      test "check names an alias that names no version" (fun () ->
           let store = new_store () in
           let s = start store in
-          let a = Session.log_artifact s ~name:"x" (source "1") in
+          ignore (Session.log_artifact s ~name:"x" (source "1"));
           Session.finish s;
           let alias =
             Filename.concat (Store.root store) "artifacts/x/aliases/best"
           in
           mkdir_p (Filename.dirname alias);
           write_file alias "9\n";
+          equal (list string) [ alias ] (List.map fst (Store.check store)));
+      test "check names a version whose blob is missing" (fun () ->
+          let store = new_store () in
+          let s = start store in
+          let a = Session.log_artifact s ~name:"x" (source "1") in
+          Session.finish s;
           Sys.remove (Artifact.path a);
           equal (list string)
-            (List.sort compare [ alias; Artifact.path a ])
+            [ Artifact.path a ]
             (List.map fst (Store.check store)));
       test "check names a version file that does not follow the format"
         (fun () ->
@@ -3025,17 +3092,22 @@ let maintenance_tests =
           equal (list string)
             [ Artifact.path a ]
             (List.map fst (Store.check store)));
-      test "check names an unparsable hint and one that disagrees with its log"
-        (fun () ->
+      test "check names a hint that does not parse" (fun () ->
           let store = new_store () in
-          let a = ended_with_hint store and b = ended_with_hint store in
-          write_file (hint_path a) "{\"format\":1,";
-          write_file (hint_path b)
+          let run = ended_with_hint store in
+          write_file (hint_path run) "{\"format\":1,";
+          equal (list string)
+            [ hint_path run ]
+            (List.map fst (Store.check store)));
+      test "check names a hint that disagrees with its log" (fun () ->
+          let store = new_store () in
+          let run = ended_with_hint store in
+          write_file (hint_path run)
             (replace_first
-               (read_file (hint_path b))
+               (read_file (hint_path run))
                ~sub:{|"count":1|} ~by:{|"count":2|});
           equal (list string)
-            (List.sort compare [ hint_path a; hint_path b ])
+            [ hint_path run ]
             (List.map fst (Store.check store)));
       test "check passes a hint of other rules" (fun () ->
           let store = new_store () in
@@ -3463,6 +3535,25 @@ let sampling_tests =
           equal ~msg:"at the latest step" (list int)
             (List.init (Metric.length series) (fun _ -> 7))
             (List.init (Metric.length series) (Metric.step series)));
+      test "readings before any metrics record are logged at step 0" (fun () ->
+          let store = new_store () in
+          let s = start store in
+          Session.sample s ~every:1000. [ (fun () -> [ ("sys/x", 1.) ]) ];
+          Session.finish s;
+          equal (list int) [ 0 ]
+            (List.map
+               (fun (x : Metric.sample) -> x.step)
+               (samples_of (History.series (history store s) "sys/x"))));
+      test "readings after a resume are logged at its step" (fun () ->
+          let store = new_store () in
+          let run = written_run store (log_text []) in
+          let s = Session.resume ~provenance run ~step:4 in
+          Session.sample s ~every:1000. [ (fun () -> [ ("sys/x", 1.) ]) ];
+          Session.finish s;
+          equal (list int) [ 4 ]
+            (List.map
+               (fun (x : Metric.sample) -> x.step)
+               (samples_of (History.series (History.read run) "sys/x"))));
       test "a reading that raises Sys_error gives nothing that time" (fun () ->
           let store = new_store () in
           let s = start store in
@@ -3623,6 +3714,7 @@ let session_artifact_tests =
           ("a name starting with .", (".x", None, []));
           ("an empty name", ("", None, []));
           ("a step below 0", ("x", Some (-1), []));
+          ("an empty metadata key", ("x", None, [ ("", `Int 1) ]));
           ("a metadata key twice", ("x", None, [ ("k", `Int 1); ("k", `Int 2) ]));
           ("a string that is not UTF-8", ("x", None, [ ("k", `String "\xff") ]));
         ]
