@@ -49,7 +49,16 @@
   rig.metal)
  (foreign_stubs
   (language c)
-  (names nx_kernels_support_stubs)))
+  (names nx_kernels_support_stubs))
+ ; nx_cpu.mli's orders of a contraction's sum: no product fused into a sum
+ ; the text keeps apart, and x86-64's fma instruction, from nx.cpu's floor.
+ (foreign_stubs
+  (language c)
+  (flags
+   :standard
+   -ffp-contract=off
+   (:include %{lib:nx.cpu:avx2_flags.sexp}))
+  (names nx_kernels_support_order)))
 
 ; What nx.kernel's suites and nx.cpu's share: elements as their bits, and
 ; the cases, references and laws of copies, casts and maps, of reductions

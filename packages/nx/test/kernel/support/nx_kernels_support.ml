@@ -516,3 +516,22 @@ let loop_bytes d n f =
 (* Address space *)
 
 external cap_memory : int -> bool = "nx_kernels_support_cap_memory"
+
+(* Orders of a contraction's sum *)
+
+external ordered_flags :
+  float array ->
+  float array ->
+  (int[@untagged]) ->
+  (float[@unboxed]) ->
+  (float[@unboxed])
+  = "nx_kernels_support_ordered_byte" "nx_kernels_support_ordered"
+[@@noalloc]
+
+let ordered ~chain ~f32 ~init a b =
+  let flags =
+    (if f32 then 1 else 0)
+    lor (if chain then 2 else 0)
+    lor match init with Some _ -> 4 | None -> 0
+  in
+  ordered_flags a b flags (Option.value init ~default:0.)

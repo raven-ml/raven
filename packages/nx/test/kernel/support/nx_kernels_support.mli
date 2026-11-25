@@ -264,3 +264,18 @@ val cap_memory : int -> bool
     above its size, so that an allocation past them fails. It is [true] iff
     the limit is set, which only Linux does. The limit stays for the
     process's life: only a forked child calls it. *)
+
+(** {1:order Orders of a contraction's sum} *)
+
+val ordered :
+  chain:bool ->
+  f32:bool ->
+  init:float option ->
+  float array ->
+  float array ->
+  float
+(** [ordered ~chain ~f32 ~init a b] is the sum of the products [a.(t) b.(t)] in
+    nx_cpu.mli's chain order where [chain], else in its lane order, then [init]
+    added: each fused multiply-add and each addition rounded once to float32
+    where [f32], to float64 otherwise. [a] and [b] are of one length and, where
+    [f32], hold float32 values. With no product it is [init], or [+0]. *)
