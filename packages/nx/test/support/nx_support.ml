@@ -372,7 +372,12 @@ let same (type v s) (dt : (v, s) Nx_array.Dtype.t) (a : v) (b : v) =
 
 let elements dt =
   Windtrap.Testable.make
-    ~pp:(Format.pp_print_list (Nx_array.Dtype.pp_value dt))
+    ~pp:(fun ppf l ->
+      Format.fprintf ppf "[@[%a@]]"
+        (Format.pp_print_list
+           ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
+           (Nx_array.Dtype.pp_value dt))
+        l)
     ~equal:(fun a b ->
       List.length a = List.length b && List.for_all2 (same dt) a b)
 
