@@ -99,17 +99,18 @@ static inline void copy16(uint8_t *d, const uint8_t *s) { memcpy(d, s, 16); }
 
 /* How a block's decoding ended: every sequence decoded; the input ended
    before the block did; a code asked for output past [oend] and not past
-   [fend], or past [fend] too; or a code is not the format. */
+   the format's end, or past it too; or a code is not the format. */
 enum outcome { DECODED, ENDS_EARLY, OVERFLOWS, PASSES_LIMIT, MALFORMED };
 
 /* A block to decode: [src, src + len) into [op, oend), matches reaching
-   back to [lo] at the furthest. [fend], at or past [oend], is the end of
-   the output the format allows: a code asking for output past it breaks
-   the format whatever the destination's room. [cut] says the input ends
-   inside the block: [src + len] is not its end, so reaching it is
-   ENDS_EARLY and the end-of-block rules do not apply. On return [op] is
-   the end of the output; on failure [at] is the offset in [src] of the
-   code that failed, and [msg] names a malformation. */
+   back to [lo] at the furthest. The output the format allows ends [past]
+   bytes after [oend]: a code asking for output past that end breaks the
+   format whatever the destination's room. It is a count, since the end
+   may lie past the destination, where no pointer may point. [cut] says
+   the input ends inside the block: [src + len] is not its end, so
+   reaching it is ENDS_EARLY and the end-of-block rules do not apply. On
+   return [op] is the end of the output; on failure [at] is the offset in
+   [src] of the code that failed, and [msg] names a malformation. */
 struct block {
   const uint8_t *src;
   size_t len;
@@ -117,7 +118,7 @@ struct block {
   uint8_t *lo;
   uint8_t *op;
   uint8_t *oend;
-  uint8_t *fend;
+  size_t past;
   size_t at;
   const char *msg;
   struct told *told;
@@ -387,7 +388,7 @@ static enum outcome block_decode(struct block *b) {
   const uint8_t *const iend = b->src + b->len;
   uint8_t *op = c.op;
   uint8_t *const oend = b->oend;
-  uint8_t *const fend = b->fend;
+  const size_t past = b->past;
   uint8_t *const lo = b->lo;
   uint64_t last_match = c.last_match;
   unsigned s;
@@ -422,8 +423,9 @@ static enum outcome block_decode(struct block *b) {
           breaks_end(lit, last_match))
         return fail(b, MALFORMED, seq, "invalid end of block");
       if (token >> 4 == 15 && ip[-1] == 255)
-        lit = length_on(ip, iend, lit, (uint64_t)(fend - op));
-      return fail(b, lit > (uint64_t)(fend - op) ? PASSES_LIMIT : OVERFLOWS,
+        lit = length_on(ip, iend, lit, (uint64_t)(oend - op) + past);
+      return fail(b, lit > (uint64_t)(oend - op) + past ? PASSES_LIMIT
+                                                         : OVERFLOWS,
                   seq, NULL);
     }
     if (lit > (uint64_t)(iend - ip)) return fail(b, ENDS_EARLY, seq, NULL);
@@ -461,8 +463,9 @@ static enum outcome block_decode(struct block *b) {
     len += MIN_MATCH;
     if (len > (uint64_t)(oend - op)) {
       if ((token & 15) == 15 && ip[-1] == 255)
-        len = length_on(ip, iend, len, (uint64_t)(fend - op));
-      return fail(b, len > (uint64_t)(fend - op) ? PASSES_LIMIT : OVERFLOWS,
+        len = length_on(ip, iend, len, (uint64_t)(oend - op) + past);
+      return fail(b, len > (uint64_t)(oend - op) + past ? PASSES_LIMIT
+                                                         : OVERFLOWS,
                   at_offset, NULL);
     }
     if (len >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, len);
@@ -481,7 +484,7 @@ enum lz_status lz_lz4_block_decode(struct lz_io *io, struct lz_error *err) {
                     .lo = io->dst,
                     .op = io->dst,
                     .oend = io->dst + io->dst_cap,
-                    .fend = io->dst + io->dst_cap,
+                    .past = 0,
                     .told = &t};
   switch (block_decode(&b)) {
   case DECODED:
@@ -815,7 +818,7 @@ static enum lz_status frame_decode(const uint8_t *src, size_t n, size_t *pos,
                         .lo = flg & FLG_INDEPENDENT ? op : first,
                         .op = op,
                         .oend = op + (limit < room ? limit : room),
-                        .fend = op + limit,
+                        .past = limit < room ? 0 : limit - room,
                         .told = t};
       switch (block_decode(&b)) {
       case DECODED:
