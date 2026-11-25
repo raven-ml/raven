@@ -111,8 +111,8 @@ let rebuild ?(cls = "FloatStorage") ?(hooks = odict) ?(meta = "") key n =
 (* Where [zip] states an entry's CRC-32 and sizes: in its local header, or after
    its data in a descriptor, [signed] or not (APPNOTE 4.3.9.3), with sizes of
    [width] bytes each, as torch streams them. A [zip64] entry's records have a
-   ZIP64 field holding the local header's offset, as torch writes them past
-   4 GiB with 8-byte sizes (4.3.9.2). *)
+   ZIP64 field holding the local header's offset, as torch writes them past 4
+   GiB with 8-byte sizes (4.3.9.2). *)
 type sizes =
   | In_header
   | In_descriptor of { zip64 : bool; width : int; signed : bool }
@@ -140,7 +140,8 @@ let zip ?(crc = fun _ c -> c) ?(sizes = In_header) entries =
       let extra =
         if pad = 0 then zip64_extra
         else
-          zip64_extra ^ le 2 0x4246 ^ le 2 (pad - 4)
+          zip64_extra ^ le 2 0x4246
+          ^ le 2 (pad - 4)
           ^ String.make (pad - 4) '\000'
       in
       let flags, local_crc, local_n, descriptor =
@@ -297,17 +298,21 @@ let meta ~proto : Pt.value =
           ] );
     ]
 
-(* The byte of [s] where the data of its entry [name] starts. *)
-let data_of s name =
+(* The byte of [s] where the local record of its entry [name] starts, and the
+   one where its data does. *)
+let local_of s name =
   let rec find i =
     if
       String.sub s i 4 = "PK\003\004"
       && String.sub s (i + 30) (String.length name) = name
-    then
-      i + 30 + String.get_uint16_le s (i + 26) + String.get_uint16_le s (i + 28)
+    then i
     else find (i + 1)
   in
   find 0
+
+let data_of s name =
+  let i = local_of s name in
+  i + 30 + String.get_uint16_le s (i + 26) + String.get_uint16_le s (i + 28)
 
 let torch_files =
   group "files torch wrote"
@@ -421,6 +426,27 @@ let torch_files =
             file ~suffix:".pt" (flip_byte s (data_of s "pt_views/data/0" + 5))
           in
           fails ~path ~naming:"CRC-32" (fun () -> Nx_io.load_pytorch path));
+      (* APPNOTE 4.4.7: the CRC-32 is of a stored entry's data as it is, and it
+         detects every burst of 32 bits or fewer. *)
+      prop "a flipped byte of a stored storage's data fails"
+        (Gen.int_range 0 max_int) (fun k ->
+          let s = read (fixture "pt_views.pt") in
+          let name = "pt_views/data/0" in
+          (* The size the entry's central record states, torch writing its local
+             record's in a descriptor. *)
+          let rec central i =
+            if
+              String.sub s i 4 = "PK\001\002"
+              && String.sub s (i + 46) (String.length name) = name
+            then i
+            else central (i + 1)
+          in
+          let size = String.get_int32_le s (central 0 + 20) in
+          let path =
+            file ~suffix:".pt"
+              (flip_byte s (data_of s name + (k mod Int32.to_int size)))
+          in
+          fails ~path (fun () -> Nx_io.load_pytorch path));
       test "every proper prefix fails, and any byte flipped loads or fails"
         (fun () ->
           let whole = read (fixture "pt_legacy.pt") in
@@ -529,6 +555,8 @@ let refusals : (string * string * string) list =
     ("INST", "(im\nC\n", "INST");
     ("OBJ", "(" ^ global "m" "C" ^ "o", "INST");
     ("EXT1", "\x82\x01", "EXT1");
+    ("EXT2", "\x83\x01\x00", "EXT2");
+    ("EXT4", "\x84\x01\x00\x00\x00", "EXT4");
     ("NEXT_BUFFER", "\x97", "NEXT_BUFFER");
     ("an INT with a leading zero", "I007\n", "decimal");
     ("PROTO 6", "\x80\x06N", "protocol 6");
@@ -567,17 +595,78 @@ let opcode_cases =
           equal value expected (load_pickle (pickle ~proto:4 body)));
       test "protocol 1 has no PROTO opcode" (fun () ->
           equal value (Int 1) (load_pickle ("K\x01" ^ ".")));
-      test "Python 2's names read as Python 3's below protocol 3" (fun () ->
-          let p proto = pickle ~proto (global "__builtin__" "set") in
-          equal value (Global "builtins.set") (load_pickle (p 2));
-          equal value (Global "__builtin__.set") (load_pickle (p 3)));
       cases "a pickle breaking the language is refused, naming the rule"
         ~id:(fun (n, _, _) -> n)
         refusals
         (fun (_, body, naming) -> refused ~naming (checkpoint (pickle body) []));
       test "bytes after STOP are refused" (fun () ->
           refused ~naming:"after its STOP" (checkpoint (pickle "N" ^ "N") []));
+      test "a LONG4 of 10^6 bytes loads as its bytes" (fun () ->
+          let b = String.make 999_999 '\x01' ^ "\x02" in
+          equal value (Long b)
+            (load_pickle (pickle ("\x8b" ^ le 4 1_000_000 ^ b))));
+      test "LONG text of 4300 digits loads, and of 4301 is refused" (fun () ->
+          let digits n = "1" ^ String.make (n - 1) '0' in
+          (match load_pickle (pickle ("L" ^ digits 4300 ^ "L\n")) with
+          | Long _ -> ()
+          | v -> failf "%a" pp_value v);
+          refused ~naming:"4300"
+            (checkpoint (pickle ("L" ^ digits 4301 ^ "L\n")) []));
+      test "a key nested 10^6 tuples deep loads, under an 8 MiB stack"
+        (fun () ->
+          let p = pickle ("})" ^ String.make 1_000_000 '\x85' ^ "Ns") in
+          let rec depth n = function
+            | Pt.Tuple [ t ] -> depth (n + 1) t
+            | Tuple [] -> n
+            | _ -> -1
+          in
+          match load_pickle p with
+          | Dict [ (k, Null) ] -> equal int 1_000_000 (depth 0 k)
+          | _ -> failf "not a dict of one key");
     ]
+
+(* [doubled d] is a tuple holding the tuple below it twice, [d] levels deep over
+   [leaf]: 5 bytes a level, 2^d paths. *)
+let doubled ~leaf d =
+  leaf ^ "q\x00" ^ String.concat "" (List.init d (fun _ -> "h\x00\x86q\x00"))
+
+(* [dict_of_tuples keys] is a dict whose keys are tuples of ints below 3001,
+   [keys] then [(0, 1, ..., 3000)], each of value [None]. *)
+let dict_of_tuples keys =
+  let int i = "M" ^ le 2 i in
+  let tuple t = "(" ^ String.concat "" (List.map int t) ^ "t" in
+  pickle
+    ("}("
+    ^ String.concat "" (List.map (fun t -> tuple t ^ "N") keys)
+    ^ tuple (List.init 3001 Fun.id)
+    ^ "Nu")
+
+(* [colliding n] is [n] distinct 4-tuples [(a, b, c, d)] with [29791 a + 961 b +
+   31 c + d] constant. The keys of a load number the ints 0 to 3000 in that
+   order when the dict ends with [(0, ..., 3000)], so these tuples all collide
+   under a hash that folds [h * 31 + x], as nx.io's did. *)
+let colliding n =
+  let target = 1000 * 29791 in
+  let out = ref [] and count = ref 0 in
+  (try
+     for a = 1000 downto 0 do
+       for b = 0 to 3000 do
+         (* The [c] whose [d] lies in 0 to 3000. *)
+         let rest = target - (a * 29791) - (b * 961) in
+         for
+           c = Int.max 0 ((rest - 3000 + 30) / 31) to Int.min 3000 (rest / 31)
+         do
+           let d = rest - (c * 31) in
+           if d >= 0 && d <= 3000 then begin
+             out := [ a; b; c; d ] :: !out;
+             incr count;
+             if !count = n then raise Exit
+           end
+         done
+       done
+     done
+   with Exit -> ());
+  !out
 
 (* Tensors *)
 
@@ -708,14 +797,56 @@ let tensor_cases =
           in
           refused ~naming:"byte order"
             (checkpoint ~byteorder:"big" (pickle body) [ ("0", "abcd") ]));
+      cases "byte counts that pass an int's range are refused" ~id:fst
+        [
+          ( "an offset times a dtype's width",
+            ( global "torch._utils" "_rebuild_tensor_v3"
+              ^ tuple
+                  [
+                    pid ~cls:"UntypedStorage" "0" 4;
+                    "\x8a\x08" ^ le 7 0 ^ "\x20";
+                    int1 1 ^ "\x85";
+                    int1 1 ^ "\x85";
+                    "\x89";
+                    odict;
+                    global "torch" "complex32";
+                  ]
+              ^ "R",
+              [ ("0", "abcd") ],
+              "past" ) );
+          ( "a storage's count times its width",
+            ( tuple
+                [
+                  str "storage";
+                  global "torch" "ComplexDoubleStorage";
+                  str "0";
+                  str "cpu";
+                  "\x8a\x08" ^ le 7 0 ^ "\x08";
+                ]
+              ^ "Q",
+              [ ("0", "") ],
+              "more bytes" ) );
+        ]
+        (fun (_, (body, storages, naming)) ->
+          within_budget (fun () ->
+              refused ~naming (checkpoint (pickle body) storages)));
     ]
 
 (* Calls outside the vocabulary *)
 
 let opaque_cases =
   let setitem = global "operator" "setitem" in
-  group "opaque calls"
+  group "the vocabulary and opaque calls"
     [
+      cases "Python 2's names read as Python 3's below protocol 3" ~id:fst
+        [
+          ("__builtin__", ("__builtin__", "set", "builtins.set"));
+          ("copy_reg", ("copy_reg", "_reconstructor", "copyreg._reconstructor"));
+        ]
+        (fun (_, (m, n, py3)) ->
+          let p proto = pickle ~proto (global m n) in
+          equal value (Global py3) (load_pickle (p 2));
+          equal value (Global (m ^ "." ^ n)) (load_pickle (p 3)));
       test "a call given values nothing else reaches loads as its name"
         (fun () ->
           equal value
@@ -812,10 +943,23 @@ let naming =
             Dict [ (String "a.b", t); (String "a", Dict [ (String "b", t) ]) ]
           );
           ("a tensor at the root", t);
+          ( "a Ref to a shared value it does not hold",
+            Dict [ (String "b", Ref 0) ] );
         ]
         (fun (_, v) ->
           raises_match (Exn.failure ~sub:"Nx_io.Pytorch.tensors") (fun () ->
               ignore (Pt.tensors v)));
+      test "tensors refuses a shared value that holds a tensor" (fun () ->
+          let v =
+            load_pickle ~storages:four
+              (pickle (doubled ~leaf:(rebuild "0" 4) 40))
+          in
+          raises_match (Exn.failure ~sub:"holds a tensor") (fun () ->
+              ignore (Pt.tensors v)));
+      test "tensors of a value that doubles 40 times, with no tensor, is empty"
+        (fun () ->
+          let v = load_pickle (pickle (doubled ~leaf:")" 40)) in
+          equal (list string) [] (Archive.names (Pt.tensors v)));
       test "a whole module's tensors have no names" (fun () ->
           raises_match (Exn.failure ~sub:"torch.nn.modules.linear.Linear")
             (fun () ->
@@ -912,7 +1056,7 @@ let key_of (name, bytes, exact) form =
   | _ -> None
 
 let laws =
-  group "laws"
+  group "Pytorch.value"
     [
       prop "LONG1 of any bytes and LONG of their decimal are one integer"
         ~examples:bounds twos_bytes (fun b ->
@@ -921,11 +1065,8 @@ let laws =
           cover "8 bytes" (n = 8);
           cover "9 bytes" (n = 9);
           let long1 = load_pickle (pickle ~proto:4 ("\x8a" ^ le 1 n ^ b)) in
-          (match long1 with
-          | Int i ->
-              cover "max_int" (i = max_int);
-              cover "min_int" (i = min_int)
-          | _ -> ());
+          cover "max_int" (long1 = Int max_int);
+          cover "min_int" (long1 = Int min_int);
           let text =
             load_pickle (pickle ~proto:4 ("L" ^ decimal_of_twos b ^ "L\n"))
           in
@@ -956,65 +1097,41 @@ let laws =
             ((a = "min_int, -2^62" || a = "2^62") && b = a && f <> g);
           let s = checkpoint (pickle ("}(" ^ k ^ "N" ^ k' ^ "Nu")) [] in
           if a = b then refused ~naming:"twice" s else ignore (load s));
+      (* Under a hash that folds [h * 31 + x], as nx.io's did, these keys share
+         one bucket and a load compares them pairwise, 2 10^10 comparisons, past
+         the test's limit on any machine: the test fails by its timeout. nx.io
+         hashes each key under a seed a file cannot choose. *)
+      test "200 000 keys a file makes collide load" (fun () ->
+          let n = 200_000 in
+          let crafted = colliding n in
+          equal ~msg:"distinct crafted keys" int n
+            (List.length (List.sort_uniq compare crafted));
+          match
+            Nx_io.load_pytorch
+              (file ~suffix:".pt" (checkpoint (dict_of_tuples crafted) []))
+          with
+          | Dict kv -> equal int (n + 1) (List.length kv)
+          | v -> failf "%a" pp_value v);
+      test "a key that doubles 40 times loads in linear time, shared" (fun () ->
+          match load_pickle (pickle ("}" ^ doubled ~leaf:")" 40 ^ "Ns")) with
+          | Dict [ (Tuple [ Shared (0, _); Ref 0 ], Null) ] -> ()
+          | v -> failf "%a" pp_value v);
+      test "a shared list is Shared at its first path and a Ref after"
+        (fun () ->
+          equal value
+            (Dict
+               [ (String "a", Shared (0, List [ Int 1 ])); (String "b", Ref 0) ])
+            (load_pickle
+               (pickle (dict [ (str "a", "]q\x01K\x01a"); (str "b", "h\x01") ]))));
     ]
-
-(* [doubled d] is a tuple holding the tuple below it twice, [d] levels deep over
-   [leaf]: 5 bytes a level, 2^d paths. *)
-let doubled ~leaf d =
-  leaf ^ "q\x00" ^ String.concat "" (List.init d (fun _ -> "h\x00\x86q\x00"))
-
-(* [dict_of_tuples keys] is a dict whose keys are tuples of ints below 3001,
-   [keys] then [(0, 1, ..., 3000)], each of value [None]. *)
-let dict_of_tuples keys =
-  let int i = "M" ^ le 2 i in
-  let tuple t = "(" ^ String.concat "" (List.map int t) ^ "t" in
-  pickle
-    ("}("
-    ^ String.concat "" (List.map (fun t -> tuple t ^ "N") keys)
-    ^ tuple (List.init 3001 Fun.id)
-    ^ "Nu")
-
-(* [colliding n] is [n] distinct 4-tuples [(a, b, c, d)] with [29791 a + 961 b +
-   31 c + d] constant. The keys of a load number the ints 0 to 3000 in that
-   order when the dict ends with [(0, ..., 3000)], so these tuples all collide
-   under a hash that folds [h * 31 + x], as nx.io's did. *)
-let colliding n =
-  let target = 1000 * 29791 in
-  let out = ref [] and count = ref 0 in
-  (try
-     for a = 1000 downto 0 do
-       for b = 0 to 3000 do
-         (* The [c] whose [d] lies in 0 to 3000. *)
-         let rest = target - (a * 29791) - (b * 961) in
-         for
-           c = Int.max 0 ((rest - 3000 + 30) / 31) to Int.min 3000 (rest / 31)
-         do
-           let d = rest - (c * 31) in
-           if d >= 0 && d <= 3000 then begin
-             out := [ a; b; c; d ] :: !out;
-             incr count;
-             if !count = n then raise Exit
-           end
-         done
-       done
-     done
-   with Exit -> ());
-  !out
-
-(* The least of three times [f ()] takes, in seconds. *)
-let best f =
-  List.fold_left Float.min Float.infinity
-    (List.init 3 (fun _ ->
-         let t = Unix.gettimeofday () in
-         ignore (f ());
-         Unix.gettimeofday () -. t))
 
 let finding =
   let d kvs = Pt.Dict (List.map (fun (k, v) -> (Pt.String k, v)) kvs) in
   let found = option value in
   let refuses ~sub v path =
-    raises_match (Exn.failure ~sub:("Nx_io.Pytorch.find: " ^ sub)) (fun () ->
-        ignore (Pt.find path v))
+    raises_match
+      (Exn.failure ~sub:("Nx_io.Pytorch.find: " ^ sub))
+      (fun () -> ignore (Pt.find path v))
   in
   group "Pytorch.find"
     [
@@ -1091,106 +1208,6 @@ let finding =
           refuses ~sub:"b: a reference to shared value 0, outside the value"
             (d [ ("b", Ref 0) ])
             [ "b"; "k" ]);
-    ]
-
-let review =
-  group "sizes a hostile file chooses"
-    [
-      test "keys a file makes collide load as fast as as many ordinary ones"
-        (fun () ->
-          let n = 20_000 in
-          let crafted = colliding n in
-          equal ~msg:"distinct crafted keys" int n
-            (List.length (List.sort_uniq compare crafted));
-          let ordinary =
-            List.init n (fun i -> [ i mod 3001; i / 3001; 7; 11 ])
-          in
-          let time keys =
-            let path =
-              file ~suffix:".pt" (checkpoint (dict_of_tuples keys) [])
-            in
-            best (fun () -> Nx_io.load_pytorch path)
-          in
-          let t = time ordinary in
-          less ~msg:"seconds, against five times an ordinary file's" float_exact
-            ~than:((5. *. t) +. 0.05)
-            (time crafted));
-      test "a key that doubles 40 times loads in linear time, shared" (fun () ->
-          match load_pickle (pickle ("}" ^ doubled ~leaf:")" 40 ^ "Ns")) with
-          | Dict [ (Tuple [ Shared (0, _); Ref 0 ], Null) ] -> ()
-          | v -> failf "%a" pp_value v);
-      test "tensors refuses a shared value that holds a tensor" (fun () ->
-          let v =
-            load_pickle ~storages:four
-              (pickle (doubled ~leaf:(rebuild "0" 4) 40))
-          in
-          raises_match (Exn.failure ~sub:"holds a tensor") (fun () ->
-              ignore (Pt.tensors v)));
-      test "tensors of a value that doubles 40 times, with no tensor, is empty"
-        (fun () ->
-          let v = load_pickle (pickle (doubled ~leaf:")" 40)) in
-          equal (list string) [] (Archive.names (Pt.tensors v)));
-      test "a shared list is Shared at its first path and a Ref after"
-        (fun () ->
-          equal value
-            (Dict
-               [ (String "a", Shared (0, List [ Int 1 ])); (String "b", Ref 0) ])
-            (load_pickle
-               (pickle (dict [ (str "a", "]q\x01K\x01a"); (str "b", "h\x01") ]))));
-      test "a key nested 10^6 tuples deep loads, under an 8 MiB stack"
-        (fun () ->
-          let p = pickle ("})" ^ String.make 1_000_000 '\x85' ^ "Ns") in
-          let rec depth n = function
-            | Pt.Tuple [ t ] -> depth (n + 1) t
-            | Tuple [] -> n
-            | _ -> -1
-          in
-          match load_pickle p with
-          | Dict [ (k, Null) ] -> equal int 1_000_000 (depth 0 k)
-          | _ -> failf "not a dict of one key");
-      test "a LONG4 of 10^6 bytes loads as its bytes" (fun () ->
-          let b = String.make 999_999 '\x01' ^ "\x02" in
-          equal value (Long b)
-            (load_pickle (pickle ("\x8b" ^ le 4 1_000_000 ^ b))));
-      test "LONG text of 4300 digits loads, and of 4301 is refused" (fun () ->
-          let digits n = "1" ^ String.make (n - 1) '0' in
-          (match load_pickle (pickle ("L" ^ digits 4300 ^ "L\n")) with
-          | Long _ -> ()
-          | v -> failf "%a" pp_value v);
-          refused ~naming:"4300"
-            (checkpoint (pickle ("L" ^ digits 4301 ^ "L\n")) []));
-      cases "byte counts that pass an int's range are refused" ~id:fst
-        [
-          ( "an offset times a dtype's width",
-            ( global "torch._utils" "_rebuild_tensor_v3"
-              ^ tuple
-                  [
-                    pid ~cls:"UntypedStorage" "0" 4;
-                    "\x8a\x08" ^ le 7 0 ^ "\x20";
-                    int1 1 ^ "\x85";
-                    int1 1 ^ "\x85";
-                    "\x89";
-                    odict;
-                    global "torch" "complex32";
-                  ]
-              ^ "R",
-              [ ("0", "abcd") ],
-              "past" ) );
-          ( "a storage's count times its width",
-            ( tuple
-                [
-                  str "storage";
-                  global "torch" "ComplexDoubleStorage";
-                  str "0";
-                  str "cpu";
-                  "\x8a\x08" ^ le 7 0 ^ "\x08";
-                ]
-              ^ "Q",
-              [ ("0", "") ],
-              "more bytes" ) );
-        ]
-        (fun (_, (body, storages, naming)) ->
-          refused ~naming (checkpoint (pickle body) storages));
     ]
 
 (* The legacy format, byte by byte: its magic number, version, system
@@ -1295,8 +1312,7 @@ let descriptors =
         "sizes after an entry's data load at 4 or 8 bytes each, whether or not \
          its records have a ZIP64 field, with or without the descriptor's \
          signature"
-        ~id:fst layouts
-        (fun (_, sizes) -> equal value w (load (ckpt sizes)));
+        ~id:fst layouts (fun (_, sizes) -> equal value w (load (ckpt sizes)));
       cases "a descriptor that disagrees with the central directory is refused"
         ~id:fst
         [ ("8-byte sizes", (true, 8)); ("4-byte sizes", (false, 4)) ]
@@ -1307,8 +1323,7 @@ let descriptors =
           in
           (* The compressed size in the first entry's descriptor, off by one. *)
           let rec size i =
-            if Bytes.sub_string b i 4 = "PK\007\008" then i + 8
-            else size (i + 1)
+            if Bytes.sub_string b i 4 = "PK\007\008" then i + 8 else size (i + 1)
           in
           let i = size 0 in
           Bytes.set_uint8 b i (Bytes.get_uint8 b i lxor 1);
@@ -1320,13 +1335,12 @@ let () =
     (run "nx.io PyTorch"
        [
          torch_files;
+         descriptors;
+         legacy_views;
          opcode_cases;
-         tensor_cases;
          opaque_cases;
+         tensor_cases;
+         laws;
          naming;
          finding;
-         laws;
-         review;
-         legacy_views;
-         descriptors;
        ])
