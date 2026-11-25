@@ -616,8 +616,8 @@ let reading =
           let t =
             Talon.v [ ("x", Column.v Type.int64 (Array.init n Fun.id)) ]
           in
-          (* Each compression writes a file of its own, since Windows refuses
-             to truncate a file whose pages are mapped. *)
+          (* Each compression writes a file of its own, since Windows refuses to
+             truncate a file whose pages are mapped. *)
           let held compression =
             let path = temp_file ~suffix:".arrow" () in
             Out_channel.with_open_bin path (fun oc ->
