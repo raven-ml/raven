@@ -18,8 +18,7 @@
   test_nested_expectation
   test_weighted
   test_smc
-  test_pathfinder
-  test_vi)
+  test_fit)
  (modules
   test_sets
   test_support
@@ -39,8 +38,7 @@
   test_nested_expectation
   test_weighted
   test_smc
-  test_pathfinder
-  test_vi
+  test_fit
   nested_runs)
  (package norn)
  (deps
