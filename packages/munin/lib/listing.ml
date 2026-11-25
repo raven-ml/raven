@@ -136,7 +136,7 @@ let last_line fd ~size =
   in
   go size first_piece None
 
-type error = [ `Not_a_run | `Unreadable of string ]
+type error = [ `Not_a_run | `Unreadable of string | `Unopened of string ]
 
 let decode_start line =
   match Record.decode line with
@@ -203,7 +203,7 @@ let read ?prev ~id dir =
          deletion renames the log away before it removes the directory: a
          directory without a log holds no run. *)
       match File.open_read_opt path with
-      | exception Sys_error e -> Error (`Unreadable e)
+      | exception Sys_error e -> Error (`Unopened e)
       | None -> Error `Not_a_run
       | Some fd ->
           Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
@@ -213,7 +213,7 @@ let read ?prev ~id dir =
             | None -> (
                 match first_line fd with
                 | None -> Error `Not_a_run
-                | Some line -> decode_start line)
+                | Some line -> (decode_start line :> (_, error) result))
           in
           (* The probe comes before the read of the last record. *)
           let held = File.probe fd in

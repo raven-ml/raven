@@ -71,6 +71,7 @@ let run s id =
     | Ok r -> Some r
     | Error `Not_a_run -> None
     | Error (`Unreadable why) -> failwith (Printf.sprintf "run %s: %s" id why)
+    | Error (`Unopened e) -> raise (Sys_error e)
 
 let no_run s id = failwith (Printf.sprintf "no run %s in %s" id s.root)
 
@@ -322,7 +323,7 @@ let check s =
       | Error `Not_a_run when deleted -> add dir "left by a deletion"
       | Error `Not_a_run ->
           add dir "not a run: its log holds no whole first line"
-      | Error (`Unreadable why) -> add dir why
+      | Error (`Unreadable why | `Unopened why) -> add dir why
       | Ok r -> (
           (* Tags *)
           let tags = Filename.concat dir "tags" in

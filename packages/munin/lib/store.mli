@@ -63,8 +63,8 @@ val run : t -> string -> Run.t option
 (** [run s id] is the run [id] of [s], read as {!val-runs} reads it, or [None]
     if [s] has no run [id].
 
-    Raises [Failure] if [id]'s log does not start as a run of this
-    format. *)
+    Raises [Failure] if [id]'s log does not start as a run of this format, and
+    [Sys_error] if it cannot be opened. *)
 
 val add_tags : t -> string -> string list -> unit
 (** [add_tags s id tags] adds [tags] to the run [id]. Its other tags stay.

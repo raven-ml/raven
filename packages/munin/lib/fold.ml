@@ -506,7 +506,6 @@ let start_of st fd =
   match Listing.decode_start line with
   | Ok (start, started_at) -> (start, started_at, String.length line + 1)
   | Error (`Unreadable why) -> failwith (st.path ^ ": " ^ why)
-  | Error `Not_a_run -> failwith (st.path ^ ": not a run")
 
 let read_into st ~following ~target =
   let fd, held, stat = open_log st in

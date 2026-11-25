@@ -1757,7 +1757,8 @@ let store_tests =
             Filename.concat dir "events.jsonl" ^ ": "
             ^ Unix.error_message Unix.EACCES
           in
-          raises_match (Exn.failure ~sub:denied) (fun () -> Store.run store id);
+          raises_match (Exn.sys_error ~sub:denied) (fun () ->
+              Store.run store id);
           equal
             (list (pair string string))
             [ (dir, denied) ]
