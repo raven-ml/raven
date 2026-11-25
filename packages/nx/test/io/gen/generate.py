@@ -1155,6 +1155,21 @@ def hdf5_fixtures():
         f.create_group("g")["e"] = h5py.ExternalLink("other.h5", "/x")
     with h5py.File("hdf5_userblock.h5", "w", userblock_size=512) as f:
         f["x"] = np.arange(3)
+    # Links and attributes in fractal heaps, in superblock version 0: a group
+    # that tracks creation order holds its links in link messages, and in a
+    # fractal heap past 8 of them; a dataset that tracks it holds its
+    # attributes in one past 8.
+    with h5py.File("hdf5_dense_links.h5", "w") as f:
+        g = f.create_group("dense", track_order=True)
+        for i in range(12):
+            g["d%02d" % i] = np.int8(i)
+    with h5py.File("hdf5_dense_attrs.h5", "w") as f:
+        f.create_dataset("attrs", data=np.arange(3, dtype="<i4"), track_order=True)
+        for i in range(12):
+            f["attrs"].attrs["a%02d" % i] = np.int8(i)
+    for name in ("hdf5_dense_links.h5", "hdf5_dense_attrs.h5"):
+        b = open(name, "rb").read()
+        assert b[8] == 0 and b"FRHP" in b, name
 
 
 SUPPORT = Path(__file__).resolve().parent.parent / "support"
