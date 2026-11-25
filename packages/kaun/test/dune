@@ -8,14 +8,15 @@
   test_attention
   test_layer_norm
   test_rms_norm
+  test_batch_norm
   test_fn
   test_pool
   test_rope
+  test_dropout
   test_init
   test_loss
   test_data
   test_metric
-  test_stateful
   test_data_parallel
   test_jit_state
   test_half
