@@ -1063,7 +1063,7 @@ val reshape : int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     it, a copy otherwise.
 
     Raises [Invalid_argument] if the element counts differ, an extent is below
-    [-1], or two are [-1]. *)
+    [-1], two are [-1], or one is [-1] and the others multiply to [0]. *)
 
 val broadcast_to : int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [broadcast_to s x] is [x] stretched to shape [s]: an axis of extent [1], or
