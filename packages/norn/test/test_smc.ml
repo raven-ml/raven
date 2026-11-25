@@ -104,9 +104,16 @@ let init_tests =
         [
           ( "one value for all particles",
             fun x -> Nx.sum (conjugate.likelihood x) );
-          (* Centred on the particles' mean, which their order leaves. *)
-          ( "a value that reads the other particles",
+          ( "centred on the particles' mean",
             fun x -> conjugate.likelihood (Nx.sub x (Nx.mean ~axes:[ 0 ] x)) );
+          ( "normalised by the particles' largest",
+            fun x ->
+              let l = conjugate.likelihood x in
+              Nx.sub l (Nx.max l) );
+          ( "centred on the particles' median",
+            fun x ->
+              conjugate.likelihood (Nx.sub x (Nx.quantile ~axis:0 [| 0.5 |] x))
+          );
         ]
         (fun (_, likelihood) ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->

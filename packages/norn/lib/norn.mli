@@ -1437,9 +1437,10 @@ module Nuts : sig
       does not return one log density per chain, as in
       [Norn.Nuts.init: the density returned shape [4; 8] for a position of 4
        chains; a density returns one log density per chain, shape [4]]. With
-      several chains it evaluates [lp] again on the chains reversed, and raises
-      naming the first row whose log density differs: a chain's density reads
-      only its own row. *)
+      several chains it evaluates [lp] again on chain 0 alone and on chain 1
+      alone, and raises naming the row that differs from its chain's alone: a
+      chain's density reads only its own row. A read of the other chains that
+      leaves rows 0 and 1 as they are goes unseen. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->
@@ -1584,8 +1585,8 @@ module Hmc : sig
       one log density per chain, as in
       [Norn.Hmc.init: the density returned shape [4; 8] for a position of 4
        chains; a density returns one log density per chain, shape [4]]. With
-      several chains it evaluates [lp] again on the chains reversed, and raises
-      naming the first row whose log density differs. *)
+      several chains it evaluates [lp] again on chain 0 alone and on chain 1
+      alone, and raises naming the row that differs from its chain's alone. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->
@@ -1741,7 +1742,7 @@ module Ensemble : sig
       than twice a walker's float elements, if a tensor of [start] is not of a
       float dtype, naming its path, if [lp] is NaN, [+inf] or [-inf] at a
       walker, naming it, or if [lp] does not return one log density per walker,
-      each read from its own row. *)
+      each read from its own row as {!Nuts.init} checks it. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->
@@ -1971,8 +1972,8 @@ module Nested : sig
 
       Raises [Invalid_argument] if [batch < 1] or [batch >= n], [budget < 1],
       [tolerance] is not positive, [live] holds no tensor, or if a density does
-      not return one log density per point, each read from its own row, or is
-      NaN or [+inf] at a point. *)
+      not return one log density per point, each read from its own row as
+      {!Nuts.init} checks it, or is NaN or [+inf] at a point. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->
@@ -2115,8 +2116,8 @@ module Smc : sig
 
       Raises [Invalid_argument] if [resampled] does not divide [N] into chains
       of two states or more, [start] holds no tensor, or if a density does not
-      return one log density per particle, each read from its own row, or is NaN
-      or [+inf] at a particle. *)
+      return one log density per particle, each read from its own row as
+      {!Nuts.init} checks it, or is NaN or [+inf] at a particle. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->

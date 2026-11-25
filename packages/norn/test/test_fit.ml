@@ -161,9 +161,15 @@ let not_finite_rows =
 let not_per_chain_rows =
   [
     ("one value for all chains", fun x -> Nx.sum (target x));
-    (* Centred on the chains' mean, which their order leaves. *)
-    ( "a value that reads the other chains",
+    ( "centred on the chains' mean",
       fun x -> target (Nx.add_s (Nx.sub x (Nx.mean ~axes:[ 0 ] x)) 1.) );
+    ( "normalised by the chains' largest",
+      fun x ->
+        let l = target x in
+        Nx.sub l (Nx.max l) );
+    ( "centred on the chains' median",
+      fun x -> target (Nx.add_s (Nx.sub x (Nx.quantile ~axis:0 [| 0.5 |] x)) 1.)
+    );
   ]
 
 (* Two dtypes: a float32 tensor beside a float64 one. *)

@@ -125,9 +125,10 @@ All notable changes to this project will be documented in this file.
   density's dtype and back, losing digits with no error; `pathfinder` raised
   naming `Jera.Minimize.iterates`.
 - `Nuts.init`, `Hmc.init`, `Ensemble.init`, `Nested.init`, `Smc.init`,
-  `Gaussian.pathfinder` and `Gaussian.vi` refuse a density whose rows read the
-  other chains in a way their order leaves, such as through the chains' mean.
-  Only reads the reversal of the chains changes were refused.
+  `Gaussian.pathfinder` and `Gaussian.vi` evaluate the density on chain 0
+  alone and on chain 1 alone, and refuse it where either row differs: a read
+  of the other chains through their mean, largest or median changes it. They
+  evaluated it on the chains reversed, which none of those reads changes.
 - **Breaking:** `Norn_model.log_prior` and `Norn_model.from_prior` take the
   observations, as `log_prior m y` and `from_prior m y ~n k`, and answer the
   observed sites with them. A latent site that reads an observed value was

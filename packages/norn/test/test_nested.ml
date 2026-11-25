@@ -84,9 +84,16 @@ let init_tests =
         ~id:fst
         [
           ("one value for all points", fun x -> Nx.sum (conjugate.likelihood x));
-          (* Centred on the points' mean, which their order leaves. *)
-          ( "a value that reads the other points",
+          ( "centred on the points' mean",
             fun x -> conjugate.likelihood (Nx.sub x (Nx.mean ~axes:[ 0 ] x)) );
+          ( "normalised by the points' largest",
+            fun x ->
+              let l = conjugate.likelihood x in
+              Nx.sub l (Nx.max l) );
+          ( "centred on the points' median",
+            fun x ->
+              conjugate.likelihood (Nx.sub x (Nx.quantile ~axis:0 [| 0.5 |] x))
+          );
         ]
         (fun (_, likelihood) ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Nested.init") (fun () ->
