@@ -243,11 +243,13 @@ let system =
             (Some
                "/System/Library/PrivateFrameworks/MTLCompiler.framework/MTLCompiler")
             (C.findlib "MTLCompiler" [ "MTLCompiler" ]));
-      test "the math library is found among Linux's library directories"
-        (fun () ->
+      (* Every Linux with a C toolchain has a shared C library: glibc's
+         [libc.so.6], under [/lib/x86_64-linux-gnu] on Debian, or musl's
+         [libc.so]. musl has no math library apart from it. *)
+      test "the C library is found among Linux's library directories" (fun () ->
           on "linux";
-          let file = require_some (C.findlib "m" [ "m" ]) in
-          starts_with ~prefix:"libm.so" (Filename.basename file));
+          let file = require_some (C.findlib "c" [ "c" ]) in
+          starts_with ~prefix:"libc.so" (Filename.basename file));
     ]
 
 (* multiarch *)

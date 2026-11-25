@@ -1235,7 +1235,7 @@ generated them, and each row runs on its own platform. No tinygrad test covers
 | tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | macOS: `lib<p>.dylib`, `<p>.dylib`, `<p>`, in that order per directory; a dangling link inside a framework | `C › as tinygrad › findlib_trees.golden › platform=darwin case=*`; `C › the system's directories › MTLCompiler is found among macOS's private frameworks` |
 | tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | an absolute path is taken if it is a file, else the next path is searched; each path is searched through every directory before the next | `C › as tinygrad › findlib_trees.golden › platform=* case=absolute_*`, `paths_before_directories`, `name_path_dir_each_path` |
 | tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | not found | `C › absence › a name nowhere is not found`, `no paths find nothing, even with a directory that holds the name`; `C › as tinygrad › findlib_trees.golden › platform=* case=not_found`, `no_paths` |
-| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | the system's directories on Linux, `/lib/<MULTIARCH>` among them | `C › the system's directories › the math library is found among Linux's library directories`; `C › multiarch › names a Linux machine` |
+| tinygrad: `runtime/support/c.py` `DLL.findlib` (no test) | the system's directories on Linux, `/lib/<MULTIARCH>` among them | `C › the system's directories › the C library is found among Linux's library directories`; `C › multiarch › names a Linux machine` |
 | tinygrad: `runtime/support/c.py` `DLL.findlib` `libc` and `m` on macOS | `/usr/lib/lib<nm>.dylib` returned without a search | dropped: no caller of `C.findlib` loads the C or math library |
 
 ## Compiler_cpu
