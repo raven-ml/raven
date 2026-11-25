@@ -818,9 +818,10 @@ let cauchy_density a scale =
 (* The Student t's log density at [a = |x - loc|] is [c - log σ - ((ν + 1) / 2)
    log1p ((a / s)²)], [c] its normaliser, [s = σ √ν]. Past [a = s] it is [c +
    log √ν + ν (log s - log a) - log a - ((ν + 1) / 2) log1p ((s / a)²)]: [log σ]
-   enters once, at its net coefficient [ν], and [log s - log a < 0] there, so no
-   term is [+inf] where another is [-inf]. Neither [z] nor [z / √ν] is formed
-   where it would overflow. *)
+   enters once, at its net coefficient [ν]. There [log s - log a] is negative
+   but for rounding, which leaves it at most a few ulps of [log s] above [0], so
+   [ν (log s - log a)] is never [+inf] and no term is [+inf] where another is
+   [-inf]. Neither [z] nor [z / √ν] is formed where it would overflow. *)
 let student_t_density t loc x =
   let a = Nx.abs (Nx.sub x loc) in
   let beyond, near, log_a, far = log1p_sides a t.s in
