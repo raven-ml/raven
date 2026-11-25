@@ -108,8 +108,8 @@ All notable changes to this project will be documented in this file.
   inside the bands, so the p-value of uniform ranks came out low: 0.125 for
   three ranks at 0 of one draw, where it is 0.25.
 - An exception a `Norn_model` model raises leaves `Norn_model.v` and every
-  interpreter with the backtrace of its raise, as `v`'s interface states. It
-  started at the effect handler, which hid where the model failed.
+  interpreter run eagerly with the backtrace of its raise, as `v`'s interface
+  states. It started at the effect handler, which hid where the model failed.
 - `Dist.normal`, `Dist.half_normal` and `Dist.lognormal` keep a finite log
   density where `z²` overflows and `-z² / 2` does not: at float16, `Dist.normal`
   gave `-inf` at `z = 300`, where the log density is `-45000.9`.
