@@ -60,6 +60,11 @@ val length : string -> int -> stop:int -> int
     of [s], as {!at} reads it, without its class: the length {!decode} gives, or
     [1] for a byte that opens no character. *)
 
+val is_one_character : string -> bool
+(** [is_one_character s] is [true] iff [s] is exactly one character as
+    {!decode} reads it. A byte that opens no character is a character only
+    within a text, so a string of one such byte is not one. *)
+
 val at_len : int -> int
 (** [at_len d] is the byte length of the character in the result [d] of {!at}.
 *)

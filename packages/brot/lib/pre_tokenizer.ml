@@ -1597,15 +1597,6 @@ let walk_pieces t text ~encode ~span =
   done;
   List.rev !pieces
 
-(* Whether [s] is one character: a byte that opens none is a character only
-   within a text. *)
-let is_one_character s =
-  let stop = String.length s in
-  stop > 0
-  &&
-  let d = Char_class.decode s 0 ~stop in
-  d >= 0 && d land 7 = stop
-
 let opening = Lazy.from_val true
 let continuing = Lazy.from_val false
 
@@ -1716,7 +1707,7 @@ let split_regex ~pattern ?(behavior = `Removed) ?(invert = false) () =
   | Error msg -> invalid_arg (err_regex pattern msg)
 
 let char_delimiter delimiter =
-  if not (is_one_character delimiter) then invalid_arg err_delimiter;
+  if not (Char_class.is_one_character delimiter) then invalid_arg err_delimiter;
   Char_delimiter delimiter
 
 let digits ?(individual_digits = false) () =
@@ -1724,7 +1715,8 @@ let digits ?(individual_digits = false) () =
 
 let metaspace ?(replacement = "\xe2\x96\x81") ?(prepend_scheme = `Always)
     ?(split = true) () =
-  if not (is_one_character replacement) then invalid_arg err_replacement;
+  if not (Char_class.is_one_character replacement) then
+    invalid_arg err_replacement;
   Metaspace { replacement; prepend_scheme; split }
 
 let unicode_scripts = Unicode_scripts
@@ -1925,8 +1917,8 @@ let rec of_json = function
           | _ -> Error err_split_missing)
       | Some (Jsont.String ("CharDelimiterSplit", _)) -> (
           match find_field "delimiter" fields with
-          | Some (Jsont.String (delimiter, _)) when is_one_character delimiter
-            ->
+          | Some (Jsont.String (delimiter, _))
+            when Char_class.is_one_character delimiter ->
               Ok (Char_delimiter delimiter)
           | _ -> Error err_char_delim_missing)
       | Some (Jsont.String ("Digits", _)) ->
@@ -1937,7 +1929,7 @@ let rec of_json = function
       | Some (Jsont.String ("Metaspace", _)) -> (
           match find_field "replacement" fields with
           | Some (Jsont.String (replacement, _))
-            when is_one_character replacement ->
+            when Char_class.is_one_character replacement ->
               let* prepend_scheme = scheme_field fields in
               let* split = Json_text.bool fields "split" ~default:true in
               Ok (Metaspace { replacement; prepend_scheme; split })

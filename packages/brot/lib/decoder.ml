@@ -723,16 +723,9 @@ let byte_fallback = Byte_fallback
 let wordpiece ?(prefix = "##") ?(cleanup = true) () =
   Word_piece { prefix; cleanup }
 
-(* Whether [s] is one well-formed character. *)
-let is_one_character s =
-  let stop = String.length s in
-  stop > 0
-  &&
-  let d = Char_class.decode s 0 ~stop in
-  d >= 0 && d land 7 = stop
-
 let metaspace ?(replacement = "\xe2\x96\x81") ?(prepend_scheme = `Always) () =
-  if not (is_one_character replacement) then invalid_arg err_metaspace;
+  if not (Char_class.is_one_character replacement) then
+    invalid_arg err_metaspace;
   Metaspace { replacement; prepend_scheme }
 
 let ctc ?(pad_token = "<pad>") ?(word_delimiter_token = "|") ?(cleanup = true)
@@ -878,7 +871,8 @@ let rec of_json = function
           let* replacement =
             Json_text.string fields "replacement" ~default:"\xe2\x96\x81"
           in
-          if not (is_one_character replacement) then Error err_metaspace
+          if not (Char_class.is_one_character replacement) then
+            Error err_metaspace
           else Ok (Metaspace { replacement; prepend_scheme })
       | Some (Jsont.String ("CTC", _)) ->
           let* pad_token =

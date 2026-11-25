@@ -157,6 +157,13 @@ let length s i ~stop =
   let d = decode s i ~stop in
   if d < 0 then 1 else d land 7
 
+let is_one_character s =
+  let stop = String.length s in
+  stop > 0
+  &&
+  let d = decode s 0 ~stop in
+  d >= 0 && d land 7 = stop
+
 let[@inline never] at_beyond_ascii s i stop =
   let d = decode s i ~stop in
   if d < 0 then stray else pack (d lsr 3) (d land 7)
