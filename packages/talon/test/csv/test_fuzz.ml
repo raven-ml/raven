@@ -45,15 +45,6 @@ let pick = Gen.of_list ~pp:Format.pp_print_string (List.map fst corpus)
 let text name = List.assoc name corpus
 let nulls = [ "NA" ]
 
-(* The format sniffing gives each corpus file. *)
-let formats =
-  List.map
-    (fun (name, s) ->
-      match Csv.sniff ~nulls (Reader.of_string s) with
-      | Ok f -> (name, f)
-      | Error e -> failwith (Format.asprintf "%s: %a" name Error.pp e))
-    corpus
-
 (* Decoding *)
 
 (* [decode ?batch ?rows ?slice f s] decodes [s] in slices of [slice] bytes, in
@@ -135,22 +126,25 @@ let syntax =
       "+";
     ]
 
+(* [mutated name mutate] decodes the corpus file [name], mutated, as the format
+   sniffed from the file before the mutation. *)
 let mutated name mutate (rows, slice) =
   let s = text name in
-  ignore (decode ?rows ?slice (List.assoc name formats) (mutate s))
+  let f = Error.get_ok (Csv.sniff ~nulls (Reader.of_string s)) in
+  ignore (decode ?rows ?slice f (mutate s))
 
 let bits = Gen.(list ~size:(int_range 1 8) (pair nat (int_range 0 7)))
 
 let mutations =
-  group "Mutated files decode to a table or an error"
+  group "decode"
     [
-      prop "with bits flipped"
+      prop "a file with bits flipped is a table or an error"
         Gen.(triple pick bits (pair rows slice))
         (fun (name, bits, r) -> mutated name (flip bits) r);
-      prop "cut short"
+      prop "a file cut short is a table or an error"
         Gen.(triple pick nat (pair rows slice))
         (fun (name, k, r) -> mutated name (fun s -> String.sub s 0 (at s k)) r);
-      prop "with syntax inserted"
+      prop "a file with syntax inserted is a table or an error"
         Gen.(
           triple pick
             (list ~size:(int_range 1 4) (pair nat syntax))
@@ -159,17 +153,17 @@ let mutations =
           mutated name
             (fun s -> List.fold_left (fun s (k, p) -> insert k p s) s pieces)
             r);
-      prop "with bytes removed"
+      prop "a file with bytes removed is a table or an error"
         Gen.(quad pick nat (int_range 1 16) (pair rows slice))
         (fun (name, k, len, r) -> mutated name (remove k len) r);
-      prop "with bytes repeated"
+      prop "a file with bytes repeated is a table or an error"
         Gen.(
           quad pick
             (pair nat (int_range 1 32))
             (int_range 2 64) (pair rows slice))
         (fun (name, (k, len), n, r) -> mutated name (repeat k len n) r);
       (* The example is a file of one line feed, a batch of no record. *)
-      prop "spliced with another file"
+      prop "a file spliced with another is a table or an error"
         ~examples:[ ("types", "one column", (0, 403), (None, None)) ]
         Gen.(quad pick pick (pair nat nat) (pair rows slice))
         (fun (a, b, (i, j), r) ->
@@ -231,14 +225,14 @@ let one_batch s =
     big_format (Reader.of_string s)
 
 let boundary =
-  group "Mutations near a batch boundary"
+  group "decode_in_batches"
     [
-      prop ~count:50 "in batches of 256 bytes"
+      prop ~count:50 "reads a file mutated near a batch's end as one batch"
         Gen.(triple (int_range (-64) 64) syntax (option (int_range 1 batch)))
         (fun (k, piece, slice) ->
           let s = insert (batch + k) piece (records (batch + 2048)) in
           equal decoded (one_batch s) (decode ~batch ?slice big_format s));
-      test "a quote before the 1 MiB mark" (fun () ->
+      test "reads a quote before the 1 MiB mark as one batch" (fun () ->
           let s = insert (mib - 1) "\"" (records (mib + 2048)) in
           equal decoded (one_batch s)
             (Csv.decode big_format (Reader.of_string s)));
