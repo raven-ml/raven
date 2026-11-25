@@ -38,15 +38,41 @@ static uint64_t host_ns(CFTimeInterval seconds) {
    across submits, under the device's open mutex, until one of four commits:
    a commit of a value in it, a submit that finds fewer than [backlog]
    committed command buffers uncompleted, the handler of a command buffer
-   that completes while one is open, and a buffer that holds [open_bound]
-   values. Metal runs nothing before a commit, and one round trip costs tens
-   of dispatches, so the buffer carries as many values as the GPU's own
+   that completes while one is open, and a submit after which the buffer's
+   estimated work reaches [open_work_ns] or it holds [open_bound] values.
+   Metal runs nothing before a commit, and one round trip costs tens of
+   dispatches, so the buffer carries as many values as the GPU's own
    backlog allows. The buffer and its encoder outlive the autorelease pools
    of the submits that fill them: each is retained once made and released
    once ended. A buffer's slot carries the last value whose work it ends. */
 
 /* The values an open command buffer holds before it is committed. */
 static const int open_bound = 256;
+
+/* The estimated GPU work, in nanoseconds, at which a submit commits the
+   open command buffer: its parts times the GPU time per part of the last
+   buffer with parts to complete. On a chain of short values that the GPU
+   runs a little slower than the host submits them, the open buffer is
+   then committed while the one before it runs, where the backlog alone
+   held it until the next completion handler, which runs about 100 µs
+   after the GPU idled: a chain of 4,096 values of 11 µs left the GPU idle
+   6.1 ms of 44.7 ms, and runs 6 % faster with the estimate. Once a buffer
+   of long values has completed, the estimate also ends the next ones
+   after a few values each, where they piled up to 256 in one: 256 values
+   of 1.8 ms made one buffer of about 0.47 s. A first burst, submitted
+   before a buffer of its values completed, still fills one buffer up to
+   256 values: the estimate is none yet, or that of shorter work. A
+   command buffer boundary costs the GPU about 53 µs on an M1 Max: 29 µs
+   between the buffers, and about 24 µs inside the next before its parts
+   run at their rate. A buffer of 2 ms spends about 2.5 % of its time
+   there: a chain of 0.74 ms values runs 2.1 % slower, three values a
+   buffer, and values of 1.8 ms 0.7 %, two a buffer. A value is reported
+   at most about 2 ms of others' work late. At 1.5 ms each value of 1.8 ms
+   took a buffer, 1.1 % slower, for the same 6 % on the chain of 11 µs
+   values. At 5 ms the chain of 0.74 ms values runs 0.85 % slower, but the
+   bound of 256 values, about 2.8 ms of the 11 µs chain, ends its buffers
+   before the estimate does, and that chain runs as without it. */
+static const uint64_t open_work_ns = 2000000;
 
 /* The committed command buffers below which a submit commits its own: the
    one running and two queued behind it. A completion handler runs about
@@ -71,6 +97,7 @@ static const char *drop(struct rig_metal_queue *q, const char *why) {
 
 static const char *fail(struct rig_metal_queue *q, const char *why) {
   q->r->open_values = 0;
+  q->r->open_parts = 0;
   return drop(q, why);
 }
 
@@ -112,14 +139,15 @@ static void unlock_open(struct rig_metal_run *r);
 @end
 
 /* Starts a command buffer, after taking its slot. Its completion handler
-   runs on a thread of Metal's: it completes the slot, then commits the
-   open command buffer if it holds work and no submit holds it, so the GPU
-   finds work queued behind the one it ended. A handler that finds no work
-   takes no mutex: a submit waiting for a handler's mutex took 4 µs more on
-   the M1 Max. A submit that adds work after the handler looked finds the
-   slot completed, and commits unless buffers whose handlers come later are
-   in flight. The pool of the submit autoreleases the hold, which the
-   handler then keeps alone. */
+   runs on a thread of Metal's: it stores the buffer's GPU time per part
+   while the slot holds the buffer's parts, completes the slot, then
+   commits the open command buffer if it holds work and no submit holds it,
+   so the GPU finds work queued behind the one it ended. A handler that
+   finds no work takes no mutex: a submit waiting for a handler's mutex
+   took 4 µs more on the M1 Max. A submit that adds work after the handler
+   looked finds the slot completed, and commits unless buffers whose
+   handlers come later are in flight. The pool of the submit autoreleases
+   the hold, which the handler then keeps alone. */
 static const char *begin(struct rig_metal_queue *q) {
   struct rig_metal_run *r = q->r;
   int slot = rig_metal_ring_take(&r->ring);
@@ -148,8 +176,13 @@ static const char *begin(struct rig_metal_queue *q) {
       snprintf(why, sizeof why, "the GPU's work failed: %s (%s, code %ld)",
                b.error.localizedDescription.UTF8String ?: "no reason given",
                b.error.domain.UTF8String ?: "no domain", (long)b.error.code);
-    rig_metal_ring_complete(&run->ring, slot, failed ? why : NULL,
-                               host_ns(b.GPUStartTime), host_ns(b.GPUEndTime));
+    uint64_t start = host_ns(b.GPUStartTime), end = host_ns(b.GPUEndTime);
+    int parts = run->ring.slots[slot].parts;
+    if (!failed && parts > 0)
+      atomic_store_explicit(&run->part_ns,
+                            end > start ? (end - start) / (uint64_t)parts : 0,
+                            memory_order_relaxed);
+    rig_metal_ring_complete(&run->ring, slot, failed ? why : NULL, start, end);
     if (atomic_load_explicit(&run->open_values, memory_order_relaxed) > 0) {
       atomic_store(&run->wanted, 1);
       if (pthread_mutex_trylock(&run->open_mutex) == 0) unlock_open(run);
@@ -168,6 +201,8 @@ static void commit(struct rig_metal_queue *q, uint64_t v, uint64_t *start,
   s->v = v;
   s->start = start;
   s->end = end;
+  s->parts = q->r->open_parts;
+  q->r->open_parts = 0;
   if (q->encoder) close_encoder(q);
   [q->buffer commit];
   [q->buffer release];
@@ -196,10 +231,13 @@ static void unlock_open(struct rig_metal_run *r) {
   }
 }
 
+/* Commits the open command buffer and starts another, in which the fill
+   that split goes on as one part. */
 int rig_metal_split(void *queue, uint64_t *start, uint64_t *end) {
   struct rig_metal_queue *q = queue;
   commit(q, q->r->open_v, start, end);
   q->r->open_values = 0;
+  q->r->open_parts = 1;
   return begin(q) || open_encoder(q) ? 1 : 0;
 }
 
@@ -399,6 +437,15 @@ static void launch(struct rig_metal_queue *q, const struct rig_part *p,
                                         b->threads[2])];
 }
 
+/* Whether the open command buffer's estimated work reaches [open_work_ns]:
+   none is estimated before a command buffer with parts has completed. The
+   comparison counts parts, so that no product overflows. The open mutex is
+   held. */
+static int worked(const struct rig_metal_run *r) {
+  uint64_t g = atomic_load_explicit(&r->part_ns, memory_order_relaxed);
+  return g > 0 && (uint64_t)r->open_parts >= (open_work_ns + g - 1) / g;
+}
+
 /* Runs the parts of [v] in the open command buffer's encoder, opening
    either if none is, and commits the buffer if its work would otherwise wait:
    whether it did. A fill that returns 0 without an open command buffer broke
@@ -419,6 +466,7 @@ static const char *run(struct rig_metal_run *r, uint64_t v,
       r->ring.slots[q->slot].first = &times[0];
     if (why == NULL && n > 0 && q->encoder == nil) why = open_encoder(q);
     for (int i = 0; i < n && why == NULL; i++) {
+      r->open_parts++;
       if (parts[i].kind == RIG_LAUNCH) {
         launch(q, &parts[i], args, slots);
         continue;
@@ -436,7 +484,7 @@ static const char *run(struct rig_metal_run *r, uint64_t v,
     } else if (why == NULL) {
       r->open_v = v;
       r->open_values++;
-      *committed = r->open_values >= open_bound ||
+      *committed = r->open_values >= open_bound || worked(r) ||
                    rig_metal_ring_taken(&r->ring) - 1 < backlog;
       if (*committed) commit_open(r);
     }
@@ -493,6 +541,7 @@ void rig_metal_drop(struct rig_metal_run *r) {
     if (r->open.slot >= 0) drop(&r->open, "the device stopped");
   }
   r->open_values = 0;
+  r->open_parts = 0;
   unlock_open(r);
 }
 

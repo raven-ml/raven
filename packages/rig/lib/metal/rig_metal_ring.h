@@ -34,11 +34,12 @@
    its completion writes its start time at [start] and [first], and its end
    time at [end]. [first] is set on the first buffer of a timed value.
    [arena_end] is the count of parameter arena bytes taken up to the last
-   launch the buffer holds, which its release gives back. */
+   launch the buffer holds, which its release gives back. [parts] is the
+   parts the buffer holds, which the ring never reads. */
 struct rig_metal_slot {
   uint64_t v;
   uint64_t *start, *end, *first;
-  int state;
+  int state, parts;
   _Atomic uint64_t arena_end;
 };
 

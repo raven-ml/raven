@@ -107,6 +107,15 @@ let watching () =
   let arg, slot = watching_arg Rig_metal.command_buffer in
   ({ fn = watching_fill (); arg; keep = Kept () }, slot)
 
+external marking_arg : unit -> arg * nativeint = "rig_metal_test_marking"
+external marking_fill : unit -> nativeint = "rig_metal_test_marking_fill"
+external marked : nativeint -> nativeint = "rig_metal_test_marked"
+external unmark : nativeint -> unit = "rig_metal_test_unmark"
+
+let marking () =
+  let arg, slot = marking_arg () in
+  ({ fn = marking_fill (); arg; keep = Kept () }, slot)
+
 external resize : nativeint -> groups:int -> threads:int -> unit
   = "rig_metal_test_resize"
 

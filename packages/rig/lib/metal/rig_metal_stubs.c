@@ -1087,6 +1087,12 @@ value caml_rig_metal_open_gate(value v_g) {
   return Val_unit;
 }
 
+/* The holds of the device's run state, 0 once it stopped, for rig's tests. */
+value caml_rig_metal_holds(value v_d) {
+  struct rig_metal_run *r = Run_val(v_d);
+  return Val_long(r == NULL ? 0 : atomic_load(&r->holds));
+}
+
 #else
 
 value caml_rig_metal_count(value unit) {
@@ -1139,6 +1145,7 @@ NO_METAL1(caml_rig_metal_arena)
 NO_METAL1(caml_rig_metal_gate)
 NO_METAL1(caml_rig_metal_gate_handle)
 NO_METAL1(caml_rig_metal_open_gate)
+NO_METAL1(caml_rig_metal_holds)
 
 value caml_rig_metal_icb(value a, value b, value c, value d) {
   (void)a, (void)b, (void)c, (void)d, no_metal();

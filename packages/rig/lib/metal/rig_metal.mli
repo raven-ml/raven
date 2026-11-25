@@ -209,8 +209,18 @@ val capability : t -> Rig_metal_abi.t
        committed command buffers uncompleted, so that the GPU finds work
        queued behind the one it runs;}
     {- the completion of a command buffer while the open one holds work;}
-    {- a [rig_metal_submit] that leaves 256 values in it, so the device
-       commits each value at most 256 values late.}}
+    {- a [rig_metal_submit] after which the open command buffer's estimated
+       GPU work reaches 2 ms, or which leaves 256 values in it, so the
+       device commits each value at most 256 values late. The estimate is
+       the buffer's parts, its launches and fills, times the GPU time per
+       part, in whole nanoseconds, of the last command buffer with parts to
+       complete: its [GPUEndTime] less its [GPUStartTime] over its parts.
+       Before one completes, only the 256 applies. A fill that splits is a
+       part of each command buffer it encodes into. The commit lets the GPU
+       run the buffer while the host fills the next. The estimate decides
+       only where a command buffer ends, between values: it never splits a
+       value's work, and a command buffer ends after any value whose parts in
+       it are estimated at 2 ms or more.}}
     A [rig_metal_submit] that commits returns [RIG_COMMITTED].
 
     Metal calls a handler of the device on one of Metal's threads once a
@@ -617,6 +627,12 @@ val gate_handle : gate -> nativeint
 (* [open_gate g] opens [g]: the work held at it runs. Opening an open gate does
    nothing. *)
 val open_gate : gate -> unit
+
+(* [holds d] is the number of holds of the open device [d]'s run state
+   ({!runs}): one for [d], and one for each command buffer [d] opened whose
+   completion handler Metal has not released. Metal releases a handler after it
+   returned, so at [1] no handler of [d]'s runs. It is [0] once [d] stopped. *)
+val holds : t -> int
 
 (* [command_buffer] is the address of a C function [void *(void *queue)] that a
    fill may call with its [queue] ({!Rig_metal_abi}): it answers the command

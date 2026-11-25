@@ -67,7 +67,11 @@ struct rig_metal_run {
   struct rig_metal_queue open; /* the open command buffer, slot -1 for none */
   uint64_t open_v;             /* the last value whose work is encoded */
   _Atomic int open_values;     /* the values the open buffer ends */
+  int open_parts;              /* the parts the open buffer holds */
   _Atomic int wanted;          /* a handler found the open mutex held */
+  /* The GPU time per part, in nanoseconds, of the command buffer with parts
+     whose handler stored last; 0 before one. */
+  _Atomic uint64_t part_ns;
   _Atomic int holds; /* beside the fields handlers write */
   /* The parameter arena (rig_metal_queue.c): its buffer and host address,
      nil and NULL until a growth and after a trim, its bytes, the arena

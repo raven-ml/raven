@@ -789,6 +789,10 @@ external hold_fill : unit -> nativeint = "caml_rig_metal_hold_fill"
 let gate d = gate_of d.self
 let hold = hold_fill ()
 
+external holds_of : int -> int = "caml_rig_metal_holds"
+
+let holds d = holds_of d.self
+
 external command_buffer : unit -> nativeint = "caml_rig_metal_command_buffer"
 
 let command_buffer = command_buffer ()

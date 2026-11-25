@@ -150,8 +150,10 @@ let ring_tests =
 
    Work reaches a device through rig, which opens it: [d] is the device there,
    [g] the driver's. One device serves the tests that leave it healthy; a test
-   that fails a submission opens its own, which the next shared use replaces.
-   The tests of the driver's own stop open a device that rig never takes
+   that fails a submission opens its own, which the next shared use replaces. So
+   does a test that rests on where command buffers end: the shared device's
+   estimate of its work, which moves them, is what the tests before left. The
+   tests of the driver's own stop open a device that rig never takes
    ([S.driver]), and the tests of two devices a second one. *)
 
 type dev = { d : Rig.t; g : Rig_metal.t; fill : Rig_metal.image }
@@ -528,11 +530,13 @@ let busy t =
   done;
   [ out; args ]
 
-(* [n] values behind three running command buffers, each one dispatch of [step]:
-   with no commit and no wait, the word reaches the last and [step] counted
-   each. *)
+(* [n] values behind three running command buffers, each one dispatch of [step],
+   on a device of its own: none of its command buffers completed, so only the
+   256 ends the open one. With no commit and no wait, the word reaches the last
+   and [step] counted each. *)
 let uncommitted n =
-  let t = dev () in
+  S.with_ @@ fun s ->
+  let t = dev_of s in
   let held = busy t in
   let out = alloc t 256 and args = alloc t args_bytes in
   H.set32 (host out) 0;
@@ -548,9 +552,11 @@ let uncommitted n =
 
 (* The device commits its work on its own: after [n] submissions of one dispatch
    each and nothing more, no wait and no commit through rig, the word reaches
-   the last value. *)
+   the last value. The device is its own, so no earlier test's work sets where
+   its command buffers end. *)
 let progress n =
-  let t = dev () in
+  S.with_ @@ fun s ->
+  let t = dev_of s in
   let out = alloc t 256 and args = alloc t args_bytes in
   set_args args ~at:0 ~out:(gpu out) ~c:0;
   let f = S.dispatch ~pipeline:(pipeline t "step") args ~groups:1 ~threads:1 in
@@ -562,9 +568,11 @@ let progress n =
   List.iter (Rig_metal.free t.g) [ out; args ]
 
 (* A region allocated between two submits whose work shares a command buffer is
-   written by the second. *)
+   written by the second. The device is its own: none of its command buffers
+   completed, so the two submits' work shares the open one. *)
 let allocated_between () =
-  let t = dev () in
+  S.with_ @@ fun s ->
+  let t = dev_of s in
   let held = busy t in
   let first = alloc t 256 and args = alloc t (2 * args_bytes) in
   let f = fill_dispatch t ~args ~at:0 ~out:(gpu first) ~c:3 64 in
@@ -679,6 +687,181 @@ let commits =
         "a command buffer in flight at a loss's stop completes, writes its \
          memory and keeps the device's run state until it ends"
         stop_in_flight;
+    ]
+
+(* Cadence
+
+   Where the device ends a command buffer on its own. A mark is a part that
+   encodes nothing and keeps the encoder of the command buffer it lands in
+   ([S.marking]), one encoder a buffer: two marks keep one encoder iff they
+   landed in one command buffer. *)
+
+(* rig_metal.mli: a submit commits the open command buffer once the device
+   estimates its GPU work at 2 ms, or once it holds 256 values. *)
+let cadence_ns = 2_000_000
+let open_bound = 256
+
+(* A dispatch of [spin] for [rounds] on [t], with the regions to free once it
+   ran. *)
+let spinning t rounds =
+  let out = alloc t 256 and args = alloc t args_bytes in
+  set_args args ~at:0 ~out:(gpu out) ~c:rounds;
+  let f = S.dispatch ~pipeline:(pipeline t "spin") args ~groups:1 ~threads:1 in
+  (f, [ out; args ])
+
+(* The GPU time of [fills] submitted as one timed value on [t]: its command
+   buffer's [GPUEndTime] less its [GPUStartTime]. *)
+let timed t fills =
+  let s, buffers, args =
+    Rig_gpu_support.prepare t.d (Array.to_list (Array.map S.part fills))
+  in
+  let timer = Rig.Timer.make 1 in
+  ignore (Rig.Timer.submit timer 0 s ~buffers ~args : Rig.Point.t);
+  (Rig.Timer.read timer).(0)
+
+(* The rounds of [spin] that take about [ns] of this GPU, from a timed run of
+   2^16 rounds on the shared device. *)
+let rounds =
+  let per_round =
+    lazy
+      (let t = dev () and c = 1 lsl 16 in
+       let f, regions = spinning t c in
+       let span = timed t [| f |] in
+       List.iter (Rig_metal.free t.g) regions;
+       Float.of_int span /. Float.of_int c)
+  in
+  fun ns -> Int.max 1 (Float.to_int (Float.of_int ns /. Lazy.force per_round))
+
+(* Waits until no completion handler of [t]'s runs, nor will: every command
+   buffer [t] opened has completed and Metal released its handler. [t] holds no
+   open command buffer. *)
+let await_handlers t =
+  await
+    (fun () -> strf "%d holds of the run state, not 1" (Rig_metal.holds t.g))
+    (fun () -> Rig_metal.holds t.g = 1)
+
+(* Runs [f ()] while no command buffer of [t] completes. Once [t]'s work and its
+   handlers are done, a value holds the GPU at a closed gate and two values with
+   parts wait behind it, so the three fill the backlog and no handler runs
+   before the gate opens, after [f]: no submit of [f] commits for the backlog or
+   finds the estimate changed. Values with no parts would not wait: their
+   command buffers have no encoder. Then waits for [t]'s work. *)
+let held t f =
+  wait t (submit t [||]);
+  await_handlers t;
+  let r =
+    gated t @@ fun g ->
+    ignore (submit t [| S.hold g |]);
+    for _ = 1 to 2 do
+      ignore (submit t [| fst (S.watching ()) |])
+    done;
+    f ()
+  in
+  wait t (submit t [||]);
+  r
+
+(* Submits values of [sizes] marks each on [t], each [1] or more, and is the
+   values each command buffer they landed in holds, in order. Fails if the marks
+   of a value landed in two command buffers. *)
+let buffers t sizes =
+  let values = List.map (fun k -> List.init k (fun _ -> S.marking ())) sizes in
+  List.iter
+    (fun ms -> ignore (submit t (Array.of_list (List.map fst ms))))
+    values;
+  let encoders = List.map (List.map (fun (_, m) -> S.marked m)) values in
+  List.iter (List.iter (fun (_, m) -> S.unmark m)) values;
+  List.iteri
+    (fun i es ->
+      if List.exists (( <> ) (List.hd es)) es then
+        failf "value %d's marks landed in two command buffers" i)
+    encoders;
+  let add (counts, last) es =
+    let e = List.hd es in
+    match counts with
+    | n :: rest when last = e -> ((n + 1) :: rest, e)
+    | _ -> (1 :: counts, e)
+  in
+  List.rev (fst (List.fold_left add ([], 0n) encoders))
+
+(* The values each command buffer holds by rig_metal.mli, for values of [sizes]
+   parts behind a completed command buffer of [per] nanoseconds a part, [0] for
+   none: a buffer ends at the value after which its parts times [per] reach
+   [cadence_ns], or at its 256th value. *)
+let ends ~per sizes =
+  let rec go counts values parts = function
+    | [] -> List.rev (if values > 0 then values :: counts else counts)
+    | k :: rest ->
+        let values = values + 1 and parts = parts + k in
+        if values = open_bound || (per > 0 && parts * per >= cadence_ns) then
+          go (values :: counts) 0 0 rest
+        else go counts values parts rest
+  in
+  go [] 0 0 sizes
+
+(* After a command buffer of [work] ns of [spin] and a part that encodes
+   nothing, the values of [sizes] marks each end their command buffers where
+   [ends] says. A handler stores its buffer's time before it completes the
+   buffer's slot, so once the wait before it returned no earlier handler stores
+   a time, and once [timed] returned the time stored is its buffer's. No command
+   buffer completes after it before the values are submitted ([held]). *)
+let estimated (work, sizes) =
+  let t = dev () in
+  wait t (submit t [||]);
+  let spin, regions = spinning t (rounds work) in
+  let per = timed t [| fst (S.watching ()); spin |] / 2 in
+  List.iter (Rig_metal.free t.g) regions;
+  let alone k = k * per >= cadence_ns in
+  let rec several = function
+    | [] | [ _ ] -> false
+    | n :: rest -> n > 1 || several rest
+  in
+  let rec followed = function
+    | [] | [ _ ] -> false
+    | k :: rest -> alone k || followed rest
+  in
+  let want = ends ~per sizes in
+  cover "a command buffer of several values ends at its estimate" (several want);
+  cover "a value estimated alone at 2 ms or more, then another" (followed sizes);
+  cover "a value of several parts estimated alone at 2 ms or more"
+    (List.exists (fun k -> k > 1 && alone k) sizes);
+  equal (list int)
+    ~msg:(strf "values a command buffer, at %d ns a part" per)
+    want
+    (held t (fun () -> buffers t sizes))
+
+(* Before a command buffer with parts completed, the device has no estimate, and
+   a command buffer ends at its 256th value. [S.with_] opened the device. *)
+let bounded () =
+  S.with_ @@ fun s ->
+  let t = dev_of s in
+  let sizes = List.init ((2 * open_bound) + 1) (fun i -> 1 + (i mod 3)) in
+  equal (list int)
+    [ open_bound; open_bound; 1 ]
+    (held t (fun () -> buffers t sizes))
+
+(* The first example's 513 values of one part each fill command buffers of
+   several values at any estimate under 2 ms a part, up to 256 a buffer. Its
+   work of 0.25 ms over two parts keeps the estimate near 125 us, so its cover
+   holds whatever [per] the run measures. *)
+let cadence =
+  let works = [ cadence_ns / 2; cadence_ns; 4 * cadence_ns ] in
+  group "cadence"
+    [
+      prop ~count:20
+        "a command buffer ends at the first value that brings its estimated \
+         work to 2 ms, never inside a value"
+        ~examples:
+          [
+            (cadence_ns / 8, List.init ((2 * open_bound) + 1) (fun _ -> 1));
+            (cadence_ns / 2, [ 1; 5; 1; 2 ]);
+            (4 * cadence_ns, [ 1; 2; 1 ]);
+          ]
+        (Gen.pair (Gen.of_list works)
+           (Gen.list ~size:(Gen.int_range 1 30) (Gen.int_range 1 5)))
+        estimated;
+      test
+        "with no command buffer completed, a command buffer ends at 256 values"
+        bounded;
     ]
 
 (* Indirect command buffers *)
@@ -2775,6 +2958,7 @@ let () =
          ring_tests;
          work;
          commits;
+         cadence;
          icbs;
          launches;
          memory;

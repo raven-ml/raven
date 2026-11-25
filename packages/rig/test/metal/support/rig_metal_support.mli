@@ -59,6 +59,19 @@ val watching : unit -> fill * nativeint
 (** [watching ()] is [(f, w)] with [f] a fill that encodes nothing and makes [w]
     a weak reference to its command buffer, read with {!alive}. *)
 
+val marking : unit -> fill * nativeint
+(** [marking ()] is [(f, m)] with [f] a fill that encodes nothing and keeps its
+    encoder at [m], retained until {!unmark}[ m], so that no other object takes
+    its address meanwhile. A command buffer has one encoder, so two such fills
+    keep one encoder iff they ran in one command buffer. *)
+
+val marked : nativeint -> nativeint
+(** [marked m] is the address of the encoder [m] keeps, [0n] before its fill
+    ran. *)
+
+val unmark : nativeint -> unit
+(** [unmark m] gives back the encoder [m] keeps, and [m]. *)
+
 val resize : nativeint -> groups:int -> threads:int -> unit
 (** [resize c ~groups ~threads] makes the indirect compute command [c] dispatch
     [groups] threadgroups of [threads] threads. *)

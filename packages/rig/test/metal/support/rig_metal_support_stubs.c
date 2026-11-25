@@ -189,6 +189,22 @@ value rig_metal_test_execute_fill(value unit) {
   return caml_copy_nativeint((intnat)execute);
 }
 
+/* [(arg, slot)]: a fill's argument of [n] bytes whose first field is the
+   address of [slot], a zeroed [id] in C memory. */
+static value slotted(size_t n) {
+  CAMLparam0();
+  CAMLlocal3(v, slot, r);
+  id *p = calloc(1, sizeof(id));
+  if (p == NULL) caml_raise_out_of_memory();
+  v = arg(n);
+  *(id **)Arg_val(v) = p;
+  slot = caml_copy_nativeint((intnat)p);
+  r = caml_alloc_tuple(2);
+  Store_field(r, 0, v);
+  Store_field(r, 1, slot);
+  CAMLreturn(r);
+}
+
 /* A fill that encodes nothing and stores, at [*slot], a weak reference to
    its command buffer, which [buffer] (Rig_metal.command_buffer) answers.
    The slot is C memory never freed, since the runtime clears it when the
@@ -207,23 +223,54 @@ static int watching(void *queue, void *arg, uint64_t v) {
 
 /* [(arg, slot)], [v_buffer] the address of Rig_metal.command_buffer. */
 value rig_metal_test_watching(value v_buffer) {
-  CAMLparam1(v_buffer);
-  CAMLlocal3(v, slot, r);
-  id *p = calloc(1, sizeof(id));
-  if (p == NULL) caml_raise_out_of_memory();
-  v = arg(sizeof(struct watching));
-  ((struct watching *)Arg_val(v))->slot = p;
-  ((struct watching *)Arg_val(v))->buffer = Ptr_val(v_buffer);
-  slot = caml_copy_nativeint((intnat)p);
-  r = caml_alloc_tuple(2);
-  Store_field(r, 0, v);
-  Store_field(r, 1, slot);
-  CAMLreturn(r);
+  void *(*buffer)(void *) = Ptr_val(v_buffer);
+  value r = slotted(sizeof(struct watching));
+  ((struct watching *)Arg_val(Field(r, 0)))->buffer = buffer;
+  return r;
 }
 
 value rig_metal_test_watching_fill(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)watching);
+}
+
+/* A fill that encodes nothing and keeps its encoder at [*slot], retained,
+   so that no later object takes its address until the test gives it back.
+   Two such fills keep one encoder iff they ran in one command buffer. */
+struct marking {
+  id *slot;
+};
+
+static int marking(void *queue, void *arg, uint64_t v) {
+  (void)v;
+  id *slot = ((struct marking *)arg)->slot;
+  [*slot release];
+  *slot = [*(id *)queue retain];
+  return 0;
+}
+
+/* [(arg, slot)]. */
+value rig_metal_test_marking(value unit) {
+  (void)unit;
+  return slotted(sizeof(struct marking));
+}
+
+value rig_metal_test_marking_fill(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)marking);
+}
+
+/* The address of the encoder [v_slot] keeps, 0 before its fill ran. */
+value rig_metal_test_marked(value v_slot) {
+  return caml_copy_nativeint((intnat) * (id *)Ptr_val(v_slot));
+}
+
+/* Gives back the encoder [v_slot] keeps, and the slot. */
+value rig_metal_test_unmark(value v_slot) {
+  id *slot = Ptr_val(v_slot);
+  [*slot release];
+  free(slot);
+  return Val_unit;
 }
 
 /* Sets the sizes of the indirect compute command [v_command]. */
@@ -283,6 +330,10 @@ value rig_metal_test_resize(value a, value b, value c) {
 }
 value rig_metal_test_weak(value a) { (void)a, no_metal(); }
 value rig_metal_test_alive(value a) { (void)a, no_metal(); }
+value rig_metal_test_marking(value a) { (void)a, no_metal(); }
+value rig_metal_test_marking_fill(value a) { (void)a, no_metal(); }
+value rig_metal_test_marked(value a) { (void)a, no_metal(); }
+value rig_metal_test_unmark(value a) { (void)a, no_metal(); }
 value rig_metal_test_uptime(value a) { (void)a, no_metal(); }
 
 #endif

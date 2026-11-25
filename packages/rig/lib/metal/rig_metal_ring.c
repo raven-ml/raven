@@ -88,6 +88,7 @@ int rig_metal_ring_take(struct rig_metal_ring *r) {
   s->v = 0;
   s->start = s->end = s->first = NULL;
   s->state = taken;
+  s->parts = 0;
   pthread_mutex_unlock(&r->mutex);
   return i;
 }

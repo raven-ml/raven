@@ -111,6 +111,19 @@ let launches t n =
   let s = Sub.make t.d (Array.make n step) in
   (s, t.buffers, Array.init n (fun _ -> one_thread 16))
 
+(* The rounds of [spin] a launch of {!spinning} runs: about 0.5 ms of the M1
+   Max's GPU. *)
+let spin_rounds = 15_000
+
+(* [spin] launched once over one thread for [spin_rounds], writing [out]. *)
+let spinning t =
+  let module Sub = Rig.Submission in
+  let fn = Option.get (Rig.Image.resolve t.image "spin") in
+  let spin = Sub.launch ~refs:[| Sub.write 0 ~at:0 |] fn ~params:16 in
+  let args = one_thread 16 in
+  Bytes.set_int32_le args.params 8 (Int32.of_int spin_rounds);
+  (Sub.make t.d [| spin |], t.buffers, [| args |])
+
 (* [wide] launched once over one thread with [n] bytes of parameters, its
    ref writing [out]. *)
 let wide t n =
@@ -189,6 +202,30 @@ let launch_rows =
     done;
     wait t
   in
+  (* [burst] submissions of a launch of {!spinning}, a wait for the [early]th,
+     [host_ns] of the host's own work, then a wait for the last: a program that
+     reads its first results while the GPU runs the rest. Once a command buffer
+     of these launches completed, the device ends one at 2 ms of their estimated
+     work, four launches on the M1 Max, so the [early]th returns at about 3.5 ms
+     and the host's work runs beside the GPU's 8 ms. Where the launches after
+     the three the backlog commits share one command buffer, the [early]th
+     returns with the last, about 8 ms in, and the host's work follows. *)
+  let burst = 16 and early = 4 and host_ns = 4_000_000 in
+  let early_results (t, s) =
+    for _ = 1 to early do
+      submit t s
+    done;
+    let first = t.last in
+    for _ = early + 1 to burst do
+      submit t s
+    done;
+    Rig.Point.wait first;
+    let until = Rig.Profile.now () + host_ns in
+    while Rig.Profile.now () < until do
+      ()
+    done;
+    wait t
+  in
   (* [runs] submissions of one launch of [step] each, each after a wait for the
      one [depth] back, as a program keeps [depth] steps in flight. *)
   let depth = 3 and runs = 100 in
@@ -210,6 +247,10 @@ let launch_rows =
     let t = dev () in
     (t, indirect t n)
   in
+  let spun () =
+    let t = dev () in
+    (t, spinning t)
+  in
   Thumper.group "launch"
     [
       row "1" (launched 1) run_launches;
@@ -222,6 +263,7 @@ let launch_rows =
       row "64" (launched 64) run_launches;
       row "submits-64" (launched 1) (submits 64);
       row "submits-1024" (launched 1) (submits 1024);
+      row "early-16" spun early_results;
       row "pipelined-100" (launched 1) pipelined;
       row "1-live-4096" live (fun (t, s, _) -> run_launches (t, s));
       row "icb-1" (recorded 1) (fun (t, s) -> run t s);
