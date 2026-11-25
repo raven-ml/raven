@@ -1714,6 +1714,10 @@ val decode_finish : stream -> string
 
 (** {1:training Training}
 
+    A trained vocabulary opens with its special tokens, counted in [vocab_size]:
+    the added tokens, then the role markers ([bos_token], [eos_token],
+    [pad_token]) not among them.
+
     A trainer raises [Sys_error] if a file of [`Files] cannot be read. *)
 
 val train_bpe :

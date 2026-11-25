@@ -1995,7 +1995,8 @@ let inherited_tokens init = Option.fold ~none:[] ~some:added_tokens init
 (* A trained tokenizer keeps the added tokens and role markers the call gives
    and, where it gives none, [init]'s, each token with the flags it first comes
    with; [init]'s model does not carry over. [train] learns the model with the
-   added tokens first in its vocabulary. *)
+   added tokens first in its vocabulary, then the role markers that are not
+   among them, as [create] adds them. *)
 let train_with ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token train data =
   let role given of_init =
@@ -2011,7 +2012,9 @@ let train_with ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
       (Option.value added_tokens ~default:[] @ inherited_tokens init)
   in
   let special_tokens =
-    List.map (fun (a : added_token) -> a.content) added_tokens
+    List.map
+      (fun (a : added_token) -> a.content)
+      (added_tokens @ role_tokens ~bos_token ~eos_token ~pad_token added_tokens)
   in
   let algorithm =
     train ~special_tokens ~unk_token (training_words ?normalizer ?pre data)

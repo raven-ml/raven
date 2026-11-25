@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Trainers count `bos_token`, `eos_token` and `pad_token` in `vocab_size` and
+  number them first with the added tokens, as special tokens. They took ids
+  past the trained vocabulary.
 - A trainer's `~init` carries its added tokens with their flags, and its
   `bos_token`, `eos_token`, `pad_token` and `unk_token` where the call gives
   none. Every token came back special, and the roles were dropped.

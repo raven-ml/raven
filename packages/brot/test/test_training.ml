@@ -590,6 +590,15 @@ let test_word_level_unk () =
   in
   equal (list string) [ "a"; "[UNK]" ] (tokens t "a zz")
 
+(* tokenizers 0.23.1, with "<s>" as a special token of the trainer: <s>:0
+   a:1. *)
+let test_word_level_roles () =
+  let t =
+    train_word_level ~pre:split ~vocab_size:2 ~bos_token:"<s>"
+      (texts [ "a a a b b c" ])
+  in
+  equal (list string) [ "<s>"; "a" ] (vocabulary t)
+
 let test_word_level_min_frequency () =
   let t =
     train_word_level ~pre:split ~min_frequency:2 (texts [ "a a a b b c" ])
@@ -777,6 +786,8 @@ let () =
              test "numbers the words after the special tokens"
                test_word_level_specials;
              test "spells an unseen word as unk_token" test_word_level_unk;
+             test "counts the role markers as special tokens"
+               test_word_level_roles;
              test "leaves out a word below min_frequency"
                test_word_level_min_frequency;
              test "keeps the first of equally frequent words in byte order"
