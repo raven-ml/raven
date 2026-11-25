@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Quad.Range.v` and `Quad.Box.v` raise `Invalid_argument` naming themselves
+  and their ends' shapes when the ends do not broadcast, where `Range.v`
+  raised `Nx.broadcast_arrays`'s error.
 - `Quad.qmc` returns the integral over a box of any size and orientation, its
   signed volume times `f`'s mean. It returned the mean alone, the integral
   over a unit box: `f = 1` over `[0, 2]²` gave 1. Its error and derivative

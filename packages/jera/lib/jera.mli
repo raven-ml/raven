@@ -973,7 +973,9 @@ module Quad : sig
 
     val v : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> ('b, 'd) t
     (** [v a b] is [[a, b]], [a] and [b] broadcast together. An integral over
-        [[a, b]] with [b < a] is minus the integral over [[b, a]]. *)
+        [[a, b]] with [b < a] is minus the integral over [[b, a]].
+
+        Raises [Invalid_argument] if [a] and [b] do not broadcast. *)
 
     val from : (float, 'b, 'd) Nx.t -> ('b, 'd) t
     (** [from a] is the half-line from [a] to [+∞], at unit scale: a rule's

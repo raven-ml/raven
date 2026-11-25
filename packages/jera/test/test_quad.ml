@@ -172,6 +172,9 @@ let range_tests =
         equal (exact ())
           (Nx.neg (Quad.fixed r f (Quad.Range.v (scalar 0.) (scalar 1.))))
           (Quad.fixed r f (Quad.Range.v (scalar 1.) (scalar 0.))));
+    test "ends that do not broadcast raise" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Range.v") (fun () ->
+            Quad.Range.v (Nx.zeros f64 [| 2 |]) (Nx.ones f64 [| 3 |])));
     test "the ends broadcast together" (fun () ->
         let i =
           Quad.fixed (Quad.Rule.gauss 3) Nx.ones_like
@@ -206,12 +209,11 @@ let range_tests =
 let box_tests =
   [
     test "box corners that do not broadcast raise" (fun () ->
-        raises_match
-          (Exn.invalid_arg ~sub:"the corners have shapes [2] and [3]")
-          (fun () -> Quad.Box.v (Nx.zeros f64 [| 2 |]) (Nx.ones f64 [| 3 |])));
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Box.v") (fun () ->
+            Quad.Box.v (Nx.zeros f64 [| 2 |]) (Nx.ones f64 [| 3 |])));
     test "scalar box corners raise" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"the corners have shapes [] and []")
-          (fun () -> Quad.Box.v (scalar 0.) (scalar 1.)));
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Box.v") (fun () ->
+            Quad.Box.v (scalar 0.) (scalar 1.)));
   ]
 
 (* Cumulative *)

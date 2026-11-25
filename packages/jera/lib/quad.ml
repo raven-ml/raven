@@ -196,9 +196,8 @@ module Range = struct
     | Line of (float, 'b, 'd) Nx.t
 
   let v a b =
-    match Nx.broadcast_arrays [ a; b ] with
-    | [ a; b ] -> Finite (a, b)
-    | _ -> assert false
+    let a, b = Num.broadcast_pair "Jera.Quad.Range.v" ("a", a) ("b", b) in
+    Finite (a, b)
 
   let from a = From a
   let line c = Line c
@@ -212,19 +211,17 @@ module Box = struct
   type ('b, 'd) t = { lo : (float, 'b, 'd) Nx.t; hi : (float, 'b, 'd) Nx.t }
 
   let v lo hi =
-    let fail () =
+    let fn = "Jera.Quad.Box.v" in
+    if Nx.ndim lo = 0 || Nx.ndim hi = 0 then
       invalid_arg
         (Printf.sprintf
-           "Jera.Quad.Box.v: the corners have shapes %s and %s; they need to \
-            broadcast to one shape lanes @ [d]"
+           "%s: the corners have shapes %s and %s; they need to broadcast to \
+            one shape lanes @ [d]"
+           fn
            (Num.shape (Nx.shape lo))
-           (Num.shape (Nx.shape hi)))
-    in
-    if Nx.ndim lo = 0 || Nx.ndim hi = 0 then fail ();
-    match Nx.broadcast_arrays [ lo; hi ] with
-    | [ lo; hi ] -> { lo; hi }
-    | _ -> assert false
-    | exception Invalid_argument _ -> fail ()
+           (Num.shape (Nx.shape hi)));
+    let lo, hi = Num.broadcast_pair fn ("lo", lo) ("hi", hi) in
+    { lo; hi }
 end
 
 type ('b, 'd) integrand = (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
