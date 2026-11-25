@@ -211,16 +211,16 @@ val pp_format : Format.formatter -> format -> unit
 
     A read fails with [Error e] as {!sniff} does, if the file has no column of
     the request or one that does not read as the format's type, or if a column
-    chunk fails to decode. A failure in a column chunk names its row group. A
-    page that does not decode also gives its bytes, and a value that a column's
-    layout refuses ({!Talon.Column.of_layout}) names the column and the row of
-    the row group. A failure in a nested column names the column or, for a
-    leaf, its dotted path such as [tags.list.element], and a value's position
-    among the leaf's values stands for its row. A row that breaks a tensor's
-    shape names the column, the row of the row group and the level of the
-    lists: [0] for the tensor's outermost list, a row's own list or, in a list
-    of tensors, the outer list's element, and [k] for the values of [k] lists.
-    Of several rows that break it, the earliest is named. *)
+    chunk fails to decode. A failure in a column chunk names its row group and
+    its column. A page that does not decode also gives its bytes, and a value
+    that a column's layout refuses ({!Talon.Column.of_layout}) names the column
+    and the row of the row group. A failure in a nested column names the
+    column or, for a leaf, its dotted path such as [tags.list.element], and a
+    value's position among the leaf's values stands for its row. A row that
+    breaks a tensor's shape names the column, the row of the row group and the
+    level of the lists: [0] for the tensor's outermost list, a row's own list
+    or, in a list of tensors, the outer list's element, and [k] for the values
+    of [k] lists. Of several rows that break it, the earliest is named. *)
 
 val source : format -> Rig.Buffer.t -> Talon.Source.t
 (** [source f b] is the source, named [parquet], of the rows of the Parquet

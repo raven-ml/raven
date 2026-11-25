@@ -6117,6 +6117,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A failure to decode a flat Parquet column chunk names the column, as a
+  nested leaf's names its path: `row group 0: bytes 4-48: column "x": the page
+  fails its CRC-32 checksum`. In a file of several columns it named only the
+  row group.
 - `Talon_csv.file ~format` on a file that cannot be opened is an `Error` at
   the call, as without a format, where the error came at the first read.
 - `Talon_csv.encode`'s error for a null in a format of one column without a

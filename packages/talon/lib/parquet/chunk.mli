@@ -134,7 +134,8 @@ val read :
     outside [int64], a byte string outside a categorical's dictionary), a
     dictionary index is out of the dictionary, the pages of a whole read do not
     add up to the row group's rows, or the chunk's values would take more bytes
-    than an [int] counts. The message names a [nested] leaf's path. *)
+    than an [int] counts. The message names the leaf's column, or a [nested]
+    leaf's dotted path. *)
 
 val structure :
   row_group:int ->

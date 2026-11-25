@@ -1326,10 +1326,8 @@ let read_chunk ~scratch ~rows:wanted b (m : Meta.file) ~row_group i
   (c, lv)
 
 let read ~scratch ~rows b m ~row_group i (l : Leaf.t) ty =
-  if l.nested then
-    named (Leaf.name l) (fun () ->
-        read_chunk ~scratch ~rows b m ~row_group i l ty)
-  else read_chunk ~scratch ~rows b m ~row_group i l ty
+  named (Leaf.name l) (fun () ->
+      read_chunk ~scratch ~rows b m ~row_group i l ty)
 
 let flat_coded = function
   | Coded { valid; codes; offsets; data } -> (

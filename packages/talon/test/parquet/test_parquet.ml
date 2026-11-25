@@ -377,7 +377,7 @@ let categorical () =
   | Error e ->
       expect (error_text e)
       @@ __POS_OF__
-           {| row group 0: "v0é\x0a\"": the value is not in the categorical's dictionary |});
+           {| row group 0: "v0é\x0a\"": column "string": the value is not in the categorical's dictionary |});
   match read_as dict with
   | Error e -> failf "%s" (error_text e)
   | Ok c ->
@@ -938,7 +938,7 @@ let synthesized =
           in
           expect (outcome (read_x file))
           @@ __POS_OF__
-               {| row group 0: bytes 27-44: the dictionary indices: a value is out of its bounds |});
+               {| row group 0: bytes 27-44: column "x": the dictionary indices: a value is out of its bounds |});
       test "an RLE boolean run of value 2 is an error" (fun () ->
           (* Four booleans: a 4-byte length, then an RLE run of 4 of value 2. *)
           let file =
@@ -948,7 +948,7 @@ let synthesized =
           in
           expect (outcome (read_x file))
           @@ __POS_OF__
-               {| row group 0: bytes 4-24: the RLE booleans: a value is out of its bounds |});
+               {| row group 0: bytes 4-24: column "x": the RLE booleans: a value is out of its bounds |});
       test "an int8 that does not fit names its row" (fun () ->
           (* Rows 0, 2 and 3 hold 1, 2 and 300: the levels are a bit-packed run
              of 1, 0, 1, 1. *)
@@ -960,7 +960,7 @@ let synthesized =
           in
           expect (outcome (read_x file))
           @@ __POS_OF__
-               {| row group 0: the value 300 of row 3 does not fit int8 |});
+               {| row group 0: column "x": the value 300 of row 3 does not fit int8 |});
       test "sizes at the limits of their types are errors" (fun () ->
           let show what b =
             Printf.printf "%s: %s\n" what (outcome (read_x b))
@@ -998,13 +998,13 @@ let synthesized =
           expect (output ())
           @@ __POS_OF__
                {|
-            a page of i32_max bytes: row group 0: bytes 4-30: the page overruns its column chunk
-            a page of 2^31 bytes: row group 0: byte 9: a page header is malformed: an i32 outside its range, 2147483648
-            a page size of wire type i64: row group 0: byte 9: a page header is malformed: expected an i32, found wire type 6
-            levels of twice i32_max bytes: row group 0: bytes 4-48: the levels overrun the page
+            a page of i32_max bytes: row group 0: bytes 4-30: column "x": the page overruns its column chunk
+            a page of 2^31 bytes: row group 0: byte 9: column "x": a page header is malformed: an i32 outside its range, 2147483648
+            a page size of wire type i64: row group 0: byte 9: column "x": a page header is malformed: expected an i32, found wire type 6
+            levels of twice i32_max bytes: row group 0: bytes 4-48: column "x": the levels overrun the page
             a chunk of max_int bytes: row group 0: bytes 4-4611686018427387902: column "x": its pages overrun the file, whose footer starts at byte 27
             a chunk at max_int: row group 0: byte 4611686018427387903: column "x": its pages overrun the file, whose footer starts at byte 27
-            2^40 rows of i32_max bytes: row group 0: bytes 4-26: the chunk's 1099511627776 values do not fit in memory
+            2^40 rows of i32_max bytes: row group 0: bytes 4-26: column "x": the chunk's 1099511627776 values do not fit in memory
             |});
       test "compressed pages decode, and one that does not says where"
         (fun () ->
@@ -1055,13 +1055,13 @@ let synthesized =
             gzip of two members (69 bytes): 1 2 3 4 5 6 7 8
             zstd (30 bytes): 1 2 3 4 5 6 7 8
             lz4_raw (34 bytes): 1 2 3 4 5 6 7 8
-            zstd with a wrong checksum (30 bytes): row group 0: bytes 4-48: the page does not decompress: malformed at byte 26: Content_Checksum mismatch
-            gzip cut short (41 bytes): row group 0: bytes 4-59: the page does not decompress: truncated at byte 41
-            lz4_raw cut short (33 bytes): row group 0: bytes 4-51: the page does not decompress: truncated at byte 33
-            snappy of fewer bytes than its header (18 bytes): row group 0: bytes 4-36: the page decompresses to 16 bytes, not its header's 32
-            snappy of more bytes than its header (34 bytes): row group 0: bytes 4-52: the page does not decompress: output too long at byte 0
-            snappy followed by a byte (35 bytes): row group 0: bytes 4-53: the page does not decompress: malformed at byte 34: output longer than the preamble
-            lz4_raw followed by a byte (35 bytes): row group 0: bytes 4-53: the page does not decompress: truncated at byte 35
+            zstd with a wrong checksum (30 bytes): row group 0: bytes 4-48: column "x": the page does not decompress: malformed at byte 26: Content_Checksum mismatch
+            gzip cut short (41 bytes): row group 0: bytes 4-59: column "x": the page does not decompress: truncated at byte 41
+            lz4_raw cut short (33 bytes): row group 0: bytes 4-51: column "x": the page does not decompress: truncated at byte 33
+            snappy of fewer bytes than its header (18 bytes): row group 0: bytes 4-36: column "x": the page decompresses to 16 bytes, not its header's 32
+            snappy of more bytes than its header (34 bytes): row group 0: bytes 4-52: column "x": the page does not decompress: output too long at byte 0
+            snappy followed by a byte (35 bytes): row group 0: bytes 4-53: column "x": the page does not decompress: malformed at byte 34: output longer than the preamble
+            lz4_raw followed by a byte (35 bytes): row group 0: bytes 4-53: column "x": the page does not decompress: truncated at byte 35
             |});
     ]
 
@@ -2331,20 +2331,20 @@ let sources =
           @@ __POS_OF__
                {|
             x < 10: 1 2
-            x <= 10: row group 1: bytes 33-62: the page overruns its column chunk
+            x <= 10: row group 1: bytes 33-62: column "x": the page overruns its column chunk
             x > 20:
-            x >= 20: row group 1: bytes 33-62: the page overruns its column chunk
+            x >= 20: row group 1: bytes 33-62: column "x": the page overruns its column chunk
             x = 5:
-            x = 15: row group 1: bytes 33-62: the page overruns its column chunk
-            x <> 10: row group 1: bytes 33-62: the page overruns its column chunk
+            x = 15: row group 1: bytes 33-62: column "x": the page overruns its column chunk
+            x <> 10: row group 1: bytes 33-62: column "x": the page overruns its column chunk
             x in [3; 25]:
             x in []:
-            not (x >= 10): row group 1: bytes 33-62: the page overruns its column chunk
+            not (x >= 10): row group 1: bytes 33-62: column "x": the page overruns its column chunk
             x < 10 || x > 20: 1 2
             x > 1 && x < 10: 2
-            x > 1 && not (x >= 10): row group 1: bytes 33-62: the page overruns its column chunk
+            x > 1 && not (x >= 10): row group 1: bytes 33-62: column "x": the page overruns its column chunk
             x is null:
-            x is not null: row group 1: bytes 33-62: the page overruns its column chunk
+            x is not null: row group 1: bytes 33-62: column "x": the page overruns its column chunk
             |});
       test "a row group of nulls passes no comparison" (fun () ->
           let ints a b = int32s [ a; b ] in
@@ -2365,7 +2365,7 @@ let sources =
             x > 0: 1 2
             x <> 0: 1 2
             x is not null: 1 2
-            x is null: row group 1: bytes 33-62: the page overruns its column chunk
+            x is null: row group 1: bytes 33-62: column "x": the page overruns its column chunk
             |});
       test "float statistics skip a row group only without NaN" (fun () ->
           let floats a b = float32s [ float_of_int a; float_of_int b ] in
@@ -2386,14 +2386,14 @@ let sources =
           @@ __POS_OF__
                {|
             no NaN count
-            x < 5.: row group 1: bytes 33-62: the page overruns its column chunk
-            x > 15.: row group 1: bytes 33-62: the page overruns its column chunk
+            x < 5.: row group 1: bytes 33-62: column "x": the page overruns its column chunk
+            x > 15.: row group 1: bytes 33-62: column "x": the page overruns its column chunk
             no NaN
             x < 5.: 1. 2.
-            x > 15.: row group 1: bytes 33-62: the page overruns its column chunk
+            x > 15.: row group 1: bytes 33-62: column "x": the page overruns its column chunk
             a NaN
-            x < 5.: row group 1: bytes 33-62: the page overruns its column chunk
-            x > 15.: row group 1: bytes 33-62: the page overruns its column chunk
+            x < 5.: row group 1: bytes 33-62: column "x": the page overruns its column chunk
+            x > 15.: row group 1: bytes 33-62: column "x": the page overruns its column chunk
             |});
       test "a read decodes only the request's columns" (fun () ->
           let name = "nation.dict-malformed.parquet" in
@@ -2407,7 +2407,7 @@ let sources =
           @@ __POS_OF__
                {|
             nation_key: ok
-            name: row group 0: bytes 421-450: the page overruns its column chunk
+            name: row group 0: bytes 421-450: column "name": the page overruns its column chunk
             |});
       test "a read of no column has the rows of the file" (fun () ->
           let name = "names.parquet" in
@@ -2516,7 +2516,7 @@ let prefixes =
             [ 2; 3 ];
           expect (output ()) @@ __POS_OF__ {|
             2 rows: 1 2
-            3 rows: row group 0: bytes 27-51: the page fails its CRC-32 checksum
+            3 rows: row group 0: bytes 27-51: column "x": the page fails its CRC-32 checksum
             |});
       test "a row split across pages is read whole, and no page past it"
         (fun () ->
@@ -2635,17 +2635,32 @@ let decoding =
       expect (output ())
       @@ __POS_OF__
            {|
-        datapage_v1-corrupt-checksum.parquet a: row group 0: bytes 4-10271: the page fails its CRC-32 checksum
-        rle-dict-uncompressed-corrupt-checksum.parquet binary_field: row group 0: bytes 57-115: the page fails its CRC-32 checksum
-        bad_data/ARROW-GH-47662.parquet flba_field: row group 0: bytes 4-393: the PLAIN values take 400 bytes of the page's 364
+        datapage_v1-corrupt-checksum.parquet a: row group 0: bytes 4-10271: column "a": the page fails its CRC-32 checksum
+        rle-dict-uncompressed-corrupt-checksum.parquet binary_field: row group 0: bytes 57-115: column "binary_field": the page fails its CRC-32 checksum
+        bad_data/ARROW-GH-47662.parquet flba_field: row group 0: bytes 4-393: column "flba_field": the PLAIN values take 400 bytes of the page's 364
         nation.dict-malformed.parquet nation_key: ok
-        nation.dict-malformed.parquet name: row group 0: bytes 421-450: the page overruns its column chunk
-        int96_from_spark.parquet a: row group 0: an int96 timestamp is outside the range of datetime[ns]. Read the column as a datetime of a coarser unit (with_type).
-        int96_from_spark.parquet a: row group 0: an int96 timestamp is outside the range of datetime[us]. Read the column as a datetime of a coarser unit (with_type).
-        int96.parquet ts_ns: row group 0: an int96 timestamp is not a whole number of microseconds. Read the column as a datetime of a finer unit (with_type).
-        bad_encoding.parquet i32: row group 0: bytes 4-360: the values are in encoding 15, which Parquet does not define
+        nation.dict-malformed.parquet name: row group 0: bytes 421-450: column "name": the page overruns its column chunk
+        int96_from_spark.parquet a: row group 0: column "a": an int96 timestamp is outside the range of datetime[ns]. Read the column as a datetime of a coarser unit (with_type).
+        int96_from_spark.parquet a: row group 0: column "a": an int96 timestamp is outside the range of datetime[us]. Read the column as a datetime of a coarser unit (with_type).
+        int96.parquet ts_ns: row group 0: column "ts_ns": an int96 timestamp is not a whole number of microseconds. Read the column as a datetime of a finer unit (with_type).
+        bad_encoding.parquet i32: row group 0: bytes 4-360: column "i32": the values are in encoding 15, which Parquet does not define
         types.parquet a b: the file has no column "a b"
         |})
+
+(* Every column chunk's failure names its column, flat or nested. *)
+let flat_failure =
+  cases "a flat column's failure names its column"
+    ~id:(fun (f, c, _) -> f ^ " " ^ c)
+    [
+      ("fallback.parquet", "string", any (Type.categorical [| "x" |]));
+      ("datapage_v1-corrupt-checksum.parquet", "a", any Type.int32);
+      ("int96_from_spark.parquet", "a", any (Type.wall Ns));
+    ]
+    (fun (file, column, ty) ->
+      match read (P.with_type column ty (sniff file)) file column with
+      | Ok _ -> failf "%s read" column
+      | Error e ->
+          contains ~sub:(Printf.sprintf "column %S" column) (error_text e))
 
 (* Memory *)
 
@@ -2857,5 +2872,5 @@ let () =
     (run "talon.parquet"
        [
          agreement; clocks; sniffing; formats; synthesized; nested_files;
-         tensor_columns; sources; prefixes; decoding; memory; many_files_group;
+         tensor_columns; sources; prefixes; decoding; flat_failure; memory; many_files_group;
        ])
