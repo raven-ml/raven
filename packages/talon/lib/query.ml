@@ -310,38 +310,39 @@ let rec chain q =
   | Aggregate { input; _ } ->
       chain input
 
-(* [shared q] is the steps that [q] reaches more than once. A chain of steps
-   reaches each once, and allocates nothing to say so. *)
+let never _ = false
+
+(* [shared q s] is [true] iff [q] reaches the step [s] more than once. One walk
+   finds those steps, keyed by identity. A chain of steps reaches each once, and
+   allocates nothing to say so. *)
 let shared q =
-  if chain q then []
+  if chain q then never
   else
-    let seen = ref [] and twice = ref [] in
+    let seen = Hashtbl.create 64 and twice = Hashtbl.create 16 in
     let rec visit q =
-      if List.memq q !seen then
-        begin if not (List.memq q !twice) then twice := q :: !twice
+      if Hashtbl.mem seen q.id then Hashtbl.replace twice q.id ()
+      else begin
+        Hashtbl.add seen q.id ();
+        match q.node with
+        | Of_table _ | Of_source _ -> ()
+        | Select { input; _ }
+        | Derive { input; _ }
+        | Filter { input; _ }
+        | Sort { input; _ }
+        | Slice { input; _ }
+        | Unnest { input; _ }
+        | Aggregate { input; _ } ->
+            visit input
+        | Join { left; right; _ } ->
+            visit left;
+            visit right
+        | Append { input; rest } ->
+            visit input;
+            visit rest
       end
-    else begin
-      seen := q :: !seen;
-      match q.node with
-      | Of_table _ | Of_source _ -> ()
-      | Select { input; _ }
-      | Derive { input; _ }
-      | Filter { input; _ }
-      | Sort { input; _ }
-      | Slice { input; _ }
-      | Unnest { input; _ }
-      | Aggregate { input; _ } ->
-          visit input
-      | Join { left; right; _ } ->
-          visit left;
-          visit right
-      | Append { input; rest } ->
-          visit input;
-          visit rest
-    end
-  in
-  visit q;
-  !twice
+    in
+    visit q;
+    fun s -> Hashtbl.mem twice s.id
 
 (* Format draws no tree, so each step is formatted alone, at the margin that its
    prefix leaves, and its lines are prefixed by hand: the first by [first], the
@@ -356,7 +357,7 @@ let pp ppf q =
     | Some k -> Format.fprintf ppf "@,%s#%d" first k
     | None -> (
         let label =
-          if not (List.memq q shared) then ""
+          if not (shared q) then ""
           else begin
             let k = List.length !labels + 1 in
             labels := (q, k) :: !labels;
@@ -651,7 +652,7 @@ let plans_equal ~table q0 q1 =
   let rec equal q0 q1 =
     q0 == q1
     ||
-    if not (List.memq q0 shared) then step_equal ~input:equal ~table q0 q1
+    if not (shared q0) then step_equal ~input:equal ~table q0 q1
     else
       let compared = Lazy.force compared in
       match Hashtbl.find_opt compared (q0.id, q1.id) with

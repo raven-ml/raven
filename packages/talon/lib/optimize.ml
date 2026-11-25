@@ -34,7 +34,7 @@ let memoize same plan f =
   let shared = Query.shared plan in
   let rewritten = lazy (Hashtbl.create 16) in
   let rec go context q =
-    if not (List.memq q shared) then f go context q
+    if not (shared q) then f go context q
     else
       let rewritten = Lazy.force rewritten in
       let id = Query.id q in

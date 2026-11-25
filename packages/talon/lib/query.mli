@@ -99,9 +99,9 @@ val inputs : t -> t list
     source, [[left; right]] for a join, [[input; rest]] for an append, and
     [[input]] for the others. *)
 
-val shared : t -> t list
-(** [shared q] is the steps that [q] reaches more than once, in no order: [[]]
-    for a plan built as a tree. *)
+val shared : t -> t -> bool
+(** [shared q s] is [true] iff [q] reaches the step [s] more than once, as a
+    plan built as a tree reaches none. [shared q] walks [q] once. *)
 
 val map_inputs : (t -> t) -> node -> node
 (** [map_inputs f n] is [n] with [f] applied to each of its inputs. *)
