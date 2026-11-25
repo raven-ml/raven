@@ -274,57 +274,55 @@ let lies w (V x) =
   | On | Split _ | Cuts _ | Major _ | Minor _ -> at_p (at w)
 
 let laws =
-  group "laws"
-    [
-      prop "a host value placed lies there, each device holding its window" case
-        (fun (s, l, w, _) ->
-          cover "split" (split w);
-          let counts a = List.map (fun (_, b) -> snd b.(a)) (windows w s) in
-          let axes = List.init (Array.length s) Fun.id in
-          cover "windows of two extents along an axis"
-            (List.exists
-               (fun a -> List.length (List.sort_uniq compare (counts a)) > 1)
-               axes);
-          cover "an empty window of a non-empty axis"
-            (List.exists
-               (fun a -> s.(a) > 0 && List.mem 0 (counts a))
-               axes);
-          let a = source l s in
-          cover "a window packed into memory the host does not address"
-            (packed a s w);
-          let x = V (Nx.Repr.of_array Nx.Host.v a) in
-          lies w x;
-          holds (A.to_array a) s w (place w x));
-      prop ~count:500 "each device holds its window after a second placement"
-        case (fun (s, l, w, w') ->
-          cover "a change of arrangement" (w <> w');
-          cover "split to split on another axis"
-            (match (w, w') with Split a, Split b -> a <> b | _ -> false);
-          cover "a coarser split of one axis"
-            (match (w, w') with Split a, Minor b -> a = b | _ -> false);
-          cover "a strided source" (l <> Contiguous && split w');
-          let a = source l s in
-          let x = V (Nx.Repr.of_array Nx.Host.v a) in
-          holds (A.to_array a) s w' (place w' (place w x)));
-      prop ~count:500 "each device allocates no more than its window" case
-        (fun (s, l, w, w') ->
-          cover "split to split on another axis"
-            (match (w, w') with Split a, Split b -> a <> b | _ -> false);
-          let x = V (Nx.Repr.of_array Nx.Host.v (source l s)) in
-          let y = place w x in
-          allocates_its_window s x w y;
-          allocates_its_window s y w' (place w' y));
-      prop "a value placed back on the host has its elements" case
-        (fun (s, l, w, _) ->
-          let a = source l s in
-          let (V back) =
-            place Host (place w (V (Nx.Repr.of_array Nx.Host.v a)))
-          in
-          equal (list float_exact)
-            (Array.to_list (A.to_array a))
-            (Array.to_list
-               (A.to_array (require_some (Nx.Repr.array ~by:"test" back)))));
-    ]
+  [
+    prop "a host value placed lies there, each device holding its window" case
+      (fun (s, l, w, _) ->
+        cover "split" (split w);
+        let counts a = List.map (fun (_, b) -> snd b.(a)) (windows w s) in
+        let axes = List.init (Array.length s) Fun.id in
+        cover "windows of two extents along an axis"
+          (List.exists
+             (fun a -> List.length (List.sort_uniq compare (counts a)) > 1)
+             axes);
+        cover "an empty window of a non-empty axis"
+          (List.exists (fun a -> s.(a) > 0 && List.mem 0 (counts a)) axes);
+        let a = source l s in
+        cover "a window packed into memory the host does not address"
+          (packed a s w);
+        let x = V (Nx.Repr.of_array Nx.Host.v a) in
+        lies w x;
+        holds (A.to_array a) s w (place w x));
+    prop ~count:500 "each device holds its window after a second placement" case
+      (fun (s, l, w, w') ->
+        cover "a change of arrangement" (w <> w');
+        cover "split to split on another axis"
+          (match (w, w') with Split a, Split b -> a <> b | _ -> false);
+        cover "a coarser split of one axis"
+          (match (w, w') with Split a, Minor b -> a = b | _ -> false);
+        cover "a strided source" (l <> Contiguous && split w');
+        let a = source l s in
+        let x = V (Nx.Repr.of_array Nx.Host.v a) in
+        holds (A.to_array a) s w' (place w' (place w x)));
+    prop ~count:500 "each device allocates no more than its window" case
+      (fun (s, l, w, w') ->
+        cover "split to split on another axis"
+          (match (w, w') with Split a, Split b -> a <> b | _ -> false);
+        let x = V (Nx.Repr.of_array Nx.Host.v (source l s)) in
+        let y = place w x in
+        allocates_its_window s x w y;
+        allocates_its_window s y w' (place w' y));
+    prop "a value placed and placed back on the host keeps its elements" case
+      (fun (s, l, w, _) ->
+        let a = source l s in
+        let (V back) =
+          place Host (place w (V (Nx.Repr.of_array Nx.Host.v a)))
+        in
+        equal
+          (Nx_support.elements A.Dtype.Float32)
+          (Array.to_list (A.to_array a))
+          (Array.to_list
+             (A.to_array (require_some (Nx.Repr.array ~by:"test" back)))));
+  ]
 
 (* Reading one element *)
 
@@ -400,40 +398,50 @@ let law_item (s, l, r, donated) =
       equal ~msg float_exact e (Nx.item (Array.to_list from_end) y))
     xs
 
-let items =
-  group "item"
+let item_law =
+  prop ~count:200
+    "item is to_array's element at every index, wherever the value lies"
+    item_case law_item
+
+(* A packed or narrow dtype across a change of arrangement: by runs where whole
+   bytes copy, element by element where a window's column is half a byte. *)
+type narrow = Narrow : ('v, 's) A.Dtype.t * (int -> 'v) -> narrow
+
+let narrows =
+  List.concat_map
+    (fun n -> [ (n, [| 4; 8 |]); (n, [| 4; 4 |]) ])
     [
-      prop "item is to_array's element at every index, wherever the value lies"
-        item_case law_item;
+      Narrow (A.Dtype.Int4, Fun.id);
+      Narrow (A.Dtype.Uint4, Fun.id);
+      Narrow (A.Dtype.Bit, fun i -> i mod 2 = 0);
+      Narrow (A.Dtype.Int16, Fun.id);
+      Narrow (A.Dtype.Bool, fun i -> i mod 3 = 0);
     ]
 
-(* A narrow dtype across a change of arrangement, by runs where whole bytes copy
-   and element by element where a window's column is half a byte. *)
-let narrow (type v s) name (dt : (v, s) A.Dtype.t) (of_int : int -> v) =
-  let keeps shape =
-    let xs =
-      Array.init (Array.fold_left ( * ) 1 shape) (fun i -> of_int (i mod 7))
-    in
-    let x =
-      Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array shape) xs)
-    in
-    let y = Nx.place (S4.split ~axis:1) (Nx.place (S4.split ~axis:0) x) in
-    let back = Nx.place Nx.Host.on y in
-    equal bool true
-      (A.to_array (require_some (Nx.Repr.array ~by:"test" back)) = xs)
+let narrow_id (Narrow (dt, _), shape) =
+  Format.asprintf "%s %a" (A.Dtype.name dt) pp_ints shape
+
+let law_narrow (Narrow (dt, of_int), shape) =
+  let xs =
+    Array.init (Array.fold_left ( * ) 1 shape) (fun i -> of_int (i mod 7))
   in
-  test (name ^ " keeps its elements across a change of arrangement") (fun () ->
-      keeps [| 4; 8 |];
-      keeps [| 4; 4 |])
+  let x =
+    Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array shape) xs)
+  in
+  let y = Nx.place (S4.split ~axis:1) (Nx.place (S4.split ~axis:0) x) in
+  let back = Nx.place Nx.Host.on y in
+  equal (Nx_support.elements dt) (Array.to_list xs)
+    (Array.to_list (A.to_array (require_some (Nx.Repr.array ~by:"test" back))))
 
 let sharing =
   group "sharing"
     [
       test "a value already at a placement keeps its arrays" (fun () ->
           let (V x) = place On (host [| 4 |]) in
-          let a = (Nx.Repr.shards ~by:"test" x) in
-          let b = (Nx.Repr.shards ~by:"test" (Nx.place S4.on x)) in
-          equal bool true (Iarray.for_all2 ( == ) a b));
+          let a = Nx.Repr.shards ~by:"test" x in
+          let b = Nx.Repr.shards ~by:"test" (Nx.place S4.on x) in
+          satisfies pass ~claim:"each array is the source's"
+            (Iarray.for_all2 ( == ) a) b);
       test "a set over the host's device reads the host's array" (fun () ->
           let module Fast =
             (val Nx.devices ~kernels:(module Nx_cpu) [ Rig.host ])
@@ -443,13 +451,14 @@ let sharing =
           let b =
             require_some (Nx.Repr.array ~by:"test" (Nx.place Fast.on x))
           in
-          equal bool true (a == b));
+          satisfies pass ~claim:"is the host's array" (( == ) a) b);
       test "a device that maps the host's memory borrows it" (fun () ->
           let (V x) = host [| 1024 |] in
           let a = require_some (Nx.Repr.array ~by:"test" x) in
           let b = (Nx.Repr.shards ~by:"test" (Nx.place S4.on x)) in
-          equal bool true
-            (Rig.Buffer.overlaps (A.buffer a) (A.buffer (Iarray.get b 1))));
+          satisfies pass ~claim:"overlaps the host's buffer"
+            (Rig.Buffer.overlaps (A.buffer a))
+            (A.buffer (Iarray.get b 1)));
       test "an empty window holds no memory of the value's" (fun () ->
           let (V x) = host [| 1 |] in
           let a = require_some (Nx.Repr.array ~by:"test" x) in
@@ -458,12 +467,13 @@ let sharing =
           in
           for j = 1 to 3 do
             let e = A.buffer (Iarray.get b j) in
-            equal bool ~msg:"shares" false (Rig.Buffer.overlaps (A.buffer a) e);
+            satisfies pass ~claim:"shares none of the host's buffer"
+              (fun e -> not (Rig.Buffer.overlaps (A.buffer a) e))
+              e;
             equal int ~msg:"its bytes" 0 (Rig.Buffer.length e)
           done);
-      narrow "int4" A.Dtype.Int4 Fun.id;
-      narrow "int16" A.Dtype.Int16 Fun.id;
-      narrow "bool" A.Dtype.Bool (fun i -> i mod 2 = 0);
+      cases "a change of arrangement keeps a packed or narrow dtype's elements"
+        ~id:narrow_id narrows law_narrow;
     ]
 
 (* An operation of a kind, on a value of any set. *)
@@ -725,8 +735,22 @@ let blocks n =
 let reshapes =
   group "reshapes"
     [
-      prop ~count:1000 "a reshape keeps a cut that holds whole rows"
-        reshape_case law_reshape;
+      (* Tiles that divide the merged extent alone: a case in 55 drawn. *)
+      prop ~count:1000
+        ~examples:
+          [
+            {
+              s = [| 2; 2 |];
+              s' = [| 4 |];
+              merge = true;
+              unit = false;
+              cut = 0;
+              layout = Contiguous;
+              w = Split 0;
+              wanted = Split 0;
+            };
+          ]
+        "a reshape keeps a cut that holds whole rows" reshape_case law_reshape;
       prop "a reshaped host creation, placed, holds each window there"
         reshape_case law_wanted;
       (* A unit axis the result drops keeps no cut: a device past the first
@@ -1306,10 +1330,15 @@ let leading =
                 (Nx.Placement.without_leading_axis (at w)));
       test "a placement that cuts no axis is itself" (fun () ->
           let p = S4.on and q = One.on in
-          equal bool true (Nx.Placement.with_leading_axis p == p);
-          equal bool true (Nx.Placement.without_leading_axis p == p);
-          equal bool true (Nx.Placement.with_leading_axis q == q);
-          equal bool true (Nx.Placement.without_leading_axis q == q));
+          let itself = "is the placement itself" in
+          satisfies (placement ()) ~claim:itself (( == ) p)
+            (Nx.Placement.with_leading_axis p);
+          satisfies (placement ()) ~claim:itself (( == ) p)
+            (Nx.Placement.without_leading_axis p);
+          satisfies (placement ()) ~claim:itself (( == ) q)
+            (Nx.Placement.with_leading_axis q);
+          satisfies (placement ()) ~claim:itself (( == ) q)
+            (Nx.Placement.without_leading_axis q));
       test "a cut of the last axis a layout has refuses an axis in front"
         (fun () ->
           let last = A.Layout.max_rank - 1 in
@@ -1335,26 +1364,28 @@ module Polled = Rig_support.Polled
    placement then waits for its work. *)
 let capacity = 1 lsl 16
 
-let mapping, mapping_q =
-  Polled.open_ ~capacity ~host_visible:false ~waits_on:[ `Host ]
-    "nx-place-mapping"
+type held_devices = { mapping : Rig.t; flat : Rig.t; queues : Polled.t list }
 
-let flat, flat_q =
-  Polled.open_ ~capacity ~host_visible:false ~maps_host:false
-    ~waits_on:[ `Host ] "nx-place-flat"
-
-module Map = (val Nx.devices [ mapping ])
-module Flat = (val Nx.devices [ flat ])
-module Both = (val Nx.devices [ mapping; flat ])
+let held_devices =
+  fixture (fun () ->
+      let mapping, mapping_q =
+        Polled.open_ ~capacity ~host_visible:false ~waits_on:[ `Host ]
+          "nx-place-mapping"
+      in
+      let flat, flat_q =
+        Polled.open_ ~capacity ~host_visible:false ~maps_host:false
+          ~waits_on:[ `Host ] "nx-place-flat"
+      in
+      { mapping; flat; queues = [ mapping_q; flat_q ] })
 
 (* Runs every queued copy. *)
-let drain () =
+let drain h =
   List.iter
     (fun q ->
       while Polled.run q > 0 do
         ()
       done)
-    [ mapping_q; flat_q ]
+    h.queues
 
 type onto = Onto_map | Onto_flat | Onto_both | Onto_split of int
 
@@ -1363,15 +1394,6 @@ let pp_onto ppf = function
   | Onto_flat -> Format.pp_print_string ppf "onto the flat device"
   | Onto_both -> Format.pp_print_string ppf "onto both"
   | Onto_split a -> Format.fprintf ppf "split %d onto both" a
-
-type held = H : ('v, 's, 'd) Nx.t -> held
-
-let onto_held o x =
-  match o with
-  | Onto_map -> H (Nx.place Map.on x)
-  | Onto_flat -> H (Nx.place Flat.on x)
-  | Onto_both -> H (Nx.place Both.on x)
-  | Onto_split a -> H (Nx.place (Both.split ~axis:a) x)
 
 (* Bits, 64 KiB or more one time in four, where they go, and where they come
    from: the host for [None], one time in three, a split of axis [a] over both
@@ -1393,6 +1415,8 @@ let held_case =
   let bits = frequency [ (5, Nx_support.bits); (1, Nx_support.large_bits) ] in
   triple bits onto from
 
+type held = H : ('v, 's, 'd) Nx.t -> held
+
 (* A placement onto held devices returns with its copies queued and unrun,
    and once they have run, the value's bytes are the source's. *)
 let law_held (Bits a, o, from) =
@@ -1406,14 +1430,24 @@ let law_held (Bits a, o, from) =
   cover "a source of 64 KiB or more" (A.Dtype.bytes (A.dtype a) n >= 65536);
   cover "a strided source" (not (A.Layout.is_contiguous (A.layout a)));
   cover "no element" (n = 0);
+  let h = held_devices () in
+  let module Map = (val Nx.devices [ h.mapping ]) in
+  let module Flat = (val Nx.devices [ h.flat ]) in
+  let module Both = (val Nx.devices [ h.mapping; h.flat ]) in
   let x = Nx.Repr.of_array Nx.Host.v a in
   let check : type v s d. (v, s, d) Nx.t -> unit =
    fun x ->
-    drain ();
-    let ds = [| mapping; flat |] in
+    drain h;
+    let ds = [| h.mapping; h.flat |] in
     let submitted = Array.map Rig.submitted ds in
     let signaled = Array.map Rig.signaled ds in
-    let (H y) = onto_held o x in
+    let (H y) =
+      match o with
+      | Onto_map -> H (Nx.place Map.on x)
+      | Onto_flat -> H (Nx.place Flat.on x)
+      | Onto_both -> H (Nx.place Both.on x)
+      | Onto_split a -> H (Nx.place (Both.split ~axis:a) x)
+    in
     let queued = ref 0 in
     Array.iteri
       (fun i d ->
@@ -1428,7 +1462,7 @@ let law_held (Bits a, o, from) =
        already holds is a view. *)
     if n > 0 && from = None then
       at_least int ~msg:"copies queued" ~than:1 !queued;
-    drain ();
+    drain h;
     let back = Nx.place Nx.Host.on y in
     equal (array int) ~msg:"its bytes" (Nx_support.bytes a)
       (Nx_support.bytes (require_some (Nx.Repr.array ~by:"test" back)))
@@ -1441,19 +1475,29 @@ let law_held (Bits a, o, from) =
    the elements done, here a value of 64 KiB, whose host memory the mapping
    device copies into directly. *)
 let test_onto_host_waits () =
+  let h = held_devices () in
+  let module Map = (val Nx.devices [ h.mapping ]) in
   let x =
     Nx.place Map.on (Nx.create Nx.float32 [| 16384 |] (Array.make 16384 1.))
   in
-  drain ();
+  drain h;
   let back = Nx.place Nx.Host.on x in
-  equal int ~msg:"run" (Rig.submitted mapping) (Rig.signaled mapping);
+  equal int ~msg:"run" (Rig.submitted h.mapping) (Rig.signaled h.mapping);
   equal float_exact 1. (Nx.item [ 16383 ] back)
 
 let held =
   group "held devices"
     [
-      prop "a placement onto held devices returns with its copies queued"
-        held_case law_held;
+      (* An empty source, a case in five drawn. *)
+      prop
+        ~examples:
+          [
+            ( Nx_support.Bits (A.of_array A.Dtype.Float32 [| 0; 3 |] [||]),
+              Onto_split 0,
+              None );
+          ]
+        "a placement onto held devices returns with its copies queued" held_case
+        law_held;
       test "a placement onto the host returns with its copies done"
         test_onto_host_waits;
     ]
@@ -1502,7 +1546,6 @@ type summable =
   | K : {
       dt : ('v, 's) A.Dtype.t;
       add : 'v -> 'v -> 'v;
-      same : 'v -> 'v -> bool;
       nan : 'v -> bool;
       negative_zero : 'v -> bool;
       zero : 'v;  (** A negative zero where the dtype has one. *)
@@ -1511,11 +1554,6 @@ type summable =
       -> summable
 
 let r32 x = Int32.float_of_bits (Int32.bits_of_float x)
-
-let same_float a b =
-  (Float.is_nan a && Float.is_nan b)
-  || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
-
 let neg_zero x = x = 0. && Float.sign_bit x
 let floats = [ -0.; 0.; 1.; -1.; Float.nan; Float.infinity; Float.neg_infinity ]
 
@@ -1525,7 +1563,6 @@ let kinds =
       {
         dt = A.Dtype.Float32;
         add = (fun a b -> r32 (a +. b));
-        same = same_float;
         nan = Float.is_nan;
         negative_zero = neg_zero;
         zero = -0.;
@@ -1535,7 +1572,6 @@ let kinds =
       {
         dt = A.Dtype.Float64;
         add = ( +. );
-        same = same_float;
         nan = Float.is_nan;
         negative_zero = neg_zero;
         zero = -0.;
@@ -1546,7 +1582,6 @@ let kinds =
         (* Computed in float32, then rounded once into bfloat16. *)
         dt = A.Dtype.Bfloat16;
         add = (fun a b -> A.Dtype.of_float A.Dtype.Bfloat16 (r32 (a +. b)));
-        same = same_float;
         nan = Float.is_nan;
         negative_zero = neg_zero;
         zero = -0.;
@@ -1556,7 +1591,6 @@ let kinds =
       {
         dt = A.Dtype.Float16;
         add = (fun a b -> A.Dtype.of_float A.Dtype.Float16 (r32 (a +. b)));
-        same = same_float;
         nan = Float.is_nan;
         negative_zero = neg_zero;
         zero = -0.;
@@ -1568,7 +1602,6 @@ let kinds =
         add =
           (fun a b ->
             { Complex.re = r32 (a.re +. b.re); im = r32 (a.im +. b.im) });
-        same = (fun a b -> same_float a.re b.re && same_float a.im b.im);
         nan = (fun z -> Float.is_nan z.re || Float.is_nan z.im);
         negative_zero = (fun z -> neg_zero z.re || neg_zero z.im);
         zero = { Complex.re = -0.; im = -0. };
@@ -1581,7 +1614,6 @@ let kinds =
       {
         dt = A.Dtype.Int8;
         add = (fun a b -> ((a + b + 128) land 255) - 128);
-        same = Int.equal;
         nan = (fun _ -> false);
         negative_zero = (fun _ -> false);
         zero = 0;
@@ -1612,7 +1644,6 @@ type summed =
       kind : summable;
       dt : ('v, 's) A.Dtype.t;
       add : 'v -> 'v -> 'v;
-      same : 'v -> 'v -> bool;
       nan : 'v -> bool;
       negative_zero : 'v -> bool;
       w : sum;
@@ -1645,7 +1676,6 @@ let summed_case =
       kind;
       dt = k.dt;
       add = k.add;
-      same = k.same;
       nan = k.nan;
       negative_zero = k.negative_zero;
       w;
@@ -1687,12 +1717,9 @@ let folded add terms =
       !acc)
     terms.(0)
 
-let same_elements same a b =
-  equal int ~msg:"elements" (Array.length a) (Array.length b);
-  Array.iteri
-    (fun i x ->
-      if not (same x b.(i)) then failf "element %d differs from its sum" i)
-    a
+let equal_terms (type v s) (dt : (v, s) A.Dtype.t) ~msg (want : v array)
+    (got : v array) =
+  equal ~msg (Nx_support.elements dt) (Array.to_list want) (Array.to_list got)
 
 let law_closes (Summed c) =
   let sums = folded c.add c.terms in
@@ -1701,7 +1728,7 @@ let law_closes (Summed c) =
   cover "no element" (Array.mem 0 c.shape);
   cover "a cut beside the sum" (match c.w with Over_a _ -> true | _ -> false);
   let x = partial_value c.w c.dt c.shape c.terms in
-  same_elements c.same sums (Nx.to_array x)
+  equal_terms c.dt ~msg:"its terms' sums" sums (Nx.to_array x)
 
 let law_scatters (Summed c) =
   let r = Array.length c.shape in
@@ -1717,9 +1744,12 @@ let law_scatters (Summed c) =
   let reduced = Nx.place p (Nx.place (Nx.Placement.closed (sum_at c.w)) x) in
   equal (placement ()) ~msg:"where it lies" p (Nx.placement scattered);
   let shards x = Iarray.to_array (Nx.Repr.shards ~by:"test" x) in
-  Array.iter2
-    (fun a b -> same_elements c.same (A.to_array a) (A.to_array b))
-    (shards reduced) (shards scattered)
+  Array.iteri
+    (fun j (a, b) ->
+      equal_terms c.dt
+        ~msg:(Printf.sprintf "device %d" j)
+        (A.to_array a) (A.to_array b))
+    (Array.combine (shards reduced) (shards scattered))
 
 let law_spreads (Summed c) =
   let xs = c.terms.(0) in
@@ -1730,77 +1760,198 @@ let law_spreads (Summed c) =
   cover "a NaN" (Array.exists c.nan xs);
   let y = Nx.place (sum_at c.w) x in
   equal (placement ()) ~msg:"where it lies" (sum_at c.w) (Nx.placement y);
-  same_elements c.same c.terms.(0) (Nx.to_array y)
+  equal_terms c.dt ~msg:"closed" xs (Nx.to_array y)
+
+(* A sum placed at another sum closes, then is placed there: it closes again to
+   the first's sums. *)
+let law_resummed (Summed c) =
+  let other =
+    match c.w with Over_b -> Line | Line | Both | Over_a _ -> Over_b
+  in
+  let x = partial_value c.w c.dt c.shape c.terms in
+  let y = Nx.place (sum_at other) x in
+  equal (placement ()) ~msg:"where it lies" (sum_at other) (Nx.placement y);
+  equal_terms c.dt ~msg:"closed" (folded c.add c.terms) (Nx.to_array y)
 
 (* [Nx.item] of a sum is its element closed: each index's terms added. *)
 let law_item_of_a_sum (Summed c) =
   let x = partial_value c.w c.dt c.shape c.terms in
   let sums = folded c.add c.terms in
-  Array.iteri
-    (fun i e ->
-      let index = unravel c.shape i in
-      if not (c.same e (Nx.item (Array.to_list index) x)) then
-        failf "element %d: item reads another value than its terms' sum" i)
-    sums
+  let items =
+    Array.init (Array.length sums) (fun i ->
+        Nx.item (Array.to_list (unravel c.shape i)) x)
+  in
+  equal_terms c.dt ~msg:"items" sums items
 
 let names = String.concat "; " (List.map Rig.name (Nx.Devices.to_list Mem.v))
 let pp_at p = Format.asprintf "%a" Nx.Placement.pp p
 
-let test_sum_placements () =
-  let p = sum_at Line in
-  equal (placement ()) ~msg:"one sum over a line or the whole mesh" p
-    (sum_at Both);
-  not_equal (placement ())
-    ~msg:"the summed axes taken as listed: b then a numbers the terms \
-          otherwise"
-    (sum_at Both)
-    (Nx.Placement.partial grid [ "b"; "a" ] []);
-  not_equal (placement ()) ~msg:"a sum is not the value whole" Mem.on p;
-  not_equal (placement ()) ~msg:"sums over two mesh axes" (sum_at Over_b)
-    (Nx.Placement.partial grid [ "a" ] []);
-  equal (placement ()) ~msg:"closed" Mem.on (Nx.Placement.closed p);
-  equal (placement ()) ~msg:"closed keeps the cut"
-    (Nx.Placement.mesh grid [ (0, [ "b" ]) ])
-    (Nx.Placement.closed (sum_at (Over_a 0)));
-  equal (placement ()) ~msg:"uncut" Mem.on (Nx.Placement.uncut p);
-  equal (placement ()) ~msg:"no sum" (Nx.Placement.mesh grid [])
-    (Nx.Placement.partial grid [] []);
-  equal string ~msg:"printed" ("partial [" ^ names ^ "]") (pp_at p);
-  equal string ~msg:"printed over a mesh"
-    ("mesh 2x2 [" ^ names ^ "] ~partial:0 ~axis:1/1")
-    (pp_at (sum_at (Over_a 1)));
-  let x = Nx.place p (Nx.ones Nx.float32 [| 3 |]) in
-  equal (placement ()) ~msg:"beside a sum" Mem.on (Nx.beside x)
+let partials =
+  group "Placement.partial"
+    [
+      test "a partial placement numbers its terms in the order its sums list"
+        (fun () ->
+          equal (placement ()) ~msg:"one sum over a line or the whole mesh"
+            (sum_at Line) (sum_at Both);
+          not_equal (placement ()) ~msg:"b then a" (sum_at Both)
+            (Nx.Placement.partial grid [ "b"; "a" ] []);
+          not_equal (placement ()) ~msg:"over one mesh axis or the other"
+            (sum_at Over_b)
+            (Nx.Placement.partial grid [ "a" ] []);
+          not_equal (placement ()) ~msg:"the value whole" Mem.on (sum_at Line);
+          equal (placement ()) ~msg:"no sum"
+            (Nx.Placement.mesh grid [])
+            (Nx.Placement.partial grid [] []));
+      test "a partial closes to its cuts and uncuts to whole" (fun () ->
+          equal (placement ()) ~msg:"closed" Mem.on
+            (Nx.Placement.closed (sum_at Line));
+          equal (placement ()) ~msg:"closed keeps the cut"
+            (Nx.Placement.mesh grid [ (0, [ "b" ]) ])
+            (Nx.Placement.closed (sum_at (Over_a 0)));
+          equal (placement ()) ~msg:"uncut" Mem.on
+            (Nx.Placement.uncut (sum_at Line)));
+      test "a partial prints as partial or as its mesh's sums and cuts"
+        (fun () ->
+          equal string ~msg:"a line"
+            ("partial [" ^ names ^ "]")
+            (pp_at (sum_at Line));
+          equal string ~msg:"a mesh"
+            ("mesh 2x2 [" ^ names ^ "] ~partial:0 ~axis:1/1")
+            (pp_at (sum_at (Over_a 1))));
+      test "beside a sum is whole on its devices and no sum" (fun () ->
+          let x = Nx.place (sum_at Line) (Nx.ones Nx.float32 [| 3 |]) in
+          equal (placement ()) Mem.on (Nx.beside x));
+      test
+        "beside a cut value is whole, and a value at its placement is cut \
+         along its own axes" (fun () ->
+          let x = Nx.place (Mem.split ~axis:0) (iota [| 4; 3 |]) in
+          equal (placement ()) ~msg:"beside" Mem.on (Nx.beside x);
+          raises_match
+            (Exn.invalid_arg ~sub:"Nx.add: operand 1 lies at split ~axis:1")
+            (fun () ->
+              Nx.add x (Nx.arange_at (Nx.placement x) Nx.float32 0 3 1));
+          equal
+            (Nx_support.elements A.Dtype.Float32)
+            (Array.to_list
+               (Nx.to_array (Nx.add (iota [| 4; 3 |]) (iota [| 3 |]))))
+            (Array.to_list
+               (Nx.to_array
+                  (Nx.add x (Nx.arange_at (Nx.beside x) Nx.float32 0 3 1)))));
+    ]
 
-let test_sum_refusals () =
-  let x = Nx.place (sum_at Line) (Nx.ones Nx.float32 [| 3 |]) in
-  raises
-    (Invalid_argument
-       ("Nx.exp: operand 0 lies at partial [" ^ names
-      ^ "], a sum the operation does not keep; Nx.place (Placement.on s) x"))
-    (fun () -> Nx.exp x);
-  invalid ~by:"Nx.place" (fun () ->
-      Nx.place (sum_at Line) (Nx.ones Nx.int4 [| 3 |]));
-  invalid ~by:"Nx.place" (fun () ->
-      Nx.place (sum_at Line) (Nx.ones Nx.bool [| 3 |]));
-  invalid ~by:"Nx.Placement.partial" (fun () ->
-      Nx.Placement.partial grid [ "a" ] [ (0, [ "a" ]) ])
+(* What [ds] reach after [f ()]: whether it fits in [over] bytes over what each
+   holds at the call. An allocation past a budget first collects what nothing
+   reaches, so [f] fits in every budget above the least it fits in. *)
+let fits ds f over =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    List.iter
+      (fun d ->
+        ignore (Rig.Buffer.create d 0);
+        Rig.free_cache d)
+      ds
+  done;
+  let held = List.map Rig.allocated ds in
+  List.iter2 (fun d h -> Rig.set_budget d (h + over)) ds held;
+  Fun.protect
+    ~finally:(fun () -> List.iter (fun d -> Rig.set_budget d max_int) ds)
+    (fun () ->
+      match ignore (Sys.opaque_identity (f ())) with
+      | () -> true
+      | exception Rig.Out_of_memory _ -> false)
+
+(* The least budget in [[lo + 1, hi]] that [f] fits in, [f] fitting in [hi] and
+   not in [lo]. *)
+let rec least ds f lo hi =
+  if hi - lo <= 1 then hi
+  else
+    let mid = (lo + hi) / 2 in
+    if fits ds f mid then least ds f lo mid else least ds f mid hi
+
+(* The most each device holds beside a closing of four terms of [shape] over
+   Mem, to place [x] whole on each device: a whole window of [w] bytes and,
+   where an axis has an element per term, a part of each other term, [3 w / 4],
+   else that whole window of each other term, [3 w]. *)
+let closing_peak shape =
+  let n = Array.fold_left ( * ) 1 shape in
+  let terms =
+    Array.init 4 (fun k -> Array.init n (fun i -> Float.of_int ((i + k) mod 9)))
+  in
+  let x = partial_value Line A.Dtype.Float32 shape terms in
+  let ds = Nx.Devices.to_list Mem.v in
+  let f () = Nx.place Mem.on x in
+  ignore (f ());
+  let hi = 8 * 4 * n in
+  if not (fits ds f hi) then fail "the closing fits in no budget of 8 windows";
+  (least ds f 0 hi, 4 * n)
+
+let test_all_reduce_parts () =
+  let peak, w = closing_peak [| 8; 1024 |] in
+  at_most int ~than:(w + (3 * w / 4)) peak
+
+let test_all_reduce_whole () =
+  let peak, w = closing_peak (Array.make 10 3) in
+  at_most int ~than:(4 * w) peak;
+  greater int ~msg:"more than a part of each other window"
+    ~than:(w + (3 * w / 4))
+    peak
+
+let test_sum_refusals =
+  cases "a boolean, bit, int4 or uint4 value placed at a sum raises" ~id:fst
+    [
+      ( "bool",
+        fun () -> ignore (Nx.place (sum_at Line) (Nx.ones Nx.bool [| 3 |])) );
+      ("bit", fun () -> ignore (Nx.place (sum_at Line) (Nx.ones Nx.bit [| 3 |])));
+      ( "int4",
+        fun () -> ignore (Nx.place (sum_at Line) (Nx.ones Nx.int4 [| 3 |])) );
+      ( "uint4",
+        fun () -> ignore (Nx.place (sum_at Line) (Nx.ones Nx.uint4 [| 3 |])) );
+    ]
+    (fun (_, f) -> invalid ~by:"Nx.place" f)
+
+(* S4 holds a device the host does not address, so no kernel library computes on
+   it: the additions of a closing have no kernels. *)
+let test_bare_closing () =
+  let line = Nx.Mesh.v S4.v [ ("x", 4) ] in
+  let x =
+    Nx.place (Nx.Placement.partial line [ "x" ] []) (Nx.ones Nx.float32 [| 3 |])
+  in
+  raises_match (Exn.invalid_arg ~sub:"Nx.place: ") (fun () -> Nx.place S4.on x)
 
 let sums =
   group "sums"
     [
       prop "reading a partial value adds its terms in their order"
         summed_case law_closes;
-      prop "a reduce-scatter equals the all-reduce then placed, bit for bit, NaNs alike"
+      prop "a reduce-scatter equals the all-reduce then placed, bit for bit"
         summed_case law_scatters;
-      prop "a value placed partial closes to its bits" summed_case law_spreads;
+      prop "a value placed at a sum closes to its bits" summed_case law_spreads;
+      prop "a sum placed at another sum closes, then is placed" summed_case
+        law_resummed;
+      test "an all-reduce adds a part of each window and receives the others'"
+        test_all_reduce_parts;
+      test "an all-reduce of no axis of an element per term adds whole windows"
+        test_all_reduce_whole;
+      test "closing a sum on a set without kernels raises" test_bare_closing;
+      test_sum_refusals;
+    ]
+
+let reads =
+  group "item"
+    [
+      item_law;
       prop "item reads a sum's element, its terms added" summed_case
         law_item_of_a_sum;
-      test "partial placements" test_sum_placements;
-      test "what no sum holds raises" test_sum_refusals;
     ]
 
 let () =
   exit
     (run "nx place"
-       [ laws; items; reshapes; units; sharing; refusals; leading; held; sums ])
+       [
+         partials;
+         leading;
+         group "place" (laws @ [ sharing; refusals; held; sums ]);
+         reads;
+         reshapes;
+         units;
+       ])
