@@ -1281,6 +1281,12 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- A `Sde.Brownian` path finer than the floats near its times returns the
+  increments of its own nodes: one deeper than about 24 levels in float32,
+  or past `t0 = 1e9` in float64, summed one node's draws with another's
+  place, off by up to the coarsest such node's increment. A path now agrees
+  with every shallower path of its key at their shared nodes, as `jera.mli`
+  states.
 - `Minimize.bracket` ends an element whose bracket is too wide to shrink to
   `tol` within its budget `Budget_spent`, where it reported `Stalled`: golden
   steps take `[-1e100, 1e100]` past it. `jera.mli` states the budget, `3b + 9`

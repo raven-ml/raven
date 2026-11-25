@@ -36,6 +36,20 @@ let times =
     (List.nth l 0, List.nth l 1, List.nth l 2))
   |> Gen.with_pp (fun ppf (s, t, u) -> Format.fprintf ppf "(%g, %g, %g)" s t u)
 
+(* Two depths of one key, and a node of the coarser: its level and index, over
+   [t0, t0 + 1] with ends whose node times are exact. *)
+let nodes =
+  Gen.(
+    let* coarse = int_range 0 30 in
+    let* fine = int_range coarse 30 and+ level = int_range 0 (min coarse 20) in
+    let+ seed = int_range 0 1000
+    and+ t0 = of_list [ 0.; -3.; 1e9 ]
+    and+ k = int_range 0 ((1 lsl level) - 1) in
+    (seed, t0, coarse, fine, level, k))
+  |> Gen.with_pp (fun ppf (seed, t0, coarse, fine, level, k) ->
+      Format.fprintf ppf "key %d, t0 %g, depths %d and %d, node %d of level %d"
+        seed t0 coarse fine k level)
+
 let brownian_tests =
   let w = path ~n:8 3 in
   [
@@ -94,6 +108,45 @@ let brownian_tests =
         less (float 1.)
           ~than:(5. *. Float.sqrt (0.3 *. 0.5) /. 63.)
           (Float.abs (mean (Nx.mul a b))));
+    prop "paths of one key agree at the nodes of the coarser path" nodes
+      ~examples:[ (3, 1e9, 0, 24, 0, 0); (5, 0., 3, 30, 2, 3) ]
+      (fun (seed, t0, coarse, fine, level, k) ->
+        (* Node [k] of [level] spans [t0 + k 2^-level, t0 + (k + 1) 2^-level],
+           exact in float64 for these ends. Each side sums one node's draws, at
+           most 31 terms of at most 4: 1e-12 bounds their rounding. *)
+        cover "a deeper path" (coarse < fine);
+        cover "the root" (level = 0);
+        cover "a node finer than the floats near 1e9" (t0 = 1e9 && fine >= 24);
+        let path depth =
+          Sde.Brownian.v (Nx.Rng.key seed) f64 ~shape:[| 4 |] ~t0 ~t1:(t0 +. 1.)
+            ~depth
+        in
+        let at i = t0 +. Float.ldexp (Float.of_int i) (-level) in
+        let node depth =
+          let dw, h =
+            Sde.Brownian.increment (path depth)
+              (scalar (at k))
+              (scalar (at (k + 1)))
+          in
+          (dw, Nx.mul_s h (at (k + 1) -. at k))
+        in
+        equal
+          (Oracle.structure ~abs:1e-12 Nx.Ptree.(pair tensor tensor))
+          (node coarse) (node fine));
+    cases "a float32 path of any depth has its root's increment"
+      ~id:string_of_int [ 25; 30 ] (fun depth ->
+        (* The root's draws give the increment over [t0, t1] at every depth. Its
+           ends each sum depth + 1 terms of at most 4 in float32, which round by
+           at most 2 (31) 4 eps32 = 1.5e-5. *)
+        let f32 = Nx.float32 in
+        let root depth =
+          let w =
+            Sde.Brownian.v (Nx.Rng.key 7) f32 ~shape:[| 64 |] ~t0:0. ~t1:1.
+              ~depth
+          in
+          fst (Sde.Brownian.increment w (Nx.scalar f32 0.) (Nx.scalar f32 1.))
+        in
+        equal (Oracle.tensor ~abs:2e-5 ()) (root 0) (root depth));
     test "a time outside the path raises" (fun () ->
         raises_with "t = 1.5 is outside [0, 1]" (fun () ->
             Sde.Brownian.increment w (scalar 0.) (scalar 1.5)));

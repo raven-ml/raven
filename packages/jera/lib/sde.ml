@@ -68,24 +68,40 @@ module Brownian = struct
       Nx.Rng.normal_at at ~key:(Nx.Rng.fold_in k 1) dtype w.shape )
 
   (* W(τ) − W(t0) and I(τ) = ∫_t0^τ (W r − W t0) dr. The descent keeps an
-     interval [a, a + h] that holds τ, W and I at a, and the interval's
-     increment and space–time area; bisecting it at its midpoint m draws, given
+     interval of size h that holds τ, W and I at its start, and the interval's
+     increment and space–time area; bisecting it at its midpoint draws, given
      them (Foster's thesis, 2020, §2.2): W_am = W/2 + 3H/2 + Z, Z ~ N(0, h/16),
      H_am = S/2 + N, H_mb = S/2 − N, N ~ N(0, h/48), with S = 2H − (W_am −
      W_mb)/2, so that Chen's relation holds. In the finest interval the path is
-     its mean given W and H: W(a + x h) = W(a) + x W + 6 x (1 − x) H. *)
+     its mean given W and H: W(a + x h) = W(a) + x W + 6 x (1 − x) H.
+
+     The side taken at each level is a bit of τ's leaf, the index of the finest
+     interval that holds it. Comparing τ with a midpoint computed in the times'
+     dtype would round once the midpoint is finer than the floats near τ, and
+     the descent would then carry one node's W and I with another's place.
+     Scaling [(τ − t0) / (t1 − t0)] by 2^depth is exact, so the leaf and the
+     position x in it are; τ = t1 is the end of the last leaf. *)
   let point w tau =
     let dtype = Nx.dtype w.t0 in
     let span = Nx.sub w.t1 w.t0 in
     let at = Nx.beside w.t0 in
+    let leaves = Float.ldexp 1. w.depth in
+    let pos = Nx.mul_s (Nx.div (Nx.sub tau w.t0) span) leaves in
+    let last = Nx.greater_equal_s pos leaves in
+    let leaf =
+      Nx.minimum_s (Nx.cast Nx.int64 pos)
+        (Int64.pred (Int64.shift_left 1L w.depth))
+    in
+    let x = Nx.where last (Nx.ones_like pos) (Nx.sub pos (Nx.floor pos)) in
+    let one = Nx.scalar_at at Nx.int64 1L in
     let z1, z2 = draws w (Nx.scalar_at at Nx.int64 0L) in
-    let a = ref w.t0 and h = ref span in
+    let h = ref span in
     let wa = ref (Nx.zeros_at at dtype w.shape)
     and ia = ref (Nx.zeros_at at dtype w.shape) in
     let inc = ref (Nx.mul z1 (Nx.sqrt span)) in
     let area = ref (Nx.mul z2 (Nx.sqrt (Nx.div_s span 12.))) in
-    let id = ref (Nx.scalar_at at Nx.int64 1L) in
-    for _ = 1 to w.depth do
+    let id = ref one in
+    for level = 1 to w.depth do
       let z, n = draws w !id in
       let half = Nx.div_s !h 2. in
       let z = Nx.mul z (Nx.sqrt (Nx.div_s !h 16.))
@@ -94,21 +110,19 @@ module Brownian = struct
       let w2 = Nx.sub !inc w1 in
       let s = Nx.sub (Nx.mul_s !area 2.) (Nx.div_s (Nx.sub w1 w2) 2.) in
       let h1 = Nx.add (Nx.div_s s 2.) n and h2 = Nx.sub (Nx.div_s s 2.) n in
-      let mid = Nx.add !a half in
-      let right = Nx.greater_equal tau mid in
+      let bit = Nx.bitwise_and (Nx.rshift leaf (w.depth - level)) one in
+      let right = Nx.equal_s bit 1L in
       let pick r l = Nx.where right r l in
       let ia_right =
         Nx.add !ia (Nx.mul half (Nx.add (Nx.add !wa (Nx.div_s w1 2.)) h1))
       in
-      a := pick mid !a;
       ia := pick ia_right !ia;
       wa := pick (Nx.add !wa w1) !wa;
       inc := pick w2 w1;
       area := pick h2 h1;
-      id := Nx.add (Nx.mul_s !id 2L) (Nx.cast Nx.int64 right);
+      id := Nx.add (Nx.mul_s !id 2L) bit;
       h := half
     done;
-    let x = Nx.div (Nx.sub tau !a) !h in
     let bump = Nx.mul x (Nx.rsub_s 1. x) in
     let w_tau =
       Nx.add (Nx.add !wa (Nx.mul x !inc)) (Nx.mul (Nx.mul_s bump 6.) !area)

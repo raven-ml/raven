@@ -1879,7 +1879,9 @@ module Sde : sig
       bisections, each drawing the midpoint's increments and areas from their
       distribution given the interval's, under a key that is a pure function of
       the path's key and the node. So a path is one function of time, whatever
-      the queries: marches with different steps see one path. Steps finer than
+      the queries: marches with different steps see one path. Paths of one key,
+      dtype, shape and interval agree at the nodes they share: a deeper path
+      refines a shallower one. Steps finer than
       [(t1 − t0) / 2^depth] see, inside each finest interval, the path's mean
       given that interval's increment and area, a quadratic, and lose their
       stated order. *)
