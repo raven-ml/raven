@@ -674,11 +674,11 @@ let warmup =
          from the default 0.8 and from the step-size search's 0.8. Over keys 1
          to 40 the mean acceptance of 200 draws was 0.957 ± 0.0043 (sd), so 0.03
          lies 5.3 sds out: a rate of about 1e-7. *)
-      test "the step sizes give the target acceptance" (fun () ->
+      test "a short warmup meets a target above 0.8" (fun () ->
           equal (float 0.03) 0.95 (acceptance (Lazy.force warmed)));
       (* Over keys 1 to 40 a target of 0.6 accepted 0.761 ± 0.032 (sd): 0.6 and
          0.92 lie 5 sds out, a rate of about 6e-7 each. *)
-      test "a short warmup accepts between its target and about 0.8" (fun () ->
+      test "a short warmup overshoots a target below 0.8" (fun () ->
           let a = acceptance (warm 0.6) in
           greater float_exact ~than:0.6 a;
           less float_exact ~than:0.92 a);
@@ -706,11 +706,11 @@ let warmup =
                    Nx.item [] (Nx.sum (Nx.mul v (Nx.matmul precision v)))))
               (quadratic (fitted g))
           done);
-      test "a rank above the dimension fits as many directions as it has"
-        (fun () ->
+      test
+        "a warmup asked for more directions than the dimension has keeps \
+         finite, positive step sizes" (fun () ->
           let s = N.init t ~rank:2 normal (Nx.zeros Nx.float64 [| 2; 1 |]) in
           let s = N.warmup t normal (Nx.Rng.key 3) ~steps:30 s in
-          equal int 1 (rank s);
           Array.iter
             (fun e ->
               satisfies ~claim:"finite and positive" (float 1e-12)

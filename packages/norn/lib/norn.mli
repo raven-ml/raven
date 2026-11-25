@@ -1468,14 +1468,15 @@ module Nuts : sig
       Hoffman and Gelman 2014) aims each chain's step size at an acceptance of
       [s.accept], restarting at each window from a search for a step size
       accepting [0.8]. The step size warmup ends with is the averaging's mean
-      over the final buffer, so a short warmup accepts between [s.accept] and
-      about [0.8]: at [300] steps a target of [0.6] accepts about [0.76] on a
-      Gaussian. At each window's end each chain's geometry is refitted to its
-      window's draws and gradients by the Fisher divergence (Seyboldt, Carlson
-      and Carpenter 2026): a diagonal scale [sqrt (sd x / sd score)] per
-      element, then its directions. Transition [n] of the run, counted by
-      [s.draw], has the key [Nx.Rng.fold_in k n], as in {!sample}, so warmup and
-      sampling may share a key.
+      over the final buffer. A short warmup meets a target above [0.8] and
+      overshoots one below it: at [300] steps on a Gaussian a target of [0.95]
+      accepts about [0.96] and one of [0.6] about [0.76]. At each window's end
+      each chain's geometry is refitted to its window's draws and gradients by
+      the Fisher divergence (Seyboldt, Carlson and Carpenter 2026): a diagonal
+      scale [sqrt (sd x / sd score)] per element, then its directions.
+      Transition [n] of the run, counted by [s.draw], has the key
+      [Nx.Rng.fold_in k n], as in {!sample}, so warmup and sampling may share a
+      key.
 
       Raises [Invalid_argument] if [steps < 0]. *)
 
@@ -1617,9 +1618,9 @@ module Hmc : sig
         restarting at each window from a search for a step size accepting [0.8].
         A chain that never accepts drives the mean to [0], so the step shrinks
         until every chain moves. The step size warmup ends with is the
-        averaging's mean over the final buffer, so a short warmup accepts above
-        [s.accept]: at [300] steps a target of [0.6] accepts about [0.84] on a
-        Gaussian.
+        averaging's mean over the final buffer. A short warmup meets a target
+        above [0.8] and overshoots one below it: at [300] steps on a Gaussian a
+        target of [0.95] accepts about [0.95] and one of [0.6] about [0.84].
       - The length starts at the first step size, whatever [s.length] (Hoffman,
         Radul and Sountsov 2021, Algorithm 1), and climbs the change in the
         chains' expected squared jumped distance (ChEES) in whitened

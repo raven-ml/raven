@@ -578,11 +578,11 @@ let warmup =
          0.95 is away from the default 0.8 and from the step-size search's 0.8.
          Over keys 1 to 40 the mean over 100 draws was 0.950 ± 0.0061 (sd), so
          0.03 lies 4.9 sds out: a rate of about 1e-6. *)
-      test "the step size gives the target harmonic mean acceptance" (fun () ->
+      test "a short warmup meets a harmonic mean target above 0.8" (fun () ->
           equal (float 0.03) 0.95 (acceptance (Lazy.force warmed)));
       (* Over keys 1 to 40 a target of 0.6 accepted 0.845 ± 0.028 (sd): 0.6 lies
          8.7 sds below. *)
-      test "a short warmup accepts above its target" (fun () ->
+      test "a short warmup overshoots a target below 0.8" (fun () ->
           greater float_exact ~than:0.6 (acceptance (warm 0.6)));
       (* Chain 0 starts in a pocket of radius 0.1 where the density is finite,
          -inf around it: only a short step moves it. *)
