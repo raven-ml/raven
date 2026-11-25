@@ -1324,11 +1324,9 @@ All notable changes to this project will be documented in this file.
 - `Minimize.bracket` raises `Invalid_argument` naming itself, `lo` and `hi`
   and their shapes when its ends do not broadcast, where `Nx.broadcast_arrays`
   raised its own error.
-- `Sde.sra1` and `Sde.reversible_heun` read a step's end at the next step's
-  start, and the last step's at its interval's end itself, as `jera.mli`
-  states. They read it at the start plus the step's size, which can round
-  apart: a diffusion or drift that depends on time was read past or short of
-  `at`'s times, as over `[−7.074863082399303; 4.437342817489506]`.
+- `Sde.sra1` and `Sde.reversible_heun` read a time-dependent field at each
+  step's end time, where they read it at the start plus the step's size,
+  which can round apart from `at`'s times.
 - `Minimize.bracket` evaluates no two points closer than `√ε |x|` plus a
   third of the tolerance's scale, as Brent's `localmin` does, and ends an
   element `Stalled` when its bracket narrows to that step short of `tol`.
@@ -1336,20 +1334,14 @@ All notable changes to this project will be documented in this file.
   their rounding: `1 + (x − c)²` under `Tol.ulps 4` converged 4.5e7 ulps from
   `c`. A tolerance finer than about `6 √ε |x|` (1e-7 relative in float64)
   now ends `Stalled`; loosen it.
-- `Sde.milstein` evaluates the diffusion three times per step, as
-  `jera.mli` states, where it took four: it applies `g y` to `ΔW − q` once
-  in place of `ΔW` and `q` apart. Results change in their last bits.
-  `jera.mli` now counts `Sde.sra1`'s three diffusion evaluations and
-  `Sde.reversible_heun`'s drift evaluation at a march's start.
+- `Sde.milstein` evaluates the diffusion three times per step, as `jera.mli`
+  states, where it took four. Results change in their last bits.
 - `Linear.gmres` checks its answer at `r = 0`, and `Linear.solve` checks a
   system of no unknowns, each with one application of `a`: an `a` that is not
   linear reported `Converged` there. A gmres solve takes one more application.
-- A `Sde.Brownian` path finer than the floats near its times returns the
-  increments of its own nodes: one deeper than about 24 levels in float32,
-  or past `t0 = 1e9` in float64, summed one node's draws with another's
-  place, off by up to the coarsest such node's increment. A path now agrees
-  with every shallower path of its key at their shared nodes, as `jera.mli`
-  states.
+- A `Sde.Brownian` path whose finest intervals are below the floats' spacing
+  near its times, as past depth 24 in float32 over `[0, 1]`, no longer returns
+  wrong increments: it agrees with every shallower path of its key.
 - `Minimize.bracket` ends an element whose bracket is too wide to shrink to
   `tol` within its budget `Budget_spent`, where it reported `Stalled`: golden
   steps take `[-1e100, 1e100]` past it. `jera.mli` states the budget, `3b + 9`
