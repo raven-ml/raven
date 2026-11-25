@@ -1088,9 +1088,15 @@ val truncation : ?stride:int -> ?direction:direction -> int -> truncation
     [stride] is the overlap between successive overflow windows: each window in
     {!Encoding.overflowing} opens [stride] tokens before the end of the one
     before it, which is how the sliding-window question-answering workflow keeps
-    context across windows. Defaults to [0]. When {!encode} truncates a text,
-    [stride] must be less than the tokens left for content (on a pair, less than
-    either sequence's share), or it raises [Invalid_argument].
+    context across windows. Defaults to [0]. [stride] must be at most the
+    tokens left for content of a single text, whatever the text, and less than
+    the tokens a sequence keeps when one is truncated to some (on a pair, its
+    share); otherwise {!encode} and the other encoders raise
+    [Invalid_argument]. The tokens left are those of the call: under
+    [~add_special_tokens:false] all of [max_length] is room for content. This
+    accepts a stride tokenizers refuses, since it checks the stride when
+    truncation is configured, before any call, against the room the special
+    tokens leave.
 
     Before it truncates, {!encode} keeps only the pretokens that hold the first
     [max_length] tokens of a text, or the last under [`Left], so the windows of
@@ -1930,11 +1936,12 @@ val of_json : Jsont.json -> (t, string) result
 
     The [truncation] and [padding] members are not read, by [of_json] or
     {!from_file}. {!encode} takes both as arguments, so a file that sets them
-    encodes as tokenizers encodes it when the same settings are passed, with one
-    exception. Truncation reserves the tokens {!Post_processor.process} inserts,
-    so a [Sequence] post-processor whose template is not its last member keeps
-    [max_length], where tokenizers reserves what each member counts alone and
-    can exceed it or truncate more.
+    encodes as tokenizers encodes it when the same settings are passed, with two
+    exceptions. Truncation reserves the tokens {!Post_processor.process}
+    inserts, so a [Sequence] post-processor whose template is not its last
+    member keeps [max_length], where tokenizers reserves what each member counts
+    alone and can exceed it or truncate more. And tokenizers loads a [stride]
+    past the room for content unchecked, where {!encode} raises.
 
     The numbers of [json] are taken as given. A tree decoded from text holds
     each number as the double its text names, which can differ in the last place

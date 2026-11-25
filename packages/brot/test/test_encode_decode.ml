@@ -204,6 +204,15 @@ let encoding = Testable.contramap fields (Testable.structural ~pp:pp_fields)
 let outcome f =
   match f () with v -> Ok v | exception e -> Error (Printexc.to_string e)
 
+(* [f] of each text, the reference of a batch encoder. A batch's options are
+   checked at the call, whatever its texts, so a batch of none raises what
+   [empty], the encoding of an empty text, raises. *)
+let each f ~empty = function
+  | [] ->
+      ignore (empty ());
+      []
+  | texts -> List.map f texts
+
 (* The rows of a flat batch buffer, read back through the lengths that place
    them. Fails unless the buffer holds the rows and nothing else. *)
 let rows (buffer, lengths) =
@@ -692,6 +701,41 @@ let test_truncation_stride_room =
       in
       if refused then raises_match Exn.invalid_arg call
       else equal int max_length (Encoding.length (call ())))
+
+(* HuggingFace's rule, which holds on every encode path: a stride over the room
+   a single text leaves for content is refused whatever the text, one at the
+   room when the text is truncated. Under BERT the room is [max_length - 2]. *)
+let test_truncation_stride_paths =
+  cases
+    "refuses a stride over the room for content, and at it when it truncates, \
+     on every encode path"
+    ~id:(fun (name, _, _, _) -> name)
+    [
+      ("stride over the room, a text that fits", 2, 3, "a");
+      ("stride at the room, a text truncated", 1, 3, "a b c");
+      ("stride over a room of none", 1, 2, "a b");
+    ]
+    (fun (_, stride, max_length, text) ->
+      let t = bert_words () and truncation = truncation ~stride max_length in
+      raises_match ~msg:"encode" Exn.invalid_arg (fun () ->
+          encode t ~truncation text);
+      raises_match ~msg:"encode_ids" Exn.invalid_arg (fun () ->
+          encode_ids t ~truncation text);
+      raises_match ~msg:"encode_batch" Exn.invalid_arg (fun () ->
+          encode_batch t ~truncation [ text ]);
+      raises_match ~msg:"encode_batch_ids" Exn.invalid_arg (fun () ->
+          encode_batch_ids t ~truncation [ text ]))
+
+(* Without special tokens all of [max_length] is room, so stride 2 under
+   max_length 3 is taken, where tokenizers refuses it under BERT when truncation
+   is configured. *)
+let test_truncation_stride_without_specials () =
+  let t = bert_words () and truncation = truncation ~stride:2 3 in
+  let text = "a b c d e" in
+  equal ~msg:"encode" (array int) [| 0; 1; 2 |]
+    (ids_of t ~add_special_tokens:false ~truncation text);
+  equal ~msg:"encode_ids" (array int) [| 0; 1; 2 |]
+    (encode_ids t ~add_special_tokens:false ~truncation text)
 
 (* encode *)
 
@@ -1444,7 +1488,10 @@ let test_batch_is_encode =
       ]
     (fun (name, texts, o) ->
       let t = tokenizer name in
-      let each = outcome (fun () -> List.map (encode_with o t) texts) in
+      let each =
+        outcome (fun () ->
+            each (encode_with o t) ~empty:(fun () -> encode_with o t "") texts)
+      in
       cover "no text" (texts = []);
       cover "windows" (has_windows each);
       cover "padding" (Option.is_some o.padding);
@@ -1469,7 +1516,10 @@ let test_batch_pairs_is_encode =
       let t = tokenizer name in
       let each =
         outcome (fun () ->
-            List.map (fun (text, pair) -> encode_with o ~pair t text) pairs)
+            each
+              (fun (text, pair) -> encode_with o ~pair t text)
+              ~empty:(fun () -> encode_with o t "")
+              pairs)
       in
       cover "no pair" (pairs = []);
       cover "windows" (has_windows each);
@@ -1488,7 +1538,7 @@ let test_ids_is_encode =
   prop ~count:300 "is the ids of encode"
     Gen.(
       quad tokenizer_name text (option text)
-        (options ~longest:true ~stride:false))
+        (options ~longest:true ~stride:true))
     (fun (name, text, pair, o) ->
       let t = tokenizer name in
       let expected =
@@ -1527,7 +1577,7 @@ let test_batch_ids_raise () =
 
 let test_batch_ids_rows =
   prop ~count:200 "gives each text's encode_ids as a row placed by lengths"
-    Gen.(triple tokenizer_name texts (options ~longest:false ~stride:false))
+    Gen.(triple tokenizer_name texts (options ~longest:false ~stride:true))
     (fun (name, texts, o) ->
       let t = tokenizer name in
       cover "no text" (texts = []);
@@ -1535,12 +1585,16 @@ let test_batch_ids_rows =
       cover "a post-processor that does more than wrap" (name = "echo words");
       cover "padding" (Option.is_some o.padding);
       equal
-        (list (array int))
-        (List.map (encode_ids_with o t) texts)
-        (rows
-           (encode_batch_ids t ~add_special_tokens:o.add_special_tokens
-              ~match_special_tokens:o.match_special_tokens ?padding:o.padding
-              ?truncation:o.truncation texts)))
+        (result (list (array int)) string)
+        (outcome (fun () ->
+             each (encode_ids_with o t)
+               ~empty:(fun () -> encode_ids_with o t "")
+               texts))
+        (outcome (fun () ->
+             rows
+               (encode_batch_ids t ~add_special_tokens:o.add_special_tokens
+                  ~match_special_tokens:o.match_special_tokens
+                  ?padding:o.padding ?truncation:o.truncation texts))))
 
 let test_batch_ids_reshapes () =
   let buffer, lengths =
@@ -2276,6 +2330,11 @@ let () =
                test_truncation_pretokens;
              test_truncation_hf_windows;
              test_truncation_stride_room;
+             test_truncation_stride_paths;
+             test
+               "counts only the special tokens the call adds in the room for \
+                content"
+               test_truncation_stride_without_specials;
            ];
          group "encode"
            [

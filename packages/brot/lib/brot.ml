@@ -16,6 +16,7 @@ let strf = Printf.sprintf
 let err_pair_no_post = "pair sequences require a configured post-processor"
 let err_no_pad_token = "padding requested but no pad token configured"
 let err_pad_not_in_vocab tok = strf "pad token '%s' not in vocabulary" tok
+let err_stride = "truncation: stride must be less than the room for content"
 let err_infer_type = "unable to infer model type from JSON"
 
 (* Types *)
@@ -1111,25 +1112,50 @@ let limit_to_pretokens encoding ~max_length ~direction =
         (Encoding.truncate encoding ~max_length:keep ~direction)
         []
 
+(* The tokens [max_length] leaves for content once the tokens the
+   post-processor inserts are counted. A post-processor that raises on these
+   sequences raises in [post_process], once they are truncated. *)
+let content_room t ~add_special_tokens ~is_pair max_length =
+  let added =
+    if not add_special_tokens then 0
+    else
+      Option.value ~default:0
+        (if is_pair then t.wrapping.inserted_pair
+         else t.wrapping.inserted_single)
+  in
+  max 0 (max_length - added)
+
+(* HuggingFace's rule for a stride, which every encoder checks through these
+   two. [check_stride] refuses a stride over the room a single text leaves for
+   content, whatever the text, as HuggingFace refuses such a truncation when it
+   is configured. [check_cut] refuses, when a sequence is truncated to [kept]
+   tokens, a stride of [kept] or more, unless [kept] is [0] and the whole
+   sequence is the one window. *)
+let check_stride t ~add_special_tokens = function
+  | None -> ()
+  | Some { max_length; stride; _ } ->
+      if stride > content_room t ~add_special_tokens ~is_pair:false max_length
+      then invalid_arg err_stride
+
+let check_cut ~stride ~kept =
+  if kept > 0 && stride >= kept then invalid_arg err_stride
+
 let truncate_before_post t ~add_special_tokens ~truncation primary pair =
   match truncation with
   | None -> (primary, pair)
   | Some { max_length; stride; direction } -> (
       let primary = limit_to_pretokens primary ~max_length ~direction in
       let pair = Option.map (limit_to_pretokens ~max_length ~direction) pair in
-      (* A post-processor that raises on these sequences raises in
-         [post_process], once they are truncated. *)
-      let added =
-        if not add_special_tokens then 0
-        else
-          Option.value ~default:0
-            (if Option.is_some pair then t.wrapping.inserted_pair
-             else t.wrapping.inserted_single)
+      let budget =
+        content_room t ~add_special_tokens ~is_pair:(Option.is_some pair)
+          max_length
       in
-      let budget = max 0 (max_length - added) in
       let truncate encoding length =
         if Encoding.length encoding <= length then encoding
-        else Encoding.truncate encoding ~max_length:length ~stride ~direction
+        else begin
+          check_cut ~stride ~kept:length;
+          Encoding.truncate encoding ~max_length:length ~stride ~direction
+        end
       in
       match pair with
       | None -> (truncate primary budget, None)
@@ -1362,6 +1388,7 @@ let matching t ~match_special_tokens =
 
 let encode t ?pair ?(add_special_tokens = true) ?(match_special_tokens = true)
     ?padding ?truncation text =
+  check_stride t ~add_special_tokens truncation;
   let t = matching t ~match_special_tokens in
   match
     apply_padding t
@@ -1372,7 +1399,9 @@ let encode t ?pair ?(add_special_tokens = true) ?(match_special_tokens = true)
   | _ -> assert false
 
 let encode_batch t ?(add_special_tokens = true) ?(match_special_tokens = true)
-    ?padding ?truncation ?exec = function
+    ?padding ?truncation ?exec texts =
+  check_stride t ~add_special_tokens truncation;
+  match texts with
   | [] -> []
   | texts ->
       let t = matching t ~match_special_tokens in
@@ -1381,7 +1410,9 @@ let encode_batch t ?(add_special_tokens = true) ?(match_special_tokens = true)
         ?exec ()
 
 let encode_batch_pairs t ?(add_special_tokens = true)
-    ?(match_special_tokens = true) ?padding ?truncation ?exec = function
+    ?(match_special_tokens = true) ?padding ?truncation ?exec pairs =
+  check_stride t ~add_special_tokens truncation;
+  match pairs with
   | [] -> []
   | pairs ->
       let t = matching t ~match_special_tokens in
@@ -1402,6 +1433,7 @@ let affixes_of t ~add_special_tokens =
 
 let encode_ids t ?pair ?(add_special_tokens = true)
     ?(match_special_tokens = true) ?padding ?truncation text =
+  check_stride t ~add_special_tokens truncation;
   let t = matching t ~match_special_tokens in
   let affixes =
     match pair with Some _ -> None | None -> affixes_of t ~add_special_tokens
@@ -1415,16 +1447,18 @@ let encode_ids t ?pair ?(add_special_tokens = true)
       let body =
         match truncation with
         | None -> body
-        | Some { max_length; direction; _ } -> (
+        | Some { max_length; stride; direction } ->
             let budget =
               max 0 (max_length - Array.length prefix - Array.length suffix)
             in
             let length = Array.length body in
             if length <= budget then body
-            else
+            else begin
+              check_cut ~stride ~kept:budget;
               match direction with
               | `Right -> Array.sub body 0 budget
-              | `Left -> Array.sub body (length - budget) budget)
+              | `Left -> Array.sub body (length - budget) budget
+            end
       in
       let ids =
         if Array.length prefix = 0 && Array.length suffix = 0 then body
@@ -1659,6 +1693,7 @@ let end_batch b ~call ~give held =
    scans nor sweeps them. *)
 let encode_batch_ids t ?(add_special_tokens = true)
     ?(match_special_tokens = true) ?padding ?truncation ?exec texts =
+  check_stride t ~add_special_tokens truncation;
   let t = matching t ~match_special_tokens in
   let rows = Array.of_list texts in
   let nrows = Array.length rows in
@@ -1774,6 +1809,10 @@ let encode_batch_ids t ?(add_special_tokens = true)
     | Some { max_length; _ } when wrapped -> max 0 (max_length - np - ns)
     | _ -> max_int
   in
+  (match truncation with
+  | Some { stride; _ } when Array.exists (fun n -> n > budget) body ->
+      check_cut ~stride ~kept:budget
+  | _ -> ());
   let content = Array.init nrows (fun row -> np + min body.(row) budget + ns) in
   let lengths =
     match padding with

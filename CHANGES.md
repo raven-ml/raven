@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Every encoder checks a `truncation`'s stride as `encode` does, and a stride
+  over the room a single text leaves for content raises whatever the text.
+  The room counts only the special tokens the call adds.
 - `Brot.Encoding.truncate` raises `Invalid_argument` on a negative `stride` or
   `max_length`. A negative stride lost tokens between windows.
 - **Breaking:** `train_wordpiece` drops `?end_of_word_suffix`. The WordPiece
