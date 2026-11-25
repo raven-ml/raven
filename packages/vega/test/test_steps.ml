@@ -1131,11 +1131,13 @@ let lbfgs_formula =
       in
       let st' = Vega.lbfgs_step p ~lr:(rate lr) (make s (split g)) st in
       (* The move [-lr * r] lands on the new point and is the newest [s]; the
-         newest [y] waits for the next gradient, the completed pair below it;
-         the oldest pair drops. *)
+         newest [y] waits for the next gradient. Below them, a completed pair of
+         positive curvature and the older pairs, the oldest dropped; a rejected
+         one is replaced, and evicts nothing. *)
       let lr = rate_at lr c in
       let move = Array.map (fun r -> -.lr *. r) (two_loop g ss ys) in
-      let older a = Array.sub a 0 (history - 1) in
+      let first = if dot ys.(0) ss.(0) > 0.0 then 0 else 1 in
+      let older a = Array.sub a first (history - 1) in
       let s' = Array.append [| move |] (older ss) in
       let y' = Array.append [| waiting |] (older ys) in
       let floats (x : Wv.t) =
@@ -1170,6 +1172,94 @@ let test_lbfgs_scales_by_an_accepted_pair () =
       st
   in
   equal (array (float 1e-15)) [| -0.002; -0.003 |] (Nx.to_array st'.params)
+
+(* A pair the gradient completes without positive curvature never enters the
+   memory: the step from a state holding it as its pending pair is, bit for bit,
+   the step from the same state whose pending slot is empty, a memory that never
+   saw it. The gradient moves from [prev] by a drawn [y0], negated where its
+   curvature with the pending move [s0] would be positive; zeros of either sign
+   reach the recursion, which a pair it leaves out must not change. *)
+let rejected_pair_unseen =
+  let gen =
+    let open Gen in
+    let* ((m, n) as s) = shape in
+    let* history = frequency [ (1, constant 1); (3, int_range 2 3) ] in
+    let len = (m * n) + n in
+    let signed =
+      frequency
+        [ (2, constant (-0.0)); (1, constant 0.0); (2, float_range (-1.0) 1.0) ]
+    in
+    let vector = array ~size:(constant len) signed in
+    let+ x = values s
+    and+ prev = vector
+    and+ pending = vector
+    and+ y0 = frequency [ (1, constant (Array.make len 0.0)); (4, vector) ]
+    and+ older = list ~size:(constant (history - 1)) (drawn_pair len)
+    and+ lr = factor
+    and+ k = completed in
+    let y0 = if dot y0 pending > 0.0 then Array.map Float.neg y0 else y0 in
+    (s, history, x, prev, pending, y0, Array.of_list older, lr, k)
+  in
+  let examples =
+    (* Gradients and a pending move of [-0.]: a pair multiplied by a [rho] of
+       [+0.] gave the move [+0.] where the empty slot gives [-0.]. *)
+    [
+      ( (0, 2),
+        1,
+        ([||], [| 0.0; 0.0 |]),
+        [| -0.0; -0.0 |],
+        [| -0.0; -0.0 |],
+        [| -0.0; -0.0 |],
+        [||],
+        0.0,
+        0 );
+    ]
+  in
+  prop ~count:300 ~examples "a rejected pair evicts nothing" gen
+    (fun (((m, n) as s), history, x, prev, pending, y0, older, lr, k) ->
+      let g = Array.map2 ( +. ) prev y0 in
+      let completed = Array.map2 ( -. ) g prev in
+      assume (dot completed pending <= 0.0);
+      let curvature (s, y) = dot y s in
+      let negative_zero v = v = 0.0 && Float.sign_bit v in
+      cover_draw s k;
+      cover "a history of one pair" (history = 1);
+      cover "older pairs all of positive curvature"
+        (history > 1 && Array.for_all (fun p -> curvature p > 0.0) older);
+      cover "a zero curvature" (dot completed pending = 0.0);
+      cover "a negative curvature" (dot completed pending < 0.0);
+      cover "a gradient of -0." (Array.exists negative_zero g);
+      let split a = (Array.sub a 0 (m * n), Array.sub a (m * n) n) in
+      let memory vs =
+        let parts = Array.map split vs in
+        let leaf part = Array.concat (Array.to_list (Array.map part parts)) in
+        {
+          Wv.w = Nx.create Nx.float64 [| history; m; n |] (leaf fst);
+          v = Nx.create Nx.float64 [| history; n |] (leaf snd);
+        }
+      in
+      let waiting = Array.make (Array.length g) 0.0 in
+      let state s0 =
+        {
+          Vega.params = make s x;
+          grads = make s (split prev);
+          s = memory (Array.append [| s0 |] (Array.map fst older));
+          y = memory (Array.append [| waiting |] (Array.map snd older));
+          step = counter k;
+        }
+      in
+      let step s0 =
+        Vega.lbfgs_step p ~lr:(rate lr) (make s (split g)) (state s0)
+      in
+      let seen = step pending and unseen = step waiting in
+      let bits (st : (Wv.t, _) Vega.lbfgs_state) =
+        List.map
+          (fun (x : Wv.t) ->
+            Array.map Int64.bits_of_float
+              (Array.append (Nx.to_array x.w) (Nx.to_array x.v)))
+          [ st.params; st.grads; st.s; st.y ]
+      in
+      equal (list (array int64)) (bits unseen) (bits seen))
 
 (* On [|p - t|^2], whose Hessian is [2 I], a first step completes a pair whose
    curvature is the Hessian's along the move, so the second step's direction is
@@ -1254,6 +1344,7 @@ let () =
              test "lbfgs_init holds the parameters and an empty history"
                test_lbfgs_init;
              lbfgs_formula;
+             rejected_pair_unseen;
              test "a second step on a quadratic bowl is Newton's"
                test_lbfgs_newton;
              test "the newest accepted pair scales the inverse Hessian"

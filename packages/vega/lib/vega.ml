@@ -1303,21 +1303,29 @@ let lbfgs_init p ?(history = 10) params =
   }
 
 (* A leaf's memory is its pairs stacked along axis 0, newest first: [slot i]
-   views the [i]-th, [push] puts a new one on top and drops the oldest, [top]
-   replaces the newest. *)
+   views the [i]-th and [top] replaces the newest. [remember accepted x memory]
+   puts [x] on top of the pairs that stay: the newest and those after it,
+   dropping the oldest, if [accepted], else those after the newest, which [x]
+   replaces. *)
 let slot i memory = Nx.get [ i ] memory
-
-let push x memory =
-  let n = (Nx.shape memory).(0) in
-  let x = Nx.unsqueeze ~axes:[ 0 ] x in
-  if n = 1 then x
-  else Nx.concatenate ~axis:0 [ x; Nx.slice [ Nx.R (0, n - 1) ] memory ]
 
 let top x memory =
   let n = (Nx.shape memory).(0) in
   let x = Nx.unsqueeze ~axes:[ 0 ] x in
   if n = 1 then x
   else Nx.concatenate ~axis:0 [ x; Nx.slice [ Nx.R (1, n) ] memory ]
+
+let remember accepted x memory =
+  let n = (Nx.shape memory).(0) in
+  let x = Nx.unsqueeze ~axes:[ 0 ] x in
+  if n = 1 then x
+  else
+    let stay =
+      Nx.where accepted
+        (Nx.slice [ Nx.R (0, n - 1) ] memory)
+        (Nx.slice [ Nx.R (1, n) ] memory)
+    in
+    Nx.concatenate ~axis:0 [ x; stay ]
 
 let is_float64 (type a b d) (t : (a, b, d) Nx.t) =
   match Nx.dtype t with Float64 | Complex128 -> true | _ -> false
@@ -1409,12 +1417,19 @@ let lbfgs_step p ~lr grads st =
       (s, y, Nx.where (Nx.greater_s ys 0.0) (Nx.recip ys) (Nx.zeros_like ys))
     in
     let pairs = Array.init history pair in
+    (* A pair enters a loop where its [rho] is positive and is selected out
+       elsewhere, so that a rejected pair leaves no trace, not even a sign of
+       zero or the NaN of [0 * infinity]. *)
+    let enters rho update x =
+      let c = Nx.greater_s rho 0.0 in
+      Nx.Ptree.map2 flat (fun _ a b -> Nx.where c a b) (update x) x
+    in
     let alphas = Array.map (fun (_, _, rho) -> Nx.zeros_like rho) pairs in
     let q = ref g in
     for i = 0 to history - 1 do
       let s, y, rho = pairs.(i) in
       alphas.(i) <- Nx.mul rho (dot s !q);
-      q := Nx.Ptree.axpy flat (Nx.neg alphas.(i)) y !q
+      q := enters rho (Nx.Ptree.axpy flat (Nx.neg alphas.(i)) y) !q
     done;
     (* The initial scaling is [(s . y) / (y . y)] of the newest pair that
        enters, [1] if none does: a rejected newest pair leaves the scale of the
@@ -1429,11 +1444,12 @@ let lbfgs_step p ~lr grads st =
     for i = history - 1 downto 0 do
       let s, y, rho = pairs.(i) in
       let beta = Nx.mul rho (dot y !r) in
-      r := Nx.Ptree.axpy flat (Nx.sub alphas.(i) beta) s !r
+      r := enters rho (Nx.Ptree.axpy flat (Nx.sub alphas.(i) beta) s) !r
     done;
-    !r
+    let _, _, rho0 = pairs.(0) in
+    (!r, Nx.greater_s rho0 0.0)
   in
-  let r = if float64 then run F64 else run F32 in
+  let r, accepted = if float64 then run F64 else run F32 in
   (* [-lr * r], a complex [r] part by part: a complex product by the rate
      would add the product of a zero part to the other part's, losing a sign
      of zero the coordinates keep. *)
@@ -1443,10 +1459,15 @@ let lbfgs_step p ~lr grads st =
       (fun _ x d -> if updates x then Nx.add x d else x)
       (wide st.params) move
   in
-  (* Each leaf stores its new point, its move as the newest [s] and its
-     gradient difference as the newest [y], its stores 0, 1 and 2; the older
-     pairs, already at its dtype, move down unrounded. A leaf that computes at
-     its own dtype stores the memory the recursion read. *)
+  (* Each leaf stores its new point, its move as the newest [s] and its gradient
+     difference as the newest [y], its stores 0, 1 and 2; the older pairs,
+     already at its dtype, move down unrounded. A leaf that computes at its own
+     dtype stores the memory the recursion read. The move is the newest pair;
+     below it the completed pair and the older ones, dropping the oldest, if the
+     completed pair was [accepted], else only the older ones: a rejected pair
+     evicts nothing, the skipped update [H_{k+1} = H_k] that Nocedal and Wright
+     describe ("Numerical Optimization", §6.1). [accepted] is the completed
+     pair's [rho > 0], a curvature positive and finite. *)
   let leaves x = Array.of_list (fst (Nx.Ptree.flatten p x)) in
   let paths = Nx.Ptree.fold p (fun path _ acc -> path :: acc) st.params [] in
   let base = base st.step in
@@ -1459,18 +1480,19 @@ let lbfgs_step p ~lr grads st =
   let rebuild like f =
     Nx.Ptree.rebuild p ~like (List.init (Array.length draw) f)
   in
-  let pushed x m = push (Nx.zeros_like x) m in
+  let remember x m = remember accepted x m in
+  let waiting x m = remember (Nx.zeros_like x) m in
   let newest i =
     let (Nx.P l) = like.(i) in
     match Nx.dtype l with
     | Float16 | Bfloat16 ->
-        into (fun x m -> pushed x (top x m)) y_half.(i) (put 2 diff i)
-    | _ -> stored draw.(i) 2 like.(i) (into pushed y.(i) g.(i))
+        into (fun x m -> waiting x (top x m)) y_half.(i) (put 2 diff i)
+    | _ -> stored draw.(i) 2 like.(i) (into waiting y.(i) g.(i))
   in
   {
     params = rebuild st.params (put 0 point);
     grads;
-    s = rebuild st.s (fun i -> into push s.(i) (put 1 move i));
+    s = rebuild st.s (fun i -> into remember s.(i) (put 1 move i));
     y = rebuild st.y newest;
     step = Nx.add_s st.step 1l;
   }

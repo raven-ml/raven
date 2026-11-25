@@ -1198,7 +1198,8 @@ type ('p, 'd) lbfgs_state = {
   y : 'p;
       (** The matching gradient differences, laid out like [s]. The newest is
           zeros until the next step completes it. A pair whose curvature [y . s]
-          is not positive, an empty slot among them, enters no direction. *)
+          is not positive, an empty slot among them, enters no direction, and
+          leaves no trace in it. *)
   step : 'd Nx.int32_t;  (** Completed steps, a scalar tensor. *)
 }
 
@@ -1224,10 +1225,17 @@ val lbfgs_step :
     where the objective's gradient is [grads]. It completes the newest pair with
     [grads - st.grads], computes the direction [d] by the two-loop recursion of
     Nocedal (1980) applied to the negated gradient, with the initial inverse
-    Hessian scaled by [(s . y) / (y . y)] of the newest pair of positive
-    curvature, moves to [st.params + lr * d], and pushes the move as the newest
-    pair, dropping the oldest. With no pair of positive curvature, [d] is
-    [-grads].
+    Hessian scaled by [(s . y) / (y . y)] of the newest pair that enters, and
+    moves to [st.params + lr * d]. A pair enters where its curvature [y . s] is
+    positive and finite. If the completed pair enters, the move is pushed as the
+    newest pair and the oldest is dropped; otherwise the move replaces it and
+    nothing is dropped, so a pair that fails the test never enters the memory.
+    This is the skipped update, [H_{k+1} = H_k], that Nocedal and Wright
+    describe ({e Numerical Optimization}, §6.1). The test is made on the pair as
+    completed, at the inner products' dtype; a leaf narrower than float32 stores
+    its [y] rounded, and a pair whose stored curvature then fails the test
+    enters no direction though it keeps its slot. With no pair that enters, [d]
+    is [-grads].
 
     Raises [Invalid_argument] as {!section-structures} states if [grads],
     [st.grads], [st.s] or [st.y] does not have [st.params]' skeleton. *)
