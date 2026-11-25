@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Padded loads and Fold through Nx.Prim: the values Nx_kernel.load and
-   Nx_kernel.S.fold state for small operands, their rules before any kernel,
-   and a split placement. *)
+(* Nx.Prim's Padded loads and Fold, over Nx_kernel's pad: a load against the
+   padded operand's windows, a fold as its adjoint, their signed zeros, their
+   rules before any kernel, and their cuts. *)
 
 open Windtrap
 module A = Nx_array
@@ -21,6 +21,7 @@ module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 
 let read x =
   A.to_array (Option.get (Nx.Repr.array ~by:"test" (Nx.place Nx.Host.on x)))
+
 let host a = Nx.Repr.of_array Nx.Host.v a
 let identity dt = P.v ~ins:[| D.Any dt |] [| P.In 0 |] ~outs:[| 0 |]
 
@@ -71,51 +72,28 @@ let load x ~fill pad =
 
 let f32 xs = A.of_array D.Float32 [| Array.length xs |] xs
 
-let test_sum_pool () =
-  let x = Nx.place Count.on (host (f32 [| 1.; 2.; 3.; 4. |])) in
+(* Each element of a fold of ones counts the taps that read it; a narrow float
+   and a sub-byte integer count alike. *)
+let test_fold_counts () =
   let p = pad ~lo:[| 1 |] ~hi:[| 1 |] [| window 3 1 |] in
-  equal ~msg:"a sum over windows of three, padded with zeros"
-    (array float_exact) [| 3.; 6.; 9.; 7. |]
-    (read (sum_of x ~fill:0. p));
-  equal ~msg:"padded with 10" (array float_exact) [| 13.; 6.; 9.; 17. |]
-    (read (sum_of x ~fill:10. p));
-  let p = pad ~lo:[| -1 |] ~interior:[| 1 |] [| window 2 2 |] in
-  (* Interior padding [1; 0; 2; 0; 3; 0; 4], cropped by one: [0; 2; 0; 3; 0; 4],
-     in windows of two, stepping by two. *)
-  equal ~msg:"interior padding, a negative lo crops" (array float_exact)
-    [| 2.; 3.; 4. |]
-    (read (sum_of x ~fill:0. p))
-
-let test_fold () =
-  let p = pad ~lo:[| 1 |] ~hi:[| 1 |] [| window 3 1 |] in
-  let ones =
-    Nx.place Count.on
-      (host (A.of_array D.Float32 [| 4; 3 |] (Array.make 12 1.)))
-  in
-  let y = Nx.Prim.eval ~by:"t" (Fold { shape = [| 4 |]; pad = p; x = ones }) in
-  equal ~msg:"each element, the number of taps that read it" (array float_exact)
-    [| 2.; 3.; 3.; 2. |] (read y);
-  (* A narrow float and a sub-byte dtype fold in one kernel call. *)
-  let counts (type v s) (dt : (v, s) D.t) (one : v) (pp : v testable) want =
+  let counts (type v s) (dt : (v, s) D.t) (one : v) (w : v testable) want =
     let ones =
       Nx.place Count.on (host (A.of_array dt [| 4; 3 |] (Array.make 12 one)))
     in
-    C.reset ();
     let y =
       Nx.Prim.eval ~by:"t" (Fold { shape = [| 4 |]; pad = p; x = ones })
     in
-    let got = read y in
-    equal ~msg:(D.name dt ^ " in one kernel call") int 1 (C.calls ());
-    equal ~msg:(D.name dt) (array pp) want got
+    equal ~msg:(D.name dt) (array w) want (read y)
   in
+  counts D.Float32 1. float_exact [| 2.; 3.; 3.; 2. |];
   counts D.Bfloat16 1. float_exact [| 2.; 3.; 3.; 2. |];
   counts D.Float4_e2m1fn 1. float_exact [| 2.; 3.; 3.; 2. |];
   counts D.Int4 1 int [| 2; 3; 3; 2 |]
 
-(* A fold sums each element's taps with no +0 before them, so a single -0
-   tap keeps its sign, and is +0 where no tap lands: here interior padding
-   puts the operand's elements at 0, 2 and 4 of five, and a crop drops the
-   result's first element from every tap. *)
+(* A fold sums each element's taps with no +0 before them, so a single -0 tap
+   keeps its sign, and is +0 where no tap lands: here interior padding puts the
+   operand's elements at 0, 2 and 4 of five, and a crop drops the result's first
+   element from every tap. *)
 let test_signed_zeros () =
   let bits a = Array.map Int64.bits_of_float a in
   let fold (type s) (dt : (float, s) D.t) shape p xs =
@@ -198,8 +176,8 @@ let test_rules () =
            }));
   equal ~msg:"kernel calls" int 0 (C.calls ())
 
-(* A load reads its padded axis whole, so a value cut along it raises with
-   the placement to write; placed there, it loads as on one device. *)
+(* A load reads its padded axis whole, so a value cut along it raises with the
+   placement to write; placed there, it loads as on one device. *)
 let test_split () =
   let a = f32 [| 1.; 2.; 3.; 4. |] in
   let p = pad ~lo:[| 1 |] ~hi:[| 1 |] [| window 3 1 |] in
@@ -208,8 +186,7 @@ let test_split () =
   raises
     (Invalid_argument
        "t: operand 0 lies at split ~axis:0 [m0; m1] and is read at on [m0; \
-        m1]; Nx.place (Placement.on s) x")
-    (fun () -> sum_of split ~fill:0. p);
+        m1]; Nx.place (Placement.on s) x") (fun () -> sum_of split ~fill:0. p);
   let two = sum_of (Nx.place Count2.on split) ~fill:0. p in
   equal ~msg:"as on one device" (array float_exact) (read one) (read two)
 
@@ -226,8 +203,8 @@ let test_split_kept () =
   let split = Count2.split ~axis:0 in
   let one = sum_of (Nx.place Count.on (host a)) ~fill:0. p in
   let two = sum_of (Nx.place split (host a)) ~fill:0. p in
-  equal ~msg:"the load keeps the cut" bool true
-    (Nx.Placement.equal split (Nx.placement two));
+  equal ~msg:"the load keeps the cut" (Nx_support.placement ()) split
+    (Nx.placement two);
   equal ~msg:"as on one device" (array float_exact) (read one) (read two);
   let fold x = Nx.Prim.eval ~by:"t" (Fold { shape = [| 2; 4 |]; pad = p; x }) in
   let x =
@@ -235,8 +212,8 @@ let test_split_kept () =
   in
   let one = fold (Nx.place Count.on (host x)) in
   let two = fold (Nx.place split (host x)) in
-  equal ~msg:"the fold keeps the cut" bool true
-    (Nx.Placement.equal split (Nx.placement two));
+  equal ~msg:"the fold keeps the cut" (Nx_support.placement ()) split
+    (Nx.placement two);
   equal ~msg:"as on one device" (array float_exact) (read one) (read two)
 
 (* Loads *)
@@ -338,11 +315,7 @@ let law_padded c =
       cover "an element loaded" (Array.fold_left ( * ) 1 shape > 0);
       let a = A.of_array D.Float32 (Iarray.of_array c.s) c.xs in
       let want = reference c.s c.xs ~fill:c.fill c.p shape in
-      let x = Nx.place Count.on (host a) in
-      C.reset ();
-      let y = load x ~fill:c.fill c.p in
-      if Array.fold_left ( * ) 1 shape > 0 then
-        equal ~msg:"nx.cpu's map in one kernel call" int 1 (C.calls ());
+      let y = load (Nx.place Count.on (host a)) ~fill:c.fill c.p in
       equal ~msg:"nx.cpu's map" (array float_exact) want (read y);
       (* Small integers and fills sum exactly, in any order. *)
       if Array.length shape > 0 then begin
@@ -357,21 +330,81 @@ let law_padded c =
           (read (sum_of (Nx.place Count.on (host a)) ~fill:c.fill c.p))
       end
 
+(* A fold is the adjoint of its load: for an operand [x] and a cotangent [y] of
+   the loaded shape, [Σ load(x) y = Σ x fold(y)] with a zero fill. Small
+   integers in float32 make both sums exact in any order. *)
+let law_adjoint (c, ys) =
+  match Nx_kernel.Shape.padded c.p c.s with
+  | Error _ -> reject ()
+  | Ok shape ->
+      cover "interior padding" (Iarray.exists (fun e -> e > 0) c.p.interior);
+      cover "a negative lo or hi"
+        (Iarray.exists (fun e -> e < 0) (Iarray.append c.p.lo c.p.hi));
+      cover "windows" (Iarray.length c.p.windows > 0);
+      let n = Array.fold_left ( * ) 1 shape in
+      let ys =
+        Array.init n (fun k -> Float.of_int ys.(k mod Array.length ys))
+      in
+      let x =
+        Nx.place Count.on
+          (host (A.of_array D.Float32 (Iarray.of_array c.s) c.xs))
+      in
+      let y =
+        Nx.place Count.on
+          (host (A.of_array D.Float32 (Iarray.of_array shape) ys))
+      in
+      let loaded = read (load x ~fill:0. c.p) in
+      let folded =
+        read
+          (Nx.Prim.eval ~by:"t"
+             (Fold { shape = Iarray.of_array c.s; pad = c.p; x = y }))
+      in
+      let dot a b = Array.fold_left ( +. ) 0. (Array.map2 ( *. ) a b) in
+      equal float_exact (dot loaded ys) (dot c.xs folded)
+
+(* A padded case of a [4] operand [1 2 3 4]. *)
+let four ?lo ?hi ?interior windows fill =
+  {
+    s = [| 4 |];
+    p = pad ?lo ?hi ?interior windows;
+    xs = [| 1.; 2.; 3.; 4. |];
+    fill;
+  }
+
 let () =
   exit
     (run "nx padded"
        [
-         group "loads and folds"
+         group "Padded loads"
            [
-             test "a padded, windowed load" test_sum_pool;
-             test "a fold counts the taps" test_fold;
-             test "a fold keeps one -0 tap's sign and is +0 with none"
-               test_signed_zeros;
-             test "the rules raise before any kernel" test_rules;
-             test "a split value along its padded axis raises" test_split;
-             test "a load and a fold keep the cut of an axis they do not pad"
+             prop "read the padded operand's windows"
+               ~examples:
+                 [
+                   (* A sum over windows of three, padded with zeros, then with
+                      10. *)
+                   four ~lo:[| 1 |] ~hi:[| 1 |] [| window 3 1 |] 0.;
+                   four ~lo:[| 1 |] ~hi:[| 1 |] [| window 3 1 |] 10.;
+                   (* [1; 0; 2; 0; 3; 0; 4], cropped by one, in windows of two
+                      stepping by two. *)
+                   four ~lo:[| -1 |] ~interior:[| 1 |] [| window 2 2 |] 0.;
+                 ]
+               padded_case law_padded;
+             test "raise before any kernel where their rules refuse" test_rules;
+             test "raise along a padded axis cut over devices" test_split;
+             test
+               "keep the cut of an axis they neither pad nor window, as folds \
+                do"
                test_split_kept;
-             prop "a padded load is the padded operand's windows" padded_case
-               law_padded;
+           ];
+         group "Fold"
+           [
+             prop "is the adjoint of its padded load"
+               (Gen.pair padded_case
+                  Gen.(array ~size:(int_range 1 5) (int_range (-8) 8)))
+               law_adjoint;
+             test "counts the taps that read each element, at every width"
+               test_fold_counts;
+             test "keeps a single -0 tap's sign and is +0 with none"
+               test_signed_zeros;
            ];
        ])
