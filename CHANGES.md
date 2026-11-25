@@ -5081,6 +5081,11 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun_datasets.cifar10` reads its batches from the downloaded archive in
+  the process and needs no `tar`. On Windows the system's `tar.exe` ran ahead
+  of `PATH`'s, and a GNU tar took the archive's `C:` for a remote host. Each
+  load checks the archive's gzip checksum, so a corrupt archive fails every
+  load, where a partial extraction was taken for data.
 - `Kaun_hf` and `Kaun_datasets` run the first `curl` of `PATH`, where on
   Windows the system's own `curl.exe` ran ahead of it. With `PATH` unset no
   curl is found, where Linux and macOS fell back to `/bin` and `/usr/bin`.

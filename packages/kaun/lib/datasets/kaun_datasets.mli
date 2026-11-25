@@ -60,4 +60,13 @@ val cifar10 :
     Images are [[N; 32; 32; 3]], channels last as [Kaun.Conv] takes them,
     and labels [[N]].
 
-    Raises [Failure] on download, extraction, or parsing errors. *)
+    The archive is downloaded once and each load reads the batches from it.
+
+    Raises [Failure] on download errors, a corrupt or truncated archive, or a
+    batch missing from it or of another size than 10,000 entries. *)
+
+(**/**)
+
+val read_tar_gz : string -> (string -> int -> (int -> string) -> unit) -> unit
+(** [read_tar_gz] is the reader of CIFAR-10's archive, exposed for tests. Its
+    contract is [Dataset_utils.read_tar_gz]'s. *)

@@ -5,9 +5,9 @@
 
 (** The cache, download and unpacking steps the dataset loaders share.
 
-    Downloads run [curl] and extraction runs [tar], each found on [PATH] and run
-    without a shell; curl reads none of the user's curl configuration files.
-    Each blocks until its program exits. Progress is logged to
+    Downloads run [curl], found on [PATH] and run without a shell, which reads
+    none of the user's curl configuration files and blocks until it exits.
+    Archives are decompressed and read in this process. Progress is logged to
     the [kaun.datasets] source. *)
 
 val get_cache_dir : ?getenv:(string -> string option) -> string -> string
@@ -32,16 +32,24 @@ val ensure_decompressed_gz : gz_path:string -> target_path:string -> bool
     exists, or once [gz_path] has been decompressed to it. It is [false] if
     neither file exists. [target_path] is written whole or not at all.
 
-    Raises [Failure] naming [gz_path] if it is not gzip data or fails a
-    checksum, [Sys_error] if [gz_path] cannot be read, and [Unix.Unix_error] if
-    [target_path] cannot be written. *)
+    Raises [Failure] naming [gz_path] if it is not gzip data, fails a
+    checksum or a read of it fails, and [Unix.Unix_error] if [gz_path] cannot
+    be opened or [target_path] cannot be written. *)
 
-val ensure_extracted_tar_gz :
-  tar_gz_path:string -> target_dir:string -> check_file:string -> bool
-(** [ensure_extracted_tar_gz ~tar_gz_path ~target_dir ~check_file] is [true] if
-    [check_file] exists, or once [tar] has extracted [tar_gz_path] into
-    [target_dir], which it creates, and exited with code [0]. It is [false] if
-    the archive is missing, [tar] is missing or [tar] fails. It does not check
-    that [check_file] exists after extraction.
+val read_tar_gz : string -> (string -> int -> (int -> string) -> unit) -> unit
+(** [read_tar_gz path f] reads the gzip file [path], which holds a ustar
+    archive (POSIX pax, "ustar Interchange Format"), and applies
+    [f name size take] to each regular file in the archive's order: [name] is
+    its path in the archive, [size] its length in bytes, and [take n] its next
+    [n] bytes, fewer once [size] are taken. The bytes [f] does not take are
+    skipped, and so are directories, links, special files and pax global
+    headers. It then reads [path] to its end: the bytes [f] took are verified
+    only once [read_tar_gz] returns, so a caller keeps nothing [f] built from
+    them before.
 
-    Raises as {!Kaun_download.mkdir_p} does. *)
+    Raises [Failure] naming [path] if it cannot be read, is not gzip data,
+    fails gzip's checksum or length, or is truncated; if a header fails its
+    checksum or holds a numeric field that is not octal, as GNU's base-256
+    sizes of 8 GiB and more are not; or if a member is of another type, such
+    as a pax extended header or a GNU long name, which it does not read.
+    Raises what [f] raises, unchanged. *)

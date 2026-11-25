@@ -5,10 +5,10 @@
 
 (** The CIFAR-10 loader behind {!Kaun_datasets.cifar10}.
 
-    The binary archive is downloaded on first use and extracted in the
-    dataset's cache directory ({!Dataset_utils.get_cache_dir}), [cifar10/].
-    The training split is its five data batches and the test split its test
-    batch, each of 10,000 examples. *)
+    The binary archive is downloaded on first use into the dataset's cache
+    directory ({!Dataset_utils.get_cache_dir}), [cifar10/], and each load
+    reads its batches from it. The training split is its five data batches
+    and the test split its test batch, each of 10,000 examples. *)
 
 val load :
   unit ->
@@ -19,7 +19,8 @@ val load :
 (** [load ()] is [((train_images, train_labels), (test_images,
     test_labels))]. Images have shape [[|n; 3; 32; 32|]] (example, channel,
     row, column) in levels \[[0];[255]\], and labels are class indices. It
-    blocks while it downloads, extracts and reads the files.
+    blocks while it downloads the archive and reads the batches from it.
 
-    Raises [Failure] if the archive cannot be obtained or extracted, or a
-    batch does not hold exactly 10,000 entries. *)
+    Raises [Failure] if the archive cannot be obtained or read
+    ({!Dataset_utils.read_tar_gz}), lacks a batch, or holds one of another
+    size than 10,000 entries, naming the batch. *)

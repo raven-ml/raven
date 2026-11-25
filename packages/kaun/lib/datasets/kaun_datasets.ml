@@ -43,3 +43,5 @@ let cifar10 ?(normalize = true) () =
   let train_x, train_y = make_tensors train_images train_labels in
   let test_x, test_y = make_tensors test_images test_labels in
   (train_x, train_y, test_x, test_y)
+
+let read_tar_gz = Dataset_utils.read_tar_gz
