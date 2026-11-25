@@ -303,6 +303,17 @@ let drawn_cases ?(rank = 3) ?(kinds = kinds)
   plant kind dt vs i;
   Case (dt, s, vs, view)
 
+(* Cases a law's draws reach too rarely for every run: no element, 0-d, a
+   strided view holding NaN and -0., and a broadcast view holding an integer
+   type's bounds. Each law gives those its generator makes as examples. *)
+let empty_case = Case (D.Float32, [| 0; 3 |], [||], Plain)
+let scalar_case = Case (D.Float32, [||], [| 1.5 |], Plain)
+
+let strided_case =
+  Case (D.Float32, [| 2; 2 |], [| Float.nan; -0.; 1.; 2. |], Transposed)
+
+let broadcast_case = Case (D.Int8, [| 2 |], [| -128; 127 |], Broadcast)
+
 let case ?rank ?kinds ?views dts =
   Gen.with_pp
     (fun ppf (Case (dt, s, _, view)) ->
