@@ -114,6 +114,14 @@ let init_tests =
                 ~prior:(fun x -> Nx.sum (conjugate.prior x))
                 ~likelihood:conjugate.likelihood
                 (conjugate.draw (Nx.Rng.key 2) 100)));
+      test "a likelihood that reads the other particles is refused" (fun () ->
+          (* Centred on the particles' mean, which their order leaves. *)
+          let likelihood x =
+            conjugate.likelihood (Nx.sub x (Nx.mean ~axes:[ 0 ] x))
+          in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
+              Norn.Smc.init t ~prior:conjugate.prior ~likelihood
+                (conjugate.draw (Nx.Rng.key 2) 100)));
     ]
 
 (* step *)

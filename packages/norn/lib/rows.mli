@@ -118,5 +118,6 @@ val check_density :
   (float, 'f, 'd) Nx.t ->
   unit
 (** [check_density context u lp x l] raises [Invalid_argument] if [l], [lp] at
-    [x], is not of shape [[c]], has a NaN or [+inf] row, or changes when the
-    chains of [x] are reversed. *)
+    [x], is not of shape [[c]], has a NaN or [+inf] row, or has a row that
+    changes when the chains of [x] are reversed or when chain 0 is replaced by
+    chain 1. *)

@@ -214,27 +214,47 @@ let check_start context l =
             density is finite"
            context (Nx.item [] chain)))
 
-(* [check_rows context u lp x l] refuses a density whose rows read each other:
-   evaluated on the chains reversed, its result is not reversed. *)
+(* [check_rows context u lp x l] refuses a density whose rows read each other,
+   from two evaluations. On the chains reversed, a row that reads a neighbour by
+   position changes. A read the order leaves, such as of the chains' mean,
+   survives that; with chain 0 replaced by chain 1 it changes another row. *)
 let check_rows context u lp x l =
   let c = (Nx.shape l).(0) in
   if c > 1 then begin
-    (* The flips read the chain axis whole, on every device chains lie on. *)
+    (* The flips and slices read the chain axis whole, on every device chains
+       lie on. *)
     let whole t = Nx.place (Nx.beside t) t in
-    let flip = P.map u (fun _ t -> Nx.flip ~axes:[ 0 ] (whole t)) x in
-    let r = Nx.flip ~axes:[ 0 ] (whole (lp flip)) in
-    let same =
-      Nx.logical_or (Nx.equal l r)
+    let same a b =
+      Nx.logical_or (Nx.equal a b)
         (Nx.less_equal
-           (Nx.abs (Nx.sub l r))
-           (Nx.mul_s (Nx.add_s (Nx.abs l) 1.) 1e-5))
+           (Nx.abs (Nx.sub a b))
+           (Nx.mul_s (Nx.add_s (Nx.abs a) 1.) 1e-5))
     in
-    Nx.check P.tensor same (Nx.arange_at (Nx.beside l) Nx.int32 0 c 1) (fun _ row ->
-        Invalid_argument
-          (Printf.sprintf
-             "%s: the density's row %ld changes when the chains are reversed; \
-              a chain's log density reads only its own row"
-             context (Nx.item [] row)))
+    let refuse ~first ~change ok =
+      let rows = (Nx.shape ok).(0) in
+      Nx.check P.tensor ok
+        (Nx.arange_at (Nx.beside ok) Nx.int32 first (first + rows) 1)
+        (fun _ row ->
+          Invalid_argument
+            (Printf.sprintf
+               "%s: the density's row %ld changes when %s; a chain's log \
+                density reads only its own row"
+               context (Nx.item [] row) change))
+    in
+    let flip = P.map u (fun _ t -> Nx.flip ~axes:[ 0 ] (whole t)) x in
+    refuse ~first:0 ~change:"the chains are reversed"
+      (same l (Nx.flip ~axes:[ 0 ] (whole (lp flip))));
+    let second =
+      P.map u
+        (fun _ t ->
+          let t = whole t in
+          Nx.concatenate ~axis:0
+            [ Nx.slice [ Nx.R (1, 2) ] t; Nx.slice [ Nx.R (1, c) ] t ])
+        x
+    in
+    let rest t = Nx.slice [ Nx.R (1, c) ] t in
+    refuse ~first:1 ~change:"chain 0 is replaced by chain 1"
+      (same (rest (whole l)) (rest (whole (lp second))))
   end
 
 (* [check_density context u lp l x] refuses a density [lp] whose value [l] at

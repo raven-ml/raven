@@ -42,7 +42,17 @@ let defaults =
       equal int 10 s.batch;
       equal float_exact 1e-3 (Nx.item [] s.tolerance))
 
-let init_tests = group "init" [ refused; defaults ]
+let reads_others =
+  test "a likelihood that reads the other points is refused" (fun () ->
+      (* Centred on the points' mean, which their order leaves. *)
+      let likelihood x =
+        conjugate.likelihood (Nx.sub x (Nx.mean ~axes:[ 0 ] x))
+      in
+      raises_match (Exn.invalid_arg ~sub:"Norn.Nested.init") (fun () ->
+          Norn.Nested.init t ~budget ~prior:conjugate.prior ~likelihood
+            (conjugate.draw (Nx.Rng.key 2) 20)))
+
+let init_tests = group "init" [ refused; defaults; reads_others ]
 
 (* step *)
 
