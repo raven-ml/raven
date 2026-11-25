@@ -26,17 +26,21 @@ let parsed ty xs =
 let refused ty xs =
   match parse ty xs with Ok _ -> fail "parsed" | Error e -> e
 
-let reads ty xs expected =
-  equal
-    (array (option (G.witness ty)))
-    (Array.of_list (List.map Option.some expected))
-    (Column.options (Type.kind ty) (parsed ty (List.map Option.some xs)))
-
 let rows ty xs = Column.options (Type.kind ty) (parsed ty xs)
 let tick f n = Option.get (f n)
 let day n = Option.get (Time.Date.of_days n)
 
-(* Values *)
+(* [stored ty xs] is the storage of the texts [xs] read as the integer or
+   datetime type [ty], as int64 bits. *)
+let stored ty xs =
+  let c = parsed ty (List.map Option.some xs) in
+  match Column.type_ c with
+  | Any Uint64 ->
+      Nx.to_array (Nx.bitcast Nx.int64 (Column.to_tensor Nx.uint64 c))
+  | Any (Int64 | Datetime _) -> Nx.to_array (Column.to_tensor Nx.int64 c)
+  | _ -> Array.map Int64.of_int (Column.values Kind.int c)
+
+(* Column.parse *)
 
 type case = Case : 'a Type.t * string list * 'a list -> case
 
@@ -55,12 +59,32 @@ let values =
       Case (uint64, [ "4611686018427387903"; "+1" ], [ max_int; 1 ]);
       Case
         ( float64,
-          [ "1.5"; "-0.25"; ".5"; "5."; "1e3"; "1E-3"; "+2"; "0.1" ],
-          [ 1.5; -0.25; 0.5; 5.; 1000.; 0.001; 2.; 0.1 ] );
+          [
+            "1.5";
+            "-0.25";
+            ".5";
+            "5.";
+            "1e3";
+            "1E-3";
+            "+2";
+            "0.1";
+            "+.5";
+            "-.5e-3";
+            "1e+3";
+          ],
+          [ 1.5; -0.25; 0.5; 5.; 1000.; 0.001; 2.; 0.1; 0.5; -0.0005; 1000. ] );
       Case
         ( float64,
-          [ "inf"; "-Infinity"; "NaN"; "1e400"; "-1e-400"; "4.9e-324" ],
-          [ infinity; neg_infinity; nan; infinity; -0.; 4.9e-324 ] );
+          [
+            "inf"; "-Infinity"; "NaN"; "INF"; "+inf"; "-nan"; "+NaN"; "iNfInItY";
+          ],
+          [
+            infinity; neg_infinity; nan; infinity; infinity; nan; nan; infinity;
+          ] );
+      Case
+        ( float64,
+          [ "1e400"; "-1e-400"; "4.9e-324" ],
+          [ infinity; -0.; 4.9e-324 ] );
       Case
         ( float64,
           [
@@ -75,7 +99,8 @@ let values =
             2.2250738585072011e-308;
             1.2345678901234568e+20;
           ] );
-      (* The float below 2^-792, which some C libraries' strtod read as 2^-792. *)
+      (* The float below 2^-792, which some C libraries' strtod read as
+         2^-792. *)
       Case (float64, [ "3.839223843572815e-239" ], [ 0x1.fffffffffffffp-793 ]);
       Case (float32, [ "0.1"; "16777217" ], [ 0.10000000149011612; 16777216. ]);
       Case
@@ -111,10 +136,10 @@ let values =
           List.map day [ 0; 11016; -719528; 2932896; -1 ] );
       Case
         ( date,
-          [ "-0044-03-15"; "+12345-01-01"; "-0001-12-31"; "+2024-02-29" ],
+          [ "-0044-03-15"; "+12345-01-01"; "-0001-12-31" ],
           List.map
             (fun ymd -> Option.get (Time.Date.of_civil ymd))
-            [ (-44, 3, 15); (12345, 1, 1); (-1, 12, 31); (2024, 2, 29) ] );
+            [ (-44, 3, 15); (12345, 1, 1); (-1, 12, 31) ] );
       Case
         ( wall Us,
           [
@@ -127,16 +152,17 @@ let values =
         ( wall Ms,
           [ "1970-01-01T00:00:00.001"; "1970-01-01T00:00:00.100000" ],
           List.map (tick Time.of_ms) [ 1L; 100L ] );
-      Case
-        (wall S, [ "1970-01-02T00:00:00.000" ], [ tick Time.of_s 86400L ]);
+      Case (wall S, [ "1970-01-02T00:00:00.000" ], [ tick Time.of_s 86400L ]);
       Case
         ( instant Ns,
           [
             "1970-01-01T01:00:00+01:00";
             "1970-01-01T00:00:00Z";
             "1969-12-31T19:00:00-05:00";
+            "1970-01-01T23:59:00+23:59";
+            "1970-01-01T00:00:00-00:00";
           ],
-          List.init 3 (fun _ -> Time.of_ns 0L) );
+          List.init 5 (fun _ -> Time.of_ns 0L) );
       Case
         ( instant Ns,
           [ "2262-04-11T23:47:16.854775807Z"; "1677-09-21T00:12:43.145224192Z" ],
@@ -152,38 +178,92 @@ let values =
       Case (categorical dict, [ "b\"c"; "a"; "" ], [ "b\"c"; "a"; "" ]);
     ]
 
-let value_cases =
-  cases "values"
-    ~id:(fun (Case (ty, xs, _)) ->
-      Format.asprintf "reads %s as %a"
-        (String.escaped (String.concat " " xs))
-        Type.pp ty)
-    values
-    (fun (Case (ty, xs, expected)) -> reads ty xs expected)
+let reads (Case (ty, xs, expected)) =
+  equal
+    (array (option (G.witness ty)))
+    (Array.of_list (List.map Option.some expected))
+    (rows ty (List.map Option.some xs))
 
-(* [stored ty xs] is the storage of the texts [xs] read as [ty], as int64
-   bits. *)
-let stored ty xs =
-  let c = parsed ty (List.map Option.some xs) in
-  match Column.type_ c with
-  | Any Uint64 ->
-      Nx.to_array (Nx.bitcast Nx.int64 (Column.to_tensor Nx.uint64 c))
-  | _ -> Nx.to_array (Column.to_tensor Nx.int64 c)
-
-let storage =
-  group "storage"
+(* The bounds of each integer type, as texts and as the int64 bits it stores,
+   and the integers just outside them. *)
+let bounds =
+  Type.
     [
-      test "int64 reads its extremes" (fun () ->
-          equal (array int64)
-            [| Int64.min_int; Int64.max_int |]
-            (stored Type.int64
-               [ "-9223372036854775808"; "9223372036854775807" ]));
-      test "uint64 reads values past int64 as their bits" (fun () ->
+      (Any int8, ("-128", -128L), ("127", 127L), "-129", "128");
+      (Any int16, ("-32768", -32768L), ("32767", 32767L), "-32769", "32768");
+      ( Any int32,
+        ("-2147483648", -2147483648L),
+        ("2147483647", 2147483647L),
+        "-2147483649",
+        "2147483648" );
+      ( Any int64,
+        ("-9223372036854775808", Int64.min_int),
+        ("9223372036854775807", Int64.max_int),
+        "-9223372036854775809",
+        "9223372036854775808" );
+      (Any uint8, ("0", 0L), ("255", 255L), "-1", "256");
+      (Any uint16, ("0", 0L), ("65535", 65535L), "-1", "65536");
+      (Any uint32, ("0", 0L), ("4294967295", 4294967295L), "-1", "4294967296");
+      ( Any uint64,
+        ("0", 0L),
+        ("18446744073709551615", -1L),
+        "-1",
+        "18446744073709551616" );
+    ]
+
+let integer_types = List.map (fun (ty, _, _, _, _) -> ty) bounds
+
+(* [in_range ty x] is [true] iff the int64 [x] is a value of the integer type
+   [ty]. *)
+let in_range (Type.Any ty) x =
+  let signed bits =
+    Int64.(x >= neg (shift_left 1L (bits - 1)) && x < shift_left 1L (bits - 1))
+  in
+  let unsigned bits = x >= 0L && (bits = 64 || x < Int64.shift_left 1L bits) in
+  match ty with
+  | Type.Int8 -> signed 8
+  | Int16 -> signed 16
+  | Int32 -> signed 32
+  | Int64 -> true
+  | Uint8 -> unsigned 8
+  | Uint16 -> unsigned 16
+  | Uint32 -> unsigned 32
+  | Uint64 -> unsigned 64
+  | _ -> invalid_arg "in_range"
+
+let reading =
+  group "Column.parse"
+    [
+      cases "reads each type's text"
+        ~id:(fun (Case (ty, xs, _)) ->
+          Format.asprintf "%a: %s" Type.pp ty
+            (String.escaped (String.concat " " xs)))
+        values reads;
+      cases "reads an integer type's bounds and refuses the integers past them"
+        ~id:(fun (ty, _, _, _, _) -> Format.asprintf "%a" pp_any ty)
+        bounds
+        (fun (Type.Any ty, (lo, lo_bits), (hi, hi_bits), below, above) ->
+          equal (array int64) [| lo_bits; hi_bits |] (stored ty [ lo; hi ]);
+          equal int 0 (fst (refused ty [ Some below ]));
+          equal int 0 (fst (refused ty [ Some above ])));
+      prop "reads exactly the int64s in an integer type's range"
+        (Gen.pair (Gen.of_list ~pp:pp_any integer_types) Gen.int64)
+        (fun (Type.Any ty, x) ->
+          let held = in_range (Any ty) x in
+          cover "an integer in the range" held;
+          cover "an integer past it" (not held);
+          match (parse ty [ Some (Int64.to_string x) ], held) with
+          | Ok _, true ->
+              equal (array int64) [| x |] (stored ty [ Int64.to_string x ])
+          | Error _, false -> ()
+          | Ok _, false -> failf "read %Ld, past the range" x
+          | Error (_, why), true -> failf "refused %Ld, in the range: %s" x why);
+      test "reads uint64 values past int64 as their bits" (fun () ->
           equal (array int64)
             [| -1L; Int64.min_int; 1L |]
             (stored Type.uint64
                [ "18446744073709551615"; "9223372036854775808"; "+1" ]));
-      test "a datetime reads the extremes of its ticks" (fun () ->
+      test "reads the extremes of a datetime's ticks" (fun () ->
           equal (array int64)
             [| Int64.max_int; Int64.min_int; 185542587187199L |]
             (stored (Type.wall S)
@@ -192,7 +272,7 @@ let storage =
                  "-292277022657-01-27T08:29:52";
                  "+5881580-07-11T23:59:59";
                ]));
-      test "a datetime reads a signed year, past nanoseconds' range" (fun () ->
+      test "reads a datetime's signed year, past nanoseconds' range" (fun () ->
           equal (array int64)
             [| 253402300800L; -62167219201L; -62135596800L |]
             (stored (Type.wall S)
@@ -203,132 +283,134 @@ let storage =
                ]));
     ]
 
-(* Refusals *)
+(* Refusals. The reasons are the phrases that Column.parse writes today. *)
 
-let refusals =
+let refusal_rows =
   Type.
     [
-      (Any bool, "True", "not true or false");
-      (Any bool, "1", "not true or false");
-      (Any int8, "128", "out of range");
-      (Any int8, "-129", "out of range");
-      (Any int8, "1.0", "not an integer");
-      (Any int8, " 1", "not an integer");
-      (Any int8, "+", "not an integer");
-      (Any int8, "", "not an integer");
-      (Any uint8, "-1", "out of range");
-      (Any uint32, "4294967296", "out of range");
-      (Any int32, "99999999999999999999999", "out of range");
-      (Any int64, "9223372036854775808", "out of range");
-      (Any int64, "-9223372036854775809", "out of range");
-      (Any uint64, "18446744073709551616", "out of range");
-      (Any uint64, "-1", "out of range");
-      (Any float64, ".", "not a number");
-      (Any float64, "e5", "not a number");
-      (Any float64, "1e", "not a number");
-      (Any float64, "1.2.3", "not a number");
-      (Any float64, "0x10", "not a number");
-      (Any float64, "1_000", "not a number");
-      (Any float64, "nan1", "not a number");
-      (Any float64, "--1", "not a number");
-      (Any float32, "", "not a number");
-      (Any date, "2023-02-29", "not a day of the calendar");
-      (Any date, "2024-1-01", "not YYYY-MM-DD");
-      (Any date, "2024-13-01", "not a day of the calendar");
-      (Any date, "2024-01-01T00:00:00", "not YYYY-MM-DD");
-      (Any date, "+123-01-01", "not YYYY-MM-DD");
-      (Any date, "12345-01-01", "not YYYY-MM-DD");
-      (Any date, "+12a45-01-01", "not YYYY-MM-DD");
-      (Any date, "-12345-02-30", "not a day of the calendar");
-      (Any date, "+5881581-01-01", "out of range");
-      (Any date, "-99999999999999999999-01-01", "out of range");
+      (Any bool, "True", __POS_OF__ {|not true or false|});
+      (Any bool, "1", __POS_OF__ {|not true or false|});
+      (Any int8, "1.0", __POS_OF__ {|not an integer|});
+      (Any int8, " 1", __POS_OF__ {|not an integer|});
+      (Any int8, "+", __POS_OF__ {|not an integer|});
+      (Any int8, "", __POS_OF__ {|not an integer|});
+      (Any int32, "99999999999999999999999", __POS_OF__ {|out of range|});
+      (Any float64, ".", __POS_OF__ {|not a number|});
+      (Any float64, "e5", __POS_OF__ {|not a number|});
+      (Any float64, "1e", __POS_OF__ {|not a number|});
+      (Any float64, "1.2.3", __POS_OF__ {|not a number|});
+      (Any float64, "0x10", __POS_OF__ {|not a number|});
+      (Any float64, "1_000", __POS_OF__ {|not a number|});
+      (Any float64, "nan1", __POS_OF__ {|not a number|});
+      (Any float64, "--1", __POS_OF__ {|not a number|});
+      (Any float64, "+-1", __POS_OF__ {|not a number|});
+      (Any float64, "infinit", __POS_OF__ {|not a number|});
+      (Any float64, "in", __POS_OF__ {|not a number|});
+      (Any float64, " 1.0", __POS_OF__ {|not a number|});
+      (Any float32, "", __POS_OF__ {|not a number|});
+      (Any date, "2023-02-29", __POS_OF__ {|not a day of the calendar|});
+      (Any date, "1900-02-29", __POS_OF__ {|not a day of the calendar|});
+      (Any date, "2024-00-10", __POS_OF__ {|not a day of the calendar|});
+      (Any date, "2024-01-00", __POS_OF__ {|not a day of the calendar|});
+      (Any date, "2024-1-01", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any date, "2024-13-01", __POS_OF__ {|not a day of the calendar|});
+      (Any date, "2024-01-01T00:00:00", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any date, "+123-01-01", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any date, "12345-01-01", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any date, "+12a45-01-01", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any date, "-12345-02-30", __POS_OF__ {|not a day of the calendar|});
+      (Any date, "+5881581-01-01", __POS_OF__ {|out of range|});
+      (Any date, "-99999999999999999999-01-01", __POS_OF__ {|out of range|});
       ( Any (wall Us),
         "2024-01-01T00:00:00.1234567",
-        "not a whole number of microseconds" );
+        __POS_OF__ {|not a whole number of microseconds|} );
       ( Any (wall Us),
         "2024-01-01T00:00:00Z",
-        "not YYYY-MM-DDThh:mm:ss without an offset" );
-      (Any (wall Us), "2024-01-01T24:00:00", "not a time of day");
-      (Any (wall Us), "2024-01-01T00:00:60", "not a time of day");
+        __POS_OF__ {|not YYYY-MM-DDThh:mm:ss without an offset|} );
+      (Any (wall Us), "2024-01-01T24:00:00", __POS_OF__ {|not a time of day|});
+      (Any (wall Us), "2024-01-01T00:00:60", __POS_OF__ {|not a time of day|});
       ( Any (wall Us),
         "2024-01-01T00:00:00.",
-        "not YYYY-MM-DDThh:mm:ss without an offset" );
+        __POS_OF__ {|not YYYY-MM-DDThh:mm:ss without an offset|} );
       ( Any (wall Us),
         "2024-01-01T00:00:00.1234567890",
-        "not YYYY-MM-DDThh:mm:ss without an offset" );
+        __POS_OF__ {|not YYYY-MM-DDThh:mm:ss without an offset|} );
       ( Any (wall Us),
         "2024-01-01t00:00:00",
-        "not YYYY-MM-DDThh:mm:ss without an offset" );
+        __POS_OF__ {|not YYYY-MM-DDThh:mm:ss without an offset|} );
       ( Any (wall S),
         "2024-01-01T00:00:00.5",
-        "not a whole number of seconds" );
-      (Any (wall S), "+999-01-01T00:00:00", "not YYYY-MM-DD");
-      (Any (wall S), "+292277026596-12-04T15:30:08", "out of range");
-      (Any (wall S), "-292277022657-01-27T08:29:51", "out of range");
-      (Any (wall Ms), "+300000000-01-01T00:00:00", "out of range");
+        __POS_OF__ {|not a whole number of seconds|} );
+      (Any (wall S), "+999-01-01T00:00:00", __POS_OF__ {|not YYYY-MM-DD|});
+      (Any (wall S), "+292277026596-12-04T15:30:08", __POS_OF__ {|out of range|});
+      (Any (wall S), "-292277022657-01-27T08:29:51", __POS_OF__ {|out of range|});
+      (Any (wall Ms), "+300000000-01-01T00:00:00", __POS_OF__ {|out of range|});
       ( Any (wall S),
         "+10000-01-01",
-        "not YYYY-MM-DDThh:mm:ss without an offset" );
+        __POS_OF__ {|not YYYY-MM-DDThh:mm:ss without an offset|} );
       ( Any (wall Ms),
         "2024-01-01T00:00:00.0015",
-        "not a whole number of milliseconds" );
+        __POS_OF__ {|not a whole number of milliseconds|} );
       ( Any (instant Us),
         "2024-01-01T00:00:00",
-        "not YYYY-MM-DDThh:mm:ss with an offset" );
+        __POS_OF__ {|not YYYY-MM-DDThh:mm:ss with an offset|} );
       ( Any (instant Us),
         "2024-01-01T00:00:00+0100",
-        "not YYYY-MM-DDThh:mm:ss with an offset" );
+        __POS_OF__ {|not YYYY-MM-DDThh:mm:ss with an offset|} );
+      ( Any (instant Us),
+        "2024-01-01T00:00:00z",
+        __POS_OF__ {|not YYYY-MM-DDThh:mm:ss with an offset|} );
       ( Any (instant Us),
         "2024-01-01T00:00:00+24:00",
-        "not an offset" );
+        __POS_OF__ {|not an offset|} );
       ( Any (instant Us),
         "2024-01-01T00:00:00+01:60",
-        "not an offset" );
+        __POS_OF__ {|not an offset|} );
       ( Any (instant Ns),
         "2262-04-11T23:47:16.854775808Z",
-        "out of range" );
+        __POS_OF__ {|out of range|} );
       ( Any (instant Ns),
         "1677-09-21T00:12:43.145224191Z",
-        "out of range" );
-      (Any string, "\xff", "invalid UTF-8 at byte 0");
-      (Any string, "\xc3", "invalid UTF-8 at byte 0");
-      (Any string, "\xc0\x80", "invalid UTF-8 at byte 0");
-      (Any string, "\xed\xa0\x80", "invalid UTF-8 at byte 0");
-      (Any string, "\xf4\x90\x80\x80", "invalid UTF-8 at byte 0");
-      (Any string, "a\xe2\x82", "invalid UTF-8 at byte 1");
-      (Any (categorical [| "a" |]), "b", "not in the dictionary");
+        __POS_OF__ {|out of range|} );
+      (Any string, "\xff", __POS_OF__ {|invalid UTF-8 at byte 0|});
+      (Any string, "\xc3", __POS_OF__ {|invalid UTF-8 at byte 0|});
+      (Any string, "\xc0\x80", __POS_OF__ {|invalid UTF-8 at byte 0|});
+      (Any string, "\xed\xa0\x80", __POS_OF__ {|invalid UTF-8 at byte 0|});
+      (Any string, "\xf4\x90\x80\x80", __POS_OF__ {|invalid UTF-8 at byte 0|});
+      (Any string, "a\xe2\x82", __POS_OF__ {|invalid UTF-8 at byte 1|});
+      (Any (categorical [| "a" |]), "b", __POS_OF__ {|not in the dictionary|});
     ]
 
-let refusal_cases =
-  cases "refusals"
-    ~id:(fun (ty, s, _) ->
-      Format.asprintf "refuses %s as %a" (String.escaped s) pp_any ty)
-    refusals
-    (fun (Type.Any ty, s, why) ->
-      equal (pair int string) (1, why) (refused ty [ None; Some s ]))
-
-let errors =
-  group "errors"
+let refusing =
+  group "Column.parse"
     [
-      test "names the first row that is not the type's text" (fun () ->
-          equal (pair int string) (2, "out of range")
-            (refused Type.int8 [ Some "1"; None; Some "300"; Some "x" ]));
-      test "names the last row" (fun () ->
-          equal (pair int string) (3, "not a number")
-            (refused Type.float64 [ Some "1"; Some "2"; Some "3"; Some "x" ]));
-      test "reads a column of nulls whatever its type" (fun () ->
+      cases "refuses text that is not its type's, naming the row"
+        ~id:(fun (ty, s, _) ->
+          Format.asprintf "%s as %a" (String.escaped s) pp_any ty)
+        refusal_rows
+        (fun (Type.Any ty, s, reason) ->
+          let row, why = refused ty [ None; Some s ] in
+          equal int 1 row;
+          expect why reason);
+      cases "names the first row that is not its type's text"
+        ~id:(fun (_, xs, _) ->
+          String.concat " " (List.map (Option.value ~default:"null") xs))
+        [
+          (Type.Any Type.int8, [ Some "1"; None; Some "300"; Some "x" ], 2);
+          (Any Type.float64, [ Some "1"; Some "2"; Some "3"; Some "x" ], 3);
+        ]
+        (fun (Type.Any ty, xs, expected) ->
+          equal int expected (fst (refused ty xs)));
+      test "reads a null row as null" (fun () ->
           equal
             (array (option (G.witness Type.date)))
             [| None; None |]
-            (rows Type.date [ None; None ]));
-      test "keeps the nulls of the column it reads" (fun () ->
-          let c = parsed Type.int16 [ Some "1"; None; Some "-3" ] in
-          equal int 1 (Column.null_count c);
+            (rows Type.date [ None; None ]);
           equal
             (array (option (G.witness Type.int16)))
             [| Some 1; None; Some (-3) |]
-            (Column.options Kind.int c));
-      test "reads a string column as a binary one" (fun () ->
+            (rows Type.int16 [ Some "1"; None; Some "-3" ]));
+      test "reads a string column as it reads a binary one" (fun () ->
           let c = Column.of_options Type.string [| Some "42"; None |] in
           equal
             (array (option (G.witness Type.uint8)))
@@ -336,22 +418,22 @@ let errors =
             (Column.options Kind.int
                (Result.get_ok (Column.parse (Any Type.uint8) c))));
       test "raises on a column that is not text" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"Column.parse") (fun () ->
+          raises_match Exn.invalid_arg (fun () ->
               Column.parse (Any Type.int8) (Column.v Type.int8 [| 1 |])));
-      test "raises on a type without a text form" (fun () ->
-          List.iter
-            (fun ty ->
-              raises_match (Exn.invalid_arg ~sub:"Column.parse") (fun () ->
-                  Column.parse ty (bytes [ Some "1" ])))
-            Type.
-              [
-                Any (clock S);
-                Any (duration Ms);
-                Any (list int8);
-                Any (record [ ("a", Any int8) ]);
-                Any (tensor Nx.float32 [| 2 |]);
-                Any (ext ~name:"x" int8);
-              ]);
+      cases "raises on a type without a text"
+        ~id:(Format.asprintf "%a" pp_any)
+        Type.
+          [
+            Any (clock S);
+            Any (duration Ms);
+            Any (list int8);
+            Any (record [ ("a", Any int8) ]);
+            Any (tensor Nx.float32 [| 2 |]);
+            Any (ext ~name:"x" int8);
+          ]
+        (fun ty ->
+          raises_match Exn.invalid_arg (fun () ->
+              Column.parse ty (bytes [ Some "1" ])));
     ]
 
 (* Exact decimals *)
@@ -359,8 +441,8 @@ let errors =
 (* The tests write a float's digits from its exact decimal, computed here: the C
    library's printf does not write them on every system, and under mingw-w64
    msvcrt's keeps 17 digits and rounds from those. A decimal [(d, e)] is the
-   natural of digits [d], most significant first, times [10^e], without
-   leading or trailing zero; zero is [("", 0)]. *)
+   natural of digits [d], most significant first, times [10^e], without leading
+   or trailing zero; zero is [("", 0)]. *)
 
 let normalize d e =
   let n = String.length d in
@@ -405,7 +487,9 @@ let dyadic n k =
   done;
   let d = !ds in
   let n = Array.length d in
-  normalize (String.init n (fun i -> Char.chr (48 + d.(n - 1 - i)))) (Int.min k 0)
+  normalize
+    (String.init n (fun i -> Char.chr (48 + d.(n - 1 - i))))
+    (Int.min k 0)
 
 (* [decimal x] is the decimal of [|x|], [x] finite. *)
 let decimal x =
@@ -457,9 +541,8 @@ let increment d =
   in
   carry (String.length d - 1)
 
-(* [format_e p negative (d, e)] is C's [%.*e] with [p] digits after the point
-   of the decimal [(d, e)], negative if [negative], rounded once, ties to
-   even. *)
+(* [format_e p negative (d, e)] is C's [%.*e] with [p] digits after the point of
+   the decimal [(d, e)], negative if [negative], rounded once, ties to even. *)
 let format_e p negative (d, e) =
   let n = p + 1 and len = String.length d in
   let kept, exp =
@@ -467,7 +550,8 @@ let format_e p negative (d, e) =
     else if len <= n then (d ^ String.make (n - len) '0', len - 1 + e)
     else
       let head = String.sub d 0 n and tail = String.sub d n (len - n) in
-      (* [tail] has no trailing zero: it is half a unit exactly iff it is [5]. *)
+      (* [tail] has no trailing zero: it is half a unit exactly iff it is
+         [5]. *)
       let odd = (Char.code head.[n - 1] - 48) land 1 = 1 in
       let up = tail.[0] > '5' || (tail.[0] = '5' && (len - n > 1 || odd)) in
       let head = if up then increment head else head in
@@ -504,8 +588,8 @@ let distance (d0, e0) (d1, e1) =
 
 (* [nearest_of t x] is the float64 nearest the decimal [t], ties to even, of the
    float64 [x], at least [0.], and its neighbours. An infinity counts as
-   [2^1024], where the next float would be. A reading [x] of [t] is right iff
-   it is its own nearest. *)
+   [2^1024], where the next float would be. A reading [x] of [t] is right iff it
+   is its own nearest. *)
 let nearest_of t x =
   let value y = if y = Float.infinity then dyadic 1 1024 else decimal y in
   let even y = Int64.(logand (bits_of_float y) 1L) = 0L in
@@ -597,43 +681,51 @@ let rounds_halfway ty (subnormal, a, b, m) =
   equal int64 (bits a) (bits (read_one ty below))
 
 let laws =
-  group "laws"
+  group "Column.parse"
     [
-      prop "float64 reads a decimal number as the float64 nearest it"
-        (Gen.with_pp Format.pp_print_string float_texts) (fun s ->
+      prop "reads a decimal number as the float64 nearest it"
+        ~examples:
+          [
+            "1e400";
+            "123456789e-330";
+            "2.4703282292062327e-324";
+            "12345678901234567890123";
+          ] (Gen.with_pp Format.pp_print_string float_texts) (fun s ->
           let x = read_one Type.float64 s in
-          equal int64 (bits (nearest_of (decimal_of_text s) x)) (bits x));
-      prop "float64 reads a float written with 17 digits as itself" Gen.float
+          let d = decimal_of_text s in
+          cover "overflows to infinity" (x = Float.infinity);
+          cover "rounds to a subnormal" (x > 0. && x < Float.min_float);
+          cover "rounds to zero from a nonzero text" (x = 0. && d <> ("", 0));
+          cover "more than 19 significant digits" (String.length (fst d) > 19);
+          equal int64 (bits (nearest_of d x)) (bits x));
+      prop "reads a float64 written with 17 digits as itself" Gen.float
         (fun x ->
           Law.round_trip (G.witness Type.float64) string
             (Printf.sprintf "%.17g") (read_one Type.float64) x);
       prop
-        "float64 rounds a halfway text to even, and texts beside it to the \
+        "rounds a float64 halfway text to even, and texts beside it to the \
          nearer value"
         (halfway ~subnormal:0x10000000000000L ~top:0x7fefffffffffffffL
            Int64.float_of_bits)
         (rounds_halfway Type.float64);
       prop
-        "float32 rounds a halfway text to even, and texts beside it to the \
+        "rounds a float32 halfway text to even, and texts beside it to the \
          nearer value"
         (halfway ~subnormal:0x800000L ~top:0x7f7fffffL (fun m ->
              Int32.float_of_bits (Int64.to_int32 m)))
         (rounds_halfway Type.float32);
       prop
-        "float16 rounds a halfway text to even, and texts beside it to the \
+        "rounds a float16 halfway text to even, and texts beside it to the \
          nearer value"
         (halfway ~subnormal:0x400L ~top:0x7bffL (fun m ->
              half_of_bits (Int64.to_int m)))
         (rounds_halfway Type.float16);
-      prop "int64 reads an int64 written in decimal as itself" Gen.int64
-        (fun x ->
-          equal (array int64) [| x |] (stored Type.int64 [ Int64.to_string x ]));
-      prop "date reads a day written by Time.Date.pp as itself"
+      prop "reads a date written by Time.Date.pp as itself"
         Gen.(map day (int_range (-719528) 2932896))
         (Law.round_trip (G.witness Type.date) string
            (Format.asprintf "%a" Time.Date.pp)
            (read_one Type.date));
-      prop "datetime reads an instant written by Time.pp as itself"
+      prop "reads an instant written by Time.pp as itself"
         Gen.(map Time.of_ns int64)
         (fun t ->
           let utc = Type.instant Ns in
@@ -642,21 +734,14 @@ let laws =
             (read_one utc) t);
     ]
 
-(* Printing *)
+(* Column.print *)
 
-let texts c = Column.options Kind.string (Column.print c)
-
-let printed ty vs expected =
-  equal
-    (array (option string))
-    (Array.of_list (List.map Option.some expected))
-    (texts (Column.v ty (Array.of_list vs)))
-
-(* The reference printer is the one Column.print had before Schubfach: the first
-   of C's [%e] texts of 1 to 17 digits that reads back, written without its
-   exponent from [1e-7] up to [1e21]. Where an interval is lopsided, at a power
-   of two, the nearest text of the fewest digits can fall outside it while the
-   other one reads back; the reference then writes one digit more. *)
+(* The printer's text, from the shortest-nearest rule of talon.mli: of the
+   fewest significant digits that read back, the nearest, and of two as near the
+   one whose last digit is even. Java's Double.toString states the same choice:
+   "Define d_m as the decimal in T that is closest to m. Or if there are two
+   such decimals in T, select the one with the even significand." The decimal is
+   written without its exponent from [1e-7] up to [1e21]. *)
 
 let positional s =
   let e = String.index s 'e' in
@@ -679,91 +764,11 @@ let positional s =
     in
     if negative then "-" ^ text else text
 
-(* [reference ty xs] is the reference text of each of [xs], values of the float
-   type [ty]. The texts of [p] digits of all values still without one are read
-   back at once. *)
-let reference ty xs =
-  let text x =
-    if Float.is_nan x then Some "nan"
-    else if Float.is_finite x then None
-    else Some (if x > 0. then "inf" else "-inf")
-  in
-  let out = Array.map text xs in
-  let decimals = Array.map (fun x -> if Float.is_finite x then decimal x else ("", 0)) xs in
-  for p = 1 to 17 do
-    let open_ =
-      Array.of_seq
-        (Seq.filter
-           (fun i -> out.(i) = None)
-           (Seq.init (Array.length xs) Fun.id))
-    in
-    let ss =
-      Array.map
-        (fun i -> format_e (p - 1) (Float.sign_bit xs.(i)) decimals.(i))
-        open_
-    in
-    let back = rows ty (List.map Option.some (Array.to_list ss)) in
-    Array.iteri
-      (fun k i ->
-        if p = 17 || Float.equal (Option.get back.(k)) xs.(i) then
-          out.(i) <- Some (positional ss.(k)))
-      open_
-  done;
-  Array.map Option.get out
-
-let printer ty xs = Array.map Option.get (texts (Column.v ty xs))
-
-(* [digits s] is the number of significant digits of the text [s]. *)
-let digits s =
-  let mantissa =
-    match String.index_opt s 'e' with Some e -> String.sub s 0 e | None -> s
-  in
-  let d =
-    String.to_seq mantissa
-    |> Seq.filter (fun c -> '0' <= c && c <= '9')
-    |> String.of_seq
-  in
-  let lead = ref 0 and stop = ref (String.length d) in
-  while !lead < !stop && d.[!lead] = '0' do
-    incr lead
-  done;
-  while !stop > !lead && d.[!stop - 1] = '0' do
-    decr stop
-  done;
-  !stop - !lead
-
-let is_power_of_two x = x <> 0. && Float.abs (fst (Float.frexp x)) = 0.5
-
-(* [agrees ty x expected got] holds iff the printer's text [got] of [x] is the
-   reference text [expected], or, at a power of two where the reference writes
-   one digit too many, has one digit fewer and reads back. *)
-let agrees ty x expected got =
-  if is_power_of_two x && got <> expected then begin
-    equal float_exact x (read_one ty got);
-    equal int (digits expected - 1) (digits got)
-  end
-  else equal string expected got
-
-let prints_reference ty x =
-  cover "power of two" (is_power_of_two x);
-  agrees ty x (reference ty [| x |]).(0) (printer ty [| x |]).(0)
-
-(* [fewer ty lo hi] checks the powers of two [2^lo] to [2^hi] of the type [ty]
-   and is the number where the printer writes fewer digits than the
-   reference. *)
-let fewer ty lo hi =
-  let xs = Array.init (hi - lo + 1) (fun k -> Float.ldexp 1. (lo + k)) in
-  let expected = reference ty xs and got = printer ty xs in
-  Array.iteri (fun i x -> agrees ty x expected.(i) got.(i)) xs;
-  Array.fold_left ( + ) 0
-    (Array.map2 (fun e g -> Bool.to_int (e <> g)) expected got)
-
 (* [shortest_nearest ty xs] is the text of each of the finite, positive [xs],
-   values of [ty], that the printer's contract states: of the fewest
-   significant digits that read back as it, the nearest to it, ties to an
-   even last digit. The candidates of [p] digits are the two [p]-digit
-   decimals around the value; every value still without a text has both
-   read back at once. *)
+   values of [ty], that the printer's contract states: of the fewest significant
+   digits that read back as it, the nearest to it, ties to an even last digit.
+   The candidates of [p] digits are the two [p]-digit decimals around the value;
+   every value still without a text has both read back at once. *)
 let shortest_nearest ty xs =
   let n = Array.length xs in
   let out = Array.make n None in
@@ -787,7 +792,8 @@ let shortest_nearest ty xs =
     in
     let candidates = List.map (fun i -> (i, around i)) open_ in
     let texts =
-      List.concat_map (fun (_, cs) -> List.map (fun (_, _, t) -> Some t) cs)
+      List.concat_map
+        (fun (_, cs) -> List.map (fun (_, _, t) -> Some t) cs)
         candidates
     in
     let back = ref (Array.to_list (rows ty texts)) in
@@ -821,6 +827,45 @@ let shortest_nearest ty xs =
       candidates
   done;
   Array.map Option.get out
+
+(* [canonical ty xs] is the text that talon.mli states for each of the values
+   [xs] of the float type [ty]. *)
+let canonical ty xs =
+  let finite x = Float.is_finite x && x <> 0. in
+  let magnitudes =
+    Array.of_list
+      (List.filter_map
+         (fun x -> if finite x then Some (Float.abs x) else None)
+         (Array.to_list xs))
+  in
+  let texts = shortest_nearest ty magnitudes and next = ref 0 in
+  Array.map
+    (fun x ->
+      if Float.is_nan x then "nan"
+      else if x = Float.infinity then "inf"
+      else if x = Float.neg_infinity then "-inf"
+      else if x = 0. then if Float.sign_bit x then "-0" else "0"
+      else
+        let t = texts.(!next) in
+        incr next;
+        if x < 0. then "-" ^ t else t)
+    xs
+
+let texts c = Column.options Kind.string (Column.print c)
+let printer ty xs = Array.map Option.get (texts (Column.v ty xs))
+
+let printed ty vs expected =
+  equal
+    (array (option string))
+    (Array.of_list (List.map Option.some expected))
+    (texts (Column.v ty (Array.of_list vs)))
+
+let is_power_of_two x = x <> 0. && Float.abs (fst (Float.frexp x)) = 0.5
+
+let prints_canonical ty ~normal x =
+  cover "a subnormal" (x <> 0. && Float.abs x < normal);
+  cover "a power of two" (is_power_of_two x);
+  equal string (canonical ty [| x |]).(0) (printer ty [| x |]).(0)
 
 (* [floats ~p ~emin of_bits] draws the floats of [p] significant bits and least
    normal exponent [emin], of the bits [of_bits] reads: any bits, subnormals,
@@ -875,147 +920,172 @@ let extreme_ticks =
   in
   ((if utc then Type.Any (Type.instant u) else Type.Any (Type.wall u)), xs)
 
-let readable (G.Sample (ty, _)) =
-  match ty with
-  | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
-  | Float16 | Float32 | Float64 | String | Binary | Categorical _ | Date
-  | Datetime _ ->
-      true
-  | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ -> false
+(* The types that Column.parse reads and Column.print writes. *)
+let readable =
+  Type.
+    [
+      Any bool;
+      Any int8;
+      Any int16;
+      Any int32;
+      Any int64;
+      Any uint8;
+      Any uint16;
+      Any uint32;
+      Any uint64;
+      Any float16;
+      Any float32;
+      Any float64;
+      Any string;
+      Any binary;
+      Any (categorical [| "a"; "é"; "" |]);
+      Any date;
+      Any (wall S);
+      Any (wall Ms);
+      Any (wall Us);
+      Any (wall Ns);
+      Any (instant S);
+      Any (instant Ms);
+      Any (instant Us);
+      Any (instant Ns);
+    ]
+
+(* [every gen tys] draws one value of [gen ty] for each of [tys]. *)
+let every gen tys =
+  List.fold_right
+    (fun ty rest ->
+      Gen.(
+        let+ x = gen ty and+ xs = rest in
+        x :: xs))
+    tys (Gen.constant [])
+
+let sample (Type.Any ty) = Gen.map (fun vs -> G.Sample (ty, vs)) (G.options ty)
+
+let samples =
+  Gen.with_pp
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space G.pp_sample)
+    (every sample readable)
 
 let printing =
-  group "printing"
+  group "Column.print"
     [
-      test "a float64 is the fewest digits that read back" (fun () ->
+      cases "writes a float in the fewest digits that read back at its width"
+        ~id:(fun (ty, _, text) -> Format.asprintf "%a %s" Type.pp ty text)
+        Type.
+          [
+            (float64, 150., "150");
+            (float64, 0.0015, "0.0015");
+            (float64, 0.1, "0.1");
+            (float64, 123.456, "123.456");
+            (float64, 5e-324, "5e-324");
+            (float64, Float.max_float, "1.7976931348623157e+308");
+            (float32, 0.1, "0.1");
+            (float32, 16777216., "16777216");
+            (float16, 65504., "65500");
+            (float16, 6e-8, "6e-08");
+            (float16, 0x1p-6, "0.01563");
+            (float32, 0x1p-96, "1.2621775e-29");
+            (float64, 0x1p-1017, "7.120236347223045e-307");
+          ]
+        (fun (ty, x, text) -> printed ty [ x ] [ text ]);
+      cases "writes no exponent from 1e-7 up to 1e21, and two digits past it"
+        ~id:Fun.id [ "100000000000000000000"; "1e+21"; "0.0000001"; "1e-08" ]
+        (fun text -> printed Type.float64 [ float_of_string text ] [ text ]);
+      test "writes nan, inf, -inf, 0 and -0" (fun () ->
           printed Type.float64
-            [ 150.; 0.0015; -0.; 0.; 0.1; 123.456; 1e20; 1e21; 1e-7; 1e-8 ]
-            [
-              "150";
-              "0.0015";
-              "-0";
-              "0";
-              "0.1";
-              "123.456";
-              "100000000000000000000";
-              "1e+21";
-              "0.0000001";
-              "1e-08";
-            ];
-          printed Type.float64
-            [ nan; infinity; neg_infinity; 5e-324; Float.max_float ]
-            [ "nan"; "inf"; "-inf"; "5e-324"; "1.7976931348623157e+308" ]);
-      test "a narrow float is the fewest digits that read back at its width"
-        (fun () ->
-          printed Type.float32 [ 0.1; 16777216. ] [ "0.1"; "16777216" ];
-          printed Type.float16 [ 65504.; 0.1; 6e-8 ] [ "65500"; "0.1"; "6e-08" ]);
-      test "a power of two is the fewest digits, even unrounded" (fun () ->
-          printed Type.float16 [ 0x1p-6 ] [ "0.01563" ];
-          printed Type.float32 [ 0x1p-96 ] [ "1.2621775e-29" ];
-          printed Type.float64 [ 0x1p-1017 ] [ "7.120236347223045e-307" ]);
-      test
-        "the reference writes one digit too many at 1, 3 and 46 powers of two"
-        (fun () ->
-          equal (list int) [ 1; 3; 46 ]
-            [
-              fewer Type.float16 (-24) 15;
-              fewer Type.float32 (-149) 127;
-              fewer Type.float64 (-1074) 1023;
-            ]);
-      test
-        "every float32 and float64 power of two is the nearest of its fewest \
-         digits"
-        (fun () ->
-          let powers lo hi =
-            Array.init (hi - lo + 1) (fun k -> Float.ldexp 1. (lo + k))
-          in
-          let f32 = powers (-149) 127 and f64 = powers (-1074) 1023 in
-          equal (array string) (shortest_nearest Type.float32 f32)
-            (printer Type.float32 f32);
-          equal (array string) (shortest_nearest Type.float64 f64)
-            (printer Type.float64 f64));
-      test "every float16 is the reference text, except 2^-6" (fun () ->
+            [ nan; infinity; neg_infinity; 0.; -0. ]
+            [ "nan"; "inf"; "-inf"; "0"; "-0" ]);
+      test "writes every float16 as the nearest of its fewest digits" (fun () ->
           let n = 0x7c00 in
           let xs =
             Array.init (2 * n) (fun m ->
                 if m < n then half_of_bits m else -.half_of_bits (m - n))
           in
-          let expected = reference Type.float16 xs
-          and got = printer Type.float16 xs in
-          let differ =
-            List.filter
-              (fun i -> expected.(i) <> got.(i))
-              (List.init (2 * n) Fun.id)
+          equal (array string)
+            (canonical Type.float16 xs)
+            (printer Type.float16 xs));
+      test
+        "writes every float32 and float64 power of two as the nearest of its \
+         fewest digits" (fun () ->
+          let powers lo hi =
+            Array.init (hi - lo + 1) (fun k -> Float.ldexp 1. (lo + k))
           in
-          equal
-            (list (triple float_exact string string))
-            [
-              (0x1p-6, "0.015625", "0.01563"); (-0x1p-6, "-0.015625", "-0.01563");
-            ]
-            (List.map (fun i -> (xs.(i), expected.(i), got.(i))) differ));
-      prop "a float64 is the reference text"
+          let f32 = powers (-149) 127 and f64 = powers (-1074) 1023 in
+          equal (array string)
+            (canonical Type.float32 f32)
+            (printer Type.float32 f32);
+          equal (array string)
+            (canonical Type.float64 f64)
+            (printer Type.float64 f64));
+      prop "writes a float64 as the nearest of its fewest digits"
+        ~examples:[ 5e-324; 0x1p-1017; 1125899906842624.25 ]
         (floats ~p:53 ~emin:(-1022) Int64.float_of_bits)
-        (prints_reference Type.float64);
-      prop "a float32 is the reference text"
+        (prints_canonical Type.float64 ~normal:Float.min_float);
+      prop "writes a float32 as the nearest of its fewest digits"
+        ~examples:[ 0x1p-149; 0x1p-96; 2097152.25 ]
         (floats ~p:24 ~emin:(-126) (fun m ->
              Int32.float_of_bits (Int64.to_int32 m)))
-        (prints_reference Type.float32);
-      test "integers are written in full" (fun () ->
+        (prints_canonical Type.float32 ~normal:0x1p-126);
+      test "writes an integer in full" (fun () ->
           printed Type.int8 [ -128; 127 ] [ "-128"; "127" ];
           equal
             (array (option string))
             [| Some "-9223372036854775808"; Some "9223372036854775807" |]
-            (texts (of_ticks (Any Type.int64) [| Int64.min_int; Int64.max_int |]));
+            (texts
+               (of_ticks (Any Type.int64) [| Int64.min_int; Int64.max_int |]));
           equal
             (array (option string))
             [| Some "18446744073709551615"; Some "0" |]
             (texts
                (Column.of_tensor (Nx.create Nx.uint64 [| 2 |] [| -1L; 0L |]))));
-      test "other types write the text parse reads" (fun () ->
+      test "writes other types as parse reads them" (fun () ->
           printed Type.bool [ true; false ] [ "true"; "false" ];
           printed (Type.categorical [| "a"; "b" |]) [ "b"; "a" ] [ "b"; "a" ];
           printed Type.date
             [ day 0; day (-719529) ]
             [ "1970-01-01"; "-0001-12-31" ];
-          printed
-            (Type.instant Ms)
+          printed (Type.instant Ms)
             [ tick Time.of_ms 1500L; tick Time.of_ms (-1L) ]
             [ "1970-01-01T00:00:01.5Z"; "1969-12-31T23:59:59.999Z" ]);
-      test "a datetime is written from its ticks, past Time's range" (fun () ->
-          let ty = Type.wall S in
-          let c = of_ticks (Any ty) [| 253402300800L; -62167219201L |] in
+      test "writes a datetime from its ticks, past Time's range" (fun () ->
+          let c =
+            of_ticks (Any (Type.wall S)) [| 253402300800L; -62167219201L |]
+          in
           equal
             (array (option string))
             [| Some "+10000-01-01T00:00:00"; Some "-0001-12-31T23:59:59" |]
-            (texts c);
-          let back =
-            match Column.parse (Any ty) (Column.print c) with
-            | Ok c -> c
-            | Error (row, why) -> failf "row %d: %s" row why
-          in
-          equal (array int64)
-            [| 253402300800L; -62167219201L |]
-            (Nx.to_array (Column.to_tensor Nx.int64 back)));
-      test "nulls stay null" (fun () ->
+            (texts c));
+      test "writes a null row as null" (fun () ->
           equal
             (array (option string))
             [| None; Some "1"; None |]
             (texts (Column.of_options Type.int16 [| None; Some 1; None |])));
-      test "text is written as it is" (fun () ->
-          printed Type.string [ "a,b"; ""; "\"" ] [ "a,b"; ""; "\"" ];
-          equal
-            (array (option string))
-            [| Some "\xff" |]
-            (Column.options Kind.binary
-               (Column.print
-                  (Column.v Type.binary [| Binary.of_string "\xff" |]))
-            |> Array.map (Option.map (fun b -> (b : Binary.t :> string)))));
-      test "a type parse does not read is refused" (fun () ->
-          raises
-            (Invalid_argument
-               "Column.print: duration[s] is not a type that Column.parse reads")
-            (fun () ->
-              Column.print (Column.v (Type.duration S) [| Time.Span.s 1 |])));
-      prop "Column.parse reads back every tick a datetime holds" extreme_ticks
+      test "is the column itself for text, and a string column otherwise"
+        (fun () ->
+          let is_itself c =
+            satisfies ~claim:"the column printed" pass
+              (fun p -> p == c)
+              (Column.print c)
+          in
+          is_itself (Column.v Type.string [| "a,b"; ""; "\"" |]);
+          is_itself (Column.v Type.binary [| Binary.of_string "\xff" |]);
+          let ty = Column.type_ (Column.print (Column.v Type.int8 [| 1 |])) in
+          equal string "string" (Format.asprintf "%a" pp_any ty));
+      cases "raises on a type parse does not read"
+        ~id:(Format.asprintf "%a" pp_any)
+        Type.
+          [
+            Any (duration S);
+            Any (clock S);
+            Any (list int8);
+            Any (record [ ("a", Any int8) ]);
+            Any (tensor Nx.float32 [| 2 |]);
+            Any (ext ~name:"x" int8);
+          ]
+        (fun (Type.Any ty) ->
+          raises_match Exn.invalid_arg (fun () ->
+              Column.print (Column.of_options ty [| None |])));
+      prop "is read back by parse at every tick of a datetime" extreme_ticks
         (fun (ty, xs) ->
           let c = of_ticks ty xs in
           let back =
@@ -1024,18 +1094,80 @@ let printing =
             | Error (row, why) -> failf "row %d: %s" row why
           in
           equal (array int64) xs (Nx.to_array (Column.to_tensor Nx.int64 back)));
-      prop "Column.parse reads back what Column.print writes"
-        (Gen.such_that readable G.sample) (fun (G.Sample (ty, vs)) ->
-          let c = Column.of_options ty vs in
-          let back = Column.parse (Column.type_ c) (Column.print c) in
-          let pp ppf (row, why) = Format.fprintf ppf "row %d: %s" row why in
-          equal
-            (array (option (G.witness ty)))
-            vs
-            (Column.options (Type.kind ty) (require_ok ~pp back)));
+      prop "is read back by parse, for every type parse reads" samples
+        (List.iter (fun (G.Sample (ty, vs)) ->
+             cover "a null row" (Array.exists Option.is_none vs);
+             let c = Column.of_options ty vs in
+             let back = Column.parse (Column.type_ c) (Column.print c) in
+             let pp ppf (row, why) = Format.fprintf ppf "row %d: %s" row why in
+             equal
+               (array (option (G.witness ty)))
+               vs
+               (Column.options (Type.kind ty) (require_ok ~pp back))));
+    ]
+
+(* Expr.Str.parse *)
+
+let junk =
+  Gen.option
+    (Gen.string_of ~size:(Gen.int_range 0 6)
+       (Gen.of_list
+          [ '0'; '1'; '9'; '+'; '-'; '.'; 'e'; ':'; 'T'; 'Z'; 'a'; ' ' ]))
+
+(* A column of each type Str.parse takes: the texts Column.print writes, then a
+   few drawn from a small alphabet. *)
+let parse_inputs =
+  let text_types = Type.[ Any string; Any binary ] in
+  let typed = List.filter (fun ty -> not (List.mem ty text_types)) readable in
+  let input ty =
+    Gen.(
+      let+ (G.Sample (ty, vs)) = sample ty
+      and+ extra = array ~size:(int_range 0 2) junk in
+      let printed = texts (Column.of_options ty vs) in
+      (Type.Any ty, Array.append printed extra))
+  in
+  let pp ppf (ty, rows) =
+    Format.fprintf ppf "%a: [|%a|]" pp_any ty
+      (Format.pp_print_array ~pp_sep:Format.pp_print_space (fun ppf -> function
+        | None -> Format.pp_print_string ppf "null"
+        | Some t -> Format.fprintf ppf "%S" t))
+      rows
+  in
+  Gen.with_pp
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp)
+    (every input typed)
+
+let reads_as_column_parse (Type.Any ty, rows) =
+  let text = Column.of_options Type.string rows in
+  let q = Query.of_table (v [ ("s", text) ]) in
+  let run =
+    Query.run (Query.select Expr.[ "v" := Str.parse ty (Col.string "s") ] q)
+  in
+  match Column.parse (Any ty) text with
+  | Ok c ->
+      equal
+        (array (option (G.witness ty)))
+        (Column.options (Type.kind ty) c)
+        (Column.options (Type.kind ty)
+           (column (require_ok ~pp:Error.pp run) "v"))
+  | Error (row, reason) ->
+      let e = Format.asprintf "%a" Error.pp (require_error run) in
+      contains ~sub:(Printf.sprintf "row %d" row) e;
+      contains ~sub:reason e
+
+let str_parse =
+  group "Expr.Str.parse"
+    [
+      prop "reads a text as Column.parse reads it" parse_inputs (fun inputs ->
+          let refused (Type.Any ty, rows) =
+            Result.is_error
+              (Column.parse (Any ty) (Column.of_options Type.string rows))
+          in
+          cover "a type with a refused row" (List.exists refused inputs);
+          cover "a type whose rows all read"
+            (List.exists (fun i -> not (refused i)) inputs);
+          List.iter reads_as_column_parse inputs);
     ]
 
 let () =
-  exit
-    (run "talon.parse"
-       [ value_cases; storage; refusal_cases; errors; laws; printing ])
+  exit (run "talon.parse" [ reading; refusing; laws; printing; str_parse ])

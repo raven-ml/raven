@@ -104,7 +104,11 @@
  (name test_parse)
  (modules test_parse)
  (package talon)
- (libraries windtrap talon talon_gen nx))
+ (libraries windtrap talon talon_gen nx)
+ (action
+  (progn
+   (run %{test} --corrected)
+   (diff? test_parse.ml test_parse.ml.corrected))))
 
 (test
  (name test_table)

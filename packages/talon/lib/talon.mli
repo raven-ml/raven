@@ -739,8 +739,10 @@ module Column : sig
       [binary], and a [string] column otherwise. Each value is written in the
       text {!parse} reads:
       - a float in the fewest significant digits that read back to it at its
-        type's width, without an exponent from [1e-7] up to [1e21] ([150],
-        [0.0015], [-0], [1e+21]), or [nan], [inf] or [-inf];
+        type's width, of those the nearest to it, and of two as near the one
+        whose last digit is even; without an exponent from [1e-7] up to [1e21]
+        ([150], [0.0015], [-0]), and otherwise with [e], a sign and at least two
+        exponent digits ([1e+21], [1e-08]); or [nan], [inf] or [-inf];
       - a datetime with the fewest fraction digits that are exact, and [Z] for
         an instant, every tick of its unit included, past {!Time.Date}'s years;
       - an integer in full, past OCaml's [int] included.
@@ -1891,14 +1893,16 @@ module Expr : sig
         Raises [Invalid_argument] if [sep] is not valid UTF-8. *)
 
     val parse : 'a Type.t -> (string, 's) t -> ('a, 's) t
-    (** [parse ty a] is the value of type [ty] that the text [a] writes, in the
-        forms that [talon.csv] reads: [true] and [false]; decimal integers with
-        an optional sign; decimal or scientific floats, [inf], [-inf] and [nan];
-        ISO 8601 dates; and ISO 8601 datetimes, with an offset or [Z] for an
-        instant and without one for a wall clock. Any other text, and a value
-        that [ty] does not hold, is a data error. [ty] is a [bool], integer,
-        float, [date] or [datetime] type, or a categorical, which takes only the
-        strings of its dictionary. *)
+    (** [parse ty a] is the value of type [ty] that the text [a] writes, read as
+        {!Column.parse} reads a row of text, which is how [talon.csv] reads it:
+        [true] and [false]; decimal integers with an optional sign; decimal or
+        scientific floats, and [inf], [infinity] and [nan] in any case with an
+        optional sign; ISO 8601 dates; and ISO 8601 datetimes, with an offset or
+        [Z] for an instant and without one for a wall clock. Any other text, and
+        a value that [ty] does not hold, is a data error that names the row and
+        {!Column.parse}'s reason. [ty] is a [bool], integer, float, [date] or
+        [datetime] type, or a categorical, which takes only the strings of its
+        dictionary. *)
 
     (** {2:regexes Regular expressions}
 
