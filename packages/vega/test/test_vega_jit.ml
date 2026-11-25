@@ -761,9 +761,7 @@ module Literal : Forms = struct
       for i = n_seg - 2 downto 0 do
         let rel = Nx.sub_s step (Int32.of_int starts.(i)) in
         acc :=
-          Nx.where
-            (Nx.less_equal_s rel (Int32.of_int (fst segments.(i))))
-            (at i) !acc
+          Nx.where (Nx.less_s rel (Int32.of_int (fst segments.(i)))) (at i) !acc
       done;
       !acc
 

@@ -189,7 +189,9 @@ val piecewise_constant : boundaries:int list -> values:float list -> 'd t
 
 val join : (int * 'd t) list -> 'd t
 (** [join segments] sequences schedules end-to-end. Each [(n, s)] runs [s] for
-    [n] steps, evaluated at the counter relative to the segment's start. The
-    last segment's schedule is used for all steps beyond the total.
+    [n] steps, evaluated at the counter relative to the segment's start: a
+    segment that starts at the counter [c0] holds the counters [c0] to
+    [c0 + n - 1], where it is [s] at [0] to [n - 1]. The last segment's schedule
+    is used for all steps beyond the total.
 
     Raises [Invalid_argument] if [segments] is empty or any [n <= 0]. *)

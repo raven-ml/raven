@@ -136,6 +136,21 @@ let test_join_step_reset () =
     [ ("a", 3) ]
     (List.rev !calls)
 
+(* Each segment runs for its [n] counters, from its own counter 0: the second of
+   two ten-step segments starts at the counter 10. *)
+let test_join_boundary () =
+  let s =
+    S.join
+      [
+        (10, S.linear ~init_value:0.0 ~end_value:10.0 ~steps:10);
+        (10, S.linear ~init_value:100.0 ~end_value:110.0 ~steps:10);
+      ]
+  in
+  equal
+    (list (float 1e-4))
+    [ 0.0; 9.0; 100.0; 109.0; 110.0; 110.0 ]
+    (List.map (S.eval s) [ 0; 9; 10; 19; 20; 21 ])
+
 let test_join_validation () =
   raises_match Exn.invalid_arg (fun () -> ignore (S.join [] : Nx.host S.t));
   raises_match Exn.invalid_arg (fun () ->
@@ -200,6 +215,8 @@ let () =
              test "join" test_join;
              test "join step reset" test_join_step_reset;
              test "join validation" test_join_validation;
+             test "each segment of a join starts at its own counter 0"
+               test_join_boundary;
              test "cosine_decay_restarts" test_cosine_decay_restarts;
              test "cosine_decay_restarts t_mul" test_cosine_decay_restarts_t_mul;
              test "cosine_decay_restarts m_mul" test_cosine_decay_restarts_m_mul;

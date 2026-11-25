@@ -228,16 +228,16 @@ let join segments =
   let starts = Array.map int starts in
   let lengths = Array.map (fun (n, _) -> int n) segments in
   fun step ->
-    (* Selected last to first: the earliest segment whose span covers the
-       relative counter wins. Inactive segments are still computed (at
-       out-of-range counters) and discarded by [where]. *)
+    (* Selected last to first: the earliest segment whose span, relative
+       counters [0] to [n - 1], covers the counter wins. Inactive segments are
+       still computed (at out-of-range counters) and discarded by [where]. *)
     let rel i = Nx.sub step (beside step starts.(i)) in
     let acc = ref (snd segments.(n_seg - 1) (rel (n_seg - 1))) in
     for i = n_seg - 2 downto 0 do
       let rel = rel i in
       acc :=
         Nx.where
-          (Nx.less_equal rel (beside step lengths.(i)))
+          (Nx.less rel (beside step lengths.(i)))
           (snd segments.(i) rel) !acc
     done;
     !acc
