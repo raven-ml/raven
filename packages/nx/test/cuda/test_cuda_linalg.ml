@@ -302,6 +302,22 @@ let test_rotations =
       limited ~rotations:0 (fun () ->
           fails b (Svd (Some Reduced)) dt ~rows:40 ~cols:36 (drawn 40 36)))
 
+(* nx_cuda.mli: [bound_iterations] raises [Invalid_argument] if [sweeps] or
+   [steps] is below 1, or [qr] or [rotations] negative; the limits are restored
+   after each row whether it raises or not. *)
+let out_of_range =
+  [ (0, 30, 30, 6); (30, 0, 30, 6); (60, 30, -1, 6); (60, 30, 30, -1) ]
+
+let range_name (sweeps, steps, qr, rotations) =
+  Printf.sprintf "sweeps %d, steps %d, qr %d, rotations %d" sweeps steps qr
+    rotations
+
+let test_refused (sweeps, steps, qr, rotations) =
+  limited (fun () ->
+      raises_match
+        (function Invalid_argument _ -> true | _ -> false)
+        (fun () -> Nx_cuda.bound_iterations ~sweeps ~steps ~qr ~rotations))
+
 (* GPU 0 through CUDA and through rig.nv, opened at a test's first call;
    a test skips without its GPU. *)
 let cuda_name = "cuda"
@@ -557,4 +573,12 @@ let agreement ~first b =
 let () =
   exit
     (Windtrap.run "nx.cuda linalg"
-       [ laws ~name:cuda_name cuda; agreement ~first:cuda nv ])
+       [
+         laws ~name:cuda_name cuda;
+         agreement ~first:cuda nv;
+         group "bound_iterations"
+           [
+             cases ~id:range_name "refuses limits below their range"
+               out_of_range test_refused;
+           ];
+       ])
