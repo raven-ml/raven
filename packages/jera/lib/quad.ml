@@ -1095,29 +1095,23 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
   let ok = Nx.equal_s st (Solution.code Converged) in
   (* The answer: the volume times the mean over each lane's final points,
      tracked, chunk by chunk. A chunk the answer drops, past a lane's last or of
-     a lane that did not converge, is evaluated at chunk 0's points, which the
-     search evaluated first, and adds zero, so neither its value nor its
-     derivative reaches the sum. *)
-  let first = unit_chunk (Nx.scalar_at at Nx.int32 0l) in
+     a lane that did not converge, is evaluated where the search began, Sobol
+     point 0 under each shift, which is the shift itself, and adds zero, so
+     neither its value nor its derivative reaches the sum. *)
+  let first =
+    Nx.reshape
+      (Array.concat [ [| 1; shifts |]; Array.make (rank - 1) 1; [| d |] ])
+      (unit_points dtype shift)
+  in
   let sum_chunk total j =
-    let keep = Nx.logical_and ok (Nx.less (per_lane j) used) in
-    let along shape =
-      Nx.broadcast_to shape
-        (Nx.reshape
-           (Array.concat
-              [
-                [| 1; 1 |]; lanes; Array.make (Array.length shape - rank - 1) 1;
-              ])
-           keep)
+    let keep =
+      Nx.reshape
+        (Array.append [| 1; 1 |] lanes)
+        (Nx.logical_and ok (Nx.less (per_lane j) used))
     in
-    let shape = Array.concat [ [| qmc_chunk; shifts |]; lanes; [| d |] ] in
-    let u =
-      Nx.where (along shape)
-        (Nx.broadcast_to shape (unit_chunk j))
-        (Nx.broadcast_to shape first)
-    in
+    let u = Nx.where (Nx.unsqueeze ~axes:[ -1 ] keep) (unit_chunk j) first in
     let y = values f box.lo box.hi u in
-    let y = Nx.where (along (Nx.shape y)) y (Nx.zeros_like y) in
+    let y = Nx.where keep y (Nx.zeros_like y) in
     (Nx.add total (Nx.sum ~axes:[ 0; 1 ] y), ())
   in
   let total, () =
