@@ -136,7 +136,7 @@ let last_line fd ~size =
   in
   go size first_piece None
 
-type error = [ `Not_a_run | `Unreadable of string | `Unopened of string ]
+type error = [ `Not_a_run | `Unreadable of string | `Unread of string ]
 
 let decode_start line =
   match Record.decode line with
@@ -188,6 +188,31 @@ let annotations ?prev dir =
       (tags, notes, tags_stamp, notes_stamp)
   | None -> (tags dir, notes dir, tags_stamp, notes_stamp)
 
+(* [read_log ?prev fd] is what a listing reads of the log [fd]: its start, the
+   start's time, whether the probe found the lock held, the log's [stat] and its
+   last record's end, if it is one. *)
+let read_log ?prev fd =
+  let* start, started_at =
+    match prev with
+    | Some p -> Ok (p.start, p.started_at)
+    | None -> (
+        match first_line fd with
+        | None -> Error `Not_a_run
+        | Some line -> (decode_start line :> (_, error) result))
+  in
+  (* The probe comes before the read of the last record. *)
+  let held = File.probe fd in
+  let st = File.fstat fd in
+  let last =
+    match last_line fd ~size:st.Unix.st_size with
+    | None -> None
+    | Some line -> (
+        match Record.decode line with
+        | Some (t, Record.End s) -> Some (t, s)
+        | _ -> None)
+  in
+  Ok (start, started_at, held, st, last)
+
 let read ?prev ~id dir =
   let read_at = Unix.gettimeofday () in
   let path = log dir in
@@ -203,28 +228,15 @@ let read ?prev ~id dir =
          deletion renames the log away before it removes the directory: a
          directory without a log holds no run. *)
       match File.open_read_opt path with
-      | exception Sys_error e -> Error (`Unopened e)
+      | exception Sys_error e -> Error (`Unread e)
       | None -> Error `Not_a_run
       | Some fd ->
-          Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-          let* start, started_at =
-            match prev with
-            | Some p -> Ok (p.start, p.started_at)
-            | None -> (
-                match first_line fd with
-                | None -> Error `Not_a_run
-                | Some line -> (decode_start line :> (_, error) result))
-          in
-          (* The probe comes before the read of the last record. *)
-          let held = File.probe fd in
-          let st = File.fstat fd in
-          let last =
-            match last_line fd ~size:st.Unix.st_size with
-            | None -> None
-            | Some line -> (
-                match Record.decode line with
-                | Some (t, Record.End s) -> Some (t, s)
-                | _ -> None)
+          let* start, started_at, held, st, last =
+            Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+            (* A log that opens may still refuse its reads, as a directory does,
+               or a log another machine holds locked on SMB. *)
+            try read_log ?prev fd
+            with Sys_error e -> Error (`Unread (path ^ ": " ^ e))
           in
           let status, ended_at =
             status ~held:(Some held) ~writer:(writer dir)

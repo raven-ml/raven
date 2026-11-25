@@ -43,8 +43,8 @@ val runs : ?prev:Run.t list -> t -> Run.t list
     its tags and its notes, and probes the lock of a run without an end
     ({!Store_format.section-status}). It reads no other part of a log. A
     directory that is not a readable run of this format is left out, and
-    {!check} names it. So is a run whose log cannot be opened, such as a live
-    run on an SMB mount ({!Store_format.section-network}).
+    {!check} names it. So is a run whose log cannot be opened or read, such as a
+    live run on an SMB mount ({!Store_format.section-network}).
 
     [prev] is a listing of [s] made earlier. With it, [runs] reads the
     first record only of the runs [prev] lacks, and the last record and
@@ -65,7 +65,7 @@ val run : t -> string -> Run.t option
     ({!Store_format.section-names}) names no run.
 
     Raises [Failure] if [id]'s log does not start as a run of this format, and
-    [Sys_error] if it cannot be opened. *)
+    [Sys_error] if it cannot be opened or read. *)
 
 val add_tags : t -> string -> string list -> unit
 (** [add_tags s id tags] adds [tags] to the run [id]. Its other tags stay.
@@ -169,7 +169,7 @@ val check : t -> (string * string) list
 (** [check s] is each path of [s] that breaks the format, with what is
     wrong, sorted by path:
     - a run directory that is not a readable run, or whose log cannot be
-      opened;
+      opened or read;
     - a damaged line in a log, and a line that is not whole in the log of
       a run that has crashed or ended ({!Store_format.section-reading});
     - a damaged tag file;

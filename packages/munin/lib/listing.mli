@@ -66,10 +66,10 @@ val writer : string -> string option * string option
 (** [writer dir] is the machine and boot of the run's latest writer, from its
     [writer] file. *)
 
-type error = [ `Not_a_run | `Unreadable of string | `Unopened of string ]
+type error = [ `Not_a_run | `Unreadable of string | `Unread of string ]
 (** The type for runs that cannot be read: a directory that holds no run, a log
-    that is not a run of this format, and a log that cannot be opened, with the
-    system's message. *)
+    that is not a run of this format, and a log that cannot be opened or read,
+    with the system's message. *)
 
 val read : ?prev:t -> id:string -> string -> (t, error) result
 (** [read ?prev ~id dir] reads the run in [dir], reusing what [prev], an earlier

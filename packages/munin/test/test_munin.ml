@@ -2313,6 +2313,32 @@ let read_back =
 
 let open_run m = not m.ended
 
+(* Runs whose log cannot be opened, in a directory the user cannot search, and
+   whose log opens but cannot be read, a directory. Each is the run's id and
+   directory. The runner gives the permissions back to remove them. *)
+let unreadable_logs =
+  [
+    ( "unsearchable",
+      fun store ->
+        if Sys.win32 then
+          skip ~reason:"Windows keeps no search permission in a mode" ();
+        if Unix.geteuid () = 0 then
+          skip ~reason:"root searches any directory" ();
+        let s = start store in
+        Session.finish s;
+        let dir = Run.dir (reread store s) in
+        Unix.chmod dir 0o600;
+        (Session.id s, dir) );
+    ( "a directory",
+      fun store ->
+        let dir = Filename.concat (Store.root store) "runs/dir" in
+        mkdir_p (Store.root store);
+        mkdir_p (Filename.dirname dir);
+        mkdir_p dir;
+        mkdir_p (Filename.concat dir "events.jsonl");
+        ("dir", dir) );
+  ]
+
 let runs_tests =
   group "runs"
     [
@@ -2410,21 +2436,16 @@ let runs_tests =
             (Unix.stat tags).Unix.st_size;
           equal (list string) [ "b" ]
             (Run.tags (List.hd (Store.runs ~prev:listing store))));
-      test "a run whose log cannot be opened is left out" (fun () ->
-          if Sys.win32 then
-            skip ~reason:"Windows keeps no search permission in a mode" ();
-          if Unix.geteuid () = 0 then
-            skip ~reason:"root searches any directory" ();
+      cases "a run whose log cannot be opened or read is left out" ~id:fst
+        unreadable_logs (fun (_, unreadable) ->
           let store = new_store () in
-          let s = start store in
-          Session.finish s;
-          let dir = Run.dir (reread store s) in
-          Unix.chmod dir 0o600;
-          Fun.protect ~finally:(fun () -> Unix.chmod dir 0o755) @@ fun () ->
-          equal ~msg:"runs" (list string) []
-            (List.map Run.id (Store.runs store));
-          raises_match ~msg:"run" Exn.sys_error (fun () ->
-              Store.run store (Session.id s)));
+          ignore (unreadable store);
+          equal (list string) [] (List.map Run.id (Store.runs store)));
+      cases "run raises Sys_error for a log it cannot open or read" ~id:fst
+        unreadable_logs (fun (_, unreadable) ->
+          let store = new_store () in
+          let id, _ = unreadable store in
+          raises_match Exn.sys_error (fun () -> Store.run store id));
       cases "notes, a start and a failure of any length read back whole"
         ~id:string_of_int
         [ 0; 1; 511; 512; 513; 4096; 65535; 65536; 65537; 200_000 ] (fun n ->
@@ -2895,17 +2916,10 @@ let maintenance_tests =
           equal ~msg:"0. disagrees with -0." (list string)
             [ hint_path run ]
             (List.map fst (Store.check store)));
-      test "check names a run directory that cannot be searched" (fun () ->
-          if Sys.win32 then
-            skip ~reason:"Windows keeps no search permission in a mode" ();
-          if Unix.geteuid () = 0 then
-            skip ~reason:"root searches any directory" ();
+      cases "check names a run whose log cannot be opened or read" ~id:fst
+        unreadable_logs (fun (_, unreadable) ->
           let store = new_store () in
-          let s = start store in
-          Session.finish s;
-          let dir = Run.dir (reread store s) in
-          Unix.chmod dir 0o600;
-          Fun.protect ~finally:(fun () -> Unix.chmod dir 0o755) @@ fun () ->
+          let _, dir = unreadable store in
           equal (list string) [ dir ] (List.map fst (Store.check store)));
     ]
 
