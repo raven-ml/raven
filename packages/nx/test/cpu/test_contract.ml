@@ -2104,8 +2104,8 @@ let cpu (b : Support.backend) =
       prop
         ~examples:
           (made
-             (examples @ large_examples @ order_edges @ unroll_examples
-            @ few_rows_examples)
+             (Lazy.force examples @ Lazy.force large_examples @ order_edges
+            @ unroll_examples @ few_rows_examples)
           @ edge_examples @ by_columns_examples
           @ made (depth_one_examples @ chain_block_examples))
         "each output adds its products in the order nx_cpu.mli states"

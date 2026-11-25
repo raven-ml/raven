@@ -268,8 +268,9 @@ let make ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
   { batch = pairs; contracting; acc; a; b; init = Option.map made init; out;
     views }
 
-(* A case in [acc] into [out], each operand of [acc] or of [dts]. *)
-let case_of ?same ~acc ~out ~dts () =
+(* A case in [acc] into [out], each operand of [acc] or of [dts], with an init
+   where [init] says, drawn where it says nothing. *)
+let case_of ?same ?init ~acc ~out ~dts () =
   let open Gen in
   let* ((batch, _, _, _) as e) = extents in
   let nb = Array.length batch in
@@ -280,7 +281,7 @@ let case_of ?same ~acc ~out ~dts () =
   let* va = view ra nb in
   let* vb = view rb nb in
   let* vi = view ry 0 in
-  let* with_init = bool in
+  let* with_init = match init with Some i -> constant i | None -> bool in
   let+ seed = int in
   make ~acc ~out e (da, va) (db, vb)
     (if with_init then Some vi else None)
@@ -306,6 +307,37 @@ let apart acc (init, e) =
   let c = make ~acc ~out:acc e (acc, swap ra) (acc, swap rb) ti 1 in
   { c with a = copy c.a; b = copy c.b }
 
+(* {!case_in} with a and b stored in the orders of their made axes [sa] and [sb]
+   name. *)
+let stored acc (init, e, sa, sb) =
+  let _, _, ry = ranks e in
+  let ti = if init then Some (E.plain ry) else None in
+  let at s = { (E.plain (Array.length s)) with stored = s } in
+  make ~acc ~out:acc e (acc, at sa) (acc, at sb) ti 1
+
+(* Attention's scores, q and k of [b; s; h; d] read as [b; h; s; d]: a batch of
+   two runs, the outer of 16 positions, over 768 KiB of operands, which the
+   threads take a position at a time. *)
+let heads acc =
+  stored acc
+    ( false,
+      ([| 16; 4 |], [| 32 |], [| 32 |], [| 32 |]),
+      [| 0; 2; 1; 3 |],
+      [| 0; 3; 1; 2 |] )
+
+(* a of a dtype acc does not hold, cast into it: float64 into float32 or an
+   integer, complex128 into complex64, int64 into float64 and complex128. *)
+let unheld acc =
+  let wide =
+    match acc with
+    | D.Any D.Float32 -> D.Any D.Float64
+    | D.Any D.Complex64 -> D.Any D.Complex128
+    | D.Any (D.Float64 | D.Complex128) -> D.Any D.Int64
+    | _ -> D.Any D.Float64
+  in
+  let e = ([||], [| 3 |], [| 4 |], [| 5 |]) in
+  make ~acc ~out:acc e (wide, E.plain 2) (acc, E.plain 2) None 1
+
 (* Sizes in [acc] the drawn cases reach a few times in a hundred or never:
    no output, one, no product; either side of 4 rows and of 4 columns, of
    64 outputs and of a depth of 128 outputs' worth, where the order turns;
@@ -327,14 +359,7 @@ let regimes acc =
     let c = make ~acc ~out:acc e (acc, swap ra) (acc, plain rb) ti 1 in
     { c with a = copy c.a }
   in
-  (* [case] with a and b stored in the orders of their made axes [sa] and
-     [sb] name. *)
-  let stored (init, e, sa, sb) =
-    let _, _, ry = ranks e in
-    let ti = if init then Some (plain ry) else None in
-    let at s = { (plain (Array.length s)) with stored = s } in
-    make ~acc ~out:acc e (acc, at sa) (acc, at sb) ti 1
-  in
+  let stored = stored acc in
   (* Contracted axes stored in another order in a than in b, with init and
      without. *)
   let split =
@@ -357,28 +382,7 @@ let regimes acc =
          [| 0; 2; 1 |]);
       ]
   in
-  (* Attention's scores, q and k of [b; s; h; d] read as [b; h; s; d]: a
-     batch of two runs, the outer of 16 positions, over 768 KiB of
-     operands, which the threads take a position at a time. *)
-  let heads =
-    stored
-      ( false, ([| 16; 4 |], [| 32 |], [| 32 |], [| 32 |]),
-        [| 0; 2; 1; 3 |], [| 0; 3; 1; 2 |] )
-  in
-  (* a of a dtype acc does not hold, cast into it: float64 into float32 or
-     an integer, complex128 into complex64, int64 into float64 and
-     complex128. *)
-  let unheld =
-    let wide =
-      match acc with
-      | D.Any D.Float32 -> D.Any D.Float64
-      | D.Any D.Complex64 -> D.Any D.Complex128
-      | D.Any (D.Float64 | D.Complex128) -> D.Any D.Int64
-      | _ -> D.Any D.Float64
-    in
-    let e = ([||], [| 3 |], [| 4 |], [| 5 |]) in
-    make ~acc ~out:acc e (wide, plain 2) (acc, plain 2) None 1
-  in
+  let heads = heads acc and unheld = unheld acc in
   (* A convolution's product: a the windows of an image [n; h; w; c] by
      [kh × kw] taps at [stride] and [dilation], [n; oh; ow; c; kh; kw],
      contracted with b, [kh; kw; c; o], over the taps and channels, in the
@@ -551,13 +555,67 @@ let computed =
               ])
            (fun dts -> case_of ~acc ~out:acc ~dts ())))
 
-let examples = List.concat_map regimes accs
+(* The regimes of every float and complex accumulator, made when first forced,
+   so that a process that runs no law of them never makes them. *)
+let examples = lazy (List.concat_map regimes accs)
 
 (* A batch of chain order's contractions over some 135 million products, a
    and b stored transposed, in float64: a run of it takes seconds, so one
    law takes it. *)
 let large_examples =
-  [ apart (D.Any D.Float64) (true, ([| 8 |], [| 257 |], [| 257 |], [| 256 |])) ]
+  lazy
+    [
+      apart (D.Any D.Float64) (true, ([| 8 |], [| 257 |], [| 257 |], [| 256 |]));
+    ]
+
+(* The sizes in [acc] that drawn cases reach rarely, few enough to check on
+   every run: no output, one and no product, with init; 2 rows by 1 to 64
+   columns at depths from 1 to 1024, either side of a block of 256 products,
+   with init at an even number of columns; 256 rows by 259 columns over 3
+   products with init, a and b stored transposed; an a of a dtype [acc] does not
+   hold; and in a real [acc] attention's heads, in a complex one a real a with
+   init. *)
+let edges acc =
+  let least =
+    [
+      ([||], [| 0 |], [| 3 |], [| 2 |]);
+      ([| 1 |], [| 1 |], [| 1 |], [| 5 |]);
+      ([||], [| 3 |], [| 2 |], [| 0 |]);
+    ]
+  in
+  let two_rows (n, k) = (n mod 2 = 0, ([||], [| 2 |], [| n |], [| k |])) in
+  let real_a () =
+    make ~acc ~out:acc
+      ([||], [| 3 |], [| 4 |], [| 5 |])
+      (part_of acc, E.plain 2)
+      (acc, E.plain 2)
+      (Some (E.plain 2))
+      1
+  in
+  List.map (fun e -> case_in acc (true, e)) least
+  @ List.map
+      (fun d -> case_in acc (two_rows d))
+      [
+        (1, 17);
+        (2, 3);
+        (3, 33);
+        (4, 16);
+        (5, 47);
+        (6, 1);
+        (7, 15);
+        (8, 64);
+        (9, 100);
+        (15, 31);
+        (16, 1024);
+        (17, 5);
+        (64, 64);
+        (64, 255);
+      ]
+  @ [
+      apart acc (true, ([||], [| 256 |], [| 259 |], [| 3 |]));
+      unheld acc;
+      (if is_complex acc then real_a () else heads acc);
+    ]
 
 (* Unscaled cases of accumulators every kernel library computes in, into
    the accumulator or any dtype, of operands it holds or not. *)
@@ -934,16 +992,13 @@ let order c =
   let m, n = rows_cols c and _, k, _ = sizes c in
   order_of c.acc m n k
 
-(* The cases a run reaches, by the examples where the drawn cases reach
-   one rarely: an operand of a dtype [acc] does not hold, no output, one,
-   no product, each order of nx_cpu.mli's rule, lane order over several
-   blocks of lanes, either side of 64 outputs, an init, a complex
-   accumulator with a real operand, and each kind of view. [c]'s operands
-   are those the kernels read, on their device, so that a stepped view is
-   one whose gaps lie there. *)
-let covers c =
+(* The cases a run reaches, by the examples where the drawn cases reach one
+   rarely: an operand of a dtype [acc] does not hold, no output, one, no
+   product, an init, a complex accumulator with a real operand, and each kind of
+   view. [c]'s operands are those the kernels read, on their device, so that a
+   stepped view is one whose gaps lie there. *)
+let case_covers c =
   let y, k, _ = sizes c in
-  let per = per_batch c in
   let real (A.Any x) = not (is_complex (D.Any (A.dtype x))) in
   let gapped (A.Any x) = Support.gapped (A.layout x) in
   let operands = c.a :: c.b :: Option.to_list c.init in
@@ -951,12 +1006,6 @@ let covers c =
   cover "no output" (total y = 0);
   cover "one output" (total y = 1);
   cover "no product" (k = 0 && total y > 0);
-  cover "lane order" (per > 0 && order c = Lane);
-  cover "chain order" (per > 0 && order c = Chain);
-  cover "lane order over several blocks of lanes"
-    (per > 0 && order c = Lane && k > 1024);
-  cover "fewer than 64 outputs" (per > 0 && per < 64);
-  cover "64 outputs or more" (per >= 64);
   cover "init" (c.init <> None);
   cover "complex with a real operand"
     (is_complex c.acc && (real c.a || real c.b));
@@ -964,6 +1013,19 @@ let covers c =
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "windowed"; "reversed"; "broadcast"; "stored apart"; "permuted" ]
+
+(* {!case_covers}, then nx.cpu's orders: each order of nx_cpu.mli's rule, lane
+   order over several blocks of lanes, either side of 64 outputs. *)
+let covers c =
+  let _, k, _ = sizes c in
+  let per = per_batch c in
+  case_covers c;
+  cover "lane order" (per > 0 && order c = Lane);
+  cover "chain order" (per > 0 && order c = Chain);
+  cover "lane order over several blocks of lanes"
+    (per > 0 && order c = Lane && k > 1024);
+  cover "fewer than 64 outputs" (per > 0 && per < 64);
+  cover "64 outputs or more" (per >= 64)
 
 (* A scale on [b]'s device. *)
 let scale_on b : Nx_kernel.scale -> Nx_kernel.scale = function

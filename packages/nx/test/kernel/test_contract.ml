@@ -698,7 +698,7 @@ let laws ?paths ?(more = []) (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
     [
-      prop ~examples:(examples @ more)
+      prop ~examples:(Lazy.force examples @ more)
         "a contraction is within its bound of the exact sum" computed
         (run (law_bound ?paths b));
       prop "a destination through a view gets a fresh one's bits"
@@ -710,7 +710,7 @@ let laws ?paths ?(more = []) (b : Support.backend) =
       (* A scale with a complex acc is one case in six. *)
       prop ~count:150 "a declined contraction writes nothing" decline_cases
         (run (law_declined b));
-      prop ~examples:(examples @ in_place_examples)
+      prop ~examples:(Lazy.force examples @ in_place_examples)
         "a destination identical to init gives a fresh one's bits" computed
         (run (law_in_place b));
       test
@@ -894,7 +894,7 @@ let nv_laws (first : Support.backend) (nv : Support.backend) =
     [
       group "bits are cuda's, any NaN for a NaN"
         [
-          prop ~examples "of float and complex contractions" computed (fun c ->
+          prop ~examples:(Lazy.force examples) "of float and complex contractions" computed (fun c ->
               cover "complex" (is_complex c.acc);
               cover "init" (Option.is_some c.init);
               agree (fun b -> some (run b c)));
