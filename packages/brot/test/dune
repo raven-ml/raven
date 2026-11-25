@@ -18,14 +18,14 @@
   test_unigram_load
   test_wordpiece
   test_hf_tokenizers
-  test_pretokenizers
   test_json
   test_pretoken_cache
   test_float_text
   test_tiktoken
   test_post_processor
   test_training
-  test_huggingface)
+  test_huggingface
+  test_pre_tokenizer)
  (modules
   test_tokenization
   test_vocab
@@ -36,20 +36,21 @@
   test_unigram_load
   test_wordpiece
   test_hf_tokenizers
-  test_pretokenizers
   test_json
   test_pretoken_cache
   test_float_text
   test_tiktoken
   test_post_processor
   test_training
-  test_huggingface)
+  test_huggingface
+  test_pre_tokenizer)
  (package brot)
  (deps
   (glob_files support/parity/*)
   (glob_files support/precompiled/*)
   (glob_files support/tiktoken/*)
   (glob_files support/unicode/*)
+  (glob_files support/pre_tokenizer/*)
   (glob_files support/tokenizers/*)
   ; Downloaded by bench/download_data.sh; a missing tokenizer is skipped
   ; unless BROT_REQUIRE_FIXTURES is set.

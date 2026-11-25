@@ -2,30 +2,29 @@
 # requires-python = ">=3.11"
 # dependencies = ["tokenizers==0.23.1"]
 # ///
-"""Generate the expected rows of the regular-expression Split tests in
-test_pretokenizers.ml (`test_split_regex_cl100k`, `test_split_regex_o200k`,
-`test_split_regex_tekken`, `test_split_regex_kimi`,
-`test_split_regex_classes`, `test_split_regex_behaviors`) and the generated
-rows of `test_unicode_scripts`.
+"""Generate the goldens of test_pre_tokenizer.ml that only HuggingFace
+tokenizers can compute: the pretokens of regular-expression splits and of
+UnicodeScripts.
 
     uv run packages/brot/test/gen/gen_split_regex_expected.py [--check]
 
-The rows are the pieces HuggingFace tokenizers gives for
-`pre_tokenizers.Split(Regex(pattern), behavior, invert)` and
-`pre_tokenizers.UnicodeScripts()`, with its character offsets turned into the
-byte offsets brot reports. Without `--check` it prints the fragments to paste
-over the case lists; with `--check` it compares them, and the patterns, with
-test_pretokenizers.ml and fails, naming each case that differs.
+It writes `support/pre_tokenizer/split_regex.json`, the pieces
+`pre_tokenizers.Split(Regex(pattern), behavior, invert)` gives for each
+pattern, behavior and text below, and `support/pre_tokenizer/unicode_scripts.json`,
+those of `pre_tokenizers.UnicodeScripts()`, with tokenizers' character
+offsets turned into the byte offsets brot reports. `split_regex.json` also
+holds the patterns of tokenizer files that brot matches by name
+(`PATTERNS`). With `--check` it writes nothing and fails, naming the file,
+if a committed golden differs from what it would write.
 """
 
+import json
 import sys
 from pathlib import Path
 
 from tokenizers import Regex, pre_tokenizers
 
-import ocaml_cases
-
-TEST = Path(__file__).resolve().parents[1] / "test_pretokenizers.ml"
+SUPPORT = Path(__file__).resolve().parents[1] / "support" / "pre_tokenizer"
 
 # The pattern of Llama 3's tokenizer.json.
 CL100K = (
@@ -178,130 +177,162 @@ BEHAVIOR_CASES = [
     (r"x?x|x?y", ["xy"]),
 ]
 
-# Characters Unicode 18.0.0 assigns, which have no script in Unicode 17.0.0 or
-# in HuggingFace's table (U+0558 is Armenian since 18.0.0).
-SCRIPT_TEXTS = ["a\u0558b", "\u0558abc", "\u65e5\u0558\u672c"]
+BEHAVIORS = ["isolated", "removed", "merged_with_previous", "merged_with_next", "contiguous"]
 
-BEHAVIORS = {
-    "isolated": "`Isolated",
-    "removed": "`Removed",
-    "merged_with_previous": "`Merged_with_previous",
-    "merged_with_next": "`Merged_with_next",
-    "contiguous": "`Contiguous",
+
+# Qwen2's, in the tokenizer.json of Qwen/Qwen2.5-7B: cl100k's with numbers one
+# at a time.
+QWEN2 = (
+    r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}"
+    r"| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"
+)
+
+# Qwen3.5's: Qwen2's with the combining marks in its words.
+QWEN35 = (
+    r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}"
+    r"| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"
+)
+
+# cl100k as some tokenizer files spell it, its newline alternative without the
+# `+`, which matches the same text.
+CL100K_HF = (
+    r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}"
+    r"| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]|\s+(?!\S)|\s+"
+)
+
+PATTERNS = {
+    "cl100k": CL100K,
+    "cl100k_hf": CL100K_HF,
+    "qwen2": QWEN2,
+    "qwen35": QWEN35,
+    "o200k": O200K,
+    "tekken": TEKKEN,
+    "kimi": KIMI,
 }
 
+# The texts UnicodeScripts is compared on. Hiragana, Katakana and U+30FC
+# folding into Han is stated by brot.mli and tested there by hand.
+SCRIPT_TEXTS = [
+    "Hello world", "abc!def", "a b", "",
+    # A leading run of spaces opens no piece.
+    "  !  ", " abc", "  文", "   ", "abc  ",
+    # Only U+0020 joins the run around it; other white space has a script of
+    # its own: Common, or Ogham for U+1680.
+    "a\tb", "a\rb", "\n\nabc def", "  \n  abc", "a 　b",
+    "a b", "a b", "a b", "a b", " abc",
+    # A character of no known script joins the run around it too: U+E000 is
+    # private use.
+    "ab", "abc", "    abc",
+    # U+0558 is Armenian since Unicode 18.0.0, and has no script in 17.0.0 or
+    # in tokenizers' table.
+    "a՘b", "՘abc", "日՘本",
+    # The iteration mark U+3005 is Han.
+    "中々中 abc",
+    # A script change cuts; digits are Common.
+    "中文 abc", "Hello世界", "a１２３",
+    " 123 中文 abc ",
+    # One script, one piece, however many words.
+    "Ελληνικά abc",
+    "Привет мир",
+    "abc Привет",
+    "مرحبا بالعالم",
+    "שלום abc", "안녕 abc",
+    "नमस्ते abc",
+    # Inherited is a script of its own: a combining mark and a variation
+    # selector cut off what they attach to.
+    "éx", "a❤️b",
+]
 
-def ocaml(b: bytes) -> str:
-    out = []
-    for c in b:
-        if c == 0x22:
-            out.append('\\"')
-        elif c == 0x5C:
-            out.append("\\\\")
-        elif 0x20 <= c < 0x7F:
-            out.append(chr(c))
-        else:
-            out.append("\\x%02X" % c)
-    return '"' + "".join(out) + '"'
 
-
-def pieces(pattern, behavior, invert, text):
-    pre = pre_tokenizers.Split(Regex(pattern), behavior, invert=invert)
+def pretokens(pre, text):
+    """The pieces of `text` as [piece, start, stop], offsets in bytes."""
     rows = []
     for piece, (start, stop) in pre.pre_tokenize_str(text):
-        assert text[start:stop] == piece
         rows.append(
-            (piece.encode(), len(text[:start].encode()), len(text[:stop].encode()))
+            [piece, len(text[:start].encode()), len(text[:stop].encode())]
         )
     return rows
 
 
-def scripts_case(text):
-    rows = []
-    for piece, (start, stop) in pre_tokenizers.UnicodeScripts().pre_tokenize_str(text):
-        rows.append(
-            "(%s, (%d, %d))"
-            % (ocaml(piece.encode()), len(text[:start].encode()), len(text[:stop].encode()))
-        )
-    return "  test_case %s [ %s ];" % (ocaml(text.encode()), "; ".join(rows))
+def split_set(group, pattern, behavior, invert, texts):
+    pre = pre_tokenizers.Split(Regex(pattern), behavior, invert=invert)
+    return {
+        "group": group,
+        "pattern": pattern,
+        "behavior": behavior,
+        "invert": invert,
+        "cases": [
+            {"text": text, "pretokens": pretokens(pre, text)} for text in texts
+        ],
+    }
 
 
-def case(name, pattern, behavior, invert, text):
-    body = "; ".join(
-        "(%s, (%d, %d))" % (ocaml(p), a, b)
-        for p, a, b in pieces(pattern, behavior, invert, text)
-    )
-    return "  case %s %s ~invert:%s %s [ %s ];" % (
-        name, BEHAVIORS[behavior], str(invert).lower(), ocaml(text.encode()), body
-    )
-
-
-def fragments() -> dict[str, list[str]]:
-    """The lines of each case list, by the test function that holds it."""
-    out = {}
-    out["test_split_regex_cl100k"] = [
-        case("~pattern:cl100k", CL100K, "isolated", False, text)
-        for text in CL100K_TEXTS
+def split_regex():
+    sets = [
+        split_set("cl100k", CL100K, "isolated", False, CL100K_TEXTS),
+        split_set("o200k", O200K, "isolated", False, O200K_TEXTS + WORD_TEXTS),
+        split_set("tekken", TEKKEN, "isolated", False, WORD_TEXTS),
+        split_set("kimi", KIMI, "isolated", False, WORD_TEXTS),
     ]
-    out["test_split_regex_o200k"] = [
-        case("~pattern:o200k", O200K, "isolated", False, text)
-        for text in O200K_TEXTS
-    ]
-    for name, pattern in (("o200k", O200K), ("tekken", TEKKEN), ("kimi", KIMI)):
-        out.setdefault("test_split_regex_" + name, []).extend(
-            case("~pattern:" + name, pattern, "isolated", False, text)
-            for text in WORD_TEXTS
-        )
-    out["test_split_regex_classes"] = [
-        case("~pattern:" + ocaml(pattern.encode()), pattern, "isolated", False, text)
+    sets += [
+        split_set("classes", pattern, "isolated", False, texts)
         for pattern, texts in CLASS_CASES
-        for text in texts
     ]
-    out["test_split_regex_behaviors"] = [
-        case("~pattern:" + ocaml(pattern.encode()), pattern, behavior, invert, text)
+    sets += [
+        split_set("behaviors", pattern, behavior, invert, texts)
         for pattern, texts in BEHAVIOR_CASES
         for behavior in BEHAVIORS
         for invert in (False, True)
-        for text in texts
     ]
-    out["test_unicode_scripts"] = [scripts_case(text) for text in SCRIPT_TEXTS]
-    return out
+    return {"patterns": PATTERNS, "sets": sets}
 
 
-# The groups whose test function also holds hand-written cases.
-PARTIAL = {"test_unicode_scripts": "test_case"}
+def unicode_scripts():
+    pre = pre_tokenizers.UnicodeScripts()
+    return [{"text": text, "pretokens": pretokens(pre, text)} for text in SCRIPT_TEXTS]
 
-PATTERNS = {"cl100k": CL100K, "o200k": O200K, "tekken": TEKKEN, "kimi": KIMI}
+
+def line(value) -> str:
+    return json.dumps(value, ensure_ascii=False)
 
 
-def check(groups: dict[str, list[str]]) -> int:
-    defined = ocaml_cases.definitions(ocaml_cases.read(TEST))
-    problems = []
-    # A pattern is one string, or `String.concat sep [ part; ... ]`.
-    for name, pattern in PATTERNS.items():
-        strings = [value for kind, value in defined[name] if kind == "str"]
-        text = strings[0] if len(strings) == 1 else strings[0].join(strings[1:])
-        if text != pattern.encode():
-            problems.append(f"{name}: the test's pattern is not the generator's")
-    for group, lines in groups.items():
-        head = PARTIAL.get(group, "case")
-        generated = ocaml_cases.cases(
-            ocaml_cases.tokens("\n".join(lines)), head, 1
-        )
-        recorded = ocaml_cases.cases(defined[group], head, 1)
-        problems += ocaml_cases.differences(
-            group, generated, recorded, partial=group in PARTIAL
-        )
-    return ocaml_cases.report(problems)
+def cases(cases, indent) -> str:
+    """One case per line, so that a change reads as a diff of cases."""
+    pad = " " * indent
+    return "[\n" + ",\n".join(pad + line(c) for c in cases) + "\n" + pad[2:] + "]"
+
+
+def dump_split_regex(golden) -> str:
+    patterns = ",\n".join(
+        f"    {line(name)}: {line(pattern)}"
+        for name, pattern in golden["patterns"].items()
+    )
+    sets = ",\n".join(
+        "    " + line({k: v for k, v in s.items() if k != "cases"})[:-1]
+        + ', "cases": ' + cases(s["cases"], 6) + "}"
+        for s in golden["sets"]
+    )
+    return '{\n  "patterns": {\n' + patterns + '\n  },\n  "sets": [\n' + sets + "\n  ]\n}\n"
 
 
 def main() -> int:
-    groups = fragments()
+    goldens = {
+        "split_regex.json": dump_split_regex(split_regex()),
+        "unicode_scripts.json": cases(unicode_scripts(), 2) + "\n",
+    }
     if "--check" in sys.argv[1:]:
-        return check(groups)
-    for group, lines in groups.items():
-        print(f"(* {group} *)")
-        print("\n".join(lines))
+        stale = [
+            name
+            for name, text in goldens.items()
+            if not (SUPPORT / name).exists()
+            or (SUPPORT / name).read_text(encoding="utf-8") != text
+        ]
+        for name in stale:
+            print(f"support/pre_tokenizer/{name} differs from the generator's")
+        return 1 if stale else 0
+    SUPPORT.mkdir(parents=True, exist_ok=True)
+    for name, text in goldens.items():
+        (SUPPORT / name).write_text(text, encoding="utf-8")
     return 0
 
 

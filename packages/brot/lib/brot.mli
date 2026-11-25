@@ -428,36 +428,41 @@ module Pre_tokenizer : sig
   (** {1:constructors Constructors} *)
 
   val whitespace : t
-  (** [whitespace] splits on whitespace using pattern [\w+|[^\w\s]+].
+  (** [whitespace] cuts the text into runs of word characters and runs of other
+      characters, dropping white space. On a valid UTF-8 text the pretokens are
+      the matches of [\w+|[^\w\s]+].
 
-      Groups word characters (letters, digits, underscore) together and groups
-      non-word, non-space characters together. Whitespace is used as delimiter
-      but not included in output. *)
+      A word character is alphabetic, a mark, a decimal digit, connector
+      punctuation such as [_], or a join control (U+200C, U+200D).
+      {!split_regex}'s [\w] differs. It leaves out the join controls and counts
+      ², ³, ¹, ¼, ½ and ¾. *)
 
   val whitespace_split : t
-  (** [whitespace_split] splits on any whitespace characters.
-
-      Removes whitespace from output. Simplest and fastest pre-tokenizer. *)
+  (** [whitespace_split] splits the text on white space and drops it. White
+      space is a character with the Unicode White_Space property. *)
 
   val bert : t
-  (** [bert] applies BERT-style pre-tokenization.
-
-      Splits on whitespace, isolates punctuation, and separates CJK characters
-      individually. *)
+  (** [bert] splits the text on white space and makes each punctuation character
+      a pretoken of its own, as [sequence [whitespace_split; punctuation ()]]
+      does. *)
 
   val byte_level :
     ?add_prefix_space:bool -> ?use_regex:bool -> ?trim_offsets:bool -> unit -> t
   (** [byte_level ()] is a byte-level pre-tokenizer. Used by GPT-2, GPT-3,
       RoBERTa.
 
-      Converts text to byte representation and applies GPT-2's regex pattern for
-      splitting.
+      It cuts the text with GPT-2's pattern, whose alternatives are
+      ['s|'t|'re|'ve|'m|'ll|'d], [ ?\p{L}+], [ ?\p{N}+], [ ?[^\s\p{L}\p{N}]+],
+      [\s+(?!\S)] and [\s+] in that order, and spells each pretoken in the
+      byte-level alphabet, one character per byte.
 
-      - [add_prefix_space]: add space at beginning if text does not start with
-        whitespace. Default: [true].
-      - [use_regex]: use GPT-2's regex pattern for splitting. Default: [true].
-      - [trim_offsets]: adjust offsets for byte-level encoding. Default: [true].
-  *)
+      - [add_prefix_space]: prepend a space (U+0020) to a text that does not
+        start with one. The space stands at the text's first character. Default:
+        [true].
+      - [use_regex]: cut with GPT-2's pattern. Without it the text is one
+        pretoken. Default: [true].
+      - [trim_offsets]: kept in {!to_json} for {!Post_processor.byte_level}. It
+        changes no pretoken. Default: [true]. *)
 
   type behavior =
     [ `Isolated  (** Keep each delimiter as a pretoken of its own *)
@@ -469,13 +474,15 @@ module Pre_tokenizer : sig
       *) ]
   (** Delimiter handling behavior for splitting operations.
 
-      [`Merged_with_previous] and [`Merged_with_next] merge a delimiter into the
-      text beside it only: a delimiter that follows another one is a pretoken of
-      its own. *)
+      [`Merged_with_previous] merges a delimiter into the text before it and
+      [`Merged_with_next] into the text after it. A delimiter whose neighbour on
+      that side is another delimiter is a pretoken of its own. *)
 
   val punctuation : ?behavior:behavior -> unit -> t
-  (** [punctuation ()] separates punctuation characters from the text around
-      them, whitespace included. Every punctuation character is a delimiter.
+  (** [punctuation ()] cuts the text at its punctuation characters, the
+      delimiters. White space is text like any other here. A punctuation
+      character is a printable ASCII character other than a letter or a digit,
+      or a character of the Unicode general category P.
 
       [behavior] defaults to [`Isolated]. *)
 
@@ -488,8 +495,8 @@ module Pre_tokenizer : sig
       occurrences are what they separate; defaults to [false].
 
       An empty [pattern] matches at every position, so the pretokens are the
-      characters — and none of them when [invert] is [true] and [behavior] is
-      [`Removed]. *)
+      characters. When [invert] is [true] and [behavior] is [`Removed] there are
+      none. *)
 
   val split_regex :
     pattern:string -> ?behavior:behavior -> ?invert:bool -> unit -> t
@@ -517,7 +524,8 @@ module Pre_tokenizer : sig
       Raises [Invalid_argument] if [c] is not exactly one character. *)
 
   val digits : ?individual_digits:bool -> unit -> t
-  (** [digits ()] splits on digit boundaries.
+  (** [digits ()] isolates each run of digits from the text around it. A digit
+      is a character of the Unicode general category N (Nd, Nl or No).
 
       When [individual_digits] is [true], each digit is a separate pretoken;
       when [false] (default), consecutive digits are grouped. *)
@@ -528,9 +536,9 @@ module Pre_tokenizer : sig
     | `Always  (** Prepend to every pretoken not starting with a space *) ]
   (** Controls when metaspace prepends the replacement character. In a
       {!sequence} the pretokens are those of the member before it, so [`First]
-      marks the first of them and [`Always] each — and the encode pipeline
-      counts a pretoken as opening the document only when nothing, an added
-      token included, comes before it. *)
+      marks the first of them and [`Always] each. The encode pipeline counts a
+      pretoken as opening the document only when nothing, an added token
+      included, comes before it. *)
 
   val metaspace :
     ?replacement:string ->
@@ -538,7 +546,7 @@ module Pre_tokenizer : sig
     ?split:bool ->
     unit ->
     t
-  (** [metaspace ()] replaces spaces with a visible marker. Used by
+  (** [metaspace ()] replaces each space (U+0020) with a visible marker. Used by
       SentencePiece models.
 
       - [replacement]: the marker spaces are replaced with. Default: ["▁"]
@@ -572,10 +580,10 @@ module Pre_tokenizer : sig
       The last pretoken may be shorter than [n]. *)
 
   val sequence : t list -> t
-  (** [sequence ts] chains multiple pre-tokenizers left-to-right.
-
-      Each pre-tokenizer processes the pretokens from the previous one. Offsets
-      are composed correctly through the chain. *)
+  (** [sequence ts] cuts the text with the first of [ts], then cuts each
+      pretoken with the next, as a text of its own whose spans are placed inside
+      that pretoken's. [sequence []] gives the text as one pretoken, an empty
+      text included. *)
 
   (** {1:ops Operations} *)
 
@@ -585,14 +593,15 @@ module Pre_tokenizer : sig
       Returns a list of [(pretoken, (start, end_))] where [start] and [end_] are
       byte positions in [text], ascending and within it. A pretoken is the bytes
       of its span unless [t] rewrote or encoded them, in which case the span is
-      where the bytes it was made from lie.
+      where the bytes it was made from lie. An empty text gives no pretoken,
+      except under [sequence []].
 
-      Two spans can cover the same bytes. A span is widened to whole characters,
-      so pretokens of a [text] that is not valid UTF-8 can share one; and the
-      pretokens a member of a {!sequence} cuts from one that was rewritten more
-      than once, cut by a fixed-length member, or encoded all report that
-      pretoken's span, nothing in it being placeable more finely than the whole
-      of it. *)
+      Two spans can cover the same bytes. A marker {!metaspace} prepends stands
+      at the character it opens, so a member after it that cuts the marker off
+      gives both pretokens that span. In a {!sequence} that encodes before its
+      last member, rewrites twice or holds a fixed-length member, the pretokens
+      a member cuts from one an earlier member rewrote or encoded can report
+      that pretoken's whole span, where HuggingFace places each within it. *)
 
   (** {1:fmt Formatting} *)
 
@@ -603,12 +612,11 @@ module Pre_tokenizer : sig
 
   val byte_level_decode : string -> string
   (** [byte_level_decode s] is the bytes the byte-level alphabet spells [s]
-      from: one byte per character. A single character outside the alphabet, an
-      invalidly encoded one included, leaves [s] as it is — the fallback is over
-      the whole string, not the character.
+      from, one byte per character. A single character outside the alphabet, an
+      invalidly encoded one included, leaves [s] as it is, so one such character
+      costs the whole string its mapping.
 
-      The result needs not be valid UTF-8: it is bytes, and turning them into
-      text is the caller's step. *)
+      The result is bytes and need not be valid UTF-8. *)
 
   (** {1:serialization Serialization} *)
 
@@ -619,7 +627,10 @@ module Pre_tokenizer : sig
   (** [of_json json] is a pre-tokenizer from HuggingFace JSON format. Errors if
       [json] is not an object, has a missing or unknown ["type"] field, has
       invalid parameters, or is a ["Split"] whose regular expression
-      ([{"Regex": ...}]) uses a construct {!split_regex} does not support. *)
+      ([{"Regex": ...}]) uses a construct {!split_regex} does not support.
+
+      A field it lacks takes its constructor's default, except a ["Metaspace"]'s
+      ["replacement"], which it requires. *)
 end
 
 module Post_processor : sig

@@ -1,0 +1,512 @@
+{
+  "patterns": {
+    "cl100k": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+    "cl100k_hf": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]|\\s+(?!\\S)|\\s+",
+    "qwen2": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+    "qwen35": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?[\\p{L}\\p{M}]+|\\p{N}| ?[^\\s\\p{L}\\p{M}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+    "o200k": "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+    "tekken": "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
+    "kimi": "[\\p{Han}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"
+  },
+  "sets": [
+    {"group": "cl100k", "pattern": "(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "a  b", "pretokens": [["a", 0, 1], [" ", 1, 2], [" b", 2, 4]]},
+      {"text": "x\n\n  y", "pretokens": [["x", 0, 1], ["\n\n", 1, 3], [" ", 3, 4], [" y", 4, 6]]},
+      {"text": "I'M 123  ", "pretokens": [["I", 0, 1], ["'M", 1, 3], [" ", 3, 4], ["123", 4, 7], ["  ", 7, 9]]},
+      {"text": " a", "pretokens": [[" a", 0, 2]]},
+      {"text": "  a", "pretokens": [[" ", 0, 1], [" a", 1, 3]]},
+      {"text": "   a", "pretokens": [["  ", 0, 2], [" a", 2, 4]]},
+      {"text": " 1", "pretokens": [[" ", 0, 1], ["1", 1, 2]]},
+      {"text": "  1", "pretokens": [[" ", 0, 1], [" ", 1, 2], ["1", 2, 3]]},
+      {"text": "   1", "pretokens": [["  ", 0, 2], [" ", 2, 3], ["1", 3, 4]]},
+      {"text": " !", "pretokens": [[" !", 0, 2]]},
+      {"text": "  !", "pretokens": [[" ", 0, 1], [" !", 1, 3]]},
+      {"text": "   !", "pretokens": [["  ", 0, 2], [" !", 2, 4]]},
+      {"text": " ", "pretokens": [[" ", 0, 1]]},
+      {"text": "  ", "pretokens": [["  ", 0, 2]]},
+      {"text": "   ", "pretokens": [["   ", 0, 3]]},
+      {"text": "\ta", "pretokens": [["\ta", 0, 2]]},
+      {"text": " a", "pretokens": [[" a", 0, 3]]},
+      {"text": "　a", "pretokens": [["　a", 0, 4]]},
+      {"text": "\t\ta", "pretokens": [["\t", 0, 1], ["\ta", 1, 3]]},
+      {"text": "  a", "pretokens": [[" ", 0, 2], [" a", 2, 5]]},
+      {"text": "a　　", "pretokens": [["a", 0, 1], ["　　", 1, 7]]},
+      {"text": "a\r\nb", "pretokens": [["a", 0, 1], ["\r\n", 1, 3], ["b", 3, 4]]},
+      {"text": "a\n\rb", "pretokens": [["a", 0, 1], ["\n\r", 1, 3], ["b", 3, 4]]},
+      {"text": "\r\r\n  x", "pretokens": [["\r\r\n", 0, 3], [" ", 3, 4], [" x", 4, 6]]},
+      {"text": "a \n b", "pretokens": [["a", 0, 1], [" \n", 1, 3], [" b", 3, 5]]},
+      {"text": "a  \n  b", "pretokens": [["a", 0, 1], ["  \n", 1, 4], [" ", 4, 5], [" b", 5, 7]]},
+      {"text": "a\n", "pretokens": [["a", 0, 1], ["\n", 1, 2]]},
+      {"text": "\n  ", "pretokens": [["\n", 0, 1], ["  ", 1, 3]]},
+      {"text": "I'M", "pretokens": [["I", 0, 1], ["'M", 1, 3]]},
+      {"text": "HE'LL", "pretokens": [["HE", 0, 2], ["'LL", 2, 5]]},
+      {"text": "it'ſ", "pretokens": [["it", 0, 2], ["'ſ", 2, 5]]},
+      {"text": "'Sx", "pretokens": [["'S", 0, 2], ["x", 2, 3]]},
+      {"text": "''s", "pretokens": [["''", 0, 2], ["s", 2, 3]]},
+      {"text": "'", "pretokens": [["'", 0, 1]]},
+      {"text": "a'", "pretokens": [["a", 0, 1], ["'", 1, 2]]},
+      {"text": "'re're", "pretokens": [["'re", 0, 3], ["'re", 3, 6]]},
+      {"text": "x'Ve", "pretokens": [["x", 0, 1], ["'Ve", 1, 4]]},
+      {"text": "'K", "pretokens": [["'K", 0, 4]]},
+      {"text": "1", "pretokens": [["1", 0, 1]]},
+      {"text": "12", "pretokens": [["12", 0, 2]]},
+      {"text": "123", "pretokens": [["123", 0, 3]]},
+      {"text": "1234", "pretokens": [["123", 0, 3], ["4", 3, 4]]},
+      {"text": "1234567", "pretokens": [["123", 0, 3], ["456", 3, 6], ["7", 6, 7]]},
+      {"text": "١٢٣٤", "pretokens": [["١٢٣", 0, 6], ["٤", 6, 8]]},
+      {"text": "１２３４", "pretokens": [["１２３", 0, 9], ["４", 9, 12]]},
+      {"text": "1²2", "pretokens": [["1²2", 0, 4]]},
+      {"text": "12ab34", "pretokens": [["12", 0, 2], ["ab", 2, 4], ["34", 4, 6]]},
+      {"text": "!!!\n\nfoo", "pretokens": [["!!!\n\n", 0, 5], ["foo", 5, 8]]},
+      {"text": " !!!", "pretokens": [[" !!!", 0, 4]]},
+      {"text": "a!?\r\n\r\nb", "pretokens": [["a", 0, 1], ["!?\r\n\r\n", 1, 7], ["b", 7, 8]]},
+      {"text": "!\n ", "pretokens": [["!\n", 0, 2], [" ", 2, 3]]},
+      {"text": "!a", "pretokens": [["!a", 0, 2]]},
+      {"text": "$100", "pretokens": [["$", 0, 1], ["100", 1, 4]]},
+      {"text": "a.b", "pretokens": [["a", 0, 1], [".b", 1, 3]]},
+      {"text": "...a", "pretokens": [["...", 0, 3], ["a", 3, 4]]},
+      {"text": " ...\n\n\na", "pretokens": [[" ...\n\n\n", 0, 7], ["a", 7, 8]]},
+      {"text": "a_b-c", "pretokens": [["a", 0, 1], ["_b", 1, 3], ["-c", 3, 5]]},
+      {"text": "_a", "pretokens": [["_a", 0, 2]]},
+      {"text": "-a", "pretokens": [["-a", 0, 2]]},
+      {"text": "\u0000a", "pretokens": [["\u0000a", 0, 2]]},
+      {"text": "a", "pretokens": [["a", 0, 2]]},
+      {"text": "été", "pretokens": [["été", 0, 5]]},
+      {"text": "été", "pretokens": [["e", 0, 1], ["́te", 1, 5], ["́", 5, 7]]},
+      {"text": "́a", "pretokens": [["́a", 0, 3]]},
+      {"text": "á", "pretokens": [["a", 0, 1], ["́", 1, 3]]},
+      {"text": " ́", "pretokens": [[" ́", 0, 3]]},
+      {"text": "😀", "pretokens": [["😀", 0, 4]]},
+      {"text": "a😀b", "pretokens": [["a", 0, 1], ["😀b", 1, 6]]},
+      {"text": "👨‍👩‍👧", "pretokens": [["👨‍👩‍👧", 0, 18]]},
+      {"text": "❤️ ok", "pretokens": [["❤️", 0, 6], [" ok", 6, 9]]},
+      {"text": "日本語 123", "pretokens": [["日本語", 0, 9], [" ", 9, 10], ["123", 10, 13]]},
+      {"text": "مرحبا بك", "pretokens": [["مرحبا", 0, 10], [" بك", 10, 15]]},
+      {"text": "नमस्ते", "pretokens": [["नमस", 0, 9], ["्त", 9, 15], ["े", 15, 18]]},
+      {"text": "def f(x):\r\n\treturn x+1\r\n", "pretokens": [["def", 0, 3], [" f", 3, 5], ["(x", 5, 7], ["):\r\n", 7, 11], ["\treturn", 11, 18], [" x", 18, 20], ["+", 20, 21], ["1", 21, 22], ["\r\n", 22, 24]]},
+      {"text": "https://a.b/c?d=1&e=2", "pretokens": [["https", 0, 5], ["://", 5, 8], ["a", 8, 9], [".b", 9, 11], ["/c", 11, 13], ["?d", 13, 15], ["=", 15, 16], ["1", 16, 17], ["&e", 17, 19], ["=", 19, 20], ["2", 20, 21]]}
+    ]},
+    {"group": "o200k", "pattern": "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "Hello World", "pretokens": [["Hello", 0, 5], [" World", 5, 11]]},
+      {"text": "helloWorld", "pretokens": [["hello", 0, 5], ["World", 5, 10]]},
+      {"text": "HelloWORLDfoo", "pretokens": [["Hello", 0, 5], ["WORLDfoo", 5, 13]]},
+      {"text": "XMLHttpRequest", "pretokens": [["XMLHttp", 0, 7], ["Request", 7, 14]]},
+      {"text": "I'M he'll DON'T", "pretokens": [["I'M", 0, 3], [" he'll", 3, 9], [" DON'T", 9, 15]]},
+      {"text": "a's'T", "pretokens": [["a's", 0, 3], ["'T", 3, 5]]},
+      {"text": "a//b", "pretokens": [["a", 0, 1], ["//", 1, 3], ["b", 3, 4]]},
+      {"text": "!!/\n/x", "pretokens": [["!!/\n/", 0, 5], ["x", 5, 6]]},
+      {"text": "x =/ y", "pretokens": [["x", 0, 1], [" =/", 1, 4], [" y", 4, 6]]},
+      {"text": " /", "pretokens": [[" /", 0, 2]]},
+      {"text": "12345", "pretokens": [["123", 0, 3], ["45", 3, 5]]},
+      {"text": "éÁb", "pretokens": [["é", 0, 3], ["Áb", 3, 7]]},
+      {"text": "ǅa", "pretokens": [["ǅa", 0, 3]]},
+      {"text": "iPhone eBay HTTPServer", "pretokens": [["i", 0, 1], ["Phone", 1, 6], [" e", 6, 8], ["Bay", 8, 11], [" HTTPServer", 11, 22]]},
+      {"text": "ÉCOLEécole İstanbul", "pretokens": [["ÉCOLEécole", 0, 12], [" İstanbul", 12, 22]]},
+      {"text": "日本A", "pretokens": [["日本", 0, 6], ["A", 6, 7]]},
+      {"text": "A日B", "pretokens": [["A日", 0, 4], ["B", 4, 5]]},
+      {"text": "ʰA Aʰ AʰB", "pretokens": [["ʰ", 0, 2], ["A", 2, 3], [" Aʰ", 3, 7], [" Aʰ", 7, 11], ["B", 11, 12]]},
+      {"text": "ǅungla ǄA", "pretokens": [["ǅungla", 0, 7], [" ǄA", 7, 11]]},
+      {"text": "𝐀𝐁c 𝐀b", "pretokens": [["𝐀𝐁c", 0, 9], [" 𝐀b", 9, 15]]},
+      {"text": "ﬁne Straße", "pretokens": [["ﬁne", 0, 5], [" Straße", 5, 13]]},
+      {"text": "áB ́A", "pretokens": [["á", 0, 3], ["B", 3, 4], [" ́", 4, 7], ["A", 7, 8]]},
+      {"text": "́", "pretokens": [["́", 0, 2]]},
+      {"text": " ́x", "pretokens": [[" ́x", 0, 4]]},
+      {"text": "!́!", "pretokens": [["!́", 0, 3], ["!", 3, 4]]},
+      {"text": "é́E", "pretokens": [["é́", 0, 5], ["E", 5, 6]]},
+      {"text": "́Z", "pretokens": [["́", 0, 2], ["Z", 2, 3]]},
+      {"text": "!́Z", "pretokens": [["!́", 0, 3], ["Z", 3, 4]]},
+      {"text": "́日Z", "pretokens": [["́日", 0, 5], ["Z", 5, 6]]},
+      {"text": "नमस्ते दुनिया", "pretokens": [["नमस्ते", 0, 18], [" दुनिया", 18, 37]]},
+      {"text": "Привет Мир", "pretokens": [["Привет", 0, 12], [" Мир", 12, 19]]},
+      {"text": "Γειά σου", "pretokens": [["Γειά", 0, 8], [" σου", 8, 15]]},
+      {"text": "مرحبا123 שלום", "pretokens": [["مرحبا", 0, 10], ["123", 10, 13], [" שלום", 13, 22]]},
+      {"text": "한국어 텍스트", "pretokens": [["한국어", 0, 9], [" 텍스트", 9, 19]]},
+      {"text": "ひらがなカタカナ漢字", "pretokens": [["ひらがなカタカナ漢字", 0, 30]]},
+      {"text": "中文，标点。English混合", "pretokens": [["中文", 0, 6], ["，标点", 6, 15], ["。English混合", 15, 31]]},
+      {"text": "日本語abc", "pretokens": [["日本語abc", 0, 12]]},
+      {"text": "Abc日's", "pretokens": [["Abc日's", 0, 8]]},
+      {"text": "〇一二 々 a々b 、。", "pretokens": [["〇", 0, 3], ["一二", 3, 9], [" 々", 9, 13], [" a々b", 13, 19], [" 、。", 19, 26]]},
+      {"text": "⺀⺁ 𠀀𠀁 ｶﾀｶﾅ", "pretokens": [["⺀⺁", 0, 6], [" 𠀀𠀁", 6, 15], [" ｶﾀｶﾅ", 15, 28]]},
+      {"text": "一́ ́日 !日 123日", "pretokens": [["一́", 0, 5], [" ́日", 5, 11], [" !", 11, 13], ["日", 13, 16], [" ", 16, 17], ["123", 17, 20], ["日", 20, 23]]},
+      {"text": "eBay's McDONALD'S OK'd won't' a'ſ 'll x'LL", "pretokens": [["e", 0, 1], ["Bay's", 1, 6], [" Mc", 6, 9], ["DONALD'S", 9, 17], [" OK'd", 17, 22], [" won't", 22, 28], ["'", 28, 29], [" a'ſ", 29, 34], [" '", 34, 36], ["ll", 36, 38], [" x'LL", 38, 43]]},
+      {"text": "1234567 ١٢٣٤٥ １２３ ½¾ x² 3.14159 12,345", "pretokens": [["123", 0, 3], ["456", 3, 6], ["7", 6, 7], [" ", 7, 8], ["١٢٣", 8, 14], ["٤٥", 14, 18], [" ", 18, 19], ["１２３", 19, 28], [" ", 28, 29], ["½¾", 29, 33], [" x", 33, 35], ["²", 35, 37], [" ", 37, 38], ["3", 38, 39], [".", 39, 40], ["141", 40, 43], ["59", 43, 45], [" ", 45, 46], ["12", 46, 48], [",", 48, 49], ["345", 49, 52]]},
+      {"text": "a/b/c http://x.y/z \\/", "pretokens": [["a", 0, 1], ["/b", 1, 3], ["/c", 3, 5], [" http", 5, 10], ["://", 10, 13], ["x", 13, 14], [".y", 14, 16], ["/z", 16, 18], [" \\/", 18, 21]]},
+      {"text": " //\n//", "pretokens": [[" //\n//", 0, 6]]},
+      {"text": "!/\r\n/a", "pretokens": [["!/\r\n/", 0, 5], ["a", 5, 6]]},
+      {"text": "(a) [b] {c}", "pretokens": [["(a", 0, 2], [")", 2, 3], [" [", 3, 5], ["b", 5, 6], ["]", 6, 7], [" {", 7, 9], ["c", 9, 10], ["}", 10, 11]]},
+      {"text": "😀😀 a😀b", "pretokens": [["😀😀", 0, 8], [" a", 8, 10], ["😀b", 10, 15]]},
+      {"text": "👨‍👩‍👧 ❤️ok", "pretokens": [["👨‍👩‍👧", 0, 18], [" ❤️", 18, 25], ["ok", 25, 27]]},
+      {"text": "🇫🇷 👍🏽", "pretokens": [["🇫🇷", 0, 8], [" 👍🏽", 8, 17]]},
+      {"text": "a　b   x", "pretokens": [["a", 0, 1], ["　b", 1, 5], ["  ", 5, 8], [" x", 8, 11]]},
+      {"text": "  \t\n  x", "pretokens": [["  \t\n", 0, 4], [" ", 4, 5], [" x", 5, 7]]},
+      {"text": "x \n", "pretokens": [["x", 0, 1], [" \n", 1, 3]]},
+      {"text": "\n\n\n", "pretokens": [["\n\n\n", 0, 3]]},
+      {"text": "\r\n\r\n", "pretokens": [["\r\n\r\n", 0, 4]]},
+      {"text": " \r\n x", "pretokens": [[" \r\n", 0, 3], [" x", 3, 5]]},
+      {"text": "a   ", "pretokens": [["a", 0, 1], ["   ", 1, 4]]},
+      {"text": " a a", "pretokens": [[" a", 0, 4], [" ", 4, 5], ["a", 5, 8]]}
+    ]},
+    {"group": "tekken", "pattern": "[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "iPhone eBay HTTPServer", "pretokens": [["i", 0, 1], ["Phone", 1, 6], [" e", 6, 8], ["Bay", 8, 11], [" HTTPServer", 11, 22]]},
+      {"text": "ÉCOLEécole İstanbul", "pretokens": [["ÉCOLEécole", 0, 12], [" İstanbul", 12, 22]]},
+      {"text": "日本A", "pretokens": [["日本", 0, 6], ["A", 6, 7]]},
+      {"text": "A日B", "pretokens": [["A日", 0, 4], ["B", 4, 5]]},
+      {"text": "ʰA Aʰ AʰB", "pretokens": [["ʰ", 0, 2], ["A", 2, 3], [" Aʰ", 3, 7], [" Aʰ", 7, 11], ["B", 11, 12]]},
+      {"text": "ǅungla ǄA", "pretokens": [["ǅungla", 0, 7], [" ǄA", 7, 11]]},
+      {"text": "𝐀𝐁c 𝐀b", "pretokens": [["𝐀𝐁c", 0, 9], [" 𝐀b", 9, 15]]},
+      {"text": "ﬁne Straße", "pretokens": [["ﬁne", 0, 5], [" Straße", 5, 13]]},
+      {"text": "áB ́A", "pretokens": [["á", 0, 3], ["B", 3, 4], [" ́", 4, 7], ["A", 7, 8]]},
+      {"text": "́", "pretokens": [["́", 0, 2]]},
+      {"text": " ́x", "pretokens": [[" ́x", 0, 4]]},
+      {"text": "!́!", "pretokens": [["!́", 0, 3], ["!", 3, 4]]},
+      {"text": "é́E", "pretokens": [["é́", 0, 5], ["E", 5, 6]]},
+      {"text": "́Z", "pretokens": [["́", 0, 2], ["Z", 2, 3]]},
+      {"text": "!́Z", "pretokens": [["!́", 0, 3], ["Z", 3, 4]]},
+      {"text": "́日Z", "pretokens": [["́日", 0, 5], ["Z", 5, 6]]},
+      {"text": "नमस्ते दुनिया", "pretokens": [["नमस्ते", 0, 18], [" दुनिया", 18, 37]]},
+      {"text": "Привет Мир", "pretokens": [["Привет", 0, 12], [" Мир", 12, 19]]},
+      {"text": "Γειά σου", "pretokens": [["Γειά", 0, 8], [" σου", 8, 15]]},
+      {"text": "مرحبا123 שלום", "pretokens": [["مرحبا", 0, 10], ["1", 10, 11], ["2", 11, 12], ["3", 12, 13], [" שלום", 13, 22]]},
+      {"text": "한국어 텍스트", "pretokens": [["한국어", 0, 9], [" 텍스트", 9, 19]]},
+      {"text": "ひらがなカタカナ漢字", "pretokens": [["ひらがなカタカナ漢字", 0, 30]]},
+      {"text": "中文，标点。English混合", "pretokens": [["中文", 0, 6], ["，标点", 6, 15], ["。English混合", 15, 31]]},
+      {"text": "日本語abc", "pretokens": [["日本語abc", 0, 12]]},
+      {"text": "Abc日's", "pretokens": [["Abc日", 0, 6], ["'s", 6, 8]]},
+      {"text": "〇一二 々 a々b 、。", "pretokens": [["〇", 0, 3], ["一二", 3, 9], [" 々", 9, 13], [" a々b", 13, 19], [" 、。", 19, 26]]},
+      {"text": "⺀⺁ 𠀀𠀁 ｶﾀｶﾅ", "pretokens": [["⺀⺁", 0, 6], [" 𠀀𠀁", 6, 15], [" ｶﾀｶﾅ", 15, 28]]},
+      {"text": "一́ ́日 !日 123日", "pretokens": [["一́", 0, 5], [" ́日", 5, 11], [" !", 11, 13], ["日", 13, 16], [" ", 16, 17], ["1", 17, 18], ["2", 18, 19], ["3", 19, 20], ["日", 20, 23]]},
+      {"text": "eBay's McDONALD'S OK'd won't' a'ſ 'll x'LL", "pretokens": [["e", 0, 1], ["Bay", 1, 4], ["'s", 4, 6], [" Mc", 6, 9], ["DONALD", 9, 15], ["'S", 15, 17], [" OK", 17, 20], ["'d", 20, 22], [" won", 22, 26], ["'t", 26, 28], ["'", 28, 29], [" a", 29, 31], ["'ſ", 31, 34], [" '", 34, 36], ["ll", 36, 38], [" x", 38, 40], ["'LL", 40, 43]]},
+      {"text": "1234567 ١٢٣٤٥ １２３ ½¾ x² 3.14159 12,345", "pretokens": [["1", 0, 1], ["2", 1, 2], ["3", 2, 3], ["4", 3, 4], ["5", 4, 5], ["6", 5, 6], ["7", 6, 7], [" ", 7, 8], ["١", 8, 10], ["٢", 10, 12], ["٣", 12, 14], ["٤", 14, 16], ["٥", 16, 18], [" ", 18, 19], ["１", 19, 22], ["２", 22, 25], ["３", 25, 28], [" ", 28, 29], ["½", 29, 31], ["¾", 31, 33], [" x", 33, 35], ["²", 35, 37], [" ", 37, 38], ["3", 38, 39], [".", 39, 40], ["1", 40, 41], ["4", 41, 42], ["1", 42, 43], ["5", 43, 44], ["9", 44, 45], [" ", 45, 46], ["1", 46, 47], ["2", 47, 48], [",", 48, 49], ["3", 49, 50], ["4", 50, 51], ["5", 51, 52]]},
+      {"text": "a/b/c http://x.y/z \\/", "pretokens": [["a", 0, 1], ["/b", 1, 3], ["/c", 3, 5], [" http", 5, 10], ["://", 10, 13], ["x", 13, 14], [".y", 14, 16], ["/z", 16, 18], [" \\/", 18, 21]]},
+      {"text": " //\n//", "pretokens": [[" //\n//", 0, 6]]},
+      {"text": "!/\r\n/a", "pretokens": [["!/\r\n/", 0, 5], ["a", 5, 6]]},
+      {"text": "(a) [b] {c}", "pretokens": [["(a", 0, 2], [")", 2, 3], [" [", 3, 5], ["b", 5, 6], ["]", 6, 7], [" {", 7, 9], ["c", 9, 10], ["}", 10, 11]]},
+      {"text": "😀😀 a😀b", "pretokens": [["😀😀", 0, 8], [" a", 8, 10], ["😀b", 10, 15]]},
+      {"text": "👨‍👩‍👧 ❤️ok", "pretokens": [["👨‍👩‍👧", 0, 18], [" ❤️", 18, 25], ["ok", 25, 27]]},
+      {"text": "🇫🇷 👍🏽", "pretokens": [["🇫🇷", 0, 8], [" 👍🏽", 8, 17]]},
+      {"text": "a　b   x", "pretokens": [["a", 0, 1], ["　b", 1, 5], ["  ", 5, 8], [" x", 8, 11]]},
+      {"text": "  \t\n  x", "pretokens": [["  \t\n", 0, 4], [" ", 4, 5], [" x", 5, 7]]},
+      {"text": "x \n", "pretokens": [["x", 0, 1], [" \n", 1, 3]]},
+      {"text": "\n\n\n", "pretokens": [["\n\n\n", 0, 3]]},
+      {"text": "\r\n\r\n", "pretokens": [["\r\n\r\n", 0, 4]]},
+      {"text": " \r\n x", "pretokens": [[" \r\n", 0, 3], [" x", 3, 5]]},
+      {"text": "a   ", "pretokens": [["a", 0, 1], ["   ", 1, 4]]},
+      {"text": " a a", "pretokens": [[" a", 0, 4], [" ", 4, 5], ["a", 5, 8]]}
+    ]},
+    {"group": "kimi", "pattern": "[\\p{Han}]+|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}&&[^\\p{Han}]]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "iPhone eBay HTTPServer", "pretokens": [["i", 0, 1], ["Phone", 1, 6], [" e", 6, 8], ["Bay", 8, 11], [" HTTPServer", 11, 22]]},
+      {"text": "ÉCOLEécole İstanbul", "pretokens": [["ÉCOLEécole", 0, 12], [" İstanbul", 12, 22]]},
+      {"text": "日本A", "pretokens": [["日本", 0, 6], ["A", 6, 7]]},
+      {"text": "A日B", "pretokens": [["A", 0, 1], ["日", 1, 4], ["B", 4, 5]]},
+      {"text": "ʰA Aʰ AʰB", "pretokens": [["ʰ", 0, 2], ["A", 2, 3], [" Aʰ", 3, 7], [" Aʰ", 7, 11], ["B", 11, 12]]},
+      {"text": "ǅungla ǄA", "pretokens": [["ǅungla", 0, 7], [" ǄA", 7, 11]]},
+      {"text": "𝐀𝐁c 𝐀b", "pretokens": [["𝐀𝐁c", 0, 9], [" 𝐀b", 9, 15]]},
+      {"text": "ﬁne Straße", "pretokens": [["ﬁne", 0, 5], [" Straße", 5, 13]]},
+      {"text": "áB ́A", "pretokens": [["á", 0, 3], ["B", 3, 4], [" ́", 4, 7], ["A", 7, 8]]},
+      {"text": "́", "pretokens": [["́", 0, 2]]},
+      {"text": " ́x", "pretokens": [[" ́x", 0, 4]]},
+      {"text": "!́!", "pretokens": [["!́", 0, 3], ["!", 3, 4]]},
+      {"text": "é́E", "pretokens": [["é́", 0, 5], ["E", 5, 6]]},
+      {"text": "́Z", "pretokens": [["́", 0, 2], ["Z", 2, 3]]},
+      {"text": "!́Z", "pretokens": [["!́", 0, 3], ["Z", 3, 4]]},
+      {"text": "́日Z", "pretokens": [["́", 0, 2], ["日", 2, 5], ["Z", 5, 6]]},
+      {"text": "नमस्ते दुनिया", "pretokens": [["नमस्ते", 0, 18], [" दुनिया", 18, 37]]},
+      {"text": "Привет Мир", "pretokens": [["Привет", 0, 12], [" Мир", 12, 19]]},
+      {"text": "Γειά σου", "pretokens": [["Γειά", 0, 8], [" σου", 8, 15]]},
+      {"text": "مرحبا123 שלום", "pretokens": [["مرحبا", 0, 10], ["123", 10, 13], [" שלום", 13, 22]]},
+      {"text": "한국어 텍스트", "pretokens": [["한국어", 0, 9], [" 텍스트", 9, 19]]},
+      {"text": "ひらがなカタカナ漢字", "pretokens": [["ひらがなカタカナ", 0, 24], ["漢字", 24, 30]]},
+      {"text": "中文，标点。English混合", "pretokens": [["中文", 0, 6], ["，", 6, 9], ["标点", 9, 15], ["。English", 15, 25], ["混合", 25, 31]]},
+      {"text": "日本語abc", "pretokens": [["日本語", 0, 9], ["abc", 9, 12]]},
+      {"text": "Abc日's", "pretokens": [["Abc", 0, 3], ["日", 3, 6], ["'s", 6, 8]]},
+      {"text": "〇一二 々 a々b 、。", "pretokens": [["〇一二", 0, 9], [" ", 9, 10], ["々", 10, 13], [" a", 13, 15], ["々", 15, 18], ["b", 18, 19], [" 、。", 19, 26]]},
+      {"text": "⺀⺁ 𠀀𠀁 ｶﾀｶﾅ", "pretokens": [["⺀⺁", 0, 6], [" ", 6, 7], ["𠀀𠀁", 7, 15], [" ｶﾀｶﾅ", 15, 28]]},
+      {"text": "一́ ́日 !日 123日", "pretokens": [["一", 0, 3], ["́", 3, 5], [" ́", 5, 8], ["日", 8, 11], [" !", 11, 13], ["日", 13, 16], [" ", 16, 17], ["123", 17, 20], ["日", 20, 23]]},
+      {"text": "eBay's McDONALD'S OK'd won't' a'ſ 'll x'LL", "pretokens": [["e", 0, 1], ["Bay's", 1, 6], [" Mc", 6, 9], ["DONALD'S", 9, 17], [" OK'd", 17, 22], [" won't", 22, 28], ["'", 28, 29], [" a'ſ", 29, 34], [" '", 34, 36], ["ll", 36, 38], [" x'LL", 38, 43]]},
+      {"text": "1234567 ١٢٣٤٥ １２３ ½¾ x² 3.14159 12,345", "pretokens": [["123", 0, 3], ["456", 3, 6], ["7", 6, 7], [" ", 7, 8], ["١٢٣", 8, 14], ["٤٥", 14, 18], [" ", 18, 19], ["１２３", 19, 28], [" ", 28, 29], ["½¾", 29, 33], [" x", 33, 35], ["²", 35, 37], [" ", 37, 38], ["3", 38, 39], [".", 39, 40], ["141", 40, 43], ["59", 43, 45], [" ", 45, 46], ["12", 46, 48], [",", 48, 49], ["345", 49, 52]]},
+      {"text": "a/b/c http://x.y/z \\/", "pretokens": [["a", 0, 1], ["/b", 1, 3], ["/c", 3, 5], [" http", 5, 10], ["://", 10, 13], ["x", 13, 14], [".y", 14, 16], ["/z", 16, 18], [" \\/", 18, 21]]},
+      {"text": " //\n//", "pretokens": [[" //\n", 0, 4], ["//", 4, 6]]},
+      {"text": "!/\r\n/a", "pretokens": [["!/\r\n", 0, 4], ["/a", 4, 6]]},
+      {"text": "(a) [b] {c}", "pretokens": [["(a", 0, 2], [")", 2, 3], [" [", 3, 5], ["b", 5, 6], ["]", 6, 7], [" {", 7, 9], ["c", 9, 10], ["}", 10, 11]]},
+      {"text": "😀😀 a😀b", "pretokens": [["😀😀", 0, 8], [" a", 8, 10], ["😀b", 10, 15]]},
+      {"text": "👨‍👩‍👧 ❤️ok", "pretokens": [["👨‍👩‍👧", 0, 18], [" ❤️", 18, 25], ["ok", 25, 27]]},
+      {"text": "🇫🇷 👍🏽", "pretokens": [["🇫🇷", 0, 8], [" 👍🏽", 8, 17]]},
+      {"text": "a　b   x", "pretokens": [["a", 0, 1], ["　b", 1, 5], ["  ", 5, 8], [" x", 8, 11]]},
+      {"text": "  \t\n  x", "pretokens": [["  \t\n", 0, 4], [" ", 4, 5], [" x", 5, 7]]},
+      {"text": "x \n", "pretokens": [["x", 0, 1], [" \n", 1, 3]]},
+      {"text": "\n\n\n", "pretokens": [["\n\n\n", 0, 3]]},
+      {"text": "\r\n\r\n", "pretokens": [["\r\n\r\n", 0, 4]]},
+      {"text": " \r\n x", "pretokens": [[" \r\n", 0, 3], [" x", 3, 5]]},
+      {"text": "a   ", "pretokens": [["a", 0, 1], ["   ", 1, 4]]},
+      {"text": " a a", "pretokens": [[" a", 0, 4], [" ", 4, 5], ["a", 5, 8]]}
+    ]},
+    {"group": "classes", "pattern": "[a-z&&[^aeiou]]+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "abcdefe", "pretokens": [["a", 0, 1], ["bcd", 1, 4], ["e", 4, 5], ["f", 5, 6], ["e", 6, 7]]}
+    ]},
+    {"group": "classes", "pattern": "[^a-z&&[^aeiou]]+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "abcdefe1", "pretokens": [["a", 0, 1], ["bcd", 1, 4], ["e", 4, 5], ["f", 5, 6], ["e1", 6, 8]]}
+    ]},
+    {"group": "classes", "pattern": "[a-z&&b-d&&c-z]+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "abcdefe", "pretokens": [["ab", 0, 2], ["cd", 2, 4], ["efe", 4, 7]]}
+    ]},
+    {"group": "classes", "pattern": "[a&&]+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "a&b", "pretokens": [["a&b", 0, 3]]}
+    ]},
+    {"group": "classes", "pattern": "[&&a]+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "a&b", "pretokens": [["a&b", 0, 3]]}
+    ]},
+    {"group": "classes", "pattern": "[a[bc]d]+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "abcdex", "pretokens": [["abcd", 0, 4], ["ex", 4, 6]]}
+    ]},
+    {"group": "classes", "pattern": "[[^a]&&[^b]]+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "abcab", "pretokens": [["ab", 0, 2], ["c", 2, 3], ["ab", 3, 5]]}
+    ]},
+    {"group": "classes", "pattern": "[\\p{L}&&\\p{Greek}]+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "aβγd1", "pretokens": [["a", 0, 1], ["βγ", 1, 5], ["d1", 5, 7]]}
+    ]},
+    {"group": "classes", "pattern": "\\p{Han}+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "a日本b〇、々ー", "pretokens": [["a", 0, 1], ["日本", 1, 7], ["b", 7, 8], ["〇", 8, 11], ["、", 11, 14], ["々", 14, 17], ["ー", 17, 20]]}
+    ]},
+    {"group": "classes", "pattern": "\\p{Hani}+|\\p{Latin}+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "ab日本Ωc", "pretokens": [["ab", 0, 2], ["日本", 2, 8], ["Ω", 8, 10], ["c", 10, 11]]}
+    ]},
+    {"group": "classes", "pattern": "\\P{Han}+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "日a本", "pretokens": [["日", 0, 3], ["a", 3, 4], ["本", 4, 7]]}
+    ]},
+    {"group": "classes", "pattern": "[^\\p{Han}]+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "日a本", "pretokens": [["日", 0, 3], ["a", 3, 4], ["本", 4, 7]]}
+    ]},
+    {"group": "classes", "pattern": "\\p{Hiragana}+|\\p{Katakana}+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "ひらがなカタカナー", "pretokens": [["ひらがな", 0, 12], ["カタカナ", 12, 24], ["ー", 24, 27]]}
+    ]},
+    {"group": "classes", "pattern": "\\p{Common}+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "a1!、b", "pretokens": [["a", 0, 1], ["1!、", 1, 6], ["b", 6, 7]]}
+    ]},
+    {"group": "classes", "pattern": "\\p{Inherited}+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "á̂b", "pretokens": [["a", 0, 1], ["́̂", 1, 5], ["b", 5, 6]]}
+    ]},
+    {"group": "classes", "pattern": "\\p{Arabic}+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "abc مرحبا", "pretokens": [["abc ", 0, 4], ["مرحبا", 4, 14]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "a1b22c", "pretokens": [["a", 0, 1], ["1", 1, 2], ["b", 2, 3], ["22", 3, 5], ["c", 5, 6]]},
+      {"text": "1a2", "pretokens": [["1", 0, 1], ["a", 1, 2], ["2", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "isolated", "invert": true, "cases": [
+      {"text": "a1b22c", "pretokens": [["a", 0, 1], ["1", 1, 2], ["b", 2, 3], ["22", 3, 5], ["c", 5, 6]]},
+      {"text": "1a2", "pretokens": [["1", 0, 1], ["a", 1, 2], ["2", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "removed", "invert": false, "cases": [
+      {"text": "a1b22c", "pretokens": [["a", 0, 1], ["b", 2, 3], ["c", 5, 6]]},
+      {"text": "1a2", "pretokens": [["a", 1, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "removed", "invert": true, "cases": [
+      {"text": "a1b22c", "pretokens": [["1", 1, 2], ["22", 3, 5]]},
+      {"text": "1a2", "pretokens": [["1", 0, 1], ["2", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "merged_with_previous", "invert": false, "cases": [
+      {"text": "a1b22c", "pretokens": [["a1", 0, 2], ["b22", 2, 5], ["c", 5, 6]]},
+      {"text": "1a2", "pretokens": [["1", 0, 1], ["a2", 1, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "merged_with_previous", "invert": true, "cases": [
+      {"text": "a1b22c", "pretokens": [["a", 0, 1], ["1b", 1, 3], ["22c", 3, 6]]},
+      {"text": "1a2", "pretokens": [["1a", 0, 2], ["2", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "merged_with_next", "invert": false, "cases": [
+      {"text": "a1b22c", "pretokens": [["a", 0, 1], ["1b", 1, 3], ["22c", 3, 6]]},
+      {"text": "1a2", "pretokens": [["1a", 0, 2], ["2", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "merged_with_next", "invert": true, "cases": [
+      {"text": "a1b22c", "pretokens": [["a1", 0, 2], ["b22", 2, 5], ["c", 5, 6]]},
+      {"text": "1a2", "pretokens": [["1", 0, 1], ["a2", 1, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "contiguous", "invert": false, "cases": [
+      {"text": "a1b22c", "pretokens": [["a", 0, 1], ["1", 1, 2], ["b", 2, 3], ["22", 3, 5], ["c", 5, 6]]},
+      {"text": "1a2", "pretokens": [["1", 0, 1], ["a", 1, 2], ["2", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "\\d+", "behavior": "contiguous", "invert": true, "cases": [
+      {"text": "a1b22c", "pretokens": [["a", 0, 1], ["1", 1, 2], ["b", 2, 3], ["22", 3, 5], ["c", 5, 6]]},
+      {"text": "1a2", "pretokens": [["1", 0, 1], ["a", 1, 2], ["2", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "a, b;c", "pretokens": [["a", 0, 1], [", ", 1, 3], ["b", 3, 4], [";", 4, 5], ["c", 5, 6]]},
+      {"text": ",,a", "pretokens": [[",", 0, 1], [",", 1, 2], ["a", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "isolated", "invert": true, "cases": [
+      {"text": "a, b;c", "pretokens": [["a", 0, 1], [", ", 1, 3], ["b", 3, 4], [";", 4, 5], ["c", 5, 6]]},
+      {"text": ",,a", "pretokens": [[",", 0, 1], [",", 1, 2], ["a", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "removed", "invert": false, "cases": [
+      {"text": "a, b;c", "pretokens": [["a", 0, 1], ["b", 3, 4], ["c", 5, 6]]},
+      {"text": ",,a", "pretokens": [["a", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "removed", "invert": true, "cases": [
+      {"text": "a, b;c", "pretokens": [[", ", 1, 3], [";", 4, 5]]},
+      {"text": ",,a", "pretokens": [[",", 0, 1], [",", 1, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "merged_with_previous", "invert": false, "cases": [
+      {"text": "a, b;c", "pretokens": [["a, ", 0, 3], ["b;", 3, 5], ["c", 5, 6]]},
+      {"text": ",,a", "pretokens": [[",", 0, 1], [",", 1, 2], ["a", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "merged_with_previous", "invert": true, "cases": [
+      {"text": "a, b;c", "pretokens": [["a", 0, 1], [", b", 1, 4], [";c", 4, 6]]},
+      {"text": ",,a", "pretokens": [[",", 0, 1], [",a", 1, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "merged_with_next", "invert": false, "cases": [
+      {"text": "a, b;c", "pretokens": [["a", 0, 1], [", b", 1, 4], [";c", 4, 6]]},
+      {"text": ",,a", "pretokens": [[",", 0, 1], [",a", 1, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "merged_with_next", "invert": true, "cases": [
+      {"text": "a, b;c", "pretokens": [["a, ", 0, 3], ["b;", 3, 5], ["c", 5, 6]]},
+      {"text": ",,a", "pretokens": [[",", 0, 1], [",", 1, 2], ["a", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "contiguous", "invert": false, "cases": [
+      {"text": "a, b;c", "pretokens": [["a", 0, 1], [", ", 1, 3], ["b", 3, 4], [";", 4, 5], ["c", 5, 6]]},
+      {"text": ",,a", "pretokens": [[",,", 0, 2], ["a", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "[,;]\\s*", "behavior": "contiguous", "invert": true, "cases": [
+      {"text": "a, b;c", "pretokens": [["a", 0, 1], [", ", 1, 3], ["b", 3, 4], [";", 4, 5], ["c", 5, 6]]},
+      {"text": ",,a", "pretokens": [[",,", 0, 2], ["a", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "axxb", "pretokens": [["a", 0, 1], ["xx", 1, 3], ["b", 3, 4]]},
+      {"text": "ab", "pretokens": [["a", 0, 1], ["b", 1, 2]]},
+      {"text": "éxé", "pretokens": [["é", 0, 2], ["x", 2, 3], ["é", 3, 5]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "isolated", "invert": true, "cases": [
+      {"text": "axxb", "pretokens": [["a", 0, 1], ["xx", 1, 3], ["b", 3, 4]]},
+      {"text": "ab", "pretokens": [["a", 0, 1], ["b", 1, 2]]},
+      {"text": "éxé", "pretokens": [["é", 0, 2], ["x", 2, 3], ["é", 3, 5]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "removed", "invert": false, "cases": [
+      {"text": "axxb", "pretokens": [["a", 0, 1], ["b", 3, 4]]},
+      {"text": "ab", "pretokens": [["a", 0, 1], ["b", 1, 2]]},
+      {"text": "éxé", "pretokens": [["é", 0, 2], ["é", 3, 5]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "removed", "invert": true, "cases": [
+      {"text": "axxb", "pretokens": [["xx", 1, 3]]},
+      {"text": "ab", "pretokens": []},
+      {"text": "éxé", "pretokens": [["x", 2, 3]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "merged_with_previous", "invert": false, "cases": [
+      {"text": "axxb", "pretokens": [["axx", 0, 3], ["b", 3, 4]]},
+      {"text": "ab", "pretokens": [["a", 0, 1], ["b", 1, 2]]},
+      {"text": "éxé", "pretokens": [["éx", 0, 3], ["é", 3, 5]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "merged_with_previous", "invert": true, "cases": [
+      {"text": "axxb", "pretokens": [["a", 0, 1], ["xxb", 1, 4]]},
+      {"text": "ab", "pretokens": [["a", 0, 1], ["b", 1, 2]]},
+      {"text": "éxé", "pretokens": [["é", 0, 2], ["xé", 2, 5]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "merged_with_next", "invert": false, "cases": [
+      {"text": "axxb", "pretokens": [["a", 0, 1], ["xxb", 1, 4]]},
+      {"text": "ab", "pretokens": [["a", 0, 1], ["b", 1, 2]]},
+      {"text": "éxé", "pretokens": [["é", 0, 2], ["xé", 2, 5]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "merged_with_next", "invert": true, "cases": [
+      {"text": "axxb", "pretokens": [["axx", 0, 3], ["b", 3, 4]]},
+      {"text": "ab", "pretokens": [["a", 0, 1], ["b", 1, 2]]},
+      {"text": "éxé", "pretokens": [["éx", 0, 3], ["é", 3, 5]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "contiguous", "invert": false, "cases": [
+      {"text": "axxb", "pretokens": [["a", 0, 1], ["xx", 1, 3], ["b", 3, 4]]},
+      {"text": "ab", "pretokens": [["a", 0, 1], ["b", 1, 2]]},
+      {"text": "éxé", "pretokens": [["é", 0, 2], ["x", 2, 3], ["é", 3, 5]]}
+    ]},
+    {"group": "behaviors", "pattern": "x*", "behavior": "contiguous", "invert": true, "cases": [
+      {"text": "axxb", "pretokens": [["a", 0, 1], ["xx", 1, 3], ["b", 3, 4]]},
+      {"text": "ab", "pretokens": [["a", 0, 1], ["b", 1, 2]]},
+      {"text": "éxé", "pretokens": [["é", 0, 2], ["x", 2, 3], ["é", 3, 5]]}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["ba", 1, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "isolated", "invert": true, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["ba", 1, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "removed", "invert": false, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["ba", 1, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "removed", "invert": true, "cases": [
+      {"text": "abab", "pretokens": []}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "merged_with_previous", "invert": false, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["ba", 1, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "merged_with_previous", "invert": true, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["ba", 1, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "merged_with_next", "invert": false, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["ba", 1, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "merged_with_next", "invert": true, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["ba", 1, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "contiguous", "invert": false, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["ba", 1, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "(?=b)", "behavior": "contiguous", "invert": true, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["ba", 1, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["b", 1, 2], ["a", 2, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "isolated", "invert": true, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["b", 1, 2], ["a", 2, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "removed", "invert": false, "cases": [
+      {"text": "abab", "pretokens": []}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "removed", "invert": true, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["b", 1, 2], ["a", 2, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "merged_with_previous", "invert": false, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["b", 1, 2], ["a", 2, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "merged_with_previous", "invert": true, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["b", 1, 2], ["a", 2, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "merged_with_next", "invert": false, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["b", 1, 2], ["a", 2, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "merged_with_next", "invert": true, "cases": [
+      {"text": "abab", "pretokens": [["a", 0, 1], ["b", 1, 2], ["a", 2, 3], ["b", 3, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "contiguous", "invert": false, "cases": [
+      {"text": "abab", "pretokens": [["abab", 0, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "a(?=b)|b", "behavior": "contiguous", "invert": true, "cases": [
+      {"text": "abab", "pretokens": [["abab", 0, 4]]}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "isolated", "invert": false, "cases": [
+      {"text": "xy", "pretokens": [["x", 0, 1], ["y", 1, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "isolated", "invert": true, "cases": [
+      {"text": "xy", "pretokens": [["x", 0, 1], ["y", 1, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "removed", "invert": false, "cases": [
+      {"text": "xy", "pretokens": []}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "removed", "invert": true, "cases": [
+      {"text": "xy", "pretokens": [["x", 0, 1], ["y", 1, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "merged_with_previous", "invert": false, "cases": [
+      {"text": "xy", "pretokens": [["x", 0, 1], ["y", 1, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "merged_with_previous", "invert": true, "cases": [
+      {"text": "xy", "pretokens": [["x", 0, 1], ["y", 1, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "merged_with_next", "invert": false, "cases": [
+      {"text": "xy", "pretokens": [["x", 0, 1], ["y", 1, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "merged_with_next", "invert": true, "cases": [
+      {"text": "xy", "pretokens": [["x", 0, 1], ["y", 1, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "contiguous", "invert": false, "cases": [
+      {"text": "xy", "pretokens": [["xy", 0, 2]]}
+    ]},
+    {"group": "behaviors", "pattern": "x?x|x?y", "behavior": "contiguous", "invert": true, "cases": [
+      {"text": "xy", "pretokens": [["xy", 0, 2]]}
+    ]}
+  ]
+}
