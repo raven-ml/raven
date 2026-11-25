@@ -1470,6 +1470,18 @@ let render_group =
           let dashed = Stroke.v ~cap:`Butt ~dash:[ 2.; 2. ] 2. in
           equal float_exact 40.
             (coverage (render 40. 10. (Picture.stroke dashed red far))));
+      cases "a dashed line that starts far before the page dashes all across it"
+        ~id:(fun (e, o) -> Printf.sprintf "from %g, offset %g" (-.e) o)
+        [ (1e17, 0.); (1e17, 1.3); (1e20, 0.5); (1e300, 3.); (1e300, 0.) ]
+        (fun (e, dash_offset) ->
+          (* So far from its start, the precision promised leaves the phase
+             free, but not the extent: 40 pixels hold ten periods of 4, so
+             whatever the phase, 20 pixels of dash, 2 high, in at most 11
+             pieces. *)
+          let far = segment (-.e) 5. e 5. in
+          let dashed = Stroke.v ~cap:`Butt ~dash:[ 2.; 2. ] ~dash_offset 2. in
+          area ~pieces:11 ~box:(2., 2.) 40.
+            (coverage (render 40. 10. (Picture.stroke dashed red far))));
       test "a line to near max_float is drawn up to the page's edge" (fun () ->
           (* Its far end, at density 2, is beyond [max_float], held at 1e15
              along x: a band 2 pixels high across the 20 of the page. *)

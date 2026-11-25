@@ -19,6 +19,8 @@ open Hugin_gg
 type t = {
   cover : Cover.t;
   m : Affine.t;  (** From the stroke's coordinates to the device. *)
+  inv : Affine.t;
+      (** Its inverse; strokes are drawn only under maps that have one. *)
   hw : float;  (** Half the line width. *)
   cap : Stroke.cap;
   join : Stroke.join;
@@ -44,6 +46,7 @@ let create cover (clip : Surface.clip) m k s =
   {
     cover;
     m;
+    inv = Option.value (Affine.invert m) ~default:Affine.id;
     hw;
     cap = Stroke.cap s;
     join = Stroke.join s;
@@ -362,7 +365,12 @@ let flush_piece s ~dx ~dy =
   end
 
 (* [dash_segment s d ax ay bx by] cuts into dashes the segment from [(ax, ay)]
-   to [(bx, by)], walking only the part that the grown window reaches. *)
+   to [(bx, by)], walking only the part that the grown window reaches. That part
+   is found and walked from the points where the segment crosses the window's
+   edges, each measured from the segment's end nearer it, as [Cover] cuts its
+   edges, so that its dashes keep the precision of their place however far the
+   segment's ends lie; only their phase carries the rounding of the distance
+   from the segment's start. *)
 let dash_segment s d ax ay bx by =
   let p = s.pen in
   let len = Float.hypot (bx -. ax) (by -. ay) in
@@ -370,54 +378,83 @@ let dash_segment s d ax ay bx by =
     let ux = (bx -. ax) /. len and uy = (by -. ay) /. len in
     s.last.(0) <- ux;
     s.last.(1) <- uy;
-    (* The parameters of the segment within the grown window, by Liang and
-       Barsky's clipping of the device segment. *)
     let sx = dev_x p ax ay and sy = dev_y p ax ay in
-    let ex = dev_x p bx by -. sx and ey = dev_y p bx by -. sy in
-    let t0 = ref 0. and t1 = ref 1. in
-    let cut q r =
-      if q = 0. then (if r < 0. then t1 := -1.)
-      else
-        let t = r /. q in
-        if q < 0. then (if t > !t0 then t0 := t) else if t < !t1 then t1 := t
+    let tx = dev_x p bx by and ty = dev_y p bx by in
+    (* [along x y x' y'] is how far [(x', y')] lies past [(x, y)] along the
+       segment. *)
+    let along x y x' y' = ((x' -. x) *. ux) +. ((y' -. y) *. uy) in
+    (* [at x v] is the point of the segment on the device line [x = v] if [x],
+       and [y = v] otherwise, mapped back from the device, where its other
+       coordinate is measured from the end nearer it. *)
+    let at x v =
+      let dx, dy =
+        if x then (v, Cover.at v sx tx sy ty) else (Cover.at v sy ty sx tx, v)
+      in
+      let i = p.inv in
+      ( (i.xx *. dx) +. (i.xy *. dy) +. i.x0,
+        (i.yx *. dx) +. (i.yy *. dy) +. i.y0 )
     in
-    cut (-.ex) (sx -. p.wx0);
-    cut ex (p.wx1 -. sx);
-    cut (-.ey) (sy -. p.wy0);
-    cut ey (p.wy1 -. sy);
-    if !t0 >= !t1 then begin
+    (* Where the segment enters and leaves the grown window, by Liang and
+       Barsky: the last of its entries and the first of its exits. *)
+    let px = ref ax and py = ref ay and qx = ref bx and qy = ref by in
+    let missed = ref false in
+    let edges x a b lo hi =
+      if a = b then (if a < lo || a > hi then missed := true)
+      else begin
+        let enter, leave = if a < b then (lo, hi) else (hi, lo) in
+        if (a < b && a < lo) || (a > b && a > hi) then begin
+          let ex, ey = at x enter in
+          if along !px !py ex ey > 0. then begin
+            px := ex;
+            py := ey
+          end
+        end;
+        if (a < b && b > hi) || (a > b && b < lo) then begin
+          let lx, ly = at x leave in
+          if along !qx !qy lx ly < 0. then begin
+            qx := lx;
+            qy := ly
+          end
+        end
+      end
+    in
+    edges true sx tx p.wx0 p.wx1;
+    edges false sy ty p.wy0 p.wy1;
+    let stop = along !px !py !qx !qy in
+    if !missed || not (stop > 0.) then begin
       flush_piece s ~dx:ux ~dy:uy;
       advance d len
     end
     else begin
-      let start = !t0 *. len and stop = !t1 *. len in
+      let px = !px and py = !py and qx = !qx and qy = !qy in
+      let start = Float.hypot (px -. ax) (py -. ay) in
       if start > 0. then begin
         flush_piece s ~dx:ux ~dy:uy;
         advance d start
       end;
-      let pos = ref start in
+      let pos = ref 0. in
       let continue = ref true in
       while !continue do
         if is_dash d && s.piece.n = 0 then
-          push s.piece (ax +. (ux *. !pos)) (ay +. (uy *. !pos));
+          push s.piece (px +. (ux *. !pos)) (py +. (uy *. !pos));
         if !pos +. d.rest <= stop then begin
           pos := !pos +. d.rest;
           if is_dash d then begin
-            push s.piece (ax +. (ux *. !pos)) (ay +. (uy *. !pos));
+            push s.piece (px +. (ux *. !pos)) (py +. (uy *. !pos));
             flush_piece s ~dx:ux ~dy:uy
           end;
           next d
         end
         else begin
           d.rest <- d.rest -. (stop -. !pos);
-          if is_dash d then
-            push s.piece (ax +. (ux *. stop)) (ay +. (uy *. stop));
+          if is_dash d then push s.piece qx qy;
           continue := false
         end
       done;
-      if stop < len then begin
+      let rest = Float.hypot (bx -. qx) (by -. qy) in
+      if rest > 0. then begin
         flush_piece s ~dx:ux ~dy:uy;
-        advance d (len -. stop)
+        advance d rest
       end
     end
   end

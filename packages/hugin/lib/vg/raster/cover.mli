@@ -33,6 +33,12 @@ val line : t -> float -> float -> float -> float -> unit
     device pixels, cut to the window along its own direction. A coordinate that
     is not finite is taken as [±1e15], NaN as [1e15]. *)
 
+val at : float -> float -> float -> float -> float -> float
+(** [at v a0 a1 b0 b1] is the [b] of the line through [(a0, b0)] and
+    [(a1, b1)], [a0 <> a1], at [a = v], measured from the end nearer [v] so
+    that it keeps that end's precision however far the other lies. {!line}
+    cuts edges with it. *)
+
 val faint : float
 (** [faint] is a two-thousandth, the coverage at or below which a primitive
     paints nothing in a pixel. It is compared before the coverage is

@@ -319,6 +319,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster.render` returns on a dashed stroke whose visible part lies
+  far from its segment's start: adding a dash length there left the position
+  unchanged.
 - `layout` draws a panel of extreme aspect in the largest box of that aspect
   its cell holds, with a warning if it has no width or height. A ratio of 2e306
   raised an internal `Box2.v` error, and one above 1e20 gave a point.
