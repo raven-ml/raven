@@ -1183,6 +1183,21 @@ let writing =
             (written
                (Csv.format ~header:false [ ("y", any Type.binary) ])
                (of_table t)));
+      test "a field that starts with a byte order mark is quoted" (fun () ->
+          let bom = "\xEF\xBB\xBF" in
+          let t =
+            v
+              [
+                ( "y",
+                  Column.v Type.binary
+                    [| Binary.of_string (bom ^ "a"); Binary.of_string "b" |] );
+              ]
+          in
+          equal string
+            ("\"" ^ bom ^ "a\"\nb\n")
+            (written
+               (Csv.format ~header:false [ ("y", any Type.binary) ])
+               (of_table t)));
     ]
 
 (* Sources *)

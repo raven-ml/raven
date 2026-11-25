@@ -675,9 +675,11 @@ type field = { get : int -> char; len : int }
 let of_string s = { get = String.unsafe_get s; len = String.length s }
 
 (* A field is quoted when reading it unquoted would not give it back: empty
-   text, which is null unquoted, a null token, a leading quote, and the bytes
-   that end or break an unquoted field. *)
+   text, which is null unquoted, a null token, a leading quote, the bytes that
+   end or break an unquoted field, and a leading byte order mark, which a read
+   skips when the field starts the input. *)
 let needs_quote f { get; len } =
+  let bom = len >= 3 && get 0 = '\xEF' && get 1 = '\xBB' && get 2 = '\xBF' in
   let token t =
     String.length t = len
     &&
@@ -692,7 +694,7 @@ let needs_quote f { get; len } =
     let c = get k in
     c = f.sep || c = f.quote || is_break c || special (k + 1)
   in
-  len = 0 || special 0 || List.exists token f.nulls
+  len = 0 || bom || special 0 || List.exists token f.nulls
 
 let add_field b f ({ get; len } as x) =
   if not (needs_quote f x) then

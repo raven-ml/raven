@@ -214,12 +214,13 @@ val encode :
     [f]'s header when [f] has one, then one record per row, each ending with a
     line feed. Each field is the text {!Talon.Column.print} writes, and a null
     is an unquoted empty field. A field is quoted when it is empty text, equals
-    one of [f]'s null tokens, or holds the separator, the quote or a line break,
-    and a quote inside it is doubled. A format of one column writes a null as
-    its first null token, since a record of one empty field is an empty line,
-    which is no record. [eod] indicates whether [Bytesrw.Bytes.Slice.eod] is
-    written on [w] after the records, when they are all written: the caller
-    decides when [w] ends. Defaults to [false].
+    one of [f]'s null tokens, holds the separator, the quote, a line feed or a
+    carriage return, or starts with a UTF-8 byte order mark, which {!decode}
+    skips at the start of the input. A quote inside a quoted field is doubled. A
+    format of one column writes a null as its first null token, since a record
+    of one empty field is an empty line, which is no record. [eod] indicates
+    whether [Bytesrw.Bytes.Slice.eod] is written on [w] after the records, when
+    they are all written: the caller decides when [w] ends. Defaults to [false].
 
     [Error e] if running [q] fails, if a null is to be written in a format of
     one column without a null token, at the line it would be on, or if writing

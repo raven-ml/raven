@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_csv.encode` quotes a field that starts with a UTF-8 byte order mark.
+  Written unquoted as a file's first field, the mark was skipped by
+  `Talon_csv.decode`, so the value or the header did not read back.
 - Under `Query.slice ~offset ~length` with `offset >= 0`, or `Query.head`,
   with no filter between, `Talon_parquet.source` and `Talon_parquet.file`
   read the first `offset + length` rows alone: the row groups that hold them
