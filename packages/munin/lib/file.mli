@@ -169,6 +169,13 @@ val remove_tree : string -> unit
     that another process removes meanwhile is not an error. On Windows, it
     blocks briefly while another handle holds an entry. *)
 
+val collect : string -> bool
+(** [collect p] removes [p] as {!remove_tree} does, but leaves an entry whose
+    removal fails with [EBUSY], as NFS refuses for a file another process of
+    the client holds open, and is whether this call removed [p]: not when [p]
+    is busy, nor when another process removed it first. A symbolic link is
+    removed, never followed. *)
+
 val stamp : string -> (float * int * int) option
 (** [stamp p] is [p]'s modification time, size and inode, if it exists. *)
 

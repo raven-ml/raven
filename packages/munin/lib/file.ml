@@ -260,8 +260,14 @@ let unlock fd =
   with Unix.Unix_error (e, _, _) -> error "unlock" e
 
 let with_lock path k f =
+  (* A shared lock needs a descriptor open for reading only, on NFS too, so a
+     user who may not write the lock file, as in a store a group shares, still
+     takes it. *)
+  let mode =
+    match k with `Shared -> Unix.O_RDONLY | `Exclusive -> Unix.O_RDWR
+  in
   let fd =
-    match open_file path [ Unix.O_RDWR; Unix.O_CREAT ] 0o666 with
+    match open_file path [ mode; Unix.O_CREAT ] 0o666 with
     | Ok fd -> fd
     | Error e -> error path e
   in
@@ -439,24 +445,34 @@ let unlink path =
     Unix.chmod path 0o666;
     Unix.unlink path
 
-(* An entry gone between the listing and its removal was removed by another
-   process, as gc and a deletion may both remove what a deletion left, or
-   another domain, as two writers of one run's notes may. *)
-let gone path f =
-  try shared f with
-  | Unix.Unix_error (Unix.ENOENT, _, _) -> ()
-  | Unix.Unix_error (e, _, _) -> error path e
+(* [remove path f] is what [f ()] did to [path]: removed it, found it gone, as
+   another process removed it meanwhile (gc and a deletion may both remove what
+   a deletion left, two writers of one run's notes may), or found it busy. *)
+let remove path f =
+  match shared f with
+  | () -> `Removed
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> `Gone
+  | exception Unix.Unix_error (Unix.EBUSY, _, _) -> `Busy
+  | exception Unix.Unix_error (e, _, _) -> error path e
 
-let rec remove_tree path =
+(* [collect_tree path] removes [path] and what it holds, a link as a file whose
+   target is never read, leaving what is busy, and is what it did to [path]. *)
+let rec collect_tree path =
   match Unix.lstat path with
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> `Gone
   | exception Unix.Unix_error (e, _, _) -> error path e
   | { Unix.st_kind = Unix.S_DIR; _ } ->
-      Array.iter
-        (fun n -> remove_tree (Filename.concat path n))
-        (try Sys.readdir path with Sys_error _ -> [||]);
-      gone path (fun () -> Unix.rmdir path)
-  | _ -> gone path (fun () -> unlink path)
+      let busy =
+        Array.fold_left
+          (fun busy n -> collect_tree (Filename.concat path n) = `Busy || busy)
+          false
+          (try Sys.readdir path with Sys_error _ -> [||])
+      in
+      if busy then `Busy else remove path (fun () -> Unix.rmdir path)
+  | _ -> remove path (fun () -> unlink path)
+
+let remove_tree path = if collect_tree path = `Busy then error path Unix.EBUSY
+let collect path = collect_tree path = `Removed
 
 let stamp path =
   match Unix.stat path with

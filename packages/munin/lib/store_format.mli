@@ -304,14 +304,15 @@ v}
 
     {1:annotations Tags and notes}
 
-    A tag is the file [tags/<digest>], where [<digest>] is the 64
-    lowercase hexadecimal digits of the BLAKE2b-256 digest of the tag's
-    UTF-8 bytes, and the file holds those bytes. Two tags are equal when
-    their bytes are, whatever the file system's rules on names, such as
-    case folding. A writer adds a tag by writing a [.]-named file in
-    [tags/] and renaming it to the tag's name, and removes it by removing
-    the file. Neither takes a lock. A tag file whose bytes do not digest
-    to its name is damaged, and readers ignore it.
+    A tag is the file [tags/<digest>], where [<digest>] is the 64 lowercase
+    hexadecimal digits of the BLAKE2b-256 digest of the tag's UTF-8 bytes, and
+    the file holds those bytes. Two tags are equal when their bytes are,
+    whatever the file system's rules on names, such as case folding. A writer
+    adds a tag by writing a [.]-named file in [tags/] and renaming it to the
+    tag's name, and removes it by removing the file. Neither takes the run's
+    lock; a writer holds a shared lock on [lock] while its [.]-named file exists
+    ({!section-blobs}). A tag file whose bytes do not digest to its name is
+    damaged, and readers ignore it.
 
     [notes] holds the run's notes, UTF-8 text. A writer replaces the file
     whole. It writes the new text to a [.]-named file in the run's
@@ -409,12 +410,16 @@ v}
 
     A writer that publishes a version holds a shared lock on [lock] from before
     it writes the blob until the version file exists, and a writer that sets an
-    alias or deletes a version holds it while it replaces the file. A
-    {e collector} holds an exclusive lock on [lock] while it removes the blobs
-    that no version names, the aliases of deleted versions and the [.]-named
-    entries under [blobs/] and [artifacts/]. While it holds the lock no such
-    write is in progress, so it removes nothing a version will name and no file
-    a writer is about to rename. It also removes what a deletion cut short left
+    alias or deletes a version holds it while it replaces the file. A writer of
+    a [.]-named entry in a run's directory holds it while the entry exists: a
+    writer of tags or notes, and a run's writer as it replaces [writer],
+    [stats.json] or [git.diff] and as it copies a file it logs. A {e collector}
+    holds an exclusive lock on [lock] while it removes the blobs that no version
+    names, the aliases of deleted versions, the [.]-named entries under [blobs/]
+    and [artifacts/], and those of each run's directory, its [tags/] and its
+    [files/], but [.deleted]. While it holds the lock no such write is in
+    progress, so it removes nothing a version will name and no file a writer is
+    about to rename. It also removes what a deletion cut short left
     ({!section-resume}): the [.]-named entries of [runs/], and the run
     directories that hold [.deleted] and no log. Neither is a run, and no writer
     adds to either.
@@ -460,7 +465,10 @@ v}
     a while, so a log's modification time, and with it when a run last
     wrote, can lag behind the writer by that time. On an SMB mount under
     Linux a locked file cannot be read from another descriptor, so a
-    run's log cannot be read while it is written.
+    run's log cannot be read while it is written. Where locks hold among
+    one machine's processes only, a collector on another machine can remove
+    a writer's work in progress ({!section-blobs}): collect on the machine
+    that writes, or when no machine writes.
 
     {1:crashes Crash states}
 
@@ -471,7 +479,7 @@ v}
       and the next writer's resume cuts them off;
     - a file under [files/] that no [file] record names: ignored;
     - a [.]-named file or directory: ignored, and removed by a collector
-      under [blobs/] and [artifacts/] and in [runs/];
+      under [blobs/] and [artifacts/], in [runs/] and in a run's directory;
     - a run directory that holds [.deleted] and no log: not a run, and
       removed by a collector;
     - a blob that no version names: removed by a collector;

@@ -93,6 +93,9 @@ let add_tags s id tags =
       let path = Listing.tag_file r.dir tag in
       if not (Sys.file_exists path) then begin
         File.mkdir (Filename.dirname path);
+        (* The store's lock, shared, while the temporary exists: gc removes a
+           run's [.]-named entries under it, exclusive. *)
+        Version.with_lock s.root `Shared @@ fun () ->
         File.replace ~parents:false path tag
       end)
     tags
@@ -113,18 +116,23 @@ let set_notes s id notes =
   let path = Filename.concat r.dir "notes" in
   match notes with
   | None -> File.remove_tree path
-  | Some n -> File.replace ~parents:false path n
+  | Some n ->
+      Version.with_lock s.root `Shared @@ fun () ->
+      File.replace ~parents:false path n
 
 (* [remove_in_place dir] removes the directory [dir] of a deleted run, its mark
    last, so that a removal cut short leaves the directory marked. *)
 let remove_in_place dir =
   let mark = Listing.mark dir in
-  Array.iter
-    (fun n ->
-      let p = Filename.concat dir n in
-      if p <> mark then File.remove_tree p)
-    (try Sys.readdir dir with Sys_error _ -> [||]);
-  File.remove_tree dir
+  let others () =
+    (try Sys.readdir dir with Sys_error _ -> [||])
+    |> Array.to_list
+    |> List.map (Filename.concat dir)
+    |> List.filter (( <> ) mark)
+  in
+  List.iter (fun p -> ignore (File.collect p)) (others ());
+  (* An entry the file system keeps busy stays, and so does the mark. *)
+  others () = [] && File.collect dir
 
 (* [remove_deleted s dir] moves [dir] to a [.]-named entry of runs/ and removes
    it there, so that no writer that still holds its path, such as {!add_tags},
@@ -134,7 +142,7 @@ let remove_deleted s dir =
   let gone = File.temp_name (runs_dir s) in
   match File.rename dir gone with
   | Ok () -> File.remove_tree gone
-  | Error _ -> remove_in_place dir
+  | Error _ -> ignore (remove_in_place dir)
 
 let delete_run s id =
   let r = existing s id in
@@ -324,6 +332,7 @@ let with_store_lock s kind f =
   if Sys.file_exists s.root then Version.with_lock s.root kind f else f ()
 
 let with_publication_lock s f = Version.with_lock s.root `Shared f
+let with_collection_lock s f = Version.with_lock s.root `Exclusive f
 
 let gc s =
   with_store_lock s `Exclusive @@ fun () ->
@@ -363,10 +372,43 @@ let gc s =
           (alias_files s n))
       (Version.names ~root:s.root)
   in
-  let removed = unnamed @ leftovers @ dangling @ dot_entries runs in
-  List.iter File.remove_tree removed;
-  List.iter remove_in_place deleted;
-  List.length removed + List.length deleted
+  (* Writers hold the shared lock while their temporaries in a run's directory
+     exist, so none is in progress: every [.]-named entry there, its [tags/] and
+     the tree of its [files/] is work left behind, but the mark a deletion
+     renames the log to. *)
+  (* Below a run's directory, a link is never followed: its target may be
+     anything outside the store. *)
+  let is_real_dir d =
+    match Unix.lstat d with
+    | { Unix.st_kind = Unix.S_DIR; _ } -> true
+    | _ | (exception Unix.Unix_error _) -> false
+  in
+  let rec dot_tree dir =
+    if not (is_real_dir dir) then []
+    else
+      dot_entries dir
+      @ List.concat_map
+          (fun n -> dot_tree (Filename.concat dir n))
+          (File.entries dir)
+  in
+  let in_runs =
+    File.entries runs
+    |> List.map (Filename.concat runs)
+    (* A run's own directory, holding its log: never a link, nor a directory a
+       start claimed or a deletion marked. *)
+    |> List.filter (fun d -> is_real_dir d && Sys.file_exists (Listing.log d))
+    |> List.concat_map (fun d ->
+        List.filter (fun p -> p <> Listing.mark d) (dot_entries d)
+        @ (let tags = Filename.concat d "tags" in
+           if is_real_dir tags then dot_entries tags else [])
+        @ dot_tree (Filename.concat d "files"))
+  in
+  let removed =
+    unnamed @ leftovers @ dangling @ in_runs @ dot_entries runs
+    |> List.filter File.collect
+  in
+  let removed_in_place = List.filter remove_in_place deleted in
+  List.length removed + List.length removed_in_place
 
 (* Check *)
 

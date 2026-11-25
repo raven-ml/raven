@@ -170,9 +170,12 @@ val delete_artifact : t -> Artifact.t -> unit
 val gc : t -> int
 (** [gc s] removes the blobs of [s] that no version names, the aliases of
     deleted versions, the [.]-named work that crashed writers left under
-    [blobs/] and [artifacts/], and what a {!delete_run} cut short left under
-    [runs/], and is the number of entries it removed. It waits for the
-    publications in progress, and those that start wait for it
+    [blobs/] and [artifacts/] and in run directories, and what a {!delete_run}
+    cut short left under [runs/], and is the number of entries it removed. It
+    leaves an entry the file system keeps busy, as NFS does for a file another
+    process of its client holds open, and follows no symbolic link in or below
+    [runs/], so a run whose directory is a link keeps its [.]-named work. It
+    waits for the writes in progress, and those that start wait for it
     ({!Store_format.section-blobs}). On a missing root it does nothing and
     creates nothing. *)
 
@@ -191,7 +194,7 @@ val check : t -> (string * string) list
     - an alias whose number names no version, deleted or not;
     - a version whose blob is missing, or whose blob's content does not
       match its digest;
-    - a [.]-named entry a writer left;
+    - a [.]-named entry a writer left, until {!gc} removes it;
     - a run directory that a {!delete_run} cut short left, until {!gc}
       removes it.
 
@@ -203,5 +206,9 @@ val check : t -> (string * string) list
    to see what gc does meanwhile. *)
 
 val with_publication_lock : t -> (unit -> 'a) -> 'a
+
+(* Tests hold it exclusive, as gc does, to see what writers do meanwhile. *)
+
+val with_collection_lock : t -> (unit -> 'a) -> 'a
 
 (**/**)

@@ -17,6 +17,19 @@
 
    [gc ROOT] collects the store and prints the number of entries it removed.
 
+   [notes ROOT ID TEXT] sets the notes of the run ID to TEXT.
+
+   [tags ROOT ID TAG] adds TAG to the run ID.
+
+   [starting ROOT] starts a run of the experiment "starting", prints its id and
+   finishes it.
+
+   [logging ROOT FILE] starts a run, prints its id, logs FILE at step 1 under
+   "viz" once a line reaches its standard input, and finishes.
+
+   [finishing ROOT] starts a run, prints its id, and finishes it once a line
+   reaches its standard input.
+
    [fifo ROOT FILE] opens the FIFO FILE for writing, which returns once a reader
    has opened it, prints "opened", and writes a version's tombstone into it once
    a line reaches its standard input. An alarm ends it after 10 s, so a reader
@@ -85,6 +98,23 @@ let () =
       let tombstone = {|{"format":1,"time":1.0,"deleted":true}|} ^ "\n" in
       ignore (Unix.write_substring fd tombstone 0 (String.length tombstone));
       Unix.close fd
+  | "tags" -> Store.add_tags store Sys.argv.(3) [ Sys.argv.(4) ]
+  | "starting" ->
+      let s = Session.start ~store ~provenance ~experiment:"starting" () in
+      print_endline (Session.id s);
+      Session.finish s
+  | "notes" -> Store.set_notes store Sys.argv.(3) (Some Sys.argv.(4))
+  | "logging" ->
+      let s = Session.start ~store ~provenance ~experiment:"logging" () in
+      print_endline (Session.id s);
+      ignore (In_channel.input_line stdin);
+      Session.log_file s ~step:1 ~key:"viz" Sys.argv.(3);
+      Session.finish s
+  | "finishing" ->
+      let s = Session.start ~store ~provenance ~experiment:"finishing" () in
+      print_endline (Session.id s);
+      ignore (In_channel.input_line stdin);
+      Session.finish s
   | "gc" -> print_endline (string_of_int (Store.gc store))
   | "refused" -> (
       Sys.set_signal Sys.sigxfsz Sys.Signal_ignore;

@@ -200,18 +200,24 @@ let start ?store ?name ?parent ?(tags = []) ?(params = []) ?steps ?provenance
        its writer. *)
     if not (File.try_lock fd `Exclusive) then
       raise (Sys_error (log ^ ": the file system refused a lock"));
-    write_writer dir (identities ());
-    List.iter (fun tag -> File.replace (Listing.tag_file dir tag) tag) tags;
-    (match provenance.git with
-    | Some { dirty = true; _ } -> (
-        match
-          File.output
-            [| "git"; "-C"; provenance.cwd; "diff"; "--binary"; "HEAD" |]
-        with
-        | Some diff -> File.replace (Filename.concat dir "git.diff") diff
-        | None ->
-            failwith ("Session.start: git diff failed in " ^ provenance.cwd))
-    | _ -> ());
+    let diff =
+      match provenance.git with
+      | Some { dirty = true; _ } -> (
+          match
+            File.output
+              [| "git"; "-C"; provenance.cwd; "diff"; "--binary"; "HEAD" |]
+          with
+          | Some diff -> Some diff
+          | None ->
+              failwith ("Session.start: git diff failed in " ^ provenance.cwd))
+      | _ -> None
+    in
+    (* The store's lock, shared, while the temporaries exist: gc removes a run's
+       [.]-named entries under it, exclusive. *)
+    (Version.with_lock (Store.root store) `Shared @@ fun () ->
+     write_writer dir (identities ());
+     List.iter (fun tag -> File.replace (Listing.tag_file dir tag) tag) tags;
+     Option.iter (File.replace (Filename.concat dir "git.diff")) diff);
     let s = make ~store ~dir ~id ~fd ~good:0 in
     append s
       (Record.Start
@@ -265,7 +271,8 @@ let resume ?provenance (r : Run.t) ~step =
       (Fold.accs h);
     List.iter (fun (k, d) -> s.defs <- Smap.add k d s.defs) (Fold.defs h);
     Atomic.set s.latest step;
-    write_writer r.dir (identities ());
+    Version.with_lock (Store.root store) `Shared (fun () ->
+        write_writer r.dir (identities ()));
     append s (Record.Resume { step; provenance });
     File.sync fd;
     s
@@ -433,7 +440,12 @@ let log_file s ~step ~key path =
     | exception Unix.Unix_error (e, _, _) ->
         raise (Sys_error (dir ^ ": " ^ Unix.error_message e))
   in
+  (* The store's lock, shared, from the temporary's creation to its discard,
+     since gc removes a run's [.]-named entries under it, exclusive. The hold
+     ends before [s.mutex] is taken: a writer takes [s.mutex] first, then the
+     store's lock, never the reverse. *)
   let name =
+    Version.with_lock (Store.root s.store) `Shared @@ fun () ->
     Fun.protect
       ~finally:(fun () -> File.discard tmp)
       (fun () ->
@@ -498,6 +510,9 @@ let finish ?(status = `Finished) s =
         |> List.rev
       in
       match
+        (* Under [s.mutex], then the store's lock: the order every writer takes
+           them in. *)
+        Version.with_lock (Store.root s.store) `Shared @@ fun () ->
         File.replace
           (Filename.concat s.dir "stats.json")
           (* The log's own length, which an interrupted count cannot miss. *)

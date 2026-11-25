@@ -2962,45 +2962,42 @@ let deletion_tests =
         ];
     ]
 
-(* [gc_while_publishing store] runs [Store.gc] in a child process while this
-   process holds the store's shared lock, as a publication in progress does,
-   with a [.]-named entry under blobs/. It checks the entry is there while the
-   child waits, and is the count the child printed and the entries left once the
-   lock is let go. *)
-let gc_while_publishing store =
-  let blobs = Filename.concat (Store.root store) "blobs/blake2b-256" in
-  let entry = Filename.concat blobs ".in-progress" in
+(* [await_waiter pid] returns once the process [pid] waits for a lock. On Linux
+   the wait is the event: /proc/locks lists a blocked lock as "-> FLOCK ...
+   <pid> ...". Elsewhere no event shows it, so it returns at once and a test
+   that uses it checks only the outcome, which a writer or a gc that ignored the
+   lock passes when it is late. *)
+let await_waiter pid =
+  if Lazy.force kernel = "Linux" then
+    eventually ~within:30. (fun () ->
+        let waiters =
+          List.filter_map
+            (fun l ->
+              match List.filter (( <> ) "") (String.split_on_char ' ' l) with
+              | _ :: "->" :: _ :: _ :: _ :: pid :: _ -> Some pid
+              | _ -> None)
+            (lines (read_file "/proc/locks"))
+        in
+        mem ~msg:"the child waits" string (string_of_int pid) waiters)
+
+(* [gc_while_held store entry] runs [Store.gc] in a child process while this
+   process holds the store's shared lock, as a writer does while its [.]-named
+   [entry] exists. It checks the entry is there while the child waits, and is
+   the count the child printed once the lock is let go. *)
+let gc_while_held store entry =
   let pid, stdin, out =
     Store.with_publication_lock store (fun () ->
-        mkdir_p (Filename.concat (Store.root store) "blobs");
-        mkdir_p blobs;
         write_file entry "x";
-        let child = spawn [ "gc"; Store.root store ] in
-        let pid, _, _ = child in
-        (* On Linux the child's wait is the event: /proc/locks lists a blocked
-           lock as "-> FLOCK ... <pid> ...". *)
-        if Lazy.force kernel = "Linux" then
-          eventually ~within:30. (fun () ->
-              let waiters =
-                List.filter_map
-                  (fun l ->
-                    match
-                      List.filter (( <> ) "") (String.split_on_char ' ' l)
-                    with
-                    | _ :: "->" :: _ :: _ :: _ :: pid :: _ -> Some pid
-                    | _ -> None)
-                  (lines (read_file "/proc/locks"))
-              in
-              mem ~msg:"gc waits" string (string_of_int pid) waiters);
-        equal ~msg:"the entry while gc waits" (list string) [ ".in-progress" ]
-          (Array.to_list (Sys.readdir blobs));
+        let ((pid, _, _) as child) = spawn [ "gc"; Store.root store ] in
+        await_waiter pid;
+        equal ~msg:"the entry while gc waits" string "x" (read_file entry);
         child)
   in
   Unix.close stdin;
   let removed = input_line out in
   wait pid;
   close_in out;
-  (removed, Array.to_list (Sys.readdir blobs))
+  removed
 
 let maintenance_tests =
   group "maintenance"
@@ -3009,9 +3006,225 @@ let maintenance_tests =
          ignored the lock passes there when the child is late. *)
       test "gc waits for a publication in progress" (fun () ->
           let store = new_store () in
-          let removed, left = gc_while_publishing store in
+          let blobs = Filename.concat (Store.root store) "blobs/blake2b-256" in
+          mkdir_p (Filename.concat (Store.root store) "blobs");
+          mkdir_p blobs;
+          let removed =
+            gc_while_held store (Filename.concat blobs ".in-progress")
+          in
           equal ~msg:"removed" string "1" removed;
-          equal ~msg:"left" (list string) [] left);
+          equal ~msg:"left" (list string) [] (Array.to_list (Sys.readdir blobs)));
+      test "gc waits for a run's temporary in progress" (fun () ->
+          let store = new_store () in
+          let s = start store in
+          Session.finish s;
+          let dir = Run.dir (reread store s) in
+          let removed = gc_while_held store (Filename.concat dir ".tmp-held") in
+          equal ~msg:"removed" string "1" removed;
+          equal ~msg:"left" (list string) []
+            (List.filter
+               (fun n -> n.[0] = '.')
+               (Array.to_list (Sys.readdir dir))));
+      test "gc removes the work writers left in a run's directory" (fun () ->
+          let store = new_store () in
+          let s = start ~tags:[ "a" ] store in
+          Session.log_file s ~step:0 ~key:"viz/cm" (source ~suffix:".png" "png");
+          Session.finish s;
+          let dir = Run.dir (reread store s) in
+          let left =
+            [
+              Filename.concat dir ".tmp-1-0";
+              Filename.concat dir "tags/.tmp-1-1";
+              Filename.concat dir "files/viz/cm/.tmp-1-2";
+            ]
+          in
+          List.iter (fun p -> write_file p "x") left;
+          equal ~msg:"removed" int 3 (Store.gc store);
+          equal ~msg:"left" (list string) [] (List.filter Sys.file_exists left);
+          equal ~msg:"checked" (list string) []
+            (List.map fst (Store.check store)));
+      test "gc keeps a run directory's deletion mark" (fun () ->
+          (* A deletion that renames the log after gc read the directory leaves
+             its mark, which gc must not take for a writer's work. *)
+          let store = new_store () in
+          let s = start store in
+          Session.finish s;
+          let mark = Filename.concat (Run.dir (reread store s)) deletion_mark in
+          write_file mark "";
+          ignore (Store.gc store);
+          equal (list string) [ deletion_mark ]
+            (List.filter
+               (fun n -> n.[0] = '.')
+               (Array.to_list (Sys.readdir (Filename.dirname mark)))));
+      cases "a writer of a run's temporary waits for gc" ~id:fst
+        [
+          ("start", `Start);
+          ("add_tags", `Tags);
+          ("set_notes", `Notes);
+          ("log_file", `Log_file);
+          ("finish", `Finish);
+        ]
+        (fun (_, writer) ->
+          let store = new_store () in
+          let finished = start store in
+          Session.finish finished;
+          (* A child that writes in a session it started starts before the hold,
+             and writes once a line reaches it; the others write as they start,
+             inside the hold. *)
+          let started =
+            match writer with
+            | `Log_file ->
+                Some
+                  (spawn
+                     [
+                       "logging"; Store.root store; source ~suffix:".png" "png";
+                     ])
+            | `Finish -> Some (spawn [ "finishing"; Store.root store ])
+            | `Start | `Tags | `Notes -> None
+          in
+          let id =
+            match started with
+            | Some (_, _, out) -> input_line out
+            | None -> Session.id finished
+          in
+          let run () = require_some (Store.run store id) in
+          (* What the write leaves: the run started, the tag, the notes, the
+             file logged, the hint. *)
+          let written () =
+            match writer with
+            | `Start ->
+                List.filter_map
+                  (fun r ->
+                    if Run.experiment r = "starting" then Some "starting"
+                    else None)
+                  (Store.runs store)
+            | `Tags -> Run.tags (run ())
+            | `Notes -> Option.to_list (Run.notes (run ()))
+            | `Log_file ->
+                List.map
+                  (fun (f : History.file) -> Filename.basename f.path)
+                  (History.files (History.read (run ())))
+            | `Finish ->
+                List.filter (( = ) "stats.json")
+                  (Array.to_list (Sys.readdir (Run.dir (run ()))))
+          in
+          let expected =
+            match writer with
+            | `Start -> [ "starting" ]
+            | `Tags -> [ "t" ]
+            | `Notes -> [ "n" ]
+            | `Log_file -> [ "1.png" ]
+            | `Finish -> [ "stats.json" ]
+          in
+          let pid, stdin, out =
+            Store.with_collection_lock store (fun () ->
+                let ((pid, stdin, _) as child) =
+                  match (started, writer) with
+                  | Some child, _ -> child
+                  | None, `Start -> spawn [ "starting"; Store.root store ]
+                  | None, `Tags -> spawn [ "tags"; Store.root store; id; "t" ]
+                  | None, _ -> spawn [ "notes"; Store.root store; id; "n" ]
+                in
+                (match started with
+                | Some _ -> ignore (Unix.write_substring stdin "go\n" 0 3)
+                | None -> ());
+                await_waiter pid;
+                equal ~msg:"written while gc holds the lock" (list string) []
+                  (written ());
+                child)
+          in
+          Unix.close stdin;
+          wait pid;
+          close_in out;
+          equal ~msg:"written after" (list string) expected (written ()));
+      test "gc follows no symbolic link below a run's directory" (fun () ->
+          if Sys.win32 then skip ~reason:"a test makes symbolic links" ();
+          (* Directories outside the store, each with a [.]-named file, that a
+             run's [files/] and [tags/] link to. *)
+          let outside () =
+            let d = temp_dir () in
+            mkdir_p (Filename.concat d "sub");
+            write_file (Filename.concat d ".config") "x";
+            write_file (Filename.concat d "sub/.key") "x";
+            d
+          in
+          let store = new_store () in
+          let s = start store in
+          Session.log_file s ~step:0 ~key:"viz" (source ~suffix:".png" "png");
+          Session.finish s;
+          let dir = Run.dir (reread store s) in
+          let by_files = outside ()
+          and by_dot = outside ()
+          and by_tags = outside () in
+          Unix.symlink by_files (Filename.concat dir "files/data");
+          Unix.symlink by_dot (Filename.concat dir "files/.data");
+          Unix.symlink by_tags (Filename.concat dir "tags");
+          ignore (Store.gc store);
+          let left d =
+            List.filter Sys.file_exists
+              [ Filename.concat d ".config"; Filename.concat d "sub/.key" ]
+          in
+          equal ~msg:"under files/" (list string)
+            [
+              Filename.concat by_files ".config";
+              Filename.concat by_files "sub/.key";
+            ]
+            (left by_files);
+          equal ~msg:"a .-named link" (list string)
+            [
+              Filename.concat by_dot ".config";
+              Filename.concat by_dot "sub/.key";
+            ]
+            (left by_dot);
+          equal ~msg:"tags/" (list string)
+            [
+              Filename.concat by_tags ".config";
+              Filename.concat by_tags "sub/.key";
+            ]
+            (left by_tags));
+      test "gc collects in no run directory that is a link or holds no log"
+        (fun () ->
+          if Sys.win32 then skip ~reason:"a test makes symbolic links" ();
+          let store = new_store () in
+          let s = start store in
+          Session.finish s;
+          let outside = temp_dir () in
+          write_file (Filename.concat outside ".config") "x";
+          let runs = Filename.concat (Store.root store) "runs" in
+          Unix.symlink outside (Filename.concat runs "home");
+          (* A directory a start has claimed, before its log exists. *)
+          let claimed = Filename.concat runs "claimed" in
+          mkdir_p claimed;
+          write_file (Filename.concat claimed ".tmp-1-0") "x";
+          ignore (Store.gc store);
+          equal (list string)
+            [
+              Filename.concat outside ".config";
+              Filename.concat claimed ".tmp-1-0";
+            ]
+            (List.filter Sys.file_exists
+               [
+                 Filename.concat outside ".config";
+                 Filename.concat claimed ".tmp-1-0";
+               ]));
+      test "writers and publications work with a lock only its owner may write"
+        (fun () ->
+          if Sys.win32 then
+            skip ~reason:"Windows keeps no write permission in a mode" ();
+          if Unix.geteuid () = 0 then skip ~reason:"root writes any file" ();
+          (* As in a store shared by a group, where the lock file belongs to
+             whoever made it first: a shared hold opens it to read. *)
+          let store = new_store () in
+          let first = start store in
+          Session.finish first;
+          Unix.chmod (Filename.concat (Store.root store) "lock") 0o444;
+          Store.set_notes store (Session.id first) (Some "n");
+          let s = start store in
+          let a = Session.log_artifact s ~name:"x" (source "1") in
+          Session.finish s;
+          equal ~msg:"notes" (option string) (Some "n")
+            (Run.notes (reread store first));
+          equal ~msg:"version" int 1 (Artifact.version a));
       test "gc removes the work writers left under blobs/ and artifacts/"
         (fun () ->
           let store = new_store () in
