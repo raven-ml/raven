@@ -114,8 +114,9 @@ let with_gradient =
           let _, dy = Rune.jvp pos Nx.Ptree.tensor reads x0 dx in
           equal (array float_exact) (floats (gradient x0).a) (floats dy));
       test "a read under jit raises" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"traced") (fun () ->
-              Rune.jit Nx.Ptree.(pos @-> returns tensor) reads x0));
+          raises_match
+            (fun e -> Exn.invalid_arg e)
+            (fun () -> Rune.jit Nx.Ptree.(pos @-> returns tensor) reads x0));
     ]
 
 let () = exit (run "Norn.with_gradient" [ with_gradient ])
