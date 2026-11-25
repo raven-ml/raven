@@ -192,8 +192,7 @@ let annotations ?prev dir =
    its start, the start's time, whether the probe found the lock held, the log's
    [stat] and its last record's end, if it is one. A log that opens may still
    refuse its reads, as a directory does, or a log another machine holds locked
-   on SMB: that is [`Unread]. A probe the file system refuses, as an NFS mount
-   without its lock daemon does, leaves the run unprobed. *)
+   on SMB: that is [`Unread]. *)
 let read_log ?prev ~path fd =
   let reading f =
     try f () with Sys_error e -> Error (`Unread (path ^ ": " ^ e))
@@ -208,9 +207,7 @@ let read_log ?prev ~path fd =
         | Some line -> (decode_start line :> (_, error) result))
   in
   (* The probe comes before the read of the last record. *)
-  let held =
-    match File.probe fd with h -> Some h | exception Sys_error _ -> None
-  in
+  let held = File.probe fd in
   let* st, last =
     reading @@ fun () ->
     let st = File.fstat fd in

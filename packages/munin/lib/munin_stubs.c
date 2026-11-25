@@ -117,6 +117,11 @@ CAMLprim value caml_munin_lock(value fd, value kind, value wait) {
   DWORD err = GetLastError();
   if (err == ERROR_LOCK_VIOLATION || err == ERROR_IO_PENDING)
     CAMLreturn(Val_false);
+  /* A file system that takes no locks answers that the function is not
+     supported. The unix library maps WSAEOPNOTSUPP to EOPNOTSUPP, as flock's
+     own refusal reads on POSIX. */
+  if (err == ERROR_NOT_SUPPORTED || err == ERROR_INVALID_FUNCTION)
+    err = WSAEOPNOTSUPP;
   caml_win32_maperr(err);
   caml_uerror("LockFileEx", Nothing);
 #else

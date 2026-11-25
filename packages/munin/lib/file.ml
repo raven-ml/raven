@@ -285,10 +285,13 @@ let take_writer fd =
   go ()
 
 let probe fd =
-  if try_lock fd `Shared then (
-    unlock fd;
-    false)
-  else true
+  match lock_stub fd (kind `Shared) false with
+  | true ->
+      unlock fd;
+      Some false
+  | false -> Some true
+  | exception Unix.Unix_error ((Unix.ENOLCK | Unix.EOPNOTSUPP), _, _) -> None
+  | exception Unix.Unix_error (e, _, _) -> error "lock" e
 
 (* [repeat key l] is the first [key x] of an [x] of [l] that an earlier one has,
    found without allocating: the lists are a call's few arguments. *)

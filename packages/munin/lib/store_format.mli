@@ -239,11 +239,11 @@ v}
       not outlive its kernel. Either way the writer exited without an
       end;
     - {e silent} otherwise, as when the reader runs on another machine,
-      either side has no identities, or the run has no [writer], as a run
-      copied without it. To its reader a live writer and a
-      dead one look the same, and the log's modification time says when
-      the run last wrote. On a network file system that time comes from
-      the file system's clock.
+      either side has no identities, the run has no [writer], as a run
+      copied without it, or the file system refuses the probe. To its
+      reader a live writer and a dead one look the same, and the log's
+      modification time says when the run last wrote. On a network file
+      system that time comes from the file system's clock.
 
     Two machines that share a machine identity read as one. A system
     image or a container image copied with a filled [/etc/machine-id]

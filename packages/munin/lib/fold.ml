@@ -493,14 +493,11 @@ let run_fold st fd ~from ~target ~size =
       (refold st fd ~target ~size ~known, true)
 
 (* [open_log st] is the log opened, whether the probe found its lock held, and
-   its [stat]. A probe the file system refuses, as an NFS mount without its lock
-   daemon does, leaves the run unprobed. *)
+   its [stat]. *)
 let open_log st =
   let fd = File.open_read st.path in
   match
-    let held =
-      match File.probe fd with h -> Some h | exception Sys_error _ -> None
-    in
+    let held = File.probe fd in
     (held, File.fstat fd)
   with
   | held, stat -> (fd, held, stat)

@@ -84,9 +84,14 @@ val take_writer : Unix.file_descr -> bool
     readers' probes, and is [false] if a writer holds it
     ({!Store_format.section-resume}). *)
 
-val probe : Unix.file_descr -> bool
-(** [probe fd] is [true] iff a process holds the lock of the log open as [fd],
-    taking a shared lock without waiting and releasing it. *)
+val probe : Unix.file_descr -> bool option
+(** [probe fd] is [Some true] iff a process holds the lock of the log open as
+    [fd], taking a shared lock without waiting and releasing it, and [None] if
+    the file system refuses locks, with [ENOLCK] as an NFS mount without its
+    lock daemon does, or [EOPNOTSUPP] (on Windows, a function not supported). A
+    run whose probe is [None] is unprobed ({!Store_format.section-status}).
+
+    Raises [Sys_error] for another failure of the lock. *)
 
 val repeat : ('a -> string) -> 'a list -> string option
 (** [repeat key l] is the first key of an element of [l] that an earlier element
