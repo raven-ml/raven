@@ -1915,7 +1915,14 @@ let rejection =
       prop ~count:few "beta never draws 0 or 1"
         (Gen.pair keys
            (Gen.of_list ~pp:pp_dtype
-              [ F Nx.float32; F Nx.float16; F Nx.bfloat16 ]))
+              [
+                F Nx.float32;
+                F Nx.float16;
+                F Nx.bfloat16;
+                F Nx.float8_e4m3fn;
+                F Nx.float8_e5m2;
+                F Nx.float4_e2m1fn;
+              ]))
         (fun (k, F dt) ->
           let m = 200_000 in
           let ones v = host_of dt [| m |] (Array.make m v) in

@@ -3914,6 +3914,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.Rng.beta` at `float4_e2m1fn` draws inside (0, 1): a draw that rounds
+  to 1 is 0.5, the largest value below 1, where it was 1. Other draws keep
+  their bits.
 - `Nx_io.Tiff.window` and `Tiff.samples` refuse chunks whose byte counts sum
   past the file's length for a partial file of any length, where a sum past
   `max_int` wrapped and passed the check.

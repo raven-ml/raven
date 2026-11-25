@@ -1066,7 +1066,9 @@ let beta ?key a b =
         let d = E.(lb - la + shift) in
         let f = D.float_format dt in
         let least = lit (f.min_normal *. f.epsilon) in
-        let below_one = lit (1. -. (f.epsilon /. 2.)) in
+        (* Every multiple of [2^-p] in [[0, 1)] is a value of [dt]: the
+           largest below 1 is [1 - 2^-p]. *)
+        let below_one = lit (1. -. Float.ldexp 1. (-precision dt)) in
         rounded dt
           E.(minimum (maximum (lit 1. / (lit 1. + exp d)) least) below_one))
   in
