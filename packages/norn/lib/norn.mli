@@ -577,8 +577,8 @@ module Summary : sig
       statistics are computed at float64, whatever the draws' dtype.
 
       Raises [Invalid_argument] if the chains have fewer than 4 draws, if
-      [superchains] does not divide the chains, and as {!Norn.Diag} does for a
-      tensor that is not of a float dtype. *)
+      [superchains < 2] or does not divide the chains, and as {!Norn.Diag} does
+      for a tensor that is not of a float dtype. *)
 
   val of_weighted : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) Weighted.t -> t
   (** [of_weighted u w] summarises the weighted draws [w] of [u], their log
@@ -591,8 +591,9 @@ module Summary : sig
       effective sample size, the variance over that error squared. A
       quantile interpolates linearly between the draws of positive weight in
       order, the [j]-th at the middle of its weight,
-      [w̃_1 + ... + w̃_(j-1) + w̃_j / 2]. Its findings are each element's
-      [Not_finite] and [Constant], in row order, then [Pareto_k]. The
+      [w̃_1 + ... + w̃_(j-1) + w̃_j / 2]; below the first draw's middle it is
+      the first draw, above the last's the last. Its findings are each
+      element's [Not_finite] and [Constant], in row order, then [Pareto_k]. The
       statistics are computed at float64.
 
       Raises [Invalid_argument] if [w.log_weights] is not of shape [[n]], or if
@@ -624,7 +625,10 @@ module Summary : sig
   (** [pp_finding ppf f] formats [f] as a sentence. *)
 
   val pp : Format.formatter -> t -> unit
-  (** [pp ppf s] formats [s] as a table, then its findings, one per line. *)
+  (** [pp ppf s] formats [s] as a table, then its findings, one per line.
+
+      Here and in {!pp_finding}, a number is rounded once from its exact value,
+      to nearest, ties to even, so the text is the same on every system. *)
 end
 
 module Dist : sig
