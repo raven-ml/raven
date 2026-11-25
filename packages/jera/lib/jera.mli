@@ -701,8 +701,9 @@ module Minimize : sig
       through {!Rune.root}, so its derivative is [−H⁻¹ ∂θ∇f] through every
       tracked value [f] reads, with [H] the Hessian at the answer, solved by the
       method's [linear] on Hessian-vector products; zero at a lane that did not
-      converge. Where [H] is singular the derivative does not exist and is not
-      finite. *)
+      converge. Where [H] is singular the derivative does not exist: its solve
+      by [linear] misses the solver's bound, and the derivative raises
+      [Invalid_argument] naming the entry point. *)
 
   type ('x, 'f, 'd) t
   (** The type for methods for objectives of type ['f] over values of type ['x].
@@ -771,7 +772,7 @@ module Minimize : sig
       {b Cost.} [n] products and one solve of [linear] per iteration, and one
       evaluation of [r] per trial. {b Derivative.} The minimum is the zero of
       rune's gradient of [|r|² / 2]; at a rank-deficient minimum the derivative
-      does not exist and is not finite. *)
+      does not exist, and raises as the other methods' do. *)
 
   val nelder_mead : ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
   (** [nelder_mead] is the Nelder–Mead simplex, for an objective with no useful
@@ -853,8 +854,11 @@ module Minimize : sig
       that holds no point, where a coordinate's [lo] exceeds its [hi] or is
       [+∞] or its [hi] is [−∞], or either is NaN, ends the lane [Stalled].
 
-      [x0] is projected on the box first. Its evaluations count the calls of
-      [f], with its gradient for a gradient method, and [budget] its iterations.
+      [x0] is projected on the box first. Its evaluations count the points at
+      which [f] is evaluated, with its gradient for a gradient method, and
+      [budget] its iterations. A gradient method's line search takes at most
+      [3p] trials (159 in float64), [p] the bits of the dtype's significand, so
+      it evaluates [f] at most [1 + 3p budget] times, whatever [f] returns.
 
       Raises [Invalid_argument] if [budget < 1], if the float tensors of [x0]
       differ in dtype, if [lo] or [hi] differs from [x0] in its structure or the
