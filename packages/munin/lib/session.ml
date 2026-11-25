@@ -183,7 +183,9 @@ let start ?store ?name ?parent ?(tags = []) ?(params = []) ?steps ?provenance
           failwith
             (Printf.sprintf "Session.start: parent %s is no run of %s" p
                (Store.root store))
-      | exception Failure _ -> ())
+      (* A log of another format, or one this process cannot open, is a run all
+         the same. *)
+      | exception (Failure _ | Sys_error _) -> ())
     parent;
   let provenance =
     match provenance with Some p -> p | None -> Provenance.detect ()

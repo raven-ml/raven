@@ -2957,6 +2957,22 @@ let lifecycle_tests =
           raises_match Exn.invalid_arg (fun () -> f store);
           equal ~msg:"no run" (list string) []
             (List.map Run.id (Store.runs store)));
+      test "start takes a parent whose log cannot be opened" (fun () ->
+          if Sys.win32 then
+            skip ~reason:"Windows keeps no search permission in a mode" ();
+          if Unix.geteuid () = 0 then
+            skip ~reason:"root searches any directory" ();
+          let store = new_store () in
+          let parent = start store in
+          Session.finish parent;
+          let dir = Run.dir (reread store parent) in
+          Unix.chmod dir 0o600;
+          Fun.protect ~finally:(fun () -> Unix.chmod dir 0o755) @@ fun () ->
+          let s = start ~parent:(Session.id parent) store in
+          Session.finish s;
+          equal (option string)
+            (Some (Session.id parent))
+            (Run.parent (reread store s)));
       test "start refuses a parent the store does not hold" (fun () ->
           let store = new_store () in
           raises_match Exn.failure (fun () -> start ~parent:"none" store));
