@@ -223,7 +223,7 @@ let report source =
   List.iter
     (fun e ->
       let loc = Location.Error.get_location e in
-      satisfies ~claim:"a location in the source, not a ghost" location
+      satisfies ~claim:"a location in the source" location
         (fun l -> not l.loc_ghost)
         loc;
       try Location.Error.raise e with exn -> Location.report_exception ppf exn)

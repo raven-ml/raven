@@ -321,25 +321,27 @@ let law_config (x : Config.t) =
 
 (* The types the .mli gives the generated values, which the build checks:
    [Test_signature]'s interface is derived, its implementation derives what that
-   interface declares, and each walk is taken here where only a walk of its
-   documented type, at any payload and from any set to any other, is. *)
-let _ :
-    'e Nx.Placement.t ->
-    ((float, 's, host) Nx.t, host) Test_signature.t ->
-    ((float, 's, 'e) Nx.t, 'e) Test_signature.t =
-  P.place (module Test_signature)
-
-let _ :
-    'e Nx.Placement.t -> host Test_signature.state -> 'e Test_signature.state =
-  P.place_fixed Test_signature.walk_state
-
-let _ :
-    'e Nx.Placement.t -> host Test_signature.frozen -> 'e Test_signature.frozen
-    =
-  P.place_fixed Test_signature.walk_frozen
-
-let _ : 'e Nx.Placement.t -> Test_signature.config -> Test_signature.config =
-  P.place_fixed Test_signature.walk_config
+   interface declares, and each walk is taken here at the rigid types [a], [b],
+   [d] and [e], so a walk less general than its documented type fails to
+   compile. *)
+let _ =
+ fun (type a b d e) () ->
+  ( (Test_signature.walk
+      : (a, b, d, e) P.Walk.cursor ->
+        (a, d) Test_signature.t ->
+        (b, e) Test_signature.t),
+    (Test_signature.walk_state
+      : (a, b, d, e) P.Walk.cursor ->
+        d Test_signature.state ->
+        e Test_signature.state),
+    (Test_signature.walk_frozen
+      : (a, b, d, e) P.Walk.cursor ->
+        d Test_signature.frozen ->
+        e Test_signature.frozen),
+    (Test_signature.walk_config
+      : (a, b, d, e) P.Walk.cursor ->
+        Test_signature.config ->
+        Test_signature.config) )
 
 (* How a part is walked *)
 

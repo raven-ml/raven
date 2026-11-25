@@ -64,11 +64,11 @@
 
     In an interface, [[@@deriving ptree]] declares the same values.
 
-    The generated code is marked as generated: an editor takes none of it for
-    the user's source, and OCaml still reports an error in it at the part it
-    walks. A [[@ptree.walk f]] expression stays the user's. The generated code
-    takes the standard library's values from [Stdlib], so a scope that rebinds
-    [Array], [Bool], [ignore] or [( <> )] derives the same walk.
+    An editor takes none of the generated code for the user's source, and OCaml
+    still reports an error in it at the part it walks. A [[@ptree.walk f]]
+    expression stays the user's. The generated code takes the standard library's
+    values from [Stdlib], so a scope that rebinds [Array], [Bool], [ignore] or
+    [( <> )] derives the same walk.
 
     No description is generated: a description is at one dtype and one set,
     which its first use fixes. Make one where it is used,
@@ -138,9 +138,9 @@
     with [f] by [(('a, 'd) M.t [@ptree.walk Nx.Ptree.Walk.under M.walk f])]. The
     exception is a structure's payload argument that mentions a parameter
     without being the payload parameter itself: a nested structure, a part
-    walked with [Nx.Ptree.Walk.under], which takes an attribute. The attributes
-    are named in full: [[@int]], [[@skip]] and [[@walk f]] are not the
-    deriver's.
+    walked with [Nx.Ptree.Walk.under], which takes an attribute. The deriver
+    reads the attributes by their full names, and leaves [[@int]], [[@skip]] and
+    [[@walk f]] to other derivers.
     - [[@ptree.int]] reports the part's [int]s and [bool]s. A compiled program
       is cached per reported value, so mark an integer that changes what a
       program computes (a window, a block size, a layer kind), and hold a value
@@ -165,8 +165,7 @@
 
     {1:errors Errors}
 
-    The deriver reports each offending part once, at the part, and every such
-    part of a declaration in one expansion:
+    The deriver reports, at the offending part:
     - an [int] or [bool] without an attribute, and other scalar data ([float],
       [string], [char], [unit], [bytes], [int32], [int64], [nativeint], [exn])
       and [Nx.dtype] without [[@ptree.skip]];
