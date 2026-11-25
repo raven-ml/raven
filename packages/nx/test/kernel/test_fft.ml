@@ -1630,13 +1630,18 @@ let test_past_2_31 (b : Support.backend) () =
   error_within bound err
 
 (* The bytes of device memory nx_cuda.mli states nx.cuda keeps for later calls
-   on a device. *)
+   on a device, and the most of them its transforms' plans take. *)
 let cuda_kept = 192 * 1024 * 1024
+let cuda_plans = 64 * 1024 * 1024
 
 (* Lines of primes past 2^19, each by Bluestein's convolution, whose plans at
-   complex128, a chirp of 8 MiB and a kernel of 16 MiB or more each, take more
-   than the 64 MiB nx_cuda.mli states the plans keep. *)
+   complex128 each hold a kernel of m >= 2n - 1 points, 16 MiB or more
+   (nx_cuda.mli), and a chirp: five take more than the plans' 64 MiB. *)
 let large_plans = [ 524309; 524341; 524347; 524351; 524353 ]
+
+(* The least bytes the plan of a complex128 line of [n] points by Bluestein's
+   convolution holds: its kernel's. *)
+let least_plan n = 16 * ((2 * n) - 1)
 
 let[@inline never] transform_line (b : Support.backend) n =
   let module K = (val b.kernels) in
@@ -1645,15 +1650,24 @@ let[@inline never] transform_line (b : Support.backend) n =
   check (K.c2c Forward ~axes:[| 0 |] ~dst:y x);
   Rig.Buffer.wait (A.buffer y) Read_write
 
-(* nx.cuda keeps at most [cuda_kept] bytes of device memory for later calls,
-   however many large lines it has planned. *)
+(* nx.cuda keeps at most [cuda_kept] bytes of device memory for later calls, at
+   most [cuda_plans] of them plans, however many large lines it has planned. The
+   plans' share is bounded from what the first line leaves kept: its workspace
+   and the rest, at most that count less [least_plan], and its plan. The four
+   later lines take the first's workspace, so what they leave past that rest is
+   the plans kept. Without eviction the five plans would hold at least 5 x 16
+   MiB, past [cuda_plans], though their kept bytes stay under [cuda_kept]. *)
 let test_kept_plans (b : Support.backend) () =
   (* The first call loads the library's code on the device. *)
   transform_line b 64;
   let before = Support.settled b.device in
-  List.iter (transform_line b) large_plans;
-  at_most ~msg:"bytes kept" int ~than:cuda_kept
-    (Support.settled b.device - before)
+  let first = List.hd large_plans in
+  transform_line b first;
+  let rest = Support.settled b.device - before - least_plan first in
+  List.iter (transform_line b) (List.tl large_plans);
+  let kept = Support.settled b.device - before in
+  at_most ~msg:"bytes kept" int ~than:cuda_kept kept;
+  at_most ~msg:"plans' bytes kept" int ~than:cuda_plans (kept - rest)
 
 (* 32 lines of the prime 131101, whose predecessor is not 7-smooth, each by
    Bluestein's convolution: about the workspace of four lines of a prime past
@@ -1778,7 +1792,9 @@ let laws (d : Support.declared) =
     if d.label <> "cuda" then []
     else
       [
-        test "keeps at most 192 MiB of device memory for later calls"
+        test
+          "keeps at most 192 MiB of device memory for later calls, 64 MiB of \
+           it plans"
           test_kept_plans;
         test "calls in a loop hold one call's workspace" test_loop_workspace;
       ])
