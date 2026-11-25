@@ -2133,6 +2133,13 @@ let truncation =
           satisfies ~claim:"within [60.5, 61]" (array float_exact)
             (Array.for_all (fun x -> x >= 60.5 && x <= 61.))
             xs);
+      (* Newton's steps from the bound 1e-130 once crossed the gamma's 0. *)
+      test "its draws lie in the support where a bound is deep in a tail"
+        (fun () ->
+          let d = continuous_case "truncated_gamma_deep" in
+          satisfies ~claim:"within (0, 1e-130)" (array float_exact)
+            (Array.for_all (fun v -> v > 0. && v < 1e-130))
+            (Nx.to_array (D.sample (Nx.Rng.key 5) (D.iid [| 1000 |] d))));
       (* [∂loc f = (z + (φ(b) - φ(a)) / (Φ(b) - Φ(a))) / σ] for [z = (x - loc) /
          σ] and the standardised bounds [a] and [b]. *)
       prop "the score of a truncated normal's location"
