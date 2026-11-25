@@ -202,10 +202,12 @@ let minima_tests =
       ]
       (fun (_, m, rel, budget) ->
         (* A converged answer is within κ + 1 tolerances (jera.mli, Error), κ ≈
-           2508 the ratio of the Hessian's eigenvalues at (1, 1). *)
+           2508 the ratio of the Hessian's eigenvalues at (1, 1). Tol's measure
+           is a root mean square, so one of two components reaches √2 scales,
+           each [1.01 rel |y|]: √2 · 2509 · 1.01 ≈ 3584. *)
         let tol = Tol.v ~rel ~abs:(rel /. 100.) in
         equal
-          (Oracle.tensor ~rel:(2509. *. rel) ())
+          (Oracle.tensor ~rel:(3584. *. rel) ())
           (vec [| 1.; 1. |])
           (Solution.get
              (Minimize.solve one m ~tol ~budget rosenbrock (vec [| -1.2; 1. |]))));
@@ -428,7 +430,9 @@ let noisy_data p (noise, amp) =
    fixed to: [κ |p|∞ / |p|min], [κ] the condition of the Jacobian, whose columns
    are [e^(b t)] and [a t e^(b t)], from the eigenvalues of its 2 × 2 Gram
    matrix. *)
-let resolution_ulps p =
+(* The condition of the Jacobian of [a e^(b t)] at [p], whose columns are
+   [e^(b t)] and [a t e^(b t)], from the eigenvalues of its 2 × 2 Gram matrix. *)
+let jacobian_condition p =
   let a = Nx.item [ 0 ] p and b = Nx.item [ 1 ] p in
   let ts = Oracle.floats times in
   let sum f = Array.fold_left (fun acc t -> acc +. f t) 0. ts in
@@ -438,8 +442,11 @@ let resolution_ulps p =
   and s22 = sum (fun t -> a *. a *. t *. t *. e t) in
   let mean = (s11 +. s22) /. 2. in
   let gap = sqrt ((((s11 -. s22) /. 2.) ** 2.) +. (s12 *. s12)) in
-  let kappa = sqrt ((mean +. gap) /. (mean -. gap)) in
-  kappa
+  sqrt ((mean +. gap) /. (mean -. gap))
+
+let resolution_ulps p =
+  let a = Nx.item [ 0 ] p and b = Nx.item [ 1 ] p in
+  jacobian_condition p
   *. Float.max (Float.abs a) (Float.abs b)
   /. Float.min (Float.abs a) (Float.abs b)
 
@@ -2333,7 +2340,16 @@ let iterates_tests =
         let xs =
           Minimize.iterates one m ~steps:60 rosenbrock (vec [| -1.2; 1. |])
         in
-        equal (Oracle.tensor ()) (Nx.get [ 58 ] xs) (Nx.get [ 59 ] xs));
+        equal (Oracle.tensor ()) (Nx.get [ 58 ] xs) (Nx.get [ 59 ] xs);
+        (* There [f − f*] is within f's rounding [δf], 16 ε times its
+           coefficients' sum 101 at terms of order 1, so [|x − x*| ≤ √(2 δf /
+           λmin)], [λmin ≈ 0.40] the least eigenvalue of the Hessian at (1, 1):
+           1.3e-6. *)
+        let bound = Float.sqrt (2. *. 16. *. epsilon_float *. 101. /. 0.40) in
+        equal
+          (Oracle.tensor ~abs:bound ())
+          (vec [| 1.; 1. |])
+          (Nx.get [ 59 ] xs));
     test "levenberg_marquardt's iterates go from the start to a fit they repeat"
       (fun () ->
         let y = model (vec [| 2.; -1.3 |]) in
@@ -2343,7 +2359,13 @@ let iterates_tests =
             (vec [| 1.; 0. |])
         in
         equal (Oracle.tensor ()) (vec [| 1.; 0. |]) (Nx.get [ 0 ] xs);
-        equal (Oracle.tensor ()) (Nx.get [ 38 ] xs) (Nx.get [ 39 ] xs));
+        equal (Oracle.tensor ()) (Nx.get [ 38 ] xs) (Nx.get [ 39 ] xs);
+        (* Exact data's zero residual fixes the fit to [ε κ(J)] relative; 16 of
+           those leave room for the residual's rounding. *)
+        let p = vec [| 2.; -1.3 |] in
+        equal
+          (Oracle.tensor ~rel:(16. *. epsilon_float *. jacobian_condition p) ())
+          p (Nx.get [ 39 ] xs));
     cases "the iterates of zero unknowns are rows of none" ~id:fst
       (("nelder_mead", Minimize.nelder_mead) :: gradient_methods) (fun (_, m) ->
         equal (Oracle.tensor ())
