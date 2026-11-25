@@ -8,20 +8,17 @@
    [Sys.backend_type] selects; both build this deterministic dump. Run with
    [--compare], a binary reads the other's dump on stdin and fails, naming the
    first differing line and the bytes where it differs, unless the two are
-   byte-identical; without it, it prints its dump. Inputs cover every kernel exit: unclassified code points,
-   malformed UTF-8 of every shape, pretokens at and past the 15-byte key limit,
-   huge spans, more pretokens than a span chunk, every exit at the seams of
-   the stage, bytes without an id, [ignore_merges], caching off, and a merge
-   whose result stands for other bytes than its entry's. The byte-level models
-   run behind the GPT-2 walker and behind the cl100k and o200k ones, which have
-   their own inputs: contractions in every case, digit groups, newlines inside
-   whitespace, the one-character prefix of a word, combining marks, the
-   sequences a strict decoder refuses, and for o200k case runs, the letters of
-   both of its classes between them, and slashes after punctuation.
-
-   An optional corpus path argument, after [--compare] when given, appends
-   [encode_batch_ids] digests over that file split on <|endoftext|>, for
-   dev-time runs over a large corpus. *)
+   byte-identical; without it, it prints its dump. Inputs cover every kernel
+   exit: unclassified code points, malformed UTF-8 of every shape, pretokens at
+   and past the 15-byte key limit, huge spans, more pretokens than a span chunk,
+   every exit at the seams of the stage, bytes without an id, [ignore_merges],
+   caching off, and a merge whose result stands for other bytes than its
+   entry's. The byte-level models run behind the GPT-2 walker and behind the
+   cl100k and o200k ones, which have their own inputs: contractions in every
+   case, digit groups, newlines inside whitespace, the one-character prefix of a
+   word, combining marks, the sequences a strict decoder refuses, and for o200k
+   case runs, the letters of both of its classes between them, and slashes after
+   punctuation. *)
 
 let dump = Buffer.create 65536
 let pf fmt = Printf.bprintf dump fmt
@@ -100,8 +97,8 @@ let dump_encoding tok name text =
 
 let dump_batch tok name texts =
   let ids, lengths =
-    Brot.encode_batch_ids tok ~add_special_tokens:false
-      ~exec:(Fixture.spawn 4) texts
+    Brot.encode_batch_ids tok ~add_special_tokens:false ~exec:(Fixture.spawn 4)
+      texts
   in
   let n = Bigarray.Array1.dim ids in
   let buf = Buffer.create (4 * n) in
@@ -191,9 +188,9 @@ let adversarial =
     done;
     Buffer.contents buf
   in
-  (* Texts of pieces drawn from the shapes the batch walk classifies, each
-     class beyond ASCII and its overlong and malformed forms among them, long
-     enough to cross many 64-byte batches. *)
+  (* Texts of pieces drawn from the shapes the batch walk classifies, each class
+     beyond ASCII and its overlong and malformed forms among them, long enough
+     to cross many 64-byte batches. *)
   let pieces =
     [|
       "a"; "the"; "Ab"; " "; "  "; "\n"; "\t"; "\r\n"; "\x0b"; "'s"; "'S";
@@ -219,14 +216,14 @@ let adversarial =
      pretokens ("ab " cycles) and the tails run at least 64 bytes past the
      shape: a padding run over 15 bytes would take the Encode hand-back and
      re-anchor the grid at the shape, and a short tail would route the shape's
-     batch to the scalar tail — either way the shape would never cross a
-     streamed batch edge, which is the point of the sweep. [span64] keeps the
-     long-run padding deliberately: that family exercises the hand-back
-     re-anchor path itself. [giveback_nbsp] is the whitespace give-back decided
-     by a non-ASCII whitespace character, which only the bad-zone widening
-     around non-ASCII bytes sends to the scalar walker. The [cls] family uses a
-     distinct code point per offset, so a first-met class hand-back re-enters
-     the walk mid-batch everywhere. *)
+     batch to the scalar tail. Either way the shape would never cross a streamed
+     batch edge, which is the point of the sweep. [span64] keeps the long-run
+     padding deliberately: that family exercises the hand-back re-anchor path
+     itself. [giveback_nbsp] is the whitespace give-back decided by a non-ASCII
+     whitespace character, which only the bad-zone widening around non-ASCII
+     bytes sends to the scalar walker. The [cls] family uses a distinct code
+     point per offset, so a first-met class hand-back re-enters the walk
+     mid-batch everywhere. *)
   let batch_alignments =
     let pad n = String.init n (fun i -> "ab ".[i mod 3]) in
     let fam name shape =
@@ -253,15 +250,14 @@ let adversarial =
             Buffer.contents buf);
       ]
   in
-  (* Seam adversaries for the staged kernel: the entry loop stages 256 spans
-     or a batch more at a time, so each family plants its event at span
-     indices 250..262, across the seam at 256 — an Encode hand-back, a Class
-     hand-back (a code point per index, first met there), identical adjacent
-     pretokens (miss, store, hit across the seam) and a plain stream whose
-     length lands on the seam.
-     [ids_full_midchunk] outgrows the driver's 65536-id reserve inside one call,
-     so Ids_full exits mid-stage, keeping the rest of the stage in the cursor
-     for the call that resumes. *)
+  (* Seam adversaries for the staged kernel: the entry loop stages 256 spans or
+     a batch more at a time, so each family plants its event at span indices
+     250..262, across the seam at 256: an Encode hand-back, a Class hand-back (a
+     code point per index, first met there), identical adjacent pretokens (miss,
+     store, hit across the seam) and a plain stream whose length lands on the
+     seam. [ids_full_midchunk] outgrows the driver's 65536-id reserve inside one
+     call, so Ids_full exits mid-stage, keeping the rest of the stage in the
+     cursor for the call that resumes. *)
   let chunk_seams =
     let spans k = String.concat "" (List.init k (fun _ -> " a")) in
     let fam name shape =
@@ -339,9 +335,9 @@ let adversarial =
         String.concat " " (List.init 3000 (fun i -> Printf.sprintf "w%d" i)) );
       ( "ids_full_midchunk",
         String.concat "" (List.init 5000 (fun _ -> " abcdefghijklmn")) );
-      (* Each past one call's 65536 ids under the byte-level models and
-         over many span chunks; in ASCII, thousands of distinct pretokens
-         for the cache. *)
+      (* Each past one call's 65536 ids under the byte-level models and over
+         many span chunks; in ASCII, thousands of distinct pretokens for the
+         cache. *)
       ("random_ascii_128k", random_ascii 131_072);
       ("random_bytes_128k", random_bytes 131_072);
       ("random_utf8_128k", random_utf8 131_072);
@@ -362,25 +358,6 @@ let documents text =
     | line :: rest -> split docs (line :: current) rest
   in
   split [] [] lines
-
-let split_on_marker marker s =
-  let n = String.length s and m = String.length marker in
-  let rec find i =
-    if i + m > n then None
-    else
-      match String.index_from_opt s i marker.[0] with
-      | None -> None
-      | Some j ->
-          if j + m > n then None
-          else if String.sub s j m = marker then Some j
-          else find (j + 1)
-  in
-  let rec go acc start =
-    match find start with
-    | None -> List.rev (String.sub s start (n - start) :: acc)
-    | Some j -> go (String.sub s start (j - start) :: acc) (j + m)
-  in
-  go [] 0
 
 (* Synthetic byte-level models, always present. The alphabet mapping is the
    fixed GPT-2 one, restated here because the library does not expose the
@@ -589,8 +566,7 @@ let report_difference ~ours ~theirs =
   done;
   let suffix = ref 0 in
   while
-    !suffix < shortest - !prefix
-    && o.[lo - 1 - !suffix] = t.[lt - 1 - !suffix]
+    !suffix < shortest - !prefix && o.[lo - 1 - !suffix] = t.[lt - 1 - !suffix]
   do
     incr suffix
   done;
@@ -603,26 +579,25 @@ let report_difference ~ours ~theirs =
     (hex o ~from:!prefix ~until:(lo - !suffix))
     (hex t ~from:!prefix ~until:(lt - !suffix))
 
-(* [dump_kernels [--compare] [--shard K/N] [CORPUS]]: with [--shard K/N], the
-   dump covers a part of the differential, so that dune runs it as several
-   processes. A part is the [j]th text through the [t]th tokenizer, or that
-   tokenizer's batch, at [j] the number of texts; shard [K] takes the parts
-   where [t + j] modulo [N] is [K - 1], so that the few large texts of each
-   tokenizer go to different shards. *)
+(* [dump_kernels [--compare] [--shard K/N]]: with [--shard K/N], the dump covers
+   a part of the differential, so that dune runs it as several processes. A part
+   is the [j]th text through the [t]th tokenizer, or that tokenizer's batch, at
+   [j] the number of texts; shard [K] takes the parts where [t + j] modulo [N]
+   is [K - 1], so that the few large texts of each tokenizer go to different
+   shards. *)
 let args () =
-  let rec go ~compare ~shard ~corpus = function
-    | "--compare" :: rest -> go ~compare:true ~shard ~corpus rest
+  let rec go ~compare ~shard = function
+    | "--compare" :: rest -> go ~compare:true ~shard rest
     | "--shard" :: s :: rest ->
         let shard = Scanf.sscanf s "%u/%u%!" (fun k n -> (k, n)) in
-        go ~compare ~shard ~corpus rest
-    | path :: rest -> go ~compare ~shard ~corpus:(Some path) rest
-    | [] -> (compare, shard, corpus)
+        go ~compare ~shard rest
+    | arg :: _ -> failwith (Printf.sprintf "unknown argument %S" arg)
+    | [] -> (compare, shard)
   in
-  go ~compare:false ~shard:(1, 1) ~corpus:None
-    (List.tl (Array.to_list Sys.argv))
+  go ~compare:false ~shard:(1, 1) (List.tl (Array.to_list Sys.argv))
 
 let () =
-  let against_stdin, (k, n), corpus_arg = args () in
+  let against_stdin, (k, n) = args () in
   let fixture name = read_opt (Filename.concat "support/parity" name) in
   let data name = read_opt (Filename.concat "../bench/data" name) in
   let file_tok name =
@@ -667,14 +642,7 @@ let () =
           dump_encoding tok (name ^ "/" ^ tname) text
         end)
       texts;
-    if mine (List.length texts) then begin
-      dump_batch tok name (List.map snd texts);
-      match corpus_arg with
-      | None -> ()
-      | Some path ->
-          dump_batch tok (name ^ "/corpus")
-            (split_on_marker "<|endoftext|>" (read_file path))
-    end
+    if mine (List.length texts) then dump_batch tok name (List.map snd texts)
   in
   let from_file name =
     match file_tok name with

@@ -1933,11 +1933,16 @@ val kernels : bool
 val hold_cache : t -> (unit -> 'a) -> 'a
 (** [hold_cache t f] is [f ()] while one of the encoder states of [t]'s BPE,
     WordPiece or Unigram model is held, so that what is encoded with [t]
-    meanwhile does without it. For tests. *)
+    meanwhile does without it. When the model already holds
+    [Domain.recommended_domain_count ()] states, [f] runs while a spare state is
+    in use, which the model does not keep, as for an encoding. A state that [f]
+    raises through is dropped. For tests. *)
 
 val cache_set : string -> sets:int -> int
 (** [cache_set key ~sets] is the back set, among [sets], a power of two, that a
-    pretoken cache stores the pretoken [key] of 1 to 15 bytes in. For tests. *)
+    pretoken cache stores the pretoken [key] of 1 to 15 bytes in. Every byte of
+    [key] takes part, so keys of 2 bytes or more that share all but their last
+    bytes still spread over the sets. For tests. *)
 
 val cache_key : string -> int64 * int64
 (** [cache_key key] is the two key words a pretoken cache keys the pretoken
@@ -1948,14 +1953,16 @@ val cache_hashes : int64 -> int64 -> int * int
     and [k1] by, as OCaml computes it and as the C kernels do. For tests. *)
 
 val batch_document_hook : (unit -> unit) Atomic.t
-(** [batch_document_hook] is called by a chunk of {!encode_batch_ids} before
-    each document it encodes into its ids buffer, once the chunk holds the
-    buffer and has read where the document starts in it. For tests. *)
+(** [batch_document_hook] is called by a chunk of {!encode_batch_ids}, when the
+    post-processor only wraps a sequence, before each document or piece of a cut
+    document it encodes into its ids buffer, once the chunk holds the buffer and
+    has read where that text starts in it. For tests. *)
 
 val run_chunks : ?exec:exec -> int array -> (int -> unit) -> unit
-(** [run_chunks ?exec sizes work] is [work c] for every chunk [c] of the
-    [sizes] in bytes, through [exec] as the batch encoders spread their work,
-    raising what a chunk raised. For tests. *)
+(** [run_chunks ?exec sizes work] is [work c] for every chunk [c] of the [sizes]
+    in bytes, through [exec] as the batch encoders spread their work, raising
+    what a chunk raised. With no [exec] or a single chunk, [work] runs on the
+    calling domain and [exec] is not called. For tests. *)
 
 module Float_text : sig
   type format = { precision : int; emin : int }
@@ -1963,8 +1970,12 @@ module Float_text : sig
   val binary64 : format
   val binary32 : format
   val shortest : format -> float -> string * int
-  val significant : int -> float -> string * int
-  val decimals : int -> float -> string * int
+
+  (** [shortest f x] is the decimal [(d, e)], [d] × 10{^ [e]}, of the fewest
+      digits that reads as [|x|] in [f] to nearest, ties to even, the nearest to
+      [|x|] of those, and the one whose last digit is even at a tie; zero is
+      [("0", 0)]. Raises [Invalid_argument] if [f]'s precision is outside 1 to
+      53 or [x] is not a value of [f]. *)
 end
 (** [Float_text] is the decimal digits of floats that {!save_pretrained} writes
     numbers with. For tests. *)
