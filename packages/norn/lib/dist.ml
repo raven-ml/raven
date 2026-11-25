@@ -764,12 +764,12 @@ let student_terms df scale =
     Nx.sqrt df,
     Nx.mul_s (Nx.add_s df 1.) 0.5 )
 
-(* [log1p_square a s] is [log1p ((a / s)²)] for [a >= 0] and [s > 0], as
-   [2 (log a - log s) + log1p ((s / a)²)] past [a = s]: neither the quotient
-   nor its square overflows, where the Cauchy's log density, about
-   [-2 log (a / s)], is still finite. Each side is its own expression, fed
-   values that keep the other finite, so the side not taken adds nothing to
-   the derivative, not even rounding: at [a = s] it is the near side's. *)
+(* [log1p_square a s] is [log1p ((a / s)²)] for [a >= 0] and [s > 0], as [2 (log
+   a - log s) + log1p ((s / a)²)] past [a = s]: neither the quotient nor its
+   square overflows, where the Cauchy's log density, about [-2 log (a / s)], is
+   still finite. Each side is its own expression, fed values that keep the other
+   finite, so the side not taken adds nothing to the derivative, not even
+   rounding: at [a = s] it is the near side's. *)
 let log1p_square a s =
   let beyond = Nx.greater a s in
   let a_far = Nx.where beyond a s and a_near = Nx.where beyond s a in
@@ -780,8 +780,8 @@ let log1p_square a s =
   in
   Nx.where beyond far (Nx.log1p (Nx.square (Nx.div a_near s)))
 
-(* [log1p (z² / ν)] is [log1p_square |x - loc| (scale √ν)]: neither [z] nor
-   [z / √ν] is formed where it would overflow. *)
+(* [log1p (z² / ν)] is [log1p_square |x - loc| (scale √ν)]: neither [z] nor [z /
+   √ν] is formed where it would overflow. *)
 let student_t_density (c, root, half1) loc scale x =
   let l = log1p_square (Nx.abs (Nx.sub x loc)) (Nx.mul scale root) in
   Nx.sub c (Nx.mul half1 l)
@@ -798,14 +798,16 @@ let open_unit k dt s = Nx.add_s (Noise.uniform k dt s) (Prec.eps dt /. 4.)
 
 (* [off_bounds lo hi x] is the draw [x] in the open [(lo, hi)]: a draw that
    rounds onto a finite bound, as one in a few hundred does at bfloat16, is
-   moved inside by [max (3/4 ε |bound|, tiny)], which rounds to the float
-   next to the bound, and one that overflows onto an infinite bound is the
-   largest finite float, as a bijector saturates. *)
+   moved inside by [max (3/4 ε |bound|, tiny)], which rounds to the float next
+   to the bound, and one that overflows onto an infinite bound is the largest
+   finite float, as a bijector saturates. *)
 let off_bounds lo hi x =
   let dt = Nx.dtype x in
   let huge = const x (Prec.huge dt) in
   let nudge b =
-    Nx.maximum (Nx.mul_s (Nx.abs b) (0.75 *. Prec.eps dt)) (const b (Prec.tiny dt))
+    Nx.maximum
+      (Nx.mul_s (Nx.abs b) (0.75 *. Prec.eps dt))
+      (const b (Prec.tiny dt))
   in
   let lo_in = Nx.where (Nx.isfinite lo) (Nx.add lo (nudge lo)) (Nx.neg huge) in
   let hi_in = Nx.where (Nx.isfinite hi) (Nx.sub hi (nudge hi)) huge in
@@ -1418,8 +1420,9 @@ let mvn ~loc ~scale_tril =
   (* Its density solves a triangular system, which nx computes at float32 and
      float64 alone. *)
   if not (List.mem (Nx.Dtype.name dt) [ "float32"; "float64" ]) then
-    invalid_argf "Norn.Dist.mvn: parameters of dtype %s; mvn takes float32 or \
-                  float64" (Nx.Dtype.name dt);
+    invalid_argf
+      "Norn.Dist.mvn: parameters of dtype %s; mvn takes float32 or float64"
+      (Nx.Dtype.name dt);
   let d = ls.(nl - 1) in
   let lower = Nx.tril scale_tril in
   let shape =
@@ -1511,8 +1514,8 @@ let lkj_power n eta =
   (power, lkj_normaliser n eta)
 
 let lkj_density (power, normaliser) l =
-  (* A matrix [l] of fewer batch axes than [η] broadcasts against it: the
-     sum runs along the rows of the product. *)
+  (* A matrix [l] of fewer batch axes than [η] broadcasts against it: the sum
+     runs along the rows of the product. *)
   let terms = Nx.mul power (Nx.log (Nx.diagonal l)) in
   Nx.sub (Nx.sum ~axes:[ Nx.ndim terms - 1 ] terms) normaliser
 
@@ -2038,7 +2041,10 @@ let truncated ?low ?high d =
       let step = Nx.div (Nx.sub tail target) slope in
       (* An infinite edge enters as one away from [x], so that neither arm
          nor its derivative is NaN. *)
-      let e = Nx.where finite_edge edge ((if upper then Nx.add_s else Nx.sub_s) !x 1.) in
+      let e =
+        Nx.where finite_edge edge
+          ((if upper then Nx.add_s else Nx.sub_s) !x 1.)
+      in
       let gap = Nx.abs (Nx.sub !x e) in
       let shrunk = Nx.mul gap (Nx.exp (Nx.neg (Nx.div step gap))) in
       let toward_edge = (if upper then Nx.sub else Nx.add) e shrunk in

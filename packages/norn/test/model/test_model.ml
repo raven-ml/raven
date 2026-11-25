@@ -669,17 +669,26 @@ let constrain_tests =
                ~sub:
                  "Norn_model.constrain: the coordinates do not match the \
                   model: at b") (fun () -> M.constrain m c));
-      test "a parameter outside its domain is refused naming the site" (fun () ->
+      test "a parameter outside its domain is refused naming the site"
+        (fun () ->
           let m = Lazy.force real_tau in
           raises_match
-            (Exn.invalid_arg ~sub:"Norn_model.constrain: site theta: normal: scale")
+            (Exn.invalid_arg
+               ~sub:"Norn_model.constrain: site theta: normal: scale")
             (fun () ->
               (* The coordinates of τ = 1, every one moved by [-1]: τ is 0. *)
               let c =
                 M.unconstrain m
-                  { mu = f64 0.; tau = f64 1.; theta = Nx.zeros Nx.float64 [| 8 |] }
+                  {
+                    mu = f64 0.;
+                    tau = f64 1.;
+                    theta = Nx.zeros Nx.float64 [| 8 |];
+                  }
               in
-              M.constrain m (Nx.Ptree.map (M.coords m) (fun _ t -> Nx.sub t (Nx.ones_like t)) c)));
+              M.constrain m
+                (Nx.Ptree.map (M.coords m)
+                   (fun _ t -> Nx.sub t (Nx.ones_like t))
+                   c)));
     ]
 
 (* Values: elementwise round trips lose a few ulps of each element, and
@@ -715,12 +724,18 @@ let unconstrain_tests =
           equal (array coords_close)
             (floats (vector (M.coords m) c))
             (floats (vector (M.coords m) (M.unconstrain m (M.constrain m c)))));
-      test "a parameter outside its domain is refused naming the site" (fun () ->
+      test "a parameter outside its domain is refused naming the site"
+        (fun () ->
           raises_match
-            (Exn.invalid_arg ~sub:"Norn_model.unconstrain: site theta: normal: scale")
+            (Exn.invalid_arg
+               ~sub:"Norn_model.unconstrain: site theta: normal: scale")
             (fun () ->
               M.unconstrain (Lazy.force real_tau)
-                { mu = f64 0.; tau = f64 (-1.); theta = Nx.zeros Nx.float64 [| 8 |] }));
+                {
+                  mu = f64 0.;
+                  tau = f64 (-1.);
+                  theta = Nx.zeros Nx.float64 [| 8 |];
+                }));
       test "values of another shape are refused naming the site" (fun () ->
           let m = Lazy.force centred in
           raises_match
