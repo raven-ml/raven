@@ -168,15 +168,77 @@ let test_segment_narrow () =
   equal (array float_exact) [| 2050. |]
     (Nx.to_array (Nx.reduce_segments Add ~segments:1 ids x))
 
-let test_segment_identities () =
+(* Each identity the section names, held by a segment of no row. *)
+type identity = Identity : ('v, 's) D.t * Nx.combine * 'v -> identity
+
+let identities =
+  [
+    ("Max of float8_e4m3fn", Identity (D.Float8_e4m3fn, Max, -448.));
+    ("Min of float8_e4m3fn", Identity (D.Float8_e4m3fn, Min, 448.));
+    ("Max of float4_e2m1fn", Identity (D.Float4_e2m1fn, Max, -6.));
+    ("Min of float4_e2m1fn", Identity (D.Float4_e2m1fn, Min, 6.));
+    ("Max of float64", Identity (D.Float64, Max, Float.neg_infinity));
+    ("Min of float64", Identity (D.Float64, Min, Float.infinity));
+    ("Add of float32", Identity (D.Float32, Add, 0.));
+    ("Set of float32", Identity (D.Float32, Set, 0.));
+    ("Max of int8", Identity (D.Int8, Max, -128));
+    ("Min of int8", Identity (D.Int8, Min, 127));
+    ("Max of bool", Identity (D.Bool, Max, false));
+    ("Min of bool", Identity (D.Bool, Min, true));
+    ( "Min of complex64",
+      Identity
+        (D.Complex64, Min, { Complex.re = Float.infinity; im = Float.infinity })
+    );
+    ( "Max of complex64",
+      Identity
+        ( D.Complex64,
+          Max,
+          { Complex.re = Float.neg_infinity; im = Float.neg_infinity } ) );
+  ]
+
+let held_identity (_, Identity (dt, c, v)) =
   let ids = Nx.zeros Nx.int64 [| 0 |] in
-  let x = Nx.zeros Nx.float8_e4m3fn [| 0 |] in
-  equal (array float_exact) [| -448. |]
-    (Nx.to_array (Nx.reduce_segments Max ~segments:1 ids x));
-  let z = Nx.zeros Nx.complex64 [| 0 |] in
-  equal_elements D.Complex64
-    [| { Complex.re = Float.infinity; im = Float.infinity } |]
-    (Nx.to_array (Nx.reduce_segments Min ~segments:1 ids z))
+  equal_elements dt [| v |]
+    (Nx.to_array (Nx.reduce_segments c ~segments:1 ids (Nx.zeros dt [| 0 |])))
+
+(* Float32 rows whose sums depend on their order, each id from -1 to past the
+   segments. *)
+let summed =
+  Gen.with_pp
+    (fun ppf (x, k, _) ->
+      Format.fprintf ppf "%a, %d segments" pp_ints (Nx.shape x) k)
+    (let open Gen in
+     let* n = int_range 0 12 in
+     let* w = int_range 1 2 in
+     let* k = int_range 0 3 in
+     let* x =
+       map
+         (Nx.create Nx.float32 [| n; w |])
+         (array
+            ~size:(constant (n * w))
+            (of_list [ 1e7; -1e7; 1.; 0.1; 3.3; -2.5e-3; -0. ]))
+     in
+     let+ ids = int64s n (-1) k in
+     (x, k, ids))
+
+(* A sum's bits are a scatter's of the rows into rows of [+0]. *)
+let law_scatter_bits (x, k, ids) =
+  let n = Nx.dim 0 x and w = Nx.dim 1 x in
+  cover "a segment of several rows"
+    (let id = Nx.to_array ids in
+     List.exists
+       (fun s ->
+         Array.fold_left
+           (fun c i -> if i = Int64.of_int s then c + 1 else c)
+           0 id
+         > 2)
+       (List.init k Fun.id));
+  let at = Nx.broadcast_to [| n; w |] (Nx.reshape [| n; 1 |] ids) in
+  let want =
+    Nx.scatter ~combine:Add ~axis:0 at x (Nx.zeros Nx.float32 [| k; w |])
+  in
+  equal_elements D.Float32 (Nx.to_array want)
+    (Nx.to_array (Nx.reduce_segments Add ~segments:k ids x))
 
 let test_segment_errors () =
   let by = "Nx.reduce_segments" in
@@ -282,8 +344,11 @@ let segments =
         cut_segments law_cut_segments;
       test "the doc's sums and maxima" test_segment_doc;
       test "narrow floats sum at float32" test_segment_narrow;
-      test "a segment of no row holds the identity" test_segment_identities;
-      test "misuse raises" test_segment_errors;
+      cases "a segment of no row holds the identity" ~id:fst identities
+        held_identity;
+      prop "a sum has scatter's bits" summed law_scatter_bits;
+      test "raises on negative segments, a 0-d x, ids not one per row, booleans"
+        test_segment_errors;
     ]
 
 (* reduce_ranges *)
@@ -327,25 +392,92 @@ let term =
 
 let local =
   Gen.with_pp
-    (fun ppf (x, _, _, _) -> pp_ints ppf (Nx.shape x))
+    (fun ppf (x, _, b) ->
+      Format.fprintf ppf "%a, ranges %s" pp_ints (Nx.shape x)
+        (String.concat "; "
+           (List.map (fun (l, h) -> Printf.sprintf "[%d, %d)" l h) b)))
     (let open Gen in
      let* n = int_range 1 12 in
      let terms = map (Nx.create Nx.float32 [| n |]) (array ~size:(constant n) term) in
      let* x = terms in
      let* y = terms in
-     let* l = int_range 0 (n - 1) in
-     let+ h = int_range (l + 1) n in
-     (x, y, l, h))
+     let+ b =
+       list ~size:(int_range 1 3)
+         (pair (int_range (-2) n) (int_range 0 (n + 2)))
+     in
+     (x, y, b))
 
-(* A range's sum reads its rows alone: the other rows changed, its bits
+(* A range's sum reads its clipped rows alone: the other rows changed, its bits
    stay. *)
-let law_local (x, y, l, h) =
+let law_local (x, y, b) =
   let n = Nx.dim 0 x in
   let xs = Nx.to_array x and ys = Nx.to_array y in
-  let z = Nx.create Nx.float32 [| n |] (Array.init n (fun i -> if i >= l && i < h then xs.(i) else ys.(i))) in
-  let b v = Nx.create Nx.int64 [| 1 |] [| Int64.of_int v |] in
-  let sum t = Nx.to_array (Nx.reduce_ranges Add ~lo:(b l) ~hi:(b h) t) in
-  equal_elements D.Float32 (sum x) (sum z)
+  cover "a bound past an end" (List.exists (fun (l, h) -> l < 0 || h > n) b);
+  List.iter
+    (fun (l, h) ->
+      let l' = clip n l and h' = clip n h in
+      let z =
+        Nx.create Nx.float32 [| n |]
+          (Array.init n (fun i -> if i >= l' && i < h' then xs.(i) else ys.(i)))
+      in
+      let bound v = Nx.create Nx.int64 [| 1 |] [| Int64.of_int v |] in
+      let sum t =
+        Nx.to_array (Nx.reduce_ranges Add ~lo:(bound l) ~hi:(bound h) t)
+      in
+      equal_elements D.Float32 (sum x) (sum z))
+    b
+
+(* A float32 range of [k > 1] rows is a tree of depth at most [D = 1 + ⌈log₂ (k
+   - 1)⌉] in row order: each term passes at most [D] additions, so the sum is
+   within [γ(D) Σ|t|] of the exact one, which float64 holds within [k 2^-53
+   Σ|t|]. *)
+let long_ranges =
+  Gen.with_pp
+    (fun ppf (x, b) ->
+      Format.fprintf ppf "%a, ranges %s" pp_ints (Nx.shape x)
+        (String.concat "; "
+           (List.map (fun (l, h) -> Printf.sprintf "[%d, %d)" l h) b)))
+    (let open Gen in
+     let* n = int_range 1 40 in
+     let* x =
+       map (Nx.create Nx.float32 [| n |]) (array ~size:(constant n) term)
+     in
+     let+ b =
+       list ~size:(int_range 1 3)
+         (pair (int_range (-2) n) (int_range 0 (n + 2)))
+     in
+     (x, b))
+
+let law_range_bound (x, b) =
+  let n = Nx.dim 0 x and xs = Nx.to_array x in
+  let u = 0x1p-24 in
+  let depth k =
+    let rec up d = if 1 lsl d >= k - 1 then d else up (d + 1) in
+    1 + up 0
+  in
+  cover "a range of more than eight rows"
+    (List.exists (fun (l, h) -> clip n h - clip n l > 8) b);
+  List.iter
+    (fun (l, h) ->
+      let l = clip n l and h = clip n h in
+      let k = max 0 (h - l) in
+      let exact = ref 0. and mag = ref 0. in
+      for i = l to h - 1 do
+        exact := !exact +. xs.(i);
+        mag := !mag +. Float.abs xs.(i)
+      done;
+      let bound v = Nx.create Nx.int64 [| 1 |] [| Int64.of_int v |] in
+      let got =
+        (Nx.to_array (Nx.reduce_ranges Add ~lo:(bound l) ~hi:(bound h) x)).(0)
+      in
+      let d = if k > 1 then depth k else 0 in
+      let gamma = Float.of_int d *. u /. (1. -. (Float.of_int d *. u)) in
+      let tol = (gamma +. (Float.of_int k *. 0x1p-53)) *. !mag in
+      at_most
+        ~msg:(Printf.sprintf "[%d, %d)" l h)
+        float_exact ~than:tol
+        (Nx_support.gap got !exact))
+    b
 
 (* Every range with bounds from two before the rows to two past them, over
    rows of one sign: a row of zeros, or any value from outside the rows,
@@ -757,16 +889,19 @@ let ranges =
       prop "a Max or Min range is a NaN where a row is, signalling too"
         nan_ranges law_nan_ranges;
       prop "each range folds its clipped rows in order" ranged law_ranges;
-      prop "a range's bits read its rows alone" local law_local;
+      prop "a range's bits read its clipped rows alone" local law_local;
+      prop "a float range's sum is within its tree's bound" long_ranges
+        law_range_bound;
       test "a range's extreme is one of its rows, at either end"
         test_range_rows_only;
       test "the doc's sums and maxima" test_range_doc;
       test "narrow floats sum at float32" test_range_narrow;
       test "complex extremes in the dtype's order" test_range_complex;
-      test "misuse raises" test_range_errors;
+      test "raises on a 0-d x, bounds not 1-d of one length, booleans"
+        test_range_errors;
       test "a donated operand computes, its handle read as it was"
         test_range_donated;
-      prop
+      prop ~count:200
         "Add, Max and Min raise with their rows cut, naming the placement \
          that keeps the other cuts, and Set gives the host's bits anywhere"
         cut_ranges law_cut_ranges;
@@ -987,7 +1122,10 @@ let maps =
         test_map_unequal;
       test "the doc's scaled rows" test_map_doc;
       test "segments far above the positions" test_map_sparse;
-      test "misuse raises" test_map_errors;
+      test
+        "raises on negative segments, unbroadcast rows, a cut of another axis, \
+         f's result of another shape"
+        test_map_errors;
       test "f keeps the names of the functions it calls" test_map_callback;
     ]
 
@@ -1155,6 +1293,22 @@ let matmul_reference c =
         done;
         if c.dt = I8 then Float.of_int (wrap8 (Float.to_int !sum) 0) else !sum)
 
+(* 100 positions of one matrix: more than 64 rows of it. *)
+let many_rows =
+  {
+    dt = F32;
+    s = [| 100 |];
+    ids = Array.make 100 0L;
+    lead = [| 100 |];
+    k = 2;
+    e = 1;
+    n = 1;
+    xs = Array.init 200 (fun i -> Float.of_int ((i mod 9) - 4));
+    ws = [| 3.; -2. |];
+    w_t = false;
+    x_flip = false;
+  }
+
 let law_matmul c =
   cover "a position out of range"
     (Array.exists (fun i -> not (inside c i)) c.ids);
@@ -1177,26 +1331,36 @@ let law_matmul c =
   equal (array float_exact) (matmul_reference c) y
 
 (* A row's bits do not depend on the other positions' ids: float32 rows of
-   random values, each position's id kept or redrawn. *)
-let test_matmul_bits () =
-  let rng = Random.State.make [| 7 |] in
+   values whose sums depend on their order, each position's id kept or
+   redrawn. *)
+let redrawn =
+  let open Gen in
+  let p = 40 and e = 3 in
+  let ids = array ~size:(constant p) (int_range 0 e) in
+  let+ a = ids and+ b = ids and+ keep = array ~size:(constant p) bool in
+  (a, Array.mapi (fun q v -> if keep.(q) then a.(q) else v) b, keep)
+
+let law_matmul_bits (a, b, keep) =
+  cover "a kept id beside a redrawn one"
+    (Array.exists Fun.id keep && Array.exists not keep);
   let e = 3 and k = 200 and n = 3 and p = 40 in
-  let rand m = Array.init m (fun _ -> Random.State.float rng 2. -. 1.) in
-  let x = Nx.create Nx.float32 [| p; k |] (rand (p * k)) in
-  let w = Nx.create Nx.float32 [| e; k; n |] (rand (e * k * n)) in
-  let ids () =
-    Array.init p (fun _ -> Int64.of_int (Random.State.int rng (e + 1)))
+  let value i = Float.of_int ((i * 7919 mod 201) - 100) *. 0.37 in
+  let x = Nx.create Nx.float32 [| p; k |] (Array.init (p * k) value) in
+  let w =
+    Nx.create Nx.float32 [| e; k; n |]
+      (Array.init (e * k * n) (fun i -> value (i + 3)))
   in
-  let bits y = Array.map Int32.bits_of_float (Nx.to_array y) in
-  for _ = 1 to 10 do
-    let a = ids () and b = ids () in
-    let keep = Array.init p (fun q -> q mod 3 = 0) in
-    let b = Array.mapi (fun q v -> if keep.(q) then a.(q) else v) b in
-    let ya = bits (Nx.matmul_segments (Nx.create Nx.int64 [| p |] a) x w)
-    and yb = bits (Nx.matmul_segments (Nx.create Nx.int64 [| p |] b) x w) in
-    let kept y = Array.mapi (fun o v -> if keep.(o / n) then v else 0l) y in
-    equal (array int32) (kept ya) (kept yb)
-  done
+  let bits ids =
+    let y =
+      Nx.matmul_segments
+        (Nx.create Nx.int64 [| p |] (Array.map Int64.of_int ids))
+        x w
+    in
+    Array.mapi
+      (fun o v -> if keep.(o / n) then Int32.bits_of_float v else 0l)
+      (Nx.to_array y)
+  in
+  equal (array int32) (bits a) (bits b)
 
 (* Over two devices: [w] cut along its matrices, closed or kept as the
    devices' terms with [~sum:true] and then placed whole; the ids and [x]'s
@@ -1254,6 +1418,26 @@ let test_matmul_cut () =
   invalid ~by:"Nx.matmul_segments" (fun () ->
       ignore (matmul_at (at true true false) (two 5 4)))
 
+(* position_rows: each position's row of [x], [[| p; k |]], as matmul_segments
+   reads them; over [x] cut along its one leading axis of several indices, the
+   rows lie cut so. *)
+let test_position_rows () =
+  let x = Nx.create Nx.float64 [| 3; 1; 4 |] (Array.init 12 Float.of_int) in
+  let want lead x =
+    Nx.to_array
+      (Nx.reshape
+         [| numel lead; 4 |]
+         (Nx.broadcast_to (Array.append lead [| 4 |]) x))
+  in
+  equal ~msg:"[3; 2] from [3; 1; 4]" (array float_exact)
+    (want [| 3; 2 |] x)
+    (Nx.to_array (Nx.position_rows [| 3; 2 |] x));
+  let y = Nx.create Nx.float64 [| 4; 4 |] (Array.init 16 Float.of_int) in
+  let cut = Nx.position_rows [| 4 |] (Nx.place (S2.split ~axis:0) y) in
+  equal ~msg:"cut" (array float_exact) (want [| 4 |] y) (Nx.to_array cut);
+  equal ~msg:"where it lies" (placement ()) (S2.split ~axis:0)
+    (Nx.placement cut)
+
 let test_matmul_errors () =
   let by = "Nx.matmul_segments" in
   let ids = Nx.zeros Nx.int64 [| 3 |] in
@@ -1275,12 +1459,15 @@ let test_matmul_errors () =
 let matmuls =
   group "matmul_segments"
     [
-      prop ~count:300 "each position's row by the matrix its id names, exact"
+      prop ~count:300 ~examples:[ many_rows ]
+        "each position's row by the matrix its id names, exact"
         (Gen.with_pp pp_mcase mcase) law_matmul;
-      test "a row's bits do not depend on the other positions' ids"
-        test_matmul_bits;
+      prop "a row's bits do not depend on the other positions' ids" redrawn
+        law_matmul_bits;
       test "cuts over devices give the whole's result" test_matmul_cut;
-      test "misuse raises" test_matmul_errors;
+      test "position_rows gives matmul_segments' rows" test_position_rows;
+      test "raises on w not 3-d, x's axes or leading shape, k, booleans"
+        test_matmul_errors;
     ]
 
 (* A donated operand is dead: each function names itself, the one the user
