@@ -61,10 +61,11 @@ type id = Ops.id = {
 
 val functions : t -> (id list, string) result
 (** [functions m] is the PCI functions of [m], in bus order
-    ({!compare_address}). Listing them changes nothing on [m]. For a machine
+    ({!compare_address}). Listing them changes nothing on [m]. An entry whose
+    name is no bus address names no function and is left out. For a machine
     without a transport it is [Ok []] where the system has no [/sys/bus/pci],
     and a function whose files cannot be read, as while the kernel removes it,
-    or an entry whose name is no bus address, is left out.
+    is left out.
 
     [Error why] if the functions cannot be listed, such as when the process
     has no file left or the transport has failed. *)
@@ -221,7 +222,8 @@ type ops = Ops.ops = {
           them, and their [failed] function is {!failed}'s. *)
   page : int;  (** {!val-page}. *)
   functions : unit -> (id list, string) result;
-      (** {!val-functions}, in any order. *)
+      (** {!val-functions}, in any order. An entry whose [bus] is no bus address
+          is left out of {!val-functions}. *)
   take : string -> (fn, string) result;  (** {!Function.take} on the machine. *)
   reserve : base:int -> int -> (unit, string) result;  (** {!val-reserve}. *)
 }

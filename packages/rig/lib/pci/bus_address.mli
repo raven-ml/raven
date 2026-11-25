@@ -15,8 +15,6 @@ val numbers : string -> (int * int * int * int) option
 val compare : string -> string -> int
 (** [compare a b] is {!Machine.compare_address}. *)
 
-val sort : ('a -> string) -> 'a list -> 'a list
-(** [sort bus l] is [l] sorted stably by {!compare} on [bus], parsing each
-    address once.
-
-    Raises [Invalid_argument] as {!compare} does. *)
+val filter_sort : ('a -> string) -> 'a list -> 'a list
+(** [filter_sort bus l] is the elements of [l] whose [bus] is a bus address,
+    sorted stably by {!compare} on [bus], parsing each address once. *)

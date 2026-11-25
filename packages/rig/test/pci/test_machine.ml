@@ -51,11 +51,13 @@ let bus_order =
         (Int.compare (compare a b) 0)
         (Int.compare (Machine.compare_address (address a) (address b)) 0))
 
+(* Strings that DDDD:BB:DD.F does not spell. *)
+let not_buses =
+  [ ""; "0000:03:00"; "0000:03:00."; "0000:03:00.0.1"; "0000:3g:00.0"; "x" ]
+
 let not_addresses =
   cases "a string that is no bus address is refused on either side"
-    ~id:(strf "%S")
-    [ ""; "0000:03:00"; "0000:03:00."; "0000:03:00.0.1"; "0000:3g:00.0"; "x" ]
-    (fun s ->
+    ~id:(strf "%S") not_buses (fun s ->
       let ok = "0000:00:00.0" in
       raises_match (Exn.invalid_arg ~sub:"") (fun () ->
           Machine.compare_address s ok);
@@ -529,9 +531,47 @@ let test_far_halted (_, quiet) =
   ignore (Driver.stop h : [ `Stopped | `Unknown ]);
   equal ~msg:"halted after the stop" bool quiet (Driver.halted h)
 
+(* Whatever a transport lists, its machine's functions are the entries that are
+   bus addresses, in bus order, among entries that are none. One machine serves
+   every case, which sets what its transport lists. *)
+let transport_listed_in_bus_order =
+  let entries = ref [] in
+  let page = 4096 in
+  let m =
+    Machine.make ~name:"listing"
+      {
+        transport = Window.unsafe_transport (far 0 page);
+        page;
+        functions = (fun () -> Ok !entries);
+        take = (fun _ -> Windtrap.fail "listing: a take");
+        reserve = (fun ~base:_ _ -> Windtrap.fail "listing: a reservation");
+      }
+  in
+  let entry =
+    Gen.either numbers (Gen.of_list ~pp:Format.pp_print_string not_buses)
+  in
+  prop
+    "a transport's machine lists the entries that are bus addresses, in bus \
+     order"
+    ~count:30
+    (Gen.list ~size:(Gen.int_range 0 12) entry)
+    (fun es ->
+      let buses = List.filter_map Either.find_left es in
+      cover "an entry that is no bus address" (List.exists Either.is_right es);
+      cover "two bus addresses" (List.length buses >= 2);
+      let id bus =
+        { Machine.bus; vendor = 0x1002; device = 0x744c; class_ = 0x030000 }
+      in
+      entries :=
+        List.map (Either.fold ~left:(fun n -> id (address n)) ~right:id) es;
+      equal (list string)
+        (List.map address (List.stable_sort compare buses))
+        (List.map (fun (d : Machine.id) -> d.bus) (listed m)))
+
 let transports =
   group "transports"
     [
+      transport_listed_in_bus_order;
       test
         "a transport's machine has its name and page, lists its functions in \
          bus order, and stays failed once its transport failed"

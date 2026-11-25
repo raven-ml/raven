@@ -161,8 +161,8 @@ let group m bus = link m bus "iommu_group"
 let is_bus s = Option.is_some (Bus_address.numbers s)
 
 (* A function the kernel lists but whose files cannot be read, as while it is
-   being removed, is left out, as is an entry that is no bus address, which
-   Machine.functions could not sort. A system without the directory has none. *)
+   being removed, is left out, as is an entry that is no bus address, whose
+   files are not read. A system without the directory has none. *)
 let functions m =
   if not (Sys.file_exists m.devices) then Ok []
   else

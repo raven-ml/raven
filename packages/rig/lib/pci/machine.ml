@@ -72,8 +72,10 @@ let window m a n =
   | Some _ -> Window.v a n
   | None -> Window.through m.ops.transport a n
 
+(* A transport may list an entry that is no bus address, which names no
+   function. *)
 let functions m =
-  Result.map (Bus_address.sort (fun id -> id.bus)) (m.ops.functions ())
+  Result.map (Bus_address.filter_sort (fun id -> id.bus)) (m.ops.functions ())
 
 (* Routes *)
 
