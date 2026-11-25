@@ -206,8 +206,10 @@
       NaN prints [NaN], and the infinities [inf] and [-inf].
     - A step or a count prints with separators, as [12,400], and compactly on
       an axis, as [12k].
-    - A difference prints relative, as [-6.0%], or in points for an accuracy,
-      as [+0.15 pt], and [same] within the digits shown.
+    - A difference prints relative, as [-6.0%], in points for an accuracy,
+      as [+0.15 pt], and [same] within the digits shown. Against a zero, or
+      where the relative difference passes four digits, it prints the
+      difference itself as a value prints, signed, as [+0.9000].
     - A duration prints in two units, as [4m 10s]; a time of day as [14:22].
     - Progress is the latest step over the run's [steps], rounded down, so it
       reads [100%] only once the steps are reached. The rate is the steps per

@@ -1949,6 +1949,73 @@ let rounding_shown =
         failf "%h prints %s, which does not read back" x s;
       if not (exact || marked) then failf "%h prints %s, rounded without a mark" x s)
 
+(* A difference fills a strip's column of twelve cells: its widest forms are
+   a signed value, as [-4.941e-324] with its sign, and [+100.00 pt]. *)
+let difference_cells = 11
+
+let difference_fits =
+  let gen =
+    Gen.(
+      let value =
+        frequency
+          [
+            (4, float_range (-1e3) 1e3);
+            (2, float_range (-1e-6) 1e-6);
+            (2, float_range 0. 1.);
+            (2, any_float);
+            (1, constant 0.);
+            (1, constant Float.max_float);
+            (1, constant (-.Float.max_float));
+            (1, constant 5e-324);
+          ]
+      in
+      triple (of_list [ "loss"; "val/acc" ]) value value)
+  in
+  prop "a difference takes at most eleven cells"
+    ~examples:
+      [
+        ("loss", 1., 1e-300);
+        ("loss", Float.max_float, -.Float.max_float);
+        ("loss", 1., 5e-324);
+      ]
+    (Gen.with_pp
+       (fun ppf (k, v, o) -> Format.fprintf ppf "%s %h against %h" k v o)
+       gen)
+    (fun (key, value, other) ->
+      match Munin_tui.Numbers.difference key ~value ~other with
+      | None -> ()
+      | Some s ->
+          cover "relative" (String.ends_with ~suffix:"%" s);
+          cover "absolute"
+            (not
+               (String.ends_with ~suffix:"%" s
+               || String.ends_with ~suffix:"pt" s));
+          at_most ~msg:s int ~than:difference_cells (Munin_tui.Numbers.width s))
+
+(* The sentences of [Numbers.difference] and their examples. *)
+let differences =
+  cases
+    ~id:(fun (name, _, _, _, _) -> name)
+    "a difference is relative, in points, or the difference itself"
+    [
+      ("+60%", "loss", 1.6, 1., Some "+60%");
+      ("-6.0%", "loss", 0.94, 1., Some "-6.0%");
+      ("+0.14 pt", "val/acc", 0.9414, 0.94, Some "+0.14 pt");
+      ("same in the digits shown", "loss", 1.0001, 1., None);
+      ("not finite", "loss", Float.nan, 1., None);
+      ("against zero", "loss", 0.9, 0., Some "+0.9000");
+      ("four digits before the point", "loss", 100.99, 1., Some "+9999%");
+      ("past four digits", "loss", 1., 1e-300, Some "+1");
+      ( "past the largest float",
+        "loss",
+        Float.max_float,
+        -.Float.max_float,
+        Some "+inf" );
+    ]
+    (fun (_, key, value, other, expected) ->
+      equal (option string) expected
+        (Munin_tui.Numbers.difference key ~value ~other))
+
 (* An axis's labels, in one notation: plain while every tick fits six
    cells, else the suffix, else the exponent. *)
 let tick_labels =
@@ -3684,6 +3751,7 @@ let () =
              binned; rising; spike; non_finite; cursor_wins; zoom_cursor; x_labels_clear; lines_over_rules; letters; exact_labels; tick_labels; x_domain; x_domain_law; stalled_end; zoom_window; now_rule; bounds;
              ticks_of;
              log_choice; y_per_metric; cut_law; values_printed; rounding_shown;
+             difference_fits; differences;
              filled;
              matching; cadence;
            ];

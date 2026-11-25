@@ -99,18 +99,27 @@ let signed x = if x > 0. then "+" ^ value x else value x
 (* [plus s] is the printed number [s] with its sign, as C's [%+] gives it. *)
 let plus s = if String.starts_with ~prefix:"-" s then s else "+" ^ s
 
+(* The largest relative difference printed as one: four digits before the
+   point, so that a difference fits a strip's column. *)
+let relative_most = 9999.5
+
 let difference key ~value:v ~other:o =
   if not (Float.is_finite v && Float.is_finite o) then None
   else if as_percent key v && as_percent key o then
     let s = plus (Float_print.f 2 ((v -. o) *. 100.)) ^ " pt" in
     if s = "+0.00 pt" || s = "-0.00 pt" then None else Some s
-  else if o = 0. then if v = 0. then None else Some (signed v)
   else
+    (* Against a zero, or a value so small that the ratio passes four
+       digits, the ratio says nothing a reader can use: the difference
+       itself does. *)
     let r = 100. *. (v -. o) /. Float.abs o in
-    let s =
-      plus (Float_print.f (if Float.abs r >= 10. then 0 else 1) r) ^ "%"
-    in
-    if s = "+0.0%" || s = "-0.0%" then None else Some s
+    if not (Float.abs r < relative_most) then
+      if v = o then None else Some (signed (v -. o))
+    else
+      let s =
+        plus (Float_print.f (if Float.abs r >= 10. then 0 else 1) r) ^ "%"
+      in
+      if s = "+0.0%" || s = "-0.0%" then None else Some s
 
 let count n =
   let s = string_of_int (abs n) in

@@ -54,10 +54,12 @@ val given : float -> string
     a program gave, such as a param. *)
 
 val difference : string -> value:float -> other:float -> string option
-(** [difference key ~value ~other] is [value] against [other]: relative, as
-    [+60%], or in points for two accuracies in [[0;1]], as [+0.14 pt]. It is
-    [None] when they are the same in the digits shown, or one is not
-    finite. *)
+(** [difference key ~value ~other] is [value] against [other]: in points for
+    two accuracies in [[0;1]], as [+0.14 pt]; else relative, as [+60%], while
+    that takes at most four digits before the point; else, as against a zero,
+    [value - other] as {!value} prints it, signed, as [+0.9000], and [+inf]
+    past the largest float. It takes at most eleven cells. It is [None] when
+    they are the same in the digits shown, or one is not finite. *)
 
 val count : int -> string
 (** [count n] is [n] with separators, as [12,400]. *)
