@@ -528,6 +528,16 @@ let edges =
           equal same (Float.infinity, 0.) (scalar (Nx_wide.mul inf one));
           equal same (0., 0.) (scalar (Nx_wide.div one inf));
           equal nan_pair (Float.nan, 0.) (scalar (Nx_wide.sub inf inf)));
+      test "v holds words near the largest float as hi + lo exactly"
+        (fun () ->
+          (* The fast two-sum of [max_float] and [-0.375 max_float] is exact
+             and forms nothing past the sum. *)
+          let m = Float.max_float in
+          let lo = -0.375 *. m in
+          let s = m +. lo in
+          equal same
+            (s, lo -. (s -. m))
+            (scalar (Nx_wide.v ~lo:(f lo) (f m))));
       test "NaN compares false" (fun () ->
           let n = Nx_wide.v (f Float.nan) in
           equal bool false (Nx.item [] (Nx_wide.equal n n));

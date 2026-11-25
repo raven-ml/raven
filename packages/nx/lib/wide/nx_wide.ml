@@ -43,6 +43,17 @@ let fast_two_sum a b =
   let s = Nx.add a b in
   (s, Nx.sub b (Nx.sub s a))
 
+(* [ordered_two_sum a b] is [two_sum a b] by a fast two-sum of the larger
+   magnitude first, which forms nothing past the sum. Where [a] is near the
+   largest float and [b] is of the other sign, as in [max_float + -0.375
+   max_float], the difference [two_sum] forms overflows. *)
+let ordered_two_sum a b =
+  let first = Nx.greater_equal (Nx.abs a) (Nx.abs b) in
+  let s, e = fast_two_sum (Nx.where first a b) (Nx.where first b a) in
+  (* A [-0.] second operand leaves [-0.] for the error, where [two_sum] gave
+     [+0.]: adding [+0.] keeps its bits and changes no other. *)
+  (s, Nx.add_s e 0.)
+
 let two_prod a b =
   let p = Nx.mul a b in
   (p, Nx.fma a b (Nx.neg p))
@@ -68,7 +79,7 @@ let settle plain (zh, zl) =
    word is kept as given, its zeros' signs with it, and every other normalised
    pair is returned unchanged by the exact two-sum. *)
 let normalise hi lo =
-  let ((s, _) as sum) = two_sum hi lo in
+  let ((s, _) as sum) = ordered_two_sum hi lo in
   let w = settle s sum in
   let kept = Nx.equal lo (Nx.zeros_like lo) in
   { hi = Nx.where kept hi w.hi; lo = Nx.where kept lo w.lo }

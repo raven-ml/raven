@@ -3914,6 +3914,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_wide.v` holds words near the largest float as their sum exactly, where
+  `max_float` with a low word of `-0.375 max_float` lost the low word.
 - `Nx_io.load_image` refuses a PNG whose scanlines take more than 1032 times
   its image data's bytes, where up to 1032 bytes more passed the check, and
   states this bound and JPEG's.
