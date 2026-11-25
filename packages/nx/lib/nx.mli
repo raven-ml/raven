@@ -406,22 +406,34 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
 (** {2:routing Routing}
 
     Each device computes its window of an operation's result from the
-    windows of the operands it holds. Where some device's windows hold
-    elements, a device whose windows of the results hold none computes
-    nothing. The result lies at the union of the operands' cuts, joined in
-    operand order, or, where that order cannot read an operand where it
-    lies, with a gather's or a scatter's positions last. A cut of an axis
-    that becomes a result axis cuts that axis over the same devices. A cut
-    of an axis read whole cuts nothing. A cut of an axis that a reduction
-    or a contraction sums makes the devices compute by partials where every
-    operand holding the axis is cut alike, and cuts nothing in the result;
-    so does one of the axis a gather reads at positions, and one of the axis
-    along which a scatter reads its positions and updates. One along
-    a scan's axis stays in it, and so does one along the axis a scatter
-    writes at positions, each device writing the updates that land in its
-    window. A product asked for its sum leaves the result a sum over the
-    devices that cut the axis instead ({!section-contraction}). An operand
-    whole on every device is read by a view of each device's window.
+    windows of the operands it holds. So a result whose bits {!Nx_kernel}
+    fixes, an integer, a boolean, an extreme, a position, a movement's, a
+    gather's or a map of kinds {!Nx_kernel.Prog} defines exactly, has the
+    bits one device gives, wherever its operands lie, a NaN's sign and
+    payload aside. A float or complex result may round otherwise, within the
+    bound its function states: a fold over a cut axis, as a reduction or a
+    scan ({!section-reductions}), a {!scatter}'s [Add] or an {!attention},
+    and a contraction cut along any axis, whose association follows its
+    extents ({!section-contraction}).
+    Where some device's windows hold elements, a device whose windows of the
+    results hold none computes nothing. The result lies at the union of the
+    operands' cuts, joined in operand order, or, where that order cannot
+    read an operand where it lies, with a gather's or a scatter's positions
+    last. A cut of an axis that becomes a result axis cuts that axis over
+    the same devices. A cut of an axis read whole cuts nothing. A cut of an
+    axis that a reduction or a contraction sums makes the devices compute by
+    partials where every operand holding the axis is cut alike, and cuts
+    nothing in the result; so does one of the axis a gather reads at
+    positions, and one of the axis along which a scatter reads its positions
+    and updates, but where the partials, stacked along a new axis, would
+    pass {!Nx_array.Layout.max_rank} axes: a gather of an [x] of that many
+    axes, or of a [complex128] one of one fewer, and a scatter into one of
+    that many read the axis whole. One along a scan's axis stays in it, and
+    so does one along the axis a scatter writes at positions, each device
+    writing the updates that land in its window. A product asked for its sum
+    leaves the result a sum over the devices that cut the axis instead
+    ({!section-contraction}). An operand whole on every device is read by a
+    view of each device's window.
 
     On a set whose devices are of several architectures ({!Rig.arch}), such
     as a GPU beside a software device under a compiler, each step that computes
@@ -1424,10 +1436,9 @@ val take : ?axis:int -> 'd int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [take ~axis p x] replaces [x]'s axis [axis] by [p]'s axes, reading [x] at
     each position [p] holds; without [axis], [flatten x] is read. A position
     outside [\[0, d)] reads zero. A gather, which has the bits it has on one
-    device wherever [x] lies, cut along [axis] too, but for an [x] of
-    {!Nx_array.Layout.max_rank} axes, or a [complex128] one of one fewer,
-    which is read whole along it ({!section-routing}). Positions that cannot
-    be read where they lie move first to the devices that read them.
+    device wherever [x] lies, cut along [axis] too, but at the greatest
+    rank, where it reads [axis] whole ({!section-routing}). Positions that
+    cannot be read where they lie move first to the devices that read them.
 
     Raises [Invalid_argument] if [axis] is not an axis of [x]. *)
 
@@ -1517,8 +1528,8 @@ val scatter :
     updates whose positions fall in its window, reading [p] and [u] whole
     along [axis] ({!section-routing}): each element takes its updates in
     their order on one device. Where [p] and [u] are cut along [axis], but
-    for an [x] of {!Nx_array.Layout.max_rank} axes, which reads them whole
-    there, each device combines the updates it holds into its window of
+    at the greatest rank, where they are read whole ({!section-routing}),
+    each device combines the updates it holds into its window of
     [x], and these partial results close by [combine] in the order of the
     tiles of [u], moving as a {!sum}'s over a cut axis do and never [u]:
     each tile of [u] holding updates sends a partial of each device's
@@ -4510,9 +4521,11 @@ val matmul_segments :
     It accumulates as {!matmul} does, in one contraction whose rows are
     grouped by id, and a row's bits are a function of the shapes, the
     placements, its row and its matrix: they do not depend on the other
-    positions' ids. [ids] and [x]'s rows may be cut along the positions
-    together, into windows of one extent, each device computing its own;
-    [w] cut along its matrices
+    positions' ids. [ids] and [x]'s rows may be cut together along the
+    first axis of [ids] that holds more than one position, each device
+    computing its own; cut along another of their axes they are read whole,
+    so the call raises naming the {!place} that puts them whole on each
+    device ({!section-routing}). [w] cut along its matrices
     gives each device's rows of its own matrices, which close by partials,
     or stay the devices' terms with [~sum:true] ({!section-contraction}).
 
@@ -6373,7 +6386,9 @@ module Prim : sig
         -> ('v, 's, 'd) nx t
         (** [x] read at the positions [idx] holds along [axis]: [idx] has [x]'s
             rank and its extents off [axis], and the result [idx]'s shape. A
-            position outside [x]'s axis reads the element of zero bits. *)
+            position outside [x]'s axis reads the element of zero bits. Over
+            an [x] cut along [axis] it computes as {!take} does
+            ({!section-routing}). *)
     | Gather_ranges : {
         size : int;
         starts : (int64, Dtype.int64_elt, 'd) nx;
@@ -6388,7 +6403,10 @@ module Prim : sig
             Position [p] belongs to the first run whose end exceeds it and
             reads [x] at [starts.{j} + p - ends.{j - 1}] modulo [2{^64}]; a
             position outside [x]'s axis or past every end reads the element
-            of zero bits: the bits of a {!Gather} at those positions. *)
+            of zero bits: the bits of a {!Gather} at those positions.
+            [starts] and [ends] are positions, read whole along [a] and
+            moved as a gather's are, and over an [x] cut along [a] it
+            computes as a {!Gather} does. *)
     | Scatter : {
         combine : Nx_kernel.combine;
         unique : bool;
