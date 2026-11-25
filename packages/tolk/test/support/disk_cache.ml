@@ -14,6 +14,15 @@ let fresh () = Windtrap.temp_dir ~prefix:"disk_cache" ()
 
 type child = int * string * string
 
+(* The suite's own executable, absolute, since a test may change the working
+   directory: where the runtime cannot name the running program, as on FreeBSD,
+   [Sys.executable_name] is the command's name, as in [./test_compiler_cpu.exe],
+   relative to the directory the suite started in. *)
+let executable =
+  if Filename.is_relative Sys.executable_name then
+    Filename.concat (Sys.getcwd ()) Sys.executable_name
+  else Sys.executable_name
+
 let start ?(env = []) ~cachedb part =
   let set = (role, part) :: ("CACHEDB", cachedb) :: env in
   let unchanged binding =
@@ -31,8 +40,8 @@ let start ?(env = []) ~cachedb part =
   let fd file = Unix.openfile file [ Unix.O_WRONLY ] 0 in
   let out_fd = fd out and err_fd = fd err in
   let pid =
-    Unix.create_process_env Sys.executable_name [| Sys.executable_name |]
-      environment Unix.stdin out_fd err_fd
+    Unix.create_process_env executable [| executable |] environment Unix.stdin
+      out_fd err_fd
   in
   Unix.close out_fd;
   Unix.close err_fd;

@@ -18,7 +18,8 @@ type child
 
 val start : ?env:(string * string) list -> cachedb:string -> string -> child
 (** [start ~env ~cachedb part] starts playing [part] with [CACHEDB] set to
-    [cachedb] and each variable of [env] set. *)
+    [cachedb] and each variable of [env] set, in the suite's executable whatever
+    the working directory is. *)
 
 val finish : child -> (string, string) result
 (** [finish c] waits for [c]: [Ok] of what it wrote on its standard output if it
