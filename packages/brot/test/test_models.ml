@@ -484,6 +484,12 @@ let test_word_level_split () =
   let t = word_level ~vocab:(numbered [ "<unk>"; "a"; ","; "b"; "c" ]) () in
   equal (list string) [ "a"; ","; "b"; "c" ] (tokens t "a,b\t c")
 
+(* HF reads a duplicate key of a file's vocab as its last pair: id_to_token(0)
+   is None and token_to_id("a") is 2. *)
+let test_word_level_given_twice () =
+  let t = word_level ~vocab:[ ("a", 0); ("b", 1); ("a", 2) ] () in
+  last_pair t ~pairs:[ ("a", 2); ("b", 1) ]
+
 (* HF: a WordLevel without its unknown token raises "Missing [UNK] token from
    the vocabulary" at a word it lacks, and encodes a text of known words. *)
 let test_word_level_no_unk () =
@@ -958,6 +964,8 @@ let () =
                test_word_ids;
              test "splits on white space and punctuation without pre"
                test_word_level_split;
+             test "keeps a token given twice as its last pair"
+               test_word_level_given_twice;
              test "raises Failure at a word neither vocab nor unk_token holds"
                test_word_level_no_unk;
              test "allocates for its tokens, not its largest id" (fun () ->

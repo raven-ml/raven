@@ -5,7 +5,6 @@
 
 type t = {
   vocab : (string, int) Hashtbl.t;
-  vocab_r : (int, string) Hashtbl.t;
   token_table : string Id_table.t;
   len_table : int Id_table.t;
   unk_token : string;
@@ -15,12 +14,7 @@ type t = {
 let create ?(vocab = []) ?(unk_token = "<unk>") () =
   let size = max 1 (List.length vocab) in
   let vocab_tbl = Hashtbl.create size in
-  let vocab_r_tbl = Hashtbl.create size in
-  List.iter
-    (fun (token, id) ->
-      Hashtbl.replace vocab_tbl token id;
-      Hashtbl.replace vocab_r_tbl id token)
-    vocab;
+  List.iter (fun (token, id) -> Hashtbl.replace vocab_tbl token id) vocab;
   let token_table = Id_table.of_vocab ~who:"Word_level.create" vocab_tbl in
   let len_table =
     Id_table.mapi ~absent:0 (fun _ token -> String.length token) token_table
@@ -28,14 +22,7 @@ let create ?(vocab = []) ?(unk_token = "<unk>") () =
   let unk_id =
     match Hashtbl.find_opt vocab_tbl unk_token with Some id -> id | None -> -1
   in
-  {
-    vocab = vocab_tbl;
-    vocab_r = vocab_r_tbl;
-    token_table;
-    len_table;
-    unk_token;
-    unk_id;
-  }
+  { vocab = vocab_tbl; token_table; len_table; unk_token; unk_id }
 
 let missing_unk model =
   failwith
@@ -63,7 +50,12 @@ let encode_into model ids ~opaque text ~pos ~len =
 let token_table model = model.token_table
 let len_table model = model.len_table
 let token_to_id model token = Hashtbl.find_opt model.vocab token
-let id_to_token model id = Hashtbl.find_opt model.vocab_r id
+
+let id_to_token model id =
+  let token = Id_table.get model.token_table id in
+  (* An id that no pair holds is [""] in the table. *)
+  if token = "" && Hashtbl.find_opt model.vocab "" <> Some id then None
+  else Some token
 
 let get_vocab model =
   Hashtbl.fold (fun token id acc -> (token, id) :: acc) model.vocab []

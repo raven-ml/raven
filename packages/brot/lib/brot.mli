@@ -1237,8 +1237,9 @@ val word_level :
     {b Note.} When [pre] is not provided, {!Pre_tokenizer.whitespace} is used by
     default.
 
-    - [vocab]: initial vocabulary as [(word, id)] pairs. The ids are as in
-      {!bpe}'s [vocab]. Default: [[]].
+    - [vocab]: initial vocabulary as [(word, id)] pairs. A word given twice
+      keeps only its last pair. The ids are as in {!bpe}'s [vocab]. Default:
+      [[]].
     - [unk_token]: the token a word not in [vocab] stands as. A [vocab] that
       does not hold it encodes the words it holds, and encoding raises [Failure]
       at any other. Default: ["<unk>"].

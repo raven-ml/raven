@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- A `word_level` vocabulary that gives a word twice keeps its last pair, as
+  `bpe` and `wordpiece` do: `id_to_token` answered the earlier id too.
 - `Brot.vocab` of a `chars` tokenizer lists its 256 one-byte tokens, which
   `vocab_size` counted and `vocab` left out.
 - `Brot.unk_token` is the model's unknown token, defaults included, and
