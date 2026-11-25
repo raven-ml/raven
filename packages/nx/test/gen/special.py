@@ -939,7 +939,118 @@ def log10_points(fmt):
             + [x for x in drawn if math.isfinite(x)])
 
 
+# asinh, acosh, atanh, hypot and sinc: the float functions nx composes from
+# other kinds. Their points are the boundaries of nx.ml's forms: asinh's and
+# acosh's [2^-28] and [2^28], acosh's 2, atanh's 1/2, hypot's float64 scaling
+# below the least normal and near overflow, sinc's 1/2 and the integers; the
+# poles and ends; and sweeps.
+
+def asinh_reference(fmt, x):
+    if math.isinf(x):
+        return x
+    return odd(mpmath.asinh)(fmt, x)
+
+
+def asinh_points(fmt):
+    rng = random.Random(f"asinh {fmt.name}")
+    edges = [2.0 ** -28, 0.5, 1.0, 2.0, 2.0 ** 28, fmt.max / 4]
+    points = [x for c in edges for x in neighbours(fmt, c)]
+    return standard(fmt, rng, fmt.tiny, fmt.max) + points + [-x for x in points]
+
+
+def acosh_reference(fmt, x):
+    if math.isnan(x) or x < 1:
+        return math.nan
+    if math.isinf(x):
+        return x
+    return correctly_rounded(fmt, mpmath.acosh, x)
+
+
+def acosh_points(fmt):
+    rng = random.Random(f"acosh {fmt.name}")
+    edges = [1.0, 1.5, 2.0, 2.0 ** 28, fmt.max / 4]
+    points = [x for c in edges for x in neighbours(fmt, c)]
+    above_one = [round_to(fmt, 1 + mpf(2) ** -k) for k in range(1, fmt.p)]
+    # C libraries that give numbers below 1: musl's at these.
+    musl = [float.fromhex("-0x1.c2c2c2p+13")] + ([float.fromhex("-0x1.1616361616161p+23")] if fmt.p == 53 else [])
+    return (standard(fmt, rng, 1.0, fmt.max) + points + above_one + musl
+            + [-x for x in points])
+
+
+def atanh_reference(fmt, x):
+    if math.isnan(x) or abs(x) > 1:
+        return math.nan
+    if abs(x) == 1:
+        return math.copysign(math.inf, x)
+    return odd(mpmath.atanh)(fmt, x)
+
+
+def atanh_points(fmt):
+    rng = random.Random(f"atanh {fmt.name}")
+    edges = [2.0 ** -28, 0.25, 0.5, 0.75]
+    points = [x for c in edges for x in neighbours(fmt, c)]
+    near_one = [round_to(fmt, 1 - mpf(2) ** -k) for k in range(2, fmt.p + 1)]
+    sweep = log_sweep(fmt, fmt.tiny, 1.0, 48)
+    return ([math.nan, 0.0, -0.0, 1.0, -1.0, 2.0, -2.0, math.inf, -math.inf] + sweep + [-x for x in sweep]
+            + uniform(fmt, rng, -1, 1, 96) + points + near_one + [-x for x in points + near_one])
+
+
+def hypot_reference(fmt, x, y):
+    if math.isinf(x) or math.isinf(y):
+        return math.inf
+    if math.isnan(x) or math.isnan(y):
+        return math.nan
+    return correctly_rounded(fmt, lambda a, b: mpmath.sqrt(a * a + b * b), x, y)
+
+
+def hypot_points(fmt):
+    rng = random.Random(f"hypot {fmt.name}")
+    sweep = log_sweep(fmt, fmt.tiny, fmt.max, 32)
+    pairs = [(a, b) for a in sweep[::3] for b in sweep[::3]]
+    drawn = [(of_bits(fmt, rng.getrandbits(31 if fmt.p == 24 else 63)),
+              of_bits(fmt, rng.getrandbits(31 if fmt.p == 24 else 63))) for _ in range(256)]
+    drawn = [(a, b) for a, b in drawn if math.isfinite(a) and math.isfinite(b)]
+    near = []
+    for c in [fmt.min_normal, fmt.max / 2, fmt.max]:
+        for a in neighbours(fmt, c, 2):
+            for b in neighbours(fmt, c, 2):
+                near.append((a, b))
+    equal = [(a, a) for a in sweep] + [(a, next_up(fmt, a)) for a in sweep]
+    special = [(0.0, 0.0), (-0.0, 0.0), (-0.0, -0.0), (3.0, 4.0), (-3.0, -0.0), (math.nan, math.inf),
+               (-math.inf, math.nan), (math.nan, 1.0), (1.0, math.nan), (2.0, -math.inf), (fmt.tiny, fmt.tiny),
+               (fmt.tiny, 1.0), (1.0, 2.0 ** -(fmt.p + 2)), (fmt.max, fmt.max)]
+    return special + pairs + drawn + near + equal + [(-a, b) for a, b in pairs[::4]]
+
+
+def sinc_reference(fmt, x):
+    if math.isnan(x) or math.isinf(x):
+        return math.nan
+    if x == 0:
+        return 1.0
+    if x == int(x):
+        return 0.0
+    return correctly_rounded(fmt, mpmath.sincpi, x)
+
+
+def sinc_points(fmt):
+    rng = random.Random(f"sinc {fmt.name}")
+    near_int = [n + s * 2.0 ** -e for n in range(-6, 7) for e in range(1, fmt.p, 3) for s in (1, -1)]
+    near_int = [round_to(fmt, mpf(x)) for x in near_int]
+    small = [2.0 ** -e for e in range(1, 160 if fmt.p == 24 else 1100, 7)]
+    points = [x for c in [0.5, 0.25, 1.5, 2.0 ** (fmt.p - 2), 2.0 ** (fmt.p - 1)] for x in neighbours(fmt, c)]
+    width = 31 if fmt.p == 24 else 63
+    drawn = [of_bits(fmt, rng.getrandbits(width)) for _ in range(128)]
+    return ([math.nan, 0.0, -0.0, math.inf, -math.inf, 1.0, -1.0, 7.0, fmt.max]
+            + uniform(fmt, rng, -8, 8, 256) + near_int + small + [-x for x in small] + points
+            + [-x for x in points] + [x for x in drawn if math.isfinite(x)])
+
+
 FUNCTIONS = [
+    Function("asinh", ["x"], asinh_reference, asinh_points),
+    Function("acosh", ["x"], acosh_reference, acosh_points),
+    Function("atanh", ["x"], atanh_reference, atanh_points),
+    Function("hypot", ["x", "y"], hypot_reference, hypot_points),
+    Function("sinc", ["x"], sinc_reference, sinc_points),
     Function("erf", ["x"], erf_reference, erf_points),
     Function("erfinv", ["x"], erfinv_reference, erfinv_points, extra=kappa),
     Function("erfc", ["x"], plain(mpmath.erfc, 2.0, 0.0), erfc_points),
