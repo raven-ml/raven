@@ -3,11 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Interpretations through Nx.Prim: the dispatch rule and its refusals, fibers
-   and domains, the forms results gives, and interpreters shaped like nx's
-   consumers: a forward derivative, a recording observer and forwarding ones, a
-   staging compiler and one that runs its program, a capture of expressions,
-   and the staging compiler handing a call to the derivative. *)
+(* Nx.Prim, in nx.mli's order: which interpretation an operation reaches, the
+   extent and the rule; operations as data, their operands, forms and results;
+   interpret, traced and twinned values, payloads and owners. *)
 
 open Windtrap
 module A = Nx_array
@@ -51,6 +49,16 @@ let logged ~name reach log f =
 let tag i x = Nx.Prim.traced i (Nx.Prim.form x) (Tag 0)
 let received log = List.rev !log
 let names = list string
+
+(* An effect handler's exception clause that keeps the raise's backtrace. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
+(* An [Invalid_argument] message naming [by] and the interpretation [name]. *)
+let names_both ~by name m =
+  starts_with ~prefix:(by ^ ": ") m;
+  contains ~sub:name m
+
+let placed_at p = Format.asprintf "%a" Nx.Placement.pp p
 
 (* The rule *)
 
@@ -96,21 +104,10 @@ let test_innermost () =
   equal ~msg:"the extent, for a concrete operation" names [ "Map" ]
     (received outer)
 
-(* A rule's own operations on concrete parts compute; on its own values they
-   raise naming it, outside its extent, also under an extent around it. *)
-let test_running () =
+(* An operation on its own value inside its rule raises naming it, as outside
+   its extent, also under an extent around it. *)
+let test_own_value () =
   let x = x3 () in
-  let log = ref [] in
-  let computing _ ~by op =
-    log := Nx.Prim.name op :: !log;
-    Nx.Prim.eval ~by op
-  in
-  let y =
-    Nx.Prim.interpret ~name:"test.extent" Extent computing (fun _ -> Nx.add x x)
-  in
-  equal ~msg:"delivered once" names [ "Map" ] (received log);
-  equal ~msg:"computed by the rule" (array float_exact) [| 2.; 4.; 6. |]
-    (elements y);
   let own i ~by op =
     let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
     let (Nx.Prim.Any x) = List.hd xs in
@@ -202,11 +199,7 @@ let test_rule_calls_named () =
     | _ -> ());
     Nx.Prim.eval ~by op
   in
-  let by_reshape = function
-    | Invalid_argument m -> String.starts_with ~prefix:"Nx.reshape: " m
-    | _ -> false
-  in
-  raises_match by_reshape (fun () ->
+  invalid ~sub:"Nx.reshape: " (fun () ->
       Nx.Prim.interpret ~name:"test.reshaping" Extent reshaping (fun _ ->
           Nx.lstsq f64 a b))
 
@@ -256,7 +249,7 @@ let test_names_after_hop () =
     Effect.Deep.match_with f ()
       {
         retc = Fun.id;
-        exnc = raise;
+        exnc = reraise;
         effc =
           (fun (type a) (e : a Effect.t) ->
             match e with
@@ -278,7 +271,8 @@ let test_names_after_hop () =
           end;
           Nx.Prim.eval ~by op)
         (fun _ -> ignore (Nx.trace (square64 ()))));
-  equal ~msg:"hopped" bool true !hopped;
+  satisfies ~msg:"hopped" ~claim:"the rule's call resumed on another domain"
+    bool Fun.id !hopped;
   equal ~msg:"a rule's by" names [ "Nx.neg" ]
     (observed_names (fun () -> Nx.neg (Nx.donate (vec f64 [| 1.; 2. |]))));
   let h = Nx.donate (Nx.copy (vec f64 [| 1.; 2. |])) in
@@ -337,13 +331,28 @@ let test_after_return () =
   in
   invalid ~sub:"Nx.add: a value of test.values, used after test.values returned"
     (fun () -> Nx.add t x);
-  equal ~msg:"its shape answers" (array int) [| 3 |] (Nx.shape t);
-  equal ~msg:"its owner answers" bool true
-    (match Nx.Prim.owner t with Some o -> o == i | None -> false);
-  equal ~msg:"its payload answers" bool true
-    (match Nx.Prim.payload i t with Some (Tag 0) -> true | _ -> false);
+  let f = Nx.Prim.form t in
+  equal ~msg:"its form answers"
+    (pair string (array int))
+    ("float32", [| 3 |])
+    (D.name f.dtype, Iarray.to_array (L.shape f.layout));
+  satisfies ~msg:"its owner answers" ~claim:"the interpretation that made it"
+    (option pass)
+    (function Some o -> o == i | None -> false)
+    (Nx.Prim.owner t);
+  equal ~msg:"its payload answers" (option int) (Some 0)
+    (match Nx.Prim.payload i t with Some (Tag k) -> Some k | _ -> None);
   invalid ~sub:"test.array: a value traced by test.values has no bytes"
-    (fun () -> Nx.Repr.array ~by:"test.array" t)
+    (fun () -> Nx.Repr.array ~by:"test.array" t);
+  let leaked = ref None in
+  (try
+     logged ~name:"test.raised" Values (ref []) (fun i ->
+         leaked := Some (tag i x);
+         failwith "f raises")
+   with Failure _ -> ());
+  match Nx.add (Option.get !leaked) x with
+  | _ -> fail "a value of an interpretation whose f raised computed"
+  | exception Invalid_argument m -> names_both ~by:"Nx.add" "test.raised" m
 
 let test_domains () =
   let x = x3 () in
@@ -356,8 +365,7 @@ let test_domains () =
         | exception Invalid_argument m -> Some m
       in
       match Domain.join (Domain.spawn elsewhere) with
-      | Some m ->
-          contains ~sub:"Nx.add: a value of test.values, used outside" m
+      | Some m -> names_both ~by:"Nx.add" "test.values" m
       | None -> fail "a traced value computed on another domain");
   let log = ref [] in
   let y =
@@ -380,7 +388,7 @@ let test_systhreads () =
       in
       Thread.join (Thread.create elsewhere ());
       match !got with
-      | Some m -> contains ~sub:"Nx.add: a value of test.values, used outside" m
+      | Some m -> names_both ~by:"Nx.add" "test.values" m
       | None -> fail "a traced value computed on another systhread");
   let log = ref [] in
   let y =
@@ -404,14 +412,14 @@ let test_creation_values () =
     List.iter
       (fun (Nx.Prim.Any y) ->
         if Nx.Prim.owner y = None then
-          placed := Nx.Placement.equal Count.on (Nx.placement y) :: !placed)
+          placed := placed_at (Nx.placement y) :: !placed)
       xs;
     tagged i ~by op
   in
   C.reset ();
   Nx.Prim.interpret ~name:"test.values" Values looking (fun i ->
       ignore (Nx.add (tag i x) c));
-  equal ~msg:"at its placement" (list bool) [ true ] !placed;
+  equal ~msg:"at its placement" (list string) [ placed_at Count.on ] !placed;
   equal ~msg:"kernel calls" int 0 (C.calls ())
 
 (* The name of an operation, a creation told from a map. *)
@@ -427,13 +435,11 @@ let test_captured () =
   let looking i ~by op =
     log := kind op :: !log;
     (match op with
-    | Map { loads = [||]; at = Some p; _ } ->
-        named := Nx.Placement.equal p Count.on :: !named
+    | Map { loads = [||]; at = Some p; _ } -> named := placed_at p :: !named
     | _ -> ());
     let r = tagged i ~by op in
     Nx.Prim.iter_results
-      (fun y ->
-        placed := Nx.Placement.equal (Nx.placement y) Count.on :: !placed)
+      (fun y -> placed := placed_at (Nx.placement y) :: !placed)
       op r;
     r
   in
@@ -441,45 +447,15 @@ let test_captured () =
   Nx.Prim.interpret ~name:"test.extent" Extent looking (fun _ ->
       ignore (Nx.add outside (Nx.zeros_at Count.on f32 [| 2 |])));
   equal ~msg:"received" names [ "Creation"; "Map" ] (received log);
-  equal ~msg:"the creation names its placement" (list bool) [ true ] !named;
-  equal ~msg:"results lie there" (list bool) [ true; true ] !placed;
+  equal ~msg:"the creation names its placement" (list string)
+    [ placed_at Count.on ]
+    !named;
+  equal ~msg:"results lie there" (list string)
+    [ placed_at Count.on; placed_at Count.on ]
+    !placed;
   equal ~msg:"kernel calls" int 0 (C.calls ())
 
-let rule =
-  group "rule"
-    [
-      test "values reach the operations on their values alone" test_values_reach;
-      test "an extent reaches every operation inside it, creations included"
-        test_extent_reach;
-      test "the innermost that reaches an operation receives it" test_innermost;
-      test "a rule computes, and refuses its own values" test_running;
-      test "a rule reads one handle twice" test_donor_beside;
-      test "a rule receives the function the user called" test_by_called;
-      test "a rule's refusal keeps its name inside a composite"
-        test_refusal_named;
-      test "a rule's calls keep their names inside a composite"
-        test_rule_calls_named;
-      test "what the function and the rule raise keep their backtrace"
-        test_raised_backtrace;
-      test "what a rule donates dies, its handle naming the rule's call"
-        test_rule_donates;
-      test "a plain operation after a call resumed on another domain"
-        test_names_after_hop;
-      test "a plain operation beside another systhread's composite"
-        test_names_two_threads;
-      test "a value used after its interpretation returned raises"
-        test_after_return;
-      test "a value refuses another domain; an extent does not reach one"
-        test_domains;
-      test "a value refuses another systhread; an extent does not reach one"
-        test_systhreads;
-      test "a creation reaches a values rule as the value it is"
-        test_creation_values;
-      test "an extent receives a creation at its placement"
-        test_captured;
-    ]
-
-(* Forms: results gives the form eager execution gives (Law 3) *)
+(* Forms: results gives the form eager execution gives *)
 
 type case = Case : string * 'r Nx.Prim.t -> case
 type kind = Concrete | View | Created
@@ -580,91 +556,96 @@ let forms_case =
        (fun ((shape, a), (b, k)) -> (shape, a, b, k))
        (Gen.pair (Gen.pair shapes kinds) (Gen.pair kinds (Gen.int_range 0 9))))
 
-let same_form ~msg (x : ('v, 's, 'd) Nx.t) (y : ('v, 's, 'd) Nx.t) =
-  let f = Nx.Prim.form x and g = Nx.Prim.form y in
-  equal ~msg:(msg ^ ": dtype") string (D.name f.dtype) (D.name g.dtype);
-  equal ~msg:(msg ^ ": layout")
-    (Testable.make ~pp:L.pp ~equal:L.equal)
-    f.layout g.layout;
-  equal ~msg:(msg ^ ": placement")
-    (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
-    f.placement g.placement
+(* A value of a result, of any dtype and set. *)
+type value = V : ('v, 's, 'd) Nx.t -> value
 
-let rec same_outs : type d r. string -> (d, r) Nx.Prim.outs -> r -> r -> unit =
- fun msg outs a b ->
-  match (outs, a, b) with
-  | [], (), () -> ()
-  | _ :: outs, (x, a), (y, b) ->
-      same_form ~msg x y;
-      same_outs msg outs a b
+let rec out_values : type d r. (d, r) Nx.Prim.outs -> r -> value list =
+ fun outs r ->
+  match (outs, r) with
+  | [], () -> []
+  | _ :: outs, (x, r) -> V x :: out_values outs r
 
-let same_reduction : type d a.
-    string -> (d, a) Nx.Prim.reduction -> a -> a -> unit =
- fun msg r a b ->
-  match (r, a, b) with
-  | Monoid _, a, b -> same_form ~msg a b
-  | Logsumexp _, a, b -> same_form ~msg a b
-  | Moments _, (a, a'), (b, b') ->
-      same_form ~msg a b;
-      same_form ~msg a' b'
-  | Arg _, (a, a'), (b, b') ->
-      same_form ~msg a b;
-      same_form ~msg a' b'
+let reduction_values : type d a. (d, a) Nx.Prim.reduction -> a -> value list =
+ fun r a ->
+  match (r, a) with
+  | Monoid _, x -> [ V x ]
+  | Logsumexp _, x -> [ V x ]
+  | Moments _, (m, v) -> [ V m; V v ]
+  | Arg _, (e, i) -> [ V e; V i ]
 
-let rec same_reductions : type d r.
-    string -> (d, r) Nx.Prim.reductions -> r -> r -> unit =
- fun msg rs a b ->
-  match (rs, a, b) with
-  | [], (), () -> ()
-  | r :: rs, (x, a), (y, b) ->
-      same_reduction msg r x y;
-      same_reductions msg rs a b
+let rec reductions_values : type d r.
+    (d, r) Nx.Prim.reductions -> r -> value list =
+ fun rs r ->
+  match (rs, r) with
+  | [], () -> []
+  | x :: rs, (a, r) -> reduction_values x a @ reductions_values rs r
 
-let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
- fun msg op a b ->
+let linalg_values : type d r. (d, r) Nx.Prim.linalg -> r -> value list =
+ fun l r ->
+  match (l, r) with
+  | Cholesky _, x -> [ V x ]
+  | Lu _, (lu, pivots, perm) -> [ V lu; V pivots; V perm ]
+  | Qr _, (q, r) -> [ V q; V r ]
+  | Svd_values _, s -> [ V s ]
+  | Svd _, (s, u, vh) -> [ V s; V u; V vh ]
+  | Eigh_values _, w -> [ V w ]
+  | Eigh _, (w, v) -> [ V w; V v ]
+  | Eig_values _, w -> [ V w ]
+  | Eig _, (w, v) -> [ V w; V v ]
+  | Solve_triangular _, x -> [ V x ]
+
+(* The values of [op]'s result [r], in the order of its type: the reference the
+   positions of results and iter_results are read against. *)
+let values : type r. r Nx.Prim.t -> r -> value list =
+ fun op r ->
   match op with
-  | Map { outs; _ } -> same_outs msg outs a b
-  | Reduce { reductions; _ } -> same_reductions msg reductions a b
-  | Scan { reduction; _ } -> same_reduction msg reduction a b
-  | Gather _ -> same_form ~msg a b
-  | Gather_ranges _ -> same_form ~msg a b
-  | Scatter _ -> same_form ~msg a b
+  | Map { outs; _ } -> out_values outs r
+  | Reduce { reductions; _ } -> reductions_values reductions r
+  | Scan { reduction; _ } -> reduction_values reduction r
   | Sort _ ->
-      let (v, p), (v', p') = (a, b) in
-      same_form ~msg v v';
-      same_form ~msg p p'
+      let v, p = r in
+      [ V v; V p ]
   | Unique _ ->
-      let (i, f, c, k), (i', f', c', k') = (a, b) in
-      same_form ~msg i i';
-      same_form ~msg f f';
-      same_form ~msg c c';
-      same_form ~msg k k'
-  | Fft (C2c _) -> same_form ~msg a b
-  | Fft (R2c _) -> same_form ~msg a b
-  | Fft (C2r _) -> same_form ~msg a b
-  | Linalg _ -> fail "law_forms builds no factorisation"
-  | Fold _ -> same_form ~msg a b
-  | Assemble _ -> same_form ~msg a b
-  | Copy _ -> same_form ~msg a b
-  | Contract _ -> same_form ~msg a b
-  | Move _ -> same_form ~msg a b
-  | Bitcast _ -> same_form ~msg a b
-  | Place _ -> same_form ~msg a b
-  | Check _ -> ()
+      let i, f, c, k = r in
+      [ V i; V f; V c; V k ]
+  | Linalg l -> linalg_values l r
   | Attention _ ->
-      let (o, l), (o', l') = (a, b) in
-      same_form ~msg o o';
-      same_form ~msg l l'
+      let o, l = r in
+      [ V o; V l ]
+  | Check _ -> []
+  | Gather _ -> [ V r ]
+  | Gather_ranges _ -> [ V r ]
+  | Scatter _ -> [ V r ]
+  | Fft (C2c _) -> [ V r ]
+  | Fft (R2c _) -> [ V r ]
+  | Fft (C2r _) -> [ V r ]
+  | Fold _ -> [ V r ]
+  | Assemble _ -> [ V r ]
+  | Copy _ -> [ V r ]
+  | Contract _ -> [ V r ]
+  | Move _ -> [ V r ]
+  | Bitcast _ -> [ V r ]
+  | Place _ -> [ V r ]
 
-let law_forms (shape, a, b, k) =
+let form_of (V x) =
+  let f = Nx.Prim.form x in
+  Format.asprintf "%s %a at %a" (D.name f.dtype) L.pp f.layout Nx.Placement.pp
+    f.placement
+
+(* The forms of [op]'s result traced under a tagging rule, and eagerly. *)
+let traced_and_eager_forms op =
+  let eager = Nx.Prim.eval ~by:"test" op in
+  logged ~name:"test.forms" Values (ref []) (fun i ->
+      let traced = tagged i ~by:"test" op in
+      (List.map form_of (values op traced), List.map form_of (values op eager)))
+
+let law_eager_forms (shape, a, b, k) =
   cover "a creation" (a = Created || b = Created);
   cover "empty" (Array.mem 0 shape);
   cover "0-d" (shape = [||]);
   let (Case (name, op)) = List.nth (cases_of shape a b) k in
-  let eager = Nx.Prim.eval ~by:"test" op in
-  logged ~name:"test.forms" Values (ref []) (fun i ->
-      let traced = tagged i ~by:"test" op in
-      same_results name op traced eager)
+  let traced, eager = traced_and_eager_forms op in
+  equal ~msg:name (list string) eager traced
 
 (* A float32 of the coordinate along axis 1 plus load 0: past the rank of a loop
    of one axis. *)
@@ -680,7 +661,7 @@ let row i : M.range iarray =
   [| { start = i; count = 1; step = 1 }; { start = 0; count = 3; step = 1 } |]
 
 (* Loops of no loads that name no placement or a misplaced one, and loops of
-   loads that name one, each with the part of its refusal that says why. *)
+   loads that name one. *)
 let misplaced () =
   let x = operand Concrete [| 3 |] and line = L.contiguous [| 3 |] in
   let one = P.of_exprs ~ins:[||] [| P.E.(any (const f32 1.)) |]
@@ -718,35 +699,35 @@ let misplaced () =
   in
   (* A carry whole on both devices, beside a scan cut along the axis it
      keeps, which a carry's route would read where it lies. *)
+  let map name ?(loads : _ Nx.Prim.load iarray = [||]) ?(prog = one) at =
+    Case (name, Map { layout = line; prog; outs = Nx.Prim.[ f32 ]; loads; at })
+  in
   let carry = Nx.Prim.Any (Nx.place Count2.on (Nx.zeros f32 [| 1; 2 |])) in
   [
-    ( "names no placement",
-      reduce "a reduction of no loads that names no placement" None );
-    ( "names a placement",
-      reduce "a reduction of loads that names a placement" ~prog:load
-        ~loads:[| Plain x |] (Some Count.on) );
-    ( "axis 1 is cut and the shape has rank 1",
-      reduce "a reduction of no loads at a cut of an axis it lacks"
-        (Some (Count2.split ~axis:1)) );
-    ("a sum", reduce "a reduction of no loads at a sum" (Some sum));
-    ( "names no placement",
-      scan "a scan of no loads that names no placement" None );
-    ( "names a placement",
-      scan "a scan of loads that names a placement" ~prog:load
-        ~loads:[| Plain x |] (Some Count.on) );
-    ( "axis 1 is cut and the shape has rank 1",
-      scan "a scan of no loads at a cut of an axis it lacks"
-        (Some (Count2.split ~axis:1)) );
-    ("a sum", scan "a scan of no loads at a sum" (Some sum));
-    ( "a carry at",
-      scan "a scan of no loads from a carry elsewhere"
-        ~layout:(L.contiguous [| 3; 2 |])
-        ~carry
-        (Some (Count2.split ~axis:1)) );
+    map "a map of no loads that names no placement" None;
+    map "a map of loads that names a placement" ~prog:load ~loads:[| Plain x |]
+      (Some Count.on);
+    map "a map of no loads at a cut of an axis it lacks"
+      (Some (Count2.split ~axis:1));
+    reduce "a reduction of no loads that names no placement" None;
+    reduce "a reduction of loads that names a placement" ~prog:load
+      ~loads:[| Plain x |] (Some Count.on);
+    reduce "a reduction of no loads at a cut of an axis it lacks"
+      (Some (Count2.split ~axis:1));
+    reduce "a reduction of no loads at a sum" (Some sum);
+    scan "a scan of no loads that names no placement" None;
+    scan "a scan of loads that names a placement" ~prog:load
+      ~loads:[| Plain x |] (Some Count.on);
+    scan "a scan of no loads at a cut of an axis it lacks"
+      (Some (Count2.split ~axis:1));
+    scan "a scan of no loads at a sum" (Some sum);
+    scan "a scan of no loads from a carry elsewhere"
+      ~layout:(L.contiguous [| 3; 2 |])
+      ~carry
+      (Some (Count2.split ~axis:1));
   ]
 
-(* Ill-formed operations raise naming [by], eagerly and under either reach,
-   before any kernel (Laws 7 and 13). *)
+(* Ill-formed operations, each refused naming [by]. *)
 let ill_formed () =
   let x = operand Concrete [| 3 |] and y = operand Concrete [| 2 |] in
   let x23 = placed Nx.int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
@@ -755,7 +736,24 @@ let ill_formed () =
   in
   let flags = placed Nx.bool [| 2 |] [| true; false |] in
   let line = L.contiguous [| 3 |] in
+  let none = operand Concrete [| 0; 2 |] in
+  let load = P.v ~ins:[| D.Any D.Float32 |] [| In 0 |] ~outs:[| 0 |] in
+  let extreme name r =
+    Case
+      ( name,
+        Reduce
+          {
+            layout = L.contiguous [| 0; 2 |];
+            axes = [| 0 |];
+            prog = load;
+            reductions = r;
+            loads = [| Plain none |];
+            at = None;
+          } )
+  in
   [
+    extreme "a maximum of no term" Nx.Prim.[ Monoid (Max, 0, f32) ];
+    extreme "a position of a minimum of no term" Nx.Prim.[ Arg (Min, 0, f32) ];
     Case
       ( "loads of another shape",
         Map
@@ -858,36 +856,40 @@ let ill_formed () =
             fail = (fun _ _ -> Failure "fails");
           } );
   ]
-  @ List.map snd (misplaced ())
+  @ misplaced ()
 
-(* Each misplaced loop's refusal says why, eagerly and before any kernel. *)
-let test_misplaced () =
-  List.iter
-    (fun (why, Case (name, op)) ->
-      C.reset ();
-      raises_match ~msg:name (Exn.invalid_arg ~sub:why) (fun () ->
-          Nx.Prim.eval ~by:"test.by" op);
-      equal ~msg:(name ^ ": kernel calls") int 0 (C.calls ()))
-    (misplaced ())
+let case_id (Case (name, _)) = name
 
-let test_ill_formed () =
+(* [op] raises naming [by] eagerly, under either reach and from results, before
+   any kernel and before results makes a value. *)
+let refused (Case (_, op)) =
+  C.reset ();
+  invalid ~sub:"test.by: " (fun () -> Nx.Prim.eval ~by:"test.by" op);
   List.iter
-    (fun (Case (name, op)) ->
-      C.reset ();
-      invalid ~sub:"test.by: " (fun () -> Nx.Prim.eval ~by:"test.by" op);
-      List.iter
-        (fun reach ->
-          invalid ~sub:"test.by: " (fun () ->
-              logged ~name:"test" reach (ref []) (fun i ->
-                  let traced =
-                    Nx.Prim.map
-                      (fun x -> if reach = Nx.Prim.Values then tag i x else x)
-                      op
-                  in
-                  Nx.Prim.eval ~by:"test.by" traced)))
-        [ Nx.Prim.Values; Extent ];
-      equal ~msg:(name ^ ": kernel calls") int 0 (C.calls ()))
-    (ill_formed ())
+    (fun reach ->
+      invalid ~sub:"test.by: " (fun () ->
+          logged ~name:"test" reach (ref []) (fun i ->
+              let traced =
+                Nx.Prim.map
+                  (fun x -> if reach = Nx.Prim.Values then tag i x else x)
+                  op
+              in
+              Nx.Prim.eval ~by:"test.by" traced)))
+    [ Nx.Prim.Values; Extent ];
+  let made = ref 0 in
+  invalid ~sub:"test.by: " (fun () ->
+      Nx.Prim.results ~by:"test.by"
+        (fun _ _ ->
+          incr made;
+          failwith "made")
+        op);
+  equal ~msg:"values results made" int 0 !made;
+  equal ~msg:"kernel calls" int 0 (C.calls ())
+
+let refusal (Case (name, op)) =
+  match Nx.Prim.eval ~by:"test.by" op with
+  | _ -> name ^ ": computed"
+  | exception Invalid_argument m -> name ^ ": " ^ m
 
 (* A selection and a constant move bits: each code of a narrow dtype comes
    back unchanged, its infinities, NaNs, [-0], largest finite value and least
@@ -1077,23 +1079,8 @@ let test_iter_results () =
           equal ~msg:name (list int) (List.init n Fun.id) (List.rev !seen)))
     (List.map named (cases_of [| 2; 3 |] Concrete Concrete) @ counted_cases ())
 
-let laws =
-  group "laws"
-    [
-      prop "results gives the forms eager execution gives" forms_case law_forms;
-      test "iter_results visits a result's values in position order"
-        test_iter_results;
-      test "a selection or constant keeps each narrow code's bits"
-        test_keeps_bits;
-      test
-        "an ill-formed operation raises naming its function, before any kernel"
-        test_ill_formed;
-      test "a loop of no loads names where it lies, there alone"
-        test_misplaced;
-    ]
-
-(* (a) A forward derivative: a Values interpretation whose values hold a primal
-   and a tangent, over maps of one node. *)
+(* A forward derivative: a Values interpretation whose values hold a primal and
+   a tangent, over maps of one node. *)
 
 type ('v, 's, 'd) Nx.Prim.payload +=
   | Dual : {
@@ -1111,7 +1098,7 @@ let dual i primal tangent =
   Nx.Prim.traced i (Nx.Prim.form primal) (Dual { primal; tangent })
 
 (* [x] at [dt]'s type. *)
-let expect (type v s d) (dt : (v, s) D.t) (Nx.Prim.Any x : d Nx.Prim.any) :
+let at_dtype (type v s d) (dt : (v, s) D.t) (Nx.Prim.Any x : d Nx.Prim.any) :
     (v, s, d) Nx.t =
   match D.equal_witness (Nx.dtype x) dt with
   | Some Type.Equal -> x
@@ -1139,17 +1126,17 @@ let tangent (type v s d) i node (loads : d Nx.Prim.load iarray)
   in
   let dt = Nx.dtype y in
   match (node : P.node) with
-  | Op2 (Binary Add, 0, 1) -> Nx.add (expect dt (t 0)) (expect dt (t 1))
+  | Op2 (Binary Add, 0, 1) -> Nx.add (at_dtype dt (t 0)) (at_dtype dt (t 1))
   | Op2 (Binary Mul, 0, 1) ->
       Nx.add
-        (Nx.mul (expect dt (t 0)) (expect dt (p 1)))
-        (Nx.mul (expect dt (p 0)) (expect dt (t 1)))
+        (Nx.mul (at_dtype dt (t 0)) (at_dtype dt (p 1)))
+        (Nx.mul (at_dtype dt (p 0)) (at_dtype dt (t 1)))
   | Op1 (Cast, _, 0) ->
       let (Nx.Prim.Any tx) = t 0 in
       Nx.cast dt tx
-  | Op1 (Copy, _, 0) -> Nx.copy (expect dt (t 0))
+  | Op1 (Copy, _, 0) -> Nx.copy (at_dtype dt (t 0))
   | Op3 (Where, 0, 1, 2) ->
-      Nx.where (expect Nx.bool (p 0)) (expect dt (t 1)) (expect dt (t 2))
+      Nx.where (at_dtype Nx.bool (p 0)) (at_dtype dt (t 1)) (at_dtype dt (t 2))
   | Op2 (Compare _, _, _) | Const _ | Coord _ -> Nx.zeros_like y
   | _ -> fail "test.jvp: a kind it lacks"
 
@@ -1265,66 +1252,27 @@ let law_jvp (xs, vs) =
     elements (chain (vec f64 (Array.mapi (fun k x -> x +. (s *. vs.(k))) xs)))
   in
   let plus = at h and minus = at (-.h) in
+  (* [chain] is x^5 + x^4 below 0 and x^3 + x^2 + x from 0, in four roundings:
+     with a = |x| and u = eps / 2, an evaluation errs by at most u (5 a^5 + 4
+     a^4), and rounding x + hv to a float moves it by |f'| u a. The central
+     difference divides both by 2h, which at a = 3, the worst case, gives (1539
+     u + 891 u) / h, about 3.4 eps S / h, S the sum of the terms' magnitudes: 8
+     eps S / h allows that with room. Its truncation, h^2 |f3| / 6 with |f3| <=
+     468 the third derivative for |x| <= 3 and |v| <= 1, is below 1e-10; the
+     kink of [less] lies over 0.01 away. *)
   Array.iteri
     (fun k t ->
       let fd = (plus.(k) -. minus.(k)) /. (2. *. h) in
-      let tol = 1e-4 *. (1. +. Float.abs fd) in
-      less
+      let a = Float.abs xs.(k) in
+      let terms = (a ** 5.) +. (a ** 4.) +. (a ** 3.) +. (a ** 2.) +. a in
+      let tol = (8. *. epsilon_float *. terms /. h) +. 1e-9 in
+      at_most
         ~msg:(Printf.sprintf "tangent %d: %h against %h" k t fd)
         float_exact ~than:tol
         (Float.abs (t -. fd)))
     (elements t)
 
-(* (b) A recording observer: an Extent interpretation that records each
-   operation and computes it as eager execution would. *)
-type recorded = Recorded : 'r Nx.Prim.t * 'r -> recorded
-
-let recording log _ ~by op =
-  let r = Nx.Prim.eval ~by op in
-  log := Recorded (op, r) :: !log;
-  r
-
-let step k x = Nx.(add (mul x x) (scalar float32 (Float.of_int k)))
-
-let test_recording () =
-  let x = vec f32 [| 0.5; -1.; 2. |] in
-  let trips =
-    List.init 3 (fun k ->
-        let log = ref [] in
-        let y =
-          Nx.Prim.interpret ~name:"test.record" Extent
-            (fun i ~by op -> recording log i ~by op)
-            (fun _ -> step k x)
-        in
-        equal
-          ~msg:(Printf.sprintf "trip %d as eager" k)
-          (array float_exact)
-          (elements (step k x))
-          (elements y);
-        List.rev !log)
-  in
-  let names =
-    List.map (List.map (fun (Recorded (op, _)) -> Nx.Prim.name op)) trips
-  in
-  equal ~msg:"each trip's operations"
-    (list (list string))
-    (List.init 3 (fun _ -> [ "Map"; "Map"; "Move"; "Map" ]))
-    names;
-  (* Replaying trip 2's operations gives its results again. *)
-  List.iter
-    (fun (Recorded (op, r)) ->
-      match op with
-      | Map { outs = [ _ ]; _ } ->
-          let y, () = Nx.Prim.eval ~by:"test.replay" op in
-          let y0, () = r in
-          let bits x =
-            Array.map Int64.bits_of_float (elements (Nx.cast f64 x))
-          in
-          equal ~msg:"replayed" (array int64) (bits y0) (bits y)
-      | _ -> ())
-    (List.nth trips 2)
-
-(* (c) A staging compiler: an Extent interpretation whose values are nodes of a
+(* A staging compiler: an Extent interpretation whose values are nodes of a
    program. Concrete operands are captured, and the program holds their bytes; a
    value of another live interpretation it refuses. *)
 
@@ -1379,31 +1327,6 @@ let stage f args =
   in
   (outs, prog)
 
-(* A creation inside the extent reaches the compiler as the map of no loads
-   it is, and nothing computes now; one made outside is captured with its
-   bytes. *)
-let test_staging () =
-  let w = on_count f32 [| 1.; 2.; 3.; 4. |] in
-  let c = Nx.zeros_at Count.on f32 [| 4 |] in
-  let x = on_count f32 [| 0.; 1.; 0.; 1. |] in
-  C.reset ();
-  let outs, prog =
-    stage
-      (fun ts ->
-        let t = List.hd ts in
-        let y = Nx.add (Nx.mul t w) c in
-        [ y; Nx.add (Nx.zeros_at Count.on f32 [| 4 |]) t ])
-      [ x ]
-  in
-  equal ~msg:"kernel calls" int 0 (C.calls ());
-  equal ~msg:"held bytes: the weight and the zeros made outside" int 32
-    prog.held;
-  equal ~msg:"operations" names
-    [ "Map"; "Map"; "Creation"; "Map" ]
-    (List.rev prog.ops);
-  equal ~msg:"results are the program's" bool true
-    (List.for_all (fun y -> Nx.Prim.owner y <> None) outs)
-
 (* On a set whose kernels decline [Fill], a creation stages as on any
    other. *)
 module Dec =
@@ -1422,8 +1345,8 @@ let test_staging_declining () =
   in
   equal ~msg:"operations" names [ "Creation"; "Map" ] (List.rev prog.ops);
   equal ~msg:"held bytes" int 0 prog.held;
-  equal ~msg:"results are the program's" bool true
-    (List.for_all (fun y -> Nx.Prim.owner y <> None) outs)
+  equal ~msg:"results are the program's" (list bool) [ true ]
+    (List.map (fun y -> Nx.Prim.owner y <> None) outs)
 
 (* A forwarding observer gets values back from the operations it forwards:
    each operation of a chain reaches it once, under another observer too. A
@@ -1497,6 +1420,11 @@ let every () =
         fun () ->
           eval (Fft (R2c { dtype = Nx.complex64; axes = [| 0 |]; x = a () })) );
     Every ("Bitcast", fun () -> Nx.bitcast Nx.int32 (a ()));
+    Every
+      ( "Linalg",
+        fun () ->
+          let m = Nx.add (Nx.eye f32 3) (Nx.eye f32 3) in
+          eval (Linalg (Cholesky { triangle = Lower; a = m })) );
     Every ("Move", fun () -> Nx.transpose (m ()));
     Every ("Copy", fun () -> Nx.copy (Nx.transpose (m ())));
   ]
@@ -1505,33 +1433,19 @@ let every () =
 let last_two log =
   match !log with b :: a :: _ -> [ a; b ] | _ -> received log
 
-(* CR: Check captured result positions through the existing Tag k payload.
-   These cases miss multi-output Map, paired reductions/scans and Linalg
-   pairs/triples; swapping same-dtype results can pass. Read each selected
-   result through Copy under tagged and check its operand's expected Tag k.
-   Keep the numerical forwarding checks; this also covers Linalg without
-   requiring an eager kernel. *)
-let test_every () =
-  List.iter
-    (fun (Every (name, made)) ->
-      let log = ref [] in
-      let y = forwarding "test.forward" log (fun _ -> Nx.copy (made ())) in
-      let printed x = Nx.to_string (Nx.place Nx.Host.on x) in
-      equal ~msg:(name ^ ": as eager") string
-        (printed (Nx.copy (made ())))
-        (printed y);
-      equal ~msg:(name ^ ": received") names [ name; "Copy" ] (last_two log))
-    (every ());
-  (* No kernel of the host computes a factorisation yet: a rule that computes
-     nothing receives one. *)
+let host_elements (type v s d) (y : (v, s, d) Nx.t) =
+  Array.to_list (A.to_array (host_array y))
+
+(* An operation of each kind, copied under a forwarding observer, reaches it as
+   that operation and gives eager's bits. *)
+let forwards_as_eager (Every (name, made)) =
   let log = ref [] in
-  logged ~name:"test.extent" Extent log (fun _ ->
-      let a = Nx.add (Nx.eye f32 3) (Nx.eye f32 3) in
-      ignore
-        (Nx.copy
-           (Nx.Prim.eval ~by:"test"
-              (Linalg (Cholesky { triangle = Lower; a })))));
-  equal ~msg:"Linalg: received" names [ "Linalg"; "Copy" ] (last_two log)
+  let y = forwarding "test.forward" log (fun _ -> Nx.copy (made ())) in
+  let eager = Nx.copy (made ()) in
+  equal ~msg:"bits"
+    (Nx_support.elements (Nx.dtype y))
+    (host_elements eager) (host_elements y);
+  equal ~msg:"received" names [ name; "Copy" ] (last_two log)
 
 (* A compiler that stages each operation and runs the program after its extent
    returns: a staged function over captured creations equals the function
@@ -1605,141 +1519,6 @@ let law_staged (cs, steps, xs) =
   equal ~msg:"kernel calls while staging" int 0 calls;
   equal ~msg:"as eager" (array float_exact) (elements (f x)) (elements y)
 
-(* (d) A capture of expressions, whose literals come from creations. *)
-
-type expr =
-  | Lit of string * int array
-  | Col of int array
-  | App of string * expr list
-
-let rec pp_expr ppf = function
-  | Lit (bits, s) -> Format.fprintf ppf "lit %S %a" bits pp_shape s
-  | Col s -> Format.fprintf ppf "col %a" pp_shape s
-  | App (f, args) ->
-      Format.fprintf ppf "(%s %a)" f
-        (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_expr)
-        args
-
-let exprs = Testable.make ~pp:pp_expr ~equal:( = )
-
-type ('v, 's, 'd) Nx.Prim.payload += Expr : expr -> ('v, 's, 'd) Nx.Prim.payload
-
-let capturing (type r) i ~by (op : r Nx.Prim.t) : r =
-  let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-  let arg (Nx.Prim.Any x) =
-    match Nx.Prim.payload i x with Some (Expr e) -> e | _ -> Col (Nx.shape x)
-  in
-  let e =
-    match op with
-    | Map { loads = [||]; prog; layout; _ } -> (
-        match Iarray.get prog.nodes (Iarray.length prog.nodes - 1) with
-        | Const (_, bits) -> Lit (bits, Iarray.to_array (L.shape layout))
-        | _ -> App ("creation", []))
-    | _ -> App (Nx.Prim.name op, List.map arg xs)
-  in
-  Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form (Expr e)) op
-
-let capture f =
-  Nx.Prim.interpret ~name:"test.capture" Extent capturing (fun i ->
-      List.map
-        (fun y ->
-          match Nx.Prim.payload i y with
-          | Some (Expr e) -> e
-          | _ -> fail "a result outside the capture")
-        (f ()))
-
-let test_capture () =
-  let x = vec f32 [| 1.; 2.; 3. |] in
-  let two = P.bits D.Float32 2. in
-  equal ~msg:"a literal and a column" (list exprs)
-    [ App ("Map", [ App ("Move", [ Lit (two, [||]) ]); Col [| 3 |] ]) ]
-    (capture (fun () -> [ Nx.add (Nx.scalar f32 2.) x ]))
-
-(* (e) The staging compiler called with arguments of a live derivative hands the
-   call to it, which stages the derivative: the program takes each argument's
-   primal and tangent. Without the hand-off, staging refuses. *)
-
-let staged_call f args =
-  let owned =
-    List.find_map
-      (fun a ->
-        match Nx.Prim.owner a with
-        | Some j -> (
-            match Nx.Prim.payload j a with Some (Dual _) -> Some j | _ -> None)
-        | None -> None)
-      args
-  in
-  match owned with
-  | None -> stage f args
-  | Some j ->
-      let n = List.length args in
-      let primals = List.map (fun a -> fst (parts j a)) args in
-      let tangents = List.map (fun a -> snd (parts j a)) args in
-      stage
-        (fun xs ->
-          let ps = List.filteri (fun k _ -> k < n) xs in
-          let ts = List.filteri (fun k _ -> k >= n) xs in
-          Nx.Prim.interpret ~name:"test.jvp" Values jvp_rule (fun i ->
-              let ys = f (List.map2 (dual i) ps ts) in
-              List.map (fun y -> fst (parts i y)) ys
-              @ List.map (fun y -> snd (parts i y)) ys))
-        (primals @ tangents)
-
-let test_hand_off () =
-  let x = vec f32 [| 1.; 2. |] and v = vec f32 [| 1.; 0. |] in
-  let square ts = List.map (fun t -> Nx.mul t t) ts in
-  let (outs, prog), refused =
-    Nx.Prim.interpret ~name:"test.jvp" Values jvp_rule (fun j ->
-        let d = dual j x v in
-        let handed = staged_call square [ d ] in
-        let refused =
-          match stage (fun _ -> square [ d ]) [ x ] with
-          | _ -> None
-          | exception Invalid_argument m -> Some m
-        in
-        (handed, refused))
-  in
-  equal ~msg:"params: a primal and a tangent" int 2 prog.params;
-  equal ~msg:"results: a primal and a tangent" int 2 (List.length outs);
-  (* x * x, then its tangent t * x + x * t. *)
-  equal ~msg:"the derivative, staged" names
-    [ "Map"; "Map"; "Map"; "Map" ]
-    (List.rev prog.ops);
-  equal ~msg:"without the hand-off" (option string)
-    (Some "Nx.mul: test.stage meets a value of another live interpretation")
-    refused
-
-(* A cast's tangent is the tangent cast. *)
-let test_jvp_cast () =
-  let x = vec f64 [| 1.5; -2. |] and v = vec f64 [| 0.25; 3. |] in
-  let y, t = jvp (fun x -> Nx.cast f32 x) x v in
-  equal ~msg:"primal" (array float_exact) [| 1.5; -2. |] (elements y);
-  equal ~msg:"tangent" (array float_exact) [| 0.25; 3. |] (elements t)
-
-let interpreters =
-  group "interpreters"
-    [
-      test "a forward derivative casts its tangent" test_jvp_cast;
-      prop ~count:50 "a forward derivative agrees with finite differences"
-        (Gen.pair
-           (Gen.array ~size:(Gen.int_range 0 6) (Gen.float_range (-3.) 3.))
-           (Gen.array ~size:(Gen.int_range 0 6) (Gen.float_range (-1.) 1.)))
-        law_jvp;
-      test "a recording observer computes as eager, and its trips replay"
-        test_recording;
-      test "a staging compiler computes nothing and stages creations"
-        test_staging;
-      test "staging a creation needs no kernel of the set"
-        test_staging_declining;
-      test "a forwarding observer receives each operation once"
-        test_forwarding;
-      test "an operation of each kind forwards as eager" test_every;
-      prop ~count:100 "a staged function over captured values equals eager"
-        staged_case law_staged;
-      test "a capture takes literals from creations" test_capture;
-      test "staging hands a call on a derivative's values to it" test_hand_off;
-    ]
-
 (* Fibers and domains *)
 
 type _ Effect.t += Yield : unit Effect.t
@@ -1754,7 +1533,7 @@ let schedule ?(dropped = []) fs =
     Effect.Deep.match_with f ()
       {
         retc = Fun.id;
-        exnc = raise;
+        exnc = reraise;
         effc =
           (fun (type a) (e : a Effect.t) ->
             match e with
@@ -1816,7 +1595,7 @@ let test_migrated () =
     ()
     {
       retc = Fun.id;
-      exnc = raise;
+      exnc = reraise;
       effc =
         (fun (type a) (e : a Effect.t) ->
           match e with
@@ -1857,9 +1636,7 @@ let test_outer_fiber () =
           | _ -> used := "computed"
           | exception Invalid_argument m -> used := m );
     ];
-  contains
-    ~sub:"Nx.add: a value of test.values, used outside test.values's extent"
-    !used
+  names_both ~by:"Nx.add" "test.values" !used
 
 (* A rule that suspends its fiber suspends its extent with it: its yield
    reaches the scheduler around the interpretation, past the one inside the
@@ -1903,47 +1680,20 @@ let test_suspended_rule () =
    handlers and finalisers see it. *)
 let test_rule_raises () =
   let x = x3 () in
-  let finalised = ref false in
-  let got =
-    Nx.Prim.interpret ~name:"test.values" Values
-      (fun _ ~by:_ _ -> failwith "the rule")
-      (fun i ->
-        match
-          Fun.protect
-            ~finally:(fun () -> finalised := true)
-            (fun () -> Nx.add (tag i x) x)
-        with
-        | _ -> "returned"
-        | exception Failure m -> m)
-  in
-  equal ~msg:"caught inside" string "the rule" got;
-  equal ~msg:"finalised" bool true !finalised
-
-let fibers =
-  group "fibers"
-    [
-      test "a fiber beside an extent computes" test_two_fibers;
-      test "a continuation dropped inside an extent changes no result"
-        test_dropped;
-      test "an extent resumed on another domain still receives" test_migrated;
-      test "a fiber an outer scheduler runs refuses a traced value"
-        test_outer_fiber;
-      test "a suspended rule holds its extent and enters once"
-        test_suspended_rule;
-      test "a rule's exception raises inside the extent" test_rule_raises;
-    ]
+  let events = ref [] in
+  Nx.Prim.interpret ~name:"test.values" Values
+    (fun _ ~by:_ _ -> failwith "the rule")
+    (fun i ->
+      match
+        Fun.protect
+          ~finally:(fun () -> events := "finalised" :: !events)
+          (fun () -> Nx.add (tag i x) x)
+      with
+      | _ -> events := "returned" :: !events
+      | exception Failure m -> events := ("caught " ^ m) :: !events);
+  equal (list string) [ "finalised"; "caught the rule" ] (List.rev !events)
 
 (* Allocation *)
-
-(* The words an operation allocates, over [n] runs after one uncounted. *)
-let words_per f =
-  let n = 1000 in
-  f ();
-  let before = Gc.minor_words () in
-  for _ = 1 to n do
-    f ()
-  done;
-  (Gc.minor_words () -. before) /. Float.of_int n
 
 (* Asking a value for its owner and its payload allocates nothing, as their
    interpretations ask for every operand of every operation. *)
@@ -1955,75 +1705,24 @@ let test_queries_words () =
         ignore (Sys.opaque_identity (Nx.Prim.owner y));
         ignore (Sys.opaque_identity (Nx.Prim.payload p y))
       in
-      equal ~msg:"a traced value's" float_exact 0. (words_per (ask t));
-      equal ~msg:"an array's" float_exact 0. (words_per (ask x)))
-
-(* An operation [log] received, whatever its result. *)
-type received = Received : 'r Nx.Prim.t -> received
-
-(* Walking a contraction's operands allocates nothing, as an interpretation
-   walks every operation's. *)
-let test_contract_walk_words () =
-  let a =
-    Nx.Repr.of_array Nx.Host.v (A.of_array f32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |])
-  in
-  let seen = ref None in
-  Nx.Prim.interpret ~name:"test.c" Values
-    (fun i ~by op ->
-      seen := Some (Received op);
-      tagged i ~by op)
-    (fun i -> ignore (Nx.matmul (tag i a) a));
-  match !seen with
-  | None -> fail "no operation was received"
-  | Some (Received op) ->
-      equal ~msg:"received" string "Contract" (Nx.Prim.name op);
-      let walk () = Nx.Prim.iteri (fun _ _ -> ()) op in
-      equal ~msg:"words per walk" float_exact 0. (words_per walk)
-
-(* Walking a transform's operand allocates nothing, whichever its kind. *)
-let test_fft_walk_words () =
-  let z =
-    Nx.Repr.of_array Nx.Host.v
-      (A.of_array Nx.complex64 [| 4 |] (Array.make 4 Complex.one))
-  in
-  let r = vec f32 [| 1.; 2.; 3.; 4. |] and axes = Iarray.of_array [| 0 |] in
-  List.iter
-    (fun (name, Received op) ->
-      let walk () = Nx.Prim.iteri (fun _ _ -> ()) op in
-      equal ~msg:name float_exact 0. (words_per walk))
-    [
-      ("c2c", Received (Fft (C2c { direction = Forward; axes; x = z })));
-      ("r2c", Received (Fft (R2c { dtype = Nx.complex64; axes; x = r })));
-      ("c2r", Received (Fft (C2r { dtype = f32; n = 6; axes; x = z })));
-    ]
+      equal ~msg:"a traced value's" float_exact 0. (Nx_support.words (ask t));
+      equal ~msg:"an array's" float_exact 0. (Nx_support.words (ask x)))
 
 (* The words an interpretation's dispatch costs one operation on its value,
-   beyond what its rule allocates. *)
+   beyond what its rule allocates: 56 once 914bee9af7 dropped the closures and
+   records no caller kept. *)
 let test_dispatch_words () =
   let x = x3 () in
   logged ~name:"test.p" Values (ref []) (fun p ->
       let t = tag p x in
-      let copy () = ignore (Sys.opaque_identity (Nx.copy t)) in
-      Windtrap.expect (Printf.sprintf "%.0f words" (words_per copy))
-      @@ __POS_OF__ {| 56 words |})
-
-let allocation =
-  group "allocation"
-    [
-      test "owner and payload allocate nothing" test_queries_words;
-      test "walking a contraction's operands allocates nothing"
-        test_contract_walk_words;
-      test "walking a transform's operand allocates nothing"
-        test_fft_walk_words;
-      test "an operation on a traced value allocates its baseline"
-        test_dispatch_words;
-    ]
+      let copy () = Nx.copy t in
+      at_most float_exact ~than:56. (Nx_support.words copy))
 
 (* Memory
 
    While backtraces are recorded, the runtime keeps the last exception raised
-   reachable. An operation keeps none of its operands' bytes once it returns,
-   wherever it computed. *)
+   reachable. Delivering an operation keeps none of its operands' bytes once it
+   returns, wherever it computed. *)
 
 let device = Nx_support.memory 2
 
@@ -2041,12 +1740,12 @@ let settled () =
 
 (* Reshapes a fresh value on [device] and drops both: a movement makes a view,
    which allocates nothing. *)
-let[@inline never] moved () =
+let[@inline never] [@local never] moved () =
   let x = Nx.place Mem.on (Nx.zeros f32 [| 1024 |]) in
   ignore (Sys.opaque_identity (Nx.reshape [| 32; 32 |] x))
 
 (* Raises and catches, so the last exception raised holds nothing. *)
-let[@inline never] cleared () =
+let[@inline never] [@local never] cleared () =
   try raise (Sys.opaque_identity Exit) with Exit -> ()
 
 (* The bytes [device] holds once [f ()] returns, beyond those it held before,
@@ -2086,20 +1785,15 @@ let beside f =
       Domain.join other)
     f
 
-let memory =
-  group "memory"
-    [
-      test "an operation beside another domain's extent keeps no bytes"
-        (fun () -> equal int 0 (held_after (fun () -> beside moved)));
-      test "an operation a rule applies keeps no bytes" (fun () ->
-          let within () = evaluating "test.extent" (fun _ -> moved ()) in
-          equal int 0 (held_after within));
-    ]
+let test_beside_keeps () = equal int 0 (held_after (fun () -> beside moved))
+
+let test_rule_keeps () =
+  let within () = evaluating "test.extent" (fun _ -> moved ()) in
+  equal int 0 (held_after within)
 
 (* The rule on two domains: each domain's operations go where the rule says,
-   whatever the other domain's interpretations do (Law 1). The reference is the
-   rule's statement: who receives each operation, and what eager execution
-   gives. *)
+   whatever the other domain's interpretations do. The reference is the rule's
+   statement: who receives each operation, and what eager execution gives. *)
 
 let value =
   abstract "x" ~pp:(fun ppf xs ->
@@ -2129,11 +1823,24 @@ let in_values x =
 
 let leak x = logged ~name:"test.leaked" Values (ref []) (fun i -> tag i x)
 
+(* An operation on a value of a returned interpretation raises naming the
+   function and the interpretation. *)
+let refused_leak = "refused, naming Nx.add and test.leaked"
+
+let holds ~sub m =
+  let n = String.length sub in
+  let rec from i =
+    i + n <= String.length m && (String.sub m i n = sub || from (i + 1))
+  in
+  from 0
+
 let use t =
   match Nx.add t t with
   | _ -> "computed"
   | exception Invalid_argument m ->
-      if String.length m > 0 then "refused" else "refused without a reason"
+      if String.starts_with ~prefix:"Nx.add: " m && holds ~sub:"test.leaked" m
+      then refused_leak
+      else m
 
 let floats3 =
   Gen.with_pp
@@ -2158,15 +1865,8 @@ let rule_commands =
       (value ^-> returns (pair names (array float_exact)))
       (fun xs -> ([ "Map" ], doubled xs))
       in_values;
-    command "use" (leaked ^-> returns string) (fun () -> "refused") use;
+    command "use" (leaked ^-> returns string) (fun () -> refused_leak) use;
   ]
-
-let domains =
-  group "domains"
-    [
-      stateful ~domains:2 "each domain's operations follow the rule"
-        rule_commands;
-    ]
 
 (* Twins: item of a value an interpretation made with a twin reads the twin
    where the interpretation is around the call, with no extent between
@@ -2194,7 +1894,7 @@ let specials =
 let item_bits i x = Int64.bits_of_float (Nx.item i x)
 
 let twins =
-  group "twins"
+  group "twinned"
     [
       prop "item of a twinned value reads its twin" specials (fun xs ->
           cover "-0" (Array.exists (fun v -> 1. /. v = Float.neg_infinity) xs);
@@ -2373,7 +2073,7 @@ let agrees f x y =
   let traced = outcome (fun () -> traced_placement f x y) in
   (match (eager, traced) with
   | Ok p, Ok q ->
-      equal ~msg:"where the result lies" bool true (Nx.Placement.equal p q)
+      equal ~msg:"where the result lies" (Nx_support.placement ()) p q
   | Error m, Error m' -> equal ~msg:"the refusal" string m m'
   | Ok _, Error m -> fail ("traced alone raises: " ^ m)
   | Error m, Ok _ -> fail ("eager alone raises: " ^ m));
@@ -2431,59 +2131,580 @@ let law_by_groups (wo, wx, wy) =
     (along_groups wy && Result.is_ok eager);
   cover "a cut result" (cut_result eager)
 
-let forms =
-  group "placements"
-    [
-      prop
-        "a traced result lies where its eager twin does, and a refusal is \
-         the same message"
-        (Gen.with_pp
-           (fun ppf (k, wx, wy) ->
-             Format.fprintf ppf "%s, x at %a, y at %a"
-               (fst (List.nth binaries k))
-               pp_where wx pp_where wy)
-           Gen.(triple (int_range 0 (List.length binaries - 1)) where where))
-        law_forms;
-      prop
-        "a traced product of rows by groups lies where its eager twin does, \
-         and a refusal is the same message"
-        (Gen.with_pp
-           (fun ppf (wo, wx, wy) ->
-             Format.fprintf ppf "ids at %a, a at %a, b at %a" pp_where wo
-               pp_where wx pp_where wy)
-           Gen.(
-             triple
-               (frequency [ (3, constant On); (1, constant (Split 0)) ])
-               (frequency [ (3, constant On); (1, where) ])
-               where))
-        law_by_groups;
-      test "a product cut unlike raises one message eagerly and traced"
+(* An operation of [f], resumed on another domain by a scheduler installed
+   inside an extent, lies outside it. *)
+let test_inner_fiber_elsewhere () =
+  let x = x3 () and log = ref [] and copied = ref [||] in
+  logged ~name:"test.extent" Extent log (fun _ ->
+      Effect.Deep.match_with
         (fun () ->
-          let value = Nx.reshape [| 4; 4 |] (Nx.arange f32 0 16 1) in
-          let x = Nx.place (Mem4.split ~axis:1) value in
-          let y = Nx.place (Mem4.split ~axis:1) value in
-          let refusal =
-            Invalid_argument
-              "Nx.matmul: operand 1 lies at split ~axis:1 [m0; m1; m2; m3] \
-               and is read at split ~axis:0 [m0; m1; m2; m3]; Nx.place \
-               (Placement.split ~axis:0 s) y"
-          in
-          raises ~msg:"eager" refusal (fun () -> Nx.matmul x y);
-          raises ~msg:"traced" refusal (fun () ->
-              traced_placement Nx.matmul x y));
-    ]
+          yield ();
+          copied := elements (Nx.copy x))
+        ()
+        {
+          retc = Fun.id;
+          exnc = reraise;
+          effc =
+            (fun (type a) (e : a Effect.t) ->
+              match e with
+              | Yield ->
+                  Some
+                    (fun (k : (a, unit) Effect.Deep.continuation) ->
+                      Domain.join
+                        (Domain.spawn (fun () -> Effect.Deep.continue k ())))
+              | _ -> None);
+        });
+  equal ~msg:"received" names [] (received log);
+  equal ~msg:"computed there" (array float_exact) [| 1.; 2.; 3. |] !copied
+
+(* Operations as data *)
+
+let sig_of (V x) =
+  Format.asprintf "%s %a" (D.name (Nx.dtype x)) Nx.pp_shape (Nx.shape x)
+
+let operand_sigs op =
+  let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+  List.map (fun (Nx.Prim.Any x) -> sig_of (V x)) xs
+
+(* [x] with a trailing axis of one: the same dtype, a shape of its own. *)
+let widened x = Nx.reshape (Array.append (Nx.shape x) [| 1 |]) x
+
+(* An operation and its operands in the order nx.mli states, each of a dtype and
+   shape of its own within the operation. *)
+type operands_row =
+  | Ops : string * (unit -> 'r Nx.Prim.t * value list) -> operands_row
+
+let z dt s = Nx.zeros dt s
+let row_id (Ops (name, _)) = name
+
+let operand_rows =
+  let line i : M.range iarray =
+    [| { start = i; count = 1; step = 1 }; { start = 0; count = 3; step = 1 } |]
+  in
+  [
+    Ops
+      ( "a map's loads",
+        fun () ->
+          let a = z f32 [| 2; 3 |] and b = z Nx.int32 [| 2; 3 |] in
+          ( Map
+              {
+                layout = L.contiguous [| 2; 3 |];
+                prog = add_prog;
+                outs = Nx.Prim.[ f32 ];
+                loads = [| Plain a; Plain b |];
+                at = None;
+              },
+            [ V a; V b ] ) );
+    Ops
+      ( "a scan's loads, then its carry",
+        fun () ->
+          let a = z f32 [| 2; 3 |] and c = z f32 [| 2; 1 |] in
+          ( Scan
+              {
+                layout = L.contiguous [| 2; 3 |];
+                axis = 1;
+                prog = P.v ~ins:[| D.Any D.Float32 |] [| In 0 |] ~outs:[| 0 |];
+                reduction = Monoid (Sum, 0, f32);
+                loads = [| Plain a |];
+                carry = Some (Any c);
+                at = None;
+              },
+            [ V a; V c ] ) );
+    Ops
+      ( "a gather's positions, then x",
+        fun () ->
+          let idx = z Nx.int64 [| 2; 1 |] and x = z f32 [| 2; 3 |] in
+          (Gather { axis = 1; idx; x }, [ V idx; V x ]) );
+    Ops
+      ( "a scatter's positions, updates, then target",
+        fun () ->
+          let idx = z Nx.int64 [| 2; 1 |] and updates = z f32 [| 2; 1 |] in
+          let into = z f32 [| 2; 3 |] in
+          ( Scatter
+              { combine = Set; unique = false; axis = 1; idx; updates; into },
+            [ V idx; V updates; V into ] ) );
+    Ops
+      ( "an assembly's pieces",
+        fun () ->
+          let p0 = z f32 [| 1; 3 |] and p1 = z f32 [| 1; 2 |] in
+          ( Assemble
+              {
+                dtype = f32;
+                shape = [| 2; 3 |];
+                fill = 0.;
+                pieces = [ (line 0, p0); (line 1, p1) ];
+              },
+            [ V p0; V p1 ] ) );
+    Ops
+      ( "a contraction's a, b, init, scales, then ids",
+        fun () ->
+          let a = z f32 [| 2; 4 |] and b = z f32 [| 4; 3 |] in
+          let init = z f32 [| 2; 3 |] and sa = z f32 [| 2; 1 |] in
+          let sb = z Nx.uint8 [| 1; 3 |] and ids = z Nx.int64 [| 2 |] in
+          ( Contract
+              {
+                batch = [||];
+                contracting = [| (1, 0) |];
+                acc = D.Any f32;
+                out = f32;
+                a;
+                b;
+                init = Some init;
+                a_scale = Some (Value sa);
+                b_scale = Some (Exponent sb);
+                segments = Some (Rows { ids; a_axis = 0; b_axis = 0 });
+                sum = false;
+              },
+            [ V a; V b; V init; V sa; V sb; V ids ] ) );
+    Ops
+      ( "a triangular solve's a, then b",
+        fun () ->
+          let a = z f32 [| 3; 3 |] and b = z f32 [| 3; 2 |] in
+          ( Linalg
+              (Solve_triangular
+                 {
+                   triangle = Lower;
+                   adjoint = false;
+                   unit_diagonal = false;
+                   a;
+                   b;
+                 }),
+            [ V a; V b ] ) );
+    Ops
+      ( "a check's flags, then its data",
+        fun () ->
+          let ok = z Nx.bool [| 2 |] and d0 = z f32 [| 2 |] in
+          let d1 = z Nx.int32 [| 2 |] in
+          ( Check { ok; data = [ d0; d1 ]; fail = (fun _ _ -> Exit) },
+            [ V ok; V d0; V d1 ] ) );
+    Ops
+      ( "a transform's operand",
+        fun () ->
+          let x = z Nx.complex64 [| 4 |] in
+          (Fft (C2c { direction = Forward; axes = [| 0 |]; x }), [ V x ]) );
+    Ops
+      ( "a copy's operand",
+        fun () ->
+          let x = z f32 [| 2; 3 |] in
+          (Copy x, [ V x ]) );
+  ]
+
+let in_order (Ops (_, make)) =
+  let op, stated = make () in
+  equal ~msg:"operands" (list string) (List.map sig_of stated) (operand_sigs op);
+  let seen = ref [] in
+  Nx.Prim.iteri (fun i x -> seen := (i, sig_of (V x)) :: !seen) op;
+  equal ~msg:"iteri"
+    (list (pair int string))
+    (List.mapi (fun i x -> (i, sig_of x)) stated)
+    (List.rev !seen);
+  equal ~msg:"map" (list string)
+    (List.map (fun (V x) -> sig_of (V (widened x))) stated)
+    (operand_sigs (Nx.Prim.map widened op))
+
+let walks_free (Ops (_, make)) =
+  let op, _ = make () in
+  equal float_exact 0.
+    (Nx_support.words (fun () -> Nx.Prim.iteri (fun _ _ -> ()) op))
+
+let kind_rows : (string * P.node * string) list =
+  [
+    ("a unary operation", Op1 (Unary Exp, D.Any D.Float32, 0), "Exp");
+    ("a binary one", Op2 (Binary Add, 0, 1), "Add");
+    ("a selection", Op3 (Where, 0, 1, 2), "Where");
+    ("an operand", In 0, "In");
+    ("a coordinate", Coord 0, "Iota");
+    ("a constant", Const (D.Any D.Float32, P.bits D.Float32 1.), "Fill");
+  ]
+
+(* A map whose sum node is read twice. *)
+let test_pp () =
+  let prog =
+    P.v
+      ~ins:[| D.Any D.Float32; D.Any D.Float32 |]
+      [| In 0; In 1; Op2 (Binary Add, 0, 1); Op2 (Binary Mul, 2, 2) |]
+      ~outs:[| 3 |]
+  in
+  let op =
+    Nx.Prim.Map
+      {
+        layout = L.contiguous [| 3 |];
+        prog;
+        outs = Nx.Prim.[ f32 ];
+        loads = [| Plain (x3 ()); Plain (x3 ()) |];
+        at = None;
+      }
+  in
+  expect (Format.asprintf "%a" Nx.Prim.pp op)
+  @@ __POS_OF__
+       {| Map n2 = add(x0, x1); [mul(n2, n2)] (x0: float32 [3] at CPU) (x1: float32 [3] at CPU) |}
+
+let layout_t = Testable.make ~pp:L.pp ~equal:L.equal
+
+let test_form_cut () =
+  let x = Nx.place (Count2.split ~axis:0) (vec f32 [| 1.; 2.; 3.; 4. |]) in
+  let f = Nx.Prim.form x in
+  equal ~msg:"layout" layout_t (L.contiguous [| 4 |]) f.layout;
+  equal ~msg:"placement" string
+    (placed_at (Nx.placement x))
+    (placed_at f.placement)
+
+let test_form_view () =
+  let v =
+    Nx.transpose (Nx.create f32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |])
+  in
+  let f = Nx.Prim.form v in
+  equal ~msg:"layout" layout_t
+    (A.layout (Option.get (Nx.Repr.array ~by:"test" v)))
+    f.layout;
+  equal ~msg:"dtype" string "float32" (D.name f.dtype)
+
+let pp_reduction ppf (r, k, dt) =
+  let name =
+    match (r : Nx_kernel.reduction) with
+    | Monoid Sum -> "Monoid Sum"
+    | Monoid Prod -> "Monoid Prod"
+    | Monoid Max -> "Monoid Max"
+    | Monoid Min -> "Monoid Min"
+    | Logsumexp -> "Logsumexp"
+    | Moments -> "Moments"
+    | Arg Max -> "Arg Max"
+    | Arg Min -> "Arg Min"
+  in
+  Format.fprintf ppf "%s of output %d, first result %s" name k dt
+
+let reduction_t = Testable.make ~pp:pp_reduction ~equal:( = )
+let shown (r, k, D.Any dt) = (r, k, D.name dt)
+
+let test_reduction () =
+  equal ~msg:"sum" reduction_t (Monoid Sum, 2, "float32")
+    (shown (Nx.Prim.reduction (Monoid (Sum, 2, f32))));
+  equal ~msg:"moments" reduction_t (Moments, 1, "float64")
+    (shown (Nx.Prim.reduction (Moments (1, f64))));
+  equal ~msg:"arg" reduction_t (Arg Max, 0, "int32")
+    (shown (Nx.Prim.reduction (Arg (Max, 0, Nx.int32))));
+  equal ~msg:"reductions" (list reduction_t)
+    [ (Monoid Sum, 2, "float32"); (Arg Min, 0, "int32") ]
+    (List.map shown
+       (Array.to_list
+          (Nx.Prim.reductions
+             Nx.Prim.[ Monoid (Sum, 2, f32); Arg (Min, 0, Nx.int32) ])))
+
+let test_outputs () =
+  let (Nx.Prim.Outputs (outs, read)) =
+    Nx.Prim.outputs [ D.Any D.Float32; D.Any D.Int32 ]
+  in
+  let prog =
+    P.v ~ins:[| D.Any D.Float32 |]
+      [| In 0; Op1 (Cast, D.Any D.Float32, 0); Op1 (Cast, D.Any D.Int32, 0) |]
+      ~outs:[| 1; 2 |]
+  in
+  let r =
+    Nx.Prim.eval ~by:"test"
+      (Map
+         {
+           layout = L.contiguous [| 3 |];
+           prog;
+           outs;
+           loads = [| Plain (x3 ()) |];
+           at = None;
+         })
+  in
+  equal (list string) [ "float32"; "int32" ]
+    (List.map (fun (Nx.Prim.Any y) -> D.name (Nx.dtype y)) (read r))
+
+(* Results *)
+
+let counted name =
+  if name = "chain" then
+    List.find
+      (fun (Case (n, _)) -> n = "chain")
+      (cases_of [| 2; 3 |] Concrete Concrete)
+  else fst (List.find (fun (Case (n, _), _) -> n = name) (counted_cases ()))
+
+let counted_names =
+  [
+    "chain";
+    "reduce";
+    "scan";
+    "sort";
+    "unique";
+    "r2c";
+    "qr";
+    "eigh";
+    "eig";
+    "lu";
+    "svd";
+    "check";
+  ]
+
+let test_counted_forms name =
+  let (Case (_, op)) = counted name in
+  let traced, eager = traced_and_eager_forms op in
+  equal (list string) eager traced
+
+let test_positions name =
+  let (Case (_, op)) = counted name in
+  logged ~name:"test.positions" Values (ref []) (fun i ->
+      let r = tagged i ~by:"test" op in
+      let tags =
+        List.map
+          (fun (V y) ->
+            match Nx.Prim.payload i y with Some (Tag k) -> k | _ -> -1)
+          (values op r)
+      in
+      equal (list int) (List.init (List.length tags) Fun.id) tags)
+
+let placements_case =
+  Gen.with_pp
+    (fun ppf (k, wx, wy) ->
+      Format.fprintf ppf "%s, x at %a, y at %a"
+        (fst (List.nth binaries k))
+        pp_where wx pp_where wy)
+    Gen.(triple (int_range 0 (List.length binaries - 1)) where where)
+
+let groups_case =
+  Gen.with_pp
+    (fun ppf (wo, wx, wy) ->
+      Format.fprintf ppf "ids at %a, a at %a, b at %a" pp_where wo pp_where wx
+        pp_where wy)
+    Gen.(
+      triple
+        (frequency [ (3, constant On); (1, constant (Split 0)) ])
+        (frequency [ (3, constant On); (1, where) ])
+        where)
 
 let () =
   exit
-    (run "nx interp"
+    (run "Nx.Prim"
        [
-         rule;
-         laws;
-         fibers;
-         allocation;
-         memory;
-         interpreters;
-         domains;
+         group "reach"
+           [
+             test
+               "a Values interpretation receives the operations on its values \
+                alone"
+               test_values_reach;
+             test
+               "an Extent interpretation receives every operation of its \
+                extent, creations included, and none computes"
+               test_extent_reach;
+             test
+               "the innermost interpretation that reaches an operation \
+                receives it"
+               test_innermost;
+             test
+               "an operation reaches a rule as it was called: one handle at \
+                two operands, a donor beside its handle refused"
+               test_donor_beside;
+           ];
+         group "extent"
+           [
+             test "a domain started in an extent lies outside it" test_domains;
+             test "a systhread started in an extent lies outside it"
+               test_systhreads;
+             test
+               "a fiber an outer scheduler runs beside an extent lies outside \
+                it"
+               test_two_fibers;
+             test "a fiber an outer scheduler runs refuses a traced value"
+               test_outer_fiber;
+             test
+               "an extent resumed on another domain receives its operations \
+                there"
+               test_migrated;
+             test
+               "a fiber a scheduler inside the extent resumes on another \
+                domain lies outside it"
+               test_inner_fiber_elsewhere;
+             test
+               "an extent whose continuation is dropped leaves later \
+                operations computing and later extents receiving"
+               test_dropped;
+             stateful ~domains:2
+               "operations on two domains reach their own domain's \
+                interpretations"
+               rule_commands;
+           ];
+         group "rule"
+           [
+             test
+               "a rule's operations reach the interpretations around its own, \
+                each once"
+               test_forwarding;
+             test "an operation on its own value in its rule raises naming it"
+               test_own_value;
+             test
+               "a rule that suspends its fiber holds its extent and is entered \
+                once"
+               test_suspended_rule;
+             test
+               "a rule's exception raises at the operation, inside the extent"
+               test_rule_raises;
+             test
+               "a creation on a set whose kernels decline it reaches an Extent \
+                rule"
+               test_staging_declining;
+             test
+               "a Values rule reads a creation made outside as the value it is"
+               test_creation_values;
+             test
+               "an Extent rule receives a creation at its placement, where \
+                results puts its result"
+               test_captured;
+             test "delivering an operation to a rule keeps none of its bytes"
+               test_rule_keeps;
+             test
+               "an operation beside another domain's extent keeps none of its \
+                bytes"
+               test_beside_keeps;
+           ];
+         group "Prim.t"
+           [
+             cases
+               "an ill-formed operation raises naming its function, eagerly, \
+                under either reach and from results, before any kernel"
+               ~id:case_id (ill_formed ()) refused;
+             test
+               "a loop names where it lies exactly when it has no loads, and \
+                its refusals say why" (fun () ->
+                 expect (String.concat "\n" (List.map refusal (misplaced ())))
+                 @@ __POS_OF__
+                      {|
+                   a map of no loads that names no placement: test.by: a map of no loads names no placement
+                   a map of loads that names a placement: test.by: a map of 1 loads names a placement
+                   a map of no loads at a cut of an axis it lacks: test.by: axis 1 is cut and the shape has rank 1
+                   a reduction of no loads that names no placement: test.by: a reduction of no loads names no placement
+                   a reduction of loads that names a placement: test.by: a reduction of 1 loads names a placement
+                   a reduction of no loads at a cut of an axis it lacks: test.by: axis 1 is cut and the shape has rank 1
+                   a reduction of no loads at a sum: test.by: a reduction of no loads at partial [m0; m1], a sum
+                   a scan of no loads that names no placement: test.by: a scan of no loads names no placement
+                   a scan of loads that names a placement: test.by: a scan of 1 loads names a placement
+                   a scan of no loads at a cut of an axis it lacks: test.by: axis 1 is cut and the shape has rank 1
+                   a scan of no loads at a sum: test.by: a scan of no loads at partial [m0; m1], a sum
+                   a scan of no loads from a carry elsewhere: test.by: a carry at on [m0; m1] for a scan of no loads at split ~axis:1 [m0; m1]
+                   |});
+             test "a selection or constant keeps each narrow code's bits"
+               test_keeps_bits;
+             prop ~count:100
+               "an operation a rule keeps evaluates after its extent to \
+                eager's bits, none computing while staged"
+               staged_case law_staged;
+           ];
+         group "kind"
+           [
+             cases "a node is named by its innermost constructor"
+               ~id:(fun (name, _, _) -> name)
+               kind_rows
+               (fun (_, node, expected) ->
+                 equal string expected (Nx.Prim.kind node));
+           ];
+         group "pp"
+           [
+             test "an operation prints its program, a node read twice once"
+               test_pp;
+           ];
+         group "operands"
+           [
+             cases
+               "operands are in the stated order, where iteri and map visit \
+                them"
+               ~id:row_id operand_rows in_order;
+             cases "iteri allocates nothing but for a factorisation or a check"
+               ~id:row_id
+               (List.filter
+                  (fun r ->
+                    not
+                      (List.mem (row_id r)
+                         [
+                           "a triangular solve's a, then b";
+                           "a check's flags, then its data";
+                         ]))
+                  operand_rows)
+               walks_free;
+           ];
+         group "form"
+           [
+             test
+               "a value cut over devices has the C-contiguous layout of the \
+                whole"
+               test_form_cut;
+             test "a view's form has its layout" test_form_view;
+           ];
+         group "reduction and outputs"
+           [
+             test
+               "reduction is what a reduction computes, its output and its \
+                first result's dtype"
+               test_reduction;
+             test "outputs are the outs of their dtypes, read in order"
+               test_outputs;
+           ];
+         group "results"
+           [
+             prop ~count:630 "results gives the forms eager execution gives"
+               forms_case law_eager_forms;
+             cases "results gives eager's forms at each count of results"
+               ~id:Fun.id counted_names test_counted_forms;
+             cases "the value made at position k is the result's k-th"
+               ~id:Fun.id counted_names test_positions;
+             test "iter_results visits a result's values in position order"
+               test_iter_results;
+             prop
+               ~examples:[ (1, Split 1, Split 1) ]
+               "a traced result lies where eager's does, and a refusal is \
+                eager's message"
+               placements_case law_forms;
+             prop
+               "a traced product of rows by groups lies where eager's does, \
+                and a refusal is eager's message"
+               groups_case law_by_groups;
+           ];
+         group "interpret"
+           [
+             test
+               "by is the function the user called, whatever it computes \
+                through"
+               test_by_called;
+             test
+               "by names a plain operation after a call resumed on another \
+                domain"
+               test_names_after_hop;
+             test "by names each systhread's own call" test_names_two_threads;
+             test "a rule's refusal reaches the caller as raised"
+               test_refusal_named;
+             test "a rule's operations are named by the functions it calls"
+               (fun () ->
+                 test_rule_calls_named ();
+                 test_rule_donates ());
+             test "what the function and the rule raise keep their backtrace"
+               test_raised_backtrace;
+             cases
+               "an operation of each kind a rule evaluates is received as \
+                itself and gives eager's bits"
+               ~id:(fun (Every (name, _)) -> name)
+               (every ()) forwards_as_eager;
+             prop ~count:50
+               "a derivative over a Values interpretation agrees with central \
+                differences"
+               (Gen.pair
+                  (Gen.array ~size:(Gen.int_range 0 6)
+                     (Gen.float_range (-3.) 3.))
+                  (Gen.array ~size:(Gen.int_range 0 6)
+                     (Gen.float_range (-1.) 1.)))
+               law_jvp;
+           ];
+         group "traced"
+           [
+             test
+               "after its interpretation returned or raised, a traced value \
+                refuses operations and its form, payload and owner answer"
+               test_after_return;
+           ];
          twins;
-         forms;
+         group "payload and owner"
+           [
+             test "owner and payload allocate nothing" test_queries_words;
+             test "a traced copy's dispatch allocates at most its budget"
+               test_dispatch_words;
+           ];
        ])

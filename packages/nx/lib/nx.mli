@@ -6116,6 +6116,9 @@ end
     operations go to the interpretations around its own, never to its own,
     and an effect it performs reaches the handlers around the interpretation.
     So a rule is never entered while it runs, and its state needs no lock.
+    Delivering an operation keeps none of its operands: once it returns, they
+    are held only by its results, by what a rule kept, and by work and checks
+    it left pending.
 
     An operation on a traced value raises [Invalid_argument] naming [by] and
     the interpretation where the interpretation is not around it: after it
