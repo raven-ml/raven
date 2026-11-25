@@ -7,108 +7,558 @@ open Talon
 open Windtrap
 module Csv = Talon_csv
 module Reader = Bytesrw.Bytes.Reader
+module Writer = Bytesrw.Bytes.Writer
+module G = Talon_gen
 
 (* Helpers *)
 
 let any t = Type.Any t
+let pp_any ppf (Type.Any t) = Type.pp ppf t
+let type_name t = Format.asprintf "%a" pp_any t
 let error_text e = Format.asprintf "%a" Error.pp e
 let format_text f = Format.asprintf "%a" Csv.pp_format f
-let sniff ?rows ?nulls s = Csv.sniff ?rows ?nulls (Reader.of_string s)
-let sniffed ?rows ?nulls s = Error.get_ok (sniff ?rows ?nulls s)
 
-(* [columns ty] is a format without a header whose columns are named [c1], [c2],
-   … and read as [ty]. *)
+let sniffed ?rows ?nulls s =
+  Error.get_ok (Csv.sniff ?rows ?nulls (Reader.of_string s))
+
+let read ?slice_length f s = Csv.decode f (Reader.of_string ?slice_length s)
+let failure f s = match read f s with Ok _ -> "ok" | Error e -> error_text e
+
+(* [columns types] is a format without a header whose columns [c1], [c2], … read
+   as [types]. *)
 let columns ?nulls types =
   Csv.format ~header:false ?nulls
     (List.mapi (fun i t -> (Printf.sprintf "c%d" (i + 1), t)) types)
 
-let read ?slice_length f s = Csv.decode f (Reader.of_string ?slice_length s)
-let names t = List.map fst (Schema.columns (schema t))
-let all_columns t = List.map (column t) (names t)
+(* [bytes n] is a format of [n] binary columns, which read any field. *)
+let bytes ?nulls n = columns ?nulls (List.init n (fun _ -> any Type.binary))
 
-(* [float_text x] is the fewest digits that read back as the float64 [x], as nx
-   writes them on every system. *)
-let float_text x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
+(* [fields t] is the rows of [t]'s binary columns, [None] at a null. *)
+let fields t =
+  let bytes (name, _) =
+    Array.map
+      (Option.map (fun (b : Binary.t) -> (b :> string)))
+      (Column.options Kind.binary (column t name))
+  in
+  let cs = List.map bytes (Schema.columns (schema t)) in
+  List.init (rows t) (fun i -> List.map (fun c -> c.(i)) cs)
 
-let valid c =
-  match Column.validity c with
-  | None -> Fun.const true
-  | Some v ->
-      let v = Nx.to_array v in
-      fun i -> v.(i)
+let decoded ?slice_length f s = fields (Error.get_ok (read ?slice_length f s))
+let records = list (list (option string))
 
-(* [byte_rows c] is the byte strings of the rows of the varsize column [c],
-   whether null or not. *)
-let byte_rows c =
-  match Column.layout c with
-  | Varsize { offsets; child; _ } ->
-      let o = Array.map Int64.to_int (Nx.to_array offsets) in
-      let d = Nx.to_array (Column.to_tensor Nx.uint8 child) in
-      List.init
-        (Array.length o - 1)
-        (fun i ->
-          String.init (o.(i + 1) - o.(i)) (fun k -> Char.chr d.(o.(i) + k)))
-  | Fixed _ | Children _ -> fail "not a varsize column"
+(* [table] compares tables column by column, floats by their bits, whatever
+   their batches. *)
+let table =
+  let same a b =
+    let (Type.Any ty) = Column.type_ a in
+    let rows c = Column.options (Type.kind ty) c in
+    Testable.equal (array (option (G.witness ty))) (rows a) (rows b)
+  in
+  let equal a b =
+    Schema.equal (schema a) (schema b)
+    && rows a = rows b
+    && List.for_all
+         (fun (n, _) -> same (column a n) (column b n))
+         (Schema.columns (schema a))
+  in
+  Testable.make ~pp:Talon.pp ~equal
 
-(* [strings c] is the rows of the varsize column [c]. *)
-let strings c =
-  let valid = valid c in
-  List.mapi (fun i s -> if valid i then Some s else None) (byte_rows c)
+(* The types CSV reads ({!Csv.format}), each width and unit. *)
+let csv_types =
+  Type.
+    [
+      Any bool;
+      Any int8;
+      Any int16;
+      Any int32;
+      Any int64;
+      Any uint8;
+      Any uint16;
+      Any uint32;
+      Any uint64;
+      Any float16;
+      Any float32;
+      Any float64;
+      Any string;
+      Any binary;
+      Any (categorical [| "a"; ""; "b\"c"; "x,y"; "l\nm"; "NA"; "café" |]);
+      Any date;
+      Any (wall S);
+      Any (wall Ms);
+      Any (wall Us);
+      Any (wall Ns);
+      Any (instant S);
+      Any (instant Ms);
+      Any (instant Us);
+      Any (instant Ns);
+    ]
 
-(* [cells c] is the storage of [c] and its rows printed, [∅] at a null. *)
-let cells c =
-  let valid = valid c in
-  let rows n f = List.init n (fun i -> if valid i then f i else "∅") in
-  match Column.layout c with
-  | Fixed { values = Nx.P x; _ } ->
-      let dtype = Format.asprintf "%a" Nx.pp_dtype (Nx.dtype x) in
-      let row =
-        match dtype with
-        | "bool" | "bit" ->
-            let a = Nx.to_array (Nx.cast Nx.uint8 x) in
-            fun i -> if a.(i) = 1 then "true" else "false"
-        | "uint64" ->
-            let a = Nx.to_array (Nx.bitcast Nx.int64 x) in
-            fun i -> Printf.sprintf "%Lu" a.(i)
-        | "float16" | "float32" | "float64" ->
-            let a = Nx.to_array (Nx.cast Nx.float64 x) in
-            fun i -> float_text a.(i)
-        | _ ->
-            let a = Nx.to_array (Nx.cast Nx.int64 x) in
-            fun i -> Int64.to_string a.(i)
-      in
-      (dtype, rows (Nx.shape x).(0) row)
-  | Varsize _ ->
-      let bs = Array.of_list (byte_rows c) in
-      ("bytes", rows (Array.length bs) (fun i -> Printf.sprintf "%S" bs.(i)))
-  | Children _ -> fail "a record column"
+(* The types CSV does not read. *)
+let other_types =
+  Type.
+    [
+      Any (clock Us);
+      Any (duration Ms);
+      Any (list int64);
+      Any (record [ ("a", Any int64) ]);
+      Any (tensor Nx.float32 [| 2 |]);
+      Any (ext ~name:"units.mass" float64);
+    ]
 
-(* [printed t] is each column of [t] printed as its storage and its rows: [int8
-   [1; ∅]]. *)
-let printed t =
-  if rows t = 0 then "no rows"
-  else
-    String.concat "\n"
-      (List.map
-         (fun c ->
-           let dtype, rows = cells c in
-           Printf.sprintf "%s [%s]" dtype (String.concat "; " rows))
-         (all_columns t))
+(* Fields written by hand, under the null token NA *)
 
-let decode ?slice_length f s =
-  match read ?slice_length f s with
-  | Error e -> "error: " ^ error_text e
-  | Ok t -> printed t
+(* [quoted s] is [s] between double quotes, its quotes doubled. *)
+let quoted s = "\"" ^ String.concat "\"\"" (String.split_on_char '"' s) ^ "\""
 
-let failure f s = match read f s with Ok _ -> "ok" | Error e -> error_text e
+(* [must_quote s] is [true] iff [s] read unquoted would not give [s] back. *)
+let must_quote s =
+  s = "" || s = "NA"
+  || String.starts_with ~prefix:"\xEF\xBB\xBF" s
+  || String.exists (fun c -> c = ',' || c = '"' || c = '\n' || c = '\r') s
+
+(* [field (v, quote)] is the field that holds [v], quoted when it must be or
+   when [quote] says, and empty for [None]. *)
+let field (v, quote) =
+  match v with
+  | None -> ""
+  | Some s -> if quote || must_quote s then quoted s else s
+
+(* Syntax *)
+
+(* A file of [cols] binary columns written by hand: each record ends in a line
+   feed or a carriage return and a line feed, the last one maybe not at all, an
+   empty line may precede a record, a byte order mark may start the input, and a
+   one-column record writes a null as NA. *)
+type file = {
+  cols : int;
+  rows : (string option * bool) list list;
+  crlf : bool list;
+  blank : bool list;
+  last : bool;
+  bom : bool;
+  slice : int;
+}
+
+let encode t =
+  let b = Buffer.create 256 in
+  if t.bom then Buffer.add_string b "\xEF\xBB\xBF";
+  let n = List.length t.rows in
+  List.iteri
+    (fun i ((row, crlf), blank) ->
+      let break = if crlf then "\r\n" else "\n" in
+      if blank then Buffer.add_string b break;
+      let fields = List.map field row in
+      let fields = if fields = [ "" ] then [ "NA" ] else fields in
+      Buffer.add_string b (String.concat "," fields);
+      if i < n - 1 || t.last then Buffer.add_string b break)
+    (List.combine (List.combine t.rows t.crlf) t.blank);
+  Buffer.contents b
+
+let file =
+  let open Gen in
+  let* cols = int_range 1 4 in
+  let* n = int_range 0 12 in
+  let byte = of_list [ 'a'; 'b'; ' '; ','; '"'; '\n'; '\r'; '\xff' ] in
+  let cell = pair (option (string_of ~size:(int_range 0 5) byte)) bool in
+  let* rows = list ~size:(constant n) (list ~size:(constant cols) cell) in
+  let* crlf = list ~size:(constant n) bool in
+  let* blank = list ~size:(constant n) bool in
+  let* last = bool in
+  let* bom = frequency [ (3, constant false); (1, constant true) ] in
+  let+ slice = int_range 1 16 in
+  { cols; rows; crlf; blank; last; bom; slice }
+
+let pp_file ppf t = Format.fprintf ppf "%S (slices of %d)" (encode t) t.slice
+
+(* A byte order mark read in slices of one byte, and a null in one column. *)
+let bom_in_slices =
+  {
+    cols = 1;
+    rows = [ [ (Some "a", false) ]; [ (None, false) ] ];
+    crlf = [ false; false ];
+    blank = [ false; false ];
+    last = true;
+    bom = true;
+    slice = 1;
+  }
+
+let reads_its_fields t =
+  let cells = List.concat t.rows in
+  let holds p =
+    List.exists (fun (v, _) -> Option.fold ~none:false ~some:p v) cells
+  in
+  cover "a byte order mark" t.bom;
+  cover "a byte order mark in slices shorter than it" (t.bom && t.slice < 3);
+  cover "a record that ends at the end of the input"
+    ((not t.last) && t.rows <> []);
+  cover "an empty line" (List.mem true t.blank);
+  cover "a quoted line break"
+    (holds (String.exists (fun c -> c = '\n' || c = '\r')));
+  cover "a doubled quote" (holds (fun s -> String.contains s '"'));
+  cover "a null token in a one-column file"
+    (t.cols = 1 && List.exists (fun (v, _) -> v = None) cells);
+  equal records
+    (List.map (List.map fst) t.rows)
+    (decoded ~slice_length:t.slice (bytes ~nulls:[ "NA" ] t.cols) (encode t))
+
+let wide_record = String.concat "," (List.init 5000 (fun _ -> "y"))
+let some_rows = List.map (List.map Option.some)
+
+let syntax =
+  group "syntax"
+    [
+      cases
+        "a record ends at a line feed, a carriage return and a line feed, or \
+         the end of the input"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ("a line feed", "a,b\nc,d\n", [ [ "a"; "b" ]; [ "c"; "d" ] ]);
+          ("a CRLF", "a,b\r\nc,d\r\n", [ [ "a"; "b" ]; [ "c"; "d" ] ]);
+          ("the end of the input", "a,b\nc,d", [ [ "a"; "b" ]; [ "c"; "d" ] ]);
+          ( "a quoted field at the end of the input",
+            "\"a\",\"b\"",
+            [ [ "a"; "b" ] ] );
+        ]
+        (fun (_, s, expected) ->
+          equal records (some_rows expected) (decoded (bytes 2) s));
+      test "a separator before a line break ends an empty field" (fun () ->
+          equal records
+            [ [ Some "a"; None ]; [ Some "b"; None ] ]
+            (decoded (bytes 2) "a,\nb,"));
+      cases "an empty line is no record, wherever it is"
+        ~id:(fun (name, _, _, _) -> name)
+        [
+          ("in one column", 1, "a\n\nb\n", [ [ "a" ]; [ "b" ] ]);
+          ("between records", 2, "a,b\n\nc,d\n", [ [ "a"; "b" ]; [ "c"; "d" ] ]);
+          ("at the end", 2, "a,b\n\n\n", [ [ "a"; "b" ] ]);
+          ("of CRLFs", 1, "\r\na\r\n\r\n\nb\r\n\r\n", [ [ "a" ]; [ "b" ] ]);
+          ("on every line", 1, "\n\r\n\n", []);
+          ("in no input", 1, "", []);
+        ]
+        (fun (_, n, s, expected) ->
+          equal records (some_rows expected) (decoded (bytes n) s));
+      test "an empty line before a header is no record" (fun () ->
+          let f =
+            Csv.format [ ("a", any Type.binary); ("b", any Type.int64) ]
+          in
+          (* Two empty lines, the header, then [y,z] on line 5. *)
+          expect (failure f "\r\n\na,b\nx,1\ny,z\n")
+          @@ __POS_OF__
+               {| line 5, column 3: "z": column "b": cannot read as int64: not an integer. Declare the null token (~nulls) or another type (with_type). |});
+      cases "a quoted field holds the separator, line breaks and quotes"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ("the separator", "\"a,b\"\n", "a,b");
+          ("line breaks", "\"a\nb\r\nc\"\n", "a\nb\r\nc");
+          ("a doubled quote as one quote", "\"a\"\"b\"\"\"\n", "a\"b\"");
+          ("nothing, the empty string", "\"\"\n", "");
+        ]
+        (fun (_, s, expected) ->
+          equal records [ [ Some expected ] ] (decoded (bytes 1) s));
+      test "an unquoted field keeps its spaces" (fun () ->
+          equal records
+            [ [ Some " a "; Some " b " ] ]
+            (decoded (bytes 2) " a , b \n"));
+      cases "a byte order mark is skipped at the start of the input only"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ("at the start", "\xEF\xBB\xBFa\n", [ "a" ]);
+          ("on a later line", "a\n\xEF\xBB\xBF\n", [ "a"; "\xEF\xBB\xBF" ]);
+          ("in part", "\xEF\xBBa\n", [ "\xEF\xBBa" ]);
+        ]
+        (fun (_, s, expected) ->
+          equal records
+            (List.map (fun s -> [ Some s ]) expected)
+            (decoded (bytes 1) s));
+      prop ~count:200 ~examples:[ bom_in_slices ]
+        "records read as a writer by hand writes them"
+        (Gen.with_pp pp_file file) reads_its_fields;
+      cases "decode fails at the first byte that breaks the syntax"
+        ~id:(fun (name, _, _, _) -> name)
+        [
+          ( "a quote in an unquoted field",
+            2,
+            "a,b\"c\n",
+            __POS_OF__
+              {| line 1, column 4: a quote in a field that does not start with one |}
+          );
+          ( "a byte after a closing quote",
+            2,
+            "a,\"b\"c\n",
+            __POS_OF__
+              {| line 1, column 6: a quoted field's closing quote is followed by a byte other than a separator or a line break |}
+          );
+          ( "a quoted field that does not end, at its quote",
+            2,
+            "a,b\n\"c\nd\n,e\n",
+            __POS_OF__ {| line 2, column 1: a quoted field does not end |} );
+          ( "a carriage return alone",
+            2,
+            "a,b\rc\n",
+            __POS_OF__
+              {| line 1, column 4: a carriage return that no line feed follows |}
+          );
+          ( "a carriage return at the end",
+            1,
+            "a\r",
+            __POS_OF__
+              {| line 1, column 2: a carriage return that no line feed follows |}
+          );
+          ( "a column after a byte order mark",
+            2,
+            "\xEF\xBB\xBFa,\"b\"c\n",
+            __POS_OF__
+              {| line 1, column 6: a quoted field's closing quote is followed by a byte other than a separator or a line break |}
+          );
+        ]
+        (fun (_, n, s, baseline) -> expect (failure (bytes n) s) baseline);
+      cases "decode fails at a record with another number of fields"
+        ~id:(fun (name, _, _, _) -> name)
+        [
+          ( "too many",
+            2,
+            "a,b\nc,d,e\n",
+            __POS_OF__
+              {| line 2, column 5: the record has 3 fields, and the format 2 columns |}
+          );
+          ( "too few",
+            2,
+            "a,b\nc\n",
+            __POS_OF__
+              {| line 2, column 2: the record has 1 field, and the format 2 columns |}
+          );
+          ( "after a quoted line break",
+            2,
+            "\"a\nb\",c\nd,e,f\n",
+            __POS_OF__
+              {| line 3, column 5: the record has 3 fields, and the format 2 columns |}
+          );
+          ( "wider than the first",
+            1,
+            "a\n" ^ wide_record ^ "\n",
+            __POS_OF__
+              {| line 2, column 3: the record has 5000 fields, and the format 1 column |}
+          );
+        ]
+        (fun (_, n, s, baseline) -> expect (failure (bytes n) s) baseline);
+    ]
+
+(* Values *)
+
+(* The texts of a column's rows, [None] at a null, and whether each is quoted
+   when it need not be. *)
+type texts = Texts : 'a Type.t * string option array * bool list -> texts
+
+(* [print c] is the text of each row of [c], as {!Column.print} writes it. *)
+let print c =
+  let p = Column.print c in
+  match Column.type_ p with
+  | Type.Any Binary ->
+      Array.map
+        (Option.map (fun (b : Binary.t) -> (b :> string)))
+        (Column.options Kind.binary p)
+  | _ -> Column.options Kind.string p
+
+(* Text that most types do not read: no type but binary reads [\xff], [300] is
+   out of [int8]'s range. *)
+let junk = [ "x"; "300"; "1e"; "\xff"; "true1" ]
+
+let texts =
+  let open Gen in
+  let* (Type.Any ty) = of_list ~pp:pp_any csv_types in
+  let* vs = G.options ty in
+  let texts = print (Column.of_options ty vs) in
+  let n = Array.length texts in
+  let* bad =
+    if n = 0 then constant None
+    else
+      frequency
+        [
+          (3, constant None);
+          (1, map Option.some (pair (int_range 0 (n - 1)) (of_list junk)));
+        ]
+  in
+  let texts = Array.copy texts in
+  Option.iter (fun (i, s) -> texts.(i) <- Some s) bad;
+  let+ quotes = list ~size:(constant n) bool in
+  Texts (ty, texts, quotes)
+
+let pp_texts ppf (Texts (ty, texts, _)) =
+  Format.fprintf ppf "%a [%s]" Type.pp ty
+    (String.concat "; "
+       (Array.to_list
+          (Array.map
+             (function None -> "null" | Some s -> Printf.sprintf "%S" s)
+             texts)))
+
+(* One column, a null written NA. The line of record [r] is one more than the
+   line feeds before it: each record's own, and those its quoted field holds. *)
+let reads_as_parse (Texts (ty, texts, quotes)) =
+  List.iter
+    (fun t -> cover (type_name t) (type_name t = type_name (any ty)))
+    csv_types;
+  let rows = List.combine (Array.to_list texts) quotes in
+  let record (v, q) = if v = None then "NA\n" else field (v, q) ^ "\n" in
+  let line_feeds s = List.length (String.split_on_char '\n' s) - 1 in
+  let line r =
+    List.fold_left
+      (fun n row -> n + line_feeds (record row))
+      1
+      (List.filteri (fun i _ -> i < r) rows)
+  in
+  let expected =
+    Column.parse (any ty)
+      (Column.of_options Type.binary
+         (Array.map (Option.map Binary.of_string) texts))
+  in
+  cover "a field that does not read" (Result.is_error expected);
+  let decoded =
+    read
+      (columns ~nulls:[ "NA" ] [ any ty ])
+      (String.concat "" (List.map record rows))
+  in
+  match (expected, decoded) with
+  | Ok c, Ok t -> equal table (Talon.v [ ("c1", c) ]) t
+  | Error (r, _), Error e ->
+      starts_with
+        ~prefix:(Printf.sprintf "line %d, column 1:" (line r))
+        (error_text e)
+  | Ok _, Error e ->
+      failf "Column.parse reads the texts, decode fails: %s" (error_text e)
+  | Error (r, reason), Ok _ ->
+      failf "Column.parse fails at row %d (%s), decode reads the texts" r reason
+
+(* A dictionary's text holding a doubled quote. *)
+let quoted_categorical =
+  Texts
+    ( Type.categorical [| "a"; "b\"c" |],
+      [| Some "b\"c"; Some "a" |],
+      [ true; false ] )
+
+let delays = "dep_delay,carrier\n1,AA\n2,B6\nNA,F9\n"
+let delays_sniffed = lazy (sniffed ~rows:2 delays)
+
+let values =
+  group "values"
+    [
+      prop ~count:600 ~examples:[ quoted_categorical ]
+        "a field reads as Column.parse reads its text"
+        (Gen.with_pp pp_texts texts)
+        reads_as_parse;
+      cases
+        "an unquoted empty field or null token is null, and a quoted one is \
+         text"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ("an unquoted empty field", ",x\n", None);
+          ("an unquoted null token", "NA,x\n", None);
+          ("a quoted null token", "\"NA\",x\n", Some "NA");
+          ("a quoted empty field", "\"\",x\n", Some "");
+          ("a field that starts as a null token", "NAN,x\n", Some "NAN");
+        ]
+        (fun (_, s, expected) ->
+          equal records
+            [ [ expected; Some "x" ] ]
+            (decoded (bytes ~nulls:[ "NA" ] 2) s));
+      cases
+        "a field that does not read fails with its line, column, text and fix"
+        ~id:(fun (name, _, _, _) -> name)
+        [
+          ( "a sniffed type",
+            delays_sniffed,
+            delays,
+            __POS_OF__
+              {| line 4, column 1: "NA": column "dep_delay": cannot read as int64: not an integer. The type was sniffed from rows 1 to 2. Declare the null token (~nulls) or the type (with_type). |}
+          );
+          ( "a type sniffed from one row",
+            lazy (sniffed ~rows:1 "x\n1\nNA\n"),
+            "x\n1\nNA\n",
+            __POS_OF__
+              {| line 3, column 1: "NA": column "x": cannot read as int64: not an integer. The type was sniffed from row 1. Declare the null token (~nulls) or the type (with_type). |}
+          );
+          ( "a declared type",
+            lazy
+              (Csv.with_type "dep_delay" (any Type.float64)
+                 (Lazy.force delays_sniffed)),
+            delays,
+            __POS_OF__
+              {| line 4, column 1: "NA": column "dep_delay": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type). |}
+          );
+          ( "a quoted value out of range",
+            lazy (columns [ any Type.int8 ]),
+            "1\n\"300\"\n",
+            __POS_OF__
+              {| line 2, column 1: "300": column "c1": cannot read as int8: out of range. Declare the null token (~nulls) or another type (with_type). |}
+          );
+          ( "text that is not UTF-8",
+            lazy (columns [ any Type.string ]),
+            "a\n\"b\nc\xff\"\n",
+            __POS_OF__
+              {| line 2, column 1: "b\x0ac\xff": column "c1": cannot read as string: invalid UTF-8 at byte 3. Read the column as binary (with_type). |}
+          );
+          ( "sniffed text that is not UTF-8",
+            lazy (sniffed "x\na\n"),
+            "x\na\n\xff\n",
+            __POS_OF__
+              {| line 3, column 1: "\xff": column "x": cannot read as string: invalid UTF-8 at byte 0. Read the column as binary (with_type). |}
+          );
+          ( "text outside a categorical's dictionary",
+            lazy (columns [ any (Type.categorical [| "a" |]) ]),
+            "a\nb\n",
+            __POS_OF__
+              {| line 2, column 1: "b": column "c1": cannot read as categorical["a"]: not in the dictionary. Declare the null token (~nulls) or another type (with_type). |}
+          );
+          ( "a bool spelled True",
+            lazy (columns [ any Type.bool ]),
+            "true\nTrue\n",
+            __POS_OF__
+              {| line 2, column 1: "True": column "c1": cannot read as bool: not true or false. Declare the null token (~nulls), or read the column as string (with_type) and map its spellings with an expression. |}
+          );
+        ]
+        (fun (_, f, s, baseline) -> expect (failure (Lazy.force f) s) baseline);
+      cases "decode fails at the earliest record, then its first field"
+        ~id:(fun (name, _, _, _) -> name)
+        [
+          ( "the earliest record",
+            [ any Type.int8; any Type.int8 ],
+            "1,1\n2,x\ny,3\n",
+            __POS_OF__
+              {| line 2, column 3: "x": column "c2": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type). |}
+          );
+          ( "the first field",
+            [ any Type.int8; any Type.int8 ],
+            "x,y\n",
+            __POS_OF__
+              {| line 1, column 1: "x": column "c1": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type). |}
+          );
+          ( "an earlier record over a later field",
+            [ any Type.int8; any Type.int8 ],
+            "x,1\n2,y\n",
+            __POS_OF__
+              {| line 1, column 1: "x": column "c1": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type). |}
+          );
+          ( "a value before a syntax error",
+            [ any Type.int8; any Type.int8 ],
+            "1,1\n2,x\n3,\"4\n",
+            __POS_OF__
+              {| line 2, column 3: "x": column "c2": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type). |}
+          );
+          ( "a value before a wider record",
+            [ any Type.int64 ],
+            "x\n" ^ wide_record ^ "\n",
+            __POS_OF__
+              {| line 1, column 1: "x": column "c1": cannot read as int64: not an integer. Declare the null token (~nulls) or another type (with_type). |}
+          );
+        ]
+        (fun (_, types, s, baseline) ->
+          expect (failure (columns types) s) baseline);
+    ]
 
 (* Formats *)
 
+let two = [ ("a", any Type.int64); ("b", any Type.string) ]
+
 let formats =
-  let raises_invalid name f =
-    test name (fun () -> raises_match (Exn.invalid_arg ?sub:None) f)
-  in
-  let two = [ ("a", any Type.int64); ("b", any Type.string) ] in
   group "format"
     [
       test "defaults to a comma, a double quote, a header and no null token"
@@ -120,50 +570,52 @@ let formats =
               a int64
               b string
             |});
-      test "prints its null tokens quoted, and a tab as an escape" (fun () ->
-          expect
-            (format_text
-               (Csv.format ~sep:'\t' ~quote:'\'' ~header:false
-                  ~nulls:[ "NA"; "\"" ] two))
-          @@ __POS_OF__
-               {|
-            csv (2 columns, separator '\t', quote '\'', no header, nulls ["NA"; "\""])
-              a int64
-              b string
-            |});
-      raises_invalid "refuses no column" (fun () -> Csv.format []);
-      raises_invalid "refuses two columns of one name" (fun () ->
-          Csv.format [ ("a", any Type.int64); ("a", any Type.string) ]);
-      test "names a control byte in a refused name as hexadecimal" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:{|"a\x0a"|}) (fun () ->
-              Csv.format [ ("a\n", any Type.int64); ("a\n", any Type.int64) ]));
-      raises_invalid "refuses a name that is not UTF-8" (fun () ->
-          Csv.format [ ("\xff", any Type.int64) ]);
-      raises_invalid "refuses a clock, which CSV does not read" (fun () ->
-          Csv.format [ ("a", any (Type.clock Us)) ]);
-      raises_invalid "refuses a list type" (fun () ->
-          Csv.format [ ("a", any (Type.list Type.int64)) ]);
-      raises_invalid "refuses a line feed as the separator" (fun () ->
-          Csv.format ~sep:'\n' two);
-      raises_invalid "refuses a carriage return as the quote" (fun () ->
-          Csv.format ~quote:'\r' two);
-      raises_invalid "refuses a separator outside ASCII" (fun () ->
-          Csv.format ~sep:'\xc3' two);
-      raises_invalid "refuses a separator equal to the quote" (fun () ->
-          Csv.format ~sep:'"' two);
-      cases "null tokens"
-        ~id:(fun t -> Printf.sprintf "refuses the null token %S" t)
-        [ "a,b"; "\"x"; "a\nb"; "\r" ]
+      cases "raises on a description CSV cannot read"
+        ~id:(fun (name, _, _, _, _) -> name)
+        [
+          ("no column", ',', '"', [], []);
+          ( "two columns of one name",
+            ',',
+            '"',
+            [],
+            [ ("a\n", any Type.int64); ("a\n", any Type.string) ] );
+          ( "a name that is not UTF-8",
+            ',',
+            '"',
+            [],
+            [ ("\xff", any Type.int64) ] );
+          ("a line feed as the separator", '\n', '"', [], two);
+          ("a carriage return as the separator", '\r', '"', [], two);
+          ("a line feed as the quote", ',', '\n', [], two);
+          ("a carriage return as the quote", ',', '\r', [], two);
+          ("a separator outside ASCII", '\xc3', '"', [], two);
+          ("a quote outside ASCII", ',', '\xe9', [], two);
+          ("a separator equal to the quote", '"', '"', [], two);
+          ("a null token holding the separator", ',', '"', [ "a,b" ], two);
+          ("a null token holding the quote", ',', '"', [ "\"x" ], two);
+          ("a null token holding a line feed", ',', '"', [ "a\nb" ], two);
+          ("a null token holding a carriage return", ',', '"', [ "\r" ], two);
+        ]
+        (fun (_, sep, quote, nulls, columns) ->
+          raises_match (Exn.invalid_arg ~sub:"Talon_csv.format") (fun () ->
+              Csv.format ~sep ~quote ~nulls columns));
+      cases "raises on a type CSV does not read" ~id:type_name other_types
         (fun t ->
-          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
-              Csv.format ~nulls:[ t ] two));
-      test "accepts an empty name and a name in UTF-8" (fun () ->
-          ignore
-            (Csv.format [ ("", any Type.int64); ("café", any Type.string) ]));
+          raises_match (Exn.invalid_arg ~sub:"Talon_csv.format") (fun () ->
+              Csv.format [ ("a", t) ]));
+      test
+        "has a header name its columns byte for byte, the empty name included"
+        (fun () ->
+          let f =
+            Csv.format [ ("", any Type.binary); ("café", any Type.binary) ]
+          in
+          equal records
+            [ [ Some "x"; Some "y" ] ]
+            (decoded f "\"\",café\nx,y\n"));
     ]
 
 let with_types =
-  let f = Csv.format [ ("a", any Type.int64); ("b", any Type.string) ] in
+  let f = Csv.format two in
   group "with_type"
     [
       test "changes the type of the column it names" (fun () ->
@@ -184,52 +636,48 @@ let with_types =
               b string
             |});
       test "raises on a column the format does not have" (fun () ->
-          raises_match (Exn.invalid_arg ~sub:"\"c\"") (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Talon_csv.with_type") (fun () ->
               Csv.with_type "c" (any Type.int64) f));
-      test "raises on a type CSV does not read" (fun () ->
-          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
-              Csv.with_type "a" (any (Type.duration Ms)) f));
+      cases "raises on a type CSV does not read" ~id:type_name other_types
+        (fun t ->
+          raises_match (Exn.invalid_arg ~sub:"Talon_csv.with_type") (fun () ->
+              Csv.with_type "a" t f));
+    ]
+
+let dialect s = List.hd (String.split_on_char '\n' (format_text (sniffed s)))
+
+let pp_formats =
+  group "pp_format"
+    [
+      test "prints its null tokens quoted, and a tab as an escape" (fun () ->
+          expect
+            (format_text
+               (Csv.format ~sep:'\t' ~quote:'\'' ~header:false
+                  ~nulls:[ "NA"; "\"" ] two))
+          @@ __POS_OF__
+               {|
+            csv (2 columns, separator '\t', quote '\'', no header, nulls ["NA"; "\""])
+              a int64
+              b string
+            |});
+      test "counts the rows it sniffed from with thousands separators"
+        (fun () ->
+          equal string
+            "csv (1 column, separator ',', quote '\"', header), types sniffed \
+             from 1,500 rows"
+            (dialect
+               ("x\n" ^ String.concat "" (List.init 1500 (fun _ -> "1\n")))));
+      test "counts no rows under a header alone" (fun () ->
+          equal string
+            "csv (2 columns, separator ',', quote '\"', header), types sniffed \
+             from no rows"
+            (dialect "a,b\n\n"));
     ]
 
 (* Sniffing *)
 
-let dialect s = List.hd (String.split_on_char '\n' (format_text (sniffed s)))
-
-let column_types s =
-  List.tl (String.split_on_char '\n' (format_text (sniffed s)))
-  |> List.map String.trim
-
-let sniff_errors () =
-  let limited s n = Reader.limit n (Reader.of_string ~slice_length:2 s) in
-  let outcome r =
-    match Csv.sniff r with Ok _ -> "ok" | Error e -> error_text e
-  in
-  List.iter
-    (fun (name, r) -> Printf.printf "%s: %s\n" name (outcome r))
-    [
-      ("empty", Reader.of_string "");
-      ("a byte order mark", Reader.of_string "\xEF\xBB\xBF");
-      ("only empty lines", Reader.of_string "\n\r\n\n");
-      ("ragged", Reader.of_string "a,b\n1,2\n3\n");
-      ("ragged with a tab", Reader.of_string "a\tb\n1\t2\t3\n");
-      ("unterminated quote", Reader.of_string "a,b\n1,\"2\n3,4\n");
-      ("duplicate names", Reader.of_string "a,b,a\n1,2,3\n");
-      ("name not UTF-8", Reader.of_string "a,\xff\n1,2\n");
-      ("stream error", limited "a,b\n1,2\n" 5);
-    ];
-  expect (output ())
-  @@ __POS_OF__
-       {|
-    empty: the input holds no record
-    a byte order mark: the input holds no record
-    only empty lines: the input holds no record
-    ragged: line 3, column 1: no separator splits every record into the same number of fields: with ',', the record has 1 field, and the first one 2
-    ragged with a tab: line 2, column 1: no separator splits every record into the same number of fields: with '\t', the record has 3 fields, and the first one 2
-    unterminated quote: line 2, column 3: a quoted field does not end
-    duplicate names: line 1, column 5: "a": the header names two columns the same
-    name not UTF-8: line 1, column 3: "\xff": the column name is not UTF-8
-    stream error: reader:5: Limit of 5 bytes exceeded.
-    |}
+let column_types f =
+  List.tl (String.split_on_char '\n' (format_text f)) |> List.map String.trim
 
 let sniffing =
   group "sniff"
@@ -237,44 +685,27 @@ let sniffing =
       cases "separators"
         ~id:(fun (name, _, _) -> name)
         [
-          ( "a comma",
-            "a,b\n1,2\n",
-            "csv (2 columns, separator ',', quote '\"', header), types sniffed \
-             from 1 row" );
-          ( "a tab",
-            "a\tb\n1\t2\n",
-            "csv (2 columns, separator '\\t', quote '\"', header), types \
-             sniffed from 1 row" );
-          ( "a semicolon",
-            "a;b;c\n1;2;3\n",
-            "csv (3 columns, separator ';', quote '\"', header), types sniffed \
-             from 1 row" );
-          ( "a bar",
-            "a|b\n1|2\n",
-            "csv (2 columns, separator '|', quote '\"', header), types sniffed \
-             from 1 row" );
+          ("a comma", "a,b\n1,2\n", "2 columns, separator ','");
+          ("a tab", "a\tb\n1\t2\n", "2 columns, separator '\\t'");
+          ("a semicolon", "a;b;c\n1;2;3\n", "3 columns, separator ';'");
+          ("a bar", "a|b\n1|2\n", "2 columns, separator '|'");
           ( "the one that splits into the most fields",
             "a;b,c;d\n1;2,3;4\n",
-            "csv (3 columns, separator ';', quote '\"', header), types sniffed \
-             from 1 row" );
-          ( "the first on a tie",
-            "a;b,c\n1;2,3\n",
-            "csv (2 columns, separator ',', quote '\"', header), types sniffed \
-             from 1 row" );
+            "3 columns, separator ';'" );
+          ("the first on a tie", "a;b,c\n1;2,3\n", "2 columns, separator ','");
           ( "one that splits every record alike, over one that does not",
             "a;b;c,d\n1;2,3\n",
-            "csv (2 columns, separator ',', quote '\"', header), types sniffed \
-             from 1 row" );
+            "2 columns, separator ','" );
           ( "not a separator between quotes",
             "a;\"b,c,d\"\n1;2\n",
-            "csv (2 columns, separator ';', quote '\"', header), types sniffed \
-             from 1 row" );
-          ( "a comma for one column",
-            "a\n1\n",
-            "csv (1 column, separator ',', quote '\"', header), types sniffed \
-             from 1 row" );
+            "2 columns, separator ';'" );
+          ("a comma for one column", "a\n1\n", "1 column, separator ','");
         ]
-        (fun (_, s, expected) -> equal string expected (dialect s));
+        (fun (_, s, expected) ->
+          equal string
+            (Printf.sprintf
+               "csv (%s, quote '\"', header), types sniffed from 1 row" expected)
+            (dialect s));
       cases "types"
         ~id:(fun (name, _, _) -> name)
         [
@@ -287,6 +718,9 @@ let sniffing =
             [ "x int64" ] );
           ( "string from an integer int64 does not hold",
             "x\n1\n9223372036854775808\n",
+            [ "x string" ] );
+          ( "string from a negative integer int64 does not hold",
+            "x\n-9223372036854775809\n",
             [ "x string" ] );
           ( "string from a float and an integer int64 does not hold",
             "x\n1.5\n9223372036854775808\n",
@@ -316,6 +750,9 @@ let sniffing =
           ( "datetime[us, UTC] from offsets",
             "x\n2024-01-31T10:00:00Z\n2024-01-31T10:00:00+05:30\n",
             [ "x datetime[us, UTC]" ] );
+          ( "datetime[ns, UTC] from an offset and a fine fraction",
+            "x\n2024-01-31T10:00:00Z\n2024-01-31T10:00:00.1234567+05:30\n",
+            [ "x datetime[ns, UTC]" ] );
           ( "string from datetimes with and without offsets",
             "x\n2024-01-31T10:00:00Z\n2024-01-31T10:00:00\n",
             [ "x string" ] );
@@ -329,14 +766,12 @@ let sniffing =
           ( "int64 past empty lines",
             "x,y\n1,2\n\n3,4\n\n\n",
             [ "x int64"; "y int64" ] );
-          ( "string from a negative integer int64 does not hold",
-            "x\n-9223372036854775809\n",
-            [ "x string" ] );
           ("string from a quoted empty string", "x\n\"\"\n1\n", [ "x string" ]);
-          ("never a categorical", "x\na\nb\na\nb\na\n", [ "x string" ]);
           ("int64 from a quoted integer", "x\n\"12\"\n", [ "x int64" ]);
+          ("never a categorical", "x\na\nb\na\nb\na\n", [ "x string" ]);
         ]
-        (fun (_, s, expected) -> equal (list string) expected (column_types s));
+        (fun (_, s, expected) ->
+          equal (list string) expected (column_types (sniffed s)));
       cases "header"
         ~id:(fun (name, _, _) -> name)
         [
@@ -355,16 +790,17 @@ let sniffing =
           ("a header over string columns", "x\ny\n", [ "x string" ]);
           ("a header over no other record", "a,b\n", [ "a string"; "b string" ]);
         ]
-        (fun (_, s, expected) -> equal (list string) expected (column_types s));
+        (fun (_, s, expected) ->
+          equal (list string) expected (column_types (sniffed s)));
       test "reads the header's quoted names undoubled" (fun () ->
           equal (list string) [ "\"a,\\\"b\" int64" ]
-            (column_types "\"a,\"\"b\"\n1\n"));
+            (column_types (sniffed "\"a,\"\"b\"\n1\n")));
       test "skips a byte order mark" (fun () ->
-          equal (list string) [ "a int64" ] (column_types "\xEF\xBB\xBFa\n1\n"));
+          equal (list string) [ "a int64" ]
+            (column_types (sniffed "\xEF\xBB\xBFa\n1\n")));
       test "infers types from the first rows records after the header"
         (fun () ->
-          let f = sniffed ~rows:2 "x\n1\n2\nz\n" in
-          expect (format_text f)
+          expect (format_text (sniffed ~rows:2 "x\n1\n2\nz\n"))
           @@ __POS_OF__
                {|
             csv (1 column, separator ',', quote '"', header), types sniffed from 2 rows
@@ -372,19 +808,27 @@ let sniffing =
             |});
       test "infers types from the first rows records without a header"
         (fun () ->
-          let f = sniffed ~rows:1 "1\n2\nz\n" in
-          expect (format_text f)
+          expect (format_text (sniffed ~rows:1 "1\n2\nz\n"))
           @@ __POS_OF__
                {|
             csv (1 column, separator ',', quote '"', no header), types sniffed from 1 row
               column_1 int64
             |});
       test "does not count empty lines as rows" (fun () ->
-          let f = sniffed ~rows:2 "x\n\n1\n\n\r\n2\nz\n" in
-          expect (format_text f)
+          expect (format_text (sniffed ~rows:2 "x\n\n1\n\n\r\n2\nz\n"))
           @@ __POS_OF__
                {|
             csv (1 column, separator ',', quote '"', header), types sniffed from 2 rows
+              x int64
+            |});
+      test "infers types from 16,384 records by default" (fun () ->
+          let s =
+            "x\n" ^ String.concat "" (List.init 16384 (fun _ -> "1\n")) ^ "z\n"
+          in
+          expect (format_text (sniffed s))
+          @@ __POS_OF__
+               {|
+            csv (1 column, separator ',', quote '"', header), types sniffed from 16,384 rows
               x int64
             |});
       test "infers types from records past the first MiB" (fun () ->
@@ -395,22 +839,10 @@ let sniffing =
                 (List.init 11999 (fun _ -> "1," ^ String.make 97 'a' ^ "\n"))
             ^ "z,b\n"
           in
-          equal (list string) [ "x string"; "y string" ] (column_types s);
+          equal (list string) [ "x string"; "y string" ]
+            (column_types (sniffed s));
           equal (list string) [ "x int64"; "y string" ]
-            (List.tl
-               (String.split_on_char '\n' (format_text (sniffed ~rows:11999 s)))
-            |> List.map String.trim));
-      test "counts no rows under a header alone" (fun () ->
-          equal string
-            "csv (2 columns, separator ',', quote '\"', header), types sniffed \
-             from no rows"
-            (dialect "a,b\n\n"));
-      test "counts its rows with thousands separators" (fun () ->
-          equal string
-            "csv (1 column, separator ',', quote '\"', header), types sniffed \
-             from 1,500 rows"
-            (dialect
-               ("x\n" ^ String.concat "" (List.init 1500 (fun _ -> "1\n")))));
+            (column_types (sniffed ~rows:11999 s)));
       test "skips its null tokens and keeps them in the format" (fun () ->
           expect (format_text (sniffed ~nulls:[ "NA" ] "x,y\nNA,1\n1,NA\n"))
           @@ __POS_OF__
@@ -421,371 +853,201 @@ let sniffing =
             |});
       test "infers from a quoted null token, which is a value" (fun () ->
           equal (list string) [ "x string" ]
-            (List.tl
-               (String.split_on_char '\n'
-                  (format_text (sniffed ~nulls:[ "NA" ] "x\nNA\n\"NA\"\n1\n")))
-            |> List.map String.trim));
-      test "infers a type from fields that are not null tokens" (fun () ->
-          let f = sniffed ~nulls:[ "NA"; "-" ] "x\nNA\n1\n-\n" in
-          equal text "int64 [∅; 1; ∅]" (decode f "x\nNA\n1\n-\n"));
-      cases "null tokens"
-        ~id:(fun t -> Printf.sprintf "raises on the null token %S" t)
-        [ "a,b"; "a\tb"; "a;b"; "a|b"; "\""; "\n" ]
+            (column_types (sniffed ~nulls:[ "NA" ] "x\nNA\n\"NA\"\n1\n")));
+      test "makes a format that reads its null tokens as null" (fun () ->
+          let s = "x\nNA\n1\n-\n" in
+          equal table
+            (v [ ("x", Column.of_options Type.int64 [| None; Some 1; None |]) ])
+            (Error.get_ok (read (sniffed ~nulls:[ "NA"; "-" ] s) s)));
+      cases
+        "raises on a null token holding a separator, the quote or a line break"
+        ~id:(Printf.sprintf "%S") [ "a,b"; "a\tb"; "a;b"; "a|b"; "\""; "\n" ]
         (fun t ->
-          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Talon_csv.sniff") (fun () ->
               Csv.sniff ~nulls:[ t ] (Reader.of_string "a\n")));
       test "raises on rows below 1" (fun () ->
-          raises_match (Exn.invalid_arg ?sub:None) (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Talon_csv.sniff") (fun () ->
               Csv.sniff ~rows:0 (Reader.of_string "a\n")));
-      cases "peeking"
+      cases "leaves the reader whole"
         ~id:(fun (n, rows) ->
-          Printf.sprintf "leaves the reader whole, %d-byte slices, rows %d" n
-            rows)
+          Printf.sprintf "in %d-byte slices, sniffing %d rows" n rows)
         [ (1, 1); (3, 1); (3, 5); (64, 2); (65536, 16384) ]
         (fun (slice_length, rows) ->
           let s = "a,\"b\nc\"\r\n1,2\n3,\"x\"\"y\"\n4,5" in
           let r = Reader.of_string ~slice_length s in
           ignore (Error.get_ok (Csv.sniff ~rows r));
           equal string s (Reader.to_string r));
-      test "fails on errors as baselined" sniff_errors;
-    ]
-
-(* Syntax *)
-
-let texts n = columns (List.init n (fun _ -> any Type.string))
-
-let syntax_errors () =
-  List.iter
-    (fun (name, f, s) -> Printf.printf "%s: %s\n" name (failure f s))
-    [
-      ("quote in an unquoted field", texts 2, "a,b\"c\n");
-      ("byte after a closing quote", texts 2, "a,\"b\"c\n");
-      ("unterminated quote", texts 2, "a,b\n\"c\nd\n,e\n");
-      ("carriage return alone", texts 2, "a,b\rc\n");
-      ("carriage return at the end", texts 1, "a\r");
-      ("too many fields", texts 2, "a,b\nc,d,e\n");
-      ("too few fields", texts 2, "a,b\nc\n");
-      ("lines after a quoted line break", texts 2, "\"a\nb\",c\nd,e,f\n");
-      ( "the header names another column",
-        Csv.format [ ("a", any Type.string); ("b", any Type.string) ],
-        "a,c\nx,y\n" );
-      ( "the header has too few fields",
-        Csv.format [ ("a", any Type.string); ("b", any Type.string) ],
-        "a\n" );
-      ("no header", Csv.format [ ("a", any Type.string) ], "");
-      ( "a byte order mark and no header",
-        Csv.format [ ("a", any Type.string) ],
-        "\xEF\xBB\xBF" );
-      ( "only empty lines and a header",
-        Csv.format [ ("a", any Type.string) ],
-        "\n\r\n\n" );
-      ("a column after a byte order mark", texts 2, "\xEF\xBB\xBFa,\"b\"c\n");
-    ];
-  expect (output ())
-  @@ __POS_OF__
-       {|
-    quote in an unquoted field: line 1, column 4: a quote in a field that does not start with one
-    byte after a closing quote: line 1, column 6: a quoted field's closing quote is followed by a byte other than a separator or a line break
-    unterminated quote: line 2, column 1: a quoted field does not end
-    carriage return alone: line 1, column 4: a carriage return that no line feed follows
-    carriage return at the end: line 1, column 2: a carriage return that no line feed follows
-    too many fields: line 2, column 5: the record has 3 fields, and the format 2 columns
-    too few fields: line 2, column 2: the record has 1 field, and the format 2 columns
-    lines after a quoted line break: line 3, column 5: the record has 3 fields, and the format 2 columns
-    the header names another column: line 1, column 3: "c": the header does not name column 2 "b"
-    the header has too few fields: line 1, column 2: the record has 1 field, and the format 2 columns
-    no header: the input is empty, and the format has a header
-    a byte order mark and no header: the input is empty, and the format has a header
-    only empty lines and a header: the input is empty, and the format has a header
-    a column after a byte order mark: line 1, column 6: a quoted field's closing quote is followed by a byte other than a separator or a line break
-    |}
-
-let syntax =
-  group "syntax"
-    [
-      cases "records"
-        ~id:(fun (name, _, _, _) -> name)
+      test "leaves the reader where it was" (fun () ->
+          let r = Reader.of_string ~slice_length:5 "skip\na,b\n1,2\n" in
+          ignore (Reader.read r);
+          ignore (Error.get_ok (Csv.sniff r));
+          equal string "a,b\n1,2\n" (Reader.to_string r));
+      cases "fails with the line and column where the input fails"
+        ~id:(fun (name, _, _) -> name)
         [
-          ( "a line feed ends a record",
-            2,
-            "a,b\nc,d\n",
-            "bytes [\"a\"; \"c\"]\nbytes [\"b\"; \"d\"]" );
-          ( "a carriage return and a line feed end a record",
-            2,
-            "a,b\r\nc,d\r\n",
-            "bytes [\"a\"; \"c\"]\nbytes [\"b\"; \"d\"]" );
-          ( "the last record ends at the end of the input",
-            2,
-            "a,b\nc,d",
-            "bytes [\"a\"; \"c\"]\nbytes [\"b\"; \"d\"]" );
-          ( "a quoted field holds the separator",
-            1,
-            "\"a,b\"\n",
-            "bytes [\"a,b\"]" );
-          ( "a quoted field holds line breaks",
-            1,
-            "\"a\nb\r\nc\"\n",
-            "bytes [\"a\\nb\\r\\nc\"]" );
-          ( "a doubled quote is one quote",
-            1,
-            "\"a\"\"b\"\"\"\n",
-            "bytes [\"a\\\"b\\\"\"]" );
-          ( "an unquoted empty field is null",
-            2,
-            ",x\n",
-            "bytes [∅]\nbytes [\"x\"]" );
-          ( "a quoted empty field is the empty string",
-            2,
-            "\"\",x\n",
-            "bytes [\"\"]\nbytes [\"x\"]" );
-          ( "spaces are part of a field",
-            2,
-            " a , b \n",
-            "bytes [\" a \"]\nbytes [\" b \"]" );
-          ( "a separator before a line break ends an empty field",
-            2,
-            "a,\nb,",
-            "bytes [\"a\"; \"b\"]\nbytes [∅; ∅]" );
-          ( "an empty line in one column is skipped",
-            1,
-            "a\n\nb\n",
-            "bytes [\"a\"; \"b\"]" );
-          ( "an empty line between records is skipped",
-            2,
-            "a,b\n\nc,d\n",
-            "bytes [\"a\"; \"c\"]\nbytes [\"b\"; \"d\"]" );
-          ( "empty lines at the end are skipped",
-            2,
-            "a,b\n\n\n",
-            "bytes [\"a\"]\nbytes [\"b\"]" );
-          ( "empty lines of carriage returns and line feeds are skipped",
-            1,
-            "\r\na\r\n\r\n\nb\r\n\r\n",
-            "bytes [\"a\"; \"b\"]" );
-          ( "a line holding a quoted empty field is a record",
-            1,
-            "a\n\"\"\n",
-            "bytes [\"a\"; \"\"]" );
-          ("only empty lines are no record", 1, "\n\r\n\n", "no rows");
-          ("a quoted field ends the input", 1, "\"a\"", "bytes [\"a\"]");
-          ( "a byte order mark is not part of the first field",
-            1,
-            "\xEF\xBB\xBFa\n",
-            "bytes [\"a\"]" );
-          ( "a byte order mark is a byte order mark only first",
-            1,
-            "a\n\xEF\xBB\xBF\n",
-            "bytes [\"a\"; \"\\239\\187\\191\"]" );
-          ("no input is no record", 1, "", "no rows");
+          ("on no input", "", __POS_OF__ {| the input holds no record |});
+          ( "on a byte order mark alone",
+            "\xEF\xBB\xBF",
+            __POS_OF__ {| the input holds no record |} );
+          ( "on empty lines alone",
+            "\n\r\n\n",
+            __POS_OF__ {| the input holds no record |} );
+          ( "on records no separator splits alike",
+            "a,b\n1,2\n3\n",
+            __POS_OF__
+              {| line 3, column 1: no separator splits every record into the same number of fields: with ',', the record has 1 field, and the first one 2 |}
+          );
+          ( "on records a tab splits unevenly",
+            "a\tb\n1\t2\t3\n",
+            __POS_OF__
+              {| line 2, column 1: no separator splits every record into the same number of fields: with '\t', the record has 3 fields, and the first one 2 |}
+          );
+          ( "on a quoted field that does not end",
+            "a,b\n1,\"2\n3,4\n",
+            __POS_OF__ {| line 2, column 3: a quoted field does not end |} );
+          ( "on a header that names two columns the same",
+            "a,b,a\n1,2,3\n",
+            __POS_OF__
+              {| line 1, column 5: "a": the header names two columns the same |}
+          );
+          ( "on a column name that is not UTF-8",
+            "a,\xff\n1,2\n",
+            __POS_OF__
+              {| line 1, column 3: "\xff": the column name is not UTF-8 |} );
         ]
-        (fun (_, n, s, expected) -> equal text expected (decode (texts n) s));
-      test "fails on errors as baselined" syntax_errors;
+        (fun (_, s, baseline) ->
+          expect
+            (match Csv.sniff (Reader.of_string s) with
+            | Ok _ -> "ok"
+            | Error e -> error_text e)
+            baseline);
+      test "fails when reading its reader raises" (fun () ->
+          let outcome r =
+            match Csv.sniff r with Ok _ -> "ok" | Error e -> error_text e
+          in
+          expect
+            (String.concat "\n"
+               [
+                 outcome
+                   (Reader.limit 5
+                      (Reader.of_string ~slice_length:2 "a,b\n1,2\n"));
+                 outcome (Reader.make (fun () -> raise (Sys_error "disk")));
+               ])
+          @@ __POS_OF__
+               {|
+            reader:5: Limit of 5 bytes exceeded.
+            disk
+            |});
     ]
 
-(* Values *)
+(* Reading *)
 
-let values =
-  cases "values"
-    ~id:(fun (ty, s, _) ->
-      Printf.sprintf "reads %s as %s" (String.escaped s)
-        (Format.asprintf "%a" (fun ppf (Type.Any t) -> Type.pp ppf t) ty))
-    [
-      (any Type.bool, "true\nfalse\n", "bit [true; false]");
-      (any Type.int8, "-128\n127\n+5\n-0\n", "int8 [-128; 127; 5; 0]");
-      (any Type.int16, "-32768\n32767\n", "int16 [-32768; 32767]");
-      ( any Type.int32,
-        "-2147483648\n2147483647\n",
-        "int32 [-2147483648; 2147483647]" );
-      (any Type.uint8, "0\n255\n-0\n", "uint8 [0; 255; 0]");
-      (any Type.uint16, "65535\n", "uint16 [65535]");
-      (any Type.uint32, "4294967295\n", "uint32 [4294967295]");
-      ( any Type.int64,
-        "-9223372036854775808\n9223372036854775807\n0009\n",
-        "int64 [-9223372036854775808; 9223372036854775807; 9]" );
-      ( any Type.uint64,
-        "18446744073709551615\n9223372036854775808\n+1\n",
-        "uint64 [18446744073709551615; 9223372036854775808; 1]" );
-      ( any Type.float64,
-        "1.5\n-0.25\n.5\n5.\n1e3\n1E-3\n+2\n0.1\n123456789012345678901\n",
-        "float64 [1.5; -0.25; 0.5; 5; 1000; 0.001; 2; 0.1; \
-         1.2345678901234568e+20]" );
-      ( any Type.float64,
-        "inf\n-Infinity\nNaN\n1e400\n-1e-400\n4.9e-324\n",
-        "float64 [inf; -inf; nan; inf; -0; 5e-324]" );
-      ( any Type.float64,
-        "9007199254740993\n0.30000000000000004\n2.2250738585072011e-308\n",
-        "float64 [9007199254740992; 0.30000000000000004; \
-         2.225073858507201e-308]" );
-      ( any Type.float32,
-        "0.1\n16777217\n",
-        "float32 [0.10000000149011612; 16777216]" );
-      ( any Type.float16,
-        "0.1\n65504\n1e5\n",
-        "float16 [0.0999755859375; 65504; inf]" );
-      ( any Type.float32,
-        "1.00000005960464477550461637\n\
-         1.000000059604644775390625\n\
-         1.000000059604644775390624\n\
-         -1.00000005960464477550461637\n",
-        "float32 [1.0000001192092896; 1; 1; -1.0000001192092896]" );
-      ( any Type.float32,
-        "340282356779733661637539395458142568447\n\
-         340282356779733661637539395458142568448\n\
-         1e39\n",
-        "float32 [3.4028234663852886e+38; inf; inf]" );
-      ( any Type.float16,
-        "1.00048828125000000001\n1.00048828125\n65519.99999\n65520\n",
-        "float16 [1.0009765625; 1; 65504; inf]" );
-      ( any Type.date,
-        "1970-01-01\n2000-02-29\n0000-01-01\n9999-12-31\n1969-12-31\n",
-        "int32 [0; 11016; -719528; 2932896; -1]" );
-      ( any (Type.wall Us),
-        "1970-01-01T00:00:01\n\
-         1970-01-01 00:00:00.5\n\
-         1969-12-31T23:59:59.999999\n",
-        "int64 [1000000; 500000; -1]" );
-      ( any (Type.wall Ms),
-        "1970-01-01T00:00:00.001\n1970-01-01T00:00:00.100000\n",
-        "int64 [1; 100]" );
-      (any (Type.wall S), "1970-01-02T00:00:00.000\n", "int64 [86400]");
-      ( any (Type.instant Ns),
-        "1970-01-01T01:00:00+01:00\n\
-         1970-01-01T00:00:00Z\n\
-         1969-12-31T19:00:00-05:00\n",
-        "int64 [0; 0; 0]" );
-      ( any (Type.instant Ns),
-        "2262-04-11T23:47:16.854775807Z\n1677-09-21T00:12:43.145224192Z\n",
-        "int64 [9223372036854775807; -9223372036854775808]" );
-      ( any Type.string,
-        "caf\xc3\xa9\n\"a\"\"b\"\n\"\"\n",
-        "bytes [\"caf\\195\\169\"; \"a\\\"b\"; \"\"]" );
-      (any Type.binary, "\xff\xfe\n", "bytes [\"\\255\\254\"]");
-      ( any (Type.categorical [| "a"; "b\"c"; "" |]),
-        "\"b\"\"c\"\na\n\"\"\n",
-        "int32 [1; 0; 2]" );
-    ]
-    (fun (ty, s, expected) -> equal text expected (decode (columns [ ty ]) s))
-
-let nulls =
-  group "nulls"
-    [
-      test "a null token is null, quoted or not empty" (fun () ->
-          equal text "int64 [1; ∅; ∅]\nbytes [∅; \"NA\"; \"N/A\"]"
-            (decode
-               (columns ~nulls:[ "NA" ] [ any Type.int64; any Type.string ])
-               "1,NA\nNA,\"NA\"\n,N/A\n"));
-      test "a null holds zero, or the empty byte string" (fun () ->
-          let t =
-            Error.get_ok
-              (read (columns [ any Type.int64; any Type.string ]) "7,a\n,\n")
-          in
-          (match Column.layout (column t "c1") with
-          | Fixed { values = Nx.P x; _ } ->
-              equal (list int64) [ 7L; 0L ]
-                (Array.to_list (Nx.to_array (Nx.cast Nx.int64 x)))
-          | Varsize _ | Children _ -> fail "not a fixed column");
-          equal (list string) [ "a"; "" ] (byte_rows (column t "c2")));
-      test "a validity leaves the bits past its rows clear" (fun () ->
-          let text =
-            String.concat ""
-              (List.init 13 (fun i -> if i = 4 then "NA\n" else "x\n"))
-          in
-          let t =
-            Error.get_ok
-              (read (columns ~nulls:[ "NA" ] [ any Type.string ]) text)
-          in
-          let v = Option.get (Column.validity (column t "c1")) in
-          equal (array bool) (Array.init 13 (fun i -> i <> 4)) (Nx.to_array v);
-          Nx.Repr.read ~by:"test" v @@ fun a ->
-          Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
-              equal int 0 (raw.{1} lsr 5)));
-      test "every row valid has no validity" (fun () ->
-          let t = Error.get_ok (read (columns [ any Type.int64 ]) "1\n2\n") in
-          match Column.validity (column t "c1") with
-          | None -> ()
-          | Some _ -> fail "a validity");
-    ]
-
-let data_errors () =
-  let sniffed_f = sniffed ~rows:2 "dep_delay,carrier\n1,AA\n2,B6\nNA,F9\n" in
-  let s = "dep_delay,carrier\n1,AA\n2,B6\nNA,F9\n" in
-  List.iter
-    (fun (name, f, s) -> Printf.printf "%s: %s\n" name (failure f s))
-    [
-      ("sniffed", sniffed_f, s);
-      ("declared", Csv.with_type "dep_delay" (any Type.float64) sniffed_f, s);
-      ("range", columns [ any Type.int8 ], "1\n\"300\"\n");
-      ("utf-8", columns [ any Type.string ], "a\n\"b\nc\xff\"\n");
-      ( "earliest row first",
-        columns [ any Type.int8; any Type.int8 ],
-        "1,1\n2,x\ny,3\n" );
-      ( "value before syntax",
-        columns [ any Type.int8; any Type.int8 ],
-        "1,1\n2,x\n3,\"4\n" );
-      ("categorical", columns [ any (Type.categorical [| "a" |]) ], "a\nb\n");
-      ( "leftmost column first",
-        columns [ any Type.int8; any Type.int8 ],
-        "x,y\n" );
-      ( "earlier row first",
-        columns [ any Type.int8; any Type.int8 ],
-        "x,1\n2,y\n" );
-      ("sniffed from one row", sniffed ~rows:1 "x\n1\nNA\n", "x\n1\nNA\n");
-      ("bool spelled True", columns [ any Type.bool ], "true\nTrue\n");
-      ("sniffed string not UTF-8", sniffed "x\na\n", "x\na\n\xff\n");
-    ];
-  expect (output ())
-  @@ __POS_OF__
-       {|
-    sniffed: line 4, column 1: "NA": column "dep_delay": cannot read as int64: not an integer. The type was sniffed from rows 1 to 2. Declare the null token (~nulls) or the type (with_type).
-    declared: line 4, column 1: "NA": column "dep_delay": cannot read as float64: not a number. Declare the null token (~nulls) or another type (with_type).
-    range: line 2, column 1: "300": column "c1": cannot read as int8: out of range. Declare the null token (~nulls) or another type (with_type).
-    utf-8: line 2, column 1: "b\x0ac\xff": column "c1": cannot read as string: invalid UTF-8 at byte 3. Read the column as binary (with_type).
-    earliest row first: line 2, column 3: "x": column "c2": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
-    value before syntax: line 2, column 3: "x": column "c2": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
-    categorical: line 2, column 1: "b": column "c1": cannot read as categorical["a"]: not in the dictionary. Declare the null token (~nulls) or another type (with_type).
-    leftmost column first: line 1, column 1: "x": column "c1": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
-    earlier row first: line 1, column 1: "x": column "c1": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type).
-    sniffed from one row: line 3, column 1: "NA": column "x": cannot read as int64: not an integer. The type was sniffed from row 1. Declare the null token (~nulls) or the type (with_type).
-    bool spelled True: line 2, column 1: "True": column "c1": cannot read as bool: not true or false. Declare the null token (~nulls), or read the column as string (with_type) and map its spellings with an expression.
-    sniffed string not UTF-8: line 3, column 1: "\xff": column "x": cannot read as string: invalid UTF-8 at byte 0. Read the column as binary (with_type).
-    |}
-
-(* Batches *)
+(* [quoted_records n] is a header and about [n] bytes of records, each a quoted
+   line break and a number. *)
+let quoted_records n =
+  let b = Buffer.create (n + 16) in
+  Buffer.add_string b "a,b\n";
+  let i = ref 0 in
+  while Buffer.length b < n do
+    Printf.bprintf b "\"r\n%d\",%d\n" !i !i;
+    incr i
+  done;
+  Buffer.contents b
 
 let big_rows = 200_000
 
 (* About 2.4 MiB of records, each a quoted field with a line break and a
    number. *)
 let big =
-  let b = Buffer.create (big_rows * 13) in
-  for i = 0 to big_rows - 1 do
-    Printf.bprintf b "\"r\n%d\",%d\n" i i
-  done;
-  Buffer.contents b
+  lazy
+    (let b = Buffer.create (big_rows * 13) in
+     for i = 0 to big_rows - 1 do
+       Printf.bprintf b "\"r\n%d\",%d\n" i i
+     done;
+     Buffer.contents b)
 
-let rows_of_two =
-  String.concat "" (List.init 1000 (fun i -> Printf.sprintf "a,%d\n" i))
+let text_int = columns [ any Type.binary; any Type.int64 ]
 
-let wide_record = String.concat "," (List.init 5000 (fun _ -> "y"))
+(* [with_ratio r f] is [f ()] with the collector's [custom_major_ratio] at
+   [r]. *)
+let with_ratio r f =
+  let was = (Gc.get ()).custom_major_ratio in
+  Gc.set { (Gc.get ()) with custom_major_ratio = r };
+  Fun.protect f ~finally:(fun () ->
+      Gc.set { (Gc.get ()) with custom_major_ratio = was })
 
-let batches =
-  let f = columns [ any Type.string; any Type.int64 ] in
-  let decoded ?slice_length s = Error.get_ok (read ?slice_length f s) in
-  let sizes t = List.map rows (batches t) in
-  group "batches"
+(* 2^14 rows of 8 bytes in one slice, one batch: a text column of 128 KiB of
+   bytes and 128 KiB of offsets. *)
+let text_column () =
+  let rows = 1 lsl 14 in
+  let s = "s\n" ^ String.concat "" (List.init rows (fun _ -> "abcdefgh\n")) in
+  let f = Csv.format [ ("s", any Type.binary) ] in
+  column (Error.get_ok (read ~slice_length:(String.length s) f s)) "s"
+
+let text_column_bytes = (8 lsl 14) + (8 * ((1 lsl 14) + 1))
+
+(* Dropped columns pace the collector as rig's host buffers do, whatever
+   [custom_major_ratio] says of the heap: the bytes of host buffers that reach
+   the major heap bring a cycle's work per bound of at least 4 MiB, and a buffer
+   that starts young with more than [custom_minor_max_size] bytes brings an
+   eighth of its bytes at birth as well. A decode makes its column's bytes and
+   offsets, 128 KiB each, in such buffers, and holds them across a minor
+   collection that promotes them. So at a ratio of 1, which paces a bigarray of
+   Bigarray's own at a cycle's work each, 64 decodes bring at most a cycle's
+   work per 4 MiB of their arrays and of an eighth of them more than at the
+   default ratio. The count starts from a compaction, which leaves the heap
+   about its live words: a cycle's work, which the runtime sizes as sweeping the
+   heap and marking part of it, then completes at most a cycle, and two more are
+   under way at either end. The cycles the decodes bring at either ratio are the
+   heap's own, paced by its allocations. *)
+let paces_collector () =
+  let decodes = 64 in
+  let cycles r =
+    with_ratio r @@ fun () ->
+    ignore (text_column ());
+    Talon_held.cycles (fun () ->
+        for _ = 1 to decodes do
+          let held = text_column () in
+          Gc.minor ();
+          ignore (Sys.opaque_identity held)
+        done)
+  in
+  let usual = cycles (Gc.get ()).custom_major_ratio in
+  let at_1 = cycles 1 in
+  let made = decodes * (text_column_bytes + (text_column_bytes / 8)) in
+  at_most
+    ~msg:
+      (Printf.sprintf "major cycles at a ratio of 1: %s; at the default: %s"
+         (Talon_held.pp_cycles at_1)
+         (Talon_held.pp_cycles usual))
+    int
+    ~than:(usual.majors + (made / (4 lsl 20)) + 2)
+    at_1.majors
+
+let decoding =
+  let ab = Csv.format [ ("a", any Type.binary); ("b", any Type.binary) ] in
+  group "decode"
     [
-      test "split a large input, keeping every record in order" (fun () ->
-          let t = decoded big in
+      test "reads a large input in batches, every record in order" (fun () ->
+          let t = Error.get_ok (read text_int (Lazy.force big)) in
           greater int ~than:1 (List.length (batches t));
           equal (array int)
             (Array.init big_rows Fun.id)
             (Column.values Kind.int (column t "c2")));
-      cases "slicing" ~id:(Printf.sprintf "are the same in slices of %d bytes")
-        [ 7; 4096; 100_000 ] (fun slice_length ->
-          equal (list int)
-            (sizes (decoded big))
-            (sizes (decoded ~slice_length big)));
-      test "keep a quoted line feed at the 1 MiB edge in its field" (fun () ->
+      cases "cuts the same batches whatever the reader's slices"
+        ~id:(Printf.sprintf "in slices of %d bytes") [ 1; 7; 256; 4096 ]
+        (fun slice_length ->
+          (* About 2 KiB in batches of 256 bytes. *)
+          let s = quoted_records 2048 in
+          let sizes slice_length =
+            List.map rows
+              (batches
+                 (Error.get_ok
+                    (Csv.decode_in_batches ~batch:256 ab
+                       (Reader.of_string ?slice_length s))))
+          in
+          equal (list int) (sizes None) (sizes (Some slice_length)));
+      test "keeps a quoted line feed at the 1 MiB edge in its field" (fun () ->
           (* The quoted line feed is the input's byte 2^20 - 1, the first that
              may end a batch. *)
           let s =
@@ -794,18 +1056,16 @@ let batches =
             ^ "\"a\nb\"\nz\n"
           in
           equal int ((1 lsl 20) - 1) (String.index_from s 1048574 '\n');
-          let t = Error.get_ok (read (texts 1) s) in
-          let rows = strings (column t "c1") in
+          let rows = decoded (bytes 1) s in
           equal int 524288 (List.length rows);
-          equal
-            (list (option string))
-            [ Some "x"; Some "a\nb"; Some "z" ]
+          equal records
+            [ [ Some "x" ]; [ Some "a\nb" ]; [ Some "z" ] ]
             (List.filteri (fun i _ -> i >= 524285) rows));
-      test "count lines across batches" (fun () ->
-          expect (failure f (big ^ "x,y\n"))
+      test "counts lines across batches" (fun () ->
+          expect (failure text_int (Lazy.force big ^ "x,y\n"))
           @@ __POS_OF__
                {| line 400001, column 3: "y": column "c2": cannot read as int64: not an integer. Declare the null token (~nulls) or another type (with_type). |});
-      test "count empty lines and line breaks of two bytes across batches"
+      test "counts empty lines and line breaks of two bytes across batches"
         (fun () ->
           let records = 200_000 in
           let s =
@@ -813,155 +1073,329 @@ let batches =
             ^ "x,y\n"
           in
           greater int ~than:(1 lsl 20) (String.length s);
-          equal string
-            (Printf.sprintf
-               "line %d, column 3: \"y\": column \"c2\": cannot read as \
-                int64: not an integer. Declare the null token (~nulls) or \
-                another type (with_type)."
-               ((2 * records) + 1))
-            (failure f s));
-      test "read a last record that no line feed ends" (fun () ->
-          let t = decoded ("a,0\n" ^ rows_of_two ^ "b,2") in
-          equal int 1002 (Talon.rows t);
-          equal (option string) (Some "b")
-            (List.nth (strings (column t "c1")) 1001));
-      test "report a record wider than the first at its field" (fun () ->
-          equal string
-            "line 2, column 3: the record has 5000 fields, and the format 1 \
-             column"
-            (failure (texts 1) ("a\n" ^ wide_record ^ "\n")));
-      test "read the records before a wider one" (fun () ->
-          equal string
-            "line 1, column 1: \"x\": column \"c1\": cannot read as int64: not \
-             an integer. Declare the null token (~nulls) or another type \
-             (with_type)."
-            (failure (columns [ any Type.int64 ]) ("x\n" ^ wide_record ^ "\n")));
+          (* Each record and its empty line are two lines. *)
+          starts_with
+            ~prefix:(Printf.sprintf "line %d, column 3:" ((2 * records) + 1))
+            (failure text_int s));
+      test "reads a last record that no line feed ends" (fun () ->
+          let s =
+            "a,0\n"
+            ^ String.concat ""
+                (List.init 1000 (fun i -> Printf.sprintf "a,%d\n" i))
+            ^ "b,2"
+          in
+          let rows = decoded (bytes 2) s in
+          equal int 1002 (List.length rows);
+          equal records
+            [ [ Some "b"; Some "2" ] ]
+            (List.filteri (fun i _ -> i = 1001) rows));
+      cases "fails on an empty input when the format has a header"
+        ~id:(fun (name, _) -> name)
+        [
+          ("no byte", "");
+          ("a byte order mark", "\xEF\xBB\xBF");
+          ("empty lines", "\n\r\n\n");
+        ]
+        (fun (_, s) ->
+          expect (failure (Csv.format [ ("a", any Type.string) ]) s)
+          @@ __POS_OF__ {| the input is empty, and the format has a header |});
+      test "reads an empty input without a header as no rows" (fun () ->
+          equal table
+            (v [ ("c1", Column.of_options Type.int64 [||]) ])
+            (Error.get_ok (read (columns [ any Type.int64 ]) "")));
+      cases "fails on a header that does not name the format's columns"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ( "another column",
+            "a,c\nx,y\n",
+            __POS_OF__
+              {| line 1, column 3: "c": the header does not name column 2 "b" |}
+          );
+          ( "the columns in another order",
+            "b,a\nx,y\n",
+            __POS_OF__
+              {| line 1, column 1: "b": the header does not name column 1 "a" |}
+          );
+          ( "too few fields",
+            "a\n",
+            __POS_OF__
+              {| line 1, column 2: the record has 1 field, and the format 2 columns |}
+          );
+        ]
+        (fun (_, s, baseline) -> expect (failure ab s) baseline);
+      test "fails when reading its reader raises" (fun () ->
+          let outcome r =
+            match Csv.decode ab r with Ok _ -> "ok" | Error e -> error_text e
+          in
+          expect
+            (String.concat "\n"
+               [
+                 outcome
+                   (Reader.limit 5
+                      (Reader.of_string ~slice_length:2 "a,b\n1,2\n"));
+                 outcome (Reader.make (fun () -> raise (Sys_error "disk")));
+               ])
+          @@ __POS_OF__
+               {|
+            reader:5: Limit of 5 bytes exceeded.
+            disk
+            |});
+      (* A text column is host memory: the host holds its bytes and offsets
+         while it is live, and has them back once it is collected. *)
+      test "makes a text column of the host's memory" (fun () ->
+          Talon_held.check text_column);
+      test "makes columns whose drop paces the collector by memory"
+        paces_collector;
     ]
 
-(* Hand-encoded tables *)
+(* Sources *)
 
-(* A table of [cols] binary columns encoded by hand: a null is an unquoted empty
-   field, or the null token [NA] when it is a record's only field, a field is
-   quoted when it must be or when [quote] says, each record ends in a line feed
-   or a carriage return and a line feed, the last one maybe not at all, and an
-   empty line may precede a record. *)
-type table = {
-  cols : int;
-  rows : (string option * bool) list list;
-  crlf : bool list;
-  blank : bool list;
-  last : bool;
-  slice : int;
-}
+let run_ok q = Error.get_ok (Query.run q)
 
-let encode t =
-  let b = Buffer.create 256 in
-  let field ~alone (v, quote) =
-    match v with
-    | None -> if alone then Buffer.add_string b "NA"
-    | Some s ->
-        let must =
-          s = ""
-          || String.exists
-               (fun c -> c = ',' || c = '"' || c = '\n' || c = '\r')
-               s
-        in
-        if must || quote then begin
-          Buffer.add_char b '"';
-          String.iter
-            (fun c ->
-              if c = '"' then Buffer.add_string b "\"\""
-              else Buffer.add_char b c)
-            s;
-          Buffer.add_char b '"'
-        end
-        else Buffer.add_string b s
-  in
-  let n = List.length t.rows in
-  List.iteri
-    (fun i ((row, crlf), blank) ->
-      let break = if crlf then "\r\n" else "\n" in
-      if blank then Buffer.add_string b break;
-      List.iteri
-        (fun j f ->
-          if j > 0 then Buffer.add_char b ',';
-          field ~alone:(t.cols = 1) f)
-        row;
-      if i < n - 1 || t.last then Buffer.add_string b break)
-    (List.combine (List.combine t.rows t.crlf) t.blank);
-  Buffer.contents b
+let run_error q =
+  match Query.run q with Ok _ -> "ok" | Error e -> error_text e
 
-let table =
+let source ?slice_length f s =
+  Query.of_source (Csv.source f (fun () -> Reader.of_string ?slice_length s))
+
+let keep names q =
+  Query.select (if names = [] then [] else Expr.[ keep (Sel.names names) ]) q
+
+let ab = Csv.format [ ("a", any Type.int64); ("b", any Type.int8) ]
+
+(* Record 4's [b] does not read. *)
+let bad_b = "a,b\n1,1\n2,\n3,x\n"
+
+type request = { t : file; read : bool list; limit : int option }
+
+let request =
   let open Gen in
-  let* cols = int_range 1 4 in
-  let* n = int_range 0 12 in
-  let byte = of_list [ 'a'; 'b'; ' '; ','; '"'; '\n'; '\r'; '\xff' ] in
-  let cell = pair (option (string_of ~size:(int_range 0 5) byte)) bool in
-  let* rows = list ~size:(constant n) (list ~size:(constant cols) cell) in
-  let* crlf = list ~size:(constant n) bool in
-  let* blank = list ~size:(constant n) bool in
-  let* last = bool in
-  let+ slice = int_range 1 16 in
-  { cols; rows; crlf; blank; last; slice }
+  let* t = file in
+  let* read = list ~size:(constant t.cols) bool in
+  let+ limit = option (int_range 0 14) in
+  { t; read; limit }
 
-let pp_table ppf t = Format.fprintf ppf "%S (slices of %d)" (encode t) t.slice
+let pp_request ppf r =
+  Format.fprintf ppf "%a, reading %s, limit %s" pp_file r.t
+    (String.concat "" (List.map (fun b -> if b then "1" else "0") r.read))
+    (match r.limit with None -> "none" | Some n -> string_of_int n)
 
-let binaries t =
-  columns ~nulls:[ "NA" ] (List.init t.cols (fun _ -> any Type.binary))
+let ask r q =
+  let names =
+    List.filteri
+      (fun j _ -> List.nth r.read j)
+      (List.init r.t.cols (fun j -> Printf.sprintf "c%d" (j + 1)))
+  in
+  let q = keep names q in
+  match r.limit with None -> q | Some n -> Query.slice ~offset:0 ~length:n q
 
-let round_trip =
-  prop "hand-encoded records decode as their fields"
-    (Gen.with_pp pp_table table) (fun t ->
-      let d =
-        Error.get_ok (read ~slice_length:t.slice (binaries t) (encode t))
-      in
-      let columns = List.map strings (all_columns d) in
-      let got =
-        List.init (rows d) (fun i -> List.map (fun c -> List.nth c i) columns)
-      in
-      equal (list (list (option string))) (List.map (List.map fst) t.rows) got)
+(* A limit of 0 over a record. *)
+let limit_0 =
+  {
+    t =
+      {
+        cols = 2;
+        rows = [ [ (Some "a", false); (None, false) ] ];
+        crlf = [ false ];
+        blank = [ false ];
+        last = true;
+        bom = false;
+        slice = 4;
+      };
+    read = [ true; false ];
+    limit = Some 0;
+  }
+
+let reads_as_decode r =
+  cover "no column read" (not (List.mem true r.read));
+  cover "a limit below the rows"
+    (match r.limit with Some n -> n < List.length r.t.rows | None -> false);
+  cover "a limit of 0" (r.limit = Some 0);
+  let f = bytes ~nulls:[ "NA" ] r.t.cols and s = encode r.t in
+  let decoded = Query.of_table (Error.get_ok (read f s)) in
+  equal table
+    (run_ok (ask r decoded))
+    (run_ok (ask r (source ~slice_length:r.t.slice f s)))
+
+let sources =
+  group "source"
+    [
+      test "reads the table decode reads" (fun () ->
+          let s = "a,b\n1,1\n2,\n" in
+          equal table (Error.get_ok (read ab s)) (run_ok (source ab s)));
+      test "is named csv in plans" (fun () ->
+          expect (Format.asprintf "%a" Query.pp (source ab bad_b))
+          @@ __POS_OF__
+               {|
+            query → a int64, b int8
+            csv (2 columns)
+            |});
+      test "reads the request's columns only" (fun () ->
+          equal table
+            (v [ ("a", Column.v Type.int64 [| 1; 2; 3 |]) ])
+            (run_ok (keep [ "a" ] (source ab bad_b))));
+      test "stops after its limit" (fun () ->
+          equal table
+            (v
+               [
+                 ("a", Column.v Type.int64 [| 1; 2 |]);
+                 ("b", Column.of_options Type.int8 [| Some 1; None |]);
+               ])
+            (run_ok (Query.slice ~offset:0 ~length:2 (source ab bad_b))));
+      test "counts rows without reading a column" (fun () ->
+          equal int 3 (rows (run_ok (keep [] (source ab bad_b)))));
+      test "applies no conjunct" (fun () ->
+          let q = Query.filter Expr.(Col.int "a" > int 1) (source ab bad_b) in
+          expect (Format.asprintf "%a" Query.pp (Query.optimize q))
+          @@ __POS_OF__
+               {|
+            query → a int64, b int8
+            filter (a > 1)
+            └ csv (2 columns)
+            |});
+      test "fails where decode fails" (fun () ->
+          equal string (failure ab bad_b) (run_error (source ab bad_b)));
+      test "fails on a record of another number of fields within its limit"
+        (fun () ->
+          let s = "a,b\n1,1\n2\n" in
+          expect (run_error (Query.slice ~offset:0 ~length:2 (source ab s)))
+          @@ __POS_OF__
+               {| line 3, column 2: the record has 1 field, and the format 2 columns |};
+          equal table
+            (v
+               [
+                 ("a", Column.v Type.int64 [| 1 |]);
+                 ("b", Column.v Type.int8 [| 1 |]);
+               ])
+            (run_ok (Query.slice ~offset:0 ~length:1 (source ab s))));
+      test "opens a reader for each read" (fun () ->
+          let opened = ref 0 in
+          let open_ () =
+            incr opened;
+            Reader.of_string "a,b\n1,1\n"
+          in
+          let q = Query.of_source (Csv.source ab open_) in
+          ignore (run_ok q);
+          ignore (run_ok q);
+          equal int 2 !opened);
+      prop ~examples:[ limit_0 ]
+        "reads what decode reads, whatever its reader's slices, columns and \
+         limit"
+        (Gen.with_pp pp_request request)
+        reads_as_decode;
+    ]
+
+(* Files *)
+
+(* [in_temp_dir contents] makes [data.csv] of [contents] in a fresh working
+   directory. *)
+let in_temp_dir contents =
+  chdir (temp_dir ());
+  Out_channel.with_open_bin "data.csv" (fun oc -> output_string oc contents)
+
+let x_int = Csv.format [ ("x", any Type.int64) ]
+
+let files =
+  group "file"
+    [
+      test "sniffs its file with the null tokens and reads it" (fun () ->
+          in_temp_dir "x,y\n1,NA\n2,b\n";
+          let s = Error.get_ok (Csv.file ~nulls:[ "NA" ] "data.csv") in
+          equal table
+            (v
+               [
+                 ("x", Column.v Type.int64 [| 1; 2 |]);
+                 ("y", Column.of_options Type.string [| None; Some "b" |]);
+               ])
+            (run_ok (Query.of_source s)));
+      test "names its file in its plans and errors" (fun () ->
+          in_temp_dir "x\n1\nz\n";
+          let q =
+            Query.of_source (Error.get_ok (Csv.file ~format:x_int "data.csv"))
+          in
+          expect (Format.asprintf "%a@.%s" Query.pp q (run_error q))
+          @@ __POS_OF__
+               {|
+            query → x int64
+            csv "data.csv" (1 column)
+            data.csv:3:1: "z": column "x": cannot read as int64: not an integer. Declare the null token (~nulls) or another type (with_type).
+            |});
+      test "names its file in a sniffing error" (fun () ->
+          in_temp_dir "a,b\n1\n";
+          expect
+            (match Csv.file "data.csv" with
+            | Ok _ -> "ok"
+            | Error e -> error_text e)
+          @@ __POS_OF__
+               {| data.csv:2:1: no separator splits every record into the same number of fields: with ',', the record has 1 field, and the first one 2 |});
+      test "fails at the call on a file it cannot open, with a format or not"
+        (fun () ->
+          chdir (temp_dir ());
+          let outcome = function Ok _ -> "ok" | Error e -> error_text e in
+          expect
+            (String.concat "\n"
+               [
+                 outcome (Csv.file "missing.csv");
+                 outcome (Csv.file ~format:x_int "missing.csv");
+               ])
+          @@ __POS_OF__
+               {|
+            missing.csv: No such file or directory
+            missing.csv: No such file or directory
+            |});
+      test "fails a read of a file removed since the call" (fun () ->
+          in_temp_dir "x\n1\n";
+          let s = Error.get_ok (Csv.file ~format:x_int "data.csv") in
+          Sys.remove "data.csv";
+          expect (run_error (Query.of_source s))
+          @@ __POS_OF__ {| data.csv: No such file or directory |});
+      test "raises on null tokens given with a format" (fun () ->
+          let f = Csv.format ~nulls:[ "NA" ] [ ("x", any Type.int64) ] in
+          raises_match (Exn.invalid_arg ~sub:"Talon_csv.file") (fun () ->
+              Csv.file ~format:f ~nulls:[ "NA" ] "data.csv"));
+      test "opens its file again for each read" (fun () ->
+          in_temp_dir "x\n1\n";
+          let q =
+            Query.of_source (Error.get_ok (Csv.file ~format:x_int "data.csv"))
+          in
+          equal table (v [ ("x", Column.v Type.int64 [| 1 |]) ]) (run_ok q);
+          Out_channel.with_open_bin "data.csv" (fun oc ->
+              output_string oc "x\n2\n3\n");
+          equal table (v [ ("x", Column.v Type.int64 [| 2; 3 |]) ]) (run_ok q));
+    ]
 
 (* Writing *)
 
-module G = Talon_gen
-
 let written f q =
   let b = Buffer.create 256 in
-  match Csv.encode f q (Bytesrw.Bytes.Writer.of_buffer b) with
+  match Csv.encode f q (Writer.of_buffer b) with
   | Ok () -> Buffer.contents b
   | Error e -> Buffer.contents b ^ "error: " ^ error_text e
-
-let of_table t = Query.of_table t
-
-let csv_type (Type.Any t) =
-  match t with
-  | Bool | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
-  | Float16 | Float32 | Float64 | String | Binary | Categorical _ | Date
-  | Datetime _ ->
-      true
-  | Clock _ | Duration _ | List _ | Record _ | Tensor _ | Ext _ -> false
 
 (* A table to write: up to four columns of the types CSV reads, named to need
    quoting, cut into batches, and a dialect. One column with a null takes a null
    token. *)
-type written = { f : Csv.format; t : Talon.t; slice : int }
+type writable = { f : Csv.format; t : Talon.t; slice : int }
 
-let pool = [ "a"; ""; "x,y"; "q\"t"; "NA"; "l\nm"; "s;t" ]
+let names = [ "a"; ""; "x,y"; "q\"t"; "NA"; "l\nm"; "s;t" ]
 
 let writable =
   let open Gen in
   let* samples =
     list ~size:(int_range 1 4)
-      (such_that (fun (G.Sample (ty, _)) -> csv_type (Any ty)) G.sample)
+      (let* (Type.Any ty) = of_list ~pp:pp_any csv_types in
+       let+ vs = G.options ty in
+       G.Sample (ty, vs))
   in
   let n =
     List.fold_left
       (fun n (G.Sample (_, vs)) -> Int.min n (Array.length vs))
       max_int samples
   in
-  let* k = int_range 0 (List.length pool - 1) in
+  let* k = int_range 0 (List.length names - 1) in
   let names =
-    List.filteri (fun i _ -> i >= k) pool @ List.filteri (fun i _ -> i < k) pool
+    List.filteri (fun i _ -> i >= k) names
+    @ List.filteri (fun i _ -> i < k) names
   in
   let columns =
     List.mapi
@@ -983,207 +1417,97 @@ let writable =
   let types = List.map (fun (n, c) -> (n, Column.type_ c)) columns in
   { f = Csv.format ~sep ~header ~nulls types; t; slice }
 
-let pp_written ppf w =
+let pp_writable ppf w =
   Format.fprintf ppf "@[<v>%a@,%a@,%S@]" Csv.pp_format w.f Talon.pp w.t
-    (written w.f (of_table w.t))
+    (written w.f (Query.of_table w.t))
 
-let same_column a b =
-  let (Type.Any ty) = Column.type_ a in
-  equal
-    (array (option (G.witness ty)))
-    (Column.options (Type.kind ty) a)
-    (Column.options (Type.kind ty) b)
+(* Floats whose text holds the separator [.], and a byte order mark that starts
+   the file. *)
+let writable_examples =
+  [
+    {
+      f = Csv.format ~sep:'.' [ ("x", any Type.float64) ];
+      t = v [ ("x", Column.v Type.float64 [| 1.5; -0.; 1e21 |]) ];
+      slice = 3;
+    };
+    {
+      f = Csv.format ~header:false [ ("b", any Type.binary) ];
+      t =
+        v [ ("b", Column.v Type.binary [| Binary.of_string "\xEF\xBB\xBFa" |]) ];
+      slice = 1;
+    };
+  ]
+
+let reads_back w =
+  let types = List.map snd (Schema.columns (schema w.t)) in
+  List.iter
+    (fun t ->
+      cover (type_name t)
+        (List.exists (fun u -> type_name u = type_name t) types))
+    csv_types;
+  cover "one column with a null"
+    (match Schema.columns (schema w.t) with
+    | [ (n, _) ] -> Column.null_count (column w.t n) > 0
+    | _ -> false);
+  Law.round_trip table string
+    (fun t -> written w.f (Query.of_table t))
+    (fun s -> Error.get_ok (read ~slice_length:w.slice w.f s))
+    w.t
 
 let writing =
   group "encode"
     [
-      prop "decode reads back the rows encode writes"
-        (Gen.with_pp pp_written writable) (fun w ->
-          let text = written w.f (of_table w.t) in
-          let back = Error.get_ok (read ~slice_length:w.slice w.f text) in
-          equal int (rows w.t) (rows back);
-          List.iter2 same_column (all_columns w.t) (all_columns back));
-      test "fields are quoted only when reading needs it" (fun () ->
+      prop ~count:450 ~examples:writable_examples
+        "decode reads back the rows encode writes"
+        (Gen.with_pp pp_writable writable)
+        reads_back;
+      test "quotes a field only when reading needs it" (fun () ->
+          let s =
+            [|
+              Some "plain";
+              Some "";
+              None;
+              Some "a,b";
+              Some "say \"hi\"";
+              Some "\"lead";
+              Some "two\nlines";
+              Some "cr\r";
+              Some "semi;colon";
+              Some "NA";
+              Some " spaced ";
+              Some "\xff";
+            |]
+          in
           let t =
             v
               [
                 ( "s",
-                  Column.of_options Type.string
-                    [|
-                      Some "plain";
-                      Some "";
-                      None;
-                      Some "a,b";
-                      Some "say \"hi\"";
-                      Some "\"lead";
-                      Some "two\nlines";
-                      Some "semi;colon";
-                      Some "NA";
-                      Some " spaced ";
-                    |] );
-                ( "x",
-                  Column.of_options Type.float64
-                    [|
-                      Some 0.1;
-                      Some (-0.);
-                      Some nan;
-                      None;
-                      Some 1e21;
-                      Some infinity;
-                      Some 150.;
-                      Some 1e-8;
-                      Some 2.5;
-                      Some 1.;
-                    |] );
+                  Column.of_options Type.binary
+                    (Array.map (Option.map Binary.of_string) s) );
+                ("n", Column.v Type.int64 (Array.init 12 Fun.id));
               ]
           in
           let f =
             Csv.format ~nulls:[ "NA" ]
-              [ ("s", any Type.string); ("x", any Type.float64) ]
+              [ ("s", any Type.binary); ("n", any Type.int64) ]
           in
-          expect (written f (of_table t))
-          @@ __POS_OF__
-               {|
-            s,x
-            plain,0.1
-            "",-0
-            ,nan
-            "a,b",
-            "say ""hi""",1e+21
-            """lead",inf
-            "two
-            lines",150
-            semi;colon,1e-08
-            "NA",2.5
-             spaced ,1
-            |});
-      test "the other types write the text Column.parse reads" (fun () ->
-          let t =
-            v
-              [
-                ("b", Column.v Type.bool [| true; false |]);
-                ("i", Column.v Type.int8 [| -128; 127 |]);
-                ( "c",
-                  Column.v (Type.categorical [| ""; "u,v" |]) [| ""; "u,v" |] );
-                ( "t",
-                  Column.v
-                    (Type.instant Ms)
-                    [|
-                      Option.get (Time.of_ms 1500L); Option.get (Time.of_ms 0L);
-                    |] );
-                ( "y",
-                  Column.v Type.binary
-                    [| Binary.of_string "b"; Binary.of_string "" |] );
-              ]
-          in
-          let f =
-            Csv.format ~sep:';' ~header:false
-              (List.map (fun (n, ty) -> (n, ty)) (Schema.columns (schema t)))
-          in
-          expect (written f (of_table t))
-          @@ __POS_OF__
-               {|
-            true;-128;"";1970-01-01T00:00:01.5Z;b
-            false;127;u,v;1970-01-01T00:00:00Z;""
-            |});
-      test "one column writes a null as its first null token" (fun () ->
-          let t =
-            v [ ("a", Column.of_options Type.int64 [| Some 1; None |]) ]
-          in
-          let f nulls = Csv.format ?nulls [ ("a", any Type.int64) ] in
-          expect
-            (written (f (Some [ "NA"; "null" ])) (of_table t)
-            ^ "--\n"
-            ^ written (f None) (of_table t))
-          @@ __POS_OF__
-               {|
-            a
-            1
-            NA
-            --
-            a
-            1
-            error: line 3, column 1: column "a": a null in the only column is an empty line, which is no record. Declare a null token (~nulls).
-            |});
-      test "a failing run is the error, after the rows before it" (fun () ->
-          let t =
-            of_batches
-              [
-                v [ ("a", Column.v Type.string [| "1" |]) ];
-                v [ ("a", Column.v Type.string [| "x" |]) ];
-              ]
-          in
-          let q =
-            Query.select
-              Expr.[ "a" := Str.parse Type.int64 (Col.string "a") ]
-              (of_table t)
-          in
-          expect (written (Csv.format [ ("a", any Type.int64) ]) q)
-          @@ __POS_OF__
-               {|
-            a
-            1
-            error: select ["a" := Str.parse int64 a]: row 1: "x": not an integer.
-            |});
-      test "eod ends the writer when asked and every record is written"
-        (fun () ->
-          let ends ?eod q =
-            let eods = ref 0 in
-            let w =
-              Bytesrw.Bytes.Writer.make (fun s ->
-                  if Bytesrw.Bytes.Slice.is_eod s then incr eods)
-            in
-            ignore (Csv.encode ?eod (Csv.format [ ("a", any Type.int64) ]) q w);
-            !eods
-          in
-          let ok = of_table (v [ ("a", Column.v Type.int64 [| 1 |]) ]) in
-          let failing =
-            Query.select
-              Expr.[ "a" := Str.parse Type.int64 (Col.string "a") ]
-              (of_table (v [ ("a", Column.v Type.string [| "x" |]) ]))
-          in
-          equal (list int) [ 0; 0; 1; 0 ]
-            [
-              ends ok;
-              ends ~eod:false ok;
-              ends ~eod:true ok;
-              ends ~eod:true failing;
-            ]);
-      test "the query's columns must be the format's" (fun () ->
-          let q = of_table (v [ ("a", Column.v Type.int64 [| 1 |]) ]) in
-          let refused f =
-            match
-              Csv.encode f q (Bytesrw.Bytes.Writer.of_buffer (Buffer.create 1))
-            with
-            | _ -> "no exception"
-            | exception Invalid_argument m -> m
-          in
-          expect
-            (String.concat "\n"
-               [
-                 refused (Csv.format [ ("a", any Type.int32) ]);
-                 refused (Csv.format [ ("b", any Type.int64) ]);
-               ])
-          @@ __POS_OF__
-               {|
-            Talon_csv.encode: the query's columns are not the format's: a int64, against a int32
-            Talon_csv.encode: the query's columns are not the format's: a int64, against b int64
-            |});
-      test "a carriage return and bytes that are not UTF-8 are quoted as needed"
-        (fun () ->
-          let t =
-            v
-              [
-                ( "y",
-                  Column.v Type.binary
-                    [| Binary.of_string "cr\r"; Binary.of_string "\xff" |] );
-              ]
-          in
-          equal string "\"cr\r\"\n\xff\n"
-            (written
-               (Csv.format ~header:false [ ("y", any Type.binary) ])
-               (of_table t)));
-      test "a field that starts with a byte order mark is quoted" (fun () ->
+          equal string
+            "s,n\n\
+             plain,0\n\
+             \"\",1\n\
+             ,2\n\
+             \"a,b\",3\n\
+             \"say \"\"hi\"\"\",4\n\
+             \"\"\"lead\",5\n\
+             \"two\n\
+             lines\",6\n\
+             \"cr\r\",7\n\
+             semi;colon,8\n\
+             \"NA\",9\n\
+            \ spaced ,10\n\
+             \xff,11\n"
+            (written f (Query.of_table t)));
+      test "quotes a field that starts with a byte order mark" (fun () ->
           let bom = "\xEF\xBB\xBF" in
           let t =
             v
@@ -1197,8 +1521,35 @@ let writing =
             ("\"" ^ bom ^ "a\"\nb\n")
             (written
                (Csv.format ~header:false [ ("y", any Type.binary) ])
-               (of_table t)));
-      test "one column writes a null as its first non-empty null token"
+               (Query.of_table t)));
+      test "writes the text Column.print writes" (fun () ->
+          let t =
+            v
+              [
+                ("b", Column.v Type.bool [| true; false |]);
+                ("i", Column.v Type.int8 [| -128; 127 |]);
+                ( "c",
+                  Column.v (Type.categorical [| ""; "u,v" |]) [| ""; "u,v" |] );
+                ( "t",
+                  Column.v (Type.instant Ms)
+                    [|
+                      Option.get (Time.of_ms 1500L); Option.get (Time.of_ms 0L);
+                    |] );
+                ( "y",
+                  Column.v Type.binary
+                    [| Binary.of_string "b"; Binary.of_string "" |] );
+              ]
+          in
+          let f =
+            Csv.format ~sep:';' ~header:false (Schema.columns (schema t))
+          in
+          expect (written f (Query.of_table t))
+          @@ __POS_OF__
+               {|
+            true;-128;"";1970-01-01T00:00:01.5Z;b
+            false;127;u,v;1970-01-01T00:00:00Z;""
+            |});
+      test "writes a null in one column as its first non-empty null token"
         (fun () ->
           let t =
             v [ ("a", Column.of_options Type.int64 [| Some 1; None |]) ]
@@ -1206,309 +1557,131 @@ let writing =
           equal string "a\n1\nNA\n"
             (written
                (Csv.format ~nulls:[ ""; "NA" ] [ ("a", any Type.int64) ])
-               (of_table t)));
-      test "a null in one column without a null token fails at its line"
+               (Query.of_table t)));
+      test "fails at a null in one column without a null token, at its line"
         (fun () ->
           let t =
             v [ ("a", Column.of_options Type.string [| Some "x\ny"; None |]) ]
           in
           (* The header is line 1, the quoted field lines 2 and 3. *)
-          starts_with ~prefix:"a\n\"x\ny\"\nerror: line 4, column 1:"
-            (written (Csv.format [ ("a", any Type.string) ]) (of_table t)));
-    ]
-
-(* Sources *)
-
-let run_ok q = Error.get_ok (Query.run q)
-
-let run_error q =
-  match Query.run q with Ok _ -> "ok" | Error e -> error_text e
-
-(* [opening ?slice_length s] opens readers on [s], and counts them. *)
-let opening ?slice_length s =
-  let opened = ref 0 in
-  let open_ () =
-    incr opened;
-    Reader.of_string ?slice_length s
-  in
-  (open_, opened)
-
-let source ?slice_length f s =
-  Query.of_source (Csv.source f (fst (opening ?slice_length s)))
-
-let keep names q =
-  Query.select (if names = [] then [] else Expr.[ keep (Sel.names names) ]) q
-
-let ab = Csv.format [ ("a", any Type.int64); ("b", any Type.int8) ]
-
-(* Record 4's [b] does not read. *)
-let bad_b = "a,b\n1,1\n2,\n3,x\n"
-
-(* What a read with a request yields: the table's columns, each column's
-   validity and the bytes of its rows, under nulls too, so that two reads agree
-   byte for byte. *)
-let layout t =
-  Printf.sprintf "%d rows" (rows t)
-  :: List.map
-       (fun n ->
-         let c = column t n in
-         let valid = valid c in
-         Printf.sprintf "%s: %s" n
-           (String.concat "; "
-              (List.mapi
-                 (fun i s -> Printf.sprintf "%b %S" (valid i) s)
-                 (byte_rows c))))
-       (names t)
-
-type request = { t : table; read : bool list; limit : int option }
-
-let request =
-  let open Gen in
-  let* t = table in
-  let* read = list ~size:(constant t.cols) bool in
-  let+ limit = option (int_range 0 14) in
-  { t; read; limit }
-
-let pp_request ppf r =
-  Format.fprintf ppf "%a, reading %s, limit %s" pp_table r.t
-    (String.concat "" (List.map (fun b -> if b then "1" else "0") r.read))
-    (match r.limit with None -> "none" | Some n -> string_of_int n)
-
-let ask r q =
-  let names =
-    List.filteri
-      (fun j _ -> List.nth r.read j)
-      (List.init r.t.cols (fun j -> Printf.sprintf "c%d" (j + 1)))
-  in
-  let q = keep names q in
-  match r.limit with None -> q | Some n -> Query.slice ~offset:0 ~length:n q
-
-let sources =
-  group "source"
-    [
-      test "reads the table that decode reads" (fun () ->
-          equal text
-            (printed (Error.get_ok (read ab "a,b\n1,1\n2,\n")))
-            (printed (run_ok (source ab "a,b\n1,1\n2,\n"))));
-      test "reads the request's columns only" (fun () ->
-          equal text "int64 [1; 2; 3]"
-            (printed (run_ok (keep [ "a" ] (source ab bad_b)))));
-      test "stops after its limit" (fun () ->
-          equal text "int64 [1; 2]\nint8 [1; ∅]"
-            (printed
-               (run_ok (Query.slice ~offset:0 ~length:2 (source ab bad_b)))));
-      test "counts rows without reading a column" (fun () ->
-          equal int 3 (rows (run_ok (keep [] (source ab bad_b)))));
-      test "fails where decode fails, at the record's line and column"
-        (fun () ->
-          let failed = run_error (source ab bad_b) in
-          equal string (failure ab bad_b) failed;
-          expect failed
-          @@ __POS_OF__
-               {| line 4, column 3: "x": column "b": cannot read as int8: not an integer. Declare the null token (~nulls) or another type (with_type). |});
-      test "fails on a record of another number of fields within its limit"
-        (fun () ->
-          let s = "a,b\n1,1\n2\n" in
-          expect (run_error (Query.slice ~offset:0 ~length:2 (source ab s)))
-          @@ __POS_OF__
-               {| line 3, column 2: the record has 1 field, and the format 2 columns |};
-          equal text "int64 [1]\nint8 [1]"
-            (printed (run_ok (Query.slice ~offset:0 ~length:1 (source ab s)))));
-      test "opens a reader for each read" (fun () ->
-          let open_, opened = opening "a,b\n1,1\n" in
-          let q = Query.of_source (Csv.source ab open_) in
-          let first = printed (run_ok q) in
-          equal text first (printed (run_ok q));
-          equal int 2 !opened);
-      prop
-        "reads the bytes decode reads, whatever its reader's slices, columns \
-         and limit" (Gen.with_pp pp_request request) (fun r ->
-          let f = binaries r.t and s = encode r.t in
-          let decoded = Query.of_table (Error.get_ok (read f s)) in
-          equal (list string)
-            (layout (run_ok (ask r decoded)))
-            (layout (run_ok (ask r (source ~slice_length:r.t.slice f s)))));
-    ]
-
-(* Files *)
-
-let with_file contents f =
-  let path = Filename.temp_file "talon" ".csv" in
-  Out_channel.with_open_bin path (fun oc -> output_string oc contents);
-  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () -> f path)
-
-(* [replace sub by s] is [s] with each [sub] written [by]. *)
-let replace sub by s =
-  let n = String.length sub and b = Buffer.create (String.length s) in
-  let i = ref 0 in
-  while !i < String.length s do
-    if !i + n <= String.length s && String.sub s !i n = sub then begin
-      Buffer.add_string b by;
-      i := !i + n
-    end
-    else begin
-      Buffer.add_char b s.[!i];
-      incr i
-    end
-  done;
-  Buffer.contents b
-
-(* [anonymous path s] is [s] with each [path] written [data.csv], bare or
-   quoted as plans quote it, which escapes the backslashes of a Windows
-   path. *)
-let anonymous path s =
-  let quoted = Format.asprintf "%a" Type.pp_quoted in
-  s
-  |> replace (quoted path) (quoted "data.csv")
-  |> replace path "data.csv"
-
-let files =
-  group "file"
-    [
-      test "sniffs its file with the null tokens and reads it" (fun () ->
-          with_file "x,y\n1,NA\n2,b\n" @@ fun path ->
-          let s = Error.get_ok (Csv.file ~nulls:[ "NA" ] path) in
-          equal text "int64 [1; 2]\nbytes [∅; \"b\"]"
-            (printed (run_ok (Query.of_source s))));
-      test "names its file in its plans and errors" (fun () ->
-          with_file "x\n1\nz\n" @@ fun path ->
-          let f = Csv.format [ ("x", any Type.int64) ] in
-          let q = Query.of_source (Error.get_ok (Csv.file ~format:f path)) in
           expect
-            (anonymous path (Format.asprintf "%a@.%s" Query.pp q (run_error q)))
+            (written (Csv.format [ ("a", any Type.string) ]) (Query.of_table t))
           @@ __POS_OF__
                {|
-            query → x int64
-            csv "data.csv" (1 column)
-            data.csv:3:1: "z": column "x": cannot read as int64: not an integer. Declare the null token (~nulls) or another type (with_type).
+            a
+            "x
+            y"
+            error: line 4, column 1: column "a": a null in the only column is an empty line, which is no record. Declare a null token (~nulls).
             |});
-      test "names its file in a sniffing error" (fun () ->
-          with_file "a,b\n1\n" @@ fun path ->
-          expect
-            (anonymous path
-               (match Csv.file path with
-               | Ok _ -> "ok"
-               | Error e -> error_text e))
-          @@ __POS_OF__
-               {| data.csv:2:1: no separator splits every record into the same number of fields: with ',', the record has 1 field, and the first one 2 |});
-      test "fails on a file it cannot open" (fun () ->
-          expect
-            (match Csv.file "/nonexistent/data.csv" with
-            | Ok _ -> "ok"
-            | Error e -> error_text e)
-          @@ __POS_OF__ {| /nonexistent/data.csv: No such file or directory |});
-      test "fails a read of a file removed since the call" (fun () ->
-          let path = Filename.concat (temp_dir ()) "data.csv" in
-          Out_channel.with_open_bin path (fun oc -> output_string oc "x\n1\n");
-          let f = Csv.format [ ("x", any Type.int64) ] in
-          let s = Error.get_ok (Csv.file ~format:f path) in
-          Sys.remove path;
-          contains ~sub:"data.csv" (run_error (Query.of_source s)));
-      test "fails at the call on a file it cannot open, with a format"
-        (fun () ->
-          let f = Csv.format [ ("x", any Type.int64) ] in
-          let path = Filename.concat (temp_dir ()) "missing.csv" in
-          match Csv.file ~format:f path with
-          | Ok _ -> fail "Ok"
-          | Error e -> contains ~sub:"missing.csv" (error_text e));
-      test "raises on null tokens given with a format" (fun () ->
-          let f = Csv.format ~nulls:[ "NA" ] [ ("x", any Type.int64) ] in
-          raises_match (Exn.invalid_arg ~sub:"~nulls") (fun () ->
-              Csv.file ~format:f ~nulls:[ "NA" ] "data.csv"));
-      test "opens its file again for each read" (fun () ->
-          with_file "x\n1\n" @@ fun path ->
-          let f = Csv.format [ ("x", any Type.int64) ] in
-          let q = Query.of_source (Error.get_ok (Csv.file ~format:f path)) in
-          equal text "int64 [1]" (printed (run_ok q));
-          Out_channel.with_open_bin path (fun oc ->
-              output_string oc "x\n2\n3\n");
-          equal text "int64 [2; 3]" (printed (run_ok q)));
-    ]
-
-(* Memory *)
-
-(* [with_ratio r f] is [f ()] with the collector's [custom_major_ratio] at
-   [r]. *)
-let with_ratio r f =
-  let was = (Gc.get ()).custom_major_ratio in
-  Gc.set { (Gc.get ()) with custom_major_ratio = r };
-  Fun.protect f ~finally:(fun () ->
-      Gc.set { (Gc.get ()) with custom_major_ratio = was })
-
-(* 2^14 rows of 8 bytes in one slice, one batch: a text column of 128 KiB of
-   bytes and 128 KiB of offsets. *)
-let texts =
-  let rows = 1 lsl 14 in
-  let s = "s\n" ^ String.concat "" (List.init rows (fun _ -> "abcdefgh\n")) in
-  let f = Csv.format [ ("s", any Type.binary) ] in
-  fun () -> column (Error.get_ok (read ~slice_length:(String.length s) f s)) "s"
-
-let texts_bytes = (8 lsl 14) + (8 * ((1 lsl 14) + 1))
-
-let memory =
-  group "memory"
-    [
-      (* A text column is host memory: the host holds its bytes and offsets
-         while it is live, and has them back once it is collected. *)
-      test "a text column is the host's memory while it is live" (fun () ->
-          Talon_held.check texts);
-      (* Dropped columns pace the collector as rig's host buffers do,
-         whatever [custom_major_ratio] says of the heap: the bytes of host
-         buffers that reach the major heap bring a cycle's work per bound of
-         at least 4 MiB, and a buffer that starts young with more than
-         [custom_minor_max_size] bytes brings an eighth of its bytes at birth
-         as well. A decode makes its column's bytes and offsets, 128 KiB
-         each, in such buffers, and holds them across a minor collection that
-         promotes them. So at a ratio of 1, which paces a bigarray of
-         Bigarray's own at a cycle's work each, 64 decodes bring at most a
-         cycle's work per 4 MiB of their arrays and of an eighth of them more
-         than at the default ratio. The count starts from a compaction, which
-         leaves the heap about its live words: a cycle's work, which the
-         runtime sizes as sweeping the heap and marking part of it, then
-         completes at most a cycle, and two more are under way at either
-         end. The cycles the decodes bring at either ratio are the heap's
-         own, paced by its allocations. *)
-      test "dropped columns pace the collector by the program's memory"
-        (fun () ->
-          let decodes = 64 in
-          let cycles r =
-            with_ratio r @@ fun () ->
-            ignore (texts ());
-            Talon_held.cycles (fun () ->
-                for _ = 1 to decodes do
-                  let held = texts () in
-                  Gc.minor ();
-                  ignore (Sys.opaque_identity held)
-                done)
+      test "fails as its query fails, after the rows before it" (fun () ->
+          let t =
+            of_batches
+              [
+                v [ ("a", Column.v Type.string [| "1" |]) ];
+                v [ ("a", Column.v Type.string [| "x" |]) ];
+              ]
           in
-          let usual = cycles (Gc.get ()).custom_major_ratio in
-          let at_1 = cycles 1 in
-          let made = decodes * (texts_bytes + (texts_bytes / 8)) in
-          at_most
-            ~msg:
-              (Printf.sprintf
-                 "major cycles at a ratio of 1: %s; at the default: %s"
-                 (Talon_held.pp_cycles at_1) (Talon_held.pp_cycles usual))
-            int
-            ~than:(usual.majors + (made / (4 lsl 20)) + 2)
-            at_1.majors);
+          let q =
+            Query.select
+              Expr.[ "a" := Str.parse Type.int64 (Col.string "a") ]
+              (Query.of_table t)
+          in
+          expect (written (Csv.format [ ("a", any Type.int64) ]) q)
+          @@ __POS_OF__
+               {|
+            a
+            1
+            error: select ["a" := Str.parse int64 a]: row 1: "x": not an integer.
+            |});
+      test "fails when writing raises" (fun () ->
+          let q =
+            Query.of_table (v [ ("a", Column.v Type.int64 [| 1; 22; 333 |]) ])
+          in
+          let f = Csv.format [ ("a", any Type.int64) ] in
+          let outcome w =
+            match Csv.encode f q w with
+            | Ok () -> "ok"
+            | Error e -> error_text e
+          in
+          let limited =
+            Writer.limit 8 ~eod:false (Writer.of_buffer (Buffer.create 16))
+          in
+          expect
+            (String.concat "\n"
+               [
+                 outcome limited;
+                 outcome (Writer.make (fun _ -> raise (Sys_error "disk full")));
+               ])
+          @@ __POS_OF__
+               {|
+            writer:8: Limit of 8 bytes exceeded.
+            disk full
+            |});
+      test "ends the writer when asked and every record is written" (fun () ->
+          let ends ?eod q =
+            let eods = ref 0 in
+            let w =
+              Writer.make (fun s ->
+                  if Bytesrw.Bytes.Slice.is_eod s then incr eods)
+            in
+            ignore (Csv.encode ?eod (Csv.format [ ("a", any Type.int64) ]) q w);
+            !eods
+          in
+          let ok = Query.of_table (v [ ("a", Column.v Type.int64 [| 1 |]) ]) in
+          let failing =
+            Query.select
+              Expr.[ "a" := Str.parse Type.int64 (Col.string "a") ]
+              (Query.of_table (v [ ("a", Column.v Type.string [| "x" |]) ]))
+          in
+          equal (list int) [ 0; 0; 1; 0 ]
+            [
+              ends ok;
+              ends ~eod:false ok;
+              ends ~eod:true ok;
+              ends ~eod:true failing;
+            ]);
+      test "raises when the query's columns are not the format's" (fun () ->
+          let q =
+            Query.of_table
+              (v
+                 [
+                   ("a", Column.v Type.int64 [| 1 |]);
+                   ("b", Column.v Type.int64 [| 2 |]);
+                 ])
+          in
+          let refused f =
+            match Csv.encode f q (Writer.of_buffer (Buffer.create 1)) with
+            | _ -> "no exception"
+            | exception Invalid_argument m -> m
+          in
+          let i64 = any Type.int64 in
+          expect
+            (String.concat "\n"
+               [
+                 refused (Csv.format [ ("a", any Type.int32); ("b", i64) ]);
+                 refused (Csv.format [ ("a", i64); ("c", i64) ]);
+                 refused (Csv.format [ ("b", i64); ("a", i64) ]);
+               ])
+          @@ __POS_OF__
+               {|
+            Talon_csv.encode: the query's columns are not the format's: a int64, b int64, against a int32, b int64
+            Talon_csv.encode: the query's columns are not the format's: a int64, b int64, against a int64, c int64
+            Talon_csv.encode: the query's columns are not the format's: a int64, b int64, against b int64, a int64
+            |});
     ]
 
 let () =
   exit
     (run "talon.csv"
        [
-         formats;
-         with_types;
-         sniffing;
          syntax;
          values;
-         nulls;
-         test "data errors are as baselined" data_errors;
-         batches;
-         round_trip;
-         writing;
+         formats;
+         with_types;
+         pp_formats;
+         sniffing;
+         decoding;
          sources;
          files;
-         memory;
+         writing;
        ])
