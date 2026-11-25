@@ -968,23 +968,29 @@ let cauchy = group "cauchy" [ cauchy_tails ]
 (* Far in a Student t's tail, [z = (x - loc) / scale] or [z / √ν] overflows
    where its log density does not: [c - ((ν + 1) / 2) log1p (z² / ν)], [c] its
    normaliser less [log scale], is read with [log1p (z² / ν)] as [2 (log d - log
-   s) + log1p ((s / d)²)], [s = scale √ν]. The bound is norn.mli's, [ε (16 |f| +
-   48 Λ)], [Λ = 1 + |log ν| + |log scale|]. *)
+   s) + log1p ((s / d)²)], [s = scale √ν], [log s] read as [log scale + log √ν]
+   where [s] itself underflows. The bound is norn.mli's, [ε (16 |f| + 48 Λ)], [Λ
+   = 1 + |log ν| + |log scale|]. *)
 let student_t_tails =
   Windtrap.cases "a Student t's log density far past where z overflows"
     ~id:(fun (df, d, s) -> Printf.sprintf "df %g, x - loc %g, scale %g" df d s)
-    [ (1., 1., 1e-310); (1e-300, 1e160, 1.); (3.5, 1e200, 1e-100) ]
+    [
+      (1., 1., 1e-310);
+      (1e-300, 1e160, 1.);
+      (3.5, 1e200, 1e-100);
+      (1e-300, 1., 1e-200);
+    ]
     (fun (df, d, s) ->
-      let root = Float.sqrt df in
       let c =
         lgamma ((df +. 1.) /. 2.)
         -. lgamma (df /. 2.)
         -. (0.5 *. (Float.log df +. Float.log Float.pi))
         -. Float.log s
       in
-      let s' = s *. root in
+      let log_s = Float.log s +. (0.5 *. Float.log df) in
       let l =
-        (2. *. (Float.log d -. Float.log s')) +. Float.log1p ((s' /. d) ** 2.)
+        (2. *. (Float.log d -. log_s))
+        +. Float.log1p (Float.exp (2. *. (log_s -. Float.log d)))
       in
       let exact = c -. ((df +. 1.) /. 2. *. l) in
       let logs = 1. +. alog df +. alog s in

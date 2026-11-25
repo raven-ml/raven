@@ -764,26 +764,35 @@ let student_terms df scale =
     Nx.sqrt df,
     Nx.mul_s (Nx.add_s df 1.) 0.5 )
 
-(* [log1p_square a s] is [log1p ((a / s)²)] for [a >= 0] and [s > 0], as [2 (log
-   a - log s) + log1p ((s / a)²)] past [a = s]: neither the quotient nor its
-   square overflows, where the Cauchy's log density, about [-2 log (a / s)], is
-   still finite. Each side is its own expression, fed values that keep the other
-   finite, so the side not taken adds nothing to the derivative, not even
-   rounding: at [a = s] it is the near side's. *)
-let log1p_square a s =
+(* [log1p_square a s log_s] is [log1p ((a / s)²)] for [a >= 0] and [s >= 0],
+   [log_s] the logarithm of [s] taken apart from it, as [2 (log a - log s) +
+   log1p ((s / a)²)] past [a = s]: neither the quotient nor its square
+   overflows, nor [log s] where [s] underflows, where the Cauchy's and the
+   Student t's log densities, about [-2 log (a / s)], are still finite. Each
+   side is its own expression, fed values that keep the other finite, so the
+   side not taken adds nothing to the derivative, not even rounding: at [a = s]
+   it is the near side's. *)
+let log1p_square a s log_s =
   let beyond = Nx.greater a s in
-  let a_far = Nx.where beyond a s and a_near = Nx.where beyond s a in
+  let one = const a 1. in
+  let a_far = Nx.where beyond a one in
   let far =
     Nx.add
-      (Nx.mul_s (Nx.sub (Nx.log a_far) (Nx.log s)) 2.)
+      (Nx.mul_s (Nx.sub (Nx.log a_far) log_s) 2.)
       (Nx.log1p (Nx.square (Nx.div s a_far)))
   in
-  Nx.where beyond far (Nx.log1p (Nx.square (Nx.div a_near s)))
+  let a_near = Nx.where beyond (const a 0.) a in
+  let s_near =
+    Nx.where (Nx.logical_or beyond (Nx.equal s (const s 0.))) one s
+  in
+  Nx.where beyond far (Nx.log1p (Nx.square (Nx.div a_near s_near)))
 
-(* [log1p (z² / ν)] is [log1p_square |x - loc| (scale √ν)]: neither [z] nor [z /
-   √ν] is formed where it would overflow. *)
+(* [log1p (z² / ν)] is [log1p_square |x - loc| (scale √ν)], with [log (scale
+   √ν)] the sum of the logarithms: neither [z] nor [z / √ν] is formed where it
+   would overflow, nor [scale √ν]'s logarithm where it underflows. *)
 let student_t_density (c, root, half1) loc scale x =
-  let l = log1p_square (Nx.abs (Nx.sub x loc)) (Nx.mul scale root) in
+  let log_s = Nx.add (Nx.log scale) (Nx.log root) in
+  let l = log1p_square (Nx.abs (Nx.sub x loc)) (Nx.mul scale root) log_s in
   Nx.sub c (Nx.mul half1 l)
 
 (* A format narrower than float32 computes a mass at float32 and rounds it
@@ -925,7 +934,9 @@ let cauchy_tails () = mirror cauchy_cdf cauchy_lower
 let cauchy ~loc ~scale =
   location_scale "cauchy" ~loc ~scale
     ~density:(fun d ->
-      Nx.add_s (Nx.neg (log1p_square (Nx.abs d) scale)) (-.log_pi))
+      Nx.add_s
+        (Nx.neg (log1p_square (Nx.abs d) scale (Nx.log scale)))
+        (-.log_pi))
     ~draw:(fun k dt s -> quantile_of (cauchy_tails ()) (open_unit k dt s))
     ~tails:(cauchy_tails ()) ()
 
@@ -1102,7 +1113,7 @@ let half_cauchy ~scale =
     ~density:(fun x ->
       Nx.sub
         (Nx.add_s
-           (Nx.neg (log1p_square x scale))
+           (Nx.neg (log1p_square x scale (Nx.log scale)))
            (Float.log 2. -. log_pi))
         (Nx.log scale))
     ~draw:(fun k s -> quantile_of tails (open_unit k dt s))
