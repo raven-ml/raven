@@ -17,7 +17,11 @@
     stride 0, and a layout with no element has offset 0 and every stride 0. Two
     layouts of one shape that map every index to the same position are then
     {!equal}. Its sizes are at most {!max_numel}, so code that multiplies them
-    checks nothing. *)
+    checks nothing.
+
+    The messages of {!contiguous}, {!v}, {!dim}, {!stride} and {!coalesce} start
+    with the function's name, as [Layout.v:], and, where one axis is at fault,
+    name it; {!move} raises as {!Move.shape} does. *)
 
 type t
 (** The type for layouts. *)
