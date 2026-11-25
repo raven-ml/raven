@@ -122,6 +122,13 @@ let init_tests =
           raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
               Norn.Smc.init t ~prior ~likelihood
                 (conjugate.draw (Nx.Rng.key 2) 100)));
+      test "a likelihood of 0 at every particle is refused" (fun () ->
+          let likelihood x =
+            Nx.full Nx.float64 [| (Nx.shape x).(0) |] Float.neg_infinity
+          in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
+              Norn.Smc.init t ~prior:conjugate.prior ~likelihood
+                (conjugate.draw (Nx.Rng.key 2) 100)));
       test "a start that holds no tensor is refused" (fun () ->
           let none () = Nx.zeros Nx.float64 [| 1 |] in
           raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->

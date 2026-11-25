@@ -85,6 +85,8 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Smc.init` refuses a likelihood of `-inf` at every particle. The first
+  `Smc.step` raised in its place, naming `Norn.Weighted.resample`.
 - `Nuts.init`, `Hmc.init`, `Nested.init` and `Smc.init` refuse a start whose
   float tensors have two dtypes, as the fits do. Their moves cast every float
   tensor to the density's dtype and back, losing digits with no error.

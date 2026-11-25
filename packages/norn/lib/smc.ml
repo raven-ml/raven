@@ -330,6 +330,15 @@ let init u ?(move = Hmc) ?resampled ~prior ~likelihood start =
   let pl = prior start and ll = likelihood start in
   Rows.check_density context u prior start pl;
   Rows.check_density context u likelihood start ll;
+  (* With no particle of nonzero likelihood no step has a weight to resample
+     by. *)
+  Nx.check P.unit
+    (Nx.any (Nx.not_equal ll (Nx.scalar_like ll Float.neg_infinity)))
+    ()
+    (fun _ () ->
+      Invalid_argument
+        (context
+       ^ ": the likelihood is 0 at every particle; a step resamples by it"));
   let dt = Nx.dtype pl and on = Nx.beside pl in
   let zero = Nx.scalar_at on dt 0. in
   {

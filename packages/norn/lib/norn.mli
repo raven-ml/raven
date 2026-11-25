@@ -2113,9 +2113,9 @@ module Smc : sig
 
       Raises [Invalid_argument] if [resampled] does not divide [N] into chains
       of two states or more, [start] holds no tensor or float tensors of two
-      dtypes, or if a density does not return one log density per particle,
-      each read from its own row as {!Nuts.init} checks it, or is NaN or [+inf]
-      at a particle. *)
+      dtypes, or if a density does not return one log density per particle, each
+      read from its own row as {!Nuts.init} checks it, or is NaN or [+inf] at a
+      particle, or if the likelihood is [-inf] at every particle. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->
