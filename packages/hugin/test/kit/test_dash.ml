@@ -13,6 +13,7 @@ let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 let pp_lengths =
   Format.pp_print_list ~pp_sep:Format.pp_print_space Format.pp_print_float
 
+(* Lengths that make a pattern: empty, or with a positive sum. *)
 let gen_lengths =
   Gen.list ~size:(Gen.int_range 0 5)
     (Gen.frequency
@@ -23,61 +24,87 @@ let gen_lengths =
   |> Gen.map (fun l -> if List.fold_left ( +. ) 0. l = 0. then [] else l)
   |> Gen.with_pp pp_lengths
 
+(* Patterns *)
+
 let patterns =
   group "patterns"
     [
-      cases "v refuses lengths that make no pattern"
+      cases "v raises on lengths that make no pattern"
         ~id:(fun (n, _) -> n)
         [
           ("a negative length", [ 4.; -1. ]);
           ("nan", [ Float.nan ]);
           ("infinity", [ 1.; Float.infinity ]);
+          ("neg_infinity", [ Float.neg_infinity; 2. ]);
           ("a zero length alone", [ 0. ]);
           ("zero lengths", [ 0.; 0.; 0. ]);
         ]
         (fun (_, l) -> invalid (fun () -> Dash.v l));
-      cases "v takes every pattern with a positive length"
-        ~id:(fun (n, _) -> n)
-        [
-          ("dots", [ 0.; 2. ]);
-          ("an odd pattern", [ 3. ]);
-          ("a zero gap", [ 1.; 0. ]);
-        ]
-        (fun (_, l) -> equal lengths l (Dash.lengths (Dash.v l)));
       test "v names a bad length as negative or not finite" (fun () ->
           raises
             (Invalid_argument "Dash.v: the length -1 is negative or not finite")
             (fun () -> Dash.v [ 4.; -1. ]));
-      test "v of no length is solid" (fun () ->
-          equal dash Dash.solid (Dash.v []));
-      test "the presets have the lengths they state" (fun () ->
-          equal (list lengths)
-            [ []; [ 4.; 2. ]; [ 1.; 2. ]; [ 4.; 2.; 1.; 2. ] ]
-            (List.map Dash.lengths
-               [ Dash.solid; Dash.dashed; Dash.dotted; Dash.dash_dot ]));
-      test "all is the presets in order" (fun () ->
+      test "solid is v []" (fun () -> equal dash (Dash.v []) Dash.solid);
+      cases "the presets have the lengths they state" ~id:fst
+        [
+          ("dashed", (Dash.dashed, [ 4.; 2. ]));
+          ("dotted", (Dash.dotted, [ 1.; 2. ]));
+          ("dash_dot", (Dash.dash_dot, [ 4.; 2.; 1.; 2. ]));
+        ]
+        (fun (_, (d, l)) -> equal dash (Dash.v l) d);
+      test "all is solid, dashed, dotted and dash_dot in order" (fun () ->
           equal (list dash)
             [ Dash.solid; Dash.dashed; Dash.dotted; Dash.dash_dot ]
             Dash.all);
-      prop "lengths reads back what v is given" gen_lengths (fun l ->
-          equal lengths l (Dash.lengths (Dash.v l)));
     ]
 
-let comparing =
-  group "comparing"
+(* Observing *)
+
+let observing =
+  group "lengths"
     [
-      prop "equal is an equivalence"
-        (let d = Gen.map Dash.v gen_lengths |> Gen.with_pp Dash.pp in
-         Gen.pair d d)
-        (Law.equivalence dash);
-      test "patterns of other lengths differ" (fun () ->
-          not_equal dash Dash.dashed (Dash.v [ 4.; 2.; 4.; 2. ]);
-          not_equal dash Dash.solid Dash.dotted);
-      test "pp prints solid or the lengths" (fun () ->
+      prop "is what v is given"
+        ~examples:[ [ 0.; 2. ]; [ 3. ]; [ 1.; 0. ] ]
+        gen_lengths
+        (fun l ->
+          cover "a zero length" (List.mem 0. l);
+          cover "an odd number of lengths" (List.length l mod 2 = 1);
+          equal lengths l (Dash.lengths (Dash.v l)));
+      test "is [] for solid" (fun () ->
+          equal lengths [] (Dash.lengths Dash.solid));
+    ]
+
+(* Comparing and formatting *)
+
+let comparing =
+  group "equal"
+    [
+      (* Equal pairs come from the generator's repeats at p of about 1/8: the
+         example reaches them. *)
+      prop "holds iff the lengths are equal by Float.equal"
+        ~examples:
+          [
+            ([ 4.; 2. ], [ 4.; 2. ]);
+            ([ 4.; 2. ], [ 4.; 2.; 4.; 2. ]);
+            ([], [ 1.; 2. ]);
+          ]
+        (Gen.pair gen_lengths gen_lengths)
+        (fun (l, l') ->
+          let same = List.equal Float.equal l l' in
+          cover "equal lengths" same;
+          cover "other lengths" (not same);
+          if same then equal dash (Dash.v l) (Dash.v l')
+          else not_equal dash (Dash.v l) (Dash.v l'));
+    ]
+
+let formatting =
+  group "pp"
+    [
+      test "prints solid or the lengths" (fun () ->
           expect
             (Format.asprintf "%a|%a|%a" Dash.pp Dash.solid Dash.pp Dash.dash_dot
                Dash.pp (Dash.v [ 0.5 ]))
           @@ __POS_OF__ {| solid|4 2 1 2|0.5 |});
     ]
 
-let () = exit (run "Dash" [ patterns; comparing ])
+let () = exit (run "Dash" [ patterns; observing; comparing; formatting ])
