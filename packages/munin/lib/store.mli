@@ -45,8 +45,9 @@ val runs : ?prev:Run.t list -> t -> Run.t list
     allocates for a file what it reads of it, with no buffer of a fixed size, so
     that a run whose records, tags and notes are short costs less than 64 KiB. A
     directory that is not a readable run of this format is left out, and
-    {!check} names it. So is a run whose log cannot be opened or read, such as a
-    live run on an SMB mount ({!Store_format.section-network}).
+    {!check} names it. So is a run whose log cannot be opened, read or probed
+    (other than by a file system that refuses locks), such as a live run on an
+    SMB mount ({!Store_format.section-network}).
 
     [prev] is a listing of [s] made earlier. With it, [runs] reads the first
     record only of the runs [prev] lacks, and the last record and the lock only
@@ -67,7 +68,7 @@ val run : t -> string -> Run.t option
     ({!Store_format.section-names}) names no run.
 
     Raises [Failure] if [id]'s log does not start as a run of this format, and
-    [Sys_error] if it cannot be opened or read. *)
+    [Sys_error] if it cannot be opened, read or probed. *)
 
 val add_tags : t -> string -> string list -> unit
 (** [add_tags s id tags] adds [tags] to the run [id]. Its other tags stay.
