@@ -18,10 +18,15 @@ let gets a =
   let idxs = indices (Iarray.to_array (L.shape (A.layout a))) in
   Array.of_list (List.map (fun i -> A.get a (Iarray.of_array i)) idxs)
 
-(* Answers *)
+(* [b] is [a]'s own buffer. *)
+let own_buffer a b =
+  satisfies ~claim:"the source's own buffer" pass (fun b -> b == A.buffer a) b
 
-let refusals =
-  List.filter (fun (_, a) -> a <> A.Done && a <> A.Declined) S.answers
+(* [c]'s buffer shares no byte with [a]'s. *)
+let fresh a c =
+  satisfies ~claim:"shares no byte with the source" pass
+    (fun c -> not (B.overlaps (A.buffer c) (A.buffer a)))
+    c
 
 (* Arrays of every dtype *)
 
@@ -61,39 +66,71 @@ let viewed = Gen.with_pp pp_case viewed
 
 (* Construction *)
 
-let test_bounds () =
-  let b = B.create Rig.host 16 in
-  let fails dt l =
-    raises_match (Exn.invalid_arg ~sub:"reaches past") (fun () -> A.v dt l b)
-  in
-  ignore (A.v f32 (L.contiguous [| 4 |]) b);
-  ignore (A.v f32 (L.v ~offset:3 ~strides:[| -1 |] [| 4 |]) b);
-  fails f32 (L.contiguous [| 5 |]);
-  fails f32 (L.v ~offset:1 ~strides:[| 1 |] [| 4 |]);
-  ignore (A.v D.Int4 (L.contiguous [| 32 |]) b);
-  ignore (A.v D.Bit (L.contiguous [| 128 |]) b);
-  fails D.Int4 (L.contiguous [| 33 |]);
-  fails D.Bit (L.contiguous [| 129 |]);
-  fails D.Complex128 (L.contiguous [| 2 |]);
-  ignore (A.v f32 (L.contiguous [| 0 |]) (B.create Rig.host 0))
+(* Layouts over a host buffer of [bytes] bytes, and whether they lie within
+   them: sub-byte elements count bits, a negative stride its reach below the
+   offset. *)
+let within =
+  [
+    ("float32 [4] in 16 bytes", D.Any f32, L.contiguous [| 4 |], 16, true);
+    ( "float32 [4] reversed from 3",
+      D.Any f32,
+      L.v ~offset:3 ~strides:[| -1 |] [| 4 |],
+      16,
+      true );
+    ("float32 [5] in 16 bytes", D.Any f32, L.contiguous [| 5 |], 16, false);
+    ( "float32 [4] from 1 in 16 bytes",
+      D.Any f32,
+      L.v ~offset:1 ~strides:[| 1 |] [| 4 |],
+      16,
+      false );
+    ("int4 [32] in 16 bytes", D.Any D.Int4, L.contiguous [| 32 |], 16, true);
+    ("bit [128] in 16 bytes", D.Any D.Bit, L.contiguous [| 128 |], 16, true);
+    ("int4 [33] in 16 bytes", D.Any D.Int4, L.contiguous [| 33 |], 16, false);
+    ("bit [129] in 16 bytes", D.Any D.Bit, L.contiguous [| 129 |], 16, false);
+    ( "complex128 [2] in 16 bytes",
+      D.Any D.Complex128,
+      L.contiguous [| 2 |],
+      16,
+      false );
+    ("float32 [0] in no byte", D.Any f32, L.contiguous [| 0 |], 0, true);
+  ]
 
-let test_alignment () =
-  let b = B.create Rig.host 64 in
-  let at first = B.view b ~first ~length:32 in
-  let fails dt l b =
+let test_within (_, D.Any dt, l, bytes, taken) =
+  let b = B.create Rig.host bytes in
+  if taken then equal layout l (A.layout (A.v dt l b))
+  else raises_match (Exn.invalid_arg ~sub:"reaches past") (fun () -> A.v dt l b)
+
+(* Layouts over 32 bytes from byte [first] of a host buffer, and whether their
+   first element is aligned: a dtype's width, a complex one's component's, a
+   byte below. *)
+let alignments =
+  [
+    ("float32 at byte 1", D.Any f32, L.contiguous [| 1 |], 1, false);
+    ("float32 at byte 2", D.Any f32, L.contiguous [| 1 |], 2, false);
+    ("float64 at byte 4", D.Any D.Float64, L.contiguous [| 1 |], 4, false);
+    ("int16 at byte 1", D.Any D.Int16, L.contiguous [| 1 |], 1, false);
+    ("complex64 at byte 4", D.Any D.Complex64, L.contiguous [| 1 |], 4, true);
+    ("uint8 at byte 1", D.Any D.Uint8, L.contiguous [| 1 |], 1, true);
+    ("int4 at byte 1", D.Any D.Int4, L.contiguous [| 1 |], 1, true);
+    ( "float32 from element 1 at byte 4",
+      D.Any f32,
+      L.v ~offset:1 ~strides:[| 1 |] [| 1 |],
+      4,
+      true );
+    ( "float32 from element 1 at byte 2",
+      D.Any f32,
+      L.v ~offset:1 ~strides:[| 1 |] [| 1 |],
+      2,
+      false );
+    ("float32 [0] at byte 1", D.Any f32, L.contiguous [| 0 |], 1, true);
+  ]
+
+let test_alignment (_, D.Any dt, l, first, aligned) =
+  let b = B.view (B.create Rig.host 64) ~first ~length:32 in
+  if aligned then equal layout l (A.layout (A.v dt l b))
+  else
     raises_match (Exn.invalid_arg ~sub:"not on a multiple") (fun () ->
         A.v dt l b)
-  in
-  fails f32 (L.contiguous [| 1 |]) (at 1);
-  fails f32 (L.contiguous [| 1 |]) (at 2);
-  fails D.Float64 (L.contiguous [| 1 |]) (at 4);
-  fails D.Int16 (L.contiguous [| 1 |]) (at 1);
-  ignore (A.v D.Complex64 (L.contiguous [| 1 |]) (at 4));
-  ignore (A.v D.Uint8 (L.contiguous [| 1 |]) (at 1));
-  ignore (A.v D.Int4 (L.contiguous [| 1 |]) (at 1));
-  ignore (A.v f32 (L.v ~offset:1 ~strides:[| 1 |] [| 1 |]) (at 4));
-  fails f32 (L.v ~offset:1 ~strides:[| 1 |] [| 1 |]) (at 2);
-  ignore (A.v f32 (L.contiguous [| 0 |]) (at 1))
 
 let test_dead () =
   let b = B.create Rig.host 16 in
@@ -146,7 +183,7 @@ let law_create (D.Any dt, s) =
   let b = A.buffer a in
   equal layout (L.contiguous s) (A.layout a);
   equal int (D.bytes dt n) (B.length b);
-  equal bool true (Rig.equal Rig.host (A.device a));
+  equal device Rig.host (A.device a);
   let used = n * D.bits dt mod 8 in
   cover "a partial last byte" (used > 0);
   if used > 0 then begin
@@ -186,7 +223,7 @@ let test_create_memory () =
     let s : int iarray = [| rows; 3 |] in
     let a = A.create ?memory d f32 s in
     equal ~msg:(msg ^ ": layout") layout (L.contiguous s) (A.layout a);
-    equal ~msg:(msg ^ ": device") bool true (Rig.equal d (A.device a));
+    equal ~msg:(msg ^ ": device") device d (A.device a);
     equal ~msg:(msg ^ ": bytes") int (12 * rows) (B.length (A.buffer a))
   in
   List.iteri
@@ -244,7 +281,7 @@ let law_move (Case (a, m)) =
   | None | Some (None, None) -> ()
   | Some (Some b, Some l) ->
       equal layout l (A.layout b);
-      equal bool true (A.buffer a == A.buffer b)
+      own_buffer a (A.buffer b)
   | Some (Some _, None) -> fail "move answered a view Layout.move refuses"
   | Some (None, Some _) ->
       fail "move answered None where Layout.move has a view"
@@ -396,7 +433,9 @@ let law_bitcast (D.Any src, (D.Any dst as d), l, first) =
     match (reference, A.bitcast dst a) with
     | Some l', Some c ->
         equal layout l' (A.layout c);
-        equal bool true (A.buffer c == b)
+        satisfies ~claim:"over the source's buffer" pass
+          (fun c -> A.buffer c == b)
+          c
     | None, None -> ()
     | Some l', None -> failf "None where %a was expected" L.pp l'
     | None, Some c -> failf "%a where None was expected" L.pp (A.layout c)
@@ -404,64 +443,11 @@ let law_bitcast (D.Any src, (D.Any dst as d), l, first) =
 let test_expect () =
   let a = floats32 [| 1 |] [| 3. |] in
   equal (values f32) [| 3. |] (A.to_array (A.expect f32 (A.Any a)));
-  raises_match (Exn.invalid_arg ~sub:"float32") (fun () ->
-      A.expect D.Float64 (A.Any a))
-
-let test_refused () =
-  let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
-  let b = A.create Rig.host D.Int8 [| 4 |] in
-  (match A.refused "add" A.Wrong_dtype [ A.Any a; A.Any b ] with
-  | () -> fail "refused returned"
+  match A.expect D.Float64 (A.Any a) with
+  | _ -> fail "expect returned"
   | exception Invalid_argument m ->
-      starts_with ~prefix:"add: " m;
-      contains ~sub:"dtype" m;
-      contains ~sub:"float32 [2; 3]" m;
-      contains ~sub:"int8 [4]" m);
-  raises_match (Exn.invalid_arg ~sub:"shapes") (fun () ->
-      A.refused "add" A.Shape_mismatch [ A.Any a ]);
-  raises_match (Exn.invalid_arg ~sub:"not a refusal") (fun () ->
-      A.refused "add" A.Done [ A.Any a ]);
-  raises_match (Exn.invalid_arg ~sub:"not a refusal") (fun () ->
-      A.refused "add" A.Declined [ A.Any a ])
-
-(* A dead operand's reason is its consumer's, given before the operands, each
-   dead operand named by its dtype and shape in the list's order. *)
-let test_refused_dead () =
-  let a = floats32 [| 3 |] [| 1.; 2.; 3. |] in
-  let b = floats32 [| 3 |] [| 4.; 5.; 6. |] in
-  kill ~why:"donated (Nx.donate)" (A.buffer b);
-  raises
-    (Invalid_argument
-       "Nx.add: float32 [3] was donated (Nx.donate) (float32 [3], float32 [3])")
-    (fun () -> A.refused "Nx.add" A.Dead_buffer [ A.Any a; A.Any b ]);
-  kill ~why:"donated to Nx.set" (A.buffer a);
-  raises
-    (Invalid_argument
-       "Nx.add: float32 [3] was donated to Nx.set, float32 [3] was donated \
-        (Nx.donate) (float32 [3], float32 [3])")
-    (fun () -> A.refused "Nx.add" A.Dead_buffer [ A.Any a; A.Any b ])
-
-(* Every refusal raises, naming the function and each operand, with a reason
-   of its own. *)
-let test_refused_codes () =
-  let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
-  let reason (name, r) =
-    match A.refused "Nx.f" r [ A.Any a ] with
-    | () -> failf "refused returned on %s" name
-    | exception Invalid_argument m ->
-        starts_with ~msg:name ~prefix:"Nx.f: " m;
-        contains ~msg:name ~sub:"float32 [2; 3]" m;
-        m
-  in
-  let reasons = List.map reason refusals in
-  equal int (List.length refusals)
-    (List.length (List.sort_uniq compare reasons))
-
-(* C answers nx_array.h's codes, which OCaml reads as the constructors. *)
-let test_codes () =
-  equal (array int)
-    (Array.of_list (List.map (fun (_, a) -> S.code a) S.answers))
-    (S.codes ())
+      contains ~sub:"float32" m;
+      contains ~sub:"float64" m
 
 (* Elements *)
 
@@ -492,18 +478,19 @@ let law_range (type s) (dt : (int, s) D.t) =
             [ min_int; lo - 1; lo; hi; hi + 1; max_int ] );
       ]
   in
-  prop ~count:400 (D.name dt) x (fun x ->
+  prop ~count:400 (D.name dt)
+    ~examples:[ min_int; lo - 1; lo; hi; hi + 1; max_int ]
+    x
+    (fun x ->
       let a = A.create Rig.host dt [| 1 |] in
       let outside = x < lo || x > hi in
       cover "out of range" outside;
       cover "a bound" (x = lo || x = hi);
       if outside then begin
-        equal ~msg:"holds" bool false (D.holds dt x);
         raises_match Exn.invalid_arg (fun () -> A.set a [| 0 |] x);
         raises_match Exn.invalid_arg (fun () -> A.of_array dt [| 1 |] [| x |])
       end
       else begin
-        equal ~msg:"holds" bool true (D.holds dt x);
         A.set a [| 0 |] x;
         equal int x (A.get a [| 0 |]);
         equal (array int) [| x |] (A.to_array (A.of_array dt [| 1 |] [| x |]))
@@ -524,32 +511,38 @@ let test_of_array_refuses () =
   raises_match Exn.invalid_arg (fun () -> A.of_array f32 [| 1 |] [| 1.; 2. |]);
   raises_match Exn.invalid_arg (fun () -> A.of_array f32 [| -1 |] [||]);
   let a = A.of_array f32 [| 0; 3 |] [||] in
-  equal bool true (Rig.equal Rig.host (A.device a));
+  equal device Rig.host (A.device a);
   equal layout (L.contiguous [| 0; 3 |]) (A.layout a)
 
-let test_index () =
-  let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
-  let fails f = raises_match Exn.invalid_arg f in
-  fails (fun () -> A.get a [| 2; 0 |]);
-  fails (fun () -> A.get a [| 0; -1 |]);
-  fails (fun () -> A.get a [| 0 |]);
-  fails (fun () -> A.set a [| 0; 3 |] 1.);
-  fails (fun () -> A.get a [| 0; 0; 0 |])
+(* Indices of a [2; 3] array outside its shape: past an extent, below 0, of
+   another number of entries. *)
+let outside = [ [| 2; 0 |]; [| 0; 3 |]; [| 0; -1 |]; [| 0 |]; [| 0; 0; 0 |] ]
 
-let test_set_refuses () =
+let test_index i =
+  let a = floats32 [| 2; 3 |] (Array.make 6 0.) in
+  let i = Iarray.of_array i in
+  raises_match ~msg:"get" Exn.invalid_arg (fun () -> A.get a i);
+  raises_match ~msg:"set" Exn.invalid_arg (fun () -> A.set a i 1.)
+
+(* [a]'s dtype and layout over the host's borrow of mapped pages whose memory
+   admits only reads. *)
+let read_only a =
+  let io = S.mapped_read_only a in
+  A.v (A.dtype a) (A.layout a) (Option.get (B.borrow Rig.host (A.buffer io)))
+
+let test_set_twice () =
   let a = floats32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Option.get (A.move (M.Broadcast [| 2; 3 |]) a) in
-  raises_match (Exn.invalid_arg ~sub:"twice") (fun () -> A.set b [| 0; 0 |] 5.);
-  let u = A.create Rig.host D.Uint8 [| 1 |] in
-  raises_match (Exn.invalid_arg ~sub:"256") (fun () -> A.set u [| 0 |] 256);
-  raises_match Exn.invalid_arg (fun () -> A.set u [| 0 |] (-1));
-  let i = A.create Rig.host D.Int4 [| 1 |] in
-  raises_match Exn.invalid_arg (fun () -> A.set i [| 0 |] 8);
-  raises_match Exn.invalid_arg (fun () -> A.set i [| 0 |] (-9));
-  A.set i [| 0 |] (-8);
-  equal int (-8) (A.get i [| 0 |]);
-  raises_match Exn.invalid_arg (fun () ->
-      A.of_array D.Uint16 [| 2 |] [| 1; 65536 |])
+  raises_match (Exn.invalid_arg ~sub:"twice") (fun () -> A.set b [| 0; 0 |] 5.)
+
+let test_set_read_only () =
+  let a = read_only (floats32 [| 2 |] [| 1.; 2. |]) in
+  raises_match
+    (fun e ->
+      Exn.invalid_arg ~sub:"Nx_array.set" e
+      && Exn.invalid_arg ~sub:"read-only" e)
+    (fun () -> A.set a [| 0 |] 5.);
+  equal (values f32) [| 1.; 2. |] (A.to_array a)
 
 let test_off_host_refuses () =
   let d = S.off_host () in
@@ -599,9 +592,9 @@ let test_copy_off_host () =
   let m = A.to_device d (floats32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |]) in
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) m) in
   let c = A.copy t in
-  equal ~msg:"device" bool true (Rig.equal d (A.device c));
+  equal ~msg:"device" device d (A.device c);
   equal ~msg:"layout" layout (L.contiguous [| 3; 2 |]) (A.layout c);
-  equal ~msg:"fresh" bool false (B.overlaps (A.buffer c) (A.buffer m));
+  fresh m c;
   equal ~msg:"elements" (values f32) [| 0.; 3.; 1.; 4.; 2.; 5. |]
     (A.to_array (A.to_device Rig.host c))
 
@@ -721,64 +714,26 @@ let law_to_array (Case (a, m)) =
     | None -> false);
   match b with Some b -> check b | None -> check a
 
-(* Every pattern of a narrow float format decodes alike in the run form
-   ([to_array]) and the scalar one ([get]). *)
-let test_decode_patterns () =
-  let all dt patterns =
-    let a = Option.get (A.bitcast dt patterns) in
-    equal ~msg:(D.name dt) (values dt) (gets a) (A.to_array a)
-  in
-  let u16 = A.of_array D.Uint16 [| 65536 |] (Array.init 65536 Fun.id) in
-  let u8 = A.of_array D.Uint8 [| 256 |] (Array.init 256 Fun.id) in
-  all D.Float16 u16;
-  all D.Bfloat16 u16;
-  all D.Float8_e4m3fn u8;
-  all D.Float8_e5m2 u8;
-  all D.Float4_e2m1fn u8
-
-(* And every store of a run ([of_array]) is the scalar store ([of_float]). *)
-let law_encode (D.Any dt) =
-  let open Gen in
-  let x =
-    frequency
-      [
-        (4, float_range (-70000.) 70000.);
-        (2, float_range (-1e-4) 1e-4);
-        (1, any_float);
-        ( 1,
-          map
-            (fun k -> Float.ldexp (Float.of_int ((2 * k) + 1)) (-11))
-            (int_range 0 4096) );
-      ]
-  in
-  match D.kind dt with
-  | D.Float ->
-      [
-        prop (D.name dt)
-          (array ~size:(int_range 1 40) x)
-          (fun xs ->
-            equal (values dt)
-              (Array.map (D.of_float dt) xs)
-              (A.to_array (A.of_array dt [| Array.length xs |] xs)));
-      ]
-  | _ -> []
-
 let test_copy () =
   let a = floats32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) a) in
   let c = A.copy t in
   equal layout (L.contiguous [| 3; 2 |]) (A.layout c);
   equal (values f32) [| 0.; 3.; 1.; 4.; 2.; 5. |] (A.to_array c);
-  equal bool false (B.overlaps (A.buffer c) (A.buffer a));
+  fresh a c;
   A.set c [| 0; 0 |] 9.;
   equal (values f32) [| 0. |] [| A.get a [| 0; 0 |] |]
 
-let test_copy_bits () =
+(* NaN payloads of both kinds and -0., as float32 bits. *)
+let test_nan_payloads () =
   let bits = [| 0x7fc00001l; 0xffa00002l; 0x80000000l; 0x7f800001l |] in
-  let u = A.of_array D.Uint32 [| 4 |] bits in
-  let f = Option.get (A.bitcast f32 u) in
-  let back = Option.get (A.bitcast D.Uint32 (A.copy f)) in
-  equal (array int32) bits (A.to_array back)
+  let f = Option.get (A.bitcast f32 (A.of_array D.Uint32 [| 4 |] bits)) in
+  let back a = A.to_array (Option.get (A.bitcast D.Uint32 a)) in
+  equal ~msg:"copy" (array int32) bits (back (A.copy f));
+  equal ~msg:"to_device" (array int32) bits (back (A.to_device Rig.host f));
+  let dst = A.create Rig.host f32 [| 4 |] in
+  A.transfer ~src:f ~dst;
+  equal ~msg:"transfer" (array int32) bits (back dst)
 
 let law_copy (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
@@ -919,10 +874,26 @@ let raw = raw_of (List.filter (fun (D.Any dt) -> D.bits dt >= 8) D.all)
 (* The bytes of [a]'s elements in C order of indices. *)
 let bytes_of a = A.to_array (Option.get (A.bitcast D.Uint8 a))
 
-let law_copy_bits (Case (a, m)) =
-  let a = Option.value ~default:a (Option.bind m (fun m -> A.move m a)) in
+(* The bytes of each element of a host array and a movement of it, then of copy,
+   to_device and transfer of the same view of its elements lying where [src]
+   says, into memory lying where [dst] says, read back on the host. *)
+let law_bits_kept (Case (a, m), (src, dst)) =
+  let view a = Option.value ~default:a (Option.bind m (fun m -> A.move m a)) in
+  let want = bytes_of (view a) in
+  let a = view (lying src a) in
   cover "a strided view" (not (L.is_contiguous (A.layout a)));
-  equal (array int) (bytes_of a) (bytes_of (A.copy a))
+  cover "from memory off the host" (src <> Host_memory);
+  cover "into memory off the host" (dst <> Host_memory);
+  let bytes x = bytes_of (on_host x) in
+  (* An io device makes no memory, so a copy there raises as create does. *)
+  if src <> Io_memory then equal ~msg:"copy" (array int) want (bytes (A.copy a));
+  equal ~msg:"to_device to the host" (array int) want
+    (bytes (A.to_device Rig.host a));
+  equal ~msg:"to_device off the host" (array int) want
+    (bytes (A.to_device (S.off_host ()) a));
+  let into = lying dst (A.create Rig.host (A.dtype a) (L.shape (A.layout a))) in
+  A.transfer ~src:a ~dst:into;
+  equal ~msg:"transfer" (array int) want (bytes into)
 
 (* A bool element is true iff its byte is not zero. *)
 let law_bool_bytes (Case (a, m)) =
@@ -1166,7 +1137,7 @@ let check_moved ?(msg = "") d a =
   let c = A.to_device d a in
   let bits = D.bits (A.dtype a) in
   let how, want = moved bits (A.layout a) in
-  equal ~msg:(msg ^ "device") bool true (Rig.equal d (A.device c));
+  equal ~msg:(msg ^ "device") device d (A.device c);
   equal ~msg:(msg ^ "layout") layout want (A.layout c);
   let lo, hi = L.span want in
   let bytes =
@@ -1208,8 +1179,7 @@ let law_to_device (Case (a, m)) =
       &&
       let lo, hi = L.span l in
       lo * bits mod 8 <> 0 || hi * bits mod 8 <> 0);
-    if B.length (A.buffer c) > 0 then
-      equal bool false (B.overlaps (A.buffer c) (A.buffer a))
+    if B.length (A.buffer c) > 0 then fresh a c
   in
   let b = Option.bind m (fun m -> A.move m a) in
   cover "a view" (Option.is_some b);
@@ -1327,13 +1297,19 @@ module Polled = Rig_support.Polled
 
 let capacity = 1 lsl 16
 
-let held, held_q =
-  Polled.open_ ~capacity ~host_visible:false ~waits_on:[ `Host ]
-    "nx-array-held"
+(* The two devices and their queues, opened by the first test that uses them. *)
+let held_device =
+  lazy
+    (Polled.open_ ~capacity ~host_visible:false ~waits_on:[ `Host ]
+       "nx-array-held")
 
-let flat, flat_q =
-  Polled.open_ ~capacity ~host_visible:false ~maps_host:false
-    ~waits_on:[ `Host ] "nx-array-flat"
+let flat_device =
+  lazy
+    (Polled.open_ ~capacity ~host_visible:false ~maps_host:false
+       ~waits_on:[ `Host ] "nx-array-flat")
+
+let held () = fst (Lazy.force held_device)
+let flat () = fst (Lazy.force flat_device)
 
 (* Runs every queued copy. *)
 let drain () =
@@ -1342,7 +1318,7 @@ let drain () =
       while Polled.run q > 0 do
         ()
       done)
-    [ held_q; flat_q ]
+    [ snd (Lazy.force held_device); snd (Lazy.force flat_device) ]
 
 (* The bytes of [a]'s buffer, read on the host. *)
 let buffer_bytes a =
@@ -1356,7 +1332,10 @@ let buffer_bytes a =
 
 type side = On_host | Held | Flat
 
-let device_of = function On_host -> Rig.host | Held -> held | Flat -> flat
+let device_of = function
+  | On_host -> Rig.host
+  | Held -> held ()
+  | Flat -> flat ()
 
 let pp_side ppf s =
   Format.pp_print_string ppf
@@ -1520,7 +1499,7 @@ let law_transfer_held ((Case (a, m), flip), r) =
           in
           let reference = A.copy before in
           let expected = outcome reference in
-          let big = A.to_device held before in
+          let big = A.to_device (held ()) before in
           let actual = outcome big in
           equal string ~msg:"outcome" expected actual;
           drain ();
@@ -1538,6 +1517,7 @@ let law_transfer_held ((Case (a, m), flip), r) =
    in memory that a freed buffer filled with ones held, which rig may give the
    array. *)
 let test_create_fill_queued () =
+  let held = held () in
   let dirty = B.create held 3 in
   B.fill dirty '\xff';
   ignore (B.free dirty : bool);
@@ -1578,6 +1558,8 @@ let test_transfer_refusals () =
   in
   fails "a destination overlapping the source" "shares bytes" (fun () ->
       A.transfer ~src:(part 0) ~dst:(part 1));
+  fails "a Read destination" "read-only" (fun () ->
+      A.transfer ~src:a ~dst:(read_only (floats32 [| 2 |] [| 0.; 0. |])));
   (* An empty destination on Read memory raises wherever the memory lies. *)
   let empty = A.create Rig.host f32 [| 0 |] in
   let read_only b = A.v f32 (L.contiguous [| 0 |]) b in
@@ -1598,13 +1580,15 @@ let law_borrow (Case (a, m)) =
    fun a ->
     let d = Lazy.force memory in
     let b = Option.get (A.borrow d a) in
-    equal ~msg:"device" bool true (Rig.equal d (A.device b));
+    equal ~msg:"device" device d (A.device b);
     equal iints (L.shape (A.layout a)) (L.shape (A.layout b));
     equal iints (L.strides (A.layout a)) (L.strides (A.layout b));
     equal int (L.offset (A.layout a)) (L.offset (A.layout b));
     equal (values (A.dtype a)) (A.to_array a) (A.to_array b);
     if B.length (A.buffer a) > 0 then
-      equal ~msg:"shares" bool true (B.overlaps (A.buffer a) (A.buffer b));
+      satisfies ~claim:"shares the source's memory" pass
+        (fun b -> B.overlaps (A.buffer a) (A.buffer b))
+        b;
     let back = Option.get (A.borrow Rig.host b) in
     equal ~msg:"back" (values (A.dtype a)) (A.to_array a) (A.to_array back)
   in
@@ -1612,26 +1596,37 @@ let law_borrow (Case (a, m)) =
   cover "a view" (Option.is_some b);
   match b with Some b -> check b | None -> check a
 
-let test_borrow_cases () =
+let test_borrow_own () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
-  equal ~msg:"its own device" bool true
-    (Option.get (A.borrow Rig.host a) == a);
+  satisfies ~claim:"the array itself" pass
+    (fun b -> b == a)
+    (Option.get (A.borrow Rig.host a))
+
+let test_borrow_unmapped () =
+  let a = A.to_device (S.off_host ()) (floats32 [| 2 |] [| 1.; 2. |]) in
+  is_none (A.borrow Rig.host a)
+
+let test_borrow_writes () =
+  let a = floats32 [| 2 |] [| 1.; 2. |] in
   let b = Option.get (A.borrow (Lazy.force memory) a) in
   A.set b [| 1 |] 5.;
-  equal ~msg:"writes show" float_exact 5. (A.get a [| 1 |]);
+  equal float_exact 5. (A.get a [| 1 |])
+
+let test_borrow_dead () =
   let dead = floats32 [| 2 |] [| 1.; 2. |] in
   kill (A.buffer dead);
-  raises_match ~msg:"dead" (Exn.invalid_arg ~sub:"dead") (fun () ->
-      A.borrow (Lazy.force memory) dead);
+  raises_match (Exn.invalid_arg ~sub:"dead") (fun () ->
+      A.borrow (Lazy.force memory) dead)
+
+(* A closed device's arrays, borrowed onto it and from the host. *)
+let test_borrow_lost () =
+  let a = floats32 [| 2 |] [| 1.; 2. |] in
   let closed = Result.get_ok (Rig.software "nx-test-borrow-closed") in
   let on_closed = A.to_device closed a in
   Rig.close closed;
-  raises_match ~msg:"lost"
-    (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> A.borrow closed a);
-  raises_match ~msg:"lost, on its own device"
-    (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> A.borrow closed on_closed)
+  raises_match ~msg:"from the host" lost (fun () -> A.borrow closed a);
+  raises_match ~msg:"on its own device" lost (fun () ->
+      A.borrow closed on_closed)
 
 let test_bitcast_devices () =
   let x = floats32 [| 2 |] [| 1.; -2. |] in
@@ -1641,8 +1636,8 @@ let test_bitcast_devices () =
     let before = S.off_host_allocations () in
     let u = Option.get (A.bitcast D.Uint8 a) in
     equal ~msg:"allocations" int before (S.off_host_allocations ());
-    equal ~msg:"buffer" bool true (A.buffer u == A.buffer a);
-    equal ~msg:"device" bool true (Rig.equal d (A.device u));
+    own_buffer a (A.buffer u);
+    equal ~msg:"device" device d (A.device u);
     u
   in
   equal ~msg:"software device" (array int) want
@@ -1657,7 +1652,7 @@ let test_to_device_io () =
     Option.get (A.move (M.Slice [| { start = 5; count = 3; step = -2 } |]) a)
   in
   let back = A.to_device Rig.host s in
-  equal bool true (Rig.equal Rig.host (A.device back));
+  equal device Rig.host (A.device back);
   equal (array int) [| -6; -4; -2 |] (A.to_array back);
   equal layout (L.v ~offset:2 ~strides:[| -1 |] [| 3 |]) (A.layout back)
 
@@ -1713,7 +1708,7 @@ let test_bigarray () =
   in
   let g = A.bigarray row in
   equal float_exact 9. (Bigarray.Genarray.get g [| 0; 2 |]);
-  equal bool false (unclaimed (A.buffer a))
+  claimed ~msg:"never taken after bigarray" (A.buffer a)
 
 (* Bigarray's kind for a dtype, where Bigarray has the format. *)
 let kind : type v s. (v, s) D.t -> (v, s) Bigarray.kind option = function
@@ -1784,7 +1779,9 @@ let test_wait_bigarray () =
   let d, _ = late () in
   let a = A.create Rig.host f32 [| Rig.Buffer.paged_from / 4 |] in
   pending (Option.get (A.borrow d a)) [| 3.; 4. |];
-  equal ~msg:"pending" bool true (Rig.signaled d < Rig.submitted d);
+  satisfies ~claim:"pending: signaled below submitted" (pair int int)
+    (fun (signaled, submitted) -> signaled < submitted)
+    (Rig.signaled d, Rig.submitted d);
   let g = A.bigarray a in
   equal (values f32) [| 3.; 4. |]
     (Array.init 2 (fun i -> Bigarray.Genarray.get g [| i |]))
@@ -1795,7 +1792,7 @@ let test_of_bigarray () =
   in
   Bigarray.Genarray.fill g 3;
   let a = A.of_bigarray D.Int16 g in
-  equal bool true (D.equal D.Int16 (A.dtype a));
+  equal string "int16" (D.name (A.dtype a));
   Bigarray.Genarray.set g [| 1; 0 |] (-7);
   equal (array int) [| 3; 3; -7; 3 |] (A.to_array a);
   A.set a [| 0; 1 |] 11;
@@ -1901,7 +1898,7 @@ let law_write (Case (a, m)) =
           (Array.init n (fun k -> before.(n - 1 - k)))
           (A.to_array a)
     | Some _ -> fails "contiguous");
-    equal ~msg:"released" bool true (unclaimed (A.buffer a))
+    released (A.buffer a)
   in
   check
     (match Option.bind m (fun m -> A.move m a) with Some b -> b | None -> a)
@@ -1910,8 +1907,7 @@ let law_write (Case (a, m)) =
    or raises. *)
 let test_write_claim () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
-  let inside = A.write a (fun _ -> unclaimed (A.buffer a)) in
-  equal ~msg:"claimed while f runs" bool false inside;
+  A.write a (fun _ -> claimed ~msg:"claimed while f runs" (A.buffer a));
   let a = retaken a in
   raises Raised (fun () -> A.write a (fun _ -> raise Raised));
   ignore (retaken ~msg:"released after a raise" a)
@@ -1920,7 +1916,7 @@ let test_write_claim () =
    fills. *)
 let test_host () =
   let a = A.host D.Int64 [| 2; 3 |] in
-  equal ~msg:"on the host" bool true (Rig.equal (A.device a) Rig.host);
+  equal ~msg:"on the host" device Rig.host (A.device a);
   equal ~msg:"its shape" iints
     (Iarray.of_array [| 2; 3 |])
     (L.shape (A.layout a));
@@ -1933,8 +1929,7 @@ let test_host () =
    the memory to later donations. *)
 let test_read_claim () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
-  let inside = A.read a (fun _ -> unclaimed (A.buffer a)) in
-  equal ~msg:"claimed while f runs" bool false inside;
+  A.read a (fun _ -> claimed ~msg:"claimed while f runs" (A.buffer a));
   let a = retaken a in
   raises Raised (fun () -> A.read a (fun _ -> raise Raised));
   ignore (retaken ~msg:"released after a raise" a)
@@ -1954,13 +1949,17 @@ let test_read_refuses () =
   read_fails ~msg:"17 axes" "17" (fun () ->
       A.read a ignore)
 
-(* An array with no element reads as an empty bigarray, whatever its memory. *)
+(* An array with no element passes an empty bigarray, wherever its memory
+   lies. *)
 let test_read_empty () =
-  let dims a = A.read a Bigarray.Genarray.dims in
-  equal ~msg:"on the host" ints [| 2; 0 |]
-    (dims (A.create Rig.host f32 [| 2; 0 |]));
-  equal ~msg:"off the host" ints [| 0 |]
-    (dims (A.create (S.off_host ()) f32 [| 0 |]))
+  let dims d = A.read (A.create d f32 [| 2; 0 |]) Bigarray.Genarray.dims in
+  equal ~msg:"on the host" ints [| 2; 0 |] (dims Rig.host);
+  equal ~msg:"off the host" ints [| 2; 0 |] (dims (S.off_host ()))
+
+let test_write_empty () =
+  let dims d = A.write (A.create d f32 [| 2; 0 |]) Bigarray.Genarray.dims in
+  equal ~msg:"on the host" ints [| 2; 0 |] (dims Rig.host);
+  equal ~msg:"off the host" ints [| 2; 0 |] (dims (S.off_host ()))
 
 let test_wait_read () =
   let d, _ = late () in
@@ -1969,47 +1968,128 @@ let test_wait_read () =
   equal (values f32) [| 3.; 4. |]
     (A.read a (fun g ->
          Array.init 2 (fun i -> Bigarray.Genarray.get g [| i |])));
-  no_claim a
+  released (A.buffer a)
 
-(* A lost device's array raises Lost at the claim, before [f] runs. *)
-let test_read_lost () =
-  let ran = ref false in
-  let read a = A.read a (fun _ -> ran := true) in
+(* Calls over an array of a lost device: its work faulted, or the device
+   closed. *)
+let faulted () =
   let d, l = late () in
   let x = on_late d [| 1.; 2. |] in
   pending x [| 3.; 4. |];
   S.Late.fault l "gone";
-  raises_match ~msg:"faulted" lost (fun () -> read x);
+  x
+
+let closed () =
   let d, _ = late () in
   let y = on_late d [| 1.; 2. |] in
   Rig.close d;
-  raises_match ~msg:"closed" lost (fun () -> read y);
-  equal ~msg:"ran" bool false !ran
+  y
 
-let float_dtypes = List.filter (fun (D.Any dt) -> D.is D.Float dt) D.all
+(* read and write over a lost device's array raise Lost at the claim, before
+   their function runs. *)
+let test_read_lost () =
+  let read x = A.read x (fun _ -> fail "read ran its function") in
+  raises_match ~msg:"faulted work" lost (fun () -> read (faulted ()));
+  raises_match ~msg:"a closed device" lost (fun () -> read (closed ()))
+
+let test_write_lost () =
+  let write x = A.write x (fun _ -> fail "write ran its function") in
+  raises_match ~msg:"faulted work" lost (fun () -> write (faulted ()));
+  raises_match ~msg:"a closed device" lost (fun () -> write (closed ()))
+
+(* A host array a Late device borrowed and has pending work on, which faults:
+   bigarray's wait raises Lost. *)
+let test_bigarray_lost () =
+  let d, l = late () in
+  let a = A.create Rig.host f32 [| Rig.Buffer.paged_from / 4 |] in
+  pending (Option.get (A.borrow d a)) [| 3.; 4. |];
+  S.Late.fault l "gone";
+  raises_match lost (fun () -> A.bigarray a)
+
+(* get and to_array read after the work on their array, and raise Lost where
+   that work's device is lost. *)
+let test_wait_get () =
+  let d, _ = late () in
+  let a = on_late d [| 0.; 0. |] in
+  pending a [| 3.; 4. |];
+  equal float_exact 4. (A.get a [| 1 |]);
+  released (A.buffer a)
+
+let test_wait_to_array () =
+  let d, _ = late () in
+  let a = on_late d [| 0.; 0. |] in
+  pending a [| 3.; 4. |];
+  equal ~msg:"float32" (values f32) [| 3.; 4. |] (A.to_array a);
+  let b = A.create d D.Int32 [| 2 |] in
+  pending b [| Int32.float_of_bits 5l; Int32.float_of_bits 6l |];
+  equal ~msg:"int32" (values D.Int32) [| 5l; 6l |] (A.to_array b)
+
+let test_get_lost () = raises_match lost (fun () -> A.get (faulted ()) [| 0 |])
+
+let test_to_array_lost () =
+  raises_match lost (fun () -> A.to_array (faulted ()))
+
+let test_wait_copy () =
+  let d, _ = late () in
+  let a = on_late d [| 0.; 0. |] in
+  pending a [| 3.; 4. |];
+  equal (values f32) [| 3.; 4. |] (A.to_array (A.copy a))
+
+(* Writes refused by memory that admits only reads. *)
+let test_write_read_only () =
+  let a = read_only (floats32 [| 2 |] [| 1.; 2. |]) in
+  raises_match
+    (fun e ->
+      Exn.invalid_arg ~sub:"Nx_array.write" e
+      && Exn.invalid_arg ~sub:"read-only" e)
+    (fun () -> A.write a ignore)
+
+(* A float array of to_array is a flat float array, where the compiler has
+   them. *)
+let test_flat_floats () =
+  if Obj.tag (Obj.repr [| 0.; 1. |]) <> Obj.double_array_tag then
+    skip ~reason:"the compiler has no flat float arrays" ();
+  satisfies ~claim:"a flat float array" pass
+    (fun xs -> Obj.tag (Obj.repr xs) = Obj.double_array_tag)
+    (A.to_array (floats32 [| 3 |] [| 1.; 2.; 3. |]))
+
+let test_bigarray_off_rig_host () =
+  let a = A.to_device (Lazy.force memory) (floats32 [| 2 |] [| 1.; 2. |]) in
+  raises_match (Exn.invalid_arg ~sub:"Nx_array.bigarray") (fun () ->
+      A.bigarray a)
 
 let tests =
   [
-    group "construction"
+    group "v"
       [
-        test "v keeps the layout inside the buffer" test_bounds;
-        test "v refuses a misaligned first element" test_alignment;
-        test "v refuses a dead buffer" test_dead;
+        cases
+          "takes a layout within its buffer's bytes and refuses one past them"
+          ~id:(fun (n, _, _, _, _) -> n)
+          within test_within;
+        cases "refuses a misaligned first element"
+          ~id:(fun (n, _, _, _, _) -> n)
+          alignments test_alignment;
+        test "refuses a dead buffer" test_dead;
         prop ~count:2000
-          "v takes a layout within its buffer's bytes on an aligned first \
+          "takes a layout within its buffer's bytes on an aligned first \
            element, and only those"
           parts law_v;
-        prop ~count:400
-          "create is C-contiguous at offset 0 over its bytes, its tail bits \
-           zero"
-          dtype_and_shape law_create;
-        test "create refuses what contiguous refuses" test_create_refuses;
-        test "create allocates the kind of memory it is given" test_create_memory;
-        (* One case in a hundred is a movement no view expresses. *)
-        prop ~count:3000 "move is Layout.move over the same buffer" viewed
-          law_move;
         prop "every movement keeps an array in its buffer" case law_bounds;
       ];
+    group "create"
+      [
+        prop ~count:400
+          "is C-contiguous at offset 0 over its bytes, its tail bits zero"
+          dtype_and_shape law_create;
+        test "allocates the kind of memory it is given" test_create_memory;
+        test "refuses what contiguous refuses" test_create_refuses;
+        test "on a held device leaves its tail's fill queued"
+          test_create_fill_queued;
+      ];
+    test "host makes a C-contiguous host array that write fills" test_host;
+    test "expect recovers the dtype, or raises naming both" test_expect;
+    (* One case in a hundred is a movement no view expresses. *)
+    prop ~count:3000 "move is Layout.move over the same buffer" viewed law_move;
     group "bitcast"
       [
         test "a narrowing reads the bytes, its widening returns"
@@ -2018,139 +2098,152 @@ let tests =
         test "a widening refuses strides it cannot divide" test_bitcast_refuses;
         prop ~count:400 "a narrowing then its widening is the identity" case
           law_bitcast_round_trip;
-        prop ~count:1000 "bitcast follows its rule over any layout" bitcast_case
+        prop ~count:1000 "follows its rule over any layout" bitcast_case
           law_bitcast;
-        test "expect recovers the dtype or names both" test_expect;
-        test "refused names the function, the reason and every operand"
-          test_refused;
-        test "refused gives each refusal its own reason" test_refused_codes;
-        test "refused names a dead operand's consumer, before the operands"
-          test_refused_dead;
-        test "C answers the constructors' codes" test_codes;
+        test "is a view on a software device and off the host"
+          test_bitcast_devices;
       ];
-    group "elements"
+    group "get"
       [
-        prop "get reads what set stores" case law_set_get;
-        test "an index outside the shape is refused" test_index;
-        test "set refuses repeated elements and ints out of range"
-          test_set_refuses;
-        group "an int outside its dtype's range is refused" ranges;
-        test "of_array refuses a count other than the shape's"
-          test_of_array_refuses;
-        test "memory the host does not address is refused"
-          test_off_host_refuses;
-        test "a dead buffer is refused" test_dead_access;
-        test "bigarray refuses a dead buffer off the host" test_dead_bigarray;
-        test "to_device and to_array refuse a dead buffer under no element"
-          test_dead_empty;
+        prop "reads what set stores" case law_set_get;
+        cases "refuses an index outside the shape"
+          ~id:(fun i -> Format.asprintf "%a" pp_ints i)
+          outside test_index;
+        prop "a bool reads true iff its byte is not zero"
+          (raw_of [ D.Any D.Bool ]) law_bool_bytes;
+        test "reads after the work on its array" test_wait_get;
+        test "raises Lost for a lost device's work" test_get_lost;
+        test "refuses memory the host does not address" test_off_host_refuses;
+        test "refuses a dead buffer" test_dead_access;
+      ];
+    group "set"
+      [
+        test "refuses an array that reaches an element twice" test_set_twice;
+        test "refuses memory that admits only reads" test_set_read_only;
+        group "refuses an int outside its dtype's range" ranges;
         (* Each case runs its program 50 times on two domains: 100 cases
            whatever --prop-count asks. *)
         stateful ~domains:2 ~count:100
           "writes to one byte from two domains keep each other" int4_commands;
+      ];
+    group "to_array"
+      [
+        prop ~count:300 "reads any layout in C order" case law_to_array;
+        test "of floats is a flat float array" test_flat_floats;
+        test "reads after the work on its array" test_wait_to_array;
+        test "raises Lost for a lost device's work" test_to_array_lost;
+        test "refuses a dead buffer under no element" test_dead_empty;
+      ];
+    group "of_array"
+      [
+        prop "then to_array is the identity" case law_round_trip;
+        test "refuses a count other than the shape's" test_of_array_refuses;
+      ];
+    group "placement"
+      [
+        prop ~count:300
+          "copy, to_device and transfer keep every byte of every element, on \
+           any devices"
+          (Gen.pair raw (Gen.pair lies lies))
+          law_bits_kept;
+        test "copy, to_device and transfer keep NaN payloads" test_nan_payloads;
+        prop ~count:500
+          "copy, to_array and of_array keep every element of views about 256 \
+           bytes a side"
+          tiles law_tiles;
+      ];
+    group "to_device"
+      [
+        prop ~count:400 "copies the elements, keeping a layout that fits them"
+          to_place law_to_device;
+        test "moves a column's elements alone" test_to_device_column;
+        test "packs in stride order" test_to_device_layouts;
+        test "moves a sub-byte view of an io device to the host"
+          test_to_device_io;
+        test "packs views of io and software devices on the host"
+          test_to_device_io_views;
+        stateful ~domains:2 ~count:100
+          "packs a sub-byte view while another domain stores its neighbours"
+          (to_device_commands 4);
+        stateful ~domains:2 ~count:100
+          "copies a sub-byte span while another domain stores its neighbours"
+          (to_device_commands 5);
+      ];
+    group "transfer"
+      [
+        prop ~count:300 "stores any layout's elements into any layout" case
+          law_transfer_layouts;
+        test "writes its destination's elements alone" test_transfer_writes;
+        prop "between windows of one array that share no byte stores the source"
+          (Gen.pair windows lies) law_transfer_windows;
+        prop "stores the elements alone, wherever they lie"
+          (Gen.pair case (Gen.pair lies lies))
+          law_transfer;
+        prop ~count:600 "through held devices stores what the host's does"
+          (Gen.pair (Gen.pair case Gen.bool) route)
+          law_transfer_held;
+        test "refuses what it cannot store, naming itself"
+          test_transfer_refusals;
         stateful ~domains:2 ~count:100
           "a gather keeps the other elements of its end bytes, written from \
            another domain"
           gather_commands;
-        stateful ~domains:2 ~count:100
-          "to_device packs a sub-byte view while another domain stores its \
-           neighbours"
-          (to_device_commands 4);
-        stateful ~domains:2 ~count:100
-          "to_device copies a sub-byte span while another domain stores its \
-           neighbours"
-          (to_device_commands 5);
       ];
-    group "bulk"
+    group "copy"
       [
-        prop "of_array then to_array is the identity" case law_round_trip;
-        prop ~count:300 "to_array reads any layout in C order" case
-          law_to_array;
-        test "run and scalar decodes agree over every pattern"
-          test_decode_patterns;
-        group "run and scalar stores agree"
-          (List.concat_map law_encode float_dtypes);
-        test "copy gathers into a fresh buffer" test_copy;
-        test "copy makes a fresh array off the host" test_copy_off_host;
-        test "copy keeps NaN payloads" test_copy_bits;
-        prop ~count:300 "copy is contiguous with the same elements" case
-          law_copy;
-        prop ~count:300 "copy keeps every byte of every element" raw
-          law_copy_bits;
-        prop ~count:300 "transfer stores any layout's elements into any layout"
-          case
-          law_transfer_layouts;
-        test "transfer writes its destination's elements alone"
-          test_transfer_writes;
-        prop
-          "transfer between windows of one array that share no byte stores \
-           the source"
-          (Gen.pair windows lies) law_transfer_windows;
-        prop "a bool reads true iff its byte is not zero"
-          (raw_of [ D.Any D.Bool ]) law_bool_bytes;
-        prop ~count:300
-          "copy, to_array and of_array keep every element of views about 256 \
-           bytes a side"
-          tiles law_tiles;
-        prop ~count:400
-          "to_device copies the elements, keeping a layout that fits them"
-          to_place law_to_device;
-        test "to_device moves a column's elements alone" test_to_device_column;
-        prop "transfer stores the elements alone, wherever they lie"
-          (Gen.pair case (Gen.pair lies lies))
-          law_transfer;
-        test "transfer refuses what it cannot store, naming itself"
-          test_transfer_refusals;
-        prop ~count:600
-          "transfer through held devices stores what the host's does"
-          (Gen.pair (Gen.pair case Gen.bool) route)
-          law_transfer_held;
-        test "create on a held device leaves its tail's fill queued"
-          test_create_fill_queued;
-        test "to_device packs in stride order" test_to_device_layouts;
-        test "to_device moves a sub-byte view of an io device to the host"
-          test_to_device_io;
-        test "to_device packs views of io and software devices on the host"
-          test_to_device_io_views;
-        test "bitcast is a view on a software device and off the host"
-          test_bitcast_devices;
-        prop "borrow shares memory and keeps the layout" case law_borrow;
-        test "borrow is the array on its device, writes show, dead and lost \
-              refuse"
-          test_borrow_cases;
+        test "gathers into a fresh buffer" test_copy;
+        test "makes a fresh array off the host" test_copy_off_host;
+        prop ~count:300 "is contiguous with the same elements" case law_copy;
+        test "reads after the work on its array" test_wait_copy;
+      ];
+    group "borrow"
+      [
+        prop "shares memory and keeps the layout" case law_borrow;
+        test "is the array itself on its own device" test_borrow_own;
+        test "is None where a device cannot map the memory" test_borrow_unmapped;
+        test "shows writes through either array" test_borrow_writes;
+        test "refuses a dead buffer" test_borrow_dead;
+        test "raises Lost for a lost device" test_borrow_lost;
       ];
     group "bigarray"
       [
-        test "bigarray shares a contiguous host array's bytes" test_bigarray;
-        test "bigarray waits for the work on its array's memory"
-          test_wait_bigarray;
-        test "of_bigarray shares the bigarray's bytes" test_of_bigarray;
-        prop ~count:500
-          "bigarray views a C-contiguous host array and raises otherwise" case
-          law_bigarray;
-        test "bigarray takes up to 16 axes" test_bigarray_rank;
-        test "of_bigarray refuses a bigarray misaligned for its elements"
-          test_of_bigarray_misaligned;
+        test "shares a contiguous host array's bytes, never taken after"
+          test_bigarray;
+        test "waits for the work on its array's memory" test_wait_bigarray;
+        prop ~count:500 "views a C-contiguous host array and raises otherwise"
+          case law_bigarray;
+        test "refuses an array off Rig.host" test_bigarray_off_rig_host;
+        test "takes up to 16 axes" test_bigarray_rank;
+        test "refuses a dead buffer off the host" test_dead_bigarray;
+        test "raises Lost for memory a lost device's work must precede"
+          test_bigarray_lost;
       ];
     group "read"
       [
-        prop ~count:300
-          "read passes a C-contiguous host-addressed array's bytes" case
-          law_read;
-        test "read claims the memory while its function runs" test_read_claim;
-        test "read refuses what it cannot pass" test_read_refuses;
-        test "read passes an array with no element, whatever its memory"
+        prop ~count:300 "passes a C-contiguous host-addressed array's bytes"
+          case law_read;
+        test "claims the memory while its function runs" test_read_claim;
+        test "refuses what it cannot pass" test_read_refuses;
+        test "passes an array with no element, whatever its memory"
           test_read_empty;
-        test "read waits for the work on its array" test_wait_read;
-        test "read raises Lost for a lost device's array" test_read_lost;
+        test "waits for the work on its array" test_wait_read;
+        test "raises Lost before its function runs" test_read_lost;
       ];
     group "write"
       [
-        prop ~count:300
-          "write passes a C-contiguous host array's bytes to store into" case
-          law_write;
-        test "write claims the memory while its function runs"
-          test_write_claim;
-        test "host makes a C-contiguous host array" test_host;
+        prop ~count:300 "passes a C-contiguous host array's bytes to store into"
+          case law_write;
+        test "claims the memory while its function runs" test_write_claim;
+        test "refuses memory that admits only reads" test_write_read_only;
+        test "passes an array with no element, whatever its memory"
+          test_write_empty;
+        test "raises Lost before its function runs" test_write_lost;
+      ];
+    group "of_bigarray"
+      [
+        test "shares the bigarray's bytes" test_of_bigarray;
+        test "refuses a bigarray misaligned for its elements"
+          test_of_bigarray_misaligned;
       ];
   ]
 
