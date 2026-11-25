@@ -7,17 +7,19 @@
     uv run packages/norn/test/gen/dist.py [--check]
 
 Writes `packages/norn/test/golden/dist.golden`: for each family at fixed
-parameters, SciPy's or mpmath's log density at chosen points, its quantiles, and the
-deciles or probabilities a goodness-of-fit test of `sample` bins draws by.
+parameters, mpmath's log density at chosen points, its quantiles, and the
+deciles or probabilities (SciPy's) a goodness-of-fit test of `sample` bins
+draws by.
 The parameters are repeated in `packages/norn/test/test_dist.ml` under the
 same case names. With --check nothing is written, and the run fails if the
 file would change.
 
 Lines are `KIND CASE ARGS... VALUE`, floats hexadecimal or `-inf`:
-- `logpdf CASE X... V`: the log density (or mass) at the point X, the
-  bounds of an open support and the floats next to them inside included;
-- `ppf CASE P V`: the quantile at P, the root of its smaller tail's
-  equation from mpmath;
+- `logpdf CASE X V`: a truncation's log density at the point X, from
+  mpmath, its bounds and the floats next to them inside included;
+- `ppf CASE P V M F`: the quantile V at P, the root of its smaller tail's
+  equation from mpmath, with the log of the smaller tail M of the case's base (itself, or the
+  distribution a truncation truncates) and its log density F at V;
 - `bin CASE LOW HIGH P`: the probability of [LOW, HIGH), the bins of a
   goodness-of-fit test, together of total probability one, each at least
   MIN_BIN;
@@ -40,13 +42,19 @@ Lines are `KIND CASE ARGS... VALUE`, floats hexadecimal or `-inf`:
   and inverse_gamma at concentrations from 1e230 to 1e300 whose mean count
   lies past 2^32 times the concentration, past the floats' range, or far
   below it.
+- `density` lines also hold the families whose log densities are closed
+  forms of elementary functions (normal, half_normal, lognormal, cauchy,
+  half_cauchy, laplace, logistic, exponential, uniform, von_mises, mvn of
+  loc [1, -1] and a lower triangle, categorical of three logits and a
+  category, bernoulli of a logit and 0 or 1), far into their tails and on
+  their supports' bounds.
 - `lkj N ETA L... V`: the log density of the Cholesky factor L (row by row,
   float32 values) of an N x N correlation matrix under LKJ(ETA), from mpmath
-  with the normaliser in its gamma form.
+  with the normaliser in its gamma form, at random factors and at ones far
+  in the tail.
 
-Truncated cases (`truncated_*`) and von Mises cases share the `logpdf`,
-`ppf` and `bin` lines, from mpmath; `bin lkj_N` bins an off-diagonal
-correlation of an LKJ draw.
+Truncated cases (`truncated_*`) share the `ppf` and `bin` lines, from
+mpmath; `bin lkj_N` bins an off-diagonal correlation of an LKJ draw.
 """
 
 import argparse
@@ -68,22 +76,21 @@ def sigmoid(x):
 
 
 SCALAR = {
-    "normal": (stats.norm(0.5, 2.0), [-3.0, 0.0, 0.5, 2.0, 40.0]),
-    "half_normal": (stats.halfnorm(scale=1.5), [0.0, 5e-324, 0.1, 1.0, 5.0, -1.0]),
-    "lognormal": (stats.lognorm(0.8, scale=np.exp(0.3)), [0.01, 0.5, 1.0, 10.0, -1.0, 0.0]),
-    "student_t": (stats.t(3.5, -1.0, 0.7), [-50.0, -1.0, 0.0, 3.0]),
-    "cauchy": (stats.cauchy(1.0, 0.5), [-1e4, 0.0, 1.0, 7.0]),
-    "half_cauchy": (stats.halfcauchy(scale=2.0), [0.0, 5e-324, 1.0, 100.0, -0.5]),
-    "laplace": (stats.laplace(0.0, 1.3), [-4.0, 0.0, 0.3, 9.0]),
-    "logistic": (stats.logistic(2.0, 0.4), [-10.0, 1.0, 2.0, 30.0]),
-    "exponential": (stats.expon(scale=1 / 1.7), [0.0, 5e-324, 0.2, 3.0, -0.1]),
-    "gamma": (stats.gamma(2.5, scale=1 / 1.5), [0.001, 0.5, 2.0, 20.0, -1.0, 0.0]),
-    "gamma_small": (stats.gamma(0.4, scale=1 / 0.8), [1e-6, 0.3, 5.0]),
-    "inverse_gamma": (stats.invgamma(3.0, scale=2.0), [0.05, 0.5, 1.0, 30.0, -1.0]),
-    "beta": (stats.beta(2.0, 5.0), [0.01, 0.2, 0.5, 0.99, 0.0, 1.0, 1.5]),
-    "beta_u": (stats.beta(0.5, 0.5), [1e-4, 0.5, 0.9999]),
-    "uniform": (stats.uniform(-1.0, 4.0), [-1.0, np.nextafter(-1.0, 0.0), 0.0, 2.5,
-                                          np.nextafter(3.0, 0.0), 3.0, 3.5, -2.0]),
+    "normal": stats.norm(0.5, 2.0),
+    "half_normal": stats.halfnorm(scale=1.5),
+    "lognormal": stats.lognorm(0.8, scale=np.exp(0.3)),
+    "student_t": stats.t(3.5, -1.0, 0.7),
+    "cauchy": stats.cauchy(1.0, 0.5),
+    "half_cauchy": stats.halfcauchy(scale=2.0),
+    "laplace": stats.laplace(0.0, 1.3),
+    "logistic": stats.logistic(2.0, 0.4),
+    "exponential": stats.expon(scale=1 / 1.7),
+    "gamma": stats.gamma(2.5, scale=1 / 1.5),
+    "gamma_small": stats.gamma(0.4, scale=1 / 0.8),
+    "inverse_gamma": stats.invgamma(3.0, scale=2.0),
+    "beta": stats.beta(2.0, 5.0),
+    "beta_u": stats.beta(0.5, 0.5),
+    "uniform": stats.uniform(-1.0, 4.0),
 }
 
 QUANTILE = ["normal", "half_normal", "lognormal", "cauchy", "half_cauchy", "laplace",
@@ -91,12 +98,12 @@ QUANTILE = ["normal", "half_normal", "lognormal", "cauchy", "half_cauchy", "lapl
             "beta", "beta_u", "uniform"]
 
 DISCRETE = {
-    "poisson": (stats.poisson(3.2), list(range(0, 12)) + [-1], 12),
-    "neg_binomial": (stats.nbinom(2.5, 2.5 / (2.5 + 4.0)), list(range(0, 15)) + [-2], 20),
-    "bernoulli": (stats.bernoulli(sigmoid(0.4)), [0, 1], 2),
-    "binomial": (stats.binom(12, special.expit(0.4)), list(range(0, 14)) + [-1], 12),
-    "binomial_rare": (stats.binom(40, special.expit(-2.5)), [0, 1, 3, 10, 40, 41], 40),
-    "binomial_many": (stats.binom(200, special.expit(-1.0)), [0, 30, 54, 100, 200], 200),
+    "poisson": (stats.poisson(3.2), 12),
+    "neg_binomial": (stats.nbinom(2.5, 2.5 / (2.5 + 4.0)), 20),
+    "bernoulli": (stats.bernoulli(sigmoid(0.4)), 2),
+    "binomial": (stats.binom(12, special.expit(0.4)), 12),
+    "binomial_rare": (stats.binom(40, special.expit(-2.5)), 40),
+    "binomial_many": (stats.binom(200, special.expit(-1.0)), 200),
 }
 
 
@@ -179,6 +186,11 @@ def masses():
         if 0 <= x <= n:
             v = binomial_mass(x, n, logits)
             out.append(f"mass binomial {fmt(n)} {fmt(logits)} {fmt(x)} {fmt(v)}\n")
+    # Counts outside the support: below 0, and above the trials.
+    out.append(f"mass poisson {fmt(f32(3.5))} {fmt(0.0)} {fmt(-1)} -inf\n")
+    out.append(f"mass binomial {fmt(7)} {fmt(f32(0.25))} {fmt(-1)} -inf\n")
+    out.append(f"mass binomial {fmt(7)} {fmt(f32(0.25))} {fmt(8)} -inf\n")
+    out.append(f"mass neg_binomial {fmt(f32(4.0))} {fmt(f32(2.5))} {fmt(-2)} -inf\n")
     for mean in map(f32, NB_MEANS):
         for r in map(f32, NB_DISPERSIONS):
             sd = (mean + mean * mean / r) ** 0.5
@@ -311,6 +323,160 @@ def far_densities():
             v = gamma_density(a, s, mpf(1) / mpf(x)) - 2 * mpmath.log(mpf(x))
         out.append(f"density64 {family} {fmt(a)} {fmt(s)} {fmt(x)} {fmt(v)}\n")
     return list(dict.fromkeys(out))
+# The families whose log densities are closed forms of elementary functions,
+# at float32 parameters and points: near the mode, far into both tails (where
+# a square overflows at float32, from |z| = 1.8e19), on and past a support's
+# bound. Each is (family, args, points) or, for vector values, (family,
+# args, [point components...]).
+LOCATION_SCALE = [(0.0, 1.0), (0.5, 2.0), (-3.0, 1e-20), (1e10, 1e5), (0.0, 1e30)]
+Z_POINTS = [0.0, 0.5, -0.5, 3.0, -3.0, 40.0, -40.0, 300.0, -300.0, 1e3, -1e3, 1e15, -1e15, 1e20, -1e20,
+            1e30, -1e30]
+SCALES = [1.5, 1e-20, 1e20]
+VON_MISES_CASES = [(0.3, 2.0), (-1.0, 0.0), (1.0, 1e4), (2.0, 1e30), (100.0, 0.5),
+                   (0.0, 1e-30)]
+VON_MISES_POINTS = [-3.0, -1.0, 0.0, 0.25, 1.0, 1.001, 2.0, 3.1, 3.5, -4.0]
+MVN_LOWERS = [[2.0, 0.0, 0.5, 1.0], [1e-10, 0.0, 1.0, 1.0], [1e5, 0.0, -3e4, 1e-5]]
+MVN_Z = [(0.0, 0.0), (1.0, -1.0), (1e3, -1e3), (1e15, 1.0), (-1.0, 1e18)]
+CATEGORICAL = [[0.1, -1.0, 2.0], [1e30, 0.0, -1e30], [-np.inf, 0.0, 1.0],
+               [100.0, 100.0, -100.0], [-1e-30, 1e-30, 0.0]]
+BERNOULLI = [0.0, 0.4, -30.0, 30.0, 100.0, -100.0, 1e30, -1e30, np.inf, -np.inf]
+
+
+def finite32(v):
+    return abs(v) < 3.4e38
+
+
+def located(family, loc, scale, z):
+    """The float32 point at z scales from loc, or None past float32."""
+    x = loc + scale * z
+    return f32(x) if finite32(x) else None
+
+
+def closed_form(family, args, x):
+    """The exact log density of a closed-form family, from mpmath at 200
+    bits, -inf outside the open support."""
+    mp.prec = 200
+    a = [mpf(v) for v in args]
+    half_log_2pi = mpmath.log(2 * mpmath.pi) / 2
+    if family in ("normal", "cauchy", "laplace", "logistic"):
+        loc, scale = a
+        z = (mpf(x) - loc) / scale
+        if family == "normal":
+            return -z * z / 2 - half_log_2pi - mpmath.log(scale)
+        if family == "cauchy":
+            return -mpmath.log(mpmath.pi) - mpmath.log(scale) - mpmath.log1p(z * z)
+        if family == "laplace":
+            return -abs(z) - mpmath.log(2 * scale)
+        return -z - 2 * mpmath.log1p(mpmath.exp(-z)) - mpmath.log(scale)
+    if family in ("half_normal", "half_cauchy", "exponential"):
+        (s,) = a
+        if not x > 0:
+            return -np.inf
+        x = mpf(x)
+        if family == "half_normal":
+            z = x / s
+            return mpmath.log(2) - z * z / 2 - half_log_2pi - mpmath.log(s)
+        if family == "half_cauchy":
+            z = x / s
+            return mpmath.log(2) - mpmath.log(mpmath.pi) - mpmath.log(s) - mpmath.log1p(z * z)
+        return mpmath.log(s) - s * x
+    if family == "lognormal":
+        loc, scale = a
+        if not x > 0:
+            return -np.inf
+        lx = mpmath.log(mpf(x))
+        z = (lx - loc) / scale
+        return -lx - z * z / 2 - half_log_2pi - mpmath.log(scale)
+    if family == "uniform":
+        low, high = a
+        if not low < x < high:
+            return -np.inf
+        return -mpmath.log(high - low)
+    if family == "von_mises":
+        loc, k = a
+        if abs(mpf(x)) > mpmath.pi:
+            return -np.inf
+        return (k * (mpmath.cos(mpf(x) - loc) - 1)
+                - mpmath.log(2 * mpmath.pi * mpmath.besseli(0, k) * mpmath.exp(-k)))
+    raise ValueError(family)
+
+
+def closed_forms():
+    mp.prec = 200
+    out = []
+
+    def line(family, args, xs, v):
+        out.append(f"density {family} " + " ".join(fmt(u) for u in list(args) + list(xs))
+                   + f" {fmt(v)}\n")
+
+    for loc, scale in LOCATION_SCALE:
+        for family in ("normal", "cauchy", "laplace", "logistic"):
+            for z in Z_POINTS:
+                x = located(family, loc, scale, z)
+                if x is not None:
+                    line(family, (f32(loc), f32(scale)), [x],
+                         closed_form(family, (f32(loc), f32(scale)), x))
+    for s in map(f32, SCALES):
+        for family in ("half_normal", "half_cauchy"):
+            for z in [0.0, -1.0] + [abs(z) for z in Z_POINTS if z > 0] + [1e-30]:
+                x = located(family, 0.0, s, z)
+                if x is not None:
+                    line(family, (s,), [x], closed_form(family, (s,), x))
+        rate = f32(1 / s)
+        for y in [0.0, -0.1, 1e-30, 1e-3, 1.0, 30.0, 1e5, 1e30]:
+            x = f32(y / rate)
+            if finite32(x):
+                line("exponential", (rate,), [x], closed_form("exponential", (rate,), x))
+    for loc, scale in [(0.3, 0.8), (-50.0, 1e-3), (60.0, 20.0)]:
+        loc, scale = f32(loc), f32(scale)
+        for z in [0.0, 1.0, -1.0, 5.0, -5.0, 40.0, -40.0, 1e3, -1e3]:
+            lx = loc + scale * z
+            if -100 < lx < 88:
+                x = f32(np.exp(lx))
+                if x > 0:
+                    line("lognormal", (loc, scale), [x], closed_form("lognormal", (loc, scale), x))
+        for x in [0.0, -1.0]:
+            line("lognormal", (loc, scale), [x], closed_form("lognormal", (loc, scale), x))
+    for low, high in [(-1.0, 3.0), (0.0, 1e-30), (-1e30, 1e30), (1e7, 1.0000001e7)]:
+        low, high = f32(low), f32(high)
+        for x in [low, float(np.nextafter(np.float32(low), np.float32(np.inf))),
+                  f32((low + high) / 2), float(np.nextafter(np.float32(high), np.float32(-np.inf))),
+                  high, f32(high + abs(high) + 1)]:
+            line("uniform", (low, high), [x], closed_form("uniform", (low, high), x))
+    for loc, k in VON_MISES_CASES:
+        loc, k = f32(loc), f32(k)
+        for x in map(f32, VON_MISES_POINTS):
+            line("von_mises", (loc, k), [x], closed_form("von_mises", (loc, k), x))
+    loc = [1.0, -1.0]
+    for lower in MVN_LOWERS:
+        lower = [f32(v) for v in lower]
+        L = mpmath.matrix([[lower[0], 0], [lower[2], lower[3]]])
+        for z in MVN_Z:
+            x = [f32(loc[0] + lower[0] * z[0]), f32(loc[1] + lower[2] * z[0] + lower[3] * z[1])]
+            if not all(finite32(v) for v in x):
+                continue
+            d = mpmath.matrix([mpf(x[0]) - loc[0], mpf(x[1]) - loc[1]])
+            w = mpmath.lu_solve(L, d)
+            v = (-(w[0] ** 2 + w[1] ** 2) / 2 - mpmath.log(abs(L[0, 0]))
+                 - mpmath.log(abs(L[1, 1])) - mpmath.log(2 * mpmath.pi))
+            line("mvn", loc + lower, x, v)
+    for logits in CATEGORICAL:
+        logits = [f32(v) if np.isfinite(v) else v for v in logits]
+        lse = mpmath.log(sum(mpmath.exp(mpf(v)) for v in logits if v > -np.inf))
+        for k in range(3):
+            v = -np.inf if logits[k] == -np.inf else mpf(logits[k]) - lse
+            line("categorical", logits, [float(k)], v)
+    for l in BERNOULLI:
+        l = f32(l) if np.isfinite(l) else l
+        for x in (0.0, 1.0):
+            if np.isinf(l):
+                v = 0.0 if (l > 0) == (x == 1.0) else -np.inf
+            else:
+                v = -mpmath.log1p(mpmath.exp(-mpf(l) if x == 1.0 else mpf(l)))
+            line("bernoulli", (l,), [x], v)
+    return list(dict.fromkeys(out))
+
+
 def tails(name, x):
     """The CDF and survival of a QUANTILE case at x, from mpmath."""
     x = mpf(x)
@@ -430,7 +596,22 @@ def logpdf_mp(name, x):
         return (a - 1) * mpmath.log(x) + (b - 1) * mpmath.log1p(-x) - mpmath.log(mpmath.beta(a, b))
     if name == "uniform":
         return -mpmath.log(4)
+    if name == "lognormal":
+        return closed_form("lognormal", (0.3, 0.8), x)
+    if name == "half_cauchy":
+        return closed_form("half_cauchy", (2.0,), x)
+    if name == "logistic":
+        return closed_form("logistic", (2.0, 0.4), x)
     raise ValueError(name)
+
+
+def ppf_line(case, base, p, v):
+    """A `ppf` line: the quantile v at p, and the logs of the base's smaller
+    tail and density at v, which set the quantile's precision."""
+    mp.prec = 200
+    tail = min(tails(base, v))
+    return (f"ppf {case} {fmt(p)} {fmt(v)} {fmt(mpmath.log(tail))} "
+            f"{fmt(logpdf_mp(base, v))}\n")
 
 
 # Truncations of QUANTILE cases: base, low, high (None for none), and points.
@@ -574,16 +755,6 @@ def bound(v):
     return fmt(v)
 
 
-# The open supports of the SCALAR cases that have bounds: a value on a
-# bound lies outside, with log density -inf (norn.mli: Support's Greater,
-# Less and Interval exclude their bounds).
-OPEN = {"half_normal": (0.0, np.inf), "lognormal": (0.0, np.inf),
-        "half_cauchy": (0.0, np.inf), "exponential": (0.0, np.inf),
-        "gamma": (0.0, np.inf), "gamma_small": (0.0, np.inf),
-        "inverse_gamma": (0.0, np.inf), "beta": (0.0, 1.0),
-        "beta_u": (0.0, 1.0), "uniform": (-1.0, 3.0)}
-
-
 def inward(low, high):
     """The floats next to the bounds, inside."""
     return ([float(np.nextafter(low, np.inf))] if low is not None and low > -np.inf else []) + \
@@ -593,31 +764,24 @@ def inward(low, high):
 def render():
     out = [HEADER]
     bins = {}
-    for name, (d, xs) in SCALAR.items():
-        low, high = OPEN.get(name, (-np.inf, np.inf))
-        for x in xs:
-            v = d.logpdf(x) if low < x < high else -np.inf
-            out.append(f"logpdf {name} {fmt(x)} {fmt(v)}\n")
+    for name, d in SCALAR.items():
         edges = [-np.inf] + [d.ppf(j / 10) for j in range(1, 10)] + [np.inf]
         bins[name] = [(lo, hi, 0.1) for lo, hi in zip(edges[:-1], edges[1:])]
     for name in QUANTILE:
-        d, _ = SCALAR[name]
+        d = SCALAR[name]
         for p in [1e-12, 0.001, 0.1, 0.5, 0.9, 0.999, 1 - 2.0**-40]:
-            out.append(f"ppf {name} {fmt(p)} {fmt(exact_ppf(name, d, p))}\n")
+            out.append(ppf_line(name, name, p, exact_ppf(name, d, p)))
     for case, (_, low, high, xs) in TRUNCATED.items():
         for x in xs + inward(low, high):
             out.append(f"logpdf {case} {fmt(x)} {fmt(truncated_logpdf(case, x))}\n")
         for p in [1e-12, 0.001, 0.1, 0.5, 0.9, 0.999, 1 - 2.0**-40]:
-            out.append(f"ppf {case} {fmt(p)} {fmt(truncated_ppf(case, p))}\n")
+            out.append(ppf_line(case, TRUNCATED[case][0], p, truncated_ppf(case, p)))
     for case in ["truncated_normal", "truncated_normal_far", "truncated_gamma_both"]:
         _, low, high, _ = TRUNCATED[case]
         edges = ([low if low is not None else -np.inf]
                  + [float(truncated_ppf(case, j / 10)) for j in range(1, 10)]
                  + [high if high is not None else np.inf])
         bins[case] = [(lo, hi, 0.1) for lo, hi in zip(edges[:-1], edges[1:])]
-    for case, (loc, k, xs) in VON_MISES.items():
-        for x in xs:
-            out.append(f"logpdf {case} {fmt(x)} {fmt(von_mises_logpdf(loc, k, x))}\n")
     edges = [-np.pi] + von_mises_deciles(0.3, 2.0) + [np.pi + 1e-9]
     bins["von_mises"] = [(lo, hi, 0.1) for lo, hi in zip(edges[:-1], edges[1:])]
     rng = np.random.default_rng(20002)
@@ -625,33 +789,26 @@ def render():
         for l in lkj_points(n, eta, rng, 3):
             out.append(f"lkj {n} {fmt(eta)} " + " ".join(fmt(v) for v in l.ravel())
                        + f" {fmt(lkj_logpdf(n, eta, l))}\n")
+    # Factors far in the tail, a last row of diagonal 1e-3 or 1e-20, its unit
+    # norm exact in float32.
+    for eta in [0.5, 1.0, 30.0, 1e7]:
+        for d in [1e-3, 1e-20]:
+            d = f32(d)
+            l = np.array([[1.0, 0.0], [f32(np.sqrt(1 - d * d)), d]])
+            out.append(f"lkj 2 {fmt(eta)} " + " ".join(fmt(v) for v in l.ravel())
+                       + f" {fmt(lkj_logpdf(2, eta, l))}\n")
     # An off-diagonal correlation of an LKJ draw, (r + 1) / 2 beta of shapes
     # eta - 1 + n / 2.
     for n, eta in [(3, 2.0), (5, 0.8)]:
         c = eta - 1 + n / 2
         edges = [-1.0] + [2 * stats.beta(c, c).ppf(j / 10) - 1 for j in range(1, 10)] + [1.0 + 1e-9]
         bins[f"lkj_{n}"] = [(lo, hi, 0.1) for lo, hi in zip(edges[:-1], edges[1:])]
-    for name, (d, xs, top) in DISCRETE.items():
-        for x in xs:
-            out.append(f"logpdf {name} {fmt(x)} {fmt(d.logpmf(x))}\n")
+    for name, (d, top) in DISCRETE.items():
         bins[name] = merge([(k, k + 1, d.pmf(k)) for k in range(top)]
                            + [(top, np.inf, d.sf(top - 1))])
     logits = np.array([0.1, -1.0, 2.0])
     lp = logits - special.logsumexp(logits)
-    for k in range(3):
-        out.append(f"logpdf categorical {fmt(k)} {fmt(lp[k])}\n")
     bins["categorical"] = [(k, k + 1, np.exp(lp[k])) for k in range(3)]
-    alpha = np.array([1.5, 2.0, 0.7])
-    for x in [[0.2, 0.3, 0.5], [0.6, 0.39, 0.01], [1 / 3, 1 / 3, 1 / 3]]:
-        x = np.array(x)
-        out.append("logpdf dirichlet " + " ".join(fmt(v) for v in x)
-                   + f" {fmt(stats.dirichlet.logpdf(x, alpha))}\n")
-    mean = np.array([1.0, -1.0])
-    lower = np.array([[2.0, 0.0], [0.5, 1.0]])
-    cov = lower @ lower.T
-    for x in [[1.0, -1.0], [0.0, 0.0], [5.0, -3.0]]:
-        out.append("logpdf mvn " + " ".join(fmt(v) for v in x)
-                   + f" {fmt(stats.multivariate_normal(mean, cov).logpdf(x))}\n")
     alpha = 0.01 / len(bins)
     for name, bs in bins.items():
         for lo, hi, p in bs:
@@ -660,6 +817,7 @@ def render():
     out.extend(masses())
     out.extend(densities())
     out.extend(far_densities())
+    out.extend(closed_forms())
     return "".join(out)
 
 
