@@ -1952,13 +1952,13 @@ module Sde : sig
   val sra1 : t
   (** [sra1] is Rößler's (2010) SRA1, for additive noise, where the diffusion
       does not depend on the state: strong order 3/2, reading the Lévy area; 1/2
-      otherwise. Two drift and two diffusion evaluations per step. *)
+      otherwise. Two drift and three diffusion evaluations per step. *)
 
   val reversible_heun : t
   (** [reversible_heun] is the reversible Heun method (Kidger, Foster, Li and
       Lyons, 2021), Stratonovich: strong order 1/2, and 1 for additive noise. It
       carries a second state, so each step costs one drift and two diffusion
-      evaluations. *)
+      evaluations, and a march one more drift evaluation at its start. *)
 
   (** {1:marches Marches} *)
 

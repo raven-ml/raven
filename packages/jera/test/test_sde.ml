@@ -518,6 +518,31 @@ let march_tests =
         let whole = run [| a; b; c |] (x0 3) in
         let rest = run [| b; c |] (Nx.get [ 1 ] whole) in
         equal (Oracle.tensor ()) (Nx.get [ 2 ] whole) (Nx.get [ 1 ] rest));
+    cases "a step evaluates the drift and the diffusion as its method states"
+      ~id:(fun (name, _, _) -> name)
+      [
+        ("euler_maruyama", Sde.euler_maruyama, (1, 1));
+        ("milstein", Sde.milstein, (1, 3));
+        ("sra1", Sde.sra1, (2, 3));
+        (* One drift per step, and one at the march's start. *)
+        ("reversible_heun", Sde.reversible_heun, (2, 2));
+      ]
+      (fun (_, m, expected) ->
+        (* One step of one interval runs no loop, so each call is one
+           evaluation. *)
+        let drifts = ref 0 and diffusions = ref 0 in
+        let drift t x =
+          incr drifts;
+          gbm_drift t x
+        and diffusion t x dw =
+          incr diffusions;
+          gbm_diffusion t x dw
+        in
+        ignore
+          (Sde.march one m ~steps:1 ~drift ~diffusion w
+             ~at:(vec [| 0.; 1. |])
+             (x0 3));
+        equal (pair int int) expected (!drifts, !diffusions));
     test "steps below 1 raise" (fun () ->
         raises_with "steps = 0 is not positive" (fun () ->
             run ~steps:0 (vec [| 0.; 1. |]) (x0 3)));

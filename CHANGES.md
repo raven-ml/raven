@@ -1281,6 +1281,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Sde.milstein` evaluates the diffusion three times per step, as
+  `jera.mli` states, where it took four: it applies `g y` to `ΔW − q` once
+  in place of `ΔW` and `q` apart. Results change in their last bits.
+  `jera.mli` now counts `Sde.sra1`'s three diffusion evaluations and
+  `Sde.reversible_heun`'s drift evaluation at a march's start.
 - `Linear.gmres` checks its answer at `r = 0`, and `Linear.solve` checks a
   system of no unknowns, each with one application of `a`: an `a` that is not
   linear reported `Converged` there. A gmres solve takes one more application.

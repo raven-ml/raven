@@ -253,11 +253,11 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
           let root = Nx.where zero (Nx.zeros_like h) root' in
           let drifted = axpy h (f t v) v in
           let support = add (g t v (Nx.mul (Nx.ones_like dw) root)) drifted in
-          (* (g ȳ − g y) applied to (ΔW² − h) / 2√h. *)
+          (* g y ΔW + (g ȳ − g y) q with q = (ΔW² − h) / 2√h, as g y (ΔW − q)
+             + g ȳ q: g is linear in its noise, so three evaluations. *)
           let q = Nx.div (Nx.sub (Nx.square dw) h) (Nx.mul_s root' 2.) in
           let q = Nx.where zero (Nx.zeros_like q) q in
-          let correction = axpy (Nx.neg one) (g t v q) (g t support q) in
-          add correction (add (g t v dw) drifted))
+          add (g t support q) (add (g t v (Nx.sub dw q)) drifted))
   | Sra1 ->
       simple (fun t h dw area v ->
           (* I_(1,0) / h = ΔW / 2 + H. *)
