@@ -371,19 +371,21 @@ let clip_by_global_norm p ~max_norm grads =
       in
       Nx.Ptree.scale p factor grads
 
-(* A complex gradient is clipped part by part, as two real coordinates. *)
+(* A complex gradient is clipped part by part, as two real coordinates. A leaf
+   that is neither float nor complex passes through. *)
 let clip (type a b d) ~max (g : (a, b, d) Nx.t) : (a, b, d) Nx.t =
   let dt = Nx.dtype g in
   match Nx.Dtype.kind dt with
-  | Complex ->
+  | Complex -> (
       let parts (type w) (w : w wide) =
         let part z = Nx.clamp ~min:(-.max) ~max (z (dtype w) g) in
         Nx.complex dt ~re:(part Nx.real) ~im:(part Nx.imag)
       in
-      (match dt with Complex128 -> parts F64 | Complex64 -> parts F32)
-  | Float | Signed | Unsigned | Boolean ->
+      match dt with Complex128 -> parts F64 | Complex64 -> parts F32)
+  | Float ->
       let of_float = Nx.Dtype.of_float dt in
       Nx.clamp ~min:(of_float (-.max)) ~max:(of_float max) g
+  | Signed | Unsigned | Boolean -> g
 
 let clip_by_value p ~max grads =
   validate_positive "Vega.clip_by_value" "max" max;

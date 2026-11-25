@@ -103,6 +103,22 @@ let test_clip_by_value () =
   check_vec ~eps:1e-7 [| -1.0; 0.2 |] clipped.a;
   check_vec ~eps:0. [| 1.0 |] clipped.b
 
+(* An integer, unsigned or boolean leaf, such as a counter or a mask carried in
+   the gradients, is returned unchanged. *)
+let test_clip_by_value_carries () =
+  let p = Nx.Ptree.(quad tensor tensor tensor tensor) in
+  let grads =
+    ( Nx.create Nx.float32 [| 2 |] [| 3.0; -4.0 |],
+      Nx.create Nx.int32 [| 2 |] [| 7l; -9l |],
+      Nx.create Nx.uint8 [| 2 |] [| 0; 200 |],
+      Nx.create Nx.bool [| 2 |] [| false; true |] )
+  in
+  let clipped, ints, bytes, mask = Vega.clip_by_value p ~max:1.0 grads in
+  check_vec ~eps:0. [| 1.0; -1.0 |] clipped;
+  equal ~msg:"int32" (array int32) [| 7l; -9l |] (Nx.to_array ints);
+  equal ~msg:"uint8" (array int) [| 0; 200 |] (Nx.to_array bytes);
+  equal ~msg:"bool" (array bool) [| false; true |] (Nx.to_array mask)
+
 let test_clip_validation () =
   let grads = pair [| 1.0 |] [| 1.0 |] in
   raises
@@ -2111,6 +2127,8 @@ let tests =
         test "clip by global norm carries a leaf that is not a float"
           test_clip_by_global_norm_carries;
         test "clip by value clamps elementwise" test_clip_by_value;
+        test "clip by value carries a leaf that is not a float"
+          test_clip_by_value_carries;
         test "clipping rejects non-positive bounds" test_clip_validation;
       ];
     group "sgd"

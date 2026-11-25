@@ -203,7 +203,9 @@ val clip_by_global_norm : ('p, 'd) Nx.Ptree.t -> max_norm:float -> 'p -> 'p
 
 val clip_by_value : ('p, 'd) Nx.Ptree.t -> max:float -> 'p -> 'p
 (** [clip_by_value p ~max grads] clips every gradient element to the interval
-    \[[-. max];[max]\], each part of a complex one.
+    \[[-. max];[max]\], each part of a complex one, with [max] rounded to the
+    leaf's dtype (or its parts'). A NaN element stays NaN. Leaves that are
+    neither floats nor complex are returned unchanged.
 
     Raises [Invalid_argument] if [max <= 0.]. *)
 
