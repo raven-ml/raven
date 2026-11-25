@@ -197,9 +197,10 @@ val lzf : string -> string
 val error : Lz.error Windtrap.testable
 
 val refusal : Lz.error Windtrap.testable
-(** Errors equal when their [at] and their constructor agree, printed whole: a
-    [Malformed] or [Unsupported] message is not compared, since lz's own
-    messages are baselines that each suite keeps in an [expect]. *)
+(** [refusal] compares errors by their [at] and their constructor, and
+    prints them whole. A [Malformed] or [Unsupported] message is not
+    compared, since lz's own messages are baselines that each suite keeps
+    in an [expect]. *)
 
 val progress : Lz.progress Windtrap.testable
 val step : Lz.step Windtrap.testable

@@ -79,7 +79,7 @@ type Bytesrw.Bytes.Stream.error +=
 
     A decompressing filter reads the streams its format's [decode] reads,
     except a Zstandard frame whose window size passes [window], which it
-    refuses as {!Lz.Zstd.decoder} does, and a decompressing reader that has
+    refuses as {!Lz.Zstd.decoder} does. A decompressing reader that has
     returned [eod] returns it on every later read. A deflate or zlib
     [decompress_reads] decodes one stream. It reads a slice of [r] only
     once its decoder has taken all of the last one, so before its [eod],

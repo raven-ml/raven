@@ -90,26 +90,30 @@
     Since the collector never moves a buffer's bytes, a call releases the domain
     lock once it has done a threshold of work, and takes it back when it
     returns. A decode's work is the bytes it has read and written. An encode's
-    work is the input it compresses, counted before it compresses it. A
-    whole-buffer encode counts all of its input at its start. An encoder step
+    work is its input, counted before it is compressed. A whole-buffer encode
+    counts all of its input at its start. A deflate, zlib or gzip encoder step
     counts the input it compresses, which includes input that earlier steps
-    took ({!Encoder}), and a Zstandard encoder step also the bytes of its window
-    it moves to make room for new input, over 4 MiB at levels 9 to 12. The
-    threshold is 8 KiB, except 4 KiB when deflate, zlib or gzip encodes and
-    16 KiB when LZ4 or Snappy decodes. An LZW or LZF decode releases the lock
-    at its first check. So a short call holds the lock whatever the size of
-    its input and destination, and a long one releases it whatever the size
-    of its input: a decode of a few KiB that writes megabytes
-    releases it, and a step on a few bytes that writes a few hundred holds it,
-    unless it moves a Zstandard window. While the lock is released, another
+    took ({!Encoder}). A Zstandard encoder step counts all the input it holds
+    that no block has compressed yet, once that passes 128 KiB or the step has
+    [~last:true], so input it keeps counts again in the step that compresses
+    it. It also counts the bytes of its window it moves to make room for new
+    input, over 4 MiB at levels 9 to 12. The threshold is 8 KiB, except
+    4 KiB when deflate, zlib or gzip encodes and 16 KiB when LZ4 or Snappy
+    decodes. An LZW or LZF decode releases the lock at its first check. So
+    a short call holds the lock whatever the size of its input and
+    destination, and a long one releases it whatever the size of its
+    input: a decode of a few KiB that writes megabytes releases it, and a
+    step on a few bytes that writes a few hundred holds it, unless it moves
+    a Zstandard window. While the lock is released, another
     thread of the domain may take it, and the call then waits on return until
     that thread yields it.
 
     A call checks its work between the units it works in: a format's
-    blocks and members, and each 32 KiB of a decode's output, or of an LZW
-    or LZF decode's input and output. A Zstandard decode checks before a
-    block only once 4 KiB of work has added up since its last check, so
-    that small blocks in a row are one unit. An LZ4 or Snappy decode also
+    blocks and members, each 32 KiB of a decode's output except a Zstandard
+    decode's, and each 32 KiB of an LZW or LZF decode's input and output. A
+    Zstandard decode checks before a block only once 4 KiB of work has
+    added up since its last check, so that small blocks in a row are one
+    unit. An LZ4 or Snappy decode also
     checks before it copies 32 KiB or more, and releases the lock before
     the copy when the copy would bring its work to the threshold. A call
     may thus go on for one unit past its threshold before it releases the
@@ -212,14 +216,14 @@ type progress = { consumed : int; produced : int }
 (** {1:steps Decoders and encoders}
 
     A decoder's step takes all of [src] unless the stream ends inside it
-    or its run is full. A run is full once it holds the decoder's
-    {e run capacity}, the most bytes one run holds ({!Decoder}), and a
-    Zstandard run also once its next block might pass that capacity, so a
-    full Zstandard run holds at least the run capacity less the frame's
-    Block_Maximum_Size ({!Zstd}). An encoder's step takes all of [src] up
-    to the encoder's {e quota}, the most input one step takes, and so
-    exactly the quota of a longer [src] ({!Encoder}). The next step begins
-    at the first byte not taken.
+    or its run is {e full}. A run is full once it holds the decoder's
+    {e run capacity}, the most bytes one run holds ({!Decoder}). A
+    Zstandard run is also full once its next block might pass that
+    capacity, so a full Zstandard run holds at least the run capacity less
+    the frame's Block_Maximum_Size ({!Zstd}). An encoder's step takes all
+    of [src] up to the encoder's {e quota}, the most input one step takes,
+    and so exactly the quota of a longer [src] ({!Encoder}). The next step
+    begins at the first byte not taken.
 
     A decoder or encoder is {e busy} while a step on it runs, [f]
     included. A step applies [f] with the domain lock held, and [f] may
@@ -519,9 +523,11 @@ end
     {- a sequence whose offset is 0, above Window_Size or before the
        frame's start, whose Literals_Length passes the literals, or whose
        output passes Block_Maximum_Size;}
-    {- a bitstream of Huffman-coded literals, of FSE-coded Huffman weights
-       or of sequences whose last byte is 0, at that byte, or that is not
-       read exactly to its start;}
+    {- a Huffman-coded or sequences bitstream whose last byte is 0, at that
+       byte, or that is not read exactly to its start;}
+    {- an FSE-coded Huffman weights bitstream whose last byte is 0, at that
+       byte, or that ends before its two states are read or yields more
+       than 255 weights, at its first byte;}
     {- a Frame_Content_Size or Content_Checksum that does not match the
        frame's decoded bytes.}}
     A frame naming a dictionary is [Unsupported] at its Dictionary_ID.
