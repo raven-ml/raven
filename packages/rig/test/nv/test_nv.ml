@@ -597,8 +597,8 @@ let dma =
 
 (* Work *)
 
-let launch () =
-  S.with_ @@ fun t ->
+(* [t] launches [double_index], which computes. *)
+let doubles t =
   let k = S.kernels t in
   let l = S.launches t.g in
   let n = 1000 in
@@ -608,6 +608,8 @@ let launch () =
   equal (list int) (List.init n (fun i -> 2 * i)) (words32 (host out) n);
   S.free_launches l;
   N.free t.g out
+
+let launch () = S.with_ doubles
 
 let misuse () =
   S.with_driver @@ fun g ->
@@ -2499,7 +2501,8 @@ let stop_waiting () =
   S.with_ (fun t' -> S.run t' [||])
 
 (* A kernel runs with a release queued behind it: stop returns with the word at
-   the last value, and the queued work never runs. *)
+   the last value, and the queued work never runs. The stop may reset the
+   compute engine: a kernel of the GPU's next device computes. *)
 let stop_running () =
   let t = handed () in
   let k = S.kernels t in
@@ -2519,7 +2522,202 @@ let stop_running () =
       equal int ~msg:"the word" v2 (N.signaled t.g));
   still ~msg:"the queued work" int 0 (fun () -> H.get64 (host marked)) ~ms:200;
   S.free_launches l;
-  List.iter (N.free t.g) [ flag; marked ]
+  List.iter (N.free t.g) [ flag; marked ];
+  launch ()
+
+(* The grids of {!stop_grids}, of blocks that run 100 us. A long grid of 10^5
+   blocks runs about 17 ms on an RTX 5000 Ada, past the 1 ms a stop waits for a
+   group to leave the engine; a short one of 100 blocks runs them at once, and
+   ends within it. A launches' memory holds 256 launches. *)
+let block_ns = 100_000
+let long_grid = 100_000
+let short_grid = 100
+let long_grids = 8
+let short_grids = 200
+
+(* A device's queue holds [grids] launches of a grid of [blocks] short blocks,
+   the work nx hands a GPU, then a wait on a word nobody writes and a release:
+   stopped once the first grid ended, with the next one running and others
+   queued, the word is at the last value, the release never runs, and the GPU
+   computes after. The wait holds the release back if the stop comes after the
+   grids end. *)
+let stop_grids ~blocks ~grids () =
+  let t = handed () in
+  let k = S.kernels t in
+  let l = S.launches t.g in
+  let never = alloc t.g Pinned 8 and marked = alloc t.g Pinned 8 in
+  H.set64 (host never) 0;
+  H.set64 (host marked) 0;
+  let grid () =
+    let g = S.launch l k "copy_after" ~blocks [ block_ns; 0; 0; 0 ] in
+    S.submit t [| S.words g |]
+  in
+  let first = grid () in
+  for _ = 2 to grids do
+    ignore (grid () : Rig.Point.t)
+  done;
+  let held =
+    Array.append (acquire l (address never) 1) (release l (address marked) 7)
+  in
+  let v = Rig.Point.value (S.submit t [| S.words held |]) in
+  Rig.Point.wait first;
+  S.stop_driver t.g;
+  equal int ~msg:"the word" v (N.signaled t.g);
+  still ~msg:"the queued work" int 0 (fun () -> H.get64 (host marked)) ~ms:200;
+  S.free_launches l;
+  List.iter (N.free t.g) [ never; marked ];
+  launch ()
+
+(* The flags of the children whose kernel runs beside the parent's stop or
+   reset, and whose kernel is queued behind the parent's. *)
+let kernel_child = "--kernel-beside-stop"
+let queued_child = "--kernel-queued-behind-stop"
+
+(* In the child: a kernel of a device of its own spins over one block until the
+   parent writes a line, then the kernel's point is reached and the device
+   computes. The child writes "running" once the kernel runs. *)
+let kernel_beside () =
+  let t = S.open_ () in
+  let k = S.kernels t in
+  let l = S.launches t.g in
+  let flag = alloc t.g Pinned 8 in
+  H.set64 (host flag) 0;
+  let spin = S.launch l k "spin" ~blocks:1 [ address flag; 10 * second ] in
+  let p = S.submit t [| S.words spin |] in
+  held_at t.g (Rig.Point.value p - 1) ~ms:20;
+  print_endline "running";
+  ignore (In_channel.input_line stdin : string option);
+  H.set64 (host flag) 1;
+  Rig.Point.wait p;
+  S.free_launches l;
+  N.free t.g flag;
+  doubles t;
+  S.close t
+
+(* In the child: once the parent writes a line, a kernel of a device of its own
+   doubles 1000 indices, and the child writes "queued". Once the parent writes
+   another line, the kernel's point is reached with its work done, and the
+   device computes. *)
+let kernel_queued () =
+  let t = S.open_ () in
+  let k = S.kernels t in
+  let l = S.launches t.g in
+  let n = 1000 in
+  let out = alloc t.g Pinned (4 * n) in
+  ignore (In_channel.input_line stdin : string option);
+  let double = S.launch l k "double_index" ~blocks:4 [ address out; n ] in
+  let p = S.submit t [| S.words double |] in
+  print_endline "queued";
+  ignore (In_channel.input_line stdin : string option);
+  Rig.Point.wait p;
+  equal (list int) (List.init n (fun i -> 2 * i)) (words32 (host out) n);
+  S.free_launches l;
+  N.free t.g out;
+  doubles t;
+  S.close t
+
+(* Runs [f ~hear ~say] beside a child of the test's program given the flag
+   [flag], then writes the child a last line and checks that it exits with 0.
+   [hear line] fails unless the child's next line is [line]; [say line] writes
+   the child [line]. A GPU has one device a process, so another process's work
+   runs in a child. *)
+let beside flag f =
+  if S.path () <> Some S.Kernel then
+    skip ~reason:"processes share a GPU through NVIDIA's kernel driver alone" ();
+  let exe = Sys.executable_name in
+  let child_in, to_child = Unix.pipe ~cloexec:true () in
+  let from_child, child_out = Unix.pipe ~cloexec:true () in
+  let pid =
+    Unix.create_process exe [| exe; flag |] child_in child_out child_out
+  in
+  Unix.close child_in;
+  Unix.close child_out;
+  let ic = Unix.in_channel_of_descr from_child in
+  let oc = Unix.out_channel_of_descr to_child in
+  let finally () =
+    close_out_noerr oc;
+    close_in_noerr ic
+  in
+  Fun.protect ~finally @@ fun () ->
+  Rig_support.reaping pid @@ fun () ->
+  let hear line =
+    match In_channel.input_line ic with
+    | Some l when l = line -> ()
+    | Some l -> failf "the child: %s\n%s" l (In_channel.input_all ic)
+    | None -> failf "the child ended before it wrote %S" line
+  in
+  let say line =
+    output_string oc (line ^ "\n");
+    flush oc
+  in
+  f ~hear ~say;
+  say "end";
+  close_out oc;
+  let said = In_channel.input_all ic in
+  match snd (Unix.waitpid [] pid) with
+  | Unix.WEXITED 0 -> ()
+  | WEXITED c -> failf "the child exited with %d:\n%s" c said
+  | WSIGNALED _ | WSTOPPED _ -> failf "a signal ended the child:\n%s" said
+
+(* Runs [f] while another process's kernel holds the compute engine, then checks
+   that [f] ended none of that kernel's work: the kernel's point is reached once
+   it ends, and its device computes after. *)
+let beside_kernel f =
+  beside kernel_child @@ fun ~hear ~say:_ ->
+  hear "running";
+  f ()
+
+(* Submits to [t] work that waits on a word nobody writes, a release of 7 to
+   [marked] queued behind the wait, and returns once the wait holds the word one
+   below the work's value. *)
+let waiting t l ~w ~marked =
+  H.set64 (host w) 0;
+  H.set64 (host marked) 0;
+  let ws =
+    Array.append (acquire l (address w) 1) (release l (address marked) 7)
+  in
+  let v = Rig.Point.value (S.submit t [| S.words ws |]) in
+  held_at t.g (v - 1) ~ms:20;
+  v
+
+(* While another process's kernel holds the compute engine, the stop of a device
+   waiting on a word that never moves leaves its word at the last value, and
+   ends none of that kernel's work. *)
+let stop_beside_running () =
+  beside_kernel @@ fun () ->
+  let t = handed () in
+  let l = S.launches t.g in
+  let w = alloc t.g Pinned 8 in
+  let marked = alloc t.g Pinned 8 in
+  let v = waiting t l ~w ~marked in
+  S.stop_driver t.g;
+  equal int ~msg:"the word" v (N.signaled t.g);
+  S.free_launches l;
+  List.iter (N.free t.g) [ w; marked ]
+
+(* While a device's kernel holds the compute engine, another process's kernel is
+   queued for it: the stop of the device leaves its word at the last value, and
+   ends none of the other kernel's work, which then runs. The device's kernel
+   spins over one block that does not end, which the GPU cannot preempt while
+   rig's contexts wait for idle to switch, so the other kernel waits for the
+   engine until the stop. *)
+let stop_before_queued () =
+  beside queued_child @@ fun ~hear ~say ->
+  let t = handed () in
+  let k = S.kernels t in
+  let l = S.launches t.g in
+  let flag = alloc t.g Pinned 8 in
+  H.set64 (host flag) 0;
+  releasing flag 1 (fun () ->
+      let spin = S.launch l k "spin" ~blocks:1 [ address flag; 10 * second ] in
+      let v = Rig.Point.value (S.submit t [| S.words spin |]) in
+      held_at t.g (v - 1) ~ms:20;
+      say "queue";
+      hear "queued";
+      S.stop_driver t.g;
+      equal int ~msg:"the word" v (N.signaled t.g));
+  S.free_launches l;
+  N.free t.g flag
 
 (* Opens and closes keep, of the C heap, each device's edge alone: 80 bytes,
    which glibc's allocator holds in a chunk of 96. Warm opens first make the
@@ -2584,9 +2782,25 @@ let timeline =
          at the last value (sampled)"
         stop_waiting;
       test
-        "stop of a running device leaves the word at the last value, and its \
-         queued work never runs (sampled)"
+        "stop of a running device leaves the word at the last value, its \
+         queued work never runs, and the GPU computes after (sampled)"
         stop_running;
+      test
+        "stop of a device running long grids of short blocks leaves the word \
+         at the last value, and its queued work never runs (sampled)"
+        (stop_grids ~blocks:long_grid ~grids:long_grids);
+      test
+        "stop of a device running short grids leaves the word at the last \
+         value, and its queued work never runs (sampled)"
+        (stop_grids ~blocks:short_grid ~grids:short_grids);
+      test
+        "stop of a waiting device beside another process's running kernel ends \
+         none of that kernel's work (sampled)"
+        stop_beside_running;
+      test
+        "stop of a running device ends none of the work of another process's \
+         kernel queued for the engine (sampled)"
+        stop_before_queued;
     ]
 
 (* The shared device: the stateful tests' programs use one device, opened by the
@@ -3272,6 +3486,18 @@ let () =
       | exception e ->
           prerr_endline (Printexc.to_string e);
           1);
+  let child f =
+    exit
+      (match f () with
+      | () -> 0
+      | exception e ->
+          print_endline (Printexc.to_string e);
+          1)
+  in
+  if Array.length Sys.argv = 2 && Sys.argv.(1) = kernel_child then
+    child kernel_beside;
+  if Array.length Sys.argv = 2 && Sys.argv.(1) = queued_child then
+    child kernel_queued;
   exit
     (run "rig_nv"
        [
