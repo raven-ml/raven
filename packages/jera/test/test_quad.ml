@@ -1032,13 +1032,25 @@ let qmc_tests =
           (scalar (Float.exp 0.7 *. (Float.exp 1. -. 1.)))
           (Rune.grad' integral (scalar 0.7)));
     test "a lane that did not converge has a zero derivative" (fun () ->
+        (* f is NaN where x₀ > 1 − 2^−12. Under key 1 chunk 0 has no such point
+           and a later chunk has one, so the lane ends Not_finite after 8
+           chunks: 1024 (8 + 16) evaluations with the answer's. The answer drops
+           that chunk, where its NaN would meet t's zero cotangent. *)
+        let edge = 1. -. Float.ldexp 1. (-12) in
+        let f t x =
+          let c = coord 0 x in
+          let nan_past =
+            Nx.where (Nx.greater_s c edge) (Nx.full_like c nan) (Nx.ones_like c)
+          in
+          Nx.mul (Nx.mul t (Nx.add_s (coord 1 x) 1.)) nan_past
+        in
         let solve t =
-          Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:1
-            (fun x -> Nx.exp (Nx.mul (sum_coords x) t))
+          Quad.qmc (Nx.Rng.key 1) ~tol:(Tol.abs 1e-300) ~budget:16 (f t)
             (unit_box [||] 2)
         in
-        let t = scalar 0.5 in
-        equal Oracle.status_t Budget_spent (Oracle.status (solve t));
+        let t = scalar 1. in
+        equal Oracle.status_t Not_finite (Oracle.status (solve t));
+        equal int32 24576l (Nx.item [] (Solution.evaluations (solve t)));
         equal (exact ()) (scalar 0.)
           (Rune.grad' (fun t -> Solution.best (solve t)) t));
     test "compiled equals eager with the key an argument" (fun () ->
