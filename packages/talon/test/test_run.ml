@@ -11,6 +11,7 @@ module R = Reference
 let schema_w = Testable.make ~pp:Schema.pp ~equal:Schema.equal
 let run_ok q = require_ok ~pp:Error.pp (Query.run q)
 let value ty = Option.get (G.value ty)
+let s x = Some x
 
 let message f =
   match f () with _ -> "no exception" | exception Invalid_argument m -> m
@@ -613,8 +614,8 @@ let cmp op c =
 
 type 'r cell = { cell : 'a. 'a Type.t -> 'a option -> 'r }
 
-(* [holds t p] is [p] on each row of [t], as Kleene's logic computes it. *)
-let rec holds t (p : Source.Pred.t) =
+(* [pred_holds t p] is [p] on each row of [t], as Kleene's logic computes it. *)
+let rec pred_holds t (p : Source.Pred.t) =
   let each n { cell } =
     let (R.Column (ty, vs)) = R.decode (column t n) in
     Array.map (cell ty) vs
@@ -624,7 +625,7 @@ let rec holds t (p : Source.Pred.t) =
    fun ty x (Value (ty', y)) test ->
     match Kind.provably_equal (Type.kind ty) (Type.kind ty') with
     | Some Equal -> test (Type.compare_value ty' x y)
-    | None -> invalid_arg "holds: a value of another kind"
+    | None -> invalid_arg "pred_holds: a value of another kind"
   in
   match p with
   | Null n -> each n { cell = (fun _ v -> Some (Option.is_none v)) }
@@ -637,7 +638,7 @@ let rec holds t (p : Source.Pred.t) =
         {
           cell = (fun ty x -> Some (Option.fold ~none:false ~some:(is_in ty) x));
         }
-  | Not p -> Array.map (Option.map not) (holds t p)
+  | Not p -> Array.map (Option.map not) (pred_holds t p)
   | And ps ->
       let f a b =
         match (a, b) with
@@ -647,7 +648,7 @@ let rec holds t (p : Source.Pred.t) =
       in
       List.fold_left (Array.map2 f)
         (Array.make (rows t) (Some true))
-        (List.map (holds t) ps)
+        (List.map (pred_holds t) ps)
   | Or ps ->
       let f a b =
         match (a, b) with
@@ -657,14 +658,14 @@ let rec holds t (p : Source.Pred.t) =
       in
       List.fold_left (Array.map2 f)
         (Array.make (rows t) (Some false))
-        (List.map (holds t) ps)
+        (List.map (pred_holds t) ps)
 
 (* [answer r b] is the batch [b] read with the request [r]. *)
 let answer (r : Source.request) b =
   let keep =
     List.fold_left
       (fun keep p ->
-        Array.map2 (fun k v -> k && v = Some true) keep (holds b p))
+        Array.map2 (fun k v -> k && v = Some true) keep (pred_holds b p))
       (Array.make (rows b) true)
       r.filters
   in
@@ -749,12 +750,12 @@ let pred_filter =
     (v [ ("x", x) ], Source.Pred.Cmp ("x", `Gt, Value (Type.int64, 1)))
   in
   prop ~examples:[ passes_fails_null ]
-    "a predicate made a filter keeps the rows where it holds"
+    "a predicate made a filter keeps the rows where it pred_holds"
     (Gen.with_pp
        (fun ppf (t, p) -> Format.fprintf ppf "%a@.%a" pp_pred p Talon.pp t)
        case)
     (fun (t, p) ->
-      let held = holds t p in
+      let held = pred_holds t p in
       cover "a row passes" (Array.exists (( = ) (Some true)) held);
       cover "a row is null" (Array.exists Option.is_none held);
       cover "a row fails" (Array.exists (( = ) (Some false)) held);
@@ -823,10 +824,10 @@ let source ~answer:answer_ ~stated t =
         (fun r -> Ok (List.map (part r) parts)))
     (Gen.list ~size:(Gen.constant (List.length bs)) Gen.bool)
 
-(* [split read p] is [p] with each table cut into batches, read as [read]
+(* [in_batches read p] is [p] with each table cut into batches, read as [read]
    says. *)
-let rec split read (p : R.plan) : R.plan Gen.t =
-  let split = split read in
+let rec in_batches read (p : R.plan) : R.plan Gen.t =
+  let in_batches = in_batches read in
   match p with
   | Table t -> (
       Gen.bind (G.split t) @@ fun t ->
@@ -835,19 +836,21 @@ let rec split read (p : R.plan) : R.plan Gen.t =
       | Sources { answer; stated } ->
           Gen.map (fun s -> R.Source (s, t)) (source ~answer ~stated t))
   | Source _ as p -> Gen.constant p
-  | Sort (ks, p) -> Gen.map (fun p -> R.Sort (ks, p)) (split p)
-  | Append (p, r) when p == r -> Gen.map (fun p -> R.Append (p, p)) (split p)
-  | Select (os, p) -> Gen.map (fun p -> R.Select (os, p)) (split p)
-  | Derive (os, p) -> Gen.map (fun p -> R.Derive (os, p)) (split p)
-  | Filter (e, p) -> Gen.map (fun p -> R.Filter (e, p)) (split p)
-  | Slice s -> Gen.map (fun plan -> R.Slice { s with plan }) (split s.plan)
-  | Append (p, r) -> map2 (fun p r -> R.Append (p, r)) (split p) (split r)
+  | Sort (ks, p) -> Gen.map (fun p -> R.Sort (ks, p)) (in_batches p)
+  | Append (p, r) when p == r ->
+      Gen.map (fun p -> R.Append (p, p)) (in_batches p)
+  | Select (os, p) -> Gen.map (fun p -> R.Select (os, p)) (in_batches p)
+  | Derive (os, p) -> Gen.map (fun p -> R.Derive (os, p)) (in_batches p)
+  | Filter (e, p) -> Gen.map (fun p -> R.Filter (e, p)) (in_batches p)
+  | Slice s -> Gen.map (fun plan -> R.Slice { s with plan }) (in_batches s.plan)
+  | Append (p, r) ->
+      map2 (fun p r -> R.Append (p, r)) (in_batches p) (in_batches r)
   | Aggregate (by, os, p) ->
-      Gen.map (fun p -> R.Aggregate (by, os, p)) (split p)
+      Gen.map (fun p -> R.Aggregate (by, os, p)) (in_batches p)
   | Join j ->
       map2
         (fun left right -> R.Join { j with left; right })
-        (split j.left) (split j.right)
+        (in_batches j.left) (in_batches j.right)
 
 let pp_plan ppf p = Query.pp ppf (R.query p)
 
@@ -942,7 +945,7 @@ let plans =
 
 let split_plans =
   Gen.with_pp pp_plan
-    (Gen.bind (Gen.pair plans reads) (fun (p, r) -> split r p))
+    (Gen.bind (Gen.pair plans reads) (fun (p, r) -> in_batches r p))
 
 (* The run against the reference
 
@@ -968,7 +971,7 @@ let same_failure expected actual =
   | Error (label, _), _ -> failf "no Boom %d raised" label
   | Ok (Ok _), _ -> assert false
 
-let holds t (n, R.Column (ty, vs)) =
+let column_holds t (n, R.Column (ty, vs)) =
   let (R.Column (ty', vs')) = R.decode (column t n) in
   match Kind.provably_equal (Type.kind ty') (Type.kind ty) with
   | Some Equal -> equal ~msg:n (array (option (G.witness ty))) vs vs'
@@ -1006,6 +1009,27 @@ let agreeing expected actual =
   | Ok (Error (row, why)), Ok (Error e) ->
       occurs (Printf.sprintf ": row %d: %s." row why) (error e)
   | _ -> false
+
+(* [allowed read p] is the outcomes of [read] over the plan [p] that talon
+   allows beside the reference's: each join reading either input first, and
+   operands that no row reads left uncomputed ({!R.run}). *)
+let allowed read p =
+  List.concat_map
+    (fun masked ->
+      List.init
+        (1 lsl R.joins p)
+        (fun m ->
+          let flipped i = m land (1 lsl i) <> 0 in
+          attempt (fun () -> read ~masked ~flipped)))
+    [ false; true ]
+
+(* [one_of expected allowed actual] checks that the run's [actual] is one of the
+   outcomes [allowed], reported against the reference's [expected]. *)
+let one_of expected allowed actual =
+  if not (List.exists (fun o -> agreeing o actual) allowed) then
+    same_failure expected actual
+
+let success = function Ok (Ok v) -> Some v | _ -> None
 
 (* A join's right rows by the left's keys: the rows and distinct keys of those
    that a left row matches, and of those that none does, by the reference's
@@ -1115,10 +1139,16 @@ let agrees p =
   | Ok (Ok cs), Ok (Ok t) ->
       at_most int ~than:1 (List.length (batches t));
       equal schema_w (Schema.v (R.schema p)) (schema t);
-      List.iter (holds t) cs
+      List.iter (column_holds t) cs
   | Ok (Ok _), Ok (Error e) -> failf "the run fails: %s" (error e)
   | Ok (Ok _), Error (label, _) -> failf "the run raises Boom %d" label
-  | expected, actual -> if kept then same_failure expected actual
+  | expected, actual when kept && not (agreeing expected actual) -> (
+      let read ~masked ~flipped = R.run ~masked ~flipped p in
+      let allowed = allowed read p in
+      match (actual, List.find_map success allowed) with
+      | Ok (Ok t), Some cs -> List.iter (column_holds t) cs
+      | _ -> one_of expected allowed actual)
+  | _ -> ()
 
 (* Canonical layouts, byte for byte *)
 
@@ -1177,7 +1207,7 @@ let two_splits =
   Gen.with_pp
     (fun ppf (p, _) -> pp_plan ppf p)
     (Gen.bind (Gen.pair plans reads) (fun (p, r) ->
-         Gen.pair (split r p) (split r p)))
+         Gen.pair (in_batches r p) (in_batches r p)))
 
 (* [same_outcome q0 q1] checks that [q0] and [q1] run to the same buffers, or
    end alike. *)
@@ -1199,7 +1229,7 @@ let same_layouts (p0, p1) = same_outcome (R.query p0) (R.query p1)
 
 (* A filter or a join may empty a batch of its input; [fold] hands [f] none
    without a row. The example's filter empties its first batch. *)
-let i64s xs = Column.v Type.int64 xs
+let i64 xs = Column.v Type.int64 xs
 
 let emptied_batch =
   let x xs = v [ ("x", Column.v Type.int64 xs) ] in
@@ -1246,7 +1276,13 @@ let values_agree (p, E e) =
       equal (array (G.witness (R.type_of e))) expected actual
   | Ok (Ok _), Ok (Error e) -> failf "values failed: %s" (error e)
   | Ok (Ok _), Error (label, _) -> failf "values raised Boom %d" label
-  | expected, actual -> same_failure expected actual
+  | expected, actual when not (agreeing expected actual) -> (
+      let read ~masked ~flipped = R.values ~masked ~flipped e p in
+      let allowed = allowed read p in
+      match (actual, List.find_map success allowed) with
+      | Ok (Ok vs), Some ws -> equal (array (G.witness (R.type_of e))) ws vs
+      | _ -> one_of expected allowed actual)
+  | _ -> ()
 
 (* A streaming step that fails at a row emits the rows before it *)
 
@@ -1407,8 +1443,7 @@ let fold_laws =
     prop "emits the rows before the row where a streaming step fails" failing
       emits_before;
     prop
-      ~examples:
-        [ ((1, Select, Fails, v [ ("x", i64s [| 0; 1; 2 |]) ]), (0, 3)) ]
+      ~examples:[ ((1, Select, Fails, v [ ("x", i64 [| 0; 1; 2 |]) ]), (0, 3)) ]
       "never meets a failure past the rows a slice from the start keeps" sliced
       slice_stops;
   ]
@@ -1702,15 +1737,16 @@ let values_failures =
             Query.values (Ext.col celsius "t") (Query.of_table t)));
   ]
 
+(* Two int64 columns with a null in different rows. *)
+let ocaml_rows =
+  v
+    [
+      ("x", Column.of_options Type.int64 [| Some 1; None; Some 3; Some 4 |]);
+      ("y", Column.of_options Type.int64 [| Some 10; Some 20; None; Some 40 |]);
+    ]
+
 let ocaml =
-  let x = Col.int "x" and y = Col.int "y" in
-  let t =
-    v
-      [
-        ("x", Column.of_options Type.int64 [| Some 1; None; Some 3; Some 4 |]);
-        ("y", Column.of_options Type.int64 [| Some 10; Some 20; None; Some 40 |]);
-      ]
-  in
+  let x = Col.int "x" and y = Col.int "y" and t = ocaml_rows in
   let stored e = ints (Expr.store Type.int64 e) t in
   let values e = require_ok ~pp:Error.pp (Query.values e (Query.of_table t)) in
   [
@@ -1765,14 +1801,7 @@ let ocaml =
   ]
 
 let values_with_nulls =
-  let x = Col.int "x" and y = Col.int "y" in
-  let t =
-    v
-      [
-        ("x", Column.of_options Type.int64 [| Some 1; None; Some 3; Some 4 |]);
-        ("y", Column.of_options Type.int64 [| Some 10; Some 20; None; Some 40 |]);
-      ]
-  in
+  let x = Col.int "x" and y = Col.int "y" and t = ocaml_rows in
   test "reads OCaml values of rows with nulls" (fun () ->
       equal
         (array (Windtrap.pair int (option int)))
@@ -1818,6 +1847,14 @@ let failure_order =
         expect (select Expr.[ "a" := int8 boom (int8 big x) ])
         @@ __POS_OF__
              {| select ["a" := store int8 (<const> $ store int8 (<const> $ x))]: row 2: int8 does not hold 1000. |});
+    test "the left operand's exception comes before the right's failure"
+      (fun () ->
+        equal string "Exit" (select Expr.[ "a" := int8 boom x + int8 big x ]));
+    test "the left operand's failure comes before the right's exception"
+      (fun () ->
+        expect (select Expr.[ "a" := int8 big x + int8 boom x ])
+        @@ __POS_OF__
+             {| select ["a" := store int8 (<const> $ x) + store int8 (<const> $ x)]: row 2: int8 does not hold 1000. |});
     test "an operand's exception comes before its node's failure" (fun () ->
         equal string "Exit" (select Expr.[ "a" := int8 big (int8 boom x) ]));
     test "a later step's exception at an earlier row wins" (fun () ->
@@ -2016,7 +2053,9 @@ let reductions =
         equal
           (array (option (float 1e-12)))
           [| None; Some 1.; None |] (floats t "s"));
-    test "var and std where sums of values or of squares overflow" (fun () ->
+    test
+      "var and std are their definition where sums of values or of squares \
+       overflow" (fun () ->
         (* Each group's variance from its definition, within 1e-9: the decimal
            values round. *)
         let g = Column.v Type.int64 [| 0; 0; 0; 1; 1; 1; 2; 2; 3; 3; 3 |] in
@@ -2037,7 +2076,7 @@ let reductions =
         equal w
           [| Some 1e154; Some 0.; Some (sqrt 2. *. 1e200); Some 1. |]
           (floats t "s"));
-    test "std of values whose squares underflow" (fun () ->
+    test "std of values whose squares underflow is their definition" (fun () ->
         (* From the definition: [+-1e-170] has a sample variance of [2e-340],
            below float64's range, and a standard deviation of [sqrt 2 *.
            1e-170]; a frame of ordinary values is untouched. *)
@@ -2069,7 +2108,7 @@ let reductions =
         equal
           (array (option (float_rel ~rel:0.5 ~abs:0.)))
           [| Some 5e-324 |] (floats t "s"));
-    test "std of tiny values with nulls" (fun () ->
+    test "std of tiny values with nulls is their definition" (fun () ->
         let x' =
           Column.of_options Type.float64
             [| Some 1e-170; None; Some (-1e-170); None |]
@@ -2085,7 +2124,8 @@ let reductions =
           (array (option (float_rel ~rel:1e-9 ~abs:0.)))
           [| Some (sqrt 2. *. 1e-170) |]
           (floats t "s"));
-    test "std of tiny values over the whole table" (fun () ->
+    test "std of tiny values over the whole table is their definition"
+      (fun () ->
         let x' = Column.v Type.float64 [| 1e-170; -1e-170; 3e-170 |] in
         let t =
           require_ok ~pp:Error.pp
@@ -2112,7 +2152,7 @@ let reductions =
         let w = array (option float_exact) in
         equal ~msg:"var" w [| Some 0.; Some 0. |] (floats t "v");
         equal ~msg:"std" w [| Some 0.; Some 0. |] (floats t "s"));
-    test "var far from zero, through per_list" (fun () ->
+    test "var keeps its digits far from zero, through per_list" (fun () ->
         let c = 1e12 in
         let xs =
           [| c +. (1. /. 256.); c; c +. (2. /. 256.); c +. (3. /. 256.) |]
@@ -2568,9 +2608,9 @@ let law_shared (G.Sample (ty, vs), g) =
    aggregate of those rows in one batch: the same bits, NaNs compared as NaNs,
    and the same failure. *)
 
-(* [words dt c] is [c]'s values at the stored dtype [dt], as int64, the nulls in
-   their places. *)
-let words (type a b) (dt : (a, b) Nx.dtype) c =
+(* [stored_words dt c] is [c]'s values at the stored dtype [dt], as int64, the
+   nulls in their places. *)
+let stored_words (type a b) (dt : (a, b) Nx.dtype) c =
   let n = Column.length c in
   let held =
     match Column.validity c with
@@ -2603,16 +2643,16 @@ let show c =
          (function None -> "null" | Some x -> value x)
          (Column.options (Type.kind ty) c))
   in
-  if is Type.int8 then words Nx.int8 c
-  else if is Type.int16 then words Nx.int16 c
-  else if is Type.int32 then words Nx.int32 c
-  else if is Type.int64 then words Nx.int64 c
-  else if is Type.uint8 then words Nx.uint8 c
-  else if is Type.uint16 then words Nx.uint16 c
-  else if is Type.uint32 then words Nx.uint32 c
-  else if is Type.uint64 then words Nx.uint64 c
+  if is Type.int8 then stored_words Nx.int8 c
+  else if is Type.int16 then stored_words Nx.int16 c
+  else if is Type.int32 then stored_words Nx.int32 c
+  else if is Type.int64 then stored_words Nx.int64 c
+  else if is Type.uint8 then stored_words Nx.uint8 c
+  else if is Type.uint16 then stored_words Nx.uint16 c
+  else if is Type.uint32 then stored_words Nx.uint32 c
+  else if is Type.uint64 then stored_words Nx.uint64 c
   else if Option.is_some (Kind.provably_equal (Type.kind ty) Kind.span) then
-    words Nx.int64 c
+    stored_words Nx.int64 c
   else
     match Kind.provably_equal (Type.kind ty) Kind.float with
     | Some Equal -> decoded ty float
@@ -3136,7 +3176,6 @@ let law_failures (rows_, k) =
       ]
   in
   let by = [ []; [ "g" ] ] in
-  let whole = t in
   (* Batches of at most [k + 1] rows, so that a failure outlives compactions. *)
   let stream =
     let size = k + 1 in
@@ -3153,7 +3192,7 @@ let law_failures (rows_, k) =
   List.iter
     (fun by ->
       List.iter
-        (fun os -> equal outcome_w (run os by whole) (run os by stream))
+        (fun os -> equal outcome_w (run os by t) (run os by stream))
         outs)
     by
 
@@ -3222,8 +3261,8 @@ let bit_groups =
          Gen.pair (bits_column n)
            (Gen.array ~size:(Gen.constant n) (Gen.int_range 0 3))))
 
-(* [words t n] is the 64-bit words of [t]'s column [n]. *)
-let words t n =
+(* [int64_words t n] is the 64-bit int64_words of [t]'s column [n]. *)
+let int64_words t n =
   match Column.layout (column t n) with
   | Fixed { values = P x; _ } -> Nx.to_array (Nx.bitcast Nx.int64 x)
   | _ -> assert false
@@ -3236,7 +3275,7 @@ let null_group_and_one_row =
 let moments_of_nulls =
   let group js = { exponent = 0; centre = 0; js } in
   let rows g xs =
-    v [ ("g", i64s g); ("x", Column.of_options Type.float64 xs) ]
+    v [ ("g", i64 g); ("x", Column.of_options Type.float64 xs) ]
   in
   ( [| group [| None; None |]; group [| Some 1; Some 2 |] |],
     rows [| 0; 0; 1; 1 |] [| None; None; Some 1.; Some 2. |],
@@ -3281,7 +3320,7 @@ let one_column =
             require_ok ~pp:Error.pp
               (aggregate [ "g" ] Expr.[ "lo" := min x; "hi" := max x ] t)
           in
-          (words t "lo", words t "hi")
+          (int64_words t "lo", int64_words t "hi")
         in
         let top = 0x8000_0000_0000_0000L in
         let u = [| -1L; 1L; top; top; 0L |] in
@@ -3303,8 +3342,8 @@ let aggregate_laws =
     prop ~count:300 ~examples:[ moments_of_nulls ]
       "over several batches gives var and std's definition" moments_draw
       law_streamed_moments;
-    prop ~count:300 "over several batches fails as the blocking one does"
-      failing_ints law_failures;
+    prop "over several batches fails as the blocking one does" failing_ints
+      law_failures;
   ]
 
 (* Joins *)
@@ -3316,15 +3355,13 @@ let join ?kind ?each_left ?each_right on l r =
 let joined ?kind ?each_left ?each_right on l r =
   run_ok (join ?kind ?each_left ?each_right on l r)
 
-let i64 xs = Column.v Type.int64 xs
-
 let column_is t (n, expected) =
   equal ~msg:n
     (list (option int))
     expected
     (Array.to_list (Column.options Kind.int (column t n)))
 
-let names t = List.map fst (Schema.columns (schema t))
+let column_names t = List.map fst (Schema.columns (schema t))
 
 (* Left rows 0 and 2 match right rows 1 and 2, left row 1 matches right row 0,
    and left row 3 and right row 3 match nothing. *)
@@ -3334,7 +3371,6 @@ let keyed_right =
   v [ ("k", i64 [| 1; 2; 2; 4 |]); ("y", i64 [| 10; 11; 12; 13 |]) ]
 
 let join_order =
-  let s x = Some x in
   cases "keeps each kind's rows, the left's order with matches in the right's"
     ~id:(fun (name, _, _) -> name ^ ": left's order, matches in right's")
     [
@@ -3364,14 +3400,13 @@ let join_order =
     ]
     (fun (_, kind, columns) ->
       let t = joined ~kind (Join.keys [ "k" ]) keyed_left keyed_right in
-      equal ~msg:"columns" (list string) (List.map fst columns) (names t);
+      equal ~msg:"columns" (list string) (List.map fst columns) (column_names t);
       List.iter (column_is t) columns)
 
 (* Right keys that no left key has: a left of key 1 and a right of keys 1, 2 and
    2, whose repeated key 2 matches nothing; and an empty left, whose right rows
    all match nothing. *)
 let unmatched_right =
-  let s x = Some x in
   let one = v [ ("k", i64 [| 1 |]); ("x", i64 [| 0 |]) ]
   and none = v [ ("k", i64 [||]); ("x", i64 [||]) ] in
   let repeated = v [ ("k", i64 [| 1; 2; 2 |]); ("y", i64 [| 10; 11; 12 |]) ]
@@ -3415,7 +3450,7 @@ let unmatched_right =
     ]
     (fun (_, l, r, kind, columns) ->
       let t = joined ~kind (Join.keys [ "k" ]) l r in
-      equal ~msg:"columns" (list string) (List.map fst columns) (names t);
+      equal ~msg:"columns" (list string) (List.map fst columns) (column_names t);
       List.iter (column_is t) columns)
 
 (* An equality join of an int64 key [k] of 0 to 3 on the left, and [rk] of 0 to
@@ -3479,7 +3514,7 @@ let keyed_agrees (lk, rk, kind) =
   cover "an empty left and a right row" (lk = [||] && rk <> [||]);
   match R.run p with
   | Error (row, why) -> failf "the reference fails at row %d: %s" row why
-  | Ok cs -> List.iter (holds (run_ok (R.query p))) cs
+  | Ok cs -> List.iter (column_holds (run_ok (R.query p))) cs
 
 (* Range joins
 
@@ -3551,7 +3586,6 @@ let rare_ranges =
     range_case ~kind:Inner ~each_left:Any ~each_right:Any ~keyed:false ty
   in
   let le l r = R.Compare (`Le, l, r) in
-  let s x = Some x in
   let cat = Type.categorical [| "b"; "a" |] in
   [
     inner Type.int64
@@ -3786,15 +3820,24 @@ let range_agrees (Range { ty; left; right; types; plan }) =
   in
   cover "keys and a side in order of its key, then its first column"
     (keyed && (grouped left || grouped right));
-  match (R.run plan, Query.run (R.query plan)) with
+  let reference = R.run plan in
+  let matched =
+    match reference with
+    | Ok ((_, R.Column (_, vs)) :: _) -> Array.length vs
+    | _ -> 0
+  in
+  cover "a left row with two matches or more"
+    (kind = Inner && matched > Array.length left);
+  cover "a count fails" (Result.is_error reference);
+  match (reference, Query.run (R.query plan)) with
   | Ok cs, Ok t ->
-      cover "a left row with two matches or more"
-        (rows t > Array.length left && kind = Inner);
       equal schema_w (Schema.v (R.schema plan)) (schema t);
-      List.iter (holds t) cs
-  | Error (row, why), Error e ->
-      cover "a count fails" true;
-      contains ~sub:(Printf.sprintf ": row %d: %s." row why) (error e)
+      List.iter (column_holds t) cs
+  | Error failure, Error e ->
+      (* Talon states neither the order of a join's inputs nor of its sides'
+         counts, so the failure of either order is allowed. *)
+      let read ~masked ~flipped = R.run ~masked ~flipped plan in
+      one_of (Ok (Error failure)) (allowed read plan) (Ok (Error e))
   | Ok _, Error e -> failf "the run fails: %s" (error e)
   | Error (row, why), Ok _ -> failf "no failure at row %d: %s" row why
 
@@ -3818,7 +3861,6 @@ let spikes_in_trials =
         ("spike", i64 [| 0; 1; 2; 3; 4; 5 |]);
       ]
   in
-  let s x = Some x in
   cases "inside and comparisons find spikes in trials, from either side"
     ~id:(fun (name, _, _, _, _) -> name)
     [
@@ -3845,7 +3887,6 @@ let spikes_in_trials =
    Each row is two periods and that expression's value, a pair matching where it
    is true. The expression is symmetric, so each row holds both ways. *)
 let sql92_overlaps =
-  let s x = Some x in
   let i (d, e) =
     (Column.of_options Type.int64 [| d |], Column.of_options Type.int64 [| e |])
   in
@@ -3925,7 +3966,6 @@ let distinct_right = v [ ("k", i64 [| 1; 2; 4 |]); ("y", i64 [| 10; 11; 13 |]) ]
 (* The same lookup with a null key on each side, which match each other: left
    row 4 matches right row 3. Its keys are int64 or text. *)
 let lookup_order =
-  let s x = Some x in
   let ks = [| s 2; s 1; s 2; s 3; None |] and rks = [| s 1; s 2; s 4; None |] in
   (* The keys as int64, or as the text of their digits, read back as ints. *)
   let key_column dtype ks =
@@ -3978,7 +4018,9 @@ let lookup_order =
         v [ ("k", key_column dtype rks); ("y", i64 [| 10; 11; 13; 14 |]) ]
       in
       let t = joined ~kind (Join.keys [ "k" ]) l r in
-      equal ~msg:"columns" (list string) ("k" :: List.map fst columns) (names t);
+      equal ~msg:"columns" (list string)
+        ("k" :: List.map fst columns)
+        (column_names t);
       equal ~msg:"k" (list (option int)) expected_keys (keys dtype t);
       List.iter (column_is t) columns)
 
@@ -3989,7 +4031,6 @@ let text_lookup =
   test
     "Full over distinct text keys without a null appends unmatched right rows"
     (fun () ->
-      let s x = Some x in
       let text ks = Column.v Type.string ks in
       let l =
         v [ ("k", text [| "2"; "1"; "2"; "3" |]); ("x", i64 [| 0; 1; 2; 3 |]) ]
@@ -4009,7 +4050,6 @@ let text_lookup =
 
 (* [shapes] are a left of three rows and a right of two, and the other way. *)
 let shapes =
-  let s x = Some x in
   let l3 = v [ ("x", i64 [| 0; 1; 2 |]) ]
   and r2 = v [ ("y", i64 [| 10; 11 |]) ] in
   let l2 = v [ ("x", i64 [| 0; 1 |]) ]
@@ -4093,7 +4133,7 @@ let shapes =
     ]
     (fun (_, on, kind, l, r, columns) ->
       let t = joined ~kind on l r in
-      equal ~msg:"columns" (list string) (List.map fst columns) (names t);
+      equal ~msg:"columns" (list string) (List.map fst columns) (column_names t);
       List.iter (column_is t) columns)
 
 let joins =
@@ -4454,14 +4494,14 @@ let constant_pred_gen =
   in
   pred 3
 
-(* [reads p] is the columns the drawn filter [p] reads. *)
-let rec reads : type a s. (a, s) R.term -> string list = function
+(* [columns_of p] is the columns the drawn filter [p] columns_of. *)
+let rec columns_of : type a s. (a, s) R.term -> string list = function
   | Col (_, n) -> [ n ]
-  | Cmp (_, a, b) -> reads a @ reads b
-  | And (a, b) | Or (a, b) -> reads a @ reads b
-  | Not a -> reads a
-  | Is_in (_, a) -> reads a
-  | Is_null a -> reads a
+  | Cmp (_, a, b) -> columns_of a @ columns_of b
+  | And (a, b) | Or (a, b) -> columns_of a @ columns_of b
+  | Not a -> columns_of a
+  | Is_in (_, a) -> columns_of a
+  | Is_null a -> columns_of a
   | _ -> []
 
 let rec conjuncts : bool R.expr -> bool R.expr list = function
@@ -4469,7 +4509,9 @@ let rec conjuncts : bool R.expr -> bool R.expr list = function
   | p -> [ p ]
 
 let constant_only p =
-  List.for_all (fun c -> List.mem c [ "year"; "region"; "score" ]) (reads p)
+  List.for_all
+    (fun c -> List.mem c [ "year"; "region"; "score" ])
+    (columns_of p)
 
 let constant_branch_table b =
   v
@@ -4552,7 +4594,7 @@ let filters_over_constants =
       cover "a filter mixes constant and file columns"
         (constants <> [] && not (constant_only p));
       (match (R.run plan, Query.run (R.query plan)) with
-      | Ok cs, Ok t -> List.iter (holds t) cs
+      | Ok cs, Ok t -> List.iter (column_holds t) cs
       | Error (row, why), Error e ->
           contains ~sub:(Printf.sprintf ": row %d: %s." row why) (error e)
       | Ok _, Error e -> failf "the run fails: %s" (error e)
@@ -4567,7 +4609,7 @@ let filters_over_constants =
 
 let extension_cases =
   let t_ = Ext.col celsius "t" and year = Col.int "year" in
-  cases "extension columns beside constants"
+  cases "filters extension columns beside constants as their table"
     ~id:(fun (name, _) -> name)
     [
       ("constant or extension", Expr.(year = int 2001 || t_ > const 20.));
@@ -5016,15 +5058,6 @@ let near lit =
 let row lit =
   Gen.frequency [ (8, Gen.map Option.some (near lit)); (1, Gen.constant None) ]
 
-let holds op c =
-  match op with
-  | `Eq -> c = 0
-  | `Ne -> c <> 0
-  | `Lt -> c < 0
-  | `Le -> c <= 0
-  | `Gt -> c > 0
-  | `Ge -> c >= 0
-
 let compare_op op a b =
   match op with
   | `Eq -> Expr.(a = b)
@@ -5140,7 +5173,7 @@ let comparing =
         in
         equal
           (array (option bool))
-          (Array.map (Option.map (fun s -> holds op (order s))) rows)
+          (Array.map (Option.map (fun s -> cmp op (order s))) rows)
           (over_text Kind.bool e rows));
     prop
       ~examples:
@@ -5360,8 +5393,8 @@ let counting ?sorted t parts =
   in
   (Source.v ~name:"counting" ~schema:(schema t) ?sorted read, log)
 
-let ints xs = v [ ("x", Column.v Type.int64 xs) ]
-let parts xs = List.map (List.map (fun b () -> Ok (ints b))) xs
+let table_x xs = v [ ("x", Column.v Type.int64 xs) ]
+let parts xs = List.map (List.map (fun b () -> Ok (table_x b))) xs
 let three = parts [ [ [| 0; 1 |]; [| 2 |] ]; [ [| 3; 4; 5 |] ]; [ [| 6 |] ] ]
 let xs t = Column.values Kind.int (column t "x")
 let every n log = equal (array int) (Array.make (Array.length log) n) log
@@ -5397,7 +5430,7 @@ let sources =
     pred_filter;
     pred_widened;
     test "a run opens each part once and closes each reader once" (fun () ->
-        let s, log = counting (ints [||]) three in
+        let s, log = counting (table_x [||]) three in
         let t = run_ok (Query.of_source s) in
         equal (array int) (Array.init 7 Fun.id) (xs t);
         equal int 1 (List.length log.requests);
@@ -5406,7 +5439,7 @@ let sources =
         equal ~msg:"pulls after a close" int 0 log.late);
     test "a slice asks for its rows and opens only the parts that hold them"
       (fun () ->
-        let s, log = counting (ints [||]) three in
+        let s, log = counting (table_x [||]) three in
         let t = run_ok (Query.slice ~offset:1 ~length:3 (Query.of_source s)) in
         equal (array int) [| 1; 2; 3 |] (xs t);
         equal
@@ -5418,11 +5451,11 @@ let sources =
     test "a source's error is the run's, after closing its reader" (fun () ->
         let e = Error.v ~row_group:1 "bad page" in
         let s, log =
-          counting (ints [||])
+          counting (table_x [||])
             [
-              [ (fun () -> Ok (ints [| 0 |])) ];
+              [ (fun () -> Ok (table_x [| 0 |])) ];
               [ (fun () -> Error e) ];
-              [ (fun () -> Ok (ints [| 1 |])) ];
+              [ (fun () -> Ok (table_x [| 1 |])) ];
             ]
         in
         let r = Query.run (Query.of_source s) in
@@ -5432,13 +5465,13 @@ let sources =
         equal (array int) [| 1; 1; 0 |] log.closed);
     test "a batch of other columns raises and closes its reader" (fun () ->
         let other = v [ ("y", Column.v Type.int64 [| 0 |]) ] in
-        let s, log = counting (ints [||]) [ [ (fun () -> Ok other) ] ] in
+        let s, log = counting (table_x [||]) [ [ (fun () -> Ok other) ] ] in
         expect (message (fun () -> Query.run (Query.of_source s)))
         @@ __POS_OF__
              {| Query.run: counting yields a batch of the columns y int64, not x int64 |};
         every 1 log.closed);
     test "a raising function closes every reader" (fun () ->
-        let s, log = counting (ints [||]) three in
+        let s, log = counting (table_x [||]) three in
         let f x = if x = 4 then raise (Boom (0, x)) else x in
         let q =
           Query.filter
@@ -5452,7 +5485,7 @@ let sources =
         let s, _ =
           counting
             ~sorted:[ Order.asc "x" ]
-            (ints [||])
+            (table_x [||])
             (parts [ [ [| 0; 2 |]; [| 2; 3 |] ]; [ [| 1; 4 |] ] ])
         in
         let seen = ref 0 in
@@ -5465,7 +5498,7 @@ let sources =
              {| counting (1 column): row 4: the row is out of the source's order [asc "x"]. |};
         equal ~msg:"rows folded before the failure" int 4 !seen);
     test "two places with one request read the source once" (fun () ->
-        let s, log = counting (ints [||]) three in
+        let s, log = counting (table_x [||]) three in
         let q = Query.of_source s in
         let t = run_ok (Query.append q q) in
         equal int 14 (rows t);
@@ -5481,7 +5514,7 @@ let closing =
   in
   [
     test "closes every reader when f raises" (fun () ->
-        let s, log = counting (ints [||]) three in
+        let s, log = counting (table_x [||]) three in
         let f () b = if Array.mem 2 (xs b) then raise (Boom (0, 2)) in
         raises
           (Boom (0, 2))
@@ -5489,11 +5522,11 @@ let closing =
         closes_opened log);
     test "closes every reader when a source's next raises" (fun () ->
         let s, log =
-          counting (ints [||])
+          counting (table_x [||])
             [
-              [ (fun () -> Ok (ints [| 0 |])) ];
+              [ (fun () -> Ok (table_x [| 0 |])) ];
               [ (fun () -> raise (Boom (0, 1))) ];
-              [ (fun () -> Ok (ints [| 2 |])) ];
+              [ (fun () -> Ok (table_x [| 2 |])) ];
             ]
         in
         raises (Boom (0, 1)) (fun () -> Query.run (Query.of_source s));
@@ -5505,7 +5538,7 @@ let closing =
           if !read then Ok None
           else begin
             read := true;
-            Ok (Some (ints [| 0 |]))
+            Ok (Some (table_x [| 0 |]))
           end
         in
         let reader = { Source.next; close = (fun () -> incr closed) } in
@@ -5522,7 +5555,9 @@ let closing =
           ]
         in
         let s =
-          Source.v ~name:"two" ~schema:(schema (ints [||])) (fun _ -> Ok parts)
+          Source.v ~name:"two"
+            ~schema:(schema (table_x [||]))
+            (fun _ -> Ok parts)
         in
         raises (Boom (0, 1)) (fun () -> Query.run (Query.of_source s));
         equal ~msg:"closed" int !opened !closed);
@@ -5554,7 +5589,7 @@ let sharing =
         let q =
           Query.select
             Expr.[ "y" := s * s ]
-            (Query.of_table (ints [| 1; 2; 3 |]))
+            (Query.of_table (table_x [| 1; 2; 3 |]))
         in
         equal (array int) [| 1; 4; 9 |]
           (require_ok ~pp:Error.pp (Query.values (Col.int "y") q));
@@ -5568,7 +5603,7 @@ let sharing =
         let q =
           Query.filter
             Expr.(store Type.int64 (const f $ Col.int "x") >= int 0)
-            (Query.of_table (ints (Array.init 7 Fun.id)))
+            (Query.of_table (table_x (Array.init 7 Fun.id)))
         in
         let t = run_ok (Query.append (Query.slice ~offset:0 ~length:2 q) q) in
         equal (array int) [| 0; 1; 2; 3; 4; 5; 6; 0; 1 |] (xs t);
@@ -5578,7 +5613,7 @@ let sharing =
         let q =
           Query.derive
             Expr.[ "y" := store Type.int64 (const f $ Col.int "x") ]
-            (Query.of_table (ints (Array.init 7 Fun.id)))
+            (Query.of_table (table_x (Array.init 7 Fun.id)))
         in
         let shared n = Query.slice ~offset:0 ~length:n (Query.append q q) in
         equal int 4 (rows (run_ok (shared 4)));
@@ -5591,7 +5626,7 @@ let select_reads_input =
       let q =
         Query.select
           Expr.[ "x" := x + int 1; "y" := x ]
-          (Query.of_table (ints [| 1; 2 |]))
+          (Query.of_table (table_x [| 1; 2 |]))
       in
       let t = run_ok q in
       equal ~msg:"x" (array int) [| 2; 3 |] (xs t);
@@ -5600,9 +5635,10 @@ let select_reads_input =
 
 (* Kit's runs *)
 
-let words = [| Some "b"; Some "a"; None; Some "\xc3\xa9"; Some "B"; Some "a" |]
+let tokens = [| Some "b"; Some "a"; None; Some "\xc3\xa9"; Some "B"; Some "a" |]
 
-let categorized ?(table = v [ ("s", Column.of_options Type.string words) ]) cs =
+let categorized ?(table = v [ ("s", Column.of_options Type.string tokens) ]) cs
+    =
   require_ok ~pp:Error.pp (Kit.categorize cs (Query.of_table table))
 
 let kit_runs =
@@ -5613,10 +5649,10 @@ let kit_runs =
         @@ __POS_OF__ {| s categorical["B", "a", "b", "é"] |};
         equal
           (array (option string))
-          words
+          tokens
           (Column.options Kind.string (column (run_ok q) "s")));
     test "makes a dictionary blind to order and batches" (fun () ->
-        let half a b = Column.of_options Type.string (Array.sub words a b) in
+        let half a b = Column.of_options Type.string (Array.sub tokens a b) in
         let table =
           of_batches [ v [ ("s", half 3 3) ]; v [ ("s", half 0 3) ] ]
         in
@@ -5716,12 +5752,11 @@ let validity_bytes c =
       Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
           Some (Array.init ((n + 7) / 8) (fun i -> raw.{i})))
 
-let s x = Some x
-let keys = [| s 1L; None; s 2L; None; s 1L |]
+let null_keys = [| s 1L; None; s 2L; None; s 1L |]
 
 let equal_tables =
   test "reads the nulls of a column, not the values under them" (fun () ->
-      let t under = v [ ("k", garbled keys under) ] in
+      let t under = v [ ("k", garbled null_keys under) ] in
       let table = Testable.make ~pp:Talon.pp ~equal:Talon.equal in
       equal table (t [| 0L; 7L; 0L; -9L; 0L |]) (t [| 0L; 0L; 0L; 0L; 0L |]);
       not_equal table
@@ -5733,7 +5768,7 @@ let null_group =
       let t =
         v
           [
-            ("k", garbled keys [| 0L; 7L; 0L; -9L; 0L |]);
+            ("k", garbled null_keys [| 0L; 7L; 0L; -9L; 0L |]);
             ("y", i64 [| 10; 11; 12; 13; 14 |]);
           ]
       in
