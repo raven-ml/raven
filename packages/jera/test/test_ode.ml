@@ -195,7 +195,13 @@ let march_tests =
         in
         equal (Oracle.tensor ()) (vec [| 0.; 0. |]) y);
     cases "the last step ends at its interval's end" ~id:interval_id
-      [ ([| 0.; 0.3 |], 10); ([| 0.9; 0.3 |], 7); ([| 0.2; 0.7 |], 3) ]
+      [
+        ([| 0.; 0.3 |], 10);
+        ([| 0.9; 0.3 |], 7);
+        ([| 0.2; 0.7 |], 3);
+        (* a + (b − a) is one ulp below b. *)
+        ([| -7.074863082399303; 4.437342817489506 |], 1);
+      ]
       (fun (at, steps) ->
         (* rk4's last stage reads the field at its step's end: 1 there and 0
            elsewhere, so only a last step ending at b moves y. *)
@@ -420,6 +426,19 @@ let solve_tests =
             (solve (decay (scalar 1.)) ~t0:1. ~t1:0. (scalar (Float.exp (-1.))))
         in
         equal (Oracle.tensor ~rel:1e-9 ()) (scalar 1.) y);
+    test "the last step's stages at its end read the field at t1 itself"
+      (fun () ->
+        (* The field is 1 at t1 alone: tsit5's stages at c = 1 read it, so the
+           last step's error estimate is not zero. t0 + (t1 − t0) is one ulp
+           below t1. *)
+        let t0 = -7.074863082399303 and t1 = 4.437342817489506 in
+        let s =
+          Ode.solve one Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:100
+            (fun t y ->
+              Nx.add (Nx.zeros_like y) (Nx.cast f64 (Nx.equal_s t t1)))
+            ~t0:(scalar t0) ~t1:(scalar t1) (scalar 1.)
+        in
+        less float_exact ~than:(Nx.item [] (Solution.error s)) 0.);
     test "the budget ends a solve and the report says where" (fun () ->
         let s = solve ~budget:3 forced2 ~t0:0. ~t1:10. (scalar 1.) in
         equal Oracle.status_t Budget_spent (Oracle.status s);

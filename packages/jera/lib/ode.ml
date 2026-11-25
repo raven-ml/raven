@@ -339,10 +339,15 @@ let eval fn y f t v =
          fn);
   dv
 
-(* One step of the explicit tableau [m] from [(t, v)] by [h], given the field at
-   [(t, v)] when the method reuses its last stage: the new state and the
-   stages. *)
-let explicit_step fn y m f t h v k0 =
+(* The time of a stage at [c] of the step from [t] to [t_end] of size [h]: a
+   stage at [c = 1] reads the step's end itself, which [t + h] can round apart
+   from. *)
+let stage_time t t_end h c = if c = 1. then t_end else Nx.add t (Nx.mul_s h c)
+
+(* One step of the explicit tableau [m] from [(t, v)] to [t_end] by [h], given
+   the field at [(t, v)] when the method reuses its last stage: the new state
+   and the stages. *)
+let explicit_step fn y m f t t_end h v k0 =
   let s = Array.length m.b in
   let ks = Array.make s v in
   let combine w =
@@ -359,7 +364,7 @@ let explicit_step fn y m f t h v k0 =
     | 0, Some k -> ks.(0) <- k
     | _ ->
         last := combine m.a.(i);
-        ks.(i) <- eval fn y f (Nx.add t (Nx.mul_s h m.c.(i))) !last
+        ks.(i) <- eval fn y f (stage_time t t_end h m.c.(i)) !last
   done;
   ((if m.fsal then !last else combine m.b), ks)
 
@@ -422,8 +427,8 @@ type ('y, 'd) stepped = {
   evaluations : 'd Nx.int32_t;
 }
 
-let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t, 'd) Nx.t) h
-    v k0 =
+let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t, 'd) Nx.t)
+    t_end h v k0 =
   let s = Array.length m.b in
   let tdtype = Nx.dtype t in
   let (Linear.Space { dtype; size; ravel; unravel }) =
@@ -459,7 +464,7 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t, 'd) Nx.t) h
         if aij <> 0. then r := Nx.Ptree.axpy y (Nx.mul_s h aij) ks.(j) !r)
       m.a.(i);
     let r = !r in
-    let ti = Nx.add t (Nx.mul_s h m.c.(i)) in
+    let ti = stage_time t t_end h m.c.(i) in
     let difference z =
       Nx.Ptree.axpy y (Nx.scalar_at (Nx.beside t) tdtype (-1.)) v z
     in
@@ -563,10 +568,10 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t, 'd) Nx.t) h
 
 (* One step of [m]; an implicit method solves its stages to [tol], on detached
    values in a search and stated as roots in an answer. *)
-let step ?stages fn y m f t h v k0 =
+let step ?stages fn y m f t t_end h v k0 =
   match (m.implicit, stages) with
   | None, _ ->
-      let next, ks = explicit_step fn y m.tableau f t h v k0 in
+      let next, ks = explicit_step fn y m.tableau f t t_end h v k0 in
       let s = Array.length ks in
       {
         next;
@@ -579,35 +584,27 @@ let step ?stages fn y m f t h v k0 =
             (Int32.of_int (if Option.is_some k0 then s - 1 else s));
       }
   | Some imp, Some (tol, stated) ->
-      implicit_step ~tol ~stated fn y m.tableau imp f t h v
+      implicit_step ~tol ~stated fn y m.tableau imp f t t_end h v
         (match k0 with Some k -> k | None -> eval fn y f t v)
   | Some _, None -> invalid_arg (fn ^ ": an implicit method needs a tolerance")
 
 let march y m ~steps f ~at y0 =
   let fn = "Jera.Ode.march" in
   March.check fn ~steps at;
-  let interval c step t0 t1 carry =
-    let h, starts = March.grid ~steps t0 t1 in
-    let carry =
-      March.steps c Nx.Ptree.tensor (steps - 1)
-        (fun t carry -> step t h carry)
-        carry starts
-    in
-    let t = Nx.get [ steps - 1 ] starts in
-    step t (Nx.sub t1 t) carry
-  in
   let m = m.tableau in
   if m.fsal then
     let c = Nx.Ptree.pair y y in
-    let step t h (v, k) =
-      let v, ks = explicit_step fn y m f t h v (Some k) in
+    let step t t_end h (v, k) =
+      let v, ks = explicit_step fn y m f t t_end h v (Some k) in
       (v, ks.(Array.length ks - 1))
     in
     let k0 = eval fn y f (Nx.get [ 0 ] at) y0 in
-    March.run c y ~at ~interval:(interval c step) ~state:fst (y0, k0)
+    March.run c y ~at
+      ~interval:(March.interval c ~steps step)
+      ~state:fst (y0, k0)
   else
-    let step t h v = fst (explicit_step fn y m f t h v None) in
-    March.run y y ~at ~interval:(interval y step) ~state:Fun.id y0
+    let step t t_end h v = fst (explicit_step fn y m f t t_end h v None) in
+    March.run y y ~at ~interval:(March.interval y ~steps step) ~state:Fun.id y0
 
 (* Solves *)
 
@@ -727,6 +724,11 @@ let search_ptree y tree =
 
 let scalar_at t i =
   Nx.reshape [||] (Nx.take (Nx.reshape [| 1 |] (Nx.cast Nx.int64 i)) t)
+
+(* The time at the fraction [sigma] of the interval from [a] to [b] of span
+   [span]: [b] itself at [1], which [a + span] can round apart from. *)
+let time_at a b span sigma =
+  Nx.where (Nx.equal_s sigma 1.) b (Nx.add a (Nx.mul span sigma))
 
 (* [rows] with [x] combined into row [i], where [only] holds if given: a
    scatter, at the position [-1] elsewhere, which writes nothing, so that a
@@ -900,6 +902,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     let ds = Nx.where lands (Nx.rsub_s 1. s.sigma) ds in
     let sigma_end = Nx.where lands one (Nx.add s.sigma ds) in
     let hh = Nx.mul span ds in
+    let t_end = time_at a b span sigma_end in
     let k0 =
       match mem.first with
       | None -> s.k
@@ -908,7 +911,7 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
     let stepped =
       step ~stages:(tol, Searched) fn y m
         (fun t v -> detached (mem.field s.memory t v))
-        t hh s.v (Some k0)
+        t t_end hh s.v (Some k0)
     in
     let v' = stepped.next and ks = stepped.stages in
     let e =
@@ -952,7 +955,6 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
         e
     in
     let lands = Nx.logical_or lands empty in
-    let t_end = Nx.add a (Nx.mul span sigma_end) in
     (* Controller *)
     let rr = Nx.maximum r (Nx.full_like r 1e-10) in
     let fac =
@@ -1146,14 +1148,15 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
       in
       let sigma1 = scalar_at s.ends idx in
       let t = Nx.add a (Nx.mul span sigma0)
+      and t_end = time_at a b span sigma1
       and h = Nx.mul span (Nx.sub sigma1 sigma0) in
       let k =
         match mem.first with None -> k | Some g -> eval fn y (g mm) t v
       in
       let { next = v'; stages = ks; _ } =
-        step ~stages:(tol, Stated) fn y m (mem.field mm) t h v (Some k)
+        step ~stages:(tol, Stated) fn y m (mem.field mm) t t_end h v (Some k)
       in
-      let mm, _ = mem.accept mm ~t ~t_end:(Nx.add t h) ~h ~v ~ks v' in
+      let mm, _ = mem.accept mm ~t ~t_end ~h ~v ~ks v' in
       ((v', (ks.(stages - 1), mm)), Nx.add_s i 1l)
     in
     let c = Nx.Ptree.(pair y (pair y mem.tree)) in
@@ -1364,8 +1367,9 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
   let piece (v, (k, (acc, (sigma0, (i, (nodes, accs)))))) =
     let sigma1 = scalar_at s.ends i in
     let t = Nx.add t0 (Nx.mul span sigma0)
+    and t_end = time_at t0 t1 span sigma1
     and h = Nx.mul span (Nx.sub sigma1 sigma0) in
-    let stepped = step ~stages:(tol, Stated) fn y m f t h v (Some k) in
+    let stepped = step ~stages:(tol, Stated) fn y m f t t_end h v (Some k) in
     let v' = stepped.next and ks = stepped.stages in
     let node =
       stack y (Array.map (node y ext h v (ks, stepped.values)) thetas)
@@ -1556,9 +1560,10 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
     in
     let sigma1 = fraction i in
     let t = Nx.add t0 (Nx.mul span sigma0)
+    and t_end = time_at t0 t1 span sigma1
     and h = Nx.mul span (Nx.sub sigma1 sigma0) in
     let { next = v; stages = ks; _ } =
-      step ~stages:(tol, Stated) fn y m f t h v (Some k)
+      step ~stages:(tol, Stated) fn y m f t t_end h v (Some k)
     in
     (v, (ks.(stages - 1), Nx.add_s i 1l))
   in
@@ -1585,9 +1590,10 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
       (Nx.zeros_at (Nx.beside t0) dtype [||])
   in
   let t_a = Nx.add t0 (Nx.mul span sigma0)
+  and t_b = time_at t0 t1 span sigma1
   and h = Nx.mul span (Nx.sub sigma1 sigma0) in
   let { next = v_b; stages = ks; values = zs; _ } =
-    step ~stages:(tol, Stated) fn y m f t_a h v_a (Some k_a)
+    step ~stages:(tol, Stated) fn y m f t_a t_b h v_a (Some k_a)
   in
   let ext = extension_of fn m in
   let h_safe = Nx.where (Nx.equal_s h 0.) (Nx.ones_like h) h in
@@ -1607,7 +1613,7 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let crossing = Nx.any crossed in
   let detached v = Nx.Ptree.map y (fun _ x -> Rune.detach x) v in
   let ta = Rune.detach t_a and hd = Rune.detach h_safe in
-  let tb = Nx.add ta (Rune.detach h) in
+  let tb = Rune.detach t_b in
   let vd = detached v_a
   and ksd = Array.map detached ks
   and zsd = Array.map detached zs in

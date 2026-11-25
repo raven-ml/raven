@@ -1284,6 +1284,15 @@ All notable changes to this project will be documented in this file.
 - `Piecewise.cubic (`Clamped (s0, s1))` through two knots takes the slopes
   `s0` and `s1` at its ends, as `jera.mli` states. It drew the line through
   the two samples and ignored them.
+- A step's stages at `c = 1` read the field at the step's end itself, in
+  `Ode.march` and every Ode solve, as `jera.mli` states: they read it at the
+  start plus the size, which rounds apart from the end where the size does.
+  Over `[a, b]` with `a = -7.074863082399303` and `b = 4.437342817489506`,
+  `a + (b − a)` is one ulp below `b`, so a field that switches at one of
+  `at`'s times was read on the wrong side. `Ode`, `Sde` and `Split` marches
+  now take each step's start, end and size from one rule. Results change in
+  their last bits; `Split.march` merges a step's last kick into the next
+  one's first as `h last + h first`.
 - `Quad.tanh_sinh` gives an element that did not converge a zero derivative,
   as `jera.mli` states, where it could be NaN: its answer evaluated the
   integrand's derivative at nodes near a singular end, where it overflows, and

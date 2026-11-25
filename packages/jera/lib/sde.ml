@@ -208,34 +208,19 @@ let march y m ~steps ~drift ~diffusion w ~at y0 =
   (* [v + a x] and [v + x] over the float leaves. *)
   let axpy a x v = Nx.Ptree.axpy y a x v in
   let add x v = axpy one x v in
-  (* Each step's times lie in the path's interval, as [at]'s ends were
-     checked to. Every step but the last has size [h]; the last runs from its
-     start to [t1].
-
-     The path's W and I at a step's end carry into the next step, which starts
-     there to the bit, so the march queries the path once per step and sees
-     what a query at each start would. A step that reads its end time takes
-     that next start, or [t1]: its start plus its size can round apart from
-     it. *)
+  (* Each step's times lie in the path's interval, as [at]'s ends were checked
+     to. The path's W and I at a step's end carry into the next step, which
+     starts there to the bit, so the march queries the path once per step and
+     sees what a query at each start would. *)
   let path = Nx.Ptree.(pair tensor tensor) in
-  let interval c step t0 t1 carry =
-    let h, starts = March.grid ~steps t0 t1 in
-    let advance t t' h (carry, start) =
-      let stop = Brownian.point w t' in
-      let dw, area = Brownian.between start stop h in
-      (step t t' h dw area carry, stop)
-    in
-    let carry =
-      March.steps
-        Nx.Ptree.(pair c path)
-        Nx.Ptree.(pair tensor tensor)
-        (steps - 1)
-        (fun (t, t') carry -> advance t t' h carry)
-        carry
-        (starts, Nx.slice [ Nx.R (1, steps) ] starts)
-    in
-    let t = Nx.get [ steps - 1 ] starts in
-    advance t t1 (Nx.sub t1 t) carry
+  let interval c step =
+    March.interval
+      Nx.Ptree.(pair c path)
+      ~steps
+      (fun t t' h (carry, start) ->
+        let stop = Brownian.point w t' in
+        let dw, area = Brownian.between start stop h in
+        (step t t' h dw area carry, stop))
   in
   let start = Brownian.point w (Nx.get [ 0 ] at) in
   let run c step ~state init =

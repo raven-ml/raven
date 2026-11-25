@@ -1576,9 +1576,10 @@ module Ode : sig
     ([ `Formula ], 'y, 't, 'd) t
   (** [tableau ~a ~b ~c] is the explicit Runge–Kutta method of Butcher tableau
       [(a, b, c)] with [s] stages: stage [i] evaluates the field at
-      [t + c.(i) h] on [y + h Σ_(j<i) a.(i).(j) k_j], and the step is
-      [y + h Σ_i b.(i) k_i]. Its coefficients are given in float64 and rounded
-      once to the time's and each leaf's dtype.
+      [t + c.(i) h] on [y + h Σ_(j<i) a.(i).(j) k_j], or at the step's end
+      itself where [c.(i) = 1], and the step is [y + h Σ_i b.(i) k_i]. Its
+      coefficients are given in float64 and rounded once to the time's and
+      each leaf's dtype.
 
       Raises [Invalid_argument] unless [s ≥ 1], [b] and [c] have [s] elements,
       [a] has [s] rows of which row [i] has [i] elements, every coefficient is
@@ -1640,9 +1641,10 @@ module Ode : sig
       a new leading axis of each leaf, [y0] first at [at.(0)]. The interval from
       [at.(i)] to [at.(i+1)] takes [steps] steps of [m]: step [j] starts at
       [at.(i) + j h] with [h = (at.(i+1) − at.(i)) / steps], or at [at.(i+1)]
-      where that rounds past it. Every step but the last has size [h]; the last
-      has size [at.(i+1)] minus its start, never negative, and ends at
-      [at.(i+1)] itself. [at] may decrease, to march back.
+      where that rounds past it. Every step but the last has size [h] and ends
+      where the next starts; the last has size [at.(i+1)] minus its start,
+      never negative, and ends at [at.(i+1)] itself. [at] may decrease, to
+      march back.
 
       {b Error.} A method of order [p] has global error [O(h^p)] for a smooth
       field. {b Stability.} An explicit method is stable only while [h] times

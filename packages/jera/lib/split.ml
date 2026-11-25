@@ -93,25 +93,20 @@ let step m ~kick ~drift h s =
 let march p m ~steps ~kick ~drift ~at s0 =
   March.check "Jera.Split.march" ~steps at;
   let first = m.kick.(0) and last = m.kick.(Array.length m.kick - 1) in
-  let merged = last +. first in
-  (* Adjacent kicks merge into one: of [h (last + first)] between steps of
-     [h], and of [h last + h' first] before the last step, of size [h']. *)
+  (* Adjacent kicks merge into one: a step's last kick waits in the carry and
+     joins the next step's first, and the interval's last kick lands at its
+     end. *)
   let interval t0 t1 s =
-    let h, starts = March.grid ~steps t0 t1 in
-    let h' = Nx.sub t1 (Nx.get [ steps - 1 ] starts) in
-    let s =
-      if steps = 1 then kick (Nx.mul_s h' first) s
-      else
-        let s = kick (Nx.mul_s h first) s in
-        let s =
-          March.steps p Nx.Ptree.tensor (steps - 2)
-            (fun _ s -> kick (Nx.mul_s h merged) (inner m ~kick ~drift h s))
-            s starts
-        in
-        kick
-          (Nx.add (Nx.mul_s h last) (Nx.mul_s h' first))
-          (inner m ~kick ~drift h s)
+    let s, pending =
+      March.interval
+        Nx.Ptree.(pair p tensor)
+        ~steps
+        (fun _ _ h (s, pending) ->
+          let s = kick (Nx.add pending (Nx.mul_s h first)) s in
+          (inner m ~kick ~drift h s, Nx.mul_s h last))
+        t0 t1
+        (s, Nx.zeros_like t0)
     in
-    kick (Nx.mul_s h' last) (inner m ~kick ~drift h' s)
+    kick pending s
   in
   March.run p p ~at ~interval ~state:Fun.id s0

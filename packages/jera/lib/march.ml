@@ -73,11 +73,24 @@ let grid ~steps t0 t1 =
   let past = Nx.where (Nx.greater t1 t0) (Nx.greater x t1) (Nx.less x t1) in
   (h, Nx.where past (Nx.broadcast_to [| steps |] t1) x)
 
-let steps c x n f init xs =
-  if n = 0 then init
-  else
-    let xs = Nx.Ptree.map x (fun _ v -> Nx.slice [ Nx.R (0, n) ] v) xs in
-    if n = 1 then f (Nx.Ptree.map x (fun _ v -> Nx.get [ 0 ] v) xs) init
+let interval c ~steps step t0 t1 init =
+  let h, starts = grid ~steps t0 t1 in
+  (* A step ends where the next starts, the last at [t1] itself: its start plus
+     its size can round apart from that time. *)
+  let carry =
+    if steps = 1 then init
     else
-      fst
-        (Rune.scan c x Nx.Ptree.unit (fun carry r -> (f r carry, ())) ~init xs)
+      let n = steps - 1 in
+      let ends = Nx.slice [ Nx.R (1, steps) ] starts in
+      if n = 1 then step (Nx.get [ 0 ] starts) (Nx.get [ 0 ] ends) h init
+      else
+        fst
+          (Rune.scan c
+             Nx.Ptree.(pair tensor tensor)
+             Nx.Ptree.unit
+             (fun carry (t, t_end) -> (step t t_end h carry, ()))
+             ~init
+             (Nx.slice [ Nx.R (0, n) ] starts, ends))
+  in
+  let t = Nx.get [ steps - 1 ] starts in
+  step t t1 (Nx.sub t1 t) carry
