@@ -63,6 +63,14 @@ let build_special_lookup special_tokens =
   List.iter (fun tok -> Hashtbl.replace tbl tok.key tok) special_tokens;
   tbl
 
+(* A later special token of the same text replaces an earlier one, as in
+   tokenizers' map of them, and takes its place. *)
+let last_of_each special_tokens =
+  let named key = List.exists (fun tok -> String.equal tok.key key) in
+  List.fold_right
+    (fun tok kept -> if named tok.key kept then kept else tok :: kept)
+    special_tokens []
+
 let string_is_int s =
   let len = String.length s in
   let rec loop i =
@@ -462,10 +470,11 @@ let default_pair =
 
 let template ~single ?pair ?(special_tokens = []) () =
   let specials =
-    List.map
-      (fun (token, id) ->
-        { key = token; value_ids = [ id ]; value_tokens = [ token ] })
-      special_tokens
+    last_of_each
+      (List.map
+         (fun (token, id) ->
+           { key = token; value_ids = [ id ]; value_tokens = [ token ] })
+         special_tokens)
   in
   let lookup = build_special_lookup specials in
   let single = parse_template_string ~special_lookup:lookup single in
@@ -657,7 +666,9 @@ let rec of_json_exn json =
           in
           ByteLevel { add_prefix_space; trim_offsets }
       | Some (Jsont.String ("TemplateProcessing", _)) ->
-          let special_tokens = parse_special_tokens_json fields in
+          let special_tokens =
+            last_of_each (parse_special_tokens_json fields)
+          in
           let lookup = build_special_lookup special_tokens in
           let single =
             match json_find "single" fields with

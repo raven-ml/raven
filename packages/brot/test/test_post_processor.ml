@@ -49,6 +49,8 @@ let json_of_text text =
   | Ok json -> json
   | Error msg -> failf "cannot decode %S: %s" text msg
 
+let read text = Post_processor.of_json (json_of_text text)
+let written t = json_text (Post_processor.to_json t)
 let bert = Post_processor.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101)
 let roberta = Post_processor.roberta ~sep:("</s>", 2) ~cls:("<s>", 0) ()
 
@@ -355,6 +357,21 @@ let test_multi_id () =
   equal ~msg:"special mask" (array int) [| 1; 1; 0 |]
     (Encoding.special_tokens_mask enc)
 
+(* HF: TemplateProcessing(single="[X] $A", special_tokens=[("[X]", 1), ("[X]",
+   2)]) processes [5] to [2, 5] and counts 1 special token. *)
+let duplicated_x =
+  {|{"type":"TemplateProcessing","single":[{"SpecialToken":{"id":"[X]","type_id":0}},{"Sequence":{"id":"A","type_id":0}}],"pair":[{"Sequence":{"id":"A","type_id":0}},{"Sequence":{"id":"B","type_id":1}}],"special_tokens":{"[X]":{"id":"[X]","ids":[1],"tokens":["[X]"]},"[X]":{"id":"[X]","ids":[2],"tokens":["[X]"]}}}|}
+
+let single_x =
+  {|{"type":"TemplateProcessing","single":[{"SpecialToken":{"id":"[X]","type_id":0}},{"Sequence":{"id":"A","type_id":0}}],"pair":[{"Sequence":{"id":"A","type_id":0}},{"Sequence":{"id":"B","type_id":1}}],"special_tokens":{"[X]":{"id":"[X]","ids":[2],"tokens":["[X]"]}}}|}
+
+let keeps_last (_, t) =
+  let t = Lazy.force t in
+  equal ~msg:"ids" (array int) [| 2; 1000 |]
+    (Encoding.ids (Post_processor.process t (first 1) ~add_special_tokens:true));
+  equal ~msg:"added_tokens" int 1 (Post_processor.added_tokens t ~is_pair:false);
+  equal ~msg:"to_json" string single_x (written t)
+
 let test_default_pair () =
   let t = Post_processor.template ~single:"$A" () in
   let enc =
@@ -609,9 +626,6 @@ let not_post_processors =
     );
   ]
 
-let read text = Post_processor.of_json (json_of_text text)
-let written t = json_text (Post_processor.to_json t)
-
 (* Members a reader cannot take, each with the member its error names. Hugging
    Face 0.23.1 rejects every row but the RobertaProcessing ones, which its
    untagged enum reads as a BertProcessing; brot names the member instead.
@@ -790,6 +804,18 @@ let () =
              test
                "a special token of several IDs inserts each, with its type ID"
                test_multi_id;
+             cases
+               "a later special token of the same text replaces an earlier one"
+               ~id:fst
+               [
+                 ( "template",
+                   lazy
+                     (Post_processor.template ~single:"[X] $A"
+                        ~special_tokens:[ ("[X]", 1); ("[X]", 2) ]
+                        ()) );
+                 ("of_json", lazy (require_ok (read duplicated_x)));
+               ]
+               keeps_last;
              test "a pair without a pair template is $A:0 $B:1"
                test_default_pair;
              test

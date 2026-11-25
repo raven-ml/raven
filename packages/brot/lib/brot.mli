@@ -738,7 +738,8 @@ module Post_processor : sig
       text, so one whose text holds [:] cannot appear.
 
       [pair] must reference both [$A] and [$B]; it defaults to ["$A:0 $B:1"].
-      [special_tokens] defaults to [[]].
+      [special_tokens] defaults to [[]]. A later entry of [special_tokens]
+      replaces an earlier one of the same text.
 
       Raises [Invalid_argument] if a template names a token not in
       [special_tokens] or has a suffix that is not an integer in \[0, 2{^ 32}),
@@ -793,11 +794,12 @@ module Post_processor : sig
 
       A missing ["trim_offsets"] or ["add_prefix_space"] is [true], a missing
       ["single"] is ["$A"], and a missing or [null] ["pair"] is ["$A:0 $B:1"]. A
-      template may also be a string in {!template}'s syntax. ["sep"] and ["cls"]
-      are required, and a member of the wrong type, or an id or type id that is
-      not an integer from [0] to 2{^ 31}[ - 1], is an error naming it. A
-      ["RobertaProcessing"] without its flags reads as {!roberta} with both
-      [true]; HuggingFace reads it as a ["BertProcessing"]. *)
+      template may also be a string in {!template}'s syntax, and a later special
+      token replaces an earlier one of the same name, as in {!template}. ["sep"]
+      and ["cls"] are required, and a member of the wrong type, or an id or type
+      id that is not an integer from [0] to 2{^ 31}[ - 1], is an error naming
+      it. A ["RobertaProcessing"] without its flags reads as {!roberta} with
+      both [true]; HuggingFace reads it as a ["BertProcessing"]. *)
 
   val to_json : t -> Jsont.json
   (** [to_json t] is [t] serialized to HuggingFace [tokenizer.json] format. *)

@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Post_processor.template` and `of_json` keep the last of several special
+  tokens of the same text, as tokenizers does. `process` used the first,
+  `added_tokens` counted the last, and `to_json` wrote both.
 - `Post_processor.template` refuses a type ID of 2^32 or more, which
   tokenizers cannot hold, as does `of_json` in a template string.
 - `Post_processor.sequence` keeps a pair's sequences apart until its last
