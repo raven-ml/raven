@@ -45,8 +45,9 @@
     The panes take their widths from the terminal's: at 150 columns or more
     the runs pane has 42 and the run pane 34; at 100 or more, 34 and 28, the
     run pane hidden at the strips and zoom depths; below 100, neither, and a
-    line under the top bar names the cursor's run. [1] and [3] show or hide
-    either pane at any width. Below 60 columns or 16 lines the screen is one
+    line under the top bar names the cursor's run and counts it among the
+    runs kept, as [12 of 33]. [1] and [3] show or hide either pane at any
+    width, and [/] shows a hidden runs pane while the filter is typed. Below 60 columns or 16 lines the screen is one
     line per live run and asks for a larger terminal. A store without runs
     shows how a program starts one.
 
@@ -66,14 +67,18 @@
     the name, the id, the experiment, a tag, the state word or a param written
     [key=value], ignoring case, or, for a word [key<v] or [key>v] with [v] a
     decimal such as [0.002] or [2e-3], whose param [key] is a number below or
-    above [v].
+    above [v]. A kept filter that keeps no run stays in the runs pane, and
+    the centre says [no run matches the filter].
 
     The {e key metric} of an experiment is, among its runs' metrics by key, the
     first with a goal outside [train/] whose key ends in [loss], else the first
     with a goal outside [train/], else the first with a goal, else the first.
 
     {b The centre} starts with a {e banner} when the cursor's run failed,
-    crashed or logged a sample that is not finite, then the {e hero}: the key
+    crashed or logged a sample that is not finite, which names the first such
+    sample's metric, value and step, and how many metrics went NaN or an
+    infinity, as [× a NaN from step 5; 2 metrics went NaN or inf]; then the
+    {e hero}: the key
     metric's latest value in large digits, its best, and the latest values of
     up to three other metrics with a goal, four from 150 columns, smoothed
     where their charts smooth them. Below 100 columns or 30 lines one line of
@@ -81,7 +86,8 @@
 
     At the {e charts} depth the centre has the metric tabs, which [left] and
     [right] move, a legend that gives each drawn run's value at the cursor's
-    run's latest step, one large chart and, from 100 columns and 30 lines, two
+    run's latest step, ending in [r others] while the experiment has runs
+    not drawn, one large chart and, from 100 columns and 30 lines, two
     small charts of the other metrics with a goal, three from 150 columns and
     44 lines. A run without a metric sample shows, in their place, [no
     metric sample yet], or, once it ended, [the run logged no metric]. At
@@ -90,13 +96,15 @@
     the difference to the first overlay at the latest step at which both
     logged a finite value; for a run that recorded readings of its machine,
     live or ended, strips of those the run pane gives end the list, over the
-    same steps. The list shows whole strips, as many as fit from its first,
+    same steps, each reading in its unit: bytes in GiB, a busy share in
+    percent. The list shows whole strips, as many as fit from its first,
     and moves by whole strips, the least that shows the cursor's strip; a
     line under them, such as [+6 more], counts the strips that follow. At
     the {e zoom} depth one metric fills the centre with each column's raw
     extent faint behind the smoothed line, a step cursor and a readout of
-    each drawn run at the cursor. Enter goes one depth deeper and Esc one
-    back.
+    each drawn run at the cursor, under a title that names the metric and
+    says [log] while it is drawn on a log scale. Enter goes one depth deeper
+    and Esc one back.
 
     [i] shows everything about the run over the centre: its params, notes,
     tags, source, every metric's latest and best values, the artifact versions
@@ -223,7 +231,8 @@
 
     {v
     up down, k j     the run; the strip at strips
-    left right, h l  the metric; the step at zoom, shift for ten
+    left right, h l  the metric; at zoom the sample before, after, shift
+                     for ten
     [ ]              the previous, next run, at any depth
     g G              the first, last run
     Enter            one depth deeper: charts, strips, zoom; open a folded

@@ -89,7 +89,8 @@ val gib : float -> string
 (** [gib b] is [b] bytes in GiB with one decimal, without the unit. *)
 
 val span : float -> string
-(** [span s] is [s] seconds in two units, as [4m 10s]. *)
+(** [span s] is [s] seconds in two units, as [4m 10s], or in seconds alone
+    below a minute, as [45s]. A negative [s] is [0s]. *)
 
 val clock : now:float -> float -> string
 (** [clock ~now t] is [t]'s local time of day, as [14:22], with its date

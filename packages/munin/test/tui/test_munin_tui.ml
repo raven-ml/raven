@@ -2022,6 +2022,17 @@ let differences =
       equal (option string) expected
         (Munin_tui.Numbers.difference key ~value ~other))
 
+let spans =
+  cases ~id:fst "a span prints in two units, or seconds below a minute"
+    [
+      ("4m 10s", (250., "4m 10s"));
+      ("45s", (45., "45s"));
+      ("a minute", (60., "1m 00s"));
+      ("negative", (-5., "0s"));
+    ]
+    (fun (_, (x, expected)) ->
+      equal string expected (Munin_tui.Numbers.span x))
+
 (* An axis's labels, in one notation: plain while every tick fits six
    cells, else the suffix, else the exponent. *)
 let tick_labels =
@@ -2651,6 +2662,22 @@ let watch_test =
           w)
         (fun st (w, now, _) -> Watch.word (Watch.state st (Some w) ~now));
     ]
+
+(* Before a poll watched it, a run's state is its status alone. *)
+let unwatched =
+  cases
+    ~id:(fun (s, _) -> Fixture.status_name s)
+    "a run no poll watched reads its status"
+    [
+      (`Running, "running");
+      (`Silent, "silent");
+      (`Crashed, "crashed");
+      (`Finished, "finished");
+      (`Failed "e", "failed");
+      (`Killed, "killed");
+    ]
+    (fun (status, word) ->
+      equal string word (Watch.word (Watch.state status None ~now:0.)))
 
 (* The depths *)
 
@@ -3843,7 +3870,7 @@ let () =
              binned; rising; spike; non_finite; cursor_wins; zoom_cursor; x_labels_clear; lines_over_rules; letters; exact_labels; tick_labels; x_domain; x_domain_law; stalled_end; zoom_window; now_rule; bounds;
              ticks_of;
              log_choice; y_per_metric; cut_law; values_printed; rounding_shown;
-             difference_fits; differences;
+             difference_fits; differences; spans;
              filled;
              matching; cadence;
            ];
@@ -3861,7 +3888,15 @@ let () =
              same_names;
            ];
          group "held"
-           [ held; kept_pane; ended_away; ended_between; glyphs; watch_test ];
+           [
+             held;
+             kept_pane;
+             ended_away;
+             ended_between;
+             glyphs;
+             watch_test;
+             unwatched;
+           ];
          depth_test;
          hidden_filter;
          strips_scroll;
