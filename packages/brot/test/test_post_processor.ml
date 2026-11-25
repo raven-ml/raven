@@ -601,6 +601,9 @@ let not_post_processors =
     ( "a special token with more ids than tokens",
       {|{"type":"TemplateProcessing","single":"[X] $A","special_tokens":{"[X]":{"id":"[X]","ids":[1,2],"tokens":["a"]}}}|}
     );
+    ( "a type ID of 2^32",
+      {|{"type":"TemplateProcessing","single":"$A:4294967296","special_tokens":{}}|}
+    );
     ( "a sequence that is neither A nor B",
       {|{"type":"TemplateProcessing","single":[{"Sequence":{"id":"C","type_id":0}}],"special_tokens":{}}|}
     );
@@ -805,6 +808,9 @@ let () =
                  ("[X] $A", None, "[X]");
                  ("$A:x", None, "$A:x");
                  ("$A:-1", None, "$A:-1");
+                 ("$A:99999999999999999999", None, "$A:99999999999999999999");
+                 ("$A:4294967296", None, "$A:4294967296");
+                 ("[CLS]:4294967296 $A", None, "[CLS]:4294967296");
                  ("[CLS:0] $A", None, "[CLS:0]");
                  ("$A", Some "$A [CLS]", "pair");
                  ("$A", Some "[CLS] $B", "pair");

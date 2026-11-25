@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Post_processor.template` refuses a type ID of 2^32 or more, which
+  tokenizers cannot hold, as does `of_json` in a template string.
 - `Post_processor.sequence` keeps a pair's sequences apart until its last
   processor merges them, and a template gives each piece as a sequence, as
   tokenizers does. `[bert; bert]` gave a pair 5 special tokens, not 6.

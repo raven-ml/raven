@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 let strf = Printf.sprintf
-let err_type_id tok = strf "expected integer type id after ':' in '%s'" tok
+let err_type_id tok = strf "expected a type id below 2^32 after ':' in '%s'" tok
 let err_piece tok = strf "expected 'id' or 'id:type_id', got '%s'" tok
 let err_unknown_special tok = strf "unknown special token '%s'" tok
 let err_mismatch tok = strf "ids and tokens differ in length for '%s'" tok
@@ -70,6 +70,16 @@ let string_is_int s =
     else match s.[i] with '0' .. '9' -> loop (i + 1) | _ -> false
   in
   len > 0 && loop 0
+
+(* tokenizers holds a type ID as a u32. *)
+let type_id_bound = 1 lsl 32
+
+let type_id_of_string s =
+  if not (string_is_int s) then None
+  else
+    match int_of_string_opt s with
+    | Some n when n < type_id_bound -> Some n
+    | Some _ | None -> None
 
 let sequence_id_to_label = function Sequence_a -> "A" | Sequence_b -> "B"
 let sequence_id_to_index = function Sequence_a -> 0 | Sequence_b -> 1
@@ -258,16 +268,17 @@ let parse_sequence_base base =
   else if lower = "$b" then Some (Sequence_b, 0)
   else if String.length base > 0 && base.[0] = '$' then
     let rest = String.sub base 1 (String.length base - 1) in
-    if string_is_int rest then Some (Sequence_a, int_of_string rest) else None
+    Option.map (fun n -> (Sequence_a, n)) (type_id_of_string rest)
   else None
 
 let parse_template_piece_from_string ~special_lookup token =
   let parts = String.split_on_char ':' token in
   let base, explicit_type =
     match parts with
-    | [ id; type_part ] when string_is_int type_part ->
-        (id, Some (int_of_string type_part))
-    | [ _; _ ] -> invalid_arg (err_type_id token)
+    | [ id; type_part ] -> (
+        match type_id_of_string type_part with
+        | Some type_id -> (id, Some type_id)
+        | None -> invalid_arg (err_type_id token))
     | [ id ] -> (id, None)
     | _ -> invalid_arg (err_piece token)
   in

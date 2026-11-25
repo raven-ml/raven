@@ -741,8 +741,8 @@ module Post_processor : sig
       [special_tokens] defaults to [[]].
 
       Raises [Invalid_argument] if a template names a token not in
-      [special_tokens] or has a suffix that is not a non-negative integer, or if
-      [pair] lacks [$A] or [$B]. *)
+      [special_tokens] or has a suffix that is not an integer in \[0, 2{^ 32}),
+      or if [pair] lacks [$A] or [$B]. *)
 
   val sequence : t list -> t
   (** [sequence processors] chains [processors] left to right. Each hands the
