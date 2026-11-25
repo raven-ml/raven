@@ -490,9 +490,7 @@ and constr env ~ints part ty lid args =
   | (Ldot (Lident "Nx", "dtype") | Ldot (Ldot (Lident "Nx", "Dtype"), "t")), _
     ->
       refuse "a dtype is data; leave it out with [@ptree.skip]"
-  | ( ( Ldot (Lident "Nx", "devices")
-      | Ldot (Ldot (Lident "Nx", ("Placement" | "Mesh")), "t") ),
-      _ ) ->
+  | Ldot (Ldot (Lident "Nx", ("Placement" | "Mesh" | "Devices")), "t"), _ ->
       refuse
         "%s has no walk: it says where arrays lie and holds none. Pass it \
          beside the structure, or leave it out with [@ptree.skip] if its type \

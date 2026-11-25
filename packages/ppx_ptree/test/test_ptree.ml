@@ -855,7 +855,9 @@ let test_inner () =
     (P.instantiate (module Inner))
     { w = f32 [| 1. |]; frozen = { w = f32 [| 2. |]; b = Some (f32 [| 3. |]) } }
 
-(* Each form the .mli refuses without an attribute, skipped, and one walked. *)
+(* Each form the .mli refuses without an attribute, skipped, and one walked. The
+   Nx types the deriver refuses by name are named here too, so a rename in Nx
+   fails this build before the deriver goes stale. *)
 module Skipped = struct
   type ('a, 'd) t = {
     w : 'a;
@@ -863,8 +865,10 @@ module Skipped = struct
     name : string; [@ptree.skip]
     scale : float; [@ptree.skip]
     dtype : (float, Nx.float32_elt) Nx.dtype; [@ptree.skip]
+    format : (float, Nx.float32_elt) Nx.Dtype.t; [@ptree.skip]
     at : host Nx.Placement.t; [@ptree.skip]
     mesh : host Nx.Mesh.t; [@ptree.skip]
+    devices : host Nx.Devices.t; [@ptree.skip]
     mask : host Nx.bool_t; [@ptree.skip]
     callback : int -> int; [@ptree.skip]
     getter : < get : int >; [@ptree.skip]
@@ -897,8 +901,10 @@ let test_skipped () =
       name = "skipped";
       scale = 0.5;
       dtype = Nx.float32;
+      format = Nx.float32;
       at = Nx.Host.on;
       mesh = Nx.Mesh.v Nx.Host.v [ ("x", 1) ];
+      devices = Nx.Host.v;
       mask = Nx.zeros Nx.bool [| 1 |];
       callback = succ;
       getter =

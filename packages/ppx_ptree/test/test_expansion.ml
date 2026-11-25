@@ -678,19 +678,30 @@ let () =
                ];
              reports "Nx types without a walk are refused at the part"
                [
-                 ( "placements and meshes",
-                   {|type ('a, 'd) t = { w : 'a; at : 'd Nx.Placement.t; mesh : 'd Nx.Mesh.t } [@@deriving ptree]|},
+                 ( "placements, meshes and device sets",
+                   {|type ('a, 'd) t = {
+  w : 'a;
+  at : 'd Nx.Placement.t;
+  mesh : 'd Nx.Mesh.t;
+  devices : 'd Nx.Devices.t;
+}
+[@@deriving ptree]|},
                    __POS_OF__
                      {|
-                     File "x.ml", line 1, characters 33-50:
-                     1 | type ('a, 'd) t = { w : 'a; at : 'd Nx.Placement.t; mesh : 'd Nx.Mesh.t } [@@deriving ptree]
-                                                          ^^^^^^^^^^^^^^^^^
+                     File "x.ml", line 3, characters 7-24:
+                     3 |   at : 'd Nx.Placement.t;
+                                ^^^^^^^^^^^^^^^^^
                      Error: ppx_ptree: field [at] has type 'd Nx.Placement.t; Nx.Placement.t has no walk: it says where arrays lie and holds none. Pass it beside the structure, or leave it out with [@ptree.skip] if its type mentions no parameter
 
-                     File "x.ml", line 1, characters 59-71:
-                     1 | type ('a, 'd) t = { w : 'a; at : 'd Nx.Placement.t; mesh : 'd Nx.Mesh.t } [@@deriving ptree]
-                                                                                    ^^^^^^^^^^^^
+                     File "x.ml", line 4, characters 9-21:
+                     4 |   mesh : 'd Nx.Mesh.t;
+                                  ^^^^^^^^^^^^
                      Error: ppx_ptree: field [mesh] has type 'd Nx.Mesh.t; Nx.Mesh.t has no walk: it says where arrays lie and holds none. Pass it beside the structure, or leave it out with [@ptree.skip] if its type mentions no parameter
+
+                     File "x.ml", line 5, characters 12-27:
+                     5 |   devices : 'd Nx.Devices.t;
+                                     ^^^^^^^^^^^^^^^
+                     Error: ppx_ptree: field [devices] has type 'd Nx.Devices.t; Nx.Devices.t has no walk: it says where arrays lie and holds none. Pass it beside the structure, or leave it out with [@ptree.skip] if its type mentions no parameter
                      |}
                  );
                  ( "an index",
