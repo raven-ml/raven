@@ -347,6 +347,19 @@ let bars =
       Mem64 (0x7d_0000_0000, 32 * mib);
     ]
 
+(* The window of BAR 0 where the GPU shows its VBIOS (NV_PROM_DATA). *)
+let prom = 0x300000
+
+(* [poke root r s] writes [s] at [r] of BAR 0 of the tree [root]'s GPU. *)
+let poke root r s =
+  let file =
+    Filename.concat root (strf "sys/bus/pci/devices/%s/resource0" gpu_bus)
+  in
+  let fd = Unix.openfile file [ O_WRONLY ] 0 in
+  ignore (Unix.lseek fd r SEEK_SET);
+  ignore (Unix.write_substring fd s 0 (String.length s));
+  Unix.close fd
+
 (* [fixture ~booted ~memory ()] is a tree whose GPU's GSP runs if [booted],
    whose firmware wrote [memory] bytes as its memory size otherwise. *)
 let fixture ?(booted = true) ?(memory = 0) () =
@@ -357,14 +370,7 @@ let fixture ?(booted = true) ?(memory = 0) () =
       [ { (Tree.gpu gpu_bus) with vendor = 0x10de; class_ = 0x030000; bars } ]
   in
   let device = strf "sys/bus/pci/devices/%s/" gpu_bus in
-  let write r s =
-    let fd =
-      Unix.openfile (Filename.concat root (device ^ "resource0")) [ O_WRONLY ] 0
-    in
-    ignore (Unix.lseek fd r SEEK_SET);
-    ignore (Unix.write_substring fd s 0 (String.length s));
-    Unix.close fd
-  in
+  let write = poke root in
   let set32 r x =
     let b = Bytes.create 4 in
     Bytes.set_int32_le b 0 (Int32.of_int x);
@@ -376,10 +382,10 @@ let fixture ?(booted = true) ?(memory = 0) () =
   if booted then set32 0x1fa828 0x7ff
   else begin
     (* The GPU's own boot done: its progress unlocked, then completed. Its VBIOS
-       in the PROM window, from 0x300000. *)
+       in the PROM window. *)
     set32 0x118128 1;
     set32 0x118234 0xff;
-    write 0x300000 (rom "vbios.rom");
+    write prom (rom "vbios.rom");
     (* NV_PGC6_AON_SECURE_SCRATCH_GROUP_42: the memory in MiB. *)
     set32 0x1183a4 (memory / mib)
   end;
@@ -677,6 +683,11 @@ let test_failed_boot () =
   in
   equal ~msg:"bus mastering" int 0 (command land 0x4);
   equal ~msg:"system memory left" (list string) [] (memory_files root);
+  (* The next open resets the GPU, then fails at the VBIOS, which the test
+     erases: one that found the images, in rig's firmware directory or in
+     /lib/firmware, would boot and wait out the falcon's poll again. *)
+  equal ~msg:"no reset before the next open" string "" (resets root);
+  poke root prom (String.make (String.length (rom "vbios.rom")) '\000');
   ignore (require_error (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0)));
   equal ~msg:"the next open's reset" string "1" (resets root)
 
