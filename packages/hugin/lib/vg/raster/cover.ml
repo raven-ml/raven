@@ -149,13 +149,32 @@ let[@inline] put c dir x0 y0 x1 y1 =
    [y0 < y1]. *)
 let[@inline] span c dir x y0 y1 = if y0 < y1 then put c dir x y0 x y1
 
-(* [limit v] is [v] within [±1e15], NaN taken as [1e15], so that a coordinate
-   overflowed far beyond the window stays beyond it and is finite. *)
+(* [limit v] is [v] if it is finite, and otherwise [±1e15], NaN taken as [1e15],
+   so that a coordinate overflowed beyond the range of floats stays beyond the
+   window and is finite. *)
 let[@inline] limit v =
-  if v < -1e15 then -1e15 else if v <= 1e15 then v else 1e15
+  if Float.abs v < Float.infinity then v else if v < 0. then -1e15 else 1e15
 
-(* [cut c] adds the edge [(x0, y0)] to [(x1, y1)] of [c.edge], cut to the
-   window. *)
+(* [at v a0 a1 b0 b1] is the [b] of the line through [(a0, b0)] and [(a1, b1)],
+   [a0 <> a1], at [a = v]. It is measured from the end nearer [v], so that it
+   keeps that end's precision however far the other lies, with the differences
+   halved where they overflow. *)
+let[@inline] at v a0 a1 b0 b1 =
+  let da = a1 -. a0 and db = b1 -. b0 in
+  if Float.abs da < Float.infinity && Float.abs db < Float.infinity then
+    if Float.abs (v -. a0) <= Float.abs (a1 -. v) then
+      b0 +. (db *. ((v -. a0) /. da))
+    else b1 -. (db *. ((a1 -. v) /. da))
+  else
+    let da = (a1 *. 0.5) -. (a0 *. 0.5) and db = (b1 *. 0.5) -. (b0 *. 0.5) in
+    let from0 = (v *. 0.5) -. (a0 *. 0.5)
+    and from1 = (a1 *. 0.5) -. (v *. 0.5) in
+    if Float.abs from0 <= Float.abs from1 then
+      b0 +. (2. *. (db *. (from0 /. da)))
+    else b1 -. (2. *. (db *. (from1 /. da)))
+
+(* [cut c] adds the edge [(x0, y0)] to [(x1, y1)] of [c.edge], cut to the window
+   along its own direction, however far its ends lie. *)
 let cut c =
   let e = c.edge in
   let x0 = limit (Array.unsafe_get e 1) and y0 = limit (Array.unsafe_get e 2) in
@@ -168,12 +187,11 @@ let cut c =
   if ay < by && by > wy0 && ay < wy1 then begin
     (* Coverage takes the winding's magnitude, whatever its sign. *)
     let dir = if down then 1. else -1. in
-    (* Cut to the window's rows at fractions of the edge's height, below one, so
-       that the cut stays finite however flat the edge. *)
-    let h = by -. ay and w = bx -. ax in
+    (* Cut to the window's rows, so that the cut stays finite however flat the
+       edge. *)
     let top = fmax ay wy0 and bot = fmin by wy1 in
-    let xt = if ay < wy0 then ax +. (w *. ((wy0 -. ay) /. h)) else ax in
-    let xb = if by > wy1 then bx -. (w *. ((by -. wy1) /. h)) else bx in
+    let xt = if ay < wy0 then at wy0 ay by ax bx else ax in
+    let xb = if by > wy1 then at wy1 ay by ax bx else bx in
     let wx0 = float c.x0 and wx1 = float c.x1 in
     if xt <= wx0 && xb <= wx0 then span c dir wx0 top bot
     else if xt >= wx1 && xb >= wx1 then span c dir wx1 top bot
@@ -182,9 +200,8 @@ let cut c =
     else begin
       (* [ya] and [yb] are where the edge crosses the window's left and right
          sides, clamped to it; [xb <> xt] here. *)
-      let hh = bot -. top and ww = xb -. xt in
-      let ya = top +. (hh *. fmin 1. (fmax 0. ((wx0 -. xt) /. ww))) in
-      let yb = top +. (hh *. fmin 1. (fmax 0. ((wx1 -. xt) /. ww))) in
+      let ya = fmin bot (fmax top (at wx0 xt xb top bot)) in
+      let yb = fmin bot (fmax top (at wx1 xt xb top bot)) in
       (* Going down, an edge running right crosses the left side, then the right
          one; one running left, the right side first. *)
       if xt < xb then begin

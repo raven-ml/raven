@@ -30,8 +30,8 @@ val start : t -> w:int -> h:int -> Surface.clip -> unit
 
 val line : t -> float -> float -> float -> float -> unit
 (** [line c x0 y0 x1 y1] deposits the edge from [(x0, y0)] to [(x1, y1)], in
-    device pixels. Coordinates are clamped to [±1e15], and NaN is taken as
-    [1e15]. *)
+    device pixels, cut to the window along its own direction. A coordinate that
+    is not finite is taken as [±1e15], NaN as [1e15]. *)
 
 val faint : float
 (** [faint] is a two-thousandth, the coverage at or below which a primitive

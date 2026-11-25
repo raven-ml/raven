@@ -197,6 +197,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster` cuts an edge with a finite end far beyond the page along its
+  own direction. It clamped each coordinate to `±1e15`, which bent such an
+  edge, so a fill with a far vertex covered the wrong part of the page.
 - `draw` calls a mark's draw function only in the panels the mark has a row
   in, as `Mark.v` says. A mark of no rows was drawn once, with no rows.
 - `Font.kerning` reads a `kern` subtable that sets the override bit as
