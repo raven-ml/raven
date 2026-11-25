@@ -46,7 +46,8 @@
   rig.cuda
   rig.nv.nvidia
   rig.amd.amdgpu
-  rig.metal)
+  rig.metal
+  windtrap)
  (foreign_stubs
   (language c)
   (names nx_kernels_support_stubs))

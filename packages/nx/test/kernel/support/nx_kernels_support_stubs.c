@@ -119,3 +119,15 @@ value nx_kernels_support_cap_memory(value vextra) {
   return Val_false;
 #endif
 }
+
+/* Platform */
+
+/* Whether the host is an Apple one, whose GPU nx.metal computes on. */
+value nx_kernels_support_apple(value unit) {
+  (void)unit;
+#if defined(__APPLE__)
+  return Val_true;
+#else
+  return Val_false;
+#endif
+}

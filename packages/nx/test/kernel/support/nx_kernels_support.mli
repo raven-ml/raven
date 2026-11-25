@@ -159,6 +159,43 @@ val same_bytes : Nx_array.any -> Nx_array.any -> bool
 (** [same_bytes x y] is [true] iff [x] and [y], of one dtype and shape,
     have the same {!elements}. *)
 
+(** {1:declared Backends a suite declares}
+
+    A suite declares one group per backend from what it knows without opening a
+    device: the environment variable [NX_KERNELS] and the operating system. A
+    test opens its group's backend when it runs, so the process that lists a
+    suite, and a worker that runs no GPU test, opens no GPU; windtrap runs
+    module initialisation in each. *)
+
+type declared = { label : string; opened : backend option Lazy.t }
+(** The type for a backend a suite declares: [label], its {!backend}'s [name],
+    and the backend, opened in each worker at the first {!opened} of it there,
+    [None] where its device does not open. *)
+
+val declare : backend -> declared
+(** [declare b] is [b], already open, as declared: nx.cpu's backends. *)
+
+val declared_cuda : declared option
+(** [declared_cuda] is {!gpus}' backend, ["cuda"], where [NX_KERNELS] is not
+    ["cpu"] and the host is no Apple one. *)
+
+val declared_nv : declared option
+(** [declared_nv] is {!nv}'s backend, ["cuda/nv"], where [NX_KERNELS] is not
+    ["cpu"] and the host is a Unix but no Apple one. *)
+
+val declared_amd : declared option
+(** [declared_amd] is {!amd}'s backend, ["amd"], under the conditions of
+    {!declared_nv}. *)
+
+val declared_metal : declared option
+(** [declared_metal] is {!metal}'s backend, ["metal"], where [NX_KERNELS] is not
+    ["cpu"] and the host is an Apple one. *)
+
+val opened : declared -> backend
+(** [opened d] is [d]'s backend, opened in this worker at the first call. Where
+    its device does not open it skips the running test ({!Windtrap.skip}).
+    Called only inside a test. *)
+
 (** {1:devices Devices} *)
 
 val on : backend -> ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t

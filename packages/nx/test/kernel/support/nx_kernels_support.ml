@@ -402,6 +402,37 @@ let metal =
 
 let metal () = Lazy.force metal
 
+(* Backends a suite declares *)
+
+type declared = { label : string; opened : backend option Lazy.t }
+
+external apple : unit -> bool = "nx_kernels_support_apple"
+
+(* Whether the suite may run on a GPU at all: the one fact, beside the operating
+   system, that declaring a group may read, since it reads no device. *)
+let gpu_kernels = Sys.getenv_opt "NX_KERNELS" <> Some "cpu"
+let declare b = { label = b.name; opened = Lazy.from_val (Some b) }
+let later label open_ = Some { label; opened = lazy (open_ ()) }
+
+let declared_cuda =
+  if gpu_kernels && not (apple ()) then
+    later "cuda" (fun () -> List.nth_opt (gpus ()) 0)
+  else None
+
+let declared_nv =
+  if gpu_kernels && Sys.unix && not (apple ()) then later "cuda/nv" nv else None
+
+let declared_amd =
+  if gpu_kernels && Sys.unix && not (apple ()) then later "amd" amd else None
+
+let declared_metal =
+  if gpu_kernels && apple () then later "metal" metal else None
+
+let opened d =
+  match Lazy.force d.opened with
+  | Some b -> b
+  | None -> Windtrap.skip ~reason:(d.label ^ " does not open here") ()
+
 (* Elements as bits *)
 
 let elements (Nx_array.Any x) =
