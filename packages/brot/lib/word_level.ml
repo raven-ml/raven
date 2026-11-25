@@ -115,5 +115,4 @@ let train ~vocab_size ~min_frequency ~show_progress ~special_tokens ~unk_token
         vocab_items := (word, !idx) :: !vocab_items;
         incr idx))
     items;
-  ( create ~vocab:(specials @ List.rev !vocab_items) ?unk_token (),
-    special_tokens )
+  create ~vocab:(specials @ List.rev !vocab_items) ?unk_token ()

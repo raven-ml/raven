@@ -338,7 +338,7 @@ val train :
   max_token_length:int option ->
   unk_token:string option ->
   (string * int) list ->
-  t * string list
+  t
 (** [train ~min_frequency ~vocab_size ~show_progress ~special_tokens
      ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
      ~end_of_word_suffix ~max_token_length ~unk_token word_counts] learns BPE
@@ -366,6 +366,4 @@ val train :
     - [max_token_length] holds a merge back once the run of characters it would
       join reaches that many. The merges of single characters that open the
       training are not held back.
-    - [unk_token] is the model's, as in {!create}.
-
-    Returns [(model, special_tokens)]. *)
+    - [unk_token] is the model's, as in {!create}. *)

@@ -463,8 +463,7 @@ let train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
     | Some unk ->
         List.find_index (fun (token, _) -> token = unk) vocab_with_scores
   in
-  let model = create ?unk_id vocab_with_scores in
-  (model, special_tokens)
+  create ?unk_id vocab_with_scores
 
 let cached_encoder model =
   Pretoken_cache.cached

@@ -80,7 +80,7 @@ val train :
   special_tokens:string list ->
   unk_token:string option ->
   (string * int) list ->
-  t * string list
+  t
 (** [train ~vocab_size ~min_frequency ~show_progress ~special_tokens ~unk_token
      word_counts] learns a vocabulary from [word_counts], each word paired with
     the number of times it occurs.
@@ -91,6 +91,4 @@ val train :
     - [special_tokens] take the first ids, in order; the words are numbered
       after them, the most frequent first and of equally frequent words the
       first in byte order.
-    - [unk_token] is the model's, as in {!create}.
-
-    Returns [(model, special_tokens)]. *)
+    - [unk_token] is the model's, as in {!create}. *)

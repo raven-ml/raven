@@ -367,12 +367,9 @@ let from_bpe ~unk_token bpe =
 let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix ~unk_token
     word_counts =
-  let bpe_trained, result_tokens =
-    Bpe.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
-      ~limit_alphabet ~initial_alphabet
-      ~continuing_subword_prefix:(Some continuing_subword_prefix)
-      ~end_of_word_suffix:None ~max_token_length:None ~unk_token:None
-      word_counts
-  in
-  let wordpiece_model = from_bpe ~unk_token bpe_trained in
-  (wordpiece_model, result_tokens)
+  from_bpe ~unk_token
+    (Bpe.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
+       ~limit_alphabet ~initial_alphabet
+       ~continuing_subword_prefix:(Some continuing_subword_prefix)
+       ~end_of_word_suffix:None ~max_token_length:None ~unk_token:None
+       word_counts)

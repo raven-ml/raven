@@ -2033,11 +2033,10 @@ let train_bpe ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token
     (fun ~special_tokens ~unk_token words ->
       Alg_bpe
-        (fst
-           (Bpe.train ~min_frequency ~vocab_size ~show_progress:false
-              ~special_tokens ~limit_alphabet ~initial_alphabet
-              ~continuing_subword_prefix ~end_of_word_suffix ~max_token_length
-              ~unk_token words)))
+        (Bpe.train ~min_frequency ~vocab_size ~show_progress:false
+           ~special_tokens ~limit_alphabet ~initial_alphabet
+           ~continuing_subword_prefix ~end_of_word_suffix ~max_token_length
+           ~unk_token words))
     data
 
 let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
@@ -2051,10 +2050,9 @@ let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?eos_token ?pad_token ?unk_token
     (fun ~special_tokens ~unk_token words ->
       Alg_wordpiece
-        (fst
-           (Wordpiece.train ~min_frequency ~vocab_size ~show_progress:false
-              ~special_tokens ~limit_alphabet ~initial_alphabet
-              ~continuing_subword_prefix ~unk_token words)))
+        (Wordpiece.train ~min_frequency ~vocab_size ~show_progress:false
+           ~special_tokens ~limit_alphabet ~initial_alphabet
+           ~continuing_subword_prefix ~unk_token words))
     data
 
 let train_word_level ?init ?normalizer ?pre ?post ?decoder ?added_tokens
@@ -2064,9 +2062,8 @@ let train_word_level ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?eos_token ?pad_token ?unk_token
     (fun ~special_tokens ~unk_token words ->
       Alg_wordlevel
-        (fst
-           (Word_level.train ~vocab_size ~min_frequency ~show_progress:false
-              ~special_tokens ~unk_token words)))
+        (Word_level.train ~vocab_size ~min_frequency ~show_progress:false
+           ~special_tokens ~unk_token words))
     data
 
 let train_unigram ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
@@ -2075,10 +2072,9 @@ let train_unigram ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token
     (fun ~special_tokens ~unk_token words ->
       Alg_unigram
-        (fst
-           (Unigram.train ~vocab_size ~show_progress:false ~special_tokens
-              ~shrinking_factor:0.75 ~unk_token ~max_piece_length:16
-              ~n_sub_iterations:2 words)))
+        (Unigram.train ~vocab_size ~show_progress:false ~special_tokens
+           ~shrinking_factor:0.75 ~unk_token ~max_piece_length:16
+           ~n_sub_iterations:2 words))
     data
 
 (* JSON serialization *)

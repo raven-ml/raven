@@ -2208,8 +2208,5 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
           raised := []
         end
   done;
-  let trained_model =
-    create ~vocab ~merges:(List.rev !merges) ?continuing_subword_prefix
-      ?end_of_word_suffix ?unk_token ()
-  in
-  (trained_model, special_tokens)
+  create ~vocab ~merges:(List.rev !merges) ?continuing_subword_prefix
+    ?end_of_word_suffix ?unk_token ()

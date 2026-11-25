@@ -128,7 +128,7 @@ val train :
   max_piece_length:int ->
   n_sub_iterations:int ->
   (string * int) list ->
-  t * string list
+  t
 (** [train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
      ~unk_token ~max_piece_length ~n_sub_iterations word_counts] learns a
     unigram model from [word_counts], each word paired with the number of times
@@ -142,6 +142,4 @@ val train :
       [special_tokens] already carries it.
     - [shrinking_factor], [max_piece_length] and [n_sub_iterations] are ignored:
       no EM training is run. The vocabulary is the most frequent words, each
-      scored by how often it occurs.
-
-    Returns [(model, special_tokens)]. *)
+      scored by how often it occurs. *)
