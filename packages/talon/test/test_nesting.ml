@@ -16,7 +16,10 @@ let table_w = Testable.make ~pp:Talon.pp ~equal:Talon.equal
 let schema_w = Testable.make ~pp:Schema.pp ~equal:Schema.equal
 let ints = Column.of_options Type.int64
 let exec q = require_ok ~pp:Error.pp (Query.run q)
-let problem f = match f () with _ -> "no problem" | exception Invalid_argument m -> m
+
+let problem f =
+  match f () with _ -> "no problem" | exception Invalid_argument m -> m
+
 let out q = Talon.column (exec q) "v"
 let opt_ints = array (option int)
 let ints_at t n = Column.options Kind.int (Talon.column t n)
@@ -25,47 +28,12 @@ let names t = List.map fst (Schema.columns (Talon.schema t))
 
 (* Lists *)
 
-type 'a lists = 'a option array option array
-
-let offsets_of ~lead lengths =
-  let o = Array.make (Array.length lengths + 1) (Int64.of_int lead) in
-  Array.iteri (fun i l -> o.(i + 1) <- Int64.add o.(i) (Int64.of_int l)) lengths;
-  o
-
-let laid_out ty valid offsets child =
-  let validity =
-    if Array.for_all Fun.id valid then None
-    else Some (Nx.create Nx.bit [| Array.length valid |] valid)
-  in
-  let offsets = Nx.create Nx.int64 [| Array.length offsets |] offsets in
-  Result.get_ok
-    (Column.of_layout (Any (Type.list ty))
-       (Varsize { validity; offsets; child }))
-
-(* [column ty ?junk ?lead rows] is [rows] as a list column of element type [ty];
-   a null row spans two [junk] elements, and [lead] of them precede the first
-   row, when [junk] is given. *)
-let column ty ?junk ?(lead = 0) (rows : 'a lists) =
-  let segment = function
-    | Some xs -> xs
-    | None -> ( match junk with Some v -> [| Some v; Some v |] | None -> [||])
-  in
-  let segments = Array.map segment rows in
-  let pad = match junk with Some v -> Array.make lead (Some v) | None -> [||] in
-  let child =
-    Column.of_options ty (Array.concat (pad :: Array.to_list segments))
-  in
-  laid_out ty
-    (Array.map Option.is_some rows)
-    (offsets_of ~lead:(Array.length pad) (Array.map Array.length segments))
-    child
-
+let column = G.list_column
 let of_ints rows = column Type.int64 rows
 let xs = Col.v Kind.(list int) "xs"
 let ys = Col.v Kind.(list int) "ys"
 let id = Col.int "id"
 let x = Col.int "x"
-
 let positions = function Some l -> Array.length l | None -> 0
 (* Draws *)
 
@@ -79,16 +47,22 @@ let list_of g =
       (1, Gen.constant (Some [||]));
       (1, Gen.map Option.some (elements 1));
       ( 4,
-        Gen.bind (Gen.int_range 2 5) (fun n ->
-            Gen.map Option.some (elements n)) );
+        Gen.bind (Gen.int_range 2 5) (fun n -> Gen.map Option.some (elements n))
+      );
     ]
 
-let rows_of g = Gen.array ~size:(Gen.int_range 0 12) (list_of g)
+(* No row one time in five, so that every run reaches it. *)
+let rows_of g =
+  Gen.array
+    ~size:Gen.(frequency [ (1, constant 0); (4, int_range 1 12) ])
+    (list_of g)
+
 let cover_lists rows =
   let has f = Array.exists f rows in
   cover "a null list" (has Option.is_none);
   cover "an empty list" (has (fun r -> r = Some [||]));
-  cover "a one-element list" (has (function Some [| _ |] -> true | _ -> false));
+  cover "a one-element list"
+    (has (function Some [| _ |] -> true | _ -> false));
   cover "a null element"
     (has (function Some xs -> Array.exists Option.is_none xs | None -> false));
   cover "no row" (Array.length rows = 0)
@@ -118,22 +92,21 @@ let rec holds_ext : type a. a Type.t -> bool = function
   | Record fs -> List.exists (fun (_, Type.Any t) -> holds_ext t) fs
   | _ -> false
 
+(* A kind reads no extension, so the samples of [field] hold none. *)
+let without_ext =
+  Gen.such_that (fun (G.Sample (ty, _)) -> not (holds_ext ty)) G.sample
+
 let l1 =
-  prop ~count:300 "field k n (record [n := e]) is e, nulls included" G.sample
+  prop ~count:300 "field k n (record [n := e]) is e, nulls included" without_ext
     (fun (G.Sample (ty, rows)) ->
       let k = Type.kind ty in
-      match holds_ext ty with
-      | true -> () (* A kind reads no extension; within does. *)
-      | false ->
-          let c = Column.of_options ty rows in
-          let t = v [ ("a", c) ] in
-          let e = Col.v k "a" in
-          let q =
-            Query.select
-              Expr.[ "a" := field k "a" (record [ "a" := e ]) ]
-              (Query.of_table t)
-          in
-          equal table_w t (exec q))
+      let t = v [ ("a", Column.of_options ty rows) ] in
+      let q =
+        Query.select
+          Expr.[ "a" := field k "a" (record [ "a" := Col.v k "a" ]) ]
+          (Query.of_table t)
+      in
+      equal table_w t (exec q))
 
 let l2 =
   prop "a record spread with within and rebuilt is itself, not null"
@@ -142,11 +115,7 @@ let l2 =
     (fun rows ->
       cover "a null field" (Array.exists (fun (a, _) -> a = None) rows);
       let t =
-        v
-          [
-            ("a", ints (Array.map fst rows));
-            ("b", ints (Array.map snd rows));
-          ]
+        v [ ("a", ints (Array.map fst rows)); ("b", ints (Array.map snd rows)) ]
       in
       let r = Expr.record Expr.[ keep Sel.all ] in
       let spread = Expr.(record [ within r (keep Sel.all) ]) in
@@ -180,20 +149,14 @@ let null_record =
     test "field is null where the record is, whatever the child holds"
       (fun () ->
         let q =
-          Query.select
-            Expr.[ "v" := field Kind.int "a" r ]
-            (Query.of_table t)
+          Query.select Expr.[ "v" := field Kind.int "a" r ] (Query.of_table t)
         in
-        equal opt_ints [| None; Some 2 |]
-          (ints_of q));
+        equal opt_ints [| None; Some 2 |] (ints_of q));
     test "field ANDs the record's and the field's nulls" (fun () ->
         let q =
-          Query.select
-            Expr.[ "v" := field Kind.int "b" r ]
-            (Query.of_table t)
+          Query.select Expr.[ "v" := field Kind.int "b" r ] (Query.of_table t)
         in
-        equal opt_ints [| None; Some 4 |]
-          (ints_of q));
+        equal opt_ints [| None; Some 4 |] (ints_of q));
     test "is_null reads the record, a record of nulls is not null" (fun () ->
         let q =
           Query.select
@@ -205,10 +168,12 @@ let null_record =
             (Query.of_table t)
         in
         let got = exec q in
-        equal (array (option bool))
+        equal
+          (array (option bool))
           [| Some true; Some false |]
           (Column.options Kind.bool (Talon.column got "v"));
-        equal (array (option bool))
+        equal
+          (array (option bool))
           [| Some false; Some false |]
           (Column.options Kind.bool (Talon.column got "w")));
     test "within spreads null where the record is" (fun () ->
@@ -216,18 +181,15 @@ let null_record =
           Query.select Expr.[ within r (keep Sel.all) ] (Query.of_table t)
         in
         let got = exec q in
-        equal opt_ints [| None; Some 2 |]
-          (ints_at got "a");
-        equal opt_ints [| None; Some 4 |]
-          (ints_at got "b"));
+        equal opt_ints [| None; Some 2 |] (ints_at got "a");
+        equal opt_ints [| None; Some 4 |] (ints_at got "b"));
     test "an expression over a field reads masked values" (fun () ->
         let q =
           Query.select
             Expr.[ within r ("v" := Col.int "a" + int 1) ]
             (Query.of_table t)
         in
-        equal opt_ints [| None; Some 3 |]
-          (ints_of q));
+        equal opt_ints [| None; Some 3 |] (ints_of q));
   ]
 
 (* Spreading with within *)
@@ -241,8 +203,7 @@ let spread_t =
     ]
 
 let band =
-  Expr.record
-    Expr.[ "flux" := Col.float "flux"; "err" := Col.float "err" ]
+  Expr.record Expr.[ "flux" := Col.float "flux"; "err" := Col.float "err" ]
 
 let spreads =
   [
@@ -263,26 +224,25 @@ let spreads =
                Expr.
                  [
                    within band
-                     (each Sel.all
-                        { column = (fun n x -> ("band_" ^ n) := x) });
+                     (each Sel.all { column = (fun n x -> "band_" ^ n := x) });
                  ]
                (Query.of_table spread_t))
         in
-        equal (list string) [ "band_flux"; "band_err" ]
-          (names got));
+        equal (list string) [ "band_flux"; "band_err" ] (names got));
     test "across computes at a kind" (fun () ->
         let q =
           Query.select
             Expr.
               [
                 within band
-                  (across Kind.float
-                     (Sel.names [ "flux" ])
-                     (fun n x -> n := x *. float 2.));
+                  (across Kind.float (Sel.names [ "flux" ]) (fun n x ->
+                       n := x *. float 2.));
               ]
             (Query.of_table spread_t)
         in
-        equal (array (option float_exact)) [| Some 4.; None |]
+        equal
+          (array (option float_exact))
+          [| Some 4.; None |]
           (Column.options Kind.float (Talon.column (exec q) "flux")));
     test "an aggregate reduces each field, as within's shape is the out's"
       (fun () ->
@@ -295,33 +255,36 @@ let spreads =
               ]
             (Query.of_table spread_t)
         in
-        equal (array (option float_exact)) [| Some 2. |]
+        equal
+          (array (option float_exact))
+          [| Some 2. |]
           (Column.options Kind.float (Talon.column (exec q) "flux")));
     test "an over inside within reads fields as its keys" (fun () ->
         let q =
           Query.select
-            Expr.[ within band ("v" := over ~by:[ "err" ] (count (Col.float "flux"))) ]
+            Expr.
+              [
+                within band
+                  ("v" := over ~by:[ "err" ] (count (Col.float "flux")));
+              ]
             (Query.of_table spread_t)
         in
-        equal opt_ints [| Some 1; Some 0 |]
-          (ints_of q));
+        equal opt_ints [| Some 1; Some 0 |] (ints_of q));
   ]
 
 (* L3, L4: nest and unnest *)
 
 let l3 =
-  prop ~count:200
-    "nest then unnest is the rows in first-appearance group order"
+  prop ~count:200 "nest then unnest is the rows in first-appearance group order"
     (Gen.bind G.sample (fun (G.Sample (_, rows) as s) ->
          Gen.map
            (fun ks -> (s, ks))
-           (Gen.array ~size:(Gen.constant (Array.length rows))
+           (Gen.array
+              ~size:(Gen.constant (Array.length rows))
               (Gen.int_range 0 3))))
     (fun (G.Sample (ty, rows), keys) ->
       let n = Array.length rows in
-      let rank k =
-        Option.get (Array.find_index (fun x -> x = k) keys)
-      in
+      let rank k = Option.get (Array.find_index (fun x -> x = k) keys) in
       let t =
         v
           [
@@ -360,9 +323,7 @@ let l4 =
         |> Query.unnest Expr.[ "x" := xs ]
         |> Query.aggregate ~by:[ "id" ] Expr.[ "xs" := collect x ]
       in
-      let want =
-        Query.filter Expr.(per_list [ "x" := xs ] rows > int 0) q
-      in
+      let want = Query.filter Expr.(per_list [ "x" := xs ] rows > int 0) q in
       equal table_w (exec want) (exec back))
 
 let non_inverse =
@@ -381,30 +342,11 @@ let non_inverse =
             |> unnest Expr.[ "x" := xs ]
             |> aggregate ~by:[ "id" ] Expr.[ "xs" := collect x ])
         in
-        equal (array (option (array int)))
+        equal
+          (array (option (array int)))
           [| Some [| 1; 2 |] |]
           (Column.options Kind.(list int) (Talon.column (exec back) "xs")));
-    test "a row without positions vanishes, and a keep_empty row reads as null"
-      (fun () ->
-        let t =
-          v
-            [
-              ("id", ints [| Some 1; Some 2; Some 3 |]);
-              ("xs", of_ints [| Some [||]; None; Some [| Some 9 |] |]);
-            ]
-        in
-        let ids q =
-          ints_at (exec q) "id"
-        in
-        let q = Query.(of_table t) in
-        equal opt_ints [| Some 3 |]
-          (ids (Query.unnest Expr.[ "x" := xs ] q));
-        let kept = Query.unnest ~keep_empty:true Expr.[ "x" := xs ] q in
-        equal opt_ints [| Some 1; Some 2; Some 3 |] (ids kept);
-        equal opt_ints [| None; None; Some 9 |]
-          (ints_at (exec kept) "x"));
-    test "a -0. key comes back as the group's first key, not its own"
-      (fun () ->
+    test "a -0. key comes back as the group's first key, not its own" (fun () ->
         let t =
           v
             [
@@ -427,8 +369,8 @@ let non_inverse =
 (* L5, L6, L7: positions, collect, reductions *)
 
 let l5 =
-  prop "unnest gives one row per position, keep_empty one or more per row"
-    drawn (fun ((rows, _, _) as d) ->
+  prop "unnest gives one row per position, keep_empty one or more per row" drawn
+    (fun ((rows, _, _) as d) ->
       cover_laid d;
       let q = Query.of_table (laid d) in
       let count ?keep_empty () =
@@ -452,28 +394,32 @@ let l6 =
       in
       equal table_w (v [ ("v", c) ]) (v [ ("v", got) ]))
 
+type reduction = Sum | Min | Count
+
 let l7 =
   (* A row with no positions reduces no element: a null list has a null value,
      an empty one the value over none. *)
-  let forms =
-    Expr.
-      [
-        ("sum", (fun e -> sum e), `Sum);
-        ("min", (fun e -> min e), `Min);
-        ("count", (fun e -> count e), `Count);
-      ]
+  let reduce r e =
+    Expr.(match r with Sum -> sum e | Min -> min e | Count -> count e)
+  in
+  let over_none = function Sum | Count -> Some 0 | Min -> None in
+  let reductions =
+    Gen.with_pp
+      (fun ppf r ->
+        Format.pp_print_string ppf
+          (match r with Sum -> "sum" | Min -> "min" | Count -> "count"))
+      (Gen.of_list [ Sum; Min; Count ])
   in
   prop "per_list agrees with unnest then a keyed reduction"
-    (Gen.pair (Gen.int_range 0 2) (rows_of small))
-    (fun (form, rows) ->
+    (Gen.pair reductions (rows_of small))
+    (fun (r, rows) ->
       cover_lists rows;
-      let _, r, form = List.nth forms form in
       let t = table rows in
       let e = Col.int "e" in
       let per =
         out
           (Query.select
-             Expr.[ "v" := per_list [ "e" := xs ] (r e) ]
+             Expr.[ "v" := per_list [ "e" := xs ] (reduce r e) ]
              (Query.of_table t))
       in
       let grouped =
@@ -481,18 +427,17 @@ let l7 =
           Query.(
             of_table t
             |> unnest Expr.[ "e" := xs ]
-            |> aggregate ~by:[ "id" ] Expr.[ "v" := r e ])
+            |> aggregate ~by:[ "id" ] Expr.[ "v" := reduce r e ])
       in
       let by_id =
         Array.combine
           (Column.values Kind.int (Talon.column grouped "id"))
           (ints_at grouped "v")
       in
-      let over_none = match form with `Sum -> Some 0 | `Count -> Some 0 | `Min -> None in
       let want i =
         match rows.(i) with
         | None -> None
-        | Some [||] -> over_none
+        | Some [||] -> over_none r
         | Some _ -> List.assoc i (Array.to_list by_id)
       in
       equal opt_ints
@@ -515,18 +460,18 @@ let collecting =
           exec
             Query.(
               of_table t
-              |> aggregate ~by:[ "g" ]
-                   Expr.[ "xs" := collect (Col.int "x") ]
+              |> aggregate ~by:[ "g" ] Expr.[ "xs" := collect (Col.int "x") ]
               |> unnest ~keep_empty:false Expr.[ "e" := xs ])
         in
-        equal opt_ints [| Some 1; Some 3; None |]
-          (ints_at got "e"));
+        equal opt_ints [| Some 1; Some 3; None |] (ints_at got "e"));
     test "collect over no rows is the empty list" (fun () ->
         let empty =
           Query.(of_table t |> slice ~offset:0 ~length:0)
           |> Query.aggregate ~by:[] Expr.[ "v" := collect (Col.int "x") ]
         in
-        equal (array (option (array int))) [| Some [||] |]
+        equal
+          (array (option (array int)))
+          [| Some [||] |]
           (Column.options Kind.(list int) (out empty)));
     test "collect under over holds the partition's list per row" (fun () ->
         let q =
@@ -535,21 +480,25 @@ let collecting =
             |> derive
                  Expr.
                    [
-                     "v"
-                     := per_list [ "e" := over ~by:[ "g" ] (collect (Col.int "x")) ] (count (Col.int "e"));
+                     "v" :=
+                       per_list
+                         [ "e" := over ~by:[ "g" ] (collect (Col.int "x")) ]
+                         (count (Col.int "e"));
                    ])
         in
-        equal opt_ints [| Some 2; Some 0; Some 2 |]
-          (ints_of q));
+        equal opt_ints [| Some 2; Some 0; Some 2 |] (ints_of q));
     test "collect under window holds each window's list" (fun () ->
         let q =
           Query.(
             of_table t
             |> derive
-                 Expr.[ "v" := per_list [ "e" := window (collect (Col.int "x")) ] rows ])
+                 Expr.
+                   [
+                     "v" :=
+                       per_list [ "e" := window (collect (Col.int "x")) ] rows;
+                   ])
         in
-        equal opt_ints [| Some 1; Some 2; Some 3 |]
-          (ints_of q));
+        equal opt_ints [| Some 1; Some 2; Some 3 |] (ints_of q));
   ]
 
 (* Compositions *)
@@ -571,10 +520,12 @@ let composed =
         let got =
           exec
             (Query.select
-               Expr.[ "n" := is_null rebuilt; "a" := field Kind.int "a" rebuilt ]
+               Expr.
+                 [ "n" := is_null rebuilt; "a" := field Kind.int "a" rebuilt ]
                q)
         in
-        equal (array (option bool))
+        equal
+          (array (option bool))
           [| Some false; Some false |]
           (Column.options Kind.bool (Talon.column got "n"));
         equal opt_ints [| None; Some 1 |] (ints_at got "a"));
@@ -586,8 +537,7 @@ let composed =
                Expr.
                  [
                    "f" := field Kind.int "a" (field Record.kind "b" outer);
-                   within outer
-                     (within (Col.v Record.kind "b") (keep Sel.all));
+                   within outer (within (Col.v Record.kind "b") (keep Sel.all));
                  ]
                q)
         in
@@ -602,11 +552,13 @@ let composed =
                 q));
         let p = Col.v Record.kind "p" in
         let ps =
-          Expr.(
-            per_list [ "e" := l ] (collect (record [ "a" := Col.int "e" ])))
+          Expr.(per_list [ "e" := l ] (collect (record [ "a" := Col.int "e" ])))
         in
         let back =
-          Expr.(per_list [ "p" := ps ] (collect (record [ within p (keep Sel.all) ])))
+          Expr.(
+            per_list
+              [ "p" := ps ]
+              (collect (record [ within p (keep Sel.all) ])))
         in
         let got = exec (Query.select Expr.[ "w" := ps; "v" := back ] q) in
         equal table_w
@@ -625,13 +577,12 @@ let composed =
           (ints_at got "e");
         equal opt_ints
           (Array.concat
-             (List.map
-                (fun i -> Array.make 4 (Some i))
-                [ 0; 1; 0; 1 ]))
+             (List.map (fun i -> Array.make 4 (Some i)) [ 0; 1; 0; 1 ]))
           (ints_at got "id"));
     test "a filter moves through a select around a within's reads" (fun () ->
         let inner =
-          Expr.(record [ "l" := Col.v Kind.(list int) "ls"; "z" := Col.int "b" ])
+          Expr.(
+            record [ "l" := Col.v Kind.(list int) "ls"; "z" := Col.int "b" ])
         in
         let total =
           Expr.(
@@ -655,10 +606,7 @@ let composed =
               of_table renamed
               |> select
                    Expr.
-                     [
-                       "b" := Col.int "a";
-                       "ls" := Col.v Kind.(list int) "m";
-                     ]
+                     [ "b" := Col.int "a"; "ls" := Col.v Kind.(list int) "m" ]
               |> filter Expr.(read >= int 0))
         in
         equal opt_ints [| Some 1 |] (ints_at got "b"));
@@ -670,7 +618,8 @@ let composed =
         let p = Col.v Record.kind "p" in
         let shifted r =
           Expr.(
-            per_list [ "p" := ps ]
+            per_list
+              [ "p" := ps ]
               (sum
                  (field Kind.int "s"
                     (record [ within r ("s" := shift 1 (Col.int "a")) ]))))
@@ -679,9 +628,7 @@ let composed =
           (ints_of (Query.select Expr.[ "v" := shifted p ] q));
         contains ~sub:"holds shift"
           (problem (fun () ->
-               Query.select
-                 Expr.[ "v" := shifted (record [ "a" := id ]) ]
-                 q)));
+               Query.select Expr.[ "v" := shifted (record [ "a" := id ]) ] q)));
   ]
 
 (* The optimizer: a run equals each step run over the last's table, which no
@@ -699,7 +646,8 @@ let optimized =
             Query.filter (field Kind.int "id" s >= int 1);
             Query.unnest [ "e" := xs ];
             Query.filter (id >= int 1);
-            Query.select [ within s (keep (Sel.names [ "id" ])); "e" := Col.int "e" ];
+            Query.select
+              [ within s (keep (Sel.names [ "id" ])); "e" := Col.int "e" ];
             Query.filter (Col.int "id" > int 1);
           ]
       in
@@ -731,19 +679,18 @@ let sliced =
 
 let l8 =
   prop "records, unnest and collect do not depend on batches"
-    (Gen.bind drawn (fun d ->
-         Gen.map (fun s -> (laid d, s)) (G.split (laid d))))
+    (Gen.bind drawn (fun d -> Gen.map (fun s -> (laid d, s)) (G.split (laid d))))
     (fun (whole, split) ->
       let same q =
-        equal table_w (exec (q (Query.of_table whole)))
+        equal table_w
+          (exec (q (Query.of_table whole)))
           (exec (q (Query.of_table split)))
       in
       same (Query.unnest Expr.[ "x" := xs ]);
       same (Query.unnest ~keep_empty:true Expr.[ "x" := xs ]);
       same (fun q ->
           Query.derive Expr.[ "r" := record [ "id" := id; "xs" := xs ] ] q
-          |> Query.select
-               Expr.[ within (Col.v Record.kind "r") (keep Sel.all) ]);
+          |> Query.select Expr.[ within (Col.v Record.kind "r") (keep Sel.all) ]);
       same (fun q ->
           Query.aggregate ~by:[ "id" ]
             Expr.[ "c" := collect (record [ keep (Sel.names [ "id" ]) ]) ]
@@ -761,9 +708,7 @@ let zipped =
         ( 4,
           Gen.bind (Gen.int_range 0 4) (fun n ->
               let a = Gen.array ~size:(Gen.constant n) (Gen.option small) in
-              Gen.pair
-                (Gen.map Option.some a)
-                (Gen.map Option.some a)) );
+              Gen.pair (Gen.map Option.some a) (Gen.map Option.some a)) );
       ]
   in
   Gen.array ~size:(Gen.int_range 0 10) n_pair
@@ -804,14 +749,20 @@ let l9 =
 let zip_errors =
   let run a b =
     let t = v [ ("a", of_ints a); ("b", of_ints b) ] in
-    Query.(of_table t |> unnest Expr.[ "x" := Col.v Kind.(list int) "a"; "y" := Col.v Kind.(list int) "b" ])
+    Query.(
+      of_table t
+      |> unnest
+           Expr.
+             [
+               "x" := Col.v Kind.(list int) "a";
+               "y" := Col.v Kind.(list int) "b";
+             ])
   in
   let message a b =
     Format.asprintf "%a" Error.pp (require_error (Query.run (run a b)))
   in
   [
-    test "lists of different lengths are a data error naming the row"
-      (fun () ->
+    test "lists of different lengths are a data error naming the row" (fun () ->
         let m =
           message
             [| Some [| Some 1 |]; Some [| Some 1; Some 2 |] |]
@@ -842,7 +793,11 @@ let zip_errors =
     test "a keep_empty run stops at the failure" (fun () ->
         let q =
           Query.unnest ~keep_empty:true
-            Expr.[ "x" := Col.v Kind.(list int) "a"; "y" := Col.v Kind.(list int) "b" ]
+            Expr.
+              [
+                "x" := Col.v Kind.(list int) "a";
+                "y" := Col.v Kind.(list int) "b";
+              ]
             (Query.of_table
                (v
                   [
@@ -853,22 +808,20 @@ let zip_errors =
         let rows = ref 0 in
         ignore
           (require_error
-             (Query.fold q ~init:() (fun () b ->
-                  rows := !rows + Talon.rows b)));
+             (Query.fold q ~init:() (fun () b -> rows := !rows + Talon.rows b)));
         equal int 1 !rows);
     test "the rows before a failure stream out" (fun () ->
         let q =
           run
             [| Some [| Some 1; Some 2 |]; Some [| Some 1 |]; Some [||] |]
-            [| Some [| Some 7; Some 8 |]; Some [| Some 9 |]; Some [| Some 0 |] |]
+            [|
+              Some [| Some 7; Some 8 |]; Some [| Some 9 |]; Some [| Some 0 |];
+            |]
         in
         let seen = ref [] in
         let result =
           Query.fold q ~init:() (fun () b ->
-              seen :=
-                !seen
-                @ Array.to_list
-                    (ints_at b "y"))
+              seen := !seen @ Array.to_list (ints_at b "y"))
         in
         ignore (require_error result);
         equal (list (option int)) [ Some 7; Some 8; Some 9 ] !seen);
@@ -881,7 +834,9 @@ let padding =
     v
       [
         ("id", ints [| Some 1; Some 2; Some 3; Some 4 |]);
-        ("xs", of_ints [| Some [| Some 1; None |]; Some [||]; None; Some [| Some 2 |] |]);
+        ( "xs",
+          of_ints
+            [| Some [| Some 1; None |]; Some [||]; None; Some [| Some 2 |] |] );
       ]
   in
   let kept = Query.(of_table t |> unnest ~keep_empty:true Expr.[ "x" := xs ]) in
@@ -891,32 +846,28 @@ let padding =
         equal opt_ints
           [| Some 1; Some 1; Some 2; Some 3; Some 4 |]
           (ints_at got "id");
-        equal opt_ints
-          [| Some 1; None; None; None; Some 2 |]
-          (ints_at got "x"));
+        equal opt_ints [| Some 1; None; None; None; Some 2 |] (ints_at got "x"));
     test "rows counts a kept row as one" (fun () ->
         let got =
           exec (Query.aggregate ~by:[ "id" ] Expr.[ "n" := rows ] kept)
         in
-        equal opt_ints [| Some 2; Some 1; Some 1; Some 1 |]
-          (ints_at got "n"));
+        equal opt_ints [| Some 2; Some 1; Some 1; Some 1 |] (ints_at got "n"));
     test "zipped lists null at once keep their row under keep_empty" (fun () ->
         let z =
-          v
-            [
-              ("a", of_ints [| None |]);
-              ("b", of_ints [| Some [||] |]);
-            ]
+          v [ ("a", of_ints [| None |]); ("b", of_ints [| Some [||] |]) ]
         in
         let got =
           exec
             (Query.unnest ~keep_empty:true
-               Expr.[ "x" := Col.v Kind.(list int) "a"; "y" := Col.v Kind.(list int) "b" ]
+               Expr.
+                 [
+                   "x" := Col.v Kind.(list int) "a";
+                   "y" := Col.v Kind.(list int) "b";
+                 ]
                (Query.of_table z))
         in
         equal int 1 (Talon.rows got);
-        equal opt_ints [| None |]
-          (ints_at got "y"));
+        equal opt_ints [| None |] (ints_at got "y"));
   ]
 
 (* Outputs: placement and elements *)
@@ -939,19 +890,13 @@ let placement =
                Expr.[ "xs" := lists; "y" := lists ]
                (Query.of_table t))
         in
-        equal (list string) [ "a"; "xs"; "b"; "y" ]
-          (names got);
-        equal opt_ints [| Some 1; Some 1 |]
-          (ints_at got "a");
-        equal opt_ints [| Some 7; Some 8 |]
-          (ints_at got "xs"));
+        equal (list string) [ "a"; "xs"; "b"; "y" ] (names got);
+        equal opt_ints [| Some 1; Some 1 |] (ints_at got "a");
+        equal opt_ints [| Some 7; Some 8 |] (ints_at got "xs"));
     test "a list of lists unnests one level, nulls and all" (fun () ->
-        let inner =
-          of_ints [| Some [| Some 1 |]; None; Some [||] |]
-        in
         let outer =
-          laid_out (Type.list Type.int64) [| true |]
-            (offsets_of ~lead:0 [| 3 |]) inner
+          G.list_column (Type.list Type.int64)
+            [| Some [| Some [| 1 |]; None; Some [||] |] |]
         in
         let t = v [ ("ll", outer) ] in
         let got =
@@ -960,15 +905,15 @@ let placement =
                Expr.[ "l" := Col.v Kind.(list (list int)) "ll" ]
                (Query.of_table t))
         in
-        equal (array (option (array int)))
+        equal
+          (array (option (array int)))
           [| Some [| 1 |]; None; Some [||] |]
           (Column.options Kind.(list int) (Talon.column got "l")));
     test "a null element under a record column keeps the row" (fun () ->
         let t =
           v
             [
-              ("id", ints [| Some 1; Some 2 |]);
-              ("x", ints [| Some 5; None |]);
+              ("id", ints [| Some 1; Some 2 |]); ("x", ints [| Some 5; None |]);
             ]
         in
         let got =
@@ -978,8 +923,8 @@ let placement =
               |> aggregate ~by:[]
                    Expr.
                      [
-                       "ps"
-                       := collect (if_ (is_null x) null (record [ "x" := x ]));
+                       "ps" :=
+                         collect (if_ (is_null x) null (record [ "x" := x ]));
                      ]
               |> unnest Expr.[ "p" := Col.v (Kind.list Record.kind) "ps" ]
               |> select
@@ -989,9 +934,10 @@ let placement =
                        "null" := is_null (Col.v Record.kind "p");
                      ])
         in
-        equal opt_ints [| Some 5; None |]
-          (ints_at got "x");
-        equal (array (option bool)) [| Some false; Some true |]
+        equal opt_ints [| Some 5; None |] (ints_at got "x");
+        equal
+          (array (option bool))
+          [| Some false; Some true |]
           (Column.options Kind.bool (Talon.column got "null")));
   ]
 
@@ -1023,9 +969,7 @@ let streaming =
           Source.v ~name:"batches" ~schema (fun _ ->
               Ok [ { Source.rows = None; open_ = reader } ])
         in
-        let q =
-          Query.unnest Expr.[ "x" := xs ] (Query.of_source source)
-        in
+        let q = Query.unnest Expr.[ "x" := xs ] (Query.of_source source) in
         let folded = ref 0 and peak = ref 0 in
         require_ok ~pp:Error.pp
           (Query.fold q ~init:() (fun () b ->
@@ -1038,68 +982,199 @@ let streaming =
 
 (* Names: every misuse is a problem naming the name *)
 
-let misuse =
-  let t =
-    v
+(* Problems: each names the name at fault *)
+
+let problems_t = v [ ("id", ints [| Some 1 |]); ("r", ints [| Some 1 |]) ]
+let problems_q = Query.of_table problems_t
+let ab = Expr.record Expr.[ "a" := id; "b" := id ]
+let r_type = Type.record [ ("a", Any Type.int64) ]
+let declared = Ext.v ~name:"r" ~ordered:false r_type ~dec:Fun.id ~enc:Fun.id
+
+let declared_q =
+  Query.of_table
+    (v [ ("c", Column.of_options (Type.ext ~name:"r" r_type) [| None |]) ])
+
+let names_its_problem (_, (sub, f)) =
+  contains ~sub (problem (fun () -> ignore (f ())))
+
+let field_problems =
+  let select e = Query.select Expr.[ "v" := e ] problems_q in
+  cases "field's problems name the field" ~id:fst
+    Expr.
       [
-        ("id", ints [| Some 1 |]);
-        ("r", Column.of_options Type.int64 [| Some 1 |]);
+        ( "a field its record lacks",
+          ({|no field "nope"|}, fun () -> select (field Kind.int "nope" ab)) );
+        ( "a near field name",
+          ("Did you mean", fun () -> select (field Kind.int "aa" ab)) );
+        ( "a field its kind does not read",
+          ("does not read", fun () -> select (field Kind.string "a" ab)) );
+        ( "a field of a null with no type",
+          ("has no type", fun () -> select (field Kind.int "a" null)) );
+        ( "a field through a declaration of a record",
+          ( "field reads a record column",
+            fun () ->
+              Query.select
+                [ "v" := field Kind.int "a" (Ext.col declared "c") ]
+                declared_q ) );
       ]
-  in
-  let r = Expr.record Expr.[ "a" := id; "b" := id ] in
-  let q = Query.of_table t in
-  let rty = Type.record [ ("a", Any Type.int64) ] in
-  let declared = Ext.v ~name:"r" ~ordered:false rty ~dec:Fun.id ~enc:Fun.id in
-  let ext =
-    Query.of_table
-      (v [ ("c", Column.of_options (Type.ext ~name:"r" rty) [| None |]) ])
-  in
-  let misuses =
-    [
-      ( "a field its record lacks", "no field \"nope\"",
-        fun () -> Query.select Expr.[ "v" := field Kind.int "nope" r ] q );
-      ( "a near field name", "Did you mean",
-        fun () -> Query.select Expr.[ "v" := field Kind.int "aa" r ] q );
-      ( "a field its kind does not read", "does not read",
-        fun () -> Query.select Expr.[ "v" := field Kind.string "a" r ] q );
-      ( "a field of a null with no type", "has no type",
-        fun () -> Query.select Expr.[ "v" := field Kind.int "a" null ] q );
-      ( "within names the record's fields, not the columns", "no field \"id\"",
-        fun () -> Query.select Expr.[ within r ("v" := id) ] q );
-      ( "within's keep of a field the record lacks", "no field \"nope\"",
-        fun () -> Query.select Expr.[ within r (keep (Sel.names [ "nope" ])) ] q );
-      ( "within's each of a field the record lacks", "no field \"nope\"",
-        fun () -> Query.select Expr.[ within r (each (Sel.names [ "nope" ]) { column = ( := ) }) ] q );
-      ( "across a field of another kind", "does not read",
-        fun () -> Query.select Expr.[ within r (across Kind.string Sel.all ( := )) ] q );
-      ( "within a non-record column", "Col.v record reads",
-        fun () -> Query.select Expr.[ within (Col.v Record.kind "id") (keep Sel.all) ] q );
-      ( "a record output named twice", "\"a\" is named twice",
-        fun () -> Query.select Expr.[ "v" := record [ "a" := id; "a" := id ] ] q );
-      ( "a record field without a column type", "give it one with store",
-        fun () -> Query.select Expr.[ "v" := record [ "a" := const 1 ] ] q );
-      ( "a derive's spread over a column of the input", "of within has the name of a column",
-        fun () -> Query.derive Expr.[ within r (keep (Sel.names [ "a" ])) ] (Query.select Expr.[ "a" := id; "id" := id; "r" := id ] q) );
-      ( "field through a declaration of a record", "field reads a record column",
-        fun () -> Query.select Expr.[ "v" := field Kind.int "a" (Ext.col declared "c") ] ext );
-      ( "within through a declaration of a record", "within spreads a record column",
-        fun () -> Query.select Expr.[ within (Ext.col declared "c") (keep Sel.all) ] ext );
-      ( "unnest of a column that is no list", "which is not a list",
-        fun () -> Query.unnest Expr.[ "v" := id ] q );
-      ( "unnest of no output", "at least one output",
-        fun () -> Query.unnest [] q );
-      ( "unnest of one name twice", "appears twice",
-        fun () -> Query.unnest Expr.[ "v" := xs; "v" := xs ] (Query.of_table (table [||])) );
-      ( "unnest of a spread over a column", "of within has the name of a column",
-        fun () -> Query.unnest Expr.[ within (record [ "xs" := xs; "id" := xs ]) (keep Sel.all) ] (Query.of_table (table [| Some [| Some 1 |] |])) );
-      ( "unnest of an expression over a missing column", "no column \"nope\"",
-        fun () -> Query.unnest Expr.[ "v" := Col.v Kind.(list int) "nope" ] q );
-    ]
-  in
-  cases "a misuse names its name"
-    ~id:(fun (title, _, _) -> title)
-    misuses
-    (fun (_, sub, f) -> contains ~sub (problem (fun () -> ignore (f ()))))
+    names_its_problem
+
+let within_problems =
+  let select o = Query.select [ o ] problems_q in
+  cases "within's problems name the field" ~id:fst
+    Expr.
+      [
+        ( "a column's name, which within does not read",
+          ({|no field "id"|}, fun () -> select (within ab ("v" := id))) );
+        ( "keep of a field the record lacks",
+          ( {|no field "nope"|},
+            fun () -> select (within ab (keep (Sel.names [ "nope" ]))) ) );
+        ( "each of a field the record lacks",
+          ( {|no field "nope"|},
+            fun () ->
+              select
+                (within ab (each (Sel.names [ "nope" ]) { column = ( := ) })) )
+        );
+        ( "across a field of another kind",
+          ( "does not read",
+            fun () -> select (within ab (across Kind.string Sel.all ( := ))) )
+        );
+        ( "a column that is not a record",
+          ( "Col.v record reads",
+            fun () -> select (within (Col.v Record.kind "id") (keep Sel.all)) )
+        );
+        ( "a derive's output named as an input column",
+          ( "of within has the name of a column",
+            fun () ->
+              Query.derive
+                [ within ab (keep (Sel.names [ "a" ])) ]
+                (Query.select [ "a" := id; "id" := id; "r" := id ] problems_q)
+          ) );
+        ( "a record through a declaration",
+          ( "within spreads a record column",
+            fun () ->
+              Query.select
+                [ within (Ext.col declared "c") (keep Sel.all) ]
+                declared_q ) );
+      ]
+    names_its_problem
+
+let record_problems =
+  let select e = Query.select Expr.[ "v" := e ] problems_q in
+  cases "record's problems name the output" ~id:fst
+    Expr.
+      [
+        ( "an output named twice",
+          ( {|"a" is named twice|},
+            fun () -> select (record [ "a" := id; "a" := id ]) ) );
+        ( "an output without a column type",
+          ( "give it one with store",
+            fun () -> select (record [ "a" := const 1 ]) ) );
+      ]
+    names_its_problem
+
+let unnest_problems =
+  cases "unnest's problems name the output" ~id:fst
+    Expr.
+      [
+        ( "a column that is not a list",
+          ( "which is not a list",
+            fun () -> Query.unnest [ "v" := id ] problems_q ) );
+        ( "no output",
+          ("at least one output", fun () -> Query.unnest [] problems_q) );
+        ( "one name twice",
+          ( "appears twice",
+            fun () ->
+              Query.unnest
+                [ "v" := xs; "v" := xs ]
+                (Query.of_table (table [||])) ) );
+        ( "a within's output named as an input column",
+          ( "of within has the name of a column",
+            fun () ->
+              Query.unnest
+                [ within (record [ "xs" := xs; "id" := xs ]) (keep Sel.all) ]
+                (Query.of_table (table [| Some [| Some 1 |] |])) ) );
+        ( "an expression over a missing column",
+          ( {|no column "nope"|},
+            fun () ->
+              Query.unnest [ "v" := Col.v Kind.(list int) "nope" ] problems_q )
+        );
+      ]
+    names_its_problem
+
+(* Lists of expressions *)
+
+let lists =
+  let of_list_of q = Talon.column (exec q) "v" in
+  [
+    test "a list holds a row's values in order, a null element for a null"
+      (fun () ->
+        let t =
+          v
+            [
+              ("a", ints [| Some 1; None |]);
+              ("b", Column.of_options Type.int32 [| Some 2; Some 3 |]);
+            ]
+        in
+        let e = Expr.(list [ Col.int "a"; Col.int "b"; int 9 ]) in
+        equal
+          (array (option int))
+          [| Some 1; Some 2; Some 9; None; Some 3; Some 9 |]
+          (Column.options Kind.int
+             (of_list_of (Query.unnest Expr.[ "v" := e ] (Query.of_table t)))));
+    test "a list of null values is a list of null elements" (fun () ->
+        let t = v [ ("a", ints [| None |]) ] in
+        let e = Expr.(list [ Col.int "a"; null ]) in
+        equal
+          (array (option int))
+          [| None; None |]
+          (Column.options Kind.int
+             (of_list_of (Query.unnest Expr.[ "v" := e ] (Query.of_table t)))));
+    test "a list of lists nests" (fun () ->
+        let t = v [ ("xs", Column.v Type.(list int64) [| [| 1; 2 |] |]) ] in
+        equal
+          (array (array (array int)))
+          [| [| [| 1; 2 |]; [| 1; 2 |] |] |]
+          (Column.values
+             Kind.(list (list int))
+             (of_list_of
+                (Query.select
+                   Expr.[ "v" := list [ xs; xs ] ]
+                   (Query.of_table t)))));
+    test "a list of literals takes store's type" (fun () ->
+        let e = Expr.(store Type.(list int32) (list [ null; int 1 ])) in
+        let got =
+          of_list_of
+            (Query.select
+               Expr.[ "v" := e ]
+               (Query.of_table (v [ ("i", ints [| Some 1 |]) ])))
+        in
+        let (Type.Any ty) = Column.type_ got in
+        equal string "list[int32]" (Format.asprintf "%a" Type.pp ty));
+    (let t =
+       v
+         [
+           ("i", Column.of_options Type.int8 [| Some 1 |]);
+           ("u", Column.of_options Type.uint64 [| Some 1 |]);
+         ]
+     in
+     cases "list's problems" ~id:fst
+       [
+         ("no element", Expr.list []);
+         ("operands that do not meet", Expr.list [ Col.int "i"; Col.int "u" ]);
+       ]
+       (fun (_, e) ->
+         contains ~sub:"list"
+           (problem (fun () ->
+                ignore (Query.select Expr.[ "v" := e ] (Query.of_table t))))));
+    test "prints as written" (fun () ->
+        let q =
+          Query.select
+            Expr.[ "v" := list [ id ] ]
+            (Query.of_table (v [ ("id", ints [| Some 1 |]) ]))
+        in
+        contains ~sub:{|"v" := list [id]|} (Format.asprintf "%a" Query.pp q));
+  ]
 
 let collect_typed =
   [
@@ -1115,9 +1190,10 @@ let collect_typed =
         equal schema_w
           (Schema.v [ ("m", Type.Any (Type.list ext)) ])
           (Talon.schema got));
-    test "collect of an extension with its declaration is a problem"
-      (fun () ->
-        let d = Ext.v ~name:"money" ~ordered:false Type.int64 ~dec:Fun.id ~enc:Fun.id in
+    test "collect of an extension with its declaration is a problem" (fun () ->
+        let d =
+          Ext.v ~name:"money" ~ordered:false Type.int64 ~dec:Fun.id ~enc:Fun.id
+        in
         let ty = Type.ext ~name:"money" Type.int64 in
         let t = v [ ("m", Column.of_options ty [| None |]) ] in
         contains ~sub:"collect has no type"
@@ -1132,12 +1208,13 @@ let () =
   exit
     (run "Nesting"
        [
-         group "Records" ([ l1; l2 ] @ null_record @ spreads @ composed);
-         group "Nest and unnest"
-           ([ l3; l4; l8; l9; optimized; sliced ] @ non_inverse);
-         group "Positions" ([ l5; l6; l7 ] @ collecting @ placement);
-         group "Zip and padding" (zip_errors @ padding);
-         group "Streaming" streaming;
-         group "Types" collect_typed;
-         group "Misuse" [ misuse ];
+         group "Expr.collect" (collecting @ collect_typed @ [ l6 ]);
+         group "Expr.list" lists;
+         group "Expr.record, field and within"
+           ([ l1; l2 ] @ null_record @ spreads @ composed
+           @ [ field_problems; within_problems; record_problems ]);
+         group "Query.unnest"
+           ([ l3; l4; l5; l7; l8; l9; optimized; sliced ]
+           @ non_inverse @ zip_errors @ padding @ placement @ streaming
+           @ [ unnest_problems ]);
        ])
