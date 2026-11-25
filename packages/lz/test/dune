@@ -13,9 +13,20 @@
   test_lzw
   test_lzf
   test_checksum
-  test_step
   test_hostile
   test_lock)
+ (modules :standard \ test_step)
  (libraries lz lz_support windtrap)
+ (deps
+  (glob_files golden/*)))
+
+; test_step alone links threads.posix: it holds a step from another thread of
+; the domain.
+
+(test
+ (name test_step)
+ (package lz)
+ (modules test_step)
+ (libraries lz lz_support windtrap threads.posix)
  (deps
   (glob_files golden/*)))

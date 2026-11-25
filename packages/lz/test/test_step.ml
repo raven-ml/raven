@@ -443,45 +443,86 @@ let reentry =
       raises_match ~msg:"a step after" invalid (fun () ->
           step d ~last:true (data (small fmt)) ignore))
 
-(* [held step refuse] runs [step hold] on another domain, whose [f] calls
-   [hold], which blocks on a semaphore until [refuse ()] has returned or raised
-   on this domain: [f] may block ({1:steps}). It is the held step's result. *)
-let held step refuse =
+(* Where the held step runs, as lz.mli's "from any domain or thread" says. *)
+type from = Another_domain | Another_thread
+
+(* Each row, held from each place. *)
+let each_from rows =
+  List.concat_map (fun x -> [ (x, Another_domain); (x, Another_thread) ]) rows
+
+let from_name = function
+  | Another_domain -> "another domain"
+  | Another_thread -> "another thread"
+
+(* [held from step refuse] runs [step hold] on another domain, or on another
+   thread of this domain, whose [f] calls [hold], which blocks on a semaphore
+   until [refuse ()] has returned or raised on this thread: [f] may block
+   ({1:steps}). On a thread, [refuse] runs only if [f] blocking releases the
+   domain lock. [hold] blocks only on its first application, so that a step
+   applying [f] twice ends instead of hanging; the walks check that [f] applies
+   once. It is the held step's result, or [refuse]'s exception once the holder
+   has ended. *)
+let held from step refuse =
   let entered = Semaphore.Binary.make false in
   let gate = Semaphore.Binary.make false in
   let in_f = Atomic.make false in
   let hold () =
-    Atomic.set in_f true;
-    Semaphore.Binary.release entered;
-    Semaphore.Binary.acquire gate
+    if not (Atomic.exchange in_f true) then (
+      Semaphore.Binary.release entered;
+      Semaphore.Binary.acquire gate)
   in
-  let holder =
-    Domain.spawn (fun () ->
-        Fun.protect
-          ~finally:(fun () -> Semaphore.Binary.release entered)
-          (fun () -> step hold))
+  let holder () =
+    Fun.protect
+      ~finally:(fun () -> Semaphore.Binary.release entered)
+      (fun () -> step hold)
+  in
+  let join =
+    match from with
+    | Another_domain ->
+        let d = Domain.spawn holder in
+        fun () -> Domain.join d
+    | Another_thread ->
+        (* A thread's exception ends it alone: the result carries it here. *)
+        let r = ref None in
+        let t =
+          Thread.create
+            (fun () ->
+              r :=
+                Some (match holder () with v -> Ok v | exception e -> Error e))
+            ()
+        in
+        fun () ->
+          Thread.join t;
+          Result.fold ~ok:Fun.id ~error:raise (Option.get !r)
   in
   Semaphore.Binary.acquire entered;
   if not (Atomic.get in_f) then (
-    ignore (Domain.join holder);
+    ignore (join ());
     fail "the held step returned without applying f");
-  Fun.protect ~finally:(fun () -> Semaphore.Binary.release gate) refuse;
-  Domain.join holder
+  match refuse () with
+  | () ->
+      Semaphore.Binary.release gate;
+      join ()
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      Semaphore.Binary.release gate;
+      (match join () with _ -> () | exception _ -> ());
+      Printexc.raise_with_backtrace e bt
 
 (* The refused step changes nothing: the held step and a later one decode their
    streams. *)
-let other_domain =
+let other_step =
   cases
-    "a step from another domain while one runs raises Invalid_argument and \
-     changes nothing"
-    ~id:(fun fmt -> fmt.name)
-    formats
-    (fun fmt ->
+    "a step from another domain or thread, while one blocks in f, raises \
+     Invalid_argument and leaves it as it was"
+    ~id:(fun (fmt, from) -> fmt.name ^ ", " ^ from_name from)
+    (each_from formats)
+    (fun (fmt, from) ->
       let g = small fmt in
       let d = fmt.make () in
       let out = Buffer.create 128 in
       let r =
-        held
+        held from
           (fun hold ->
             step d ~last:true (data g) (fun run ->
                 Buffer.add_string out (Lz_support.to_string run);
@@ -1036,19 +1077,19 @@ let encoder_reentry =
 
 (* The refused step changes nothing: the held step writes the stream of its
    input, and after its Done a step writes the same stream again. *)
-let encoder_other_domain =
+let encoder_other_step =
   cases
-    "a step from another domain while one runs raises Invalid_argument and \
-     changes nothing"
-    ~id:(fun enc -> enc.name)
-    encodings
-    (fun enc ->
+    "a step from another domain or thread, while one blocks in f, raises \
+     Invalid_argument and leaves it as it was"
+    ~id:(fun (enc, from) -> enc.name ^ ", " ^ from_name from)
+    (each_from encodings)
+    (fun (enc, from) ->
       let input = Lz_support.corpus Text 1000 in
       let n = String.length input in
       let e = enc.encoder () in
       let out = Buffer.create 128 in
       let r =
-        held
+        held from
           (fun hold ->
             Lz.Encoder.step e ~last:true (Lz_support.of_string input)
               (fun run ->
@@ -1120,7 +1161,7 @@ let () =
     (run "Step"
        [
          group "Decoder.step"
-           ([ after_error; reentry; other_domain ]
+           ([ after_error; reentry; other_step ]
            @ List.map
                (fun (fmt : format) ->
                  group
@@ -1136,7 +1177,7 @@ let () =
                    ])
                formats);
          group "Encoder.step"
-           ([ encoder_reentry; encoder_other_domain ]
+           ([ encoder_reentry; encoder_other_step ]
            @ List.map
                (fun (enc : encoding) ->
                  group
