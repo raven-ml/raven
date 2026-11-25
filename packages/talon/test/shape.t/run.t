@@ -2,17 +2,9 @@ An expression's shape is in its type: each mistake below fails to compile
 with a type error that names the shapes that clash, and the forms that should
 compile do.
 
-  $ lookup () {
-  >   for d in $(echo "$OCAMLPATH" | tr ':' ' '); do
-  >     if [ -f "$d/$1" ]; then dirname "$d/$1"; return; fi
-  >   done
-  >   (cd .. && cd "$(dirname "$2")" && pwd)
-  > }
-  $ includes=$(while read cmi at; do
-  >   echo "-I $(lookup "$cmi" "$at")"
-  > done < ../includes)
-  $ ocamlc_talon () { ocamlc $includes -c "$1"; }
-  $ compile () { ocamlc_talon "$1" 2>&1 | grep -A3 Error; }
+  $ ocaml -noinit include_args.ml > include.args
+  $ ocamlc_talon () { ocamlc -args include.args -c "$1"; }
+  $ compile () { ocamlc_talon "$1" 2>&1 | tr -d '\r' | grep -A3 Error; }
 
 A row expression where a reduction belongs:
 
