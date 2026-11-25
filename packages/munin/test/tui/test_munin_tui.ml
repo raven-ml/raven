@@ -949,8 +949,9 @@ let reachable =
   go [] [ (start_state, []) ]
 
 (* From each state the keys reach, each key once: the dashboard of one run
-   shows what the model of the keys table says, a refused Enter or [i]
-   under a filter that keeps no run included. A row reaches its state,
+   shows what the model of the keys table says, its depth or layer and
+   whether its filter keeps no run, a refused Enter or [i] and Esc
+   clearing the filter included. A row reaches its state,
    takes a key, and comes back by the fewest keys, so one session checks
    every key from the state. *)
 let navigation =
@@ -981,8 +982,18 @@ let navigation =
           if takes st k then begin
             press k;
             let n = model_key st k in
-            equal ~msg:("after " ^ key_name k) string (model_name n)
-              (observed (T.Terminal.screen term));
+            let screen = T.Terminal.screen term in
+            (* Whether the filter keeps no run, which the centre says where
+               help or the run's facts do not cover it. *)
+            let says_none =
+              if n.help || n.info then None
+              else Some (T.Screen.find screen "no run matches the filter" <> [])
+            in
+            equal ~msg:("after " ^ key_name k)
+              (pair string (option bool))
+              ( model_name n,
+                if n.help || n.info then None else Some (keeps_none n) )
+              (observed screen, says_none);
             match path ~from:n (fun x -> x = st) with
             | Some back -> List.iter press back
             | None -> failf "no keys back after %s" (key_name k)
@@ -1104,7 +1115,7 @@ let alike =
       equal string (zoom b) (zoom a))
 
 let smoothing =
-  cases ~id:fst "s turns smoothing off and on for every chart"
+  cases ~id:fst "s turns smoothing off and on, as zoom's title says"
     [ ("smoothed", ([], true)); ("s", ([ char 's' ], false));
       ("s s", ([ char 's'; char 's' ], true)) ]
     (fun (_, (keys, smoothed)) ->
@@ -1160,7 +1171,7 @@ let ctrl_c =
         send term s (Chord (ctrl, Char (Uchar.of_char 'c')));
         T.ended s
       in
-      equal ~msg:"the session ended" bool true ended)
+      equal string "ended" (if ended then "ended" else "running"))
 
 (* A resize changes the charts' dot columns: until the poll that reduces
    the series to them ends, the chart draws its axes alone, then its line.
@@ -1231,24 +1242,44 @@ let unknown_run =
       | Error why ->
           satisfies ~claim:"names the run" string (holds "absent") why)
 
+(* The seconds a child may take: a dashboard that starts there waits on
+   input forever, and the alarm ends it. *)
+let child_limit = 5
+
 (* [without_terminal f] is what [f ()] returns as text in a child whose
-   standard input is not a terminal, read back through a pipe. *)
+   standard input and output are [/dev/null], not terminals, read back
+   through a pipe, and how the child ended. The child exits on every path,
+   an exception's text its output, and the parent reaps it. *)
 let without_terminal f =
   let r, w = Unix.pipe ~cloexec:true () in
   match Unix.fork () with
   | 0 ->
-      let null = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0 in
-      Unix.dup2 null Unix.stdin;
-      let text = f () in
-      ignore (Unix.write_substring w text 0 (String.length text));
+      ignore (Unix.alarm child_limit);
+      let text =
+        try
+          let input = Unix.openfile "/dev/null" [ Unix.O_RDONLY ] 0
+          and output = Unix.openfile "/dev/null" [ Unix.O_WRONLY ] 0 in
+          Unix.dup2 input Unix.stdin;
+          Unix.dup2 output Unix.stdout;
+          f ()
+        with e -> "raised " ^ Printexc.to_string e
+      in
+      (try ignore (Unix.write_substring w text 0 (String.length text))
+       with _ -> ());
       Unix._exit 0
   | pid ->
       Unix.close w;
       let ic = Unix.in_channel_of_descr r in
       let text = In_channel.input_all ic in
       close_in ic;
-      ignore (Unix.waitpid [] pid);
-      text
+      let _, status = Unix.waitpid [] pid in
+      let ended =
+        match status with
+        | Unix.WEXITED n -> Printf.sprintf "exited %d" n
+        | Unix.WSIGNALED n -> Printf.sprintf "killed by signal %d" n
+        | Unix.WSTOPPED n -> Printf.sprintf "stopped by signal %d" n
+      in
+      (ended, text)
 
 let no_terminal =
   test "run is an error without a terminal" (fun () ->
@@ -1260,7 +1291,7 @@ let no_terminal =
             | Ok () -> "ran"
             | Error _ -> "error")
       in
-      equal string "error" outcome)
+      equal (pair string string) ("exited 0", "error") outcome)
 
 (* [tree root] is each file under [root], with its size and modification
    time. *)
