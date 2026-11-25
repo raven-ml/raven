@@ -368,6 +368,24 @@ let values =
               (read f "[\n  {\"a\": 1},\n  {\"a\":\n    2}\n]  \n ")
           in
           equal strings [ Some "1"; Some "2" ] (ints t "a"));
+      (* RFC 8259 §3: a value is an object, array, number, string, or one of the
+         literal names false, null and true. *)
+      cases "a row that is not an object fails, naming what it is" ~id:fst
+        [
+          ("1", "a number");
+          ({|"x"|}, "a string");
+          ("[1]", "an array");
+          ("true", "a boolean");
+          ("null", "null");
+        ]
+        (fun (row, what) ->
+          let e = fails ~f:flat row in
+          starts_with ~prefix:"line 1, column 1: byte 0: " e;
+          ends_with ~suffix:("this is " ^ what) e);
+      test "a row that is no JSON value fails at its first byte" (fun () ->
+          equal string
+            "line 1, column 1: byte 0: expected a value, found the byte 'x'"
+            (fails ~f:flat "xyz"));
       test "an empty input and an empty array have no rows" (fun () ->
           equal int 0 (Talon.rows (Error.get_ok (read flat "")));
           let f = J.format ~framing:J.Array [ ("a", any Type.int64) ] in

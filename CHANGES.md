@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A JSON row that is `null` fails naming it null; `Talon_json.decode` and
+  `Talon_json.sniff` called it a number. A row that starts with no JSON value
+  fails as a syntax error at that byte, where it was also called a number.
 - `Talon_csv.format`, `Talon_csv.sniff` and `Talon_csv.file` raise on a null
   token that starts with a UTF-8 byte order mark. A one-column file that
   started with such a token read its first null back as text.

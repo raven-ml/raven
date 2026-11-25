@@ -304,13 +304,14 @@ let name_is s name ~pos ~len =
 let json_type = function
   | '"' -> "a string"
   | 't' | 'f' -> "a boolean"
+  | 'n' -> "null"
   | '{' -> "an object"
   | '[' -> "an array"
   | _ -> "a number"
 
 let is_value_start c =
   match c with
-  | '"' | 't' | 'f' | '{' | '[' | '-' | '0' .. '9' -> true
+  | '"' | 't' | 'f' | 'n' | '{' | '[' | '-' | '0' .. '9' -> true
   | _ -> false
 
 let mismatch s c first what =
@@ -625,6 +626,7 @@ let reading f ~read ~limit r =
 let check_row s =
   let first = Scan.peek s in
   if first = '\000' then Scan.unexpected s "expected a record";
+  if not (is_value_start first) then Scan.unexpected s "expected a value";
   if first <> '{' then
     Scan.fail s (Scan.pos s)
       (Printf.sprintf "a row is a JSON object, and this is %s"
