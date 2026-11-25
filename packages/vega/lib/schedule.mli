@@ -63,8 +63,9 @@ val eval : Nx.host t -> int -> float
 
 val linear : init_value:float -> end_value:float -> steps:int -> 'd t
 (** [linear ~init_value ~end_value ~steps] interpolates linearly from
-    [init_value] to [end_value] over [steps]. Clamps to [end_value] after
-    [steps].
+    [init_value] to [end_value] over [steps]:
+    [init_value + (end_value - init_value) * min step steps / steps]. Clamps to
+    [end_value] after [steps].
 
     Raises [Invalid_argument] if [steps] is not positive. *)
 
@@ -73,7 +74,10 @@ val linear : init_value:float -> end_value:float -> steps:int -> 'd t
 val cosine_decay :
   init_value:float -> decay_steps:int -> ?alpha:float -> unit -> 'd t
 (** [cosine_decay ~init_value ~decay_steps ?alpha ()] is cosine decay from
-    [init_value] to [alpha * init_value] over [decay_steps].
+    [init_value] to [alpha * init_value] over [decay_steps]:
+    [init_value * ((1 - alpha) * (1 + cos (pi * min step decay_steps /
+     decay_steps)) / 2 + alpha)]. It stays at [alpha * init_value] after
+    [decay_steps].
 
     [alpha] defaults to [0.].
 
@@ -82,7 +86,9 @@ val cosine_decay :
 val exponential_decay :
   init_value:float -> decay_rate:float -> decay_steps:int -> 'd t
 (** [exponential_decay ~init_value ~decay_rate ~decay_steps] is
-    [init_value * decay_rate{^ (step / decay_steps)}].
+    [init_value * decay_rate{^ (step / decay_steps)}], the exponent a real
+    quotient: the rate decays at every step, by [decay_rate] every
+    [decay_steps].
 
     Raises [Invalid_argument] if [decay_steps] or [decay_rate] is not positive.
 *)
@@ -108,8 +114,10 @@ val polynomial_decay :
 val warmup_cosine :
   init_value:float -> peak_value:float -> warmup_steps:int -> 'd t
 (** [warmup_cosine ~init_value ~peak_value ~warmup_steps] is cosine warmup from
-    [init_value] to [peak_value] over [warmup_steps]. Clamps to [peak_value]
-    after [warmup_steps].
+    [init_value] to [peak_value] over [warmup_steps]:
+    [init_value + (peak_value - init_value) * (1 - cos (pi * min step
+     warmup_steps / warmup_steps)) / 2]. Clamps to [peak_value] after
+    [warmup_steps].
 
     Raises [Invalid_argument] if [warmup_steps] is not positive. *)
 
@@ -123,7 +131,11 @@ val warmup_cosine_decay :
   'd t
 (** [warmup_cosine_decay ~init_value ~peak_value ~warmup_steps ~decay_steps
      ?end_value ()] is linear warmup from [init_value] to [peak_value] over
-    [warmup_steps], then cosine decay to [end_value] over [decay_steps].
+    [warmup_steps], then cosine decay to [end_value] over [decay_steps]: up to
+    [warmup_steps] it is {!linear} from [init_value] to [peak_value], and at
+    [s = step - warmup_steps] after it
+    [end_value + (peak_value - end_value) * (1 + cos (pi * min s decay_steps /
+     decay_steps)) / 2], which stays at [end_value] after [decay_steps].
 
     [end_value] defaults to [0.].
 
@@ -144,13 +156,19 @@ val cosine_decay_restarts :
     cosine decay that periodically resets to [init_value] (SGDR).
 
     After each restart the period is multiplied by [t_mul] and the peak
-    amplitude by [m_mul]. [alpha] is the minimum fraction of [init_value].
+    amplitude by [m_mul]. [alpha] is the minimum fraction of the cycle's peak.
+    With [n = decay_steps], cycle [k] starts at the step
+    [c_k = n * (t_mul{^ k} - 1) / (t_mul - 1)] ([n * k] for [t_mul = 1.]) and
+    lasts [n * t_mul{^ k}] steps; in it the schedule is
+    [init_value * m_mul{^ k} * ((1 - alpha) * (1 + cos (pi * (step - c_k) / (n *
+     t_mul{^ k}))) / 2 + alpha)]. The starts are computed at float32, so a
+    counter within its rounding of a non-integer start may fall in either cycle.
 
     [t_mul] defaults to [1.0]. [m_mul] defaults to [1.0]. [alpha] defaults to
     [0.0].
 
-    Raises [Invalid_argument] if [decay_steps] is not positive, [t_mul < 1.0],
-    or [m_mul] is not positive. *)
+    Raises [Invalid_argument] if [decay_steps] is not positive, if [t_mul] is
+    not at least [1.0], or if [m_mul] is not positive. *)
 
 val one_cycle :
   max_value:float ->
@@ -182,11 +200,13 @@ val one_cycle :
 val piecewise_constant : boundaries:int list -> values:float list -> 'd t
 (** [piecewise_constant ~boundaries ~values] is a step function. [values] has
     one more element than [boundaries]. The schedule returns [values.(i)] for
-    steps in the i-th segment.
+    steps in the i-th segment, which holds the counters from the boundary before
+    it plus one to its own boundary, the first from [0] and the last without
+    end: a boundary counter belongs to the segment it ends.
 
     For example,
     [piecewise_constant ~boundaries:[100; 200] ~values:[0.1; 0.01; 0.001]]
-    returns [0.1] for steps 1--100, [0.01] for 101--200, and [0.001] thereafter.
+    returns [0.1] for steps 0--100, [0.01] for 101--200, and [0.001] thereafter.
 
     Raises [Invalid_argument] if
     [List.length values <> List.length boundaries + 1] or if [boundaries] is not
