@@ -1926,6 +1926,23 @@ let cut_by_the_page =
           (Stroke.v ~cap:`Square ~join:`Miter ~dash:[ 3.; 1. ] 4.)
           Color.black
           (segment (-16.2056) 73.0283 102.5 92.5426) );
+      (* Dashes in progress where the walk of their segment enters the grown
+         page, which end 0.03 after where the walk resumes, and whose square
+         caps reach the page: the first where the segment crosses the page, a
+         pixel before the page's projection, the second where it ends before it,
+         a pixel before its end. *)
+      ( 100.,
+        Picture.stroke
+          (Stroke.v ~cap:`Square ~join:`Bevel ~dash:[ 3.; 8. ] ~dash_offset:2.97
+             4.)
+          Color.black
+          (segment (-100.) 50. 200. 50.) );
+      ( 100.,
+        Picture.stroke
+          (Stroke.v ~cap:`Square ~join:`Bevel ~dash:[ 4.; 10. ]
+             ~dash_offset:5.47 8.)
+          Color.black
+          (segment (-100.) 50. (-2.5) 50.) );
     ]
 
 (* A stroked circle in a stamp nested in another, each position about 0.1 past

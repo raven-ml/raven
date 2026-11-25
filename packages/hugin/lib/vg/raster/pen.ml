@@ -469,7 +469,10 @@ type subpaths = {
   pen : t;
   dashes : dashes option;
   raw : points;  (** The subpath being flattened. *)
-  piece : points;  (** The dash being cut. *)
+  piece : points;
+      (** The dash being cut: its ends, the vertices it passes and where its
+          segment crosses the grown window. A dash in progress always holds its
+          start here, so that a piece ended mid-dash is never its caps alone. *)
   spine : points;
       (** The points of the subpath that stripping it keeps: dashes are cut from
           the polyline of these alone. *)
@@ -536,7 +539,6 @@ let[@inline] skip s d ~page ~ux ~uy ~gap nx ny nl =
   let caps = match s.pen.cap with `Butt -> false | `Round | `Square -> true in
   let across = is_dash d && d.rest > gap in
   if is_dash d && not across then begin
-    if s.piece.n = 0 then push s.piece (ox +. (ux *. l)) (oy +. (uy *. l));
     let e = l +. d.rest in
     push s.piece (ox +. (ux *. e)) (oy +. (uy *. e))
   end;
@@ -678,6 +680,9 @@ let dash_segment s d ax ay bx by =
       (* A dash ended where the segment starts. *)
       if not (is_dash d) then flush_piece s ~dx:ux ~dy:uy;
       advance d (Float.hypot (px -. ax) (py -. ay));
+      (* A dash in progress goes on from where the segment enters the grown
+         window: its start, or a point from which no cap reaches the page. *)
+      if is_dash d && s.piece.n = 0 then push s.piece px py;
       (* [z], and the page's projection from it, a pixel wider each way. *)
       let page = p.page in
       let mx = Float.abs (tx -. sx) >= Float.abs (ty -. sy) in

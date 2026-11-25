@@ -321,8 +321,9 @@ All notable changes to this project will be documented in this file.
 
 - `Hugin_vg_raster` draws a dash between the ends its pattern places. An end
   within a twentieth of a pixel of where the raster splits its walk, a pixel
-  into a segment or a pixel past the page, moved there, so a dash could be
-  that much short, and a cut of a larger page could draw it differently.
+  from either end of a segment or of the page's projection, moved there, so a
+  dash could be that much short, and a cut of a larger page could draw it
+  differently.
 - `Path.crop` keeps a region with area within the box whose points lie at far
   apart scales, such as a vertex far beyond the box or a first edge a subnormal
   long. Rounding at the far points' scale made it judge the region flat and
