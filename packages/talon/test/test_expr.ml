@@ -46,8 +46,16 @@ let construction =
         cases "accepts p in [0, 1]" ~id:(Printf.sprintf "%h")
           [ 0.; -0.; 0.5; 1. ] (fun q -> ignore (quantile q x));
         cases "raises unless p lies in [0, 1]" ~id:(Printf.sprintf "%h")
-          [ -0.1; 1.1; Float.nan; Float.infinity; Float.neg_infinity ] (fun q ->
-            raises_match Exn.invalid_arg (fun () -> quantile q x));
+          [
+            Float.pred 0.;
+            Float.succ 1.;
+            -0.1;
+            1.1;
+            Float.nan;
+            Float.infinity;
+            Float.neg_infinity;
+          ]
+          (fun q -> raises_match Exn.invalid_arg (fun () -> quantile q x));
       ];
     group "Expr.Str.slice"
       [
@@ -106,6 +114,7 @@ let catalogue () =
       p (Temporal.add ts (span (Time.Span.s 90)));
       p (Temporal.parse "%Y-%m-%d" Type.date s);
       p (Temporal.wall Tz.utc ts);
+      p (field Kind.int "a" (Col.v Record.kind "r"));
     ]
   in
   expect (String.concat "\n" lines)
@@ -128,6 +137,7 @@ let catalogue () =
     Temporal.add ts 1m30s
     Temporal.parse "%Y-%m-%d" date s
     Temporal.wall "UTC" ts
+    field int "a" r
     |}
 
 let float_literal v =
