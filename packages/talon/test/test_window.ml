@@ -14,10 +14,20 @@ open Windtrap
    integer, a temporal value in ticks (a date's in seconds), or a float. *)
 
 type coord = I of int | F of float
+
 type kind =
-  | Places | Int8 | Uint8 | Int | Float32 | Float | Date | Clock | Datetime
-  | Coarse  (* A datetime[ns] key with bounds of duration[s]. *)
+  | Places
+  | Int8
+  | Uint8
+  | Int
+  | Float32
+  | Float
+  | Date
+  | Clock
+  | Datetime
+  | Coarse (* A datetime[ns] key with bounds of duration[s]. *)
   | Duration
+
 type bound = Absent | Lit of coord | Per_row of coord option array
 
 type frame = {
@@ -36,15 +46,23 @@ type frame = {
 
 let kinds =
   [
-    (3, Places, "places"); (1, Int8, "int8"); (1, Uint8, "uint8");
-    (2, Int, "int64"); (1, Float32, "float32"); (2, Float, "float64");
-    (1, Date, "date"); (1, Clock, "clock"); (1, Datetime, "datetime");
-    (1, Coarse, "datetime by seconds"); (1, Duration, "duration");
+    (1, Places, "places");
+    (1, Int8, "int8");
+    (1, Uint8, "uint8");
+    (1, Int, "int64");
+    (1, Float32, "float32");
+    (1, Float, "float64");
+    (1, Date, "date");
+    (1, Clock, "clock");
+    (1, Datetime, "datetime");
+    (1, Coarse, "datetime by seconds");
+    (1, Duration, "duration");
   ]
 
 let kind_name k =
   let name (_, k', n) = if k = k' then Some n else None in
   Option.get (List.find_map name kinds)
+
 let to_int = function I i -> i | F _ -> assert false
 let to_float = function F x -> x | I _ -> assert false
 let specials = [ neg_infinity; -1.5; -0.; 0.; 1.; 2.5; infinity; nan ]
@@ -72,8 +90,17 @@ let coords kind =
       let e = 1_000_000_000_000_000_000 in
       ( ints [ -2 * e; -e; 0; 1_000; e + (e / 2); 2 * e ],
         ints
-          [ -20_000_000_000; -10_000_000_000; -3_000_000_000; 0; 1;
-            1_000_000_000; 3_000_000_000; 10_000_000_000; 20_000_000_000 ] )
+          [
+            -20_000_000_000;
+            -10_000_000_000;
+            -3_000_000_000;
+            0;
+            1;
+            1_000_000_000;
+            3_000_000_000;
+            10_000_000_000;
+            20_000_000_000;
+          ] )
   | Date ->
       ( ints [ 0; day; 2 * day; 5 * day ],
         ints [ 0; day; 3 * day / 2; 3 * day; -day ] )
@@ -86,7 +113,8 @@ let frame_of only =
   let* kind =
     frequency
       (List.filter_map
-         (fun (w, k, _) -> if List.mem k only then Some (w, constant k) else None)
+         (fun (w, k, _) ->
+           if List.mem k only then Some (w, constant k) else None)
          kinds)
   in
   let key, distance = coords kind in
@@ -130,20 +158,24 @@ let column kind ~bound cs =
   | Float32 -> v Type.float32 to_float
   | Clock when not bound -> v (Type.clock Type.Ns) (fun c -> span (to_int c))
   | Coarse when bound ->
-      let x = Array.map (function Some c -> Int64.of_int (to_int c) | None -> 0L) cs in
-      let validity = Nx.create Nx.bool [| Array.length cs |] (Array.map Option.is_some cs) in
+      let x =
+        Array.map (function Some c -> Int64.of_int (to_int c) | None -> 0L) cs
+      in
+      let validity =
+        Nx.create Nx.bool [| Array.length cs |] (Array.map Option.is_some cs)
+      in
       let values = Nx.P (Nx.create Nx.int64 [| Array.length cs |] x) in
       let validity = Some (Nx.cast Nx.bit validity) in
       Result.get_ok
-        (Column.of_layout (Type.Any (Type.duration Type.S))
+        (Column.of_layout
+           (Type.Any (Type.duration Type.S))
            (Fixed { validity; values }))
   | Date when bound ->
       v (Type.duration Type.S) (fun c -> span (to_int c * 1_000_000_000))
   | Date ->
       v Type.date (fun c -> Option.get (Time.Date.of_days (to_int c / 86_400)))
   | (Datetime | Coarse) when not bound ->
-      v (Type.instant Type.Ns) (fun c ->
-          Time.of_ns (Int64.of_int (to_int c)))
+      v (Type.instant Type.Ns) (fun c -> Time.of_ns (Int64.of_int (to_int c)))
   | Datetime | Coarse | Duration | Clock ->
       v (Type.duration Type.Ns) (fun c -> span (to_int c))
 
@@ -154,16 +186,22 @@ let table f =
   in
   Talon.v ~rows:(Array.length f.o)
     ([
-       ("g", Column.of_options Type.int64 f.g); ("o", Column.v Type.int64 f.o);
+       ("g", Column.of_options Type.int64 f.g);
+       ("o", Column.v Type.int64 f.o);
        ("x", Column.of_options Type.float64 f.x);
        ("y", Column.of_options Type.int32 f.y);
        ( "z",
          Column.of_options Type.float16
            (Array.map (Option.map (fun y -> Float.of_int y /. 4.)) f.y) );
        ( "d",
-         Column.of_options (Type.duration Type.Ns) (Array.map (Option.map span) f.y) );
-       ("c", Column.of_options Type.int64 (Array.map (Option.map (fun _ -> 5)) f.g));
-       ("t", Column.of_options Type.bool (Array.map (Option.map (fun x -> x > 0.)) f.x));
+         Column.of_options (Type.duration Type.Ns)
+           (Array.map (Option.map span) f.y) );
+       ( "c",
+         Column.of_options Type.int64 (Array.map (Option.map (fun _ -> 5)) f.g)
+       );
+       ( "t",
+         Column.of_options Type.bool
+           (Array.map (Option.map (fun x -> x > 0.)) f.x) );
        (* uint64 values each side of 2^63, which order unsigned. *)
        ( "u",
          let bits y = Int64.(add min_int (of_int (2 * y))) in
@@ -173,8 +211,7 @@ let table f =
          Column.of_tensor ~validity:(Nx.cast Nx.bit valid)
            (Nx.bitcast Nx.uint64 (Nx.create Nx.int64 [| n |] x)) );
      ]
-    @ (if f.kind = Places then []
-       else [ ("k", column f.kind ~bound:false f.k) ])
+    @ (if f.kind = Places then [] else [ ("k", column f.kind ~bound:false f.k) ])
     @ bound "b" f.before @ bound "a" f.after)
 
 let frames =
@@ -193,8 +230,8 @@ let window f =
   let open Expr in
   let by = if f.partitioned then [ "g" ] else [] in
   let order = if f.ordered then [ Order.asc "o" ] else [] in
-  let along (type k d) (on : (k, row) t option) (lit : coord -> (d, row) t)
-      col =
+  let along (type k d) (on : (k, row) t option) (lit : coord -> (d, row) t) col
+      =
     let bound name = function
       | Absent -> None
       | Lit c -> Some (lit c)
@@ -230,17 +267,32 @@ let outs (w : 's win) : 's Expr.out list =
   let open Expr in
   let x = Col.float "x" and y = Col.int "y" and z = Col.float "z" in
   [
-    "sum" := w.w (sum x); "mean" := w.w (mean x); "min" := w.w (min x);
-    "max" := w.w (max x); "first" := w.w (first x); "last" := w.w (last x);
-    "var" := w.w (var x); "std" := w.w (std x); "median" := w.w (median x);
-    "imean" := w.w (mean y); "count" := w.w (count x); "rows" := w.w rows;
-    "n_unique" := w.w (n_unique x); "arg_min" := w.w (arg_min x);
-    "arg_max" := w.w (arg_max x); "isum" := w.w (sum y);
-    "q25" := w.w (quantile 0.25 x); "hsum" := w.w (sum z);
-    "only" := w.w (only (Col.int "c")); "dsum" := w.w (sum (Col.span "d"));
-    "tmin" := w.w (min (Col.bool "t")); "tmax" := w.w (max (Col.bool "t"));
-    "ymin" := w.w (min y); "ymax" := w.w (max y);
-    "umin" := w.w (min (Col.int "u")); "umax" := w.w (max (Col.int "u"));
+    "sum" := w.w (sum x);
+    "mean" := w.w (mean x);
+    "min" := w.w (min x);
+    "max" := w.w (max x);
+    "first" := w.w (first x);
+    "last" := w.w (last x);
+    "var" := w.w (var x);
+    "std" := w.w (std x);
+    "median" := w.w (median x);
+    "imean" := w.w (mean y);
+    "count" := w.w (count x);
+    "rows" := w.w rows;
+    "n_unique" := w.w (n_unique x);
+    "arg_min" := w.w (arg_min x);
+    "arg_max" := w.w (arg_max x);
+    "isum" := w.w (sum y);
+    "q25" := w.w (quantile 0.25 x);
+    "hsum" := w.w (sum z);
+    "only" := w.w (only (Col.int "c"));
+    "dsum" := w.w (sum (Col.span "d"));
+    "tmin" := w.w (min (Col.bool "t"));
+    "tmax" := w.w (max (Col.bool "t"));
+    "ymin" := w.w (min y);
+    "ymax" := w.w (max y);
+    "umin" := w.w (min (Col.int "u"));
+    "umax" := w.w (max (Col.int "u"));
   ]
 
 (* The reference *)
@@ -255,9 +307,9 @@ let compare_coord a b =
   | _ -> assert false
 
 (* [members f i] is the rows of row [i]'s window in its order, or [None] if [i]
-   has none: the rows of its partition whose key [kj] has
-   [ki - before < kj <= ki + after], computed by IEEE 754 for floats and, for
-   integers, on the lag [ki - kj], which is exact. *)
+   has none: the rows of its partition whose key [kj] has [ki - before < kj <=
+   ki + after], computed by IEEE 754 for floats and, for integers, on the lag
+   [ki - kj], which is exact. *)
 let members f i =
   let bound = function
     | Absent -> Some None
@@ -278,14 +330,18 @@ let members f i =
       let inside kj =
         match (ki, kj, before, after) with
         | I ki, I kj, b, a ->
-            (* Bounds of [tick] key units: [lag < b * tick] iff
-               [floor (lag / tick) < b], with no product to overflow. *)
+            (* Bounds of [tick] key units: [lag < b * tick] iff [floor (lag /
+               tick) < b], with no product to overflow. *)
             let tick = if f.kind = Coarse then 1_000_000_000 else 1 in
             let lag = ki - kj and a = to_int (Option.value a ~default:(I 0)) in
             let q = (if lag >= 0 then lag else lag - tick + 1) / tick in
             Option.fold ~none:true ~some:(fun b -> q < to_int b) b && a >= -q
         | F ki, kj, b, a ->
-            let at x = if f.kind = Float32 then F (Int32.float_of_bits (Int32.bits_of_float x)) else F x in
+            let at x =
+              if f.kind = Float32 then
+                F (Int32.float_of_bits (Int32.bits_of_float x))
+              else F x
+            in
             let lo b = compare_coord (at (ki -. to_float b)) kj < 0 in
             let a = to_float (Option.value a ~default:(F 0.)) in
             Option.fold ~none:true ~some:lo b
@@ -297,42 +353,70 @@ let members f i =
         | Some kj -> inside kj && not (f.exclude && compare_coord kj ki = 0)
         | None -> false
       in
-      let by_key a b = compare_coord (Option.get (key a)) (Option.get (key b)) in
+      let by_key a b =
+        compare_coord (Option.get (key a)) (Option.get (key b))
+      in
       Some (List.stable_sort by_key (List.filter kept frame))
   | _ -> None
 
-let floats_w ~exact =
-  let same a b = Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b) in
-  let close a b =
-    let scale = Float.max 1. (Float.max (Float.abs a) (Float.abs b)) in
-    a = b || Float.abs (a -. b) <= 1e-9 *. scale
+(* Bits, every NaN equal to every NaN. *)
+let exact_w =
+  let same a b =
+    Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
+    || (Float.is_nan a && Float.is_nan b)
   in
-  let equal a b =
-    (Float.is_nan a && Float.is_nan b) || if exact then same a b else close a b
-  in
-  Testable.make ~pp:(fun ppf -> Format.fprintf ppf "%h") ~equal
+  Testable.make ~pp:(fun ppf -> Format.fprintf ppf "%h") ~equal:same
 
-let exact_w = floats_w ~exact:true and float_w = floats_w ~exact:false
-let witness c =
-  if List.mem c [ "min"; "max"; "first"; "last"; "hsum" ] then exact_w
-  else float_w
+(* Within [abs], every NaN equal to every NaN and an infinity to itself. *)
+let within abs =
+  let close a b =
+    (Float.is_nan a && Float.is_nan b) || a = b || Float.abs (a -. b) <= abs
+  in
+  Testable.make ~pp:(fun ppf -> Format.fprintf ppf "%h") ~equal:close
+
+(* How a window's float output meets the aggregate over the window's rows. The
+   values of a frame lie in [-8, 8] (or are infinite or NaN), so k ≤ 24 values
+   span R ≤ 16 and have a variance V ≤ 64. - min, max, first and last pick a
+   value, and the int32 mean ("imean") sums exactly and divides once (mli
+   Expr.mean): equal bits. So is the float16 sum ("hsum"): it folds in float32,
+   where every partial sum of y/4 for |y| ≤ 1000 over 24 rows is exact, and
+   rounds once. - With exclude_key and after, var and std are the aggregate's
+   (mli window floats): equal bits. - Sums, means and quantiles: any order of
+   addition errs by at most (k-1) u Σ|x| ≤ 23 · 2^-53 · 192 ≈ 4.9e-13 on each
+   side: 1e-12. - var: with before, nx.mli's moments_ranges bound (2D+5)uV +
+   (7D²-3D)uR√V, D = 6, gives 3.4e-12, doubled for the sample's k/(k-1); without
+   it, the running scan of window.ml (Chan's update over values less the
+   segment's first, depth ≤ 10) errs by at most 40·u·k·R² ≈ 2.7e-11: 3e-11. -
+   std: a window of range R has std ≥ R/√(2(k-1)) ≥ R/7, so its error is at most
+   Δvar · 7/(2R) ≈ 6e-12: 1e-11. *)
+let witness f c =
+  let exact_moments = f.exclude && f.after <> Absent in
+  match c with
+  | "min" | "max" | "first" | "last" | "hsum" | "imean" -> exact_w
+  | ("var" | "std") when exact_moments -> exact_w
+  | "var" -> within 3e-11
+  | "std" -> within 1e-11
+  | _ -> within 1e-12
 
 let exec q = Error.get_ok (Query.run q)
 let floats_of t c = Column.options Kind.float (Talon.column t c)
+
 let ints_of t c =
   match Column.type_ (Talon.column t c) with
   | Any Uint64 -> (
       (* The bit patterns 2^63 + 2y decode exactly to y. *)
       match Column.layout (Talon.column t c) with
       | Fixed { values; validity } ->
-          let x = Nx.to_array (Nx.bitcast Nx.int64 (Nx.unpack Nx.uint64 values)) in
-          let held = Option.map (fun v -> Nx.to_array (Nx.cast Nx.bool v)) validity in
+          let x =
+            Nx.to_array (Nx.bitcast Nx.int64 (Nx.unpack Nx.uint64 values))
+          in
+          let held =
+            Option.map (fun v -> Nx.to_array (Nx.cast Nx.bool v)) validity
+          in
           let y x = Int64.(to_int (shift_right (add x min_int) 1)) in
           Array.mapi
             (fun i x ->
-              match held with
-              | Some h when not h.(i) -> None
-              | _ -> Some (y x))
+              match held with Some h when not h.(i) -> None | _ -> Some (y x))
             x
       | _ -> assert false)
   | Any Bool ->
@@ -342,19 +426,131 @@ let ints_of t c =
       let ns d = Int64.to_int (Time.Span.to_ns d) in
       Array.map (Option.map ns) (Column.options Kind.span (Talon.column t c))
   | _ -> Column.options Kind.int (Talon.column t c)
+
 let indices l =
-  Nx.create Nx.int64 [| List.length l |]
+  Nx.create Nx.int64
+    [| List.length l |]
     (Array.of_list (List.map Int64.of_int l))
 
-(* [same_outputs ~exact got want] compares the outputs of {!outs}, the floats
-   by their bits if [exact]. *)
-let same_outputs ?(at = "") ~exact got want =
-  let w c = if exact then exact_w else witness c in
-  let check w read c =
-    equal ~msg:(c ^ at) (array (option w)) (read want c) (read got c)
+(* [same_bits got want] states that two runs of {!outs} hold the same values,
+   floats by their bits. *)
+let same_bits got want =
+  List.iter
+    (fun c ->
+      equal ~msg:c (array (option exact_w)) (floats_of want c) (floats_of got c))
+    floats;
+  List.iter
+    (fun c ->
+      equal ~msg:c (array (option int)) (ints_of want c) (ints_of got c))
+    ints
+
+(* [expected f t windows] is, for every row, the outputs of {!outs} over its
+   window's rows by one grouped aggregate: null where a row has no window, and
+   over no rows where its window is empty. *)
+let expected f t windows =
+  let n = Array.length f.o in
+  let rows = List.concat (List.map (Option.value ~default:[]) windows) in
+  let tags =
+    List.concat
+      (List.mapi
+         (fun i w -> List.map (fun _ -> i) (Option.value ~default:[] w))
+         windows)
   in
-  List.iter (fun c -> check (w c) floats_of c) floats;
-  List.iter (check int ints_of) ints
+  let taken = Talon.take (indices rows) t in
+  let tagged =
+    Talon.v ~rows:(List.length rows)
+      (("win", Column.v Type.int64 (Array.of_list tags))
+      :: List.map
+           (fun (c, _) -> (c, Talon.column taken c))
+           (Schema.columns (Talon.schema t)))
+  in
+  let grouped =
+    exec
+      (Query.aggregate ~by:[ "win" ]
+         (outs { w = Fun.id })
+         (Query.of_table tagged))
+  in
+  let none =
+    exec
+      (Query.aggregate ~by:[]
+         (outs { w = Fun.id })
+         (Query.of_table (Talon.take (indices []) t)))
+  in
+  let group = Array.make n (-1) in
+  Array.iteri
+    (fun k w -> Option.iter (fun w -> group.(w) <- k) w)
+    (ints_of grouped "win");
+  (* One row per frame row: its group's, the row of no rows, or null. *)
+  let pick i =
+    match List.nth windows i with
+    | None -> None
+    | Some [] -> Some (none, 0)
+    | Some _ -> Some (grouped, group.(i))
+  in
+  let floats c =
+    Array.init n (fun i ->
+        Option.bind (pick i) (fun (t, k) -> (floats_of t c).(k)))
+  in
+  let ints c =
+    Array.init n (fun i ->
+        Option.bind (pick i) (fun (t, k) -> (ints_of t c).(k)))
+  in
+  (floats, ints)
+
+(* Whether a small integer key and a bound reach past the key type's range,
+   where the window's limit lies below or above every key. *)
+let past_range f =
+  let lo, hi =
+    match f.kind with Int8 -> (-128, 127) | Uint8 -> (0, 255) | _ -> (0, -1)
+  in
+  let bound i = function
+    | Absent -> None
+    | Lit (I b) -> Some b
+    | Per_row cs -> ( match cs.(i) with Some (I b) -> Some b | _ -> None)
+    | Lit (F _) -> None
+  in
+  lo <= hi
+  && List.exists
+       (fun i ->
+         match f.k.(i) with
+         | Some (I k) ->
+             Option.fold ~none:false
+               ~some:(fun b -> k - b < lo)
+               (bound i f.before)
+             || Option.fold ~none:false
+                  ~some:(fun a -> k + a > hi)
+                  (bound i f.after)
+         | _ -> false)
+       (List.init (Array.length f.o) Fun.id)
+
+(* Two frames of two rows: int8 keys with a bound past -128, and float keys with
+   a NaN before and an infinite after. *)
+let examples =
+  let base =
+    {
+      kind = Int8;
+      g = [| Some 0; Some 0 |];
+      o = [| 0; 1 |];
+      k = [| Some (I (-128)); Some (I 127) |];
+      before = Lit (I 127);
+      after = Absent;
+      exclude = false;
+      partitioned = false;
+      ordered = false;
+      x = [| Some 1.; Some 2. |];
+      y = [| Some 1; Some 2 |];
+    }
+  in
+  [
+    base;
+    {
+      base with
+      kind = Float;
+      k = [| Some (F 1.); Some (F 2.) |];
+      before = Lit (F nan);
+      after = Lit (F infinity);
+    };
+  ]
 
 let filter_law f =
   let t = table f and n = Array.length f.o in
@@ -381,30 +577,43 @@ let filter_law f =
   cover "no row or one" (n <= 1);
   cover "one partition along keys without nulls"
     (f.kind <> Places && (not f.partitioned) && Array.for_all Option.is_some f.k);
-  List.iteri
-    (fun i w ->
-      let row = Talon.take (indices [ i ]) got in
-      let at = Printf.sprintf " at row %d" i in
-      let null c = equal ~msg:(c ^ at) int 1 (Column.null_count (Talon.column row c)) in
-      match w with
-      | None -> List.iter null (floats @ ints)
-      | Some rows ->
-          let rows = Query.of_table (Talon.take (indices rows) t) in
-          let want = exec (Query.aggregate ~by:[] (outs { w = Fun.id }) rows) in
-          same_outputs ~at ~exact:false row want)
-    windows;
-  (* Batches change no window: a window needs the whole frame. *)
+  let bound p = function
+    | Absent -> false
+    | Lit c -> p c
+    | Per_row cs -> Array.exists (Option.fold ~none:false ~some:p) cs
+  in
+  let either p = bound p f.before || bound p f.after in
+  let float p = function F x -> p x | I _ -> false in
+  cover "a NaN bound" (either (float Float.is_nan));
+  cover "an infinite bound" (either (float (fun x -> Float.abs x = infinity)));
+  cover "a bound past the key type's range" (past_range f);
+  let want_floats, want_ints = expected f t windows in
+  List.iter
+    (fun c ->
+      equal ~msg:c
+        (array (option (witness f c)))
+        (want_floats c) (floats_of got c))
+    floats;
+  List.iter
+    (fun c -> equal ~msg:c (array (option int)) (want_ints c) (ints_of got c))
+    ints
+
+(* A window needs the whole frame, so batches change none of its values. *)
+let batch_law f =
+  let t = table f and n = Array.length f.o in
   let half k =
     let m = n / 2 in
-    let rows = List.init (if k = 0 then m else n - m) (( + ) (k * m)) in
-    Talon.take (indices rows) t
+    Talon.take
+      (indices (List.init (if k = 0 then m else n - m) (( + ) (k * m))))
+      t
   in
-  let halves = Query.of_table (Talon.of_batches [ half 0; half 1 ]) in
-  same_outputs ~exact:true (exec (Query.select (outs (window f)) halves)) got
+  cover "two batches of rows" (n >= 2);
+  let run t = exec (Query.select (outs (window f)) (Query.of_table t)) in
+  same_bits (run (Talon.of_batches [ half 0; half 1 ])) (run t)
 
-(* Places are keys spaced equally: along keys [c + s * o], bounds [s * b] and
-   [s * a] hold the rows that [b] and [a] hold over places in [o]'s order, in
-   that order, so they compute the same bits. *)
+(* Places are keys spaced equally: along keys [c + s * o], bounds [s * b] and [s
+   * a] hold the rows that [b] and [a] hold over places in [o]'s order, in that
+   order, so they compute the same bits. *)
 let grid =
   let open Gen in
   let* f = frame_of [ Places ] in
@@ -425,59 +634,15 @@ let grid_law (f, s) =
   let outputs f = exec (Query.select (outs (window f)) q) in
   cover "running" (f.before = Absent);
   cover "excluding" f.exclude;
-  same_outputs ~exact:true (outputs keys) (outputs { f with ordered = true })
-
-(* A partition's windows are those of the frame of its rows alone. *)
-let partition_law f =
-  let f = { f with partitioned = true } in
-  let t = table f in
-  let whole = exec (Query.select (outs (window f)) (Query.of_table t)) in
-  let g = Col.int "g" in
-  List.iter
-    (fun v ->
-      let rows = List.init (Array.length f.g) Fun.id in
-      let rows = List.filter (fun i -> f.g.(i) = v) rows in
-      let p = match v with None -> Expr.is_null g | Some v -> Expr.(g = int v) in
-      let part = Query.filter p (Query.of_table t) in
-      let alone = window { f with partitioned = false } in
-      let got = exec (Query.select (outs alone) part) in
-      same_outputs ~exact:false got (Talon.take (indices rows) whole))
-    [ None; Some 0; Some 1 ]
-
-(* Excluding the row's key leaves out the rows of [~before:(int 1)
-   ~after:(int 0)], which along integers are the rows of its key. *)
-let exclusion =
-  let open Gen in
-  let+ f = frame_of [ Places; Int ] in
-  let at_least m = function
-    | Lit (I b) when b < m -> Lit (I m)
-    | Per_row _ -> Absent
-    | b -> b
-  in
-  let before = at_least 1 f.before and after = at_least 0 f.after in
-  { f with before; after; exclude = false }
-
-let exclusion_law f =
-  let q = Query.of_table (table f) and y = Col.int "y" in
-  let values e = Error.get_ok (Query.values (Expr.option e) q) in
-  let own = { f with before = Lit (I 1); after = Lit (I 0) } in
-  let excluded = { f with exclude = true } in
-  let total f = (window f).w (Expr.sum y) in
-  let counted f = (window f).w (Expr.count y) in
-  cover "running" (f.before = Absent);
-  cover "places" (f.kind = Places);
-  equal (array (option int)) (values (total f))
-    (values Expr.(total excluded + total own));
-  equal (array (option int)) (values (counted f))
-    (values Expr.(counted excluded + counted own))
+  same_bits (outputs keys) (outputs { f with ordered = true })
 
 (* Moments at large magnitudes *)
 
-(* [two_pass xs] is [(v, k)]: the sample variance [v] of [xs *. 2^-k] by
-   two passes, 2^k the least power of two above every finite magnitude of
-   [xs], so that no intermediate overflows; NaN over a NaN or an infinity,
-   [None] under two values. The variance of [xs] is [v] times 4^k, their
-   standard deviation its root times 2^k. *)
+(* [two_pass xs] is [(v, k)]: the sample variance [v] of [xs *. 2^-k] by two
+   passes, 2^k the least power of two above every finite magnitude of [xs], so
+   that no intermediate overflows; NaN over a NaN or an infinity, [None] under
+   two values. The variance of [xs] is [v] times 4^k, their standard deviation
+   its root times 2^k. *)
 let two_pass xs =
   let n = List.length xs in
   if n < 2 then None
@@ -489,10 +654,10 @@ let two_pass xs =
     let q = List.fold_left (fun q x -> q +. ((x -. m) *. (x -. m))) 0. xs in
     Some (q /. Float.of_int (n - 1), k)
 
-(* Frames whose values are [x *. 2^s], [x] within 1 of a centre and [s] 0
-   or 512, of one [s], or mixed with 1018: at 512 their squares and the sums
-   of their squared deviations pass max_float, while most of their variances
-   stay below it, and values of [s = 0] come before and after values near
+(* Frames whose values are [x *. 2^s], [x] within 1 of a centre and [s] 0 or
+   512, of one [s], or mixed with 1018: at 512 their squares and the sums of
+   their squared deviations pass max_float, while most of their variances stay
+   below it, and values of [s = 0] come before and after values near
    max_float. *)
 let large =
   let open Gen in
@@ -505,7 +670,8 @@ let large =
     let* s =
       frequency
         [
-          (1, constant (constant 0)); (2, constant (constant 512));
+          (1, constant (constant 0));
+          (2, constant (constant 512));
           ( 3,
             constant
               (frequency
@@ -530,6 +696,22 @@ let large =
       f.partitioned Talon.pp (table f)
   in
   with_pp pp gen
+
+(* A running frame of 1 and 2 beside 1.5 · 2^1018 in its partition. *)
+let beside_huge =
+  {
+    kind = Places;
+    g = [| Some 0; Some 0; Some 0 |];
+    o = [| 0; 1; 2 |];
+    k = [| None; None; None |];
+    before = Absent;
+    after = Absent;
+    exclude = false;
+    partitioned = false;
+    ordered = false;
+    x = [| Some 1.; Some 2.; Some (Float.ldexp 1.5 1018) |];
+    y = [| Some 1; Some 2; Some 3 |];
+  }
 
 let large_law f =
   let t = table f and x = Col.float "x" and w = window f in
@@ -572,18 +754,15 @@ let large_law f =
   cover "a finite variance whose squared deviations sum past max_float"
     (has overflows);
   cover "an empty window" (has (( = ) []));
-  let scaled op = function
-    | Some (v, k) -> Some (op v k)
-    | None -> None
-  in
+  let scaled op = function Some (v, k) -> Some (op v k) | None -> None in
   let var = List.map (scaled (fun v k -> Float.ldexp v (2 * k))) moments in
   let std = List.map (scaled (fun v k -> Float.ldexp (sqrt v) k)) moments in
   let past v d = v = Some infinity && Option.is_some d && d <> Some infinity in
   cover "a finite standard deviation of a variance past max_float"
     (List.exists2 past var std);
-  (* Both sides err by a few rounding errors of the squares, at most about
-     n eps 4^k over a window's 2^k with n <= 24: within [1e-12 4^k] and 1e-9
-     of the variance, and within the root of that of the deviation. *)
+  (* Both sides err by a few rounding errors of the squares, at most about n eps
+     4^k over a window's 2^k with n <= 24: within [1e-12 4^k] and 1e-9 of the
+     variance, and within the root of that of the deviation. *)
   let close abs =
     let equal a b =
       let scale = Float.max (Float.abs a) (Float.abs b) in
@@ -605,8 +784,8 @@ let large_law f =
   check "var" (fun k -> Float.ldexp 1e-12 (2 * k)) var (values (Expr.var x));
   check "std" (fun k -> Float.ldexp 1e-6 k) std (values (Expr.std x))
 
-(* The variances and standard deviations of values whose squares or sums
-   pass max_float, within 1e-9: the decimal values round. *)
+(* The variances and standard deviations of values whose squares or sums pass
+   max_float, within 1e-9: the decimal values round. *)
 let large_cases =
   let near =
     [| Some 2e155; Some 2.0001e155; None; Some 2.0002e155; Some 2.0003e155 |]
@@ -615,71 +794,125 @@ let large_cases =
   let top = [| Some 1e308; Some 1e308; Some 1e308 |] in
   let var = Expr.var and std = Expr.std in
   [
-    ( "a null among values near 2e155", var, None, near,
+    ( "a null among values near 2e155",
+      var,
+      None,
+      near,
       [| None; Some 5e301; Some 5e301; Some 1e302; Some (1e302 *. 5. /. 3.) |]
     );
-    ( "a null among values near 2e155, two at a time", var, Some 2, near,
+    ( "a null among values near 2e155, two at a time",
+      var,
+      Some 2,
+      near,
       [| None; Some 5e301; None; None; Some 5e301 |] );
-    ( "a null before values near 2e155", var, None,
-      [| None; Some 2e155; Some 2.0001e155 |], [| None; None; Some 5e301 |] );
-    ( "squared deviations past max_float", var, None, apart,
+    ( "a null before values near 2e155",
+      var,
+      None,
+      [| None; Some 2e155; Some 2.0001e155 |],
+      [| None; None; Some 5e301 |] );
+    ( "squared deviations past max_float",
+      var,
+      None,
+      apart,
       [| None; Some infinity; Some 1e308 |] );
-    ( "squared deviations past max_float, three at a time", var, Some 3,
+    ( "squared deviations past max_float, three at a time",
+      var,
+      Some 3,
       apart,
       [| None; Some infinity; Some 1e308 |] );
     ("a sum past max_float", var, None, top, [| None; Some 0.; Some 0. |]);
-    ( "a sum past max_float, three at a time", var, Some 3, top,
+    ( "a sum past max_float, three at a time",
+      var,
+      Some 3,
+      top,
       [| None; Some 0.; Some 0. |] );
-    ( "small values before one near max_float", var, None,
+    ( "small values before one near max_float",
+      var,
+      None,
       [| Some 1.; Some 2.; Some 3.; Some 1e308 |],
       [| None; Some 0.5; Some 1.; Some infinity |] );
-    ( "the deviation of small values before one near max_float", std, None,
+    ( "the deviation of small values before one near max_float",
+      std,
+      None,
       [| Some 1.; Some 2.; Some 3.; Some 1e308 |],
       [| None; Some (sqrt 0.5); Some 1.; Some 5e307 |] );
-    ( "the deviation of tiny values", std, None,
+    ( "the deviation of tiny values",
+      std,
+      None,
       [| Some 1e-170; Some (-1e-170) |],
       [| None; Some (sqrt 2. *. 1e-170) |] );
-    ( "the deviation of tiny values, two at a time", std, Some 2,
+    ( "the deviation of tiny values, two at a time",
+      std,
+      Some 2,
       [| Some 1e-170; Some (-1e-170); Some 1e-170 |],
       [| None; Some (sqrt 2. *. 1e-170); Some (sqrt 2. *. 1e-170) |] );
-    ( "the variance of tiny values, below the range", var, None,
-      [| Some 1e-170; Some (-1e-170) |], [| None; Some 0. |] );
-    ( "the deviation of equal tiny values, seven at a time", std, Some 7,
+    ( "the variance of tiny values, below the range",
+      var,
+      None,
+      [| Some 1e-170; Some (-1e-170) |],
+      [| None; Some 0. |] );
+    ( "the deviation of equal tiny values, seven at a time",
+      std,
+      Some 7,
       Array.make 12 (Some 1.3e-170),
       Array.append [| None |] (Array.make 11 (Some 0.)) );
-    ( "the variance of equal values near max_float, seven at a time", var,
-      Some 7, Array.make 12 (Some 1.3e300),
+    ( "the variance of equal values near max_float, seven at a time",
+      var,
+      Some 7,
+      Array.make 12 (Some 1.3e300),
       Array.append [| None |] (Array.make 11 (Some 0.)) );
-    ( "the deviation of a variance past max_float", std, None,
-      [| Some 1e200; Some (-1e200) |], [| None; Some (sqrt 2. *. 1e200) |] );
-    ( "the deviation of a variance past max_float, two at a time", std,
-      Some 2, [| Some 1e200; Some (-1e200) |],
+    ( "the deviation of a variance past max_float",
+      std,
+      None,
+      [| Some 1e200; Some (-1e200) |],
+      [| None; Some (sqrt 2. *. 1e200) |] );
+    ( "the deviation of a variance past max_float, two at a time",
+      std,
+      Some 2,
+      [| Some 1e200; Some (-1e200) |],
       [| None; Some (sqrt 2. *. 1e200) |] );
     ( "the deviation of a variance past max_float, a null among three at a time",
-      std, Some 3,
+      std,
+      Some 3,
       [| Some 1e200; None; Some (-1e200) |],
       [| None; None; Some (sqrt 2. *. 1e200) |] );
-    ( "the deviation of tiny values beside a large one", std, None,
+    ( "the deviation of tiny values beside a large one",
+      std,
+      None,
       [| Some 1e-170; Some (-1e-170); Some 1e300 |],
       [| None; Some (sqrt 2. *. 1e-170); Some (1e300 /. sqrt 3.) |] );
-    ( "the deviation of tiny values beside a large one, two at a time", std,
+    ( "the deviation of tiny values beside a large one, two at a time",
+      std,
       Some 2,
       [| Some 1e-170; Some (-1e-170); Some 1e300 |],
       [| None; Some (sqrt 2. *. 1e-170); Some (1e300 /. sqrt 2.) |] );
-    ( "the deviation of values whose difference overflows", std, None,
+    ( "the deviation of values whose difference overflows",
+      std,
+      None,
       [| Some 1.2e308; Some (-1.2e308) |],
       [| None; Some (sqrt 2. *. 1.2e308) |] );
-    ( "the deviation of three values whose differences overflow", std, None,
+    ( "the deviation of three values whose differences overflow",
+      std,
+      None,
       [| Some 1.2e308; Some (-1.2e308); Some 0. |],
       [| None; Some (sqrt 2. *. 1.2e308); Some 1.2e308 |] );
     ("no rows, two at a time", var, Some 2, [||], [||]);
     ("no rows, from the start", var, None, [||], [||]);
-    ( "no values, from the start", var, None, [| None; None; None |],
+    ( "no values, from the start",
+      var,
+      None,
+      [| None; None; None |],
       [| None; None; None |] );
-    ( "no values, two at a time", var, Some 2, [| None; None; None |],
+    ( "no values, two at a time",
+      var,
+      Some 2,
+      [| None; None; None |],
       [| None; None; None |] );
-    ( "one value among nulls, two at a time", std, Some 2,
-      [| None; Some 1.; None |], [| None; None; None |] );
+    ( "one value among nulls, two at a time",
+      std,
+      Some 2,
+      [| None; Some 1.; None |],
+      [| None; None; None |] );
   ]
 
 let large_case (_, r, before, x, want) =
@@ -693,8 +926,8 @@ let large_case (_, r, before, x, want) =
 
 (* Values far from zero *)
 
-(* [exact_var ks] is the sample variance of the integers [ks] divided by
-   2^8, from integer sums that do not round, or [None] under two values. *)
+(* [exact_var ks] is the sample variance of the integers [ks] divided by 2^8,
+   from integer sums that do not round, or [None] under two values. *)
 let exact_var ks =
   let n = List.length ks in
   if n < 2 then None
@@ -705,8 +938,8 @@ let exact_var ks =
     Some (Float.of_int num /. Float.of_int (n * (n - 1)) /. 65536.)
 
 (* Frames whose values are [c +. d], [c] far past [d]'s spread and [d] a
-   multiple of 2^-8, so that each value is exact and the variance of the
-   values is that of the [d]. *)
+   multiple of 2^-8, so that each value is exact and the variance of the values
+   is that of the [d]. *)
 let offset =
   let open Gen in
   let gen =
@@ -735,14 +968,12 @@ let offset =
 let offset_law (f, c) =
   let t = table f and w = window f and x = Col.float "x" in
   let got =
-    Error.get_ok (Query.values (Expr.option (w.w (Expr.var x))) (Query.of_table t))
+    Error.get_ok
+      (Query.values (Expr.option (w.w (Expr.var x))) (Query.of_table t))
   in
   let windows = List.init (Array.length f.o) (members f) in
   let held rows = List.filter_map (Array.get f.x) rows in
-  let enough = function
-    | Some r -> List.length (held r) >= 2
-    | None -> false
-  in
+  let enough = function Some r -> List.length (held r) >= 2 | None -> false in
   let some = List.exists enough windows in
   cover "a window of two values or more, without before"
     (f.before = Absent && some);
@@ -756,98 +987,212 @@ let offset_law (f, c) =
     let ks = List.map (fun x -> Int.of_float ((x -. c) *. 256.)) xs in
     exact_var ks
   in
-  let want = List.map (fun r -> Option.bind r (fun r -> variance (held r))) windows in
-  equal
-    (array (option (float_rel ~rel:1e-12 ~abs:0.)))
-    (Array.of_list want) got
+  let want =
+    List.map (fun r -> Option.bind r (fun r -> variance (held r))) windows
+  in
+  equal (array (option (float_rel ~rel:1e-12 ~abs:0.))) (Array.of_list want) got
 
-(* Fills *)
+(* Fills
+
+   A series is rows of a value [x] and a key [k]: none (places), integers, or
+   floats among which infinities, NaN and both zeros. *)
+
+type keys = Places_keys | Int_keys | Float_keys
 
 let series =
   let open Gen in
   let* n = int_range 0 30 in
   let rows g = array ~size:(constant n) g in
-  let* k = rows (option (int_range 0 9)) in
+  let* keys = of_list [ Places_keys; Int_keys; Float_keys ] in
+  let key =
+    match keys with
+    | Places_keys -> constant None
+    | Int_keys -> option (map Float.of_int (int_range 0 9))
+    | Float_keys ->
+        option
+          (frequency
+             [
+               (2, of_list [ neg_infinity; -0.; 0.; infinity; nan ]);
+               (3, map (fun i -> Float.of_int i /. 2.) (int_range (-6) 6));
+             ])
+  in
+  let* k = rows key in
   let value = map Option.some (float_range (-8.) 8.) in
   let+ x = rows (frequency [ (2, constant None); (3, value) ]) in
-  (k, x)
+  (keys, k, x)
 
-let filled e (k, x) =
-  let k = Column.of_options Type.int64 k in
-  let t = Talon.v [ ("k", k); ("x", Column.of_options Type.float64 x) ] in
-  Error.get_ok (Query.values (Expr.option e) (Query.of_table t))
-
-(* [interpolated key x] is [x], or at a null the line through the last value
-   at or before its key and the first after it, in key order, ties in row
-   order. With [~fill], one of them alone. *)
-let interpolated ?fill key x =
-  let rows = List.init (Array.length x) Fun.id in
-  let rows = List.filter (fun j -> key.(j) <> None && x.(j) <> None) rows in
-  let rows = List.stable_sort (fun a b -> compare key.(a) key.(b)) rows in
-  let at j = Float.of_int (Option.get key.(j)) in
-  Array.mapi
-    (fun i v ->
-      let before = List.filter (fun j -> key.(j) <= key.(i)) rows in
-      let j0 = List.nth_opt (List.rev before) 0 and j1 = List.find_opt (fun j -> key.(j) > key.(i)) rows in
-      match (v, key.(i), fill, j0, j1) with
-      | Some _, _, _, _, _ | _, None, _, _, _ -> v
-      | None, _, Some `Forward, j, _ | None, _, Some `Backward, _, j -> Option.bind j (Array.get x)
-      | None, _, None, Some j0, _ when key.(j0) = key.(i) -> x.(j0)
-      | None, _, None, Some j0, Some j1 ->
-          let x0 = Option.get x.(j0) and x1 = Option.get x.(j1) in
-          Some (x0 +. ((x1 -. x0) *. (at i -. at j0) /. (at j1 -. at j0)))
-      | _ -> None)
+let pp_series ppf (keys, k, x) =
+  let o f = function Some v -> f v | None -> "null" in
+  Format.fprintf ppf "%s@."
+    (match keys with
+    | Places_keys -> "places"
+    | Int_keys -> "int keys"
+    | Float_keys -> "float keys");
+  Array.iteri
+    (fun i x ->
+      Format.fprintf ppf "%s %s@."
+        (o (Printf.sprintf "%h") k.(i))
+        (o (Printf.sprintf "%h") x))
     x
 
-let fill_law (k, x) =
-  let places = Array.mapi (fun i _ -> Some i) x and c = Col.float "x" in
-  let distinct = List.length (List.sort_uniq compare (Array.to_list k)) in
-  cover "a null between values"
-    (Array.exists Option.is_none x && Array.exists Option.is_some x);
-  cover "tied keys" (distinct < Array.length k - 1);
-  let check w want e = equal (array (option w)) want (filled e (k, x)) in
-  check exact_w (interpolated ~fill:`Forward places x) (Kit.fill_forward c);
-  check exact_w (interpolated ~fill:`Backward places x) (Kit.fill_backward c);
-  check float_w (interpolated places x) (Kit.interpolate c);
-  check float_w (interpolated k x) (Kit.interpolate ~on:(Col.int "k") c)
+let drawn_series = Gen.with_pp pp_series series
 
-(* Over values on a line, [interpolate] is the line from the first value to the
-   last. *)
-let linear_law (alpha, beta, (k, x)) =
-  let k = Array.mapi (fun i _ -> Some (3 * i)) k in
-  let at k = alpha +. (beta *. Float.of_int k) in
-  let line = Array.map (Option.map at) k in
-  let x = Array.mapi (fun i v -> Option.bind v (fun _ -> line.(i))) x in
-  let held = List.init (Array.length x) Fun.id in
-  let held = List.filter (fun i -> x.(i) <> None) held in
-  let within i =
-    held <> [] && List.hd held <= i && i <= List.hd (List.rev held)
+(* [filled e series] is [e] on each row of the series' table. *)
+let filled e (keys, k, x) =
+  let key =
+    match keys with
+    | Places_keys -> []
+    | Int_keys ->
+        [
+          ( "k",
+            Column.of_options Type.int64 (Array.map (Option.map Float.to_int) k)
+          );
+        ]
+    | Float_keys -> [ ("k", Column.of_options Type.float64 k) ]
   in
-  let expected = Array.mapi (fun i v -> if within i then v else None) line in
-  let check e = equal (array (option float_w)) expected (filled e (k, x)) in
-  check (Kit.interpolate ~on:(Col.int "k") (Col.float "x"));
-  check (Kit.interpolate (Col.float "x"))
+  let t =
+    Talon.v ~rows:(Array.length x)
+      (key @ [ ("x", Column.of_options Type.float64 x) ])
+  in
+  Error.get_ok (Query.values (Expr.option e) (Query.of_table t))
+
+let cover_series (_, _, x) =
+  cover "a null between values"
+    (Array.exists Option.is_none x && Array.exists Option.is_some x)
+
+let held x =
+  List.filter (fun j -> x.(j) <> None) (List.init (Array.length x) Fun.id)
+
+let cumulative_law ((_, _, x) as s) =
+  cover_series s;
+  (* The count of values up to each row. *)
+  let counts =
+    Array.mapi
+      (fun i _ -> Some (List.length (List.filter (fun j -> j <= i) (held x))))
+      x
+  in
+  equal
+    (array (option int))
+    counts
+    (filled (Kit.cumulative (Expr.count (Col.float "x"))) s)
+
+let fill_forward_law ((_, _, x) as s) =
+  cover_series s;
+  let last i =
+    List.fold_left (fun acc j -> if j <= i then x.(j) else acc) None (held x)
+  in
+  equal
+    (array (option exact_w))
+    (Array.mapi (fun i _ -> last i) x)
+    (filled (Kit.fill_forward (Col.float "x")) s)
+
+let fill_backward_law ((_, _, x) as s) =
+  cover_series s;
+  let next i =
+    List.find_opt (fun j -> j >= i) (held x)
+    |> Option.map (fun j -> Option.get x.(j))
+  in
+  equal
+    (array (option exact_w))
+    (Array.mapi (fun i _ -> next i) x)
+    (filled (Kit.fill_backward (Col.float "x")) s)
+
+(* Talon's total order on floats: NaN after every number, [-0.] equal to
+   [0.]. *)
+let order a b = compare_coord (F a) (F b)
+
+(* [interpolated keys x] is Kit.interpolate's definition: at a null, the line
+   through the last value of the window of keys up to the row's, [k <= ki + 0],
+   and the first of the window [ki - 0 < k <= ki + inf], each window in key
+   order, ties in row order, its bounds computed by IEEE 754 and compared in
+   talon's order. *)
+let interpolated keys x =
+  let n = Array.length x in
+  let rows =
+    List.stable_sort
+      (fun a b -> order (Option.get keys.(a)) (Option.get keys.(b)))
+      (List.filter (fun j -> keys.(j) <> None) (List.init n Fun.id))
+  in
+  let key j = Option.get keys.(j) in
+  Array.init n (fun i ->
+      match (x.(i), keys.(i)) with
+      | Some v, _ -> Some v
+      | None, None -> None
+      | None, Some ki -> (
+          let upto =
+            List.filter (fun j -> order (key j) (ki +. 0.) <= 0) rows
+          in
+          let lo = ki -. 0. and hi = ki +. infinity in
+          let past =
+            List.filter
+              (fun j -> order lo (key j) < 0 && order (key j) hi <= 0)
+              rows
+          in
+          let last =
+            List.fold_left
+              (fun acc j -> if x.(j) <> None then Some j else acc)
+              None upto
+          in
+          let first = List.find_opt (fun j -> x.(j) <> None) past in
+          match last with
+          | None -> None
+          | Some j0 -> (
+              let x0 = Option.get x.(j0) and k0 = key j0 in
+              if order ki k0 = 0 then Some x0
+              else
+                match first with
+                | None -> None
+                | Some j1 ->
+                    let x1 = Option.get x.(j1) and k1 = key j1 in
+                    Some (x0 +. ((x1 -. x0) *. (ki -. k0) /. (k1 -. k0))))))
+
+let interpolate_law ((keys, k, x) as s) =
+  cover_series s;
+  cover "places" (keys = Places_keys);
+  cover "integer keys" (keys = Int_keys);
+  let odd v = Float.is_nan v || Float.abs v = infinity in
+  cover "an infinite or NaN key"
+    (Array.exists (Option.fold ~none:false ~some:odd) k);
+  let present = List.filter_map Fun.id (Array.to_list k) in
+  cover "tied keys"
+    (List.length (List.sort_uniq order present) < List.length present);
+  let x' = Col.float "x" in
+  let e, keys_of =
+    match keys with
+    | Places_keys ->
+        (Kit.interpolate x', Array.mapi (fun i _ -> Some (Float.of_int i)) x)
+    | Int_keys -> (Kit.interpolate ~on:(Col.int "k") x', k)
+    | Float_keys -> (Kit.interpolate ~on:(Col.float "k") x', k)
+  in
+  equal (array (option exact_w)) (interpolated keys_of x) (filled e s)
 
 (* Oracles
 
    golden/window.txt holds Polars' rolling windows over the keys in (k - w, k],
    which take in the row's key, and in (k - w, k), which leave it out. *)
 
-let golden =
-  let rec split = function
-    | [] -> []
-    | l :: ls ->
-        let rec body acc = function
-          | l :: ls when not (String.starts_with ~prefix:"# " l) ->
-              body (l :: acc) ls
-          | ls -> (List.rev acc, ls)
-        in
-        let rows, rest = body [] ls in
-        (String.sub l 2 (String.length l - 2), rows) :: split rest
+(* [golden name] is the rows of the series [name] of golden/window.txt. *)
+let golden name =
+  let lines =
+    In_channel.with_open_text "golden/window.txt" In_channel.input_lines
   in
-  split (In_channel.with_open_text "golden/window.txt" In_channel.input_lines)
+  let rec rows = function
+    | [] -> []
+    | l :: ls when l = "# " ^ name ->
+        let rec body = function
+          | l :: ls when not (String.starts_with ~prefix:"# " l) -> l :: body ls
+          | _ -> []
+        in
+        body ls
+    | _ :: ls -> rows ls
+  in
+  rows lines
 
-let oracle (name, rows) =
+(* Polars sums in its own order: over at most 160 values of magnitude at most
+   25, any two orders differ by at most 160 · 2^-53 · 4000 ≈ 7e-11 on each side.
+   Its max picks a value. *)
+let oracle name =
+  let rows = golden name in
   let split l = Array.of_list (String.split_on_char ' ' l) in
   let fields = List.map split rows in
   let col i = Array.of_list (List.map (fun r -> r.(i)) fields) in
@@ -870,25 +1215,32 @@ let oracle (name, rows) =
   let values e = Error.get_ok (Query.values (Expr.option e) q) in
   let number = function "null" -> None | s -> Some (float_of_string s) in
   let expect i = Array.map number (col i) in
-  equal (array (option float_w)) (expect 2) (values (w (Expr.sum x)));
+  equal (array (option (within 1e-10))) (expect 2) (values (w (Expr.sum x)));
   equal (array (option exact_w)) (expect 3) (values (w (Expr.max x)));
-  equal (array (option float_w)) (expect 4)
+  equal
+    (array (option (within 1e-10)))
+    (expect 4)
     (values (w ~exclude_key:true (Expr.mean x)))
 
-(* A row whose key is null has no window, so that its reduction does not
-   run there. *)
+(* A row whose key is null has no window, so that its reduction does not run
+   there. *)
 let no_window () =
   let k = Column.of_options Type.int64 [| None; Some 1 |] in
   let t = Talon.v [ ("k", k); ("x", Column.v Type.float64 [| 1.; 2. |]) ] in
-  let e = Expr.(window ~on:(Col.int "k") (cast Type.uint8 (count (Col.float "x") - int 1))) in
-  equal (result (array (option int)) pass) (Ok [| None; Some 0 |])
+  let e =
+    Expr.(
+      window ~on:(Col.int "k") (cast Type.uint8 (count (Col.float "x") - int 1)))
+  in
+  equal
+    (result (array (option int)) pass)
+    (Ok [| None; Some 0 |])
     (Query.values (Expr.option e) (Query.of_table t))
 
-(* A running median gathers about n{^ 2} / 2 rows, more than one chunk of
-   them. *)
+(* A running median gathers n (n + 1) / 2 rows, past 2^20 from n = 1448 on, so
+   that it holds them in more than one chunk. *)
 let gathered () =
-  let n = 1600 in
-  let x = Array.init n (fun i -> Float.of_int ((i * 7919) mod 1009)) in
+  let n = 1448 in
+  let x = Array.init n (fun i -> Float.of_int (i * 7919 mod 1009)) in
   let median i =
     let a = Array.sub x 0 (i + 1) in
     Array.sort Float.compare a;
@@ -897,7 +1249,7 @@ let gathered () =
   in
   let t = Talon.v [ ("x", Column.v Type.float64 x) ] in
   let e = Expr.(window (median (Col.float "x"))) in
-  equal (array float_w) (Array.init n median)
+  equal (array exact_w) (Array.init n median)
     (Error.get_ok (Query.values e (Query.of_table t)))
 
 (* Problems *)
@@ -929,8 +1281,7 @@ let problems () =
          [
            derive (window ~on:(Col.string "s") (count x));
            derive (window ~on:x ~before:(int 1) (count x));
-           derive
-             (window ~on:(Col.wall "ts") ~before:(Col.span "d") (count x));
+           derive (window ~on:(Col.wall "ts") ~before:(Col.span "d") (count x));
            derive (window ~before:(float 1.) (count x));
            derive (window ~before:null (count x));
            derive (window (sum (shift 1 x)));
@@ -938,9 +1289,9 @@ let problems () =
            derive (window (count (rank x)));
            derive (window (sum (window (sum x))));
            derive (Kit.fill_forward (x -. shift 1 x));
-           derive (window ~before:(int 2) (only x));
          ])
-  @@ __POS_OF__ {|
+  @@ __POS_OF__
+       {|
     derive: 1 problem
       "w" := window ~on:s (count x)
         window ~on takes integers, floats, dates, datetimes, durations or clocks, not string.
@@ -990,42 +1341,53 @@ let problems () =
       "w" := window (last (x -. shift 1 x))
         the reduction of a window holds shift: compute it outside the window.
       input (4 columns): x float64, s string, ts datetime[s], d duration[ns]
-
-    derive ["w" := window ~before:2 (only x)]: row 2: only finds several values.
     |}
+
+(* A data error of a window's reduction names its step and row. *)
+let data_error () =
+  let t = Talon.v [ ("x", Column.v Type.float64 [| 1.; 1.; 2. |]) ] in
+  let e = Expr.(window ~before:(int 2) (only (Col.float "x"))) in
+  let q = Query.derive Expr.[ "w" := e ] (Query.of_table t) in
+  contains ~sub:"row 2:"
+    (Format.asprintf "%a" Error.pp (require_error (Query.run q)))
 
 let () =
   exit
-    (run "window"
+    (run "Window"
        [
-         group "laws"
+         group "Expr.window"
            [
-             prop ~count:300
-               "window r is r over the rows that its predicate keeps" frames
-               filter_law;
-             prop "places are keys on a grid" grid grid_law;
-             prop "a partition's windows are its frame's" frames partition_law;
-             prop "excluding the key leaves out its rows" exclusion
-               exclusion_law;
-             prop ~count:300
-               "var and std at large magnitudes, against two passes" large
+             prop ~count:300 ~examples "is r over the rows its predicate keeps"
+               frames filter_law;
+             prop "its values do not depend on batches" frames batch_law;
+             prop "a reduction's bits are those of keys spaced as places" grid
+               grid_law;
+             prop ~count:300 ~examples:[ beside_huge ]
+               "var and std at large magnitudes agree with two passes" large
                large_law;
              prop ~count:300 "var far from zero is the variance of the spread"
                offset offset_law;
+             cases "var and std at large magnitudes"
+               ~id:(fun (n, _, _, _, _) -> n)
+               large_cases large_case;
+             test "agrees with Polars' rolling windows over datetimes"
+               (fun () -> oracle "datetime");
+             test "agrees with Polars' rolling windows over integers" (fun () ->
+                 oracle "int");
+             test "a row whose key is null runs no reduction" no_window;
+             test "median holds its gathered rows in chunks of 2^20" gathered;
+             test "its problems" problems;
+             test "a reduction's data error names its row" data_error;
            ];
-         cases "var at large magnitudes"
-           ~id:(fun (n, _, _, _, _) -> n)
-           large_cases large_case;
-         group "kit"
+         group "Kit windows"
            [
-             prop "fills and interpolation, against their reference" series
-               fill_law;
-             prop "interpolate recovers a line"
-               Gen.(triple (float_range (-5.) 5.) (float_range (-5.) 5.) series)
-               linear_law;
+             prop "cumulative r is r over the rows up to each" drawn_series
+               cumulative_law;
+             prop "fill_forward x is x or its last earlier value" drawn_series
+               fill_forward_law;
+             prop "fill_backward x is x or its next value" drawn_series
+               fill_backward_law;
+             prop "interpolate x is the line through its neighbours"
+               drawn_series interpolate_law;
            ];
-         cases "Polars' rolling windows" ~id:fst golden oracle;
-         test "a row without a window computes nothing" no_window;
-         test "a gather in chunks" gathered;
-         test "a window's problems" problems;
        ])
