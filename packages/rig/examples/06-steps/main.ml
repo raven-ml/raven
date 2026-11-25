@@ -58,8 +58,12 @@ let step d =
   in
   fun ~src ~dst -> submit s ~buffers:[| src; dst |] ~args:[| args |]
 
-(* Two runs of one step, each on buffers of its own. *)
-let runs d =
+(* Two runs of one step, each on buffers of its own. The step lives in [runs]'s
+   frame, so it is unreachable once [runs] returns. A value bound in a module's
+   initialisation may stay reachable until the program ends, as the compiler may
+   place it in static data once it inlines [runs] there, which [@inline never]
+   forbids. *)
+let[@inline never] runs d =
   let run = step d in
   let x = holding d [ 1l; 2l; 3l; 4l ] and y = Buffer.create d (4 * n) in
   Format.printf "run 1: %a@." Point.pp (run ~src:x ~dst:y);

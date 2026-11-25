@@ -25,6 +25,17 @@ let try_alloc f =
         (name d) (n / kib)
         (allocated d / kib)
 
+(* Live buffers are never freed. Four of them fill the budget, and the next
+   allocation raises once reclaiming finds no room. They live in [fill]'s frame,
+   so they are unreachable once it returns. A value bound in a module's
+   initialisation may stay reachable until the program ends, as the compiler may
+   place it in static data once it inlines [fill] there, which [@inline never]
+   forbids. *)
+let[@inline never] fill d =
+  let live = List.init 4 (fun _ -> Buffer.create d (256 * kib)) in
+  try_alloc (fun () -> Buffer.create d (256 * kib));
+  ignore (Sys.opaque_identity live)
+
 let () =
   let d = Result.get_ok (software "M") in
   Printf.printf "budget of %s: %s\n" (name d)
@@ -43,11 +54,7 @@ let () =
   done;
   print_endline "100 buffers of 256 KiB allocated, none kept";
 
-  (* Live buffers are never freed. Four of them fill the budget, and the
-     next allocation raises once reclaiming finds no room. *)
-  let live = List.init 4 (fun _ -> Buffer.create d (256 * kib)) in
-  try_alloc (fun () -> Buffer.create d (256 * kib));
+  fill d;
 
   (* Once they are unreachable, their memory serves the next allocation. *)
-  ignore (Sys.opaque_identity live);
   try_alloc (fun () -> Buffer.create d mib)
