@@ -416,9 +416,14 @@ let windows =
       equal packed (slice x ~row ~rows)
         (Audio.window (Nx_io.load_audio path) ~row ~rows))
 
-(* Joined blocks are the samples from their first row. *)
+(* Joined blocks are the samples from their first row. The draws reach one block
+   in 9% of the cases and no block in 12%, which 100 cases miss in one run of
+   10^4 and one of 3 x 10^5; the examples reach both in every run. *)
 let joined =
+  let seek = fixture "flac_seek.flac" in
+  let n = List.assoc seek lengths in
   prop "blocks joined are the samples from their row"
+    ~examples:[ ((seek, n, 1, 0), 1); ((seek, n, n, 0), 1) ]
     Gen.(pair piece (int_range 1 64))
     (fun ((path, n, row, _), k) ->
       let (Nx.P y as x) = whole path in
