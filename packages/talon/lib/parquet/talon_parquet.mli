@@ -131,7 +131,9 @@ type format
 (** The type for Parquet formats: the columns of a file, in schema order, each
     with its name, its Parquet type and the talon type it reads as, and the
     codec and row-group size {!encode} writes with. One that {!sniff} gives
-    writes with {!val-format}'s defaults. *)
+    has {!val-format}'s codec and row-group size, and {!encode} writes it only
+    when each column's Parquet type is the one {!encode} writes for its talon
+    type, as for a file {!encode} wrote. *)
 
 val sniff : Rig.Buffer.t -> (format, Talon.Error.t) result
 (** [sniff b] is the format of the Parquet file whose bytes are [b], read from
@@ -331,8 +333,9 @@ val encode :
 
     Raises [Invalid_argument] if [q]'s columns do not write as [f]'s, names and
     types, if [f] leaves a column {{!undeclared}undeclared}, or if a column of
-    [f] has a Parquet type {!encode} does not write, such as a [required] one
-    from {!sniff}. A format from {!val-format} writes. *)
+    [f] has a Parquet type that {!encode} does not write for its talon type,
+    such as a [required] one from {!sniff}. A format from {!val-format}
+    writes. *)
 
 (**/**)
 
