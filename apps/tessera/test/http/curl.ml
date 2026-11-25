@@ -22,7 +22,8 @@
      removes it. An answer [curl-exit N] exits with code N instead.
 
    Each request is a line of [log]: the method and URL, then each header and
-   the body, separated by tabs. *)
+   the body, separated by tabs; and a line of [args]: its arguments,
+   separated by tabs. *)
 
 let dir = Sys.getenv "FAKE_CURL_DIR"
 let path n = Filename.concat dir n
@@ -46,7 +47,18 @@ let https url =
     prerr_endline ("fake curl: protocol refused: " ^ url);
     exit 1)
 
+let args = List.tl (Array.to_list Sys.argv)
+
+let () =
+  Out_channel.with_open_gen
+    [ Open_append; Open_creat; Open_binary ]
+    0o644 (path "args")
+    (fun oc -> output_string oc (String.concat "\t" args ^ "\n"))
+
+(* curl reads no configuration file when [-q] comes first, and ignores it
+   elsewhere. A [-q] elsewhere is refused here, so a test sees it misplaced. *)
 let headers, body, url =
+  let args = match args with "-q" :: rest -> rest | _ -> args in
   let rec go hs body url = function
     | [] -> (List.rev hs, body, url)
     | f :: rest when List.mem f flags -> go hs body url rest
@@ -57,7 +69,7 @@ let headers, body, url =
     | "--url" :: u :: rest when url = None -> go hs body (Some u) rest
     | a :: _ -> fail "unknown argument %S" a
   in
-  match go [] None None (List.tl (Array.to_list Sys.argv)) with
+  match go [] None None args with
   | hs, body, Some url -> (hs, body, url)
   | _, _, None -> fail "no URL"
 

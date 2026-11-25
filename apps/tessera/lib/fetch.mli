@@ -6,7 +6,11 @@
 (** HTTPS through curl: JSON requests, and files read by byte ranges.
 
     A request runs the first [curl] of the [PATH]'s directories ([curl.exe]
-    on Windows), without a shell, and holds its answer in memory; nothing here speaks TLS or HTTP. Only
+    on Windows), without a shell and without reading curl's configuration
+    files, and holds its answer in memory; nothing here speaks TLS or HTTP.
+    An answer with a CR or a NUL within its status or header lines is
+    refused as malformed, which RFC 9110, HTTP Semantics, section 5.5
+    allows. Only
     [https://] URLs are requested, curl is told to speak HTTPS alone, and it
     takes the URL as the value of [--url], so no URL is read as an option.
 

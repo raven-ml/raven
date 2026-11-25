@@ -96,6 +96,15 @@ let log dir =
             { url; headers; body }
         | [] -> failf "log line %S" l)
 
+(* The arguments of each request curl was asked, in order. *)
+let args dir =
+  let file = Filename.concat dir "args" in
+  if not (Sys.file_exists file) then []
+  else
+    read file |> String.split_on_char '\n'
+    |> List.filter (( <> ) "")
+    |> List.map (String.split_on_char '\t')
+
 let answer ?(headers = []) code body =
   let hs = List.map (fun (k, v) -> Printf.sprintf "%s: %s\r\n" k v) headers in
   Printf.sprintf "HTTP/1.1 %d Status\r\n%sContent-Length: %d\r\n\r\n%s" code
@@ -170,6 +179,14 @@ let search =
                           "token": "next:sentinel-1-rtc:S1A_IW_GRDH_1SDV_20240626T052552_20240626T052617_054490_06A192_rtc"}|})
                     (body b)
               | l -> failf "%d requests" (List.length l)));
+      test "runs curl without reading its configuration files" (fun () ->
+          served
+            ~script:[ recorded "s1_page1.http"; recorded "s1_page2.http" ]
+            (fun dir ->
+              ignore (s1 (day, day));
+              equal (list (option string))
+                [ Some "-q"; Some "-q" ]
+                (List.map (fun a -> List.nth_opt a 0) (args dir))));
       test "merges a next body that says merge into the request's" (fun () ->
           let next =
             {|{"rel": "next", "method": "POST", "merge": true,
@@ -499,6 +516,13 @@ let windows =
                 lie;
               raises_match (Exn.failure ~sub:example) (fun () ->
                   read_window Nearest example bottom)));
+      cases ~id:fst "refuses an ETag holding a CR or a NUL"
+        [ ("CR", "\"0x1\r2\""); ("NUL", "\"0x1\0002\"") ]
+        (fun (_, etag) ->
+          served ~files:[ (example, big, [ etag ]) ] (fun dir ->
+              raises_match (Exn.failure ~sub:example) (fun () ->
+                  read_window Nearest example bottom);
+              equal int 1 (List.length (log dir))));
       test "refuses a first answer whose range lies past its length"
         (fun () ->
           let cr = ("Content-Range", "bytes 0-9/5") in

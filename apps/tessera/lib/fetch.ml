@@ -40,8 +40,11 @@ let first_delay = 1.
 (* The waits of one request, in seconds: at most a minute in all. *)
 let max_wait = 60.
 
+(* [-q] first: curl reads no ~/.curlrc, whose options, such as [-o] or
+   [--location-trusted], would act on every request. *)
 let options =
   [
+    "-q";
     "-sS";
     "-i";
     "--proto";
@@ -140,6 +143,12 @@ let header_line l =
       let name = String.lowercase_ascii (String.trim (String.sub l 0 i)) in
       Some (name, String.trim (String.sub l (i + 1) (String.length l - i - 1)))
 
+(* A CR or a NUL within a trimmed line. RFC 9110, HTTP Semantics, section
+   5.5 has a recipient reject such a field or replace each with a space;
+   rejecting keeps an ETag holding a CR, sent back as [If-Match], from
+   ending that header and starting another. *)
+let invalid l = String.exists (fun c -> c = '\r' || c = '\000') l
+
 (* curl's [-i] output: a status line ([HTTP/<version> <code> ...]) and headers
    up to a blank line, then the body. Interim answers (1xx) come first, each
    with its own blank line. *)
@@ -148,6 +157,7 @@ let rec parse name out =
   let stop = match blank out with Some i -> i | None -> fail () in
   let lines = String.split_on_char '\n' (String.sub out 0 stop) in
   let lines = List.map String.trim lines in
+  if List.exists invalid lines then fail ();
   let status =
     match lines with
     | first :: _ when String.starts_with ~prefix:"HTTP/" first -> (
