@@ -840,6 +840,9 @@ let mirror lc lower =
     above = false;
   }
 
+(* [density d] is a location-scale family's log density, less [log scale],
+   at the distance [d = x - loc]: a family whose tail is algebraic reads [d]
+   and [scale] apart where [d / scale] overflows. *)
 let location_scale family ~loc ~scale ~density ~draw ~tails () =
   let dt = Nx.dtype loc in
   let z x = Nx.div (Nx.sub x loc) scale in
@@ -849,7 +852,7 @@ let location_scale family ~loc ~scale ~density ~draw ~tails () =
     ~shape:(broadcast family [ Nx.shape loc; Nx.shape scale ])
     ~checks:[ in_reals family "loc" loc; in_positive family "scale" scale ]
     ~support:(fun () -> Support.Real)
-    ~factors:(fun v -> Nx.sub (density (z v)) (Nx.log scale))
+    ~factors:(fun v -> Nx.sub (density (Nx.sub v loc)) (Nx.log scale))
     ~draw:(fun k s -> x (draw k dt s))
     ~coords:Bij.identity ~standardize:(Bij.affine ~loc ~scale)
     ~tails:
@@ -864,7 +867,8 @@ let location_scale family ~loc ~scale ~density ~draw ~tails () =
 
 let normal ~loc ~scale =
   location_scale "normal" ~loc ~scale
-    ~density:(fun z ->
+    ~density:(fun d ->
+      let z = Nx.div d scale in
       Nx.add_s (Nx.mul_s (Nx.square z) (-0.5)) (-.half_log_2pi))
     ~draw:Noise.normal
     ~tails:(mirror Nx.log_ndtr Nx.ndtri)
@@ -886,9 +890,22 @@ let cauchy_lower p =
 
 let cauchy_tails () = mirror cauchy_cdf cauchy_lower
 
+(* [log1p_square a s] is [log1p ((a / s)²)] for [a >= 0] and [s > 0], as
+   [2 (log a - log s) + log1p ((s / a)²)] past [a = s]: neither the quotient
+   nor its square overflows, where the Cauchy's log density, about
+   [-2 log (a / s)], is still finite. At [a = s] it takes the near side,
+   whose derivative is the whole's. *)
+let log1p_square a s =
+  let beyond = Nx.greater a s in
+  let big = Nx.where beyond a s and small = Nx.where beyond s a in
+  Nx.add
+    (Nx.mul_s (Nx.sub (Nx.log big) (Nx.log s)) 2.)
+    (Nx.log1p (Nx.square (Nx.div small big)))
+
 let cauchy ~loc ~scale =
   location_scale "cauchy" ~loc ~scale
-    ~density:(fun z -> Nx.add_s (Nx.neg (Nx.log1p (Nx.square z))) (-.log_pi))
+    ~density:(fun d ->
+      Nx.add_s (Nx.neg (log1p_square (Nx.abs d) scale)) (-.log_pi))
     ~draw:(fun k dt s -> quantile_of (cauchy_tails ()) (open_unit k dt s))
     ~tails:(cauchy_tails ()) ()
 
@@ -905,7 +922,8 @@ let laplace_tails () = mirror laplace_cdf (fun p -> Nx.log (Nx.mul_s p 2.))
 
 let laplace ~loc ~scale =
   location_scale "laplace" ~loc ~scale
-    ~density:(fun z -> Nx.sub_s (Nx.neg (Nx.abs z)) (Float.log 2.))
+    ~density:(fun d ->
+      Nx.sub_s (Nx.neg (Nx.abs (Nx.div d scale))) (Float.log 2.))
     ~draw:(fun k dt s -> quantile_of (laplace_tails ()) (open_unit k dt s))
     ~tails:(laplace_tails ()) ()
 
@@ -914,7 +932,9 @@ let logistic_tails () =
 
 let logistic ~loc ~scale =
   location_scale "logistic" ~loc ~scale
-    ~density:(fun z -> Nx.sub (Nx.neg z) (Nx.mul_s (Nx.softplus (Nx.neg z)) 2.))
+    ~density:(fun d ->
+      let z = Nx.div d scale in
+      Nx.sub (Nx.neg z) (Nx.mul_s (Nx.softplus (Nx.neg z)) 2.))
     ~draw:(fun k dt s -> quantile_of (logistic_tails ()) (open_unit k dt s))
     ~tails:(logistic_tails ()) ()
 
@@ -1056,7 +1076,7 @@ let half_cauchy ~scale =
     ~density:(fun x ->
       Nx.sub
         (Nx.add_s
-           (Nx.neg (Nx.log1p (Nx.square (Nx.div x scale))))
+           (Nx.neg (log1p_square x scale))
            (Float.log 2. -. log_pi))
         (Nx.log scale))
     ~draw:(fun k s -> quantile_of tails (open_unit k dt s))

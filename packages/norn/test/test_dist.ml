@@ -2012,6 +2012,40 @@ let narrow_dirichlet_draws =
       satisfies ~claim:"every density finite" (array float_exact)
         (Array.for_all Float.is_finite) f)
 
+(* Far in a Cauchy's tail, [z²] overflows where its log density does not:
+   [-log π - log s - log1p (z²)], [z = d / s], is
+   [-log π - log s - 2 (log d - log s) - log1p ((s / d)²)] past [d = s]. Each
+   term is within a few ulps of itself, so the sum is within [8 ε] of their
+   magnitudes. *)
+let cauchy_tails =
+  let exact ~half d s =
+    let lead = if half then Float.log 2. else 0. in
+    lead -. Float.log Float.pi -. Float.log s
+    -. (2. *. (Float.log d -. Float.log s))
+    -. Float.log1p ((s /. d) ** 2.)
+  in
+  let magnitude d s =
+    2. +. (3. *. Float.abs (Float.log s)) +. (2. *. Float.abs (Float.log d))
+  in
+  Windtrap.cases "a Cauchy's log density far past where z² overflows"
+    ~id:(fun (name, _, _, _) -> name)
+    [
+      ("cauchy, scale 1e-160", false, 1., 1e-160);
+      ("cauchy, x 1e200", false, 1e200, 1.);
+      ("cauchy, z past the floats", false, 1., 1e-310);
+      ("half_cauchy, scale 1e-160", true, 1., 1e-160);
+      ("half_cauchy, x 1e200", true, 1e200, 1.);
+    ]
+    (fun (_, half, d, s) ->
+      let dist =
+        if half then D.half_cauchy ~scale:(f64 s)
+        else D.cauchy ~loc:(f64 0.) ~scale:(f64 s)
+      in
+      equal
+        (float (8. *. epsilon_float *. magnitude d s))
+        (exact ~half d s)
+        (item (D.factors dist (f64 d))))
+
 let laplace =
   group "laplace"
     [
@@ -2956,6 +2990,7 @@ let () =
          gamma_quantiles;
          beta_quantiles;
          laplace;
+         cauchy_tails;
          normalisation;
          bijectors;
          validation;

@@ -85,6 +85,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.cauchy` and `Dist.half_cauchy` keep a finite log density far in their
+  tails, where `(x - loc) / scale` squared or itself overflows: at `x - loc =
+  1` and `scale = 1e-160` it was `-inf` and is now `-369.6`.
 - `Nested` and `Smc`'s slice moves compute each trip elementwise, with the same
   results bit for bit: a compiled `Smc` slice step takes about half the time.
 - The scores of `Dist.gamma`, `Dist.inverse_gamma`, `Dist.beta` and
