@@ -996,6 +996,22 @@ let student_t_tails =
               (D.student_t ~df:(f64 df) ~loc:(f64 0.) ~scale:(f64 s))
               (f64 d))))
 
+(* norn.mli: at float64 the derivatives in the parameters are finite wherever
+   the exact ones are. Where [scale √ν] overflows, at [ν = 1e300] and [scale =
+   1e200], they are. *)
+let student_t_overflow =
+  test "its derivatives are finite where scale √ν overflows" (fun () ->
+      let gd, gs =
+        Rune.grad
+          Nx.Ptree.(pair tensor tensor)
+          (fun (df, scale) ->
+            D.factors (D.student_t ~df ~loc:(f64 0.) ~scale) (f64 1.))
+          (f64 1e300, f64 1e200)
+      in
+      satisfies ~claim:"finite" (array float_exact)
+        (Array.for_all Float.is_finite)
+        [| item gd; item gs |])
+
 (* At float16, components of a dirichlet of many small concentrations
    underflowed: a draw then had density [-inf]. *)
 let narrow_dirichlet_draws =
@@ -4150,7 +4166,7 @@ let () =
              compiled_densities;
              normal;
              cauchy;
-             group "student_t" [ student_t_tails ];
+             group "student_t" [ student_t_tails; student_t_overflow ];
              dirichlet;
              mvn;
              von_mises;

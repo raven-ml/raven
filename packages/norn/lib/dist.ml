@@ -776,10 +776,11 @@ let log1p_square a s log_s =
   let beyond = Nx.greater a s in
   let one = const a 1. in
   let a_far = Nx.where beyond a one in
+  let s_far = Nx.where beyond s (const s 0.) in
   let far =
     Nx.add
       (Nx.mul_s (Nx.sub (Nx.log a_far) log_s) 2.)
-      (Nx.log1p (Nx.square (Nx.div s a_far)))
+      (Nx.log1p (Nx.square (Nx.div s_far a_far)))
   in
   let a_near = Nx.where beyond (const a 0.) a in
   let s_near =

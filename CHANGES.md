@@ -98,7 +98,8 @@ All notable changes to this project will be documented in this file.
 - `Dist.student_t` keeps a finite log density far in its tails, where
   `(x - loc) / scale` or its quotient by `√df` overflows, or `scale √df`
   underflows: at `x - loc = 1`, `scale = 1e-310` and `df = 1` it was `-inf`
-  and is now `-714.9`.
+  and is now `-714.9`. Its derivatives stay finite where `scale √df`
+  overflows.
 - `Summary.of_weighted` computes the mean, standard deviation, error and
   effective size over the draws of positive weight only. A draw of weight
   zero entered the sums times zero, which gave NaN beside an infinite
