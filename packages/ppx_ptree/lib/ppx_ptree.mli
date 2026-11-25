@@ -66,7 +66,9 @@
 
     The generated code is marked as generated: an editor takes none of it for
     the user's source, and OCaml still reports an error in it at the part it
-    walks. A [[@ptree.walk f]] expression stays the user's.
+    walks. A [[@ptree.walk f]] expression stays the user's. The generated code
+    takes the standard library's values from [Stdlib], so a scope that rebinds
+    [Array], [Bool], [ignore] or [( <> )] derives the same walk.
 
     No description is generated: a description is at one dtype and one set,
     which its first use fixes. Make one where it is used,

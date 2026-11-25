@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Each derived walk visits what a hand-written walk of the same type visits:
-   the same leaves and reports, at the same paths, in the same order, and it
-   rebuilds a value from its own arrays. Each declaration shape, ('a, 'd) t, (_,
-   'd) t, 'd t and t, moves its fixed arrays and keys between sets. *)
+(* A derived walk is the hand-written walk of its type: it visits the same
+   leaves and reports, at the same paths, in the same order, and rebuilds the
+   value it walks. Each test derives a type and compares its walk with one
+   written by hand from the .mli's rules. *)
 
 open Windtrap
 module P = Nx.Ptree
@@ -20,7 +20,6 @@ type f32 = host Nx.float32_t
 
 let f32 xs : f32 = Nx.create Nx.float32 [| Array.length xs |] xs
 let i32 xs : host Nx.int32_t = Nx.create Nx.int32 [| Array.length xs |] xs
-let words s x = List.map (Format.asprintf "%a" P.pp_visit) (P.visits s x)
 
 let visit_equal a b =
   match (a, b) with
@@ -40,30 +39,32 @@ let same xs ys =
          | None -> false)
        xs ys
 
-let pp_leaf ppf (Nx.P a) =
+let pp_array ppf (Nx.P a) =
   Format.fprintf ppf "%s [%s]"
     (Nx.Dtype.name (Nx.dtype a))
     (String.concat "; " (Array.to_list (Array.map string_of_int (Nx.shape a))))
 
-let leaves =
+let arrays =
   Testable.make
-    ~pp:(Format.pp_print_list ~pp_sep:Format.pp_print_space pp_leaf)
+    ~pp:(Format.pp_print_list ~pp_sep:Format.pp_print_space pp_array)
     ~equal:same
 
-let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
 let pp_visits s ppf x =
   Format.pp_print_list ~pp_sep:Format.pp_print_space P.pp_visit ppf
     (P.visits s x)
 
-(* [agree ~msg hand derived x]: [derived] visits what [hand] visits, and
-   rebuilds [x] from [x]'s own arrays. *)
-let agree ~msg hand derived x =
-  equal ~msg:(msg ^ ": visits") (list visit) (P.visits hand x)
-    (P.visits derived x);
-  let arrays, _ = P.flatten derived x in
-  let y = P.rebuild derived ~like:x arrays in
-  equal ~msg:(msg ^ ": rebuild") leaves arrays (fst (P.flatten derived y))
+(* [agree hand derived x]: [derived] visits what [hand] visits, and the value it
+   rebuilds from [x]'s own arrays has, as [hand] sees it, [x]'s visits and
+   arrays. *)
+let agree hand derived x =
+  equal ~msg:"visits" (list visit) (P.visits hand x) (P.visits derived x);
+  let xs, _ = P.flatten derived x in
+  let y = P.rebuild derived ~like:x xs in
+  equal ~msg:"visits of the rebuilt value" (list visit) (P.visits hand x)
+    (P.visits hand y);
+  equal ~msg:"arrays of the rebuilt value" arrays xs (fst (P.flatten hand y))
 
 (* [positions fold] is the paths at which [fold] passes its function a payload,
    in walk order. *)
@@ -74,18 +75,190 @@ let positions fold =
 let placements s x =
   List.rev (P.fold s (fun _ a acc -> Nx.placement a :: acc) x [])
 
-let all_on p ~msg ps =
-  equal ~msg (list (placement ())) (List.map (fun _ -> p) ps) ps
+let all_on p ps = equal (list placement) (List.map (fun _ -> p) ps) ps
+
+(* Absent and present at even odds: [Gen.option] draws [None] at 0.15, which 100
+   cases all miss with probability 9e-8. *)
+let optional g = Gen.(frequency [ (1, constant None); (1, map Option.some g) ])
 
 let floats =
   Gen.(map (fun n -> f32 (Array.init n float_of_int)) (int_range 0 2))
 
 let linear_of position =
   let open Gen in
-  let+ w = position and+ b = option position in
+  let+ w = position and+ b = optional position in
   { Kaun.Linear.w; b }
 
-(* ('a, 'd) t: every kind of part. *)
+(* [@@deriving ptree] *)
+
+module Example = struct
+  type ('a, 'd) t = {
+    l1 : ('a, 'd) Kaun.Linear.t;
+    l2 : ('a, 'd) Kaun.Linear.t;
+    steps : 'd Nx.int32_t;
+    window : int option; [@ptree.int]
+  }
+  [@@deriving ptree]
+end
+
+(* The walk the .mli gives as equivalent to its example's. *)
+module Example_hand = struct
+  type ('a, 'd) t = ('a, 'd) Example.t
+
+  let walk c (x : _ t) : _ t =
+    let open P.Walk in
+    let l1 = field c "l1" Kaun.Linear.walk x.l1 in
+    let l2 = field c "l2" Kaun.Linear.walk x.l2 in
+    let steps = field c "steps" tensor x.steps in
+    let window = field c "window" (option int) x.window in
+    { l1; l2; steps; window }
+end
+
+let examples =
+  let open Gen in
+  let+ l1 = linear_of floats
+  and+ l2 = linear_of floats
+  and+ steps = int_range 0 2
+  and+ window = optional (int_range 0 8) in
+  { Example.l1; l2; steps = i32 (Array.init steps Int32.of_int); window }
+
+let law_example (x : (f32, host) Example.t) =
+  cover "an absent bias" (Option.is_none x.l1.b);
+  cover "a present bias" (Option.is_some x.l1.b);
+  cover "an absent window" (Option.is_none x.window);
+  cover "a present window" (Option.is_some x.window);
+  agree (P.instantiate (module Example_hand)) (P.instantiate (module Example)) x
+
+(* nx's guide (packages/nx/doc/06-structures.md) says ppx_ptree's tests compare
+   its derived [Block] with the hand-written one. *)
+module Guide = struct
+  module Linear = struct
+    type ('a, _) t = { w : 'a; b : 'a option }
+
+    let walk c { w; b } =
+      let open P.Walk in
+      let w = field c "w" leaf w in
+      let b = field c "b" (option leaf) b in
+      { w; b }
+  end
+
+  module Block_hand = struct
+    type ('a, 'd) t = {
+      proj : ('a, 'd) Linear.t;
+      steps : 'd Nx.int32_t;
+      window : int option;
+    }
+
+    let walk c { proj; steps; window } =
+      let open P.Walk in
+      let proj = field c "proj" Linear.walk proj in
+      let steps = field c "steps" tensor steps in
+      let window = field c "window" (option int) window in
+      { proj; steps; window }
+  end
+
+  module Block = struct
+    type ('a, 'd) t = ('a, 'd) Block_hand.t = {
+      proj : ('a, 'd) Linear.t;
+      steps : 'd Nx.int32_t;
+      window : int option; [@ptree.int]
+    }
+    [@@deriving ptree]
+  end
+end
+
+let test_guide () =
+  agree
+    (P.instantiate (module Guide.Block_hand))
+    (P.instantiate (module Guide.Block))
+    {
+      Guide.Block_hand.proj = { w = f32 [| 1. |]; b = Some (f32 [| 2. |]) };
+      steps = Nx.zeros Nx.int32 [||];
+      window = Some 4;
+    }
+
+(* Declarations *)
+
+module Triple = struct
+  type ('a, _) t = 'a * 'a option * 'a list [@@deriving ptree]
+end
+
+let triples =
+  Gen.triple floats (optional floats)
+    (Gen.list ~size:(Gen.int_range 0 2) floats)
+
+let law_triple ((_, b, l) as x) =
+  cover "no option" (Option.is_none b);
+  cover "an empty list" (List.is_empty l);
+  agree
+    P.(triple tensor (option tensor) (list tensor))
+    (P.instantiate (module Triple))
+    x
+
+(* Parts that move between sets by their own walks. *)
+module State = struct
+  type 'd t = {
+    steps : 'd Nx.int32_t;
+    key : 'd Nx.Rng.key;
+    index : 'd Kaun.Cache_index.t;
+    weight : 'd Nx_quant.t;
+    wide : (Nx.float32_elt, 'd) Nx_wide.t;
+    packed : 'd Nx.packed;
+  }
+  [@@deriving ptree]
+end
+
+let walk_state_hand c (x : _ State.t) : _ State.t =
+  let open P.Walk in
+  let steps = field c "steps" tensor x.steps in
+  let key = field c "key" Nx.Rng.walk x.key in
+  let index = field c "index" Kaun.Cache_index.walk x.index in
+  let weight = field c "weight" Nx_quant.walk x.weight in
+  let wide = field c "wide" Nx_wide.walk x.wide in
+  let packed =
+    field c "packed" (fun c (Nx.P a) -> Nx.P (tensor c a)) x.packed
+  in
+  { steps; key; index; weight; wide; packed }
+
+let state () : host State.t =
+  {
+    steps = i32 [| 3l |];
+    key = Nx.Rng.key 1;
+    index = Kaun.Cache_index.window 4 (Kaun.Cache_index.rows ~context:8 [| 2 |]);
+    weight =
+      Nx_quant.mxfp4
+        ~scales:(Nx.zeros Nx.uint8 [| 1; 1 |])
+        (Nx.zeros Nx.uint8 [| 1; 16 |]);
+    wide = Nx_wide.v (f32 [| 1.; 2. |]);
+    packed = Nx.P (Nx.create Nx.int64 [| 1 |] [| 5L |]);
+  }
+
+let test_state () = agree (P.v walk_state_hand) (P.v State.walk) (state ())
+
+(* Its key opened from Nx. *)
+module Held = struct
+  open Nx
+
+  type (_, 'd) t = { state : 'd State.t; spare : 'd Rng.key } [@@deriving ptree]
+end
+
+module Held_hand = struct
+  type ('a, 'd) t = ('a, 'd) Held.t
+
+  let walk c (x : _ t) : _ t =
+    let open P.Walk in
+    let state = field c "state" walk_state_hand x.state in
+    let spare = field c "spare" Nx.Rng.walk x.spare in
+    { state; spare }
+end
+
+(* A type without payload is described at any payload, here [f32]. *)
+let held : ((f32, host) Held.t, host) P.t = P.instantiate (module Held)
+
+let held_value () : (f32, host) Held.t =
+  { state = state (); spare = Nx.Rng.key 2 }
+
+let test_held () = agree (P.instantiate (module Held_hand)) held (held_value ())
 
 type kind = Dense | Sparse of int [@ptree.int] [@@deriving ptree]
 
@@ -99,6 +272,200 @@ let walk_kind_hand c =
       case c "Sparse";
       Sparse (int c k)
 
+let kinds =
+  Gen.(
+    frequency
+      [ (1, constant Dense); (1, map (fun k -> Sparse k) (int_range 0 3)) ])
+
+module Config = struct
+  type t = {
+    depth : int; [@ptree.int]
+    causal : bool; [@ptree.int]
+    kind : kind;
+    heads : (int[@ptree.int]) array;
+  }
+  [@@deriving ptree]
+end
+
+let walk_config_hand c (x : Config.t) : Config.t =
+  let open P.Walk in
+  let depth = field c "depth" int x.depth in
+  let causal =
+    field c "causal" (fun c b -> int c (Bool.to_int b) <> 0) x.causal
+  in
+  let kind = field c "kind" walk_kind_hand x.kind in
+  let heads =
+    field c "heads"
+      (fun c a ->
+        ignore (int c (Array.length a));
+        Array.mapi (fun i n -> index c i int n) a)
+      x.heads
+  in
+  { depth; causal; kind; heads }
+
+let configs =
+  let open Gen in
+  let+ depth = int_range 0 4
+  and+ causal = bool
+  and+ kind = kinds
+  and+ heads = array ~size:(int_range 0 2) (int_range 1 4) in
+  { Config.depth; causal; kind; heads }
+
+let law_config (x : Config.t) =
+  cover "a dense kind" (x.kind = Dense);
+  cover "causal" x.causal;
+  cover "no head" (Array.length x.heads = 0);
+  agree (P.v walk_config_hand) (P.v Config.walk) x
+
+(* Generated values *)
+
+(* The types the .mli gives the generated values, which the build checks:
+   [Test_signature]'s interface is derived, its implementation derives what that
+   interface declares, and each walk is taken here where only a walk of its
+   documented type, at any payload and from any set to any other, is. *)
+let _ :
+    'e Nx.Placement.t ->
+    ((float, 's, host) Nx.t, host) Test_signature.t ->
+    ((float, 's, 'e) Nx.t, 'e) Test_signature.t =
+  P.place (module Test_signature)
+
+let _ :
+    'e Nx.Placement.t -> host Test_signature.state -> 'e Test_signature.state =
+  P.place_fixed Test_signature.walk_state
+
+let _ :
+    'e Nx.Placement.t -> host Test_signature.frozen -> 'e Test_signature.frozen
+    =
+  P.place_fixed Test_signature.walk_frozen
+
+let _ : 'e Nx.Placement.t -> Test_signature.config -> Test_signature.config =
+  P.place_fixed Test_signature.walk_config
+
+(* How a part is walked *)
+
+(* A declaration group: recursion, a type nested at another argument of itself,
+   a member nested at a fixed array, and members of each arity. *)
+module Tree = struct
+  type ('a, 'd) t =
+    | Leaf of 'a
+    | Node of ('a, 'd) forest
+    | Deep of ('a list, 'd) t
+
+  and ('a, 'd) forest = ('a, 'd) t list
+
+  and ('a, 'd) rooted = {
+    root : ('a, 'd) t;
+    frozen : ('d Nx.float32_t, 'd) t;
+    state : 'd state;
+    shape : shape;
+  }
+
+  and 'd state = { steps : 'd Nx.int32_t; index : 'd Kaun.Cache_index.t }
+  and shape = { depth : int [@ptree.int] } [@@deriving ptree]
+end
+
+module Tree_hand = struct
+  open Tree
+
+  let rec walk :
+      'a 'b 'd 'e. ('a, 'b, 'd, 'e) P.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t =
+   fun c ->
+    let open P.Walk in
+    function
+    | Leaf x ->
+        case c "Leaf";
+        Leaf (leaf c x)
+    | Node f ->
+        case c "Node";
+        Node (walk_forest c f)
+    | Deep t ->
+        case c "Deep";
+        Deep (under walk (list leaf) c t)
+
+  and walk_forest :
+      'a 'b 'd 'e.
+      ('a, 'b, 'd, 'e) P.Walk.cursor -> ('a, 'd) forest -> ('b, 'e) forest =
+   fun c l -> P.Walk.list walk c l
+
+  let walk_rooted c (x : _ rooted) : _ rooted =
+    let open P.Walk in
+    let root = field c "root" walk x.root in
+    let frozen = field c "frozen" (under walk tensor) x.frozen in
+    let state =
+      field c "state"
+        (fun c (s : _ state) : _ state ->
+          let steps = field c "steps" tensor s.steps in
+          let index = field c "index" Kaun.Cache_index.walk s.index in
+          { steps; index })
+        x.state
+    in
+    let shape =
+      field c "shape"
+        (fun c (s : shape) -> { depth = field c "depth" int s.depth })
+        x.shape
+    in
+    { root; frozen; state; shape }
+end
+
+module Rooted = struct
+  type ('a, 'd) t = ('a, 'd) Tree.rooted
+
+  let walk = Tree.walk_rooted
+end
+
+module Rooted_hand = struct
+  type ('a, 'd) t = ('a, 'd) Tree.rooted
+
+  let walk = Tree_hand.walk_rooted
+end
+
+let rec tree_of : type a. int -> a Gen.t -> (a, host) Tree.t Gen.t =
+ fun depth leaf ->
+  let open Gen in
+  let leaves = map (fun x -> Tree.Leaf x) leaf in
+  if depth = 0 then leaves
+  else
+    frequency
+      [
+        (1, leaves);
+        ( 1,
+          map
+            (fun l -> Tree.Node l)
+            (list ~size:(int_range 0 2) (tree_of (depth - 1) leaf)) );
+        ( 1,
+          map
+            (fun t -> Tree.Deep t)
+            (tree_of (depth - 1) (list ~size:(int_range 0 2) leaf)) );
+      ]
+
+let rooted_hand : ((f32, host) Tree.rooted, host) P.t =
+  P.instantiate (module Rooted_hand)
+
+let rooteds =
+  let open Gen in
+  (let+ root = tree_of 3 floats
+   and+ frozen = tree_of 2 floats
+   and+ steps = int_range 0 2
+   and+ depth = int_range 0 4 in
+   {
+     Tree.root;
+     frozen;
+     state =
+       {
+         steps = i32 (Array.init steps Int32.of_int);
+         index = Kaun.Cache_index.rows ~context:8 [| 2 |];
+       };
+     shape = { depth };
+   })
+  |> with_pp (pp_visits rooted_hand)
+
+let law_rooted (x : (f32, host) Tree.rooted) =
+  cover "a leaf" (match x.root with Leaf _ -> true | _ -> false);
+  cover "a node" (match x.root with Node _ -> true | _ -> false);
+  cover "a deep tree" (match x.root with Deep _ -> true | _ -> false);
+  agree rooted_hand (P.instantiate (module Rooted)) x
+
+(* Every kind of part a record holds. *)
 module Block = struct
   type ('a, 'd) t = {
     w : 'a;
@@ -108,12 +475,17 @@ module Block = struct
     ends : 'a * 'a;
     stack : 'a array;
     frozen : ('d Nx.float32_t, 'd) Kaun.Linear.t;
+    forest : ('a, 'd) Tree.forest;
     steps : 'd Nx.int32_t;
     key : 'd Nx.Rng.key;
     window : int option; [@ptree.int]
     causal : bool; [@ptree.int]
     sizes : (int[@ptree.int]) list;
     kind : kind;
+    config : Config.t;
+    custom : 'a;
+        [@ptree.walk
+          fun c x -> Nx.Ptree.Walk.field c "inner" Nx.Ptree.Walk.leaf x]
     name : string; [@ptree.skip]
   }
   [@@deriving ptree]
@@ -144,6 +516,7 @@ module Block_hand = struct
         x.stack
     in
     let frozen = field c "frozen" (under Kaun.Linear.walk tensor) x.frozen in
+    let forest = field c "forest" Tree_hand.walk_forest x.forest in
     let steps = field c "steps" tensor x.steps in
     let key = field c "key" Nx.Rng.walk x.key in
     let window = field c "window" (option int) x.window in
@@ -152,6 +525,10 @@ module Block_hand = struct
     in
     let sizes = field c "sizes" (list int) x.sizes in
     let kind = field c "kind" walk_kind_hand x.kind in
+    let config = field c "config" walk_config_hand x.config in
+    let custom =
+      field c "custom" (fun c x -> field c "inner" leaf x) x.custom
+    in
     {
       w;
       b;
@@ -160,12 +537,15 @@ module Block_hand = struct
       ends;
       stack;
       frozen;
+      forest;
       steps;
       key;
       window;
       causal;
       sizes;
       kind;
+      config;
+      custom;
       name = x.name;
     }
 end
@@ -175,15 +555,10 @@ let block_hand : ((f32, host) Block.t, host) P.t =
 
 let block : ((f32, host) Block.t, host) P.t = P.instantiate (module Block)
 
-let kinds =
-  Gen.(
-    frequency
-      [ (1, constant Dense); (1, map (fun k -> Sparse k) (int_range 0 3)) ])
-
 let blocks =
   let open Gen in
   (let+ w = floats
-   and+ b = option floats
+   and+ b = optional floats
    and+ layers = list ~size:(int_range 0 2) (linear_of floats)
    and+ keys = floats
    and+ values = floats
@@ -191,12 +566,15 @@ let blocks =
    and+ e1 = floats
    and+ stack = array ~size:(int_range 0 2) floats
    and+ frozen = linear_of floats
+   and+ forest = list ~size:(int_range 0 2) (tree_of 1 floats)
    and+ steps = int_range 0 2
    and+ seed = int_range 0 3
-   and+ window = option (int_range 0 8)
+   and+ window = optional (int_range 0 8)
    and+ causal = bool
    and+ sizes = list ~size:(int_range 0 2) (int_range 0 4)
-   and+ kind = kinds in
+   and+ kind = kinds
+   and+ config = configs
+   and+ custom = floats in
    {
      Block.w;
      b;
@@ -205,12 +583,15 @@ let blocks =
      ends = (e0, e1);
      stack;
      frozen;
+     forest;
      steps = i32 (Array.init steps Int32.of_int);
      key = Nx.Rng.key seed;
      window;
      causal;
      sizes;
      kind;
+     config;
+     custom;
      name = "block";
    })
   |> with_pp (pp_visits block_hand)
@@ -221,63 +602,19 @@ let law_block (x : (f32, host) Block.t) =
   cover "no layer" (x.layers = []);
   cover "layers" (x.layers <> []);
   cover "an empty array" (Array.length x.stack = 0);
+  cover "an empty forest" (x.forest = []);
   cover "an absent window" (Option.is_none x.window);
   cover "a sparse kind" (x.kind <> Dense);
   cover "causal" x.causal;
-  agree ~msg:"block" block_hand block x;
+  agree block_hand block x;
   equal ~msg:"payload positions" (list string)
     (positions (fun f -> P.Payload.fold (module Block_hand) f x))
     (positions (fun f -> P.Payload.fold (module Block) f x));
-  let y = P.map block (fun _ a -> a) x in
-  equal ~msg:"skip copies the part" string x.name y.name;
-  equal ~msg:"a reported bool rebuilds" bool x.causal y.causal;
-  equal ~msg:"reported ints rebuild" (list int) x.sizes y.sizes
-
-let example =
-  {
-    Block.w = f32 [| 1. |];
-    b = Some (f32 [| 2. |]);
-    layers = [ { w = f32 [| 3. |]; b = None } ];
-    cache = { keys = f32 [| 4. |]; values = f32 [| 5. |] };
-    ends = (f32 [| 6. |], f32 [| 7. |]);
-    stack = [| f32 [| 8. |] |];
-    frozen = { w = f32 [| 9. |]; b = Some (f32 [| 10. |]) };
-    steps = i32 [| 1l |];
-    key = Nx.Rng.key 0;
-    window = Some 4;
-    causal = true;
-    sizes = [ 2 ];
-    kind = Sparse 1;
-    name = "block";
-  }
-
-let test_block_place () =
-  let y = P.place (module Block) S.on example in
-  let on_s : ((S.d Nx.float32_t, S.d) Block.t, S.d) P.t =
-    P.instantiate (module Block)
-  in
-  all_on S.on ~msg:"every array, fixed ones and the key too" (placements on_s y);
-  equal ~msg:"visits" (list visit) (P.visits block example) (P.visits on_s y);
-  equal ~msg:"key words" (array int32)
-    (Nx.to_array (Nx.Rng.to_tensor example.key))
-    (Nx.to_array (Nx.Rng.to_tensor y.key));
-  let back = P.place (module Block) Nx.Host.on y in
-  all_on Nx.Host.on ~msg:"back on the host" (placements block back)
-
-let test_block_cast () =
-  let y = P.cast (module Block) Nx.float16 example in
-  equal ~msg:"a position is cast" string "float16"
-    (Nx.Dtype.name (Nx.dtype y.w));
-  equal ~msg:"a nested position is cast" string "float16"
-    (Nx.Dtype.name (Nx.dtype y.cache.keys));
-  equal ~msg:"a frozen layer is kept" leaves [ Nx.P example.frozen.w ]
-    [ Nx.P y.frozen.w ];
-  equal ~msg:"a fixed array is kept" leaves [ Nx.P example.steps ]
-    [ Nx.P y.steps ]
+  equal ~msg:"the skipped name" string x.name
+    (P.map block (fun _ a -> a) x).name
 
 (* Variants name their case before their parts; an attribute after a
    constructor's single argument applies to it. *)
-
 module Weight = struct
   type ('a, 'd) t =
     | Float of 'a
@@ -285,6 +622,9 @@ module Weight = struct
     | Scaled of 'a * 'd Nx.float32_t
     | Window of int [@ptree.int]
     | Frozen of host Nx.float32_t [@ptree.skip]
+    | Custom of 'a
+        [@ptree.walk
+          fun c x -> Nx.Ptree.Walk.field c "inner" Nx.Ptree.Walk.leaf x]
     | Tied
   [@@deriving ptree]
 end
@@ -314,171 +654,30 @@ module Weight_hand = struct
     | Frozen x ->
         case c "Frozen";
         Frozen x
+    | Custom x ->
+        case c "Custom";
+        Custom (field c "inner" leaf x)
     | Tied ->
         case c "Tied";
         Tied
 end
 
-let weights : (string * (f32, host) Weight.t) list =
-  let u8 = Nx.create Nx.uint8 [| 1 |] [| 7 |] in
+(* Each part its own array, so a walk that swaps two parts of one type is
+   seen. *)
+let weights () : (string * (f32, host) Weight.t) list =
+  let u8 () = Nx.create Nx.uint8 [| 1 |] [| 7 |] in
   [
     ("a constructor with one argument", Float (f32 [| 1. |]));
-    ("an inline record", Mxfp4 { blocks = u8; scales = u8 });
+    ("an inline record", Mxfp4 { blocks = u8 (); scales = u8 () });
     ("a constructor with two arguments", Scaled (f32 [| 1. |], f32 [| 2. |]));
     ("[@ptree.int] after the argument", Window 4);
     ("[@ptree.skip] after the argument", Frozen (f32 [| 3. |]));
+    ("[@ptree.walk f] after the argument", Custom (f32 [| 4. |]));
     ("a constant constructor", Tied);
   ]
 
-let test_weight (msg, x) =
-  agree ~msg
-    (P.instantiate (module Weight_hand))
-    (P.instantiate (module Weight))
-    x
-
-(* Recursion, and a type nested at another argument of itself. *)
-
-module Tree = struct
-  type ('a, 'd) t =
-    | Leaf of 'a
-    | Node of ('a, 'd) t list
-    | Deep of ('a list, 'd) t
-  [@@deriving ptree]
-end
-
-module Tree_hand = struct
-  type ('a, 'd) t = ('a, 'd) Tree.t
-
-  let rec walk :
-      'a 'b 'd 'e. ('a, 'b, 'd, 'e) P.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t =
-   fun c ->
-    let open P.Walk in
-    function
-    | Leaf x ->
-        case c "Leaf";
-        Leaf (leaf c x)
-    | Node l ->
-        case c "Node";
-        Node (list walk c l)
-    | Deep t ->
-        case c "Deep";
-        Deep (under walk (list leaf) c t)
-end
-
-let rec tree_of : type a. int -> a Gen.t -> (a, host) Tree.t Gen.t =
- fun depth leaf ->
-  let open Gen in
-  let leaves = map (fun x -> Tree.Leaf x) leaf in
-  if depth = 0 then leaves
-  else
-    frequency
-      [
-        (1, leaves);
-        ( 1,
-          map
-            (fun l -> Tree.Node l)
-            (list ~size:(int_range 0 2) (tree_of (depth - 1) leaf)) );
-        ( 1,
-          map
-            (fun t -> Tree.Deep t)
-            (tree_of (depth - 1) (list ~size:(int_range 0 2) leaf)) );
-      ]
-
-let tree_hand : ((f32, host) Tree.t, host) P.t =
-  P.instantiate (module Tree_hand)
-
-let tree : ((f32, host) Tree.t, host) P.t = P.instantiate (module Tree)
-let trees = tree_of 3 floats |> Gen.with_pp (pp_visits tree_hand)
-
-let law_tree (x : (f32, host) Tree.t) =
-  cover "a leaf" (match x with Leaf _ -> true | _ -> false);
-  cover "a node" (match x with Node _ -> true | _ -> false);
-  cover "a deep tree" (match x with Deep _ -> true | _ -> false);
-  agree ~msg:"tree" tree_hand tree x;
-  equal ~msg:"payload positions" (list string)
-    (positions (fun f -> P.Payload.fold (module Tree_hand) f x))
-    (positions (fun f -> P.Payload.fold (module Tree) f x))
-
-(* 'd t: fixed arrays only, with parts that move between sets by their own
-   walks. (_, 'd) t: no payload, its key opened from Nx. *)
-
-module State = struct
-  type 'd t = {
-    steps : 'd Nx.int32_t;
-    key : 'd Nx.Rng.key;
-    index : 'd Kaun.Cache_index.t;
-    weight : 'd Nx_quant.t;
-    wide : (Nx.float32_elt, 'd) Nx_wide.t;
-    packed : 'd Nx.packed;
-  }
-  [@@deriving ptree]
-end
-
-let walk_state_hand c (x : _ State.t) : _ State.t =
-  let open P.Walk in
-  let steps = field c "steps" tensor x.steps in
-  let key = field c "key" Nx.Rng.walk x.key in
-  let index = field c "index" Kaun.Cache_index.walk x.index in
-  let weight = field c "weight" Nx_quant.walk x.weight in
-  let wide = field c "wide" Nx_wide.walk x.wide in
-  let packed =
-    field c "packed" (fun c (Nx.P a) -> Nx.P (tensor c a)) x.packed
-  in
-  { steps; key; index; weight; wide; packed }
-
-module Held = struct
-  open Nx
-
-  type (_, 'd) t = { state : 'd State.t; spare : 'd Rng.key } [@@deriving ptree]
-end
-
-let state : host State.t =
-  {
-    steps = i32 [| 3l |];
-    key = Nx.Rng.key 1;
-    index = Kaun.Cache_index.window 4 (Kaun.Cache_index.rows ~context:8 [| 2 |]);
-    weight =
-      Nx_quant.mxfp4
-        ~scales:(Nx.zeros Nx.uint8 [| 1; 1 |])
-        (Nx.zeros Nx.uint8 [| 1; 16 |]);
-    wide = Nx_wide.v (f32 [| 1.; 2. |]);
-    packed = Nx.P (Nx.create Nx.int64 [| 1 |] [| 5L |]);
-  }
-
-module Held_hand = struct
-  type ('a, 'd) t = ('a, 'd) Held.t
-
-  let walk c (x : _ t) : _ t =
-    let open P.Walk in
-    let state = field c "state" walk_state_hand x.state in
-    let spare = field c "spare" Nx.Rng.walk x.spare in
-    { state; spare }
-end
-
-(* A type without payload is described at any payload, here [f32]. *)
-let held : ((f32, host) Held.t, host) P.t = P.instantiate (module Held)
-
-let test_state () =
-  agree ~msg:"state" (P.v walk_state_hand) (P.v State.walk) state;
-  agree ~msg:"held"
-    (P.instantiate (module Held_hand))
-    held
-    { state; spare = Nx.Rng.key 2 }
-
-let test_state_place () =
-  let x : (f32, host) Held.t = { state; spare = Nx.Rng.key 2 } in
-  let y = P.place (module Held) S.on x in
-  let on_s : ((S.d Nx.float32_t, S.d) Held.t, S.d) P.t =
-    P.instantiate (module Held)
-  in
-  all_on S.on ~msg:"every array of the state and both keys" (placements on_s y);
-  equal ~msg:"visits" (list visit) (P.visits held x) (P.visits on_s y);
-  equal ~msg:"the number" (array float_exact) [| 1.; 2. |]
-    (Nx.to_array (Nx_wide.hi y.state.wide));
-  let back = P.place (module Held) Nx.Host.on y in
-  all_on Nx.Host.on ~msg:"back on the host" (placements held back)
-
-(* Every tensor alias of Nx, qualified and opened. *)
+let test_weight (_, x) =
+  agree (P.instantiate (module Weight_hand)) (P.instantiate (module Weight)) x
 
 module Aliases = struct
   type 'd t = {
@@ -538,13 +737,8 @@ module Opened = struct
   [@@deriving ptree]
 end
 
-let alias_fields =
-  [ "f64"; "f32"; "f16"; "bf16"; "f8e4m3fn"; "f8e5m2"; "f4e2m1fn"; "i64";
-    "u64"; "i32"; "u32"; "i16"; "u16"; "i8"; "u8"; "i4"; "u4"; "c128"; "c64";
-    "b"; "bit"; "any" ]
-[@@ocamlformat "disable"]
-
-let aliases : host Aliases.t =
+(* Nx's aliases (packages/nx/lib/nx.mli), each a fixed array of its own. *)
+let aliases () : host Aliases.t =
   let z dt = Nx.zeros dt [| 1 |] in
   {
     f64 = z Nx.float64;
@@ -571,92 +765,26 @@ let aliases : host Aliases.t =
     any = z Nx.float64;
   }
 
+let alias_fields =
+  [ "f64"; "f32"; "f16"; "bf16"; "f8e4m3fn"; "f8e5m2"; "f4e2m1fn"; "i64";
+    "u64"; "i32"; "u32"; "i16"; "u16"; "i8"; "u8"; "i4"; "u4"; "c128"; "c64";
+    "b"; "bit"; "any" ]
+[@@ocamlformat "disable"]
+
+let words s x = List.map (Format.asprintf "%a" P.pp_visit) (P.visits s x)
+
 let test_aliases () =
-  let expected = List.map (fun f -> f ^ ": a leaf") alias_fields in
-  equal ~msg:"qualified" (list string) expected
-    (words (P.v Aliases.walk) aliases);
-  equal ~msg:"opened" (list string) expected (words (P.v Opened.walk) aliases);
-  let y = P.place_fixed Aliases.walk S.on aliases in
-  all_on S.on ~msg:"each alias is a fixed array"
-    (placements (P.v Aliases.walk) y)
+  let leaves = List.map (fun f -> f ^ ": a leaf") alias_fields in
+  equal ~msg:"qualified" (list string) leaves
+    (words (P.v Aliases.walk) (aliases ()));
+  equal ~msg:"opened" (list string) leaves
+    (words (P.v Opened.walk) (aliases ()))
 
-(* A tuple walks its components at their positions, as Nx.Ptree.triple does. *)
-
-module Triple = struct
-  type ('a, 'd) t = 'a * 'a option * 'a list [@@deriving ptree]
-end
-
-let triples =
-  Gen.triple floats (Gen.option floats)
-    (Gen.list ~size:(Gen.int_range 0 2) floats)
-
-let law_triple ((_, b, l) as x) =
-  cover "no option" (Option.is_none b);
-  cover "an empty list" (List.is_empty l);
-  agree ~msg:"triple"
-    P.(triple tensor (option tensor) (list tensor))
-    (P.instantiate (module Triple))
-    x
-
-(* t: integers and cases, no array. *)
-
-module Config = struct
-  type t = {
-    depth : int; [@ptree.int]
-    kind : kind;
-    heads : (int[@ptree.int]) array;
-  }
-  [@@deriving ptree]
-end
-
-let walk_config_hand c (x : Config.t) : Config.t =
-  let open P.Walk in
-  let depth = field c "depth" int x.depth in
-  let kind = field c "kind" walk_kind_hand x.kind in
-  let heads =
-    field c "heads"
-      (fun c a ->
-        ignore (int c (Array.length a));
-        Array.mapi (fun i n -> index c i int n) a)
-      x.heads
-  in
-  { depth; kind; heads }
-
-let configs =
-  let open Gen in
-  let+ depth = int_range 0 4
-  and+ kind = kinds
-  and+ heads = array ~size:(int_range 0 2) (int_range 1 4) in
-  { Config.depth; kind; heads }
-
-let law_config (x : Config.t) =
-  cover "a dense kind" (x.kind = Dense);
-  cover "no head" (Array.length x.heads = 0);
-  agree ~msg:"config" (P.v walk_config_hand) (P.v Config.walk) x
-
-(* A training state: a model, an optimiser state nested over it, and a key. *)
-
-module Mlp = struct
-  type ('a, 'd) t = { l1 : ('a, 'd) Kaun.Linear.t; l2 : ('a, 'd) Kaun.Linear.t }
-  [@@deriving ptree]
-
-  let apply m x = Kaun.Linear.apply m.l2 (Kaun.Linear.apply m.l1 x)
-end
-
-module Mlp_hand = struct
-  type ('a, 'd) t = ('a, 'd) Mlp.t
-
-  let walk c (m : _ t) : _ t =
-    let open P.Walk in
-    let l1 = field c "l1" Kaun.Linear.walk m.l1 in
-    let l2 = field c "l2" Kaun.Linear.walk m.l2 in
-    { l1; l2 }
-end
-
+(* A training state: a model, an optimiser state nested over it, a key. *)
 module Train = struct
   type ('a, 'd) t = {
-    params : ('a, 'd) Mlp.t;
-    opt : (('a, 'd) Mlp.t, 'd) Vega.Adam_state.t;
+    params : ('a, 'd) Example.t;
+    opt : (('a, 'd) Example.t, 'd) Vega.Adam_state.t;
     key : 'd Nx.Rng.key;
   }
   [@@deriving ptree]
@@ -667,91 +795,41 @@ module Train_hand = struct
 
   let walk c (x : _ t) : _ t =
     let open P.Walk in
-    let params = field c "params" Mlp_hand.walk x.params in
-    let opt = field c "opt" (under Vega.Adam_state.walk Mlp_hand.walk) x.opt in
+    let params = field c "params" Example_hand.walk x.params in
+    let opt =
+      field c "opt" (under Vega.Adam_state.walk Example_hand.walk) x.opt
+    in
     let key = field c "key" Nx.Rng.walk x.key in
     { params; opt; key }
 end
 
-let mlp : ((f32, host) Mlp.t, host) P.t = P.instantiate (module Mlp)
-
-let params =
-  let k = Nx.Rng.split (Nx.Rng.key 0) in
-  {
-    Mlp.l1 = Kaun.Linear.init ~key:k.(0) ~inputs:2 ~outputs:2;
-    l2 = Kaun.Linear.init ~key:k.(1) ~inputs:2 ~outputs:1;
-  }
-
-let train : (f32, host) Train.t =
-  { params; opt = Vega.adam_init mlp params; key = Nx.Rng.key 3 }
-
 let test_train () =
-  agree ~msg:"train"
+  let k = Nx.Rng.split (Nx.Rng.key 0) in
+  let params : (f32, host) Example.t =
+    {
+      l1 = Kaun.Linear.init ~key:k.(0) ~inputs:2 ~outputs:2;
+      l2 = Kaun.Linear.init ~key:k.(1) ~inputs:2 ~outputs:1;
+      steps = i32 [| 1l |];
+      window = Some 2;
+    }
+  in
+  let opt = Vega.adam_init (P.instantiate (module Example)) params in
+  agree
     (P.instantiate (module Train_hand))
     (P.instantiate (module Train))
-    train;
-  let y = P.place (module Train) S.on train in
-  let on_s : ((S.d Nx.float32_t, S.d) Train.t, S.d) P.t =
-    P.instantiate (module Train)
-  in
-  all_on S.on ~msg:"the moments, the step and the key" (placements on_s y)
+    { params; opt; key = Nx.Rng.key 3 }
 
-let test_grad () =
-  let loss m = Nx.sum (Mlp.apply m (f32 [| 1.; 2. |])) in
-  let hand = Rune.grad (P.instantiate (module Mlp_hand)) loss params in
-  let derived = Rune.grad mlp loss params in
-  equal ~msg:"gradients" (array float_exact) (Nx.to_array hand.l1.w)
-    (Nx.to_array derived.l1.w)
-
-(* The guide's example (packages/nx/doc/06-structures.md): the derived [Block]
-   visits what the hand-written one visits. *)
-
-module Guide = struct
-  module Linear = struct
-    type ('a, _) t = { w : 'a; b : 'a option }
-
-    let walk c { w; b } =
-      let open P.Walk in
-      let w = field c "w" leaf w in
-      let b = field c "b" (option leaf) b in
-      { w; b }
-  end
-
-  module Block_hand = struct
-    type ('a, 'd) t = {
-      proj : ('a, 'd) Linear.t;
-      steps : 'd Nx.int32_t;
-      window : int option;
-    }
-
-    let walk c { proj; steps; window } =
-      let open P.Walk in
-      let proj = field c "proj" Linear.walk proj in
-      let steps = field c "steps" tensor steps in
-      let window = field c "window" (option int) window in
-      { proj; steps; window }
-  end
-
-  module Block = struct
-    type ('a, 'd) t = ('a, 'd) Block_hand.t = {
-      proj : ('a, 'd) Linear.t;
-      steps : 'd Nx.int32_t;
-      window : int option; [@ptree.int]
-    }
-    [@@deriving ptree]
-  end
-end
+(* Attributes *)
 
 (* A nested structure's payload argument is a part, so it takes an attribute. *)
-
 module Inner = struct
   type ('a, 'd) t = {
     w : 'a;
     frozen :
-      (('d Nx.float32_t
-       [@ptree.walk
-         fun c x -> Nx.Ptree.Walk.field c "inner" Nx.Ptree.Walk.tensor x]),
-        'd)
+      ( ('d Nx.float32_t
+        [@ptree.walk
+          fun c x -> Nx.Ptree.Walk.field c "inner" Nx.Ptree.Walk.tensor x]),
+        'd )
       Kaun.Linear.t;
   }
   [@@deriving ptree]
@@ -772,52 +850,169 @@ module Inner_hand = struct
 end
 
 let test_inner () =
-  let x : (f32, host) Inner.t =
-    { w = f32 [| 1. |]; frozen = { w = f32 [| 2. |]; b = Some (f32 [| 3. |]) } }
-  in
-  agree ~msg:"inner"
+  agree
     (P.instantiate (module Inner_hand))
     (P.instantiate (module Inner))
-    x
+    { w = f32 [| 1. |]; frozen = { w = f32 [| 2. |]; b = Some (f32 [| 3. |]) } }
 
-let test_guide () =
-  let block =
+(* Each form the .mli refuses without an attribute, skipped, and one walked. *)
+module Skipped = struct
+  type ('a, 'd) t = {
+    w : 'a;
+    count : int; [@ptree.skip]
+    name : string; [@ptree.skip]
+    scale : float; [@ptree.skip]
+    dtype : (float, Nx.float32_elt) Nx.dtype; [@ptree.skip]
+    at : host Nx.Placement.t; [@ptree.skip]
+    mesh : host Nx.Mesh.t; [@ptree.skip]
+    mask : host Nx.bool_t; [@ptree.skip]
+    callback : int -> int; [@ptree.skip]
+    getter : < get : int >; [@ptree.skip]
+    choice : [ `A | `B ]; [@ptree.skip]
+    m : (module Set.OrderedType); [@ptree.skip]
+    poly : 'x. 'x list; [@ptree.skip]
+    later : int lazy_t; [@ptree.skip]
+    outcome : (int, string) result; [@ptree.skip]
+    cell : 'd Nx.float32_t ref;
+        [@ptree.walk fun c r -> ref (Nx.Ptree.Walk.tensor c !r)]
+  }
+  [@@deriving ptree]
+end
+
+module Skipped_hand = struct
+  type ('a, 'd) t = ('a, 'd) Skipped.t
+
+  let walk c (x : _ t) : _ t =
+    let open P.Walk in
+    let w = field c "w" leaf x.w in
+    let cell = field c "cell" (fun c r -> ref (tensor c !r)) x.cell in
+    { x with w; cell }
+end
+
+let test_skipped () =
+  let x : (f32, host) Skipped.t =
     {
-      Guide.Block_hand.proj = { w = f32 [| 1. |]; b = Some (f32 [| 2. |]) };
-      steps = Nx.zeros Nx.int32 [||];
-      window = Some 4;
+      w = f32 [| 1. |];
+      count = 1;
+      name = "skipped";
+      scale = 0.5;
+      dtype = Nx.float32;
+      at = Nx.Host.on;
+      mesh = Nx.Mesh.v Nx.Host.v [ ("x", 1) ];
+      mask = Nx.zeros Nx.bool [| 1 |];
+      callback = succ;
+      getter =
+        object
+          method get = 1
+        end;
+      choice = `A;
+      m = (module Int);
+      poly = [];
+      later = lazy 1;
+      outcome = Ok 1;
+      cell = ref (f32 [| 2. |]);
     }
   in
-  agree ~msg:"guide block"
-    (P.instantiate (module Guide.Block_hand))
-    (P.instantiate (module Guide.Block))
-    block
+  agree (P.instantiate (module Skipped_hand)) (P.instantiate (module Skipped)) x
+
+(* What a description, place and cast make of each declaration. *)
+
+let block_example () : (f32, host) Block.t =
+  {
+    w = f32 [| 1. |];
+    b = Some (f32 [| 2. |]);
+    layers = [ { w = f32 [| 3. |]; b = None } ];
+    cache = { keys = f32 [| 4. |]; values = f32 [| 5. |] };
+    ends = (f32 [| 6. |], f32 [| 7. |]);
+    stack = [| f32 [| 8. |] |];
+    frozen = { w = f32 [| 9. |]; b = Some (f32 [| 10. |]) };
+    forest = [ Leaf (f32 [| 11. |]) ];
+    steps = i32 [| 1l |];
+    key = Nx.Rng.key 0;
+    window = Some 4;
+    causal = true;
+    sizes = [ 2 ];
+    kind = Sparse 1;
+    config = { depth = 2; causal = false; kind = Dense; heads = [| 1 |] };
+    custom = f32 [| 12. |];
+    name = "block";
+  }
+
+let test_place () =
+  let on_s : ((S.d Nx.float32_t, S.d) Block.t, S.d) P.t =
+    P.instantiate (module Block)
+  in
+  all_on S.on (placements on_s (P.place (module Block) S.on (block_example ())))
+
+let test_cast () =
+  let x = block_example () in
+  let y = P.cast (module Block) Nx.float16 x in
+  equal ~msg:"a position" string "float16" (Nx.Dtype.name (Nx.dtype y.w));
+  equal ~msg:"fixed arrays" arrays
+    [ Nx.P x.frozen.w; Nx.P x.steps ]
+    [ Nx.P y.frozen.w; Nx.P y.steps ]
+
+let test_held_place () =
+  let on_s : ((S.d Nx.float32_t, S.d) Held.t, S.d) P.t =
+    P.instantiate (module Held)
+  in
+  let x = held_value () in
+  all_on S.on (placements on_s (P.place (module Held) S.on x));
+  let y = P.cast (module Held) Nx.float16 x in
+  equal ~msg:"a cast keeps every array" arrays
+    (fst (P.flatten held x))
+    (fst (P.flatten (P.instantiate (module Held)) y))
+
+let test_place_fixed () =
+  let y = P.place_fixed State.walk S.on (state ()) in
+  all_on S.on (placements (P.v State.walk) y)
 
 let () =
   exit
     (run "ppx_ptree"
        [
-         group "('a, 'd) t"
+         group "[@@deriving ptree]"
            [
-             prop "a block's derived walk is the hand-written one" blocks
-               law_block;
-             test "place moves fixed arrays and keys with the payload"
-               test_block_place;
-             test "cast casts the payload and keeps fixed arrays"
-               test_block_cast;
-             cases "variants" ~id:fst weights test_weight;
-             prop "a recursive type nested at another argument" trees law_tree;
-             prop "a 3-tuple walks as Nx.Ptree.triple does" triples law_triple;
-             test "a state nested over a model with Walk.under" test_train;
-             test "the guide's block" test_guide;
-             test "an attribute on a nested structure's payload" test_inner;
+             prop "the example derives the walk it shows" examples law_example;
+             test "the guide's block derives its hand-written walk" test_guide;
            ];
-         group "'d t and (_, 'd) t"
+         group "declarations"
            [
-             test "fixed arrays, keys, quantised and wide parts" test_state;
-             test "place moves every part through the walk" test_state_place;
-             test "every tensor alias, qualified and opened" test_aliases;
+             prop "('a, _) t holds positions of the payload alone" triples
+               law_triple;
+             test "(_, 'd) t holds fixed arrays and keys alone" test_held;
+             test "'d t holds fixed arrays, keys, quantised and wide parts"
+               test_state;
+             prop "t holds integers and cases" configs law_config;
            ];
-         group "t" [ prop "integers and cases" configs law_config ];
-         group "transformations" [ test "grad" test_grad ];
+         group "generated values"
+           [
+             test "place moves every array of ('a, 'd) t, fixed ones too"
+               test_place;
+             test "cast casts the payload of ('a, 'd) t and keeps fixed arrays"
+               test_cast;
+             test "place and cast take the module of (_, 'd) t" test_held_place;
+             test "place_fixed takes the walk of 'd t" test_place_fixed;
+           ];
+         group "how a part is walked"
+           [
+             prop "a record walks every kind of part in declaration order"
+               blocks law_block;
+             cases "a variant reports its case, then walks its arguments"
+               ~id:fst (weights ()) test_weight;
+             prop "a declaration group walks its types with each other's walks"
+               rooteds law_rooted;
+             test "every tensor alias, qualified or opened, is a fixed array"
+               test_aliases;
+             test "a structure nested over another walks with Walk.under"
+               test_train;
+           ];
+         group "attributes"
+           [
+             test "a nested structure's payload argument takes [@ptree.walk]"
+               test_inner;
+             test
+               "each refused form derives under [@ptree.skip] or [@ptree.walk]"
+               test_skipped;
+           ];
        ])

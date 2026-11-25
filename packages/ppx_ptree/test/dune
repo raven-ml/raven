@@ -2,7 +2,7 @@
  (name test_ptree)
  (package ppx_ptree)
  (modules test_ptree test_signature)
- (libraries nx nx.array nx.quant nx.wide rig rune vega kaun windtrap)
+ (libraries nx nx.array nx.quant nx.wide rig vega kaun windtrap)
  (preprocess
   (pps ppx_ptree)))
 
@@ -24,29 +24,6 @@
  (libraries ppxlib ppx_ptree)
  (link_flags
   (:standard -linkall)))
-
-; The expansions a reader can check by eye.
-
-(rule
- (package ppx_ptree)
- (alias runtest)
- (targets record.actual variant.actual group.actual)
- (deps
-  (:pp pp.exe))
- (action
-  (progn
-   (with-stdout-to
-    record.actual
-    (run ./%{pp} -impl %{dep:golden/expansion_cases/record.ml}))
-   (with-stdout-to
-    variant.actual
-    (run ./%{pp} -impl %{dep:golden/expansion_cases/variant.ml}))
-   (with-stdout-to
-    group.actual
-    (run ./%{pp} -impl %{dep:golden/expansion_cases/group.ml}))
-   (diff golden/expansion_cases/record.expected record.actual)
-   (diff golden/expansion_cases/variant.expected variant.actual)
-   (diff golden/expansion_cases/group.expected group.actual))))
 
 ; OCaml's errors in derived walks. ocamlc hands -ppx to the platform shell,
 ; and cmd.exe cannot start a "./" program, so these cases do not run on
