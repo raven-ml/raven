@@ -172,8 +172,10 @@ val window : int -> 'd t -> 'd t
     differ in their window alone passes [window w index] to the sliding ones
     and [window max_int index] to the others, over the same pools' slots, and
     compiles one program for both. A window made inside a traced function is a
-    constant of that trace. The scalar has no axis to map, so [Rune.vmap]
-    refuses an index with a window as an argument.
+    constant of that trace. Steps windowed apart and then stacked along a new
+    axis 0 map under [Rune.vmap], each under its own window; a window set on
+    an index already stacked is a scalar with no axis to map, and [Rune.vmap]
+    refuses that index as an argument.
 
     Raises [Invalid_argument] if [w] is not positive. *)
 

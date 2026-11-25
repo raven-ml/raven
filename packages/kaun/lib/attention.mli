@@ -243,7 +243,8 @@ val cached :
     each token's chosen columns. Both trace once under [Rune.jit] whatever
     the index holds. Consumed by a compiled step that
     lends it the pools' memory, the step's cost does not depend on the size
-    of the cache.
+    of the cache. Steps of their own tokens, caches and indices, stacked along
+    a new axis 0, map under [Rune.vmap].
     Differentiable through Rune.
 
     Raises [Invalid_argument] if [x]'s dtype is a float8 or float4 format, [x]

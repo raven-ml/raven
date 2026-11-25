@@ -995,20 +995,28 @@ let test_widest (_, make) =
         (attended widest))
     [ largest + 1; max_int / 2; max_int ]
 
-(* Two indices stacked along a new leading axis map; under a window, they do
-   not. *)
+(* Two indices stacked along a new leading axis map, each under the window it
+   was given; under a window set after stacking, they do not. *)
 let test_window_vmap () =
   let positions =
     Rune.vmap Nx.Ptree.(index_s @-> returns tensor) Cache_index.positions
   in
   let a = index_at ~pos:[| [| 1; 7 |] |] ~table:[| [| 3; -1; 0; 1 |] |] in
-  let b = index_at ~pos:[| [| 0; -1 |] |] ~table:[| [| 5; 2; 4; 9 |] |] in
-  let stacked = Nx.Ptree.map2 index_s (fun _ x y -> Nx.stack [ x; y ]) a b in
+  let b = index_at ~pos:[| [| 2; -1 |] |] ~table:[| [| 5; 2; 4; 9 |] |] in
+  let stack a b = Nx.Ptree.map2 index_s (fun _ x y -> Nx.stack [ x; y ]) a b in
+  let stacked = stack a b in
   equal ~msg:"without a window" (array int)
     (Array.append
        (ints (Cache_index.positions a))
        (ints (Cache_index.positions b)))
     (ints (positions stacked));
+  let masks =
+    Rune.vmap Nx.Ptree.(index_s @-> returns tensor) Cache_index.mask
+  in
+  let a = Cache_index.window 2 a and b = Cache_index.window 1 b in
+  equal ~msg:"windowed apart" (array bool)
+    (Array.append (flat (Cache_index.mask a)) (flat (Cache_index.mask b)))
+    (flat (masks (stack a b)));
   raises_match (Exn.invalid_arg ~sub:"window") (fun () ->
       positions (Cache_index.window 2 stacked))
 

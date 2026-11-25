@@ -957,25 +957,29 @@ let pp_paged ppf (s : paged) =
     (Option.fold ~none:"none" ~some:lanes s.draft)
     s.key
 
-let paged_gen =
+(* Sequence [b]'s table: slots [8b] to [8b + 7] in some order, with holes. *)
+let lane_table b =
   let open Gen in
-  let lane_table b =
-    let* order = permutation (List.init 8 (fun i -> (8 * b) + i)) in
-    let+ entries =
-      list ~size:(constant paged_width)
-        (frequency [ (6, constant false); (2, constant true); (1, bool) ])
-    in
-    let order = Array.of_list order in
-    Array.of_list
-      (List.mapi
-         (fun j bad ->
-           if not bad then order.(j) else if j mod 2 = 0 then -1 else 99)
-         entries)
+  let* order = permutation (List.init 8 (fun i -> (8 * b) + i)) in
+  let+ entries =
+    list ~size:(constant paged_width)
+      (frequency [ (6, constant false); (2, constant true); (1, bool) ])
   in
+  let order = Array.of_list order in
+  Array.of_list
+    (List.mapi
+       (fun j bad ->
+         if not bad then order.(j) else if j mod 2 = 0 then -1 else 99)
+       entries)
+
+let window_of has_window =
+  Gen.(if has_window then map Option.some (int_range 1 4) else constant None)
+
+let paged_of ~has_window ~drafted =
+  let open Gen in
   let* t0 = lane_table 0 in
   let* t1 = lane_table 1 in
-  let* window = option (int_range 1 4) in
-  let* drafted = bool in
+  let* window = window_of has_window in
   let* key = key_gen in
   let+ pos, draft, sees =
     if not drafted then
@@ -1017,6 +1021,12 @@ let paged_gen =
   let table = [| t0; t1 |] in
   let index = paged_index ~table ~pos ~window ~draft ~sees in
   { index; table; pos; window; draft; sees; key }
+
+let paged_gen =
+  Gen.(
+    let* has_window = bool in
+    let* drafted = bool in
+    paged_of ~has_window ~drafted)
 
 (* The pages the .mli states for [s], a row per lane: the lane's table at each
    column that no rule hides, the draft's slots after it. *)
@@ -1133,6 +1143,168 @@ let law_paths_agree (s : paged) =
          (Nx.Dense { k = read k c.keys; v = read v c.values }))
   in
   close dense (fst (call p c index x))
+
+(* Steps of one form under Rune.vmap. The steps agree on everything an index's
+   walk reports, so that they stack, and draw each tensor apart: tokens, pools,
+   positions, tables, window sizes and draft slots. *)
+type form = Table | Draft | Lanes | Whole | Packed
+
+let form_name = function
+  | Table -> "a table"
+  | Draft -> "a draft"
+  | Lanes -> "one-token lanes"
+  | Whole -> "a whole index"
+  | Packed -> "a packed index"
+
+type mapped = {
+  form : form;
+  has_window : bool;
+  resolved : bool;
+  steps : (string * Nx.host Cache_index.t * int option * int) list;
+}
+
+let pp_mapped ppf m =
+  Format.fprintf ppf "%s%s%s: %s" (form_name m.form)
+    (if m.has_window then ", windowed" else "")
+    (if m.resolved then ", resolved" else "")
+    (String.concat " / " (List.map (fun (d, _, _, _) -> d) m.steps))
+
+let table_step ~has_window ~drafted =
+  Gen.map
+    (fun (s : paged) ->
+      (Format.asprintf "%a" pp_paged s, s.index, s.window, s.key))
+    (paged_of ~has_window ~drafted)
+
+(* Three lanes of one token over two sequences' tables, a lane of row [-1]
+   padding; lane [l] of sequence [r] is at position [p0.(r) + l]. *)
+let lanes_step ~has_window =
+  Gen.(
+    let+ t0 = lane_table 0
+    and+ t1 = lane_table 1
+    and+ rows = list ~size:(constant 3) (int_range (-1) 1)
+    and+ p0 = list ~size:(constant 2) (int_range 0 3)
+    and+ window = window_of has_window
+    and+ key = key_gen in
+    let rows = Array.of_list rows and p0 = Array.of_list p0 in
+    let pos =
+      Array.mapi (fun l r -> [| (if r < 0 then -1 else p0.(r) + l) |]) rows
+    in
+    let index =
+      Cache_index.make
+        ~row:(int64s [| 3 |] rows)
+        ~pos:(matrix pos) ~table:(matrix [| t0; t1 |]) ()
+    in
+    ( Format.asprintf "rows %s pos %s %a key %d"
+        (ints (Array.to_list rows))
+        (ints (Array.to_list (Array.map (fun p -> p.(0)) pos)))
+        pp_window window key,
+      windowed window index,
+      window,
+      key ))
+
+(* Two lanes of three tokens, of [lens] each. *)
+let whole_step ~has_window =
+  Gen.(
+    let+ lens = pair (int_range 0 3) (int_range 0 3)
+    and+ window = window_of has_window
+    and+ key = key_gen in
+    let lens = [| fst lens; snd lens |] in
+    ( Format.asprintf "lens %s %a key %d"
+        (ints (Array.to_list lens))
+        pp_window window key,
+      windowed window (Cache_index.whole ~lens ~batch:2 ~seq:3 ()),
+      window,
+      key ))
+
+(* Two lanes of three tokens, each holding up to two sequences. *)
+let packed_step ~has_window =
+  Gen.(
+    let lane =
+      let* first = int_range 0 3 in
+      let+ second = int_range 0 (3 - first) in
+      [| first; second |]
+    in
+    let+ l0 = lane and+ l1 = lane and+ window = window_of has_window
+    and+ key = key_gen in
+    ( Format.asprintf "lens %s | %s %a key %d"
+        (ints (Array.to_list l0))
+        (ints (Array.to_list l1))
+        pp_window window key,
+      windowed window (Cache_index.packed ~seq:3 [| l0; l1 |]),
+      window,
+      key ))
+
+let mapped_gen =
+  let open Gen in
+  let* form = of_list [ Table; Draft; Lanes; Whole; Packed ] in
+  let* has_window = bool in
+  let* resolved = bool in
+  let* n = int_range 1 3 in
+  let step =
+    match form with
+    | Table -> table_step ~has_window ~drafted:false
+    | Draft -> table_step ~has_window ~drafted:true
+    | Lanes -> lanes_step ~has_window
+    | Whole -> whole_step ~has_window
+    | Packed -> packed_step ~has_window
+  in
+  let resolve (d, index, window, key) =
+    (d, (if resolved then Cache_index.resolve index else index), window, key)
+  in
+  let+ steps = list ~size:(constant n) (map resolve step) in
+  { form; has_window; resolved; steps }
+
+(* [Rune.vmap] over steps of their own tokens, caches and indices, stacked along
+   a new leading axis, is each step: its outputs and written pools. *)
+let law_vmap (m : mapped) =
+  let n = List.length m.steps in
+  List.iter
+    (fun f -> cover (form_name f) (m.form = f))
+    [ Table; Draft; Lanes; Whole; Packed ];
+  cover "a window" m.has_window;
+  let windows = List.map (fun (_, _, w, _) -> w) m.steps in
+  cover "steps under different windows"
+    (List.length (List.sort_uniq compare windows) > 1);
+  cover "a resolved index that addresses a pool"
+    (m.resolved && m.form <> Whole && m.form <> Packed);
+  cover "one step" (n = 1);
+  cover "three steps" (n = 3);
+  let p = layer () in
+  let slots = match m.form with Whole | Packed -> 0 | _ -> paged_slots in
+  let tokens =
+    match m.form with Lanes -> [| 3; 1; embed |] | _ -> [| 2; 3; embed |]
+  in
+  let steps =
+    List.map
+      (fun (_, index, _, key) ->
+        Nx.Rng.with_key (Nx.Rng.key key) @@ fun () ->
+        let pool () = draw [| slots; 2; head_dim |] in
+        let c = { Attention.Cache.keys = pool (); values = pool () } in
+        { x = draw tokens; index; c })
+      m.steps
+  in
+  let lead t = Nx.reshape (Array.append [| 1 |] (Nx.shape t)) t in
+  let stacked =
+    match List.map (Nx.Ptree.map step_tree (fun _ t -> lead t)) steps with
+    | [] -> invalid_arg "law_vmap: no step"
+    | s :: rest ->
+        List.fold_left
+          (Nx.Ptree.map2 step_tree (fun _ a b ->
+               Nx.concatenate ~axis:0 [ a; b ]))
+          s rest
+  in
+  let alone = List.map (step_of p) steps in
+  let mapped =
+    Rune.vmap Nx.Ptree.(step_tree @-> returns step_tree) (step_of p) stacked
+  in
+  List.iteri
+    (fun i alone ->
+      let at t = Nx.slice [ I i ] t in
+      let msg what = Printf.sprintf "step %d, %s" i what in
+      close ~msg:(msg "outputs") alone.x (at mapped.x);
+      close ~msg:(msg "keys") alone.c.keys (at mapped.c.keys);
+      close ~msg:(msg "values") alone.c.values (at mapped.c.values))
+    alone
 
 let test_cached_pieces () =
   Nx.Rng.with_key (Nx.Rng.key 49) @@ fun () ->
@@ -1508,6 +1680,11 @@ let () =
              prop ~count:100 "is Cache_index.extend's read under its mask"
                (Gen.with_pp pp_paged paged_gen)
                law_paths_agree;
+             prop ~count:100
+               "under Rune.vmap over steps of their own caches and indices is \
+                each step"
+               (Gen.with_pp pp_mapped mapped_gen)
+               law_vmap;
              test "is the composition of its pieces" test_cached_pieces;
              test "composed with sinks is invariant under chunking"
                test_cached_sinks_chunking;
