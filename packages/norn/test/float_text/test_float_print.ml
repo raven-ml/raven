@@ -10,46 +10,54 @@ open Windtrap
 module F = Norn_float_text.Float_text
 module P = Norn_float_text.Float_print
 
-(* [decimal s] is the sign and the decimal of the finite number [s] writes, as
-   [(d, e)] without leading or trailing zeros, [("0", 0)] for zero, read by
-   hand so that no C library takes part. *)
-let decimal s =
-  let neg = String.length s > 0 && s.[0] = '-' in
-  let s = if neg then String.sub s 1 (String.length s - 1) else s in
-  let m, x =
-    match String.index_opt s 'e' with
-    | None -> (s, 0)
-    | Some i ->
-        let t = String.sub s (i + 1) (String.length s - i - 1) in
-        (String.sub s 0 i, int_of_string t)
-  in
-  let frac =
-    match String.index_opt m '.' with
-    | None -> 0
-    | Some i -> String.length m - i - 1
-  in
-  let d = String.concat "" (String.split_on_char '.' m) in
+let sign x = if Float.sign_bit x then "-" else ""
+
+(* [c_g p x] is the finite [x] as C11 7.21.6.1p8 lays out [%.*g] of its [p]
+   significant digits, [F.significant]: "if P > X >= -4, the conversion is with
+   style f ... and precision P - (X + 1)", "otherwise ... with style e", whose
+   exponent "always contains at least two digits"; then "any trailing zeros are
+   removed from the fractional portion of the result" and "the decimal-point
+   character is removed if there is no fractional portion remaining". *)
+let c_g p x =
+  let p = max 1 p in
+  let d, e = F.significant p x in
   let n = String.length d in
-  let first = ref 0 and last = ref (n - 1) in
-  while !first < n && d.[!first] = '0' do
-    incr first
-  done;
-  while !last >= !first && d.[!last] = '0' do
-    decr last
-  done;
-  if !first > !last then (neg, ("0", 0))
-  else
-    ( neg,
-      (String.sub d !first (!last - !first + 1), x - frac + (n - 1 - !last)) )
+  let big_x = n - 1 + e in
+  let body =
+    if d = "0" then "0"
+    else if p > big_x && big_x >= -4 then
+      if e >= 0 then d ^ String.make e '0'
+      else if big_x >= 0 then
+        String.sub d 0 (big_x + 1)
+        ^ "."
+        ^ String.sub d (big_x + 1) (n - big_x - 1)
+      else "0." ^ String.make (-big_x - 1) '0' ^ d
+    else
+      let fraction = if n > 1 then "." ^ String.sub d 1 (n - 1) else "" in
+      Printf.sprintf "%c%se%c%02d" d.[0] fraction
+        (if big_x < 0 then '-' else '+')
+        (abs big_x)
+  in
+  sign x ^ body
 
-(* [exponent s] is the text after [e] in [s], if any. *)
-let exponent s =
-  match String.index_opt s 'e' with
-  | None -> None
-  | Some i -> Some (String.sub s (i + 1) (String.length s - i - 1))
+(* [c_f n x] is the finite [x] as C11 7.21.6.1p8 lays out [%.*f] of its
+   [F.decimals n]: "the number of digits after the decimal-point character is
+   equal to the precision", and with precision zero "no decimal-point character
+   appears". *)
+let c_f n x =
+  let n = max 0 n in
+  let d, e = F.decimals n x in
+  (* The value times [10^n], an integer of at least [n + 1] digits. *)
+  let scaled = if d = "0" then "0" else d ^ String.make (e + n) '0' in
+  let scaled =
+    String.make (max 0 (n + 1 - String.length scaled)) '0' ^ scaled
+  in
+  let int = String.length scaled - n in
+  sign x ^ String.sub scaled 0 int
+  ^ if n = 0 then "" else "." ^ String.sub scaled int n
 
-(* Inputs *)
-
+(* Finite floats of either sign, from every exponent, from short decimals and
+   from the subnormals. *)
 let finite =
   let open Gen in
   let magnitude =
@@ -74,140 +82,60 @@ let classes x =
   cover "from 1e-4 to 1e15" (x >= 1e-4 && x < 1e15);
   cover "from 1e15" (x >= 1e15)
 
-(* Laws *)
+let g =
+  group "g"
+    [
+      prop "lays out the significant digits as C's %g" ~count:2000
+        Gen.(pair finite (int_range (-1) 20))
+        (fun (x, p) ->
+          classes x;
+          equal string (c_g p x) (P.g p x));
+      cases "writes the stated texts"
+        ~id:(fun (p, x, _) -> Printf.sprintf "%d %h" p x)
+        [
+          (6, 135.5625, "135.562");
+          (6, 1e16, "1e+16");
+          (6, 1.5e-5, "1.5e-05");
+          (6, 1e-4, "0.0001");
+          (6, 123456., "123456");
+          (6, 1234567., "1.23457e+06");
+          (6, 1e100, "1e+100");
+          (4, 68405., "6.84e+04");
+          (0, 2.5, "2");
+          (17, 0.1, "0.10000000000000001");
+          (6, 0., "0");
+          (6, -0., "-0");
+          (6, -1.5, "-1.5");
+          (6, Float.nan, "nan");
+          (6, -.Float.nan, "nan");
+          (6, Float.infinity, "inf");
+          (6, Float.neg_infinity, "-inf");
+        ]
+        (fun (p, x, text) -> equal string text (P.g p x));
+    ]
 
-let signed_decimal = pair bool (pair string int)
+let f =
+  group "f"
+    [
+      prop "lays out the decimals as C's %f" ~count:2000
+        Gen.(pair finite (int_range (-1) 30))
+        (fun (x, n) ->
+          classes x;
+          equal string (c_f n x) (P.f n x));
+      cases "writes the stated texts"
+        ~id:(fun (n, x, _) -> Printf.sprintf "%d %h" n x)
+        [
+          (2, 0.125, "0.12");
+          (0, 0.5, "0");
+          (0, 1.5, "2");
+          (1, 2.25, "2.2");
+          (6, 0.1, "0.100000");
+          (2, -0.001, "-0.00");
+          (-1, 3.7, "4");
+          (2, 1e21, "1000000000000000000000.00");
+          (2, Float.nan, "nan");
+        ]
+        (fun (n, x, text) -> equal string text (P.f n x));
+    ]
 
-(* [flaw ~decimals s] is what breaks the positional form in the digits of
-   [s], its text after any sign and before any exponent, or [None]: an integer
-   part of digits that is [0] or starts with a nonzero digit, then a point and
-   digits only if a fraction follows. With [~decimals:n] the fraction has
-   exactly [n] digits, as %f writes it; without, it ends in a nonzero digit,
-   as %g writes it, and before an exponent the integer part is one nonzero
-   digit. *)
-let flaw ?decimals s =
-  let s =
-    if String.length s > 0 && s.[0] = '-' then
-      String.sub s 1 (String.length s - 1)
-    else s
-  in
-  let m, exp =
-    match String.index_opt s 'e' with
-    | None -> (s, false)
-    | Some i -> (String.sub s 0 i, true)
-  in
-  let int, frac =
-    match String.index_opt m '.' with
-    | None -> (m, None)
-    | Some i ->
-        let f = String.sub m (i + 1) (String.length m - i - 1) in
-        (String.sub m 0 i, Some f)
-  in
-  let digits t = t <> "" && String.for_all (fun c -> c >= '0' && c <= '9') t in
-  if not (digits int) then Some "integer part not digits"
-  else if int <> "0" && int.[0] = '0' then Some "leading zero"
-  else if exp && (String.length int <> 1 || int = "0") then
-    Some "not one nonzero digit before the exponent"
-  else
-    match (frac, decimals) with
-    | Some f, _ when not (digits f) -> Some "point without digits after it"
-    | Some f, Some n when String.length f <> n -> Some "not that many decimals"
-    | None, Some n when n > 0 -> Some "no decimals"
-    | Some f, None when f.[String.length f - 1] = '0' ->
-        Some "trailing zero after the point"
-    | _ -> None
-
-(* C's %g layout at precision [p]: an exponent of a sign and at least two
-   digits when the leading digit's exponent is below -4 or at least [p], the
-   positional form otherwise. *)
-let check_layout s p (d, e) =
-  let lead = String.length d - 1 + e in
-  let want =
-    if d <> "0" && (lead < -4 || lead >= p) then
-      Some (Printf.sprintf "%c%02d" (if lead < 0 then '-' else '+') (abs lead))
-    else None
-  in
-  equal ~msg:s (option string) want (exponent s);
-  equal ~msg:s (option string) None (flaw s)
-
-let test_g =
-  prop "g writes significant digits as %g does" ~count:2000
-    Gen.(pair finite (int_range 1 20))
-    (fun (x, p) ->
-      classes x;
-      let s = P.g p x in
-      let want = F.significant p x in
-      equal ~msg:s signed_decimal (Float.sign_bit x, want) (decimal s);
-      check_layout s p want)
-
-let test_f =
-  prop "f writes decimals as %f does" ~count:2000
-    Gen.(pair finite (int_range 0 30))
-    (fun (x, n) ->
-      classes x;
-      let s = P.f n x in
-      equal ~msg:s signed_decimal
-        (Float.sign_bit x, F.decimals n x)
-        (decimal s);
-      equal ~msg:s (option string) None (flaw ~decimals:n s))
-
-(* Stated cases *)
-
-let written =
-  [
-    ("g 135.5625", P.g 6 135.5625, "135.562");
-    ("g 1e16", P.g 6 1e16, "1e+16");
-    ("g 1.5e-5", P.g 6 1.5e-5, "1.5e-05");
-    ("g 1e-4", P.g 6 1e-4, "0.0001");
-    ("g 123456", P.g 6 123456., "123456");
-    ("g 1234567", P.g 6 1234567., "1.23457e+06");
-    ("g 1e100", P.g 6 1e100, "1e+100");
-    ("g 4 68405", P.g 4 68405., "6.84e+04");
-    ("g 0 2.5", P.g 0 2.5, "2");
-    ("g 17 0.1", P.g 17 0.1, "0.10000000000000001");
-    ("g 0", P.g 6 0., "0");
-    ("g -0", P.g 6 (-0.), "-0");
-    ("g -1.5", P.g 6 (-1.5), "-1.5");
-    ("g nan", P.g 6 Float.nan, "nan");
-    ("g -nan", P.g 6 (-.Float.nan), "nan");
-    ("g inf", P.g 6 Float.infinity, "inf");
-    ("g -inf", P.g 6 Float.neg_infinity, "-inf");
-    ("f 2 0.125", P.f 2 0.125, "0.12");
-    ("f 0 0.5", P.f 0 0.5, "0");
-    ("f 0 1.5", P.f 0 1.5, "2");
-    ("f 1 2.25", P.f 1 2.25, "2.2");
-    ("f 6 0.1", P.f 6 0.1, "0.100000");
-    ("f 2 -0.001", P.f 2 (-0.001), "-0.00");
-    ("f -1 3.7", P.f (-1) 3.7, "4");
-    ("f 2 1e21", P.f 2 1e21, "1000000000000000000000.00");
-    ("f 2 nan", P.f 2 Float.nan, "nan");
-  ]
-
-let test_written =
-  cases "written" ~id:(fun (name, _, _) -> name) written (fun (_, got, want) ->
-      equal string want got)
-
-(* The form check itself, on texts that are not in the form. *)
-let malformed =
-  [
-    (".5", None, "integer part not digits");
-    ("0012", None, "leading zero");
-    ("15.", None, "point without digits after it");
-    ("1.50", None, "trailing zero after the point");
-    ("12e+05", None, "not one nonzero digit before the exponent");
-    ("0.1", Some 2, "not that many decimals");
-    ("1", Some 1, "no decimals");
-  ]
-
-let test_malformed =
-  cases "form check" ~id:(fun (s, _, _) -> s) malformed
-    (fun (s, decimals, want) ->
-      equal (option string) (Some want) (flaw ?decimals s))
-
-let () =
-  exit
-    (run "norn float print"
-       [
-         group "laws" [ test_g; test_f ];
-         group "cases" [ test_written; test_malformed ];
-       ])
+let () = exit (run "norn float print" [ g; f ])
