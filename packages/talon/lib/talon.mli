@@ -626,7 +626,7 @@ module Column : sig
 
       Raises [Invalid_argument] if [dt] is not [c]'s storage dtype ({!Nx.cast}
       converts the result), if [c] is not stored one element per row, or if [c]
-      has a null; under [Rune.jit], for a traced validity
+      has a null; under [Rune.jit] and [Rune.vmap], for a traced validity
       ({!Query.section-compiled}), the null raises when the call returns. *)
 
   val validity : t -> Nx.host Nx.bit_t option
@@ -791,9 +791,9 @@ val take : Nx.host Nx.int64_t -> t -> t
     [take (Nx.Rng.permutation ~key (rows t)) t] shuffles every column.
 
     Raises [Invalid_argument] if [indices] is not 1-D or holds an index outside
-    \[[0];[rows t - 1]\]; under [Rune.jit], for traced [indices]
-    ({!Query.section-compiled}), the index outside raises when the call
-    returns. *)
+    \[[0];[rows t - 1]\]; under [Rune.jit] and [Rune.vmap], for traced [indices]
+    ({!Query.section-compiled}), the index outside raises when the call returns.
+*)
 
 val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
 (** [to_tensor dt names t] is the [(rows t, List.length names)] matrix whose
@@ -802,9 +802,9 @@ val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
     The columns are numeric or boolean, and have no null.
 
     Raises [Invalid_argument] if a name is not a column of [t], if a column is
-    neither numeric nor boolean, or has a null; under [Rune.jit], for a traced
-    validity ({!Query.section-compiled}), the null raises when the call
-    returns. *)
+    neither numeric nor boolean, or has a null; under [Rune.jit] and
+    [Rune.vmap], for a traced validity ({!Query.section-compiled}), the null
+    raises when the call returns. *)
 
 val to_dense :
   ('a, 'b) Nx.dtype ->
@@ -1067,7 +1067,8 @@ module Expr : sig
 
       Expressions are data. Building one reads nothing; a verb binds it to its
       input schema when the verb is applied, checks it and infers its type,
-      reporting every problem at once. Write them inside [Expr.( … )], where the
+      reporting every problem at once. What binding allocates does not depend on
+      the expressions that are live. Write them inside [Expr.( … )], where the
       operators below shadow OCaml's.
 
       {b Types.} Whatever a value meets fixes its type:
@@ -1734,7 +1735,9 @@ module Expr : sig
   (** {1:ocaml OCaml values}
 
       These functions compute in OCaml, once per row, at native speed. They must
-      be pure; an exception they raise propagates from the run. *)
+      be pure; an exception they raise propagates from the run. Over traced
+      columns ({!Query.section-compiled}) they raise [Invalid_argument] at the
+      trace, since they read each value. *)
 
   val const : 'a -> ('a, 's) t
   (** [const v] is [v] on every row. It is typed by what it meets, an
@@ -2952,7 +2955,9 @@ module Query : sig
       rounding. Otherwise it raises [Invalid_argument] at the trace with
       nx's message for the read, such as
       [Nx.positions: the value is traced by Rune.jit], and its doc says so.
-      Under [Rune.grad] every step runs, {!values} and display aside. *)
+      Under [Rune.grad] every step runs, {!values} and display aside, and an
+      {!aggregate} with a {!Expr.var} or {!Expr.std} raises, as over traced
+      columns, for a differentiated batch that follows two that are not. *)
 
   (** {1:optimizing Optimizing} *)
 
@@ -3007,7 +3012,8 @@ module Query : sig
       - an [aggregate] with keys, when the conjunct reads only keys and none of
         their types holds floats, since [-0.] and [0.] are one key with two
         values;
-      - an [append], into both inputs;
+      - an [append], into both inputs, when each stores the columns the conjunct
+        reads at the [append]'s types;
       - a [join] whose [~each_left] and [~each_right] are [Any], on a condition
         other than {!Join.position}: into the left input when the conjunct reads
         only left columns and the join is [Inner], [Left], [Semi] or [Anti], and
@@ -3091,7 +3097,10 @@ module Query : sig
       by key identity row by row, and sources physically, with equal requests
       (see {!pp}). Equal queries have equal schemas. It compares each pair of
       steps once, so a step that a plan reaches from several places costs
-      once. *)
+      once.
+
+      Raises [Invalid_argument] over traced tables ({!section-compiled}), as
+      {!Talon.equal} does. *)
 
   val pp : Format.formatter -> t -> unit
   (** [pp ppf q] formats [q]'s plan, which reads no data: the line [query →] and
@@ -3139,9 +3148,10 @@ module Query : sig
         └ #1
       v}
       A step too long for the margin continues on the next lines, indented under
-      it. Lines fit the formatter's margin counted from column 0, since a
-      formatter does not tell its current indentation: inside an indented box
-      they overrun the margin by that indentation. *)
+      it. The lines of steps fit the formatter's margin counted from column 0,
+      since a formatter does not tell its current indentation: inside an
+      indented box they overrun the margin by that indentation. The first line
+      holds the schema whole, whatever the margin. *)
 end
 
 module Kit : sig
