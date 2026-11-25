@@ -9674,7 +9674,8 @@ let looped =
 (* Cases each run reaches, which draws reach in 5 to 14 % of the cases: a
    complex64 Exp and Pow of 2^34 elements, past the call's budget; a scan
    stepping by one, its chunks of 16 threads; a sum of rows of 2^18 terms under
-   the least budget, merged apart. *)
+   the least budget, merged apart. And one draws reach too rarely: a map under a
+   budget of 0.1 us, below a launch's fixed cost, which no group fits. *)
 let looped_examples =
   let c ?(lbudget = Library) ?(lstep = false) family kind ldt lshape =
     {
@@ -9693,6 +9694,7 @@ let looped_examples =
     c 0 3 3 [| 1 lsl 17; 1 lsl 17 |];
     c ~lstep:true 2 0 0 [| 3; 5000 |];
     c ~lbudget:Least 1 0 0 [| 2; 1 lsl 18 |];
+    c ~lbudget:(Bound 1e-7) 0 0 0 [| 1000 |];
   ]
 
 (* The plan of [c]'s call over broadcast host arrays: a map of a kind of one
@@ -14482,9 +14484,11 @@ let law_cut_pieces c =
     && Array.exists (fun (x : Pc.box) -> x.len <> p.boxes.(0).len) p.boxes)
 
 (* A box past w of a's three lines, its whole cast within w / 2, beside one line
-   of b past what w leaves. *)
+   of b past what w leaves; and boxes of whole batch elements along an axis of
+   scale blocks of 2, of which w holds 3 elements' casts, cut to ranges of 2 and
+   a last of 1. *)
 let pcase_examples =
-  let axis extent a b = { Pc.extent; a; b; step = 1 } in
+  let axis ?(step = 1) extent a b = { Pc.extent; a; b; step } in
   [
     {
       paxes = [| axis 3 true false; axis 2 false true |];
@@ -14493,6 +14497,14 @@ let pcase_examples =
       pa = 5;
       pb = 40;
       pw = 30;
+    };
+    {
+      paxes = [| axis ~step:2 7 true true |];
+      pbatch = 1;
+      prows = 0;
+      pa = 10;
+      pb = 10;
+      pw = 60;
     };
   ]
 
