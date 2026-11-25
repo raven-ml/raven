@@ -65,7 +65,8 @@ val v :
 
     [v] runs [gen] once, answering each continuous site with its bijector's
     image of zero coordinates, and checks shapes but no domain. An
-    [Invalid_argument] or [Failure] that [gen] raises is raised again as
+    [Invalid_argument] or [Failure] that [gen] raises is raised again, with the
+    same constructor, as
     [Norn_model.v: the model raised after N sites (...): message], naming the
     sites learned so far; any other exception propagates unchanged, with its
     backtrace. Raises [Invalid_argument] naming the site if a sampled value is
@@ -87,7 +88,8 @@ val sample : ('x, 'f, 'd) Norn.Dist.t -> 'x
 val factor : (float, 'f, 'd) Nx.t -> unit
 (** [factor l] adds [l] to the log likelihood. Axis 0 of [l] indexes its points;
     a scalar is one point. Interpreters that simulate ignore it, so its data
-    take no part in {!simulate} and {!predict}. *)
+    take no part in {!simulate} and {!predict}. Outside an interpreter it raises
+    [Effect.Unhandled]. *)
 
 (** {1:coords Coordinates} *)
 
@@ -99,20 +101,29 @@ type 'p coords = private 'p
     coordinates as a structure. *)
 
 val coords : ('p, 'y, 'f, 'd) t -> ('p coords, 'd) Nx.Ptree.t
-(** [coords m] is the structure of [m]'s coordinates: [m]('s, 'd) latent structure. *)
+(** [coords m] is the structure of [m]'s coordinates. *)
 
 val constrain : ('p, 'y, 'f, 'd) t -> 'p coords -> 'p
 (** [constrain m c] is the latent values at the coordinates [c]. It runs the
-    model, so a bijector that depends on other sites sees their values. *)
+    model, so a bijector that depends on other sites sees their values.
+
+    Raises [Invalid_argument] naming the site if a tensor of [c] does not have
+    its site's coordinate shape. *)
 
 val unconstrain : ('p, 'y, 'f, 'd) t -> 'p -> 'p coords
-(** [unconstrain m p] is the coordinates of the latent values [p]. *)
+(** [unconstrain m p] is the coordinates of the latent values [p].
+
+    Raises [Invalid_argument] naming the site if a tensor of [p] does not have
+    its site's shape. *)
 
 (** {1:batched Batched interpreters}
 
     These take and give positions: values with a leading chain axis. Each maps
     the single-instance interpretation with [Rune.vmap] over that axis, so the
-    rows of a density are independent by construction. *)
+    rows of a density are independent by construction. Those that take a
+    position raise [Invalid_argument] naming the site if a tensor of the
+    position does not have the position's chain axis followed by its site's
+    coordinate shape. *)
 
 val log_density : ('p, 'y, 'f, 'd) t -> 'y -> ('p coords, 'f, 'd) Norn.density
 (** [log_density m y] is the log density of the coordinates conditioned on [y]:
@@ -179,7 +190,11 @@ val init :
      poisson, {0, 1, 2, ...}; the terms are rate -1.2, counts -inf]. A site
     whose parameter is outside its domain is named with the parameter, as in
     [Norn_model.init: no finite log density in 100 candidates; at the last, site
-     theta: normal: scale at [3] is -1, not in (0, inf)]. *)
+     theta: normal: scale at [3] is -1, not in (0, inf)]. A site whose
+    coordinates saturate is named so, as in
+    [Norn_model.init: no finite log density in 100 candidates; at the last, site
+     p has log density -inf: its coordinates saturate: the log-determinant is
+     -inf; the terms are ...]. *)
 
 (** {1:single Single-instance interpreters}
 
@@ -192,10 +207,11 @@ val log_joint : ('p, 'y, 'f, 'd) t -> 'y -> 'p -> (float, 'f, 'd) Nx.t
 
     Raises [Invalid_argument] if a parameter the model computes is outside its
     domain, naming the site, as in
-    [Norn_model.log_joint: site theta: normal: scale at [3] is -1, not in
-     (0, inf)], except where the log density accumulated before the site is
-    already [-inf]: there the site's term is [-inf]. {!pointwise} raises the
-    same way. *)
+    [Norn_model.log_joint: site theta: normal: scale at [3] is -1, not in (0,
+     inf)], except where the log density accumulated before the site is already
+    [-inf]: there the site's term is [-inf]. {!pointwise} raises the same way
+    for a parameter of an observed site, where the likelihood accumulated before
+    it is not already [-inf]. *)
 
 val pointwise : ('p, 'y, 'f, 'd) t -> 'y -> 'p -> (float, 'f, 'd) Nx.t
 (** [pointwise m y p] is the log likelihood of every point, in the order the
@@ -209,7 +225,9 @@ val simulate : ('p, 'y, 'f, 'd) t -> 'd Nx.Rng.key -> 'p * 'y
     data. Site [i] draws from [Nx.Rng.fold_in k i]. *)
 
 val predict : ('p, 'y, 'f, 'd) t -> 'd Nx.Rng.key -> 'p -> 'y
-(** [predict m k p] is data drawn given the latent values [p]. *)
+(** [predict m k p] is data drawn given the latent values [p]. Observed site [i]
+    draws from [Nx.Rng.fold_in k i], as in {!simulate}, so
+    [predict m k (fst (simulate m k))] is [snd (simulate m k)]. *)
 
 (** {1:transformations Transformations of a model} *)
 
@@ -246,8 +264,8 @@ val terms :
   (string * (float, 'f, 'd) Nx.t) list * (float, 'f, 'd) Nx.t
 (** [terms m y c] is each site's term of [log_density m y] at the position [c],
     of shape [[chain]], by name in the order the model performs them, then the
-    factors' sum, zeros when there is none. *)
+    factors' sum, zeros when there is none. A fixed site's term is zero. *)
 
 val pp : Format.formatter -> ('p, 'y, 'f, 'd) t -> unit
 (** [pp ppf m] formats [m]'s site table: each site's name, role, family, shape,
-    points and coordinates. *)
+    points, support and coordinates. *)
