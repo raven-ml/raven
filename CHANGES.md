@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_csv.format`, `Talon_csv.sniff` and `Talon_csv.file` raise on a null
+  token that starts with a UTF-8 byte order mark. A one-column file that
+  started with such a token read its first null back as text.
 - `Expr.Str.regex` names the first byte of a pattern that is not valid
   UTF-8, as it does for every other refusal.
 - `Expr.Str.regex` reads a property name or value without an initial `is`,

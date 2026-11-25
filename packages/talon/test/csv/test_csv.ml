@@ -595,6 +595,11 @@ let formats =
           ("a null token holding the quote", ',', '"', [ "\"x" ], two);
           ("a null token holding a line feed", ',', '"', [ "a\nb" ], two);
           ("a null token holding a carriage return", ',', '"', [ "\r" ], two);
+          ( "a null token that starts with a byte order mark",
+            ',',
+            '"',
+            [ "\xEF\xBB\xBFNA" ],
+            two );
         ]
         (fun (_, sep, quote, nulls, columns) ->
           raises_match (Exn.invalid_arg ~sub:"Talon_csv.format") (fun () ->
@@ -860,9 +865,10 @@ let sniffing =
             (v [ ("x", Column.of_options Type.int64 [| None; Some 1; None |]) ])
             (Error.get_ok (read (sniffed ~nulls:[ "NA"; "-" ] s) s)));
       cases
-        "raises on a null token holding a separator, the quote or a line break"
-        ~id:(Printf.sprintf "%S") [ "a,b"; "a\tb"; "a;b"; "a|b"; "\""; "\n" ]
-        (fun t ->
+        "raises on a null token holding a separator, the quote or a line \
+         break, or starting with a byte order mark"
+        ~id:(Printf.sprintf "%S")
+        [ "a,b"; "a\tb"; "a;b"; "a|b"; "\""; "\n"; "\xEF\xBB\xBFNA" ] (fun t ->
           raises_match (Exn.invalid_arg ~sub:"Talon_csv.sniff") (fun () ->
               Csv.sniff ~nulls:[ t ] (Reader.of_string "a\n")));
       test "raises on rows below 1" (fun () ->

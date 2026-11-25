@@ -59,7 +59,11 @@ let check_nulls fn ~seps ~quote nulls =
       then
         invalid fn
           "the null token %s holds a separator, the quote or a line break"
-          (quoted t))
+          (quoted t);
+      (* A read skips a byte order mark at the start of the input, where a
+         one-column file may write a null token. *)
+      if String.starts_with ~prefix:"\xEF\xBB\xBF" t then
+        invalid fn "the null token %s starts with a byte order mark" (quoted t))
     nulls
 
 let format ?(sep = ',') ?(quote = '"') ?(header = true) ?(nulls = []) columns =

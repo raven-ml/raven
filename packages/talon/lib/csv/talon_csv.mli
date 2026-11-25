@@ -113,7 +113,8 @@ val format :
     same name or a name is not valid UTF-8, if a type is not one CSV reads
     ({{!values}values}), if [sep] or [quote] is a line feed, a carriage return
     or a byte outside ASCII, if [sep] equals [quote], or if a null token holds
-    the separator, the quote, a line feed or a carriage return. *)
+    the separator, the quote, a line feed or a carriage return, or starts with a
+    UTF-8 byte order mark. *)
 
 val with_type : string -> Talon.Type.any -> format -> format
 (** [with_type name t f] is [f] with the column [name] read as [t]. The type is
@@ -162,7 +163,8 @@ val sniff :
     where the input fails.
 
     Raises [Invalid_argument] if [rows < 1], or if a null token holds the quote,
-    a line break or one of the separators sniffing chooses from. *)
+    a line break or one of the separators sniffing chooses from, or starts with
+    a UTF-8 byte order mark. *)
 
 (** {1:reading Reading} *)
 
