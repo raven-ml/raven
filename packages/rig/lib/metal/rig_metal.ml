@@ -722,6 +722,9 @@ let grow d =
                launches' parameters start on"
               (-at)))
 
+(* Its trim frees in C what the arena grew into. *)
+let retire _ = ()
+
 module Driver = struct
   type nonrec t = t
   type nonrec region = region
@@ -748,6 +751,7 @@ module Driver = struct
   let sleep = sleep
   let stop = stop
   let grow = grow
+  let retire = retire
 end
 
 (* Packed once: a pack copies Driver unless it lists the signature's items

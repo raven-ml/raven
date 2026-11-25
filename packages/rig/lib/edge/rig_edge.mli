@@ -18,14 +18,15 @@
     calls, such as files, implements {!Io} instead.
 
     rig reads a device's {!type-facts} once, when the device opens. It then
-    calls the driver's OCaml functions to allocate and map memory, to load
-    code and to grow its queues, and six C functions of the driver to run work,
-    read its times and shrink its queues ({!section-calls}). [room] returns
-    whether a submission's parts fit the device's queues, [submit] places them
-    on the queues as the work of the next value of the device's timeline, and
-    [commit] lets that work run. [settle] writes the times of work that ran,
-    [measures] its counters, and [trim] gives back what the queues grew into.
-    A driver may leave any of these three [NULL].
+    calls the driver's OCaml functions to allocate and map memory, to load code,
+    to grow its queues and to give back what they no longer use, and six C
+    functions of the driver to run work, read its times and shrink its queues
+    ({!section-calls}). [room] returns whether a submission's parts fit the
+    device's queues, [submit] places them on the queues as the work of the next
+    value of the device's timeline, and [commit] lets that work run. [settle]
+    writes the times of work that ran, [measures] its counters, and [trim] gives
+    back what the queues grew into. A driver may leave any of these three
+    [NULL].
 
     A device reports progress in its {e timeline word}, eight bytes of memory
     that hold a value of the device's timeline. [Rig]'s preamble and Timelines
@@ -315,15 +316,18 @@ type 'region facts = {
     {- [trim] gives back what the device's growths made ({!Driver.val-grow}),
        whether a [room] put it into the queues or not, so that the queues
        hold what they held at the open, and a later [room] answers
-       [RIG_GROW] for parts that need a growth again. Memory that work on
-       the queues still reads goes once that work completes, and [trim]
-       never waits for it. rig calls it at a {!Rig.free_cache} of the
-       device. It never calls it once the device is lost, nor while a
-       submission is between a [room] that answered [RIG_GROW] and the end
-       of its submit, so a growth that answered [Grown] stays for its
-       [room]. [trim] may be [NULL]: rig then gives back none of the
-       driver's growth at a {!Rig.free_cache}, and the driver's interface
-       states how long its growth stays.}}
+       [RIG_GROW] for parts that need a growth again. A driver may keep part
+       of its growth past [trim]; its interface states which part and for how
+       long. Memory that work on the queues still reads goes once that work
+       completes, and [trim] never waits for it; a driver that gives memory
+       back from OCaml does it at {!Driver.val-retire}, which rig calls after
+       [trim]. rig calls [trim] at a {!Rig.free_cache} of the device. It
+       never calls it once the device is lost, nor while a submission is
+       between a [room] that answered [RIG_GROW] and the end of its submit,
+       so a growth that answered [Grown] stays for its [room]. [trim] may be
+       [NULL]: rig then gives back none of the driver's growth at a
+       {!Rig.free_cache}, and the driver's interface states how long its
+       growth stays.}}
 
     rig calls the six one at a time for each device, with [room] before
     each [submit]. They must call no function of the OCaml runtime and read
@@ -497,13 +501,13 @@ type grown =
     Another exception that escapes {!Driver.val-alloc}, {!Driver.val-free},
     {!Driver.val-map_peer}, {!Driver.val-map_host}, {!Driver.val-dma},
     {!Driver.flush}, {!Driver.val-image}, the function of a [Place],
-    {!Driver.val-entry}, {!Driver.val-grow} or {!Driver.unload} on a device
-    that is not lost also loses it, with the exception's text, since the
-    call may have left the driver's state half changed. An
-    [Invalid_argument] from [entry] loses nothing. Neither does any
-    exception from {!Driver.val-facts}, {!Driver.locate} or {!Driver.peer},
-    or one other than [Fault] from {!Driver.val-capacity},
-    {!Driver.val-prepare}, {!Driver.sleep} or {!Driver.val-signaled}.
+    {!Driver.val-entry}, {!Driver.val-grow}, {!Driver.val-retire} or
+    {!Driver.unload} on a device that is not lost also loses it, with the
+    exception's text, since the call may have left the driver's state half
+    changed. An [Invalid_argument] from [entry] loses nothing. Neither does any
+    exception from {!Driver.val-facts}, {!Driver.locate} or {!Driver.peer}, or
+    one other than [Fault] from {!Driver.val-capacity}, {!Driver.val-prepare},
+    {!Driver.sleep} or {!Driver.val-signaled}.
 
     An asynchronous exception ([Rig]'s Errors section) can end any OCaml
     code of the driver, and rig calls {!Driver.val-stop},
@@ -722,6 +726,16 @@ module type Driver = sig
       submission asks at most four times, as an allocation tries: after the
       last, a [Short n] raises [Rig.Out_of_memory] with [n]. A driver whose
       [room] never answers [RIG_GROW] is never asked. Counted. *)
+
+  val retire : t -> unit
+  (** [retire d] gives back the memory that [trim] or a [room] took out of [d]'s
+      queues, or a growth made that no [room] put in them, and that no work of
+      [d] still reads, as [d]'s word shows. It never waits for [d]'s work:
+      memory that work still reads stays for a later [retire], or for a time the
+      driver's interface states. rig calls it at each {!Rig.free_cache} of [d],
+      after [trim], while other threads may submit to [d], run its growths and
+      call any of its functions, [retire] included, and never once [d] is lost.
+      A driver with nothing to give back does nothing. Counted. *)
 
   (** {1:timeline Timeline} *)
 

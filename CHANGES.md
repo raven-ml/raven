@@ -79,6 +79,12 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig.free_cache` gives back the segment and launch rings an NV device grew
+  for large submissions, which stayed until it stopped, and puts the device
+  back on the 1 MiB rings it opened with.
+- Every `Rig_edge.Driver` must now provide `retire`, which gives back what a
+  trim or a room took out of the queues, or a growth made that none put in
+  them, once no work reads it; rig calls it at `Rig.free_cache` after `trim`.
 - `Rig.free_cache` gives back a CUDA device's chains, the graphs its runs of
   launches play through, which stayed until the device stopped. Their host
   memory returns to CUDA, which may keep their GPU memory for later graphs.

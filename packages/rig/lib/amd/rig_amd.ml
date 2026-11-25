@@ -1843,6 +1843,9 @@ let grow g =
             then raise (Fault "no host memory for a growth's record");
             Grown)
 
+(* What a growth replaced goes back at the next growth. *)
+let retire _ = ()
+
 (* Loss *)
 
 (* A queue the path could not destroy may still run, so its memory stays and its

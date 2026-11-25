@@ -164,39 +164,46 @@ val capability : t -> Rig_nv_abi.Gpu.t
     whoever wrote it.
 
     Each channel's ring holds 262,144 entries when {!make} allocates the
-    channel. A [Words] part of [n] words takes [1 + n/2] of them, and none
-    if [n] is [0]; launches and copies take none of their own. The driver's
-    own words go into segments of the channel's segment ring, and each
-    launch's descriptor and constant bank 0 into the compute channel's
-    launch ring. [rig_nv_room] returns [RIG_GROW] for parts that exceed the
-    segment ring, the launch ring or a channel's ring. The growth
-    ({!val-grow}) makes each such segment or launch ring anew, of the least
-    power of two of bytes, at least a page, that holds twice what the parts
-    take, and the next submission that needs it starts on it. A ring a
-    growth made goes back, once a later growth replaced it, at the device's
-    next growth or allocation after the device has reached the work of the
-    submissions that used it. The 1 MiB rings the device opened with stay
-    until it stops.
+    channel. A [Words] part of [n] words takes [1 + n/2] of them, and none if
+    [n] is [0]; launches and copies take none of their own. The driver's own
+    words go into segments of the channel's segment ring, and each launch's
+    descriptor and constant bank 0 into the compute channel's launch ring.
+    [rig_nv_room] returns [RIG_GROW] for parts that exceed the segment ring, the
+    launch ring or a channel's ring. The growth ({!val-grow}) makes each such
+    segment or launch ring anew, of the least power of two of bytes, at least a
+    page, that holds twice what the parts take, and the next submission that
+    needs it starts on it. A {!Rig.free_cache} gives back the rings a growth
+    made that no submission started on. Where the device has reached the work
+    submitted before a ring last grew, it also puts that ring back to the 1 MiB
+    one the device opened with, which stays until the device stops. The next
+    submission starts on it, and one whose parts exceed it grows the ring again.
+    A ring a growth made goes back, once a later growth or a {!Rig.free_cache}
+    replaced it, at the device's next growth, allocation or {!Rig.free_cache}
+    after the device has reached the work of the submissions that used it.
 
-    The RM fixes the entries of a channel's ring when it allocates the
-    channel, so for parts that exceed a channel's ring the growth makes the
-    device's two channels anew, in a new channel group, as {!make} does:
-    each ring holds the least power of two of entries that holds twice what
-    the parts take, at most [2{^31}], and no fewer than the newest
-    channels'. Once a submission needs the new channels, every submission
-    on the device waits until the device has reached every value submitted
-    before it; the next then starts on them, and places there the words a
-    new channel owes before its parts: the engines' binding, the windows
-    and the local memory. The channels they replace go back at the
-    device's next growth or allocation. A growth that the path or the RM
-    lacks memory or another resource for answers [Short]
-    ({!Rig_edge.type-grown}), and the device keeps its channels. Where the
-    path's RM frees no object ({!type-rm}'s [free] is [None]), the channels
-    a growth replaces stay until the device stops. Each growth at least
-    doubles a channel's ring, from 262,144 entries to at most [2{^31}], so
-    a device keeps at most 26 replaced sets: their rings, which take less
-    than twice the largest of each channel, and the objects the RM made for
-    each set's channels.
+    The RM fixes the entries of a channel's ring when it allocates the channel,
+    so for parts that exceed a channel's ring the growth makes the device's two
+    channels anew, in a new channel group, as {!make} does: each ring holds the
+    least power of two of entries that holds twice what the parts take, at most
+    [2{^31}], and no fewer than the newest channels'. Once a submission needs
+    the new channels, every submission on the device waits until the device has
+    reached every value submitted before it; the next then starts on them, and
+    places there the words a new channel owes before its parts: the engines'
+    binding, the windows and the local memory. The channels they replace go back
+    at the device's next growth, allocation or {!Rig.free_cache}. A
+    {!Rig.free_cache} keeps the channels the device runs on, until a later
+    growth replaces them or the device stops: channels with fewer entries would
+    make the next submission wait until the device reached every value submitted
+    before it. Where the path's RM frees objects, it gives back the channels a
+    growth made that no submission started on, unless a submission waits to
+    start on them. A growth that the path or the RM lacks memory or another
+    resource for answers [Short] ({!Rig_edge.type-grown}), and the device keeps
+    its channels. Where the path's RM frees no object ({!type-rm}'s [free] is
+    [None]), the channels a growth replaces stay until the device stops. Each
+    growth at least doubles a channel's ring, from 262,144 entries to at most
+    [2{^31}], so a device keeps at most 26 replaced sets: their rings, which
+    take less than twice the largest of each channel, and the objects the RM
+    made for each set's channels.
 
     The driver holds at most 32,768 values in flight, a number it chooses
     for its stamp ring and its marks of each channel's work: [rig_nv_room]
@@ -333,18 +340,24 @@ val capability : t -> Rig_nv_abi.Gpu.t
     the compute engine's instruction cache before its parts, since a cubin
     may load where another one's code was.
 
-    {!entry} returns the address of the kernel's first instruction; the
-    image starts there less the kernel's [code] offset
+    {!entry} returns the address of the kernel's first instruction; the image
+    starts there less the kernel's [code] offset
     ({!Rig_nv_abi.Cubin.type-kernel}). Its [params] are the kernel's
     [params_bytes], and its [threads] the launch's
     {!Rig_nv_abi.Launch.max_threads}. It sets the function up for launch
-    ({!Rig_nv_abi.Launch.make}) and grows the compute channel's local memory
-    to serve it ({!Rig_nv_abi.Gpu.t.local}). It answers [No_memory n],
-    having made nothing, if the GPU has no memory for the [n] bytes of that
-    local memory, and raises [Invalid_argument] with the reason if the
-    function takes more than a launch can, such as a constant bank 0 of more
-    than 64 KiB. {!unload} frees the launch
-    descriptors of the image's functions, and leaves its code region to
+    ({!Rig_nv_abi.Launch.make}) and grows the compute channel's local memory to
+    serve it ({!Rig_nv_abi.Gpu.t.local}). The local memory stays at its largest
+    until the device stops, through a {!Rig.free_cache} too. One a larger one
+    replaced goes back, once the device has reached the work that used it, at
+    the first {!entry} that sets a function up or call of
+    {!Rig_nv_abi.Gpu.t.local} after a submission took the larger one; where the
+    device had not reached that work then, at a later such call, allocation or
+    {!Rig.free_cache}. With no such call after that submission, it stays until
+    the device stops. It answers [No_memory n], having made nothing, if the GPU
+    has no memory for the [n] bytes of that local memory, and raises
+    [Invalid_argument] with the reason if the function takes more than a launch
+    can, such as a constant bank 0 of more than 64 KiB. {!unload} frees the
+    launch descriptors of the image's functions, and leaves its code region to
     rig. *)
 
 (** {1:faults Faults and stopping}

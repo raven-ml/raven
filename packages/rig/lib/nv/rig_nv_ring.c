@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The writer: rig_nv_room and rig_nv_submit.
+/* The writer: rig_nv_room, rig_nv_submit and rig_nv_trim.
 
    A submission of value v, on each channel it uses, is a run of ring
    entries. The driver's own words go into segments of its segment ring,
@@ -430,6 +430,37 @@ static void retire(struct device *d, struct ring *r, uint64_t until) {
   }
 }
 
+void rig_nv_put_ring(struct device *d, int i, const struct ring *r,
+                     uint64_t from) {
+  if (i < CHANNELS) {
+    struct channel *c = &d->ch[i];
+    c->segments = r->host;
+    c->segments_gpu = r->gpu;
+    c->size = r->size;
+    c->written = c->reclaimed = c->open = c->open_words = 0;
+    c->segments_from = from;
+    return;
+  }
+  struct channel *c = &d->ch[COMPUTE];
+  c->launches = r->host;
+  c->launches_gpu = r->gpu;
+  c->launches_size = r->size;
+  c->bar = r->bar;
+  c->launched = c->landed = 0;
+  c->launches_from = from;
+}
+
+/* The size of ring [i] of [d], as [grown] numbers them. */
+static uint64_t ring_size(const struct device *d, int i) {
+  return i < CHANNELS ? d->ch[i].size : d->ch[COMPUTE].launches_size;
+}
+
+/* The first value whose work ring [i] of [d] holds, as [grown] numbers
+   them. */
+static uint64_t ring_from(const struct device *d, int i) {
+  return i < CHANNELS ? d->ch[i].segments_from : d->ch[COMPUTE].launches_from;
+}
+
 /* Installs the rings a growth made that [d]'s rings are smaller than, for
    the work of the next value on. A ring one
    replaces is retired once the work before that value is done, as earlier
@@ -440,27 +471,43 @@ static void install(struct device *d) {
   for (int i = 0; i <= CHANNELS; i++) {
     struct ring *g = atomic_exchange(&d->grown[i], NULL);
     if (g == NULL) continue;
-    struct channel *c = &d->ch[i < CHANNELS ? i : COMPUTE];
-    if (i < CHANNELS && g->size > c->size) {
-      c->segments = g->host;
-      c->segments_gpu = g->gpu;
-      c->size = g->size;
-      c->written = c->reclaimed = c->open = c->open_words = 0;
-      c->segments_from = v;
-    } else if (i == CHANNELS && g->size > c->launches_size) {
-      c->launches = g->host;
-      c->launches_gpu = g->gpu;
-      c->launches_size = g->size;
-      c->bar = g->bar;
-      c->launched = c->landed = 0;
-      c->launches_from = v;
-    } else {
+    if (g->size <= ring_size(d, i)) {
       retire(d, g, 0);
       continue;
     }
+    rig_nv_put_ring(d, i, g, v);
     struct ring *replaced = atomic_exchange(&d->current[i], g);
     if (replaced != NULL) retire(d, replaced, v - 1);
   }
+}
+
+/* A ring installed holds the work from its install's value on, and the
+   ring the device opened with only work before the latest install. Once
+   [d] reached the value before that install, no work reads the opening
+   ring, and the next value starts on it; the installed ring is retired
+   after the last value submitted, which may still read it. Where [d] has
+   not, the ring stays for a later trim. Where the path's RM frees
+   objects, the channels a growth handed are withdrawn unless a room
+   drains for them, since that room's submission waits to start on them;
+   a set the RM cannot free would stay, and the next growth would make
+   another beside it. Under rig's turn, with no growth running. */
+void rig_nv_trim(void *self) {
+  struct device *d = ((struct rig_nv_edge *)self)->d;
+  uint64_t seen = atomic_load_explicit(d->word, memory_order_acquire);
+  uint64_t last = atomic_load_explicit(&d->last, memory_order_relaxed);
+  for (int i = 0; i <= CHANNELS; i++) {
+    struct ring *g = atomic_exchange(&d->grown[i], NULL);
+    if (g != NULL) retire(d, g, 0);
+    struct ring *r = atomic_load(&d->current[i]);
+    if (r == NULL || seen + 1 < ring_from(d, i)) continue;
+    rig_nv_put_ring(d, i, &d->opened[i], last + 1);
+    atomic_store(&d->current[i], NULL);
+    retire(d, r, last);
+  }
+  if (!d->rm_frees) return;
+  pthread_mutex_lock(&d->channels_mu);
+  if (!d->draining) d->grown_channels = NULL;
+  pthread_mutex_unlock(&d->channels_mu);
 }
 
 /* Whether [d]'s rings hold what [k] takes, besides the work on them. */

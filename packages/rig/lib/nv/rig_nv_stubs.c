@@ -66,7 +66,7 @@ static int rig_nv_commit(void *self, uint64_t v, const char **failure) {
 
 static const struct rig_driver driver = {rig_nv_room, rig_nv_submit,
                                          rig_nv_commit, rig_nv_settle, NULL,
-                                         NULL};
+                                         rig_nv_trim};
 
 /* A device whose timeline word is the host's 64-bit word at [v_word], the
    GPU's at [v_word_gpu], whose join words follow the GPU's word at
@@ -164,6 +164,13 @@ value caml_rig_nv_channels(value v_self, value v_id, value v_ints) {
   return Val_unit;
 }
 
+/* Sets whether [v_self]'s path's RM frees objects ([v_frees]), at its
+   open, before any room. */
+value caml_rig_nv_rm_frees(value v_self, value v_frees) {
+  Device_val(v_self)->rm_frees = Bool_val(v_frees);
+  return Val_unit;
+}
+
 /* The record of the channels [v_id] of [v_ints] (as [channels_of] reads
    them), which the OCaml side frees once no device holds it, or 0 without
    host memory for it. */
@@ -220,27 +227,32 @@ value caml_rig_nv_channels_free(value v_record) {
   return Val_unit;
 }
 
-/* Sets channel [v_q]'s segment ring to the [v_size] bytes, a power of two,
-   at the host address [v_host] and the GPU's [v_gpu]. */
+/* Opens [d]'s ring [i] (as [grown] numbers them) on [r]. */
+static void open_ring(struct device *d, int i, struct ring r) {
+  d->opened[i] = r;
+  rig_nv_put_ring(d, i, &d->opened[i], 0);
+}
+
+/* Sets channel [v_q]'s segment ring, at the device's open, to the [v_size]
+   bytes, a power of two, at the host address [v_host] and the GPU's
+   [v_gpu]. */
 value caml_rig_nv_segments(value v_self, value v_q, value v_host,
                            value v_gpu, value v_size) {
-  struct channel *c = &Device_val(v_self)->ch[Int_val(v_q)];
-  c->segments = Pointer_val(v_host);
-  c->segments_gpu = (uint64_t)Long_val(v_gpu);
-  c->size = (uint64_t)Long_val(v_size);
+  open_ring(Device_val(v_self), Int_val(v_q),
+            (struct ring){Pointer_val(v_host), (uint64_t)Long_val(v_gpu),
+                          (uint64_t)Long_val(v_size), 0, 0, NULL});
   return Val_unit;
 }
 
-/* Sets COMPUTE's launch ring to the [v_size] bytes, a power of two, at the
-   host address [v_host] and the GPU's [v_gpu], in the GPU's memory through
-   its BAR if [v_bar]. */
+/* Sets COMPUTE's launch ring, at the device's open, to the [v_size] bytes,
+   a power of two, at the host address [v_host] and the GPU's [v_gpu], in
+   the GPU's memory through its BAR if [v_bar]. */
 value caml_rig_nv_launches(value v_self, value v_host, value v_gpu,
                            value v_size, value v_bar) {
-  struct channel *c = &Device_val(v_self)->ch[COMPUTE];
-  c->launches = Pointer_val(v_host);
-  c->launches_gpu = (uint64_t)Long_val(v_gpu);
-  c->launches_size = (uint64_t)Long_val(v_size);
-  c->bar = Bool_val(v_bar);
+  open_ring(Device_val(v_self), CHANNELS,
+            (struct ring){Pointer_val(v_host), (uint64_t)Long_val(v_gpu),
+                          (uint64_t)Long_val(v_size), Bool_val(v_bar), 0,
+                          NULL});
   return Val_unit;
 }
 

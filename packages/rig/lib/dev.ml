@@ -850,7 +850,31 @@ let rec forget_measures d v =
   let r = c_measures_free d.live.c v in
   if r = Answer.busy then forget_measures d v else r = Answer.ok
 
-let rec trim d = if c_trim d.live.c = Answer.busy then trim d
+(* The driver's retire, a counted call written out so that it allocates nothing.
+   A fault loses [d], which the caller never sees, as at [give]; the loss of
+   another exception passes it on. A child forked from the device's process
+   calls nothing: the device's work is its parent's. *)
+let retire d =
+  match d.kind with
+  | Driver { m; h; _ } when not (orphaned d) ->
+      let module D = (val m) in
+      let l = d.live in
+      if c_enter l.c = 0 then begin
+        Rig_edge_primitive.mask ();
+        match D.retire h with
+        | () ->
+            c_exit l.c;
+            Rig_edge_primitive.unmask ()
+        | exception e -> raised d Any e
+      end
+  | _ -> ()
+
+let rec trim_queues d = if c_trim d.live.c = Answer.busy then trim_queues d
+
+let trim d =
+  trim_queues d;
+  retire d
+
 let wait_room d = c_wait_room d.live.c
 
 (* A lost device's word of its driver's own moves only where rig reads it

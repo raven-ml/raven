@@ -1049,6 +1049,8 @@ let grow g =
   | s when s = cuda_error_out_of_memory -> Short chunk
   | s -> fault "making a chain of kernels" s
 
+(* Its trim frees in C the chains its growths made. *)
+let retire _ = ()
 let replays g = replays_c g.self
 let made g = made_c g.self
 
@@ -1081,6 +1083,7 @@ module Driver = struct
   let sleep = sleep
   let stop = stop
   let grow = grow
+  let retire = retire
 end
 
 (* Packed once: a pack copies Driver unless it lists the signature's items

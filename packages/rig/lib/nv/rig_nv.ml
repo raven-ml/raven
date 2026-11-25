@@ -378,6 +378,8 @@ external set_channels : int -> int -> int array -> unit
   = "caml_rig_nv_channels"
 [@@noalloc]
 
+external set_rm_frees : int -> bool -> unit = "caml_rig_nv_rm_frees" [@@noalloc]
+
 external channels_record : int -> int array -> int
   = "caml_rig_nv_channels_record"
 [@@noalloc]
@@ -690,17 +692,17 @@ let settle d l =
         l.local_pending <- None
       end
 
-(* Frees the retired local memories no work uses, those whose successor's
-   value is reached, one at a time: each leaves the list before its free, so
-   an exception leaves the rest for the next call. *)
-let rec retire d l =
+(* Frees the retired local memories no work uses, those whose successor's value
+   is reached, one at a time: each leaves the list before its free, so an
+   exception leaves the rest for the next call. *)
+let rec retire_local d l =
   let seen = read_word d.self in
   match List.find_opt (fun r -> r.until <= seen) l.local_retired with
   | None -> ()
   | Some r ->
       l.local_retired <- List.filter (fun r' -> r' != r) l.local_retired;
       l.path.free r.mem;
-      retire d l
+      retire_local d l
 
 (* Makes [m], whose word is [packed], the pending local memory: the pending
    one that no submission took, for the caller to free, if any. The exchange
@@ -733,7 +735,7 @@ let grow_local d n =
   | None -> Stopped
   | Some l -> (
       settle d l;
-      retire d l;
+      retire_local d l;
       let need = Abi.Local_memory.make d.capability n in
       if need.per_thread <= l.per_thread then Served
       else
@@ -857,6 +859,23 @@ let retire_channels d l =
       let left, dropped = List.partition kept sets in
       l.sets <- left;
       each (drop_channels l) dropped
+
+(* Gives back the rings, channels and local memories the device retired that no
+   work uses, where no growth holds the local lock: what it skips goes at the
+   next growth, allocation or retire. The closure is made only when there is
+   something to give back, so the call allocates nothing otherwise. *)
+let retire_all d l =
+  let channels =
+    Option.is_some l.path.rm.free && List.compare_length_with l.sets 1 > 0
+  in
+  if rings_retired d.self || channels || not (List.is_empty l.local_retired)
+  then
+    ignore
+      (try_protect d.local_lock (fun () ->
+           retire_rings d l;
+           retire_channels d l;
+           retire_local d l)
+        : bool)
 
 let local d n =
   guarded "Rig_nv_abi.Gpu.local" @@ fun () ->
@@ -1236,6 +1255,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
       make_channels p (module R) ~taken opened memory
     in
     set_channels self channels.id ints;
+    set_rm_frees self (Option.is_some p.rm.free);
     for q = 0 to 1 do
       let at = q * segment_bytes in
       set_segments self q (segments_host + at) (segments.address + at)
@@ -1417,17 +1437,7 @@ let alloc (T d) (memory : Rig_edge.memory) n =
   if n < 1 then invalid_argf "Rig_nv.alloc: %d bytes, expected at least 1" n;
   let l = live d in
   let p = l.path in
-  (* Rings and channels the device retired go back first where no growth
-     holds them. *)
-  let channels_retire =
-    Option.is_some p.rm.free && List.compare_length_with l.sets 1 > 0
-  in
-  if rings_retired d.self || channels_retire then
-    ignore
-      (try_protect d.local_lock (fun () ->
-           retire_rings d l;
-           retire_channels d l)
-        : bool);
+  retire_all d l;
   let place =
     match memory with Device -> Gpu | Pinned -> Host | Mapped -> Bar
   in
@@ -1631,6 +1641,8 @@ let grow (T d) =
   let lacked = grow_channels d l (Array.sub needs (launch_ring + 1) 2) in
   if !short = 0 then short := lacked;
   if !short = 0 then Rig_edge.Grown else Short !short
+
+let retire (T d) = retire_all d (live d)
 
 (* Images *)
 

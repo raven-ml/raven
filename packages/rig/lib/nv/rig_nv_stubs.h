@@ -153,10 +153,11 @@ struct mark {
   uint64_t v, put, written, launched;
 };
 
-/* A ring a growth made, at its host and GPU addresses, of [size] bytes, a
-   power of two: a channel's segment ring, or COMPUTE's launch ring, in the
-   GPU's memory through its BAR if [bar]. Once retired, no work after
-   [until] uses it, and [next] is the ring retired before it. */
+/* A ring a growth made or the device opened with, at its host and GPU
+   addresses, of [size] bytes, a power of two: a channel's segment ring, or
+   COMPUTE's launch ring, in the GPU's memory through its BAR if [bar]. Once
+   retired, no work after [until] uses it, and [next] is the ring retired
+   before it. */
 struct ring {
   uint8_t *host;
   uint64_t gpu, size;
@@ -341,13 +342,17 @@ struct device {
   /* The rings a growth made, which the next room that needs them installs,
      and the rings installed, NULL for those the device opened with: each
      channel's segment ring, then COMPUTE's launch ring. A room retires the
-     rings it replaces, and those no larger than the installed ones, which
-     the OCaml side takes back. While the device runs, only the OCaml side
-     frees a ring's record, under the device's local lock, so a record these
-     name stays readable under it; its end frees the rest. */
+     rings it replaces, and those no larger than the installed ones, and a
+     trim the rings handed and, once the device reached the work on the
+     rings it opened with, those installed; the OCaml side takes them back.
+     While the device runs, only the OCaml side frees a ring's record, under
+     the device's local lock, so a record these name stays readable under
+     it; its end frees the rest. [opened] holds the rings the device opened
+     with, which stay until its stop and are never retired. */
   _Atomic(struct ring *) grown[CHANNELS + 1];
   _Atomic(struct ring *) current[CHANNELS + 1];
   _Atomic(struct ring *) retired;
+  struct ring opened[CHANNELS + 1];
   /* The channels a growth made, which the next room that needs them installs
      once the device reached every value submitted, NULL for none, and the
      [id] of the channels installed, under [channels_mu]. The OCaml side owns
@@ -357,9 +362,13 @@ struct device {
   struct channels *grown_channels;
   uint64_t installed;
   /* whether a room waits for the device to reach every value submitted, to
-     install the channels a growth made: rooms, which run under rig's turn,
-     alone read and write it */
+     install the channels a growth made: rooms and the trim, which run under
+     rig's turn, alone read it, and rooms alone write it */
   int draining;
+  /* whether the path's RM frees objects, set at open: the trim withdraws
+     the channels a growth handed only then, since the OCaml side keeps a
+     set the RM cannot free, and the next growth would make another */
+  int rm_frees;
   /* the local memory word a submission last placed, 0 for none */
   uint64_t placed_local;
   /* the path's flush word, a word of the GPU's BAR whose read returns once
@@ -426,6 +435,18 @@ static inline void rig_nv_flush(struct device *d, int launched) {
    source could not read them. */
 int rig_nv_measure(const struct device *d, struct measure *m,
                    uint64_t *width);
+
+/* Puts ring [i] of [d] (as [grown] numbers them) on [r]'s memory, empty, for
+   the work of value [from] on. */
+void rig_nv_put_ring(struct device *d, int i, const struct ring *r,
+                     uint64_t from);
+
+/* The trim of Rig_edge's C functions (rig_trim_fn): retires the rings a
+   growth handed and, where the device reached the work on the rings it
+   opened with, the rings installed, putting the device back on those it
+   opened with; withdraws the channels a growth handed, where the path's RM
+   frees objects, unless a room drains for them. */
+void rig_nv_trim(void *self);
 
 /* The join word of channel [q]: its GPU address. */
 #define JOIN_GPU(d, q) ((d)->join_gpu + 8 * (1 + (q)))

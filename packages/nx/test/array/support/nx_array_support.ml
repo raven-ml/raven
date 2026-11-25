@@ -224,6 +224,7 @@ module Driver = struct
 
   (* Its room never answers RIG_GROW. *)
   let grow _ = Rig_edge.Grown
+  let retire _ = ()
   let signaled d = late_signaled d.self
 
   let sleep d ~seen:_ ~still_ms:_ =

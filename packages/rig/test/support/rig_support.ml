@@ -542,6 +542,8 @@ module Driver = struct
     let refused = counted d "grow" in
     if polled_grow d.c refused then Rig_edge.Grown else Short 4096
 
+  let retire d = ignore (counted d "retire" : bool)
+
   let rec freed_at a = function
     | [] -> false
     | (x, _) :: l -> x = a || freed_at a l

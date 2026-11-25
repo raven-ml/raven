@@ -219,6 +219,7 @@ let stop d ~fault:_ = stop_c d.c
 (* Its room never answers RIG_GROW: the device's own driver grows its
    queues on its machine. *)
 let grow _ = Rig_edge.Grown
+let retire _ = ()
 
 (* The agent links the program, and prepares its launches there. *)
 let prepare _ _ ~still_ms:_ = true
@@ -249,6 +250,7 @@ module Driver = struct
   let sleep = sleep
   let stop = stop
   let grow = grow
+  let retire = retire
 end
 
 (* Packed once: a pack copies Driver unless it lists the signature's items

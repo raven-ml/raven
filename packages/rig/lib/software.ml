@@ -105,6 +105,7 @@ module D = struct
 
   (* It has no queues. *)
   let grow _ = Rig_edge.Grown
+  let retire _ = ()
 end
 
 (* Packed once: D has items the signature lacks, so each pack copies it. *)
