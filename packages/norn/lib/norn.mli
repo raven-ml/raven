@@ -1913,10 +1913,11 @@ module Nested : sig
     ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> ('u, 'f, 'd) state -> ('u, 'f, 'd) Evidence.t
   (** [evidence u k s] is the evidence of the dead points of [s] and of its live
       points added as dead, [k] simulating the shrinkage sequences of its error
-      and resampling its lineages.
-      Its {!Evidence.sample} is every dead point, padding included at weight
-      zero, and its {!Evidence.val-stop} is [Converged], or [Remaining r] if the
-      live points could still add [r] nats, the tolerance or more, to [ln Z]. *)
+      and resampling its lineages. Its {!Evidence.sample} is every dead point,
+      padding included at weight zero, and its {!Evidence.val-stop} is
+      [Converged], or [Remaining r] if the live points could still add [r] nats,
+      the tolerance or more, to [ln Z]: [infinity] while every point found has
+      likelihood [0], since the volume left may hold all of [Z]. *)
 
   val run :
     ('u, 'd) Nx.Ptree.t ->

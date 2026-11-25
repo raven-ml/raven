@@ -210,7 +210,25 @@ let recovers =
       Compiled.here ();
       Recovery.nested ~replicates:16 ~draws:13 (Recovery.posterior "dogs-dogs"))
 
-let run_tests = group "run" [ converges; spent; pp_spent; keyed; recovers ]
+(* With no point of nonzero likelihood found, the volume left may hold all of
+   [Z]: the live points could add any amount. *)
+let nothing_found =
+  test "a likelihood 0 at every point spends the budget with all of ln Z left"
+    (fun () ->
+      let likelihood x =
+        Nx.full Nx.float64 [| (Nx.shape x).(0) |] Float.neg_infinity
+      in
+      let z =
+        Norn.Nested.run t ~budget:3 ~prior:conjugate.prior ~likelihood
+          (Nx.Rng.key 1)
+          (conjugate.draw (Nx.Rng.key 2) 20)
+      in
+      match Norn.Evidence.stop z with
+      | Remaining r -> equal float_exact Float.infinity r
+      | stop -> failf "stopped as %s" (stop_name stop))
+
+let run_tests =
+  group "run" [ converges; spent; pp_spent; keyed; nothing_found; recovers ]
 
 let () =
   exit (run "Norn.Nested" [ init_tests; step_tests; evidence_tests; run_tests ])

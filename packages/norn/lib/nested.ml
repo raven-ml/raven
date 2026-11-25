@@ -262,14 +262,17 @@ let step (type f) u ~prior ~likelihood k (s : (_, f, 'd) state) =
   P.map2 (ptree u) (fun _ old t -> Nx.where spent old t) s stepped
 
 (* The live points' largest possible contribution to [ln Z]: all the volume left
-   at the highest likelihood. *)
+   at the highest likelihood. While every point found has likelihood 0 it is
+   [inf]: the volume left may hold all of [Z]. *)
 let remaining s =
   let best = Nx.add (Nx.max s.likelihood) s.log_volume in
-  Nx.sub (logaddexp s.log_evidence best) s.log_evidence
+  let none = Nx.scalar_like s.log_evidence Float.neg_infinity in
+  Nx.where
+    (Nx.equal s.log_evidence none)
+    (Nx.scalar_like s.log_evidence Float.infinity)
+    (Nx.sub (logaddexp s.log_evidence best) s.log_evidence)
 
-let converged s =
-  let r = remaining s in
-  Nx.logical_and (Nx.logical_not (Nx.isnan r)) (Nx.less r s.tolerance)
+let converged s = Nx.less (remaining s) s.tolerance
 
 (* Starting *)
 

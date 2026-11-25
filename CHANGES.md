@@ -85,6 +85,8 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Nested`'s evidence stops `Remaining infinity` while every point found has
+  likelihood `0`, where it gave `Remaining nan`.
 - `Smc`'s next temperature keeps half the effective sample size of the
   smallest step, the number of particles whose likelihood is not `0`. With
   more than half the particles at likelihood `0` no temperature kept half of
