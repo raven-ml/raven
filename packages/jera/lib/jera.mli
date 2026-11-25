@@ -1116,7 +1116,9 @@ module Quad : sig
       the answer evaluates every chunk of the dtype's schedule again, those past
       the element's final level with weight zero. {b Derivative.} That of the
       sum over the final level, through the ends and the integrand's parameters.
-  *)
+
+      Raises [Invalid_argument] if [f]'s result has another shape than its
+      points. *)
 
   val cubature :
     tol:Tol.t ->

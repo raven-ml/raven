@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Jera.Quad's rules and formulas. The trusted side is mpmath's Gauss–Legendre
-   rules, scipy's Gauss–Kronrod tables, closed-form integrals of polynomials and
-   the integrals of e⁻ˣ and e⁻ˣ², and finite differences of the rule's own
-   sum. *)
+(* Jera.Quad's rules, formulas and solves. The trusted side is mpmath's
+   Gauss–Legendre rules, scipy's Gauss–Kronrod tables, the rule's sum in OCaml
+   floats, closed-form integrals and their derivatives, and central
+   differences. *)
 
 open Windtrap
 open Jera
@@ -15,84 +15,37 @@ let f64 = Nx.float64
 let vec a = Nx.create f64 [| Array.length a |] a
 let scalar x = Nx.scalar f64 x
 let exact () = Oracle.tensor ()
-let ulps () = Oracle.tensor ~rel:4e-16 ~abs:1e-16 ()
+
+(* The golden is mpmath's 50-digit value rounded once, and the rule's
+   double-word arithmetic rounds once: two ulps allow both. *)
+let two_ulps () = Oracle.tensor ~rel:4e-16 ~abs:1e-16 ()
+let unit_range x = Quad.Range.v (Nx.zeros_like x) (Nx.ones_like x)
+
+(* Each lane's coordinate [k] of points [x] of shape [... @ [d]]. *)
+let coord k x = Nx.get [ k ] (Nx.moveaxis (Nx.ndim x - 1) 0 x)
+let product x = Nx.prod ~axes:[ Nx.ndim x - 1 ] x
+let sum_coords x = Nx.sum ~axes:[ Nx.ndim x - 1 ] x
+
+let unit_box lanes d =
+  Quad.Box.v
+    (Nx.zeros f64 (Array.append lanes [| d |]))
+    (Nx.ones f64 (Array.append lanes [| d |]))
+
+(* [f] with the shapes of the points it receives added to [seen]. *)
+let recording seen f x =
+  seen := Nx.shape x :: !seen;
+  f x
+
+(* ∫₀¹ e^(θx) dx = (e^θ − 1) / θ, its θ-derivative, and the derivative of its
+   square, ∫ e^(θ(x + y)) over [0, 1]². *)
+let exp_integral t = (Float.exp t -. 1.) /. t
+let exp_integral' t = ((t *. Float.exp t) -. Float.exp t +. 1.) /. (t *. t)
+let squared' t = 2. *. exp_integral t *. exp_integral' t
 
 (* Rules *)
 
-let gauss_goldens =
-  Golden_quad.
-    [
-      (1, gauss1_x, gauss1_w);
-      (2, gauss2_x, gauss2_w);
-      (3, gauss3_x, gauss3_w);
-      (4, gauss4_x, gauss4_w);
-      (5, gauss5_x, gauss5_w);
-      (8, gauss8_x, gauss8_w);
-      (10, gauss10_x, gauss10_w);
-      (16, gauss16_x, gauss16_w);
-      (20, gauss20_x, gauss20_w);
-      (32, gauss32_x, gauss32_w);
-      (64, gauss64_x, gauss64_w);
-      (100, gauss100_x, gauss100_w);
-    ]
-
-let kronrod_goldens =
-  Golden_quad.[ (7, kronrod7_x, kronrod7_w); (10, kronrod10_x, kronrod10_w) ]
-
-let nodes_match (x, w) (gx, gw) =
-  equal ~msg:"nodes" (ulps ()) (vec gx) x;
-  equal ~msg:"weights" (ulps ()) (vec gw) w
-
-let rule_tests =
-  [
-    cases "gauss n is mpmath's rule to the last bit or so"
-      ~id:(fun (n, _, _) -> Printf.sprintf "%d points" n)
-      gauss_goldens
-      (fun (n, gx, gw) ->
-        nodes_match (Quad.Rule.nodes (Quad.Rule.gauss n) f64) (gx, gw));
-    cases "kronrod n is QUADPACK's rule as scipy tabulates it"
-      ~id:(fun (n, _, _) -> Printf.sprintf "%d points" ((2 * n) + 1))
-      kronrod_goldens
-      (fun (n, gx, gw) ->
-        let x, w = Quad.Rule.nodes (Quad.Rule.kronrod n) f64 in
-        equal ~msg:"nodes" (exact ()) (vec gx) x;
-        equal ~msg:"weights" (exact ()) (vec gw) w);
-    test "nodes in float32 are the float64 nodes rounded once" (fun () ->
-        let x64, _ = Quad.Rule.nodes (Quad.Rule.gauss 7) f64 in
-        let x32, _ = Quad.Rule.nodes (Quad.Rule.gauss 7) Nx.float32 in
-        equal (exact ()) (Nx.cast Nx.float32 x64) x32);
-    test "gauss rejects no point" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"n = 0 is below 1") (fun () ->
-            Quad.Rule.gauss 0));
-    test "a Kronrod rule serves as a formula" (fun () ->
-        let rules =
-          [
-            (Quad.Rule.kronrod 7 :> [ `Formula ] Quad.Rule.t); Quad.Rule.gauss 8;
-          ]
-        in
-        List.iter
-          (fun r ->
-            equal
-              (Oracle.tensor ~rel:1e-14 ())
-              (Nx.scalar f64 (Float.exp 1. -. 1.))
-              (Quad.fixed r Nx.exp (Quad.Range.v (scalar 0.) (scalar 1.))))
-          rules);
-    test "kronrod rejects a size it has no table for" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"n = 8 is neither 7 nor 10")
-          (fun () -> Quad.Rule.kronrod 8));
-    test "nodes_at the host are the nodes" (fun () ->
-        let rule = Quad.Rule.kronrod 7 in
-        let x, w = Quad.Rule.nodes rule f64 in
-        let xa, wa = Quad.Rule.nodes_at Nx.Host.on rule f64 in
-        equal ~msg:"nodes" (exact ()) x xa;
-        equal ~msg:"weights" (exact ()) w wa);
-  ]
-
-(* Exactness *)
-
 (* A polynomial of degree [d] with coefficients in [-1, 1] and a range inside
-   [-3, 3], and its integral from the antiderivative, in OCaml floats, with the
-   sum of the terms' magnitudes that bounds its rounding. *)
+   [-3, 3]. *)
 let polynomial d =
   Gen.(
     triple
@@ -105,6 +58,7 @@ let antiderivative c x =
   let a = Array.mapi (fun k ck -> ck /. float_of_int (k + 1)) c in
   x *. horner a x
 
+(* The sum of the terms' magnitudes, which bounds the integral's rounding. *)
 let magnitude c a b =
   let m = Float.max (Float.abs a) (Float.abs b) in
   Array.fold_left
@@ -112,42 +66,167 @@ let magnitude c a b =
     (0., m) c
   |> fst
 
-let exact_for rule d =
-  prop (Printf.sprintf "degree %d" d) (polynomial d) (fun (c, a, b) ->
-      let integral =
-        Quad.fixed rule
-          (fun x -> Nx.map_item (horner c) x)
-          (Quad.Range.v (scalar a) (scalar b))
-      in
-      let truth = antiderivative c b -. antiderivative c a in
-      let bound = 64. *. epsilon_float *. (magnitude c a b +. 1.) in
-      equal (Windtrap.float_rel ~rel:0. ~abs:bound) truth (Nx.item [] integral))
+(* A rule exact to the polynomial's degree integrates it to its rounding: 64 ε
+   of its magnitude, where 300 draws at n = 20, 50 and 100 measured at most 9.3
+   ε. *)
+let integrates_exactly rule (c, a, b) =
+  let integral =
+    Quad.fixed rule
+      (fun x -> Nx.map_item (horner c) x)
+      (Quad.Range.v (scalar a) (scalar b))
+  in
+  let truth = antiderivative c b -. antiderivative c a in
+  let bound = 64. *. epsilon_float *. (magnitude c a b +. 1.) in
+  equal (float_rel ~rel:0. ~abs:bound) truth (Nx.item [] integral)
 
-let exactness_tests =
+let gauss_tests =
   [
-    group "gauss n integrates polynomials of degree 2n - 1"
-      (List.map
-         (fun n -> exact_for (Quad.Rule.gauss n) ((2 * n) - 1))
-         [ 1; 2; 5; 10; 20 ]);
-    group "kronrod n integrates polynomials of degree 3n + 1"
-      (List.map
-         (fun n -> exact_for (Quad.Rule.kronrod n) ((3 * n) + 1))
-         [ 7; 10 ]);
-    test "gauss n misses degree 2n" (fun () ->
-        (* ∫₋₁¹ x⁴ = 2/5, where two-point Gauss gives 2/9. *)
-        let i =
-          Quad.fixed (Quad.Rule.gauss 2)
-            (fun x -> Nx.pow_s x 4.)
-            (Quad.Range.v (scalar (-1.)) (scalar 1.))
+    cases "is mpmath's Gauss–Legendre rule within two ulps"
+      ~id:(fun (n, _, _) -> Printf.sprintf "%d points" n)
+      Golden_quad.
+        [
+          (1, gauss1_x, gauss1_w);
+          (2, gauss2_x, gauss2_w);
+          (3, gauss3_x, gauss3_w);
+          (4, gauss4_x, gauss4_w);
+          (5, gauss5_x, gauss5_w);
+          (8, gauss8_x, gauss8_w);
+          (10, gauss10_x, gauss10_w);
+          (16, gauss16_x, gauss16_w);
+          (20, gauss20_x, gauss20_w);
+          (32, gauss32_x, gauss32_w);
+          (64, gauss64_x, gauss64_w);
+          (100, gauss100_x, gauss100_w);
+        ]
+      (fun (n, gx, gw) ->
+        let x, w = Quad.Rule.nodes (Quad.Rule.gauss n) f64 in
+        equal ~msg:"nodes" (two_ulps ()) (vec gx) x;
+        equal ~msg:"weights" (two_ulps ()) (vec gw) w);
+    prop "integrates polynomials of degree 2n − 1"
+      Gen.(
+        let* n =
+          frequency [ (1, constant 1); (2, int_range 2 99); (1, constant 100) ]
         in
-        equal (Oracle.tensor ~rel:1e-15 ()) (scalar (2. /. 9.)) i);
+        let+ p = polynomial ((2 * n) - 1) in
+        (n, p))
+      (fun (n, p) ->
+        cover "one point" (n = 1);
+        cover "a hundred points" (n = 100);
+        integrates_exactly (Quad.Rule.gauss n) p);
+    test "n below 1 raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Rule.gauss") (fun () ->
+            Quad.Rule.gauss 0));
   ]
 
-(* Ranges *)
+let kronrod_tests =
+  [
+    cases "is QUADPACK's rule as scipy tabulates it"
+      ~id:(fun (n, _, _) -> Printf.sprintf "%d points" ((2 * n) + 1))
+      Golden_quad.
+        [ (7, kronrod7_x, kronrod7_w); (10, kronrod10_x, kronrod10_w) ]
+      (fun (n, gx, gw) ->
+        let x, w = Quad.Rule.nodes (Quad.Rule.kronrod n) f64 in
+        equal ~msg:"nodes" (exact ()) (vec gx) x;
+        equal ~msg:"weights" (exact ()) (vec gw) w);
+    cases "holds gauss n's nodes at its odd positions"
+      ~id:(Printf.sprintf "n = %d") [ 7; 10 ] (fun n ->
+        let k, _ = Quad.Rule.nodes (Quad.Rule.kronrod n) f64 in
+        let g, _ = Quad.Rule.nodes (Quad.Rule.gauss n) f64 in
+        equal (two_ulps ()) g (Nx.slice [ Nx.Rs (1, (2 * n) + 1, 2) ] k));
+    prop "integrates polynomials of degree 3n + 1"
+      Gen.(
+        let* n = of_list [ 7; 10 ] in
+        let+ p = polynomial ((3 * n) + 1) in
+        (n, p))
+      (fun (n, p) ->
+        cover "n = 7" (n = 7);
+        cover "n = 10" (n = 10);
+        integrates_exactly (Quad.Rule.kronrod n) p);
+    cases "n other than 7 or 10 raises" ~id:(Printf.sprintf "n = %d")
+      [ 6; 8; 9; 11 ] (fun n ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Rule.kronrod") (fun () ->
+            Quad.Rule.kronrod n));
+  ]
+
+let nodes_tests =
+  [
+    test "in another dtype are the float64 nodes rounded once" (fun () ->
+        let rounded : type b. (float, b) Nx.dtype -> unit =
+         fun dtype ->
+          List.iter
+            (fun r ->
+              let x, w = Quad.Rule.nodes r f64 in
+              let x', w' = Quad.Rule.nodes r dtype in
+              equal ~msg:"nodes" (exact ()) (Nx.cast dtype x) x';
+              equal ~msg:"weights" (exact ()) (Nx.cast dtype w) w')
+            [
+              Quad.Rule.gauss 7;
+              Quad.Rule.gauss 100;
+              (Quad.Rule.kronrod 10 :> [ `Formula ] Quad.Rule.t);
+            ]
+        in
+        rounded Nx.float32;
+        rounded Nx.float16;
+        rounded Nx.bfloat16);
+  ]
+
+let nodes_at_tests =
+  [
+    test "at the host are the nodes" (fun () ->
+        let rule = Quad.Rule.kronrod 7 in
+        let x, w = Quad.Rule.nodes rule f64 in
+        let xa, wa = Quad.Rule.nodes_at Nx.Host.on rule f64 in
+        equal ~msg:"nodes" (exact ()) x xa;
+        equal ~msg:"weights" (exact ()) w wa);
+  ]
+
+(* Ranges and boxes *)
 
 let range_tests =
+  let backwards integral = Nx.neg (integral (vec [| 0. |]) (vec [| 1. |])) in
   [
-    test "from a integrates e^-(x - a) to 1" (fun () ->
+    test "the ends broadcast together" (fun () ->
+        let i =
+          Quad.fixed (Quad.Rule.gauss 3) Nx.ones_like
+            (Quad.Range.v (scalar 0.) (vec [| 1.; 2.; 3. |]))
+        in
+        equal (two_ulps ()) (vec [| 1.; 2.; 3. |]) i);
+    test "fixed over [1, 0] is minus fixed over [0, 1]" (fun () ->
+        let integral a b =
+          Quad.fixed (Quad.Rule.gauss 6) Nx.exp (Quad.Range.v a b)
+        in
+        equal (exact ()) (backwards integral)
+          (integral (vec [| 1. |]) (vec [| 0. |])));
+    test "adaptive over [1, 0] is minus adaptive over [0, 1]" (fun () ->
+        (* Each meets rel 1e-10, so the two differ by at most twice that. *)
+        let integral a b =
+          Solution.get
+            (Quad.adaptive (Quad.Rule.kronrod 7) ~tol:(Tol.rel 1e-10) ~budget:50
+               Nx.sqrt (Quad.Range.v a b))
+        in
+        equal
+          (Oracle.tensor ~rel:2e-10 ())
+          (backwards integral)
+          (integral (vec [| 1. |]) (vec [| 0. |])));
+    test "tanh_sinh over [1, 0] is minus tanh_sinh over [0, 1]" (fun () ->
+        (* Each meets rel 1e-12, so the two differ by at most twice that. *)
+        let integral a b =
+          Solution.get
+            (Quad.tanh_sinh ~tol:(Tol.rel 1e-12) Nx.sqrt (Quad.Range.v a b))
+        in
+        equal
+          (Oracle.tensor ~rel:2e-12 ())
+          (backwards integral)
+          (integral (vec [| 1. |]) (vec [| 0. |])));
+    test "ends that do not broadcast raise" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Range.v") (fun () ->
+            Quad.Range.v (Nx.zeros f64 [| 2 |]) (Nx.ones f64 [| 3 |])));
+  ]
+
+let from_tests =
+  [
+    test "integrates e^-(x - a) to 1 at unit scale" (fun () ->
+        (* 40 points resolve e^-x on the mapped half-line to 1e-10. *)
         let a = vec [| 0.; 2.5; -1. |] in
         let i =
           Quad.fixed (Quad.Rule.gauss 40)
@@ -155,7 +234,11 @@ let range_tests =
             (Quad.Range.from a)
         in
         equal (Oracle.tensor ~rel:1e-10 ()) (Nx.ones_like a) i);
-    test "line c integrates e^-(x - c)² to √π" (fun () ->
+  ]
+
+let line_tests =
+  [
+    test "integrates e^-(x - c)² to √π at unit scale" (fun () ->
         let c = vec [| 0.; 0.5 |] in
         let i =
           Quad.fixed (Quad.Rule.gauss 100)
@@ -166,21 +249,81 @@ let range_tests =
           (Oracle.tensor ~rel:1e-10 ())
           (Nx.full f64 [| 2 |] (Float.sqrt Float.pi))
           i);
-    test "a reversed range negates the integral" (fun () ->
-        let f x = Nx.exp x in
-        let r = Quad.Rule.gauss 6 in
-        equal (exact ())
-          (Nx.neg (Quad.fixed r f (Quad.Range.v (scalar 0.) (scalar 1.))))
-          (Quad.fixed r f (Quad.Range.v (scalar 1.) (scalar 0.))));
-    test "ends that do not broadcast raise" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Range.v") (fun () ->
-            Quad.Range.v (Nx.zeros f64 [| 2 |]) (Nx.ones f64 [| 3 |])));
-    test "the ends broadcast together" (fun () ->
-        let i =
-          Quad.fixed (Quad.Rule.gauss 3) Nx.ones_like
-            (Quad.Range.v (scalar 0.) (vec [| 1.; 2.; 3. |]))
+  ]
+
+(* ∫ (1 + x + y) over a box, exact in the degree-7 rule's one box. *)
+let plane box =
+  Solution.get
+    (Quad.cubature ~tol:(Tol.rel 1e-12) ~budget:4
+       (fun x -> Nx.add_s (sum_coords x) 1.)
+       box)
+
+let box_tests =
+  [
+    test "corners broadcast to lanes @ [d]" (fun () ->
+        (* One unit square shared by two lanes: 2 in each. *)
+        let hi = Nx.ones f64 [| 2; 2 |] in
+        equal
+          (Oracle.tensor ~rel:1e-13 ())
+          (vec [| 2.; 2. |])
+          (plane (Quad.Box.v (vec [| 0.; 0. |]) hi)));
+    test "an axis with hi < lo flips the integral's sign" (fun () ->
+        (* Over [0, −1] × [0, 1]: −(1 − 1/2 + 1/2) = −1. *)
+        equal
+          (Oracle.tensor ~rel:1e-13 ())
+          (scalar (-1.))
+          (plane (Quad.Box.v (vec [| 0.; 0. |]) (vec [| -1.; 1. |]))));
+    test "corners that do not broadcast raise" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Box.v") (fun () ->
+            Quad.Box.v (Nx.zeros f64 [| 2 |]) (Nx.ones f64 [| 3 |])));
+    test "scalar corners raise" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Box.v") (fun () ->
+            Quad.Box.v (scalar 0.) (scalar 1.)));
+  ]
+
+(* Formulas *)
+
+let fixed_tests =
+  let theta = vec [| -1.; 0.5; 2. |] in
+  (* ∫₀¹ e^(θ x) dx by 15 Kronrod points. *)
+  let integral theta =
+    Quad.fixed (Quad.Rule.kronrod 7)
+      (fun x -> Nx.exp (Nx.mul x theta))
+      (unit_range theta)
+  in
+  [
+    prop "is the rule's sum (b − a)/2 Σ w f(mid + u (b − a)/2)"
+      Gen.(
+        triple
+          (frequency
+             [
+               (2, map Quad.Rule.gauss (int_range 1 20));
+               (1, constant (Quad.Rule.kronrod 7 :> [ `Formula ] Quad.Rule.t));
+             ])
+          (float_range (-3.) 3.) (float_range (-3.) 3.))
+      (fun (rule, a, b) ->
+        let u, w = Quad.Rule.nodes rule f64 in
+        cover "a Kronrod rule" (Nx.numel u = 15);
+        let mid = (a +. b) /. 2. and half = (b -. a) /. 2. in
+        let terms =
+          Array.map2
+            (fun u w -> half *. w *. Float.exp (mid +. (half *. u)))
+            (Nx.to_array u) (Nx.to_array w)
         in
-        equal (ulps ()) (vec [| 1.; 2.; 3. |]) i);
+        (* exp to an ulp or so, and at most 20 terms of one sign summed in
+           another order: 32 ε of the sum. *)
+        let sum = Array.fold_left ( +. ) 0. terms in
+        equal
+          (float_rel ~rel:(32. *. epsilon_float) ~abs:0.)
+          sum
+          (Nx.item []
+             (Quad.fixed rule Nx.exp (Quad.Range.v (scalar a) (scalar b)))));
+    test "f receives points of shape [m] @ shape" (fun () ->
+        let seen = ref [] in
+        ignore
+          (Quad.fixed (Quad.Rule.gauss 5) (recording seen Nx.exp)
+             (unit_range (Nx.zeros f64 [| 2; 3 |])));
+        equal (list (array int)) [ [| 5; 2; 3 |] ] !seen);
     test "a zero-size range gives a zero-size integral" (fun () ->
         let i =
           Quad.fixed (Quad.Rule.gauss 3) Nx.exp
@@ -192,40 +335,70 @@ let range_tests =
           Quad.fixed (Quad.Rule.gauss 3) Nx.ones_like
             (Quad.Range.v (vec [| 0.; nan |]) (vec [| 1.; 1. |]))
         in
-        equal (ulps ()) (vec [| 1.; nan |]) i);
-    test "float32 integrates within float32's rounding" (fun () ->
-        let i =
-          Quad.fixed (Quad.Rule.gauss 8) Nx.exp
-            (Quad.Range.v (Nx.scalar Nx.float32 0.) (Nx.scalar Nx.float32 1.))
+        equal (two_ulps ()) (vec [| 1.; nan |]) i);
+    test "computes in the range's dtype" (fun () ->
+        (* e − 1 by 8 Gauss points, whose error is far below rounding: the
+           nodes, the points, exp and 8 products and sums each round, 16 ε of
+           the dtype in all. *)
+        let in_dtype : type b. (float, b) Nx.dtype -> unit =
+         fun dtype ->
+          let i =
+            Quad.fixed (Quad.Rule.gauss 8) Nx.exp
+              (Quad.Range.v (Nx.scalar dtype 0.) (Nx.scalar dtype 1.))
+          in
+          let eps = (Nx.Dtype.float_format dtype).epsilon in
+          equal ~msg:(Nx.Dtype.name dtype)
+            (Oracle.tensor ~rel:(16. *. eps) ())
+            (Nx.scalar dtype (Float.exp 1. -. 1.))
+            i
         in
+        in_dtype Nx.float32;
+        in_dtype Nx.float16;
+        in_dtype Nx.bfloat16);
+    test "grad in a parameter is the central difference" (fun () ->
+        (* eps 1e-6: truncation O(eps²), rounding ε/eps ≈ 2e-10. *)
         equal
-          (Oracle.tensor ~rel:1e-6 ())
-          (Nx.scalar Nx.float32 (Float.exp 1. -. 1.))
-          i);
+          (Oracle.tensor ~rel:1e-8 ())
+          (Oracle.central ~eps:1e-6 integral theta (Nx.ones_like theta))
+          (Rune.grad' (fun t -> Nx.sum (integral t)) theta));
+    test "grad in an end is the central difference" (fun () ->
+        let upper b =
+          Nx.sum
+            (Quad.fixed (Quad.Rule.gauss 4) Nx.sin
+               (Quad.Range.v (Nx.zeros_like b) b))
+        in
+        let b = vec [| 0.3; 1.7 |] and v = vec [| 1.; -2. |] in
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (Nx.reshape [||] (Oracle.central ~eps:1e-6 upper b v))
+          (scalar (Oracle.dot (Rune.grad' upper b) v)));
+    test "compiled equals eager" (fun () ->
+        Compiled.here ();
+        (* A compiled sum of 15 terms may associate otherwise: 15 ε. *)
+        equal
+          (Oracle.tensor ~rel:1e-14 ())
+          (integral theta) (Rune.jit' integral theta));
+    test "vmap is each element's integral" (fun () ->
+        equal
+          (Oracle.tensor ~rel:1e-15 ())
+          (integral theta)
+          (Rune.vmap' integral theta));
+    test "an integrand that changes the shape raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.fixed") (fun () ->
+            Quad.fixed (Quad.Rule.gauss 3)
+              (fun x -> Nx.sum ~axes:[ 1 ] x)
+              (Quad.Range.v (vec [| 0.; 0. |]) (vec [| 1.; 1. |]))));
   ]
-
-(* Boxes *)
-
-let box_tests =
-  [
-    test "box corners that do not broadcast raise" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Box.v") (fun () ->
-            Quad.Box.v (Nx.zeros f64 [| 2 |]) (Nx.ones f64 [| 3 |])));
-    test "scalar box corners raise" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.Box.v") (fun () ->
-            Quad.Box.v (scalar 0.) (scalar 1.)));
-  ]
-
-(* Cumulative *)
 
 let cumulative_tests =
   let r = Quad.Rule.gauss 5 in
   [
     test "row i integrates from the first knot to knot i" (fun () ->
+        (* 5 points on intervals up to 0.75 integrate cos to 1e-13. *)
         let knots = vec [| 0.; 0.5; 1.25; 2. |] in
         let c = Quad.cumulative r Nx.cos knots in
         equal (Oracle.tensor ~rel:1e-12 ~abs:1e-15 ()) (Nx.sin knots) c);
-    test "the first row is zero" (fun () ->
+    test "row 0 is zero" (fun () ->
         let c = Quad.cumulative r Nx.exp (vec [| 1.; 2. |]) in
         equal (exact ()) (scalar 0.) (Nx.get [ 0 ] c));
     test "one knot is a zero integral" (fun () ->
@@ -238,131 +411,107 @@ let cumulative_tests =
           (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
           (Nx.sub (Nx.sin knots) (Nx.sin (Nx.get [ 0 ] knots)))
           c);
-    test "no knot raises" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"at least one knot") (fun () ->
-            Quad.cumulative r Nx.exp (vec [||])));
-  ]
-
-(* Fixed rules *)
-
-(* ∫₀¹ e^(θ x) dx, whose θ-derivative the rule's sum states. *)
-let integral theta =
-  Quad.fixed (Quad.Rule.kronrod 7)
-    (fun x -> Nx.exp (Nx.mul x theta))
-    (Quad.Range.v (Nx.zeros_like theta) (Nx.ones_like theta))
-
-let total theta = Nx.sum (integral theta)
-
-let upper b =
-  Nx.sum
-    (Quad.fixed (Quad.Rule.gauss 4) Nx.sin (Quad.Range.v (Nx.zeros_like b) b))
-
-let fixed_tests =
-  let theta = vec [| -1.; 0.5; 2. |] in
-  [
-    test "grad in a parameter is the finite difference of the sum" (fun () ->
-        equal
-          (Oracle.tensor ~rel:1e-8 ())
-          (Oracle.central ~eps:1e-6 integral theta (Nx.ones_like theta))
-          (Rune.grad' total theta));
-    test "grad in an end is the finite difference of the sum" (fun () ->
-        let b = vec [| 0.3; 1.7 |] in
-        let v = vec [| 1.; -2. |] in
-        equal
-          (Oracle.tensor ~rel:1e-8 ())
-          (Nx.reshape [||] (Oracle.central ~eps:1e-6 upper b v))
-          (scalar (Oracle.dot (Rune.grad' upper b) v)));
-    test "compiled equals eager" (fun () ->
-        Compiled.here ();
-        equal
-          (Oracle.tensor ~rel:1e-14 ())
-          (integral theta) (Rune.jit' integral theta));
-    test "vmap is each element's integral" (fun () ->
-        equal
-          (Oracle.tensor ~rel:1e-15 ())
-          (integral theta)
-          (Rune.vmap' integral theta));
+    test "f receives points of shape [m; n − 1] @ shape" (fun () ->
+        let seen = ref [] in
+        ignore
+          (Quad.cumulative r (recording seen Nx.exp) (Nx.zeros f64 [| 4; 2 |]));
+        equal (list (array int)) [ [| 5; 3; 2 |] ] !seen);
+    cases "knots without a knot or an axis raise" ~id:fst
+      [ ("no knot", vec [||]); ("no axis", scalar 1.) ]
+      (fun (_, knots) ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.cumulative") (fun () ->
+            Quad.cumulative r Nx.exp knots));
     test "an integrand that changes the shape raises" (fun () ->
-        raises_match
-          (Exn.invalid_arg ~sub:"returned shape [3] for points of shape [3,2]")
-          (fun () ->
-            Quad.fixed (Quad.Rule.gauss 3)
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.cumulative") (fun () ->
+            Quad.cumulative r
               (fun x -> Nx.sum ~axes:[ 1 ] x)
-              (Quad.Range.v (vec [| 0.; 0. |]) (vec [| 1.; 1. |]))));
+              (Nx.zeros f64 [| 2; 2 |])));
   ]
 
-(* Adaptive *)
+(* Solves *)
 
 let k7 = Quad.Rule.kronrod 7
-let unit_range x = Quad.Range.v (Nx.zeros_like x) (Nx.ones_like x)
 
 let adaptive ?(budget = 200) ?(tol = Tol.v ~rel:1e-10 ~abs:1e-12) f range =
   Quad.adaptive k7 ~tol ~budget f range
 
-(* ∫₀¹ e^(θx) dx = (e^θ − 1) / θ, and its θ-derivative. *)
-let exp_integral t = (Float.exp t -. 1.) /. t
-let exp_integral' t = ((t *. Float.exp t) -. Float.exp t +. 1.) /. (t *. t)
+(* The tolerance the adaptive solves are asked for. On a smooth piece the
+   estimate |K − G| exceeds the Kronrod sum's own error. *)
+let at_tol () = Oracle.tensor ~rel:1e-10 ~abs:1e-12 ()
+
+(* A Gaussian peak of width w at 0.3 on [0, 1], and its integral. *)
+let peak w x = Nx.exp (Nx.neg (Nx.square (Nx.div (Nx.sub_s x 0.3) w)))
+
+let peak_integral w =
+  w *. Float.sqrt Float.pi /. 2.
+  *. (Float.erf (0.7 /. w) +. Float.erf (0.3 /. w))
+
+(* 0 below 0.3 and 1 above: no piece of positive width resolves the jump. *)
+let jump x = Nx.cast f64 (Nx.greater_s x 0.3)
+
+(* A lane's points have shape [m; k] @ lanes for some k. *)
+let pieces m lanes =
+  satisfies ~claim:"[m; k] @ lanes" (array int) (fun s ->
+      Array.length s = 2 + Array.length lanes
+      && s.(0) = m
+      && Array.sub s 2 (Array.length lanes) = lanes)
 
 let adaptive_tests =
+  let theta = vec [| -2.; 0.5; 3. |] in
+  let solve t =
+    Solution.get (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))
+  in
   [
-    test "evaluations count the search's pieces and the answer's 32" (fun () ->
-        (* Budget 3: 2·3 − 1 pieces searched, then one chunk of 32 pieces, 15
-           points each. *)
-        let s = adaptive ~budget:3 Nx.log (unit_range (vec [| 0. |])) in
-        equal Oracle.status_t Budget_spent (Oracle.status s);
-        equal (Oracle.tensor ())
-          (Nx.create Nx.int32 [| 1 |] [| Int32.of_int (15 * (5 + 32)) |])
-          (Solution.evaluations s));
     test "a smooth integral converges" (fun () ->
-        let theta = vec [| -2.; 0.5; 3. |] in
-        let s =
-          adaptive (fun x -> Nx.exp (Nx.mul x theta)) (unit_range theta)
-        in
-        equal
-          (Oracle.tensor ~rel:1e-12 ())
-          (Nx.map_item exp_integral theta)
-          (Solution.get s));
-    test "an endpoint singularity converges by bisection" (fun () ->
-        (* ∫₀¹ √x = 2/3 and ∫₀¹ log x = −1. *)
-        let a = vec [| 0. |] in
-        let r = Quad.Range.v a (Nx.ones_like a) in
-        equal ~msg:"sqrt"
-          (Oracle.tensor ~rel:1e-9 ())
-          (vec [| 2. /. 3. |])
-          (Solution.get (adaptive Nx.sqrt r));
-        equal ~msg:"log"
-          (Oracle.tensor ~rel:1e-9 ())
-          (vec [| -1. |])
-          (Solution.get (adaptive ~budget:400 Nx.log r)));
-    test "each element refines on its own" (fun () ->
-        (* Gaussian peaks of widths 1, 10⁻¹ and 10⁻² at 0.3 on [0, 1]. A peak
-           narrower than the first rule's nodes is invisible to it, as to any
-           adaptive rule. *)
-        let w = vec [| 1.; 1e-1; 1e-2 |] in
-        let f x = Nx.exp (Nx.neg (Nx.square (Nx.div (Nx.sub_s x 0.3) w))) in
-        let s = adaptive f (unit_range w) in
-        let truth w =
-          w *. Float.sqrt Float.pi /. 2.
-          *. (Float.erf (0.7 /. w) +. Float.erf (0.3 /. w))
-        in
-        equal
-          (Oracle.tensor ~rel:1e-9 ())
-          (Nx.map_item truth w) (Solution.get s);
-        let n = Nx.to_array (Solution.evaluations s) in
-        less int32 ~than:n.(2) n.(0));
+        equal (at_tol ()) (Nx.map_item exp_integral theta) (solve theta));
+    cases "an endpoint singularity converges by bisection" ~id:fst
+      [ ("√x", (Nx.sqrt, 2. /. 3.)); ("log x", (Nx.log, -1.)) ]
+      (fun (_, (f, truth)) ->
+        let s = adaptive ~budget:400 f (unit_range (vec [| 0. |])) in
+        equal (at_tol ()) (vec [| truth |]) (Solution.get s));
+    test "each element is its integral solved alone" (fun () ->
+        let widths = [| 1.; 1e-1; 1e-2 |] in
+        let solve w = adaptive (peak w) (unit_range w) in
+        let all = solve (vec widths) in
+        equal (at_tol ())
+          (Nx.map_item peak_integral (vec widths))
+          (Solution.get all);
+        Array.iteri
+          (fun i w ->
+            let alone = solve (vec [| w |]) in
+            let at v = Nx.slice [ Nx.R (i, i + 1) ] v in
+            let msg = Printf.sprintf "width %g" w in
+            equal ~msg (exact ()) (Solution.best alone) (at (Solution.best all));
+            equal ~msg (exact ())
+              (Solution.evaluations alone)
+              (at (Solution.evaluations all)))
+          widths);
     test "a half-line converges" (fun () ->
         let a = vec [| 0.; 1. |] in
         let s =
           adaptive (fun x -> Nx.exp (Nx.neg (Nx.sub x a))) (Quad.Range.from a)
         in
-        equal (Oracle.tensor ~rel:1e-9 ()) (Nx.ones_like a) (Solution.get s));
-    test "the budget ends a solve" (fun () ->
+        equal (at_tol ()) (Nx.ones_like a) (Solution.get s));
+    test "a range of zero width integrates to 0" (fun () ->
+        let s = adaptive Nx.exp (Quad.Range.v (vec [| 1. |]) (vec [| 1. |])) in
+        equal (exact ()) (vec [| 0. |]) (Solution.get s));
+    test "f receives points of shape [15; k] @ shape" (fun () ->
+        let seen = ref [] in
+        ignore
+          (adaptive (recording seen Nx.sqrt)
+             (unit_range (Nx.zeros f64 [| 2; 3 |])));
+        List.iter (pieces 15 [| 2; 3 |]) !seen);
+    test "budget pieces end an element Budget_spent" (fun () ->
         let s = adaptive ~budget:2 Nx.log (unit_range (vec [| 0. |])) in
+        equal Oracle.status_t Budget_spent (Oracle.status s));
+    test "evaluations count the search's pieces and the answer's 32" (fun () ->
+        (* Budget 3: 2·3 − 1 pieces searched, then one chunk of 32 pieces, 15
+           points each. *)
+        let s = adaptive ~budget:3 Nx.log (unit_range (vec [| 0. |])) in
         equal Oracle.status_t Budget_spent (Oracle.status s);
-        let report = Format.asprintf "%a" Solution.pp s in
-        contains ~sub:"rule kronrod 7, tol rel 1e-10 abs 1e-12, budget 2" report;
-        contains ~sub:"a 0, b 1, estimate" report;
-        contains ~sub:"Raise the budget or loosen tol" report);
+        equal (exact ())
+          (Nx.create Nx.int32 [| 1 |] [| Int32.of_int (15 * (5 + 32)) |])
+          (Solution.evaluations s));
     test "a pole at a node is a non-finite sum" (fun () ->
         (* The 15-point rule's middle node on [0, 1] is 0.5, where 1 / (x − 0.5)
            is infinite. *)
@@ -372,17 +521,29 @@ let adaptive_tests =
             (unit_range (vec [| 0. |]))
         in
         equal Oracle.status_t Not_finite (Oracle.status s));
-    test "grad in a parameter is the exact integral's" (fun () ->
-        let theta = vec [| -2.; 0.5; 3. |] in
-        let integral t =
-          Nx.sum
-            (Solution.get
-               (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t)))
+    test "a jump no piece resolves ends Stalled" (fun () ->
+        (* The piece holding 0.3 is bisected until no float lies inside it,
+           about 54 levels down. *)
+        let s =
+          adaptive ~budget:400 ~tol:(Tol.rel 1e-30) jump
+            (unit_range (vec [| 0. |]))
         in
+        equal Oracle.status_t Stalled (Oracle.status s));
+    test "a piece at level 62 ends Stalled" (fun () ->
+        (* The worst piece of x^(−½) is [0, 2^−L], whose floats never run out:
+           only the level stops it, at 63 pieces of a budget of 80. *)
+        let s =
+          adaptive ~budget:80 ~tol:(Tol.rel 1e-30) Nx.rsqrt
+            (unit_range (vec [| 0. |]))
+        in
+        equal Oracle.status_t Stalled (Oracle.status s));
+    test "grad in a parameter is the exact integral's" (fun () ->
+        (* The derivative's integrand x e^(θx), on the partition chosen for
+           e^(θx): within 10 tol. *)
         equal
           (Oracle.tensor ~rel:1e-9 ())
           (Nx.map_item exp_integral' theta)
-          (Rune.grad' integral theta));
+          (Rune.grad' (fun t -> Nx.sum (solve t)) theta));
     test "grad in an end is the integrand there" (fun () ->
         let b = vec [| 0.7; 2. |] in
         let integral b =
@@ -391,84 +552,62 @@ let adaptive_tests =
         in
         equal (Oracle.tensor ~rel:1e-9 ()) (Nx.cos b) (Rune.grad' integral b));
     test "an element that did not converge has a zero derivative" (fun () ->
+        (* x^(p − 1) on [0, 1]: integrable for p = 1, not for p = −0.5. *)
         let p = vec [| 1.; -0.5 |] in
-        (* x^p on [0, 1]: integrable for p = 1, not for p = −1.5. *)
-        let integral p =
-          Nx.sum
-            (Solution.best
-               (adaptive ~budget:20
-                  (fun x -> Nx.pow x (Nx.sub_s (Nx.mul_s p 1.) 1.))
-                  (unit_range p)))
+        let solve p =
+          adaptive ~budget:20 (fun x -> Nx.pow x (Nx.sub_s p 1.)) (unit_range p)
         in
-        let g = Rune.grad' integral p in
-        equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 1 ] g));
+        equal (exact ())
+          (Nx.create Nx.bool [| 2 |] [| true; false |])
+          (Solution.ok (solve p));
+        let g = Rune.grad' (fun p -> Nx.sum (Solution.best (solve p))) p in
+        equal (exact ()) (scalar 0.) (Nx.get [ 1 ] g));
     test "compiled equals eager" (fun () ->
         Compiled.here ();
-        let theta = vec [| -2.; 0.5; 3. |] in
-        let f t =
-          Solution.get (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))
-        in
-        equal (Oracle.tensor ~rel:1e-14 ()) (f theta) (Rune.jit' f theta));
+        equal
+          (Oracle.tensor ~rel:1e-14 ())
+          (solve theta) (Rune.jit' solve theta));
     test "compiled grad equals eager grad" (fun () ->
         Compiled.here ();
-        let theta = vec [| -2.; 0.5; 3. |] in
-        let g =
-          Rune.grad' (fun t ->
-              Nx.sum
-                (Solution.get
-                   (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))))
-        in
+        let g = Rune.grad' (fun t -> Nx.sum (solve t)) in
         equal (Oracle.tensor ~rel:1e-13 ()) (g theta) (Rune.jit' g theta));
     test "vmap is each lane's solve" (fun () ->
         let theta = Nx.create f64 [| 2; 2 |] [| -2.; 0.5; 3.; 1. |] in
-        let f t =
-          Solution.get (adaptive (fun x -> Nx.exp (Nx.mul x t)) (unit_range t))
-        in
-        equal (Oracle.tensor ~rel:1e-14 ()) (f theta) (Rune.vmap' f theta));
-    test "adaptive rejects a budget below 1" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"budget = 0 is below 1") (fun () ->
-            Quad.adaptive k7 ~tol:(Tol.rel 1e-6) ~budget:0 Nx.exp
-              (unit_range (vec [| 0. |]))));
+        equal
+          (Oracle.tensor ~rel:1e-14 ())
+          (solve theta) (Rune.vmap' solve theta));
+    test "a budget below 1 raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.adaptive") (fun () ->
+            adaptive ~budget:0 Nx.exp (unit_range (vec [| 0. |]))));
+    test "an integrand that changes the shape raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.adaptive") (fun () ->
+            adaptive
+              (fun x -> Nx.sum ~axes:[ 1 ] x)
+              (unit_range (vec [| 0.; 0. |]))));
   ]
 
-(* Double-exponential *)
-
-let ts = Quad.tanh_sinh ~tol:(Tol.v ~rel:1e-12 ~abs:1e-14)
-
-(* ∫₀¹ x^(a−1) log x dx = −1 / a². *)
-let log_moment a =
-  ts
-    (fun x -> Nx.mul (Nx.pow x (Nx.sub_s a 1.)) (Nx.log x))
-    (Quad.Range.v (Nx.zeros_like a) (Nx.ones_like a))
-
-let de_tests =
-  let close = Oracle.tensor ~rel:1e-11 () in
+let tanh_sinh_tests =
+  let ts = Quad.tanh_sinh ~tol:(Tol.v ~rel:1e-12 ~abs:1e-14) in
+  (* The tolerance the solves are asked for: the last two levels' difference
+     exceeds the final level's error, which falls quadratically. *)
+  let at_tol () = Oracle.tensor ~rel:1e-12 ~abs:1e-14 () in
+  (* ∫₀¹ x^(a−1) log x dx = −1 / a². *)
+  let log_moment a =
+    Solution.get
+      (ts
+         (fun x -> Nx.mul (Nx.pow x (Nx.sub_s a 1.)) (Nx.log x))
+         (unit_range a))
+  in
+  let a = vec [| 0.5; 1.; 2.5 |] in
   [
-    test "evaluations count the search's chunks and the whole schedule"
-      (fun () ->
-        (* Lane 0 diverges and searches every chunk of 64 nodes, so it evaluates
-           the schedule twice; lane 1 converges sooner and adds its search's
-           chunks to one pass. *)
-        let f x =
-          let lane i = Nx.slice [ Nx.A; Nx.I i ] x in
-          Nx.stack ~axis:1 [ Nx.recip (lane 0); Nx.sqrt (lane 1) ]
-        in
-        let s = ts f (Quad.Range.v (vec [| 0.; 0. |]) (vec [| 1.; 1. |])) in
-        equal (Oracle.tensor ())
-          (Nx.create Nx.bool [| 2 |] [| false; true |])
-          (Solution.ok s);
-        let n = Nx.to_array (Solution.evaluations s) in
-        let schedule = Int32.div n.(0) 2l in
-        equal int32 0l (Int32.rem schedule 64l);
-        equal int32 0l (Int32.rem (Int32.sub n.(1) schedule) 64l);
-        less int32 ~than:n.(0) n.(1));
     test "endpoint singularities at 0 converge" (fun () ->
         let a = vec [| 0.3; 0.5; 1.; 2.5 |] in
-        equal close
+        equal (at_tol ())
           (Nx.map_item (fun a -> -1. /. (a *. a)) a)
-          (Solution.get (log_moment a)));
-    test "1 / √(1 − x²) on [−1, 1] is π" (fun () ->
-        (* The integrand computes the distance to each end from x itself. *)
+          (log_moment a));
+    test "1 / √(1 − x²) on [−1, 1] is π to the ends' resolution" (fun () ->
+        (* The integrand computes each end's distance from x, so it misses the
+           mass within an ulp of each end, 2√(2 · 2^−53) ≈ 3e-8. *)
         let r = Quad.Range.v (vec [| -1. |]) (vec [| 1. |]) in
         let f x = Nx.rsqrt (Nx.mul (Nx.add_s x 1.) (Nx.rsub_s 1. x)) in
         equal
@@ -476,7 +615,6 @@ let de_tests =
           (vec [| Float.pi |])
           (Solution.best (ts f r)));
     test "exp-sinh integrates a half-line" (fun () ->
-        let a = vec [| 0.; 0. |] in
         (* Lane 0 integrates e^-x, lane 1 1 / (1 + x²). *)
         let f x =
           let lane i = Nx.slice [ Nx.A; Nx.I i ] x in
@@ -486,8 +624,8 @@ let de_tests =
               Nx.recip (Nx.add_s (Nx.square (lane 1)) 1.);
             ]
         in
-        let s = ts f (Quad.Range.from a) in
-        equal close (vec [| 1.; Float.pi /. 2. |]) (Solution.get s));
+        let s = ts f (Quad.Range.from (vec [| 0.; 0. |])) in
+        equal (at_tol ()) (vec [| 1.; Float.pi /. 2. |]) (Solution.get s));
     test "sinh-sinh integrates the line" (fun () ->
         let c = vec [| 0.; 0.5 |] in
         let s =
@@ -495,212 +633,268 @@ let de_tests =
             (fun x -> Nx.exp (Nx.neg (Nx.square (Nx.sub x c))))
             (Quad.Range.line c)
         in
-        equal close (Nx.full f64 [| 2 |] (Float.sqrt Float.pi)) (Solution.get s));
+        equal (at_tol ())
+          (Nx.full f64 [| 2 |] (Float.sqrt Float.pi))
+          (Solution.get s));
+    test "f receives points of shape [64] @ shape" (fun () ->
+        let seen = ref [] in
+        ignore
+          (ts (recording seen Nx.sqrt) (unit_range (Nx.zeros f64 [| 2; 3 |])));
+        List.iter (equal (array int) [| 64; 2; 3 |]) !seen);
+    test "a divergent integral ends Stalled" (fun () ->
+        let s = ts Nx.recip (unit_range (vec [| 0. |])) in
+        equal Oracle.status_t Stalled (Oracle.status s));
+    test "a pole at a node is a non-finite sum" (fun () ->
+        (* t = 0 is the range's midpoint. *)
+        let s =
+          ts (fun x -> Nx.recip (Nx.sub_s x 0.5)) (unit_range (vec [| 0. |]))
+        in
+        equal Oracle.status_t Not_finite (Oracle.status s));
+    test "evaluations count the search's chunks and the whole schedule"
+      (fun () ->
+        (* Lane 0 diverges and searches every chunk of 64 nodes, so it evaluates
+           the schedule twice; lane 1 converges sooner and adds its search's
+           chunks to one pass. *)
+        let f x =
+          let lane i = Nx.slice [ Nx.A; Nx.I i ] x in
+          Nx.stack ~axis:1 [ Nx.recip (lane 0); Nx.sqrt (lane 1) ]
+        in
+        let s = ts f (unit_range (vec [| 0.; 0. |])) in
+        equal (exact ())
+          (Nx.create Nx.bool [| 2 |] [| false; true |])
+          (Solution.ok s);
+        let n = Nx.to_array (Solution.evaluations s) in
+        let schedule = Int32.div n.(0) 2l in
+        equal ~msg:"lane 0, in chunks" int32 0l (Int32.rem schedule 64l);
+        equal ~msg:"lane 1's search, in chunks" int32 0l
+          (Int32.rem (Int32.sub n.(1) schedule) 64l);
+        less int32 ~than:n.(0) n.(1));
     test "grad in a is 2 / a³" (fun () ->
-        let a = vec [| 0.5; 1.; 2.5 |] in
         equal
           (Oracle.tensor ~rel:1e-9 ())
           (Nx.map_item (fun a -> 2. /. (a *. a *. a)) a)
-          (Rune.grad' (fun a -> Nx.sum (Solution.get (log_moment a))) a));
+          (Rune.grad' (fun a -> Nx.sum (log_moment a)) a));
+    test "grad in an end is the integrand there" (fun () ->
+        (* d/db ∫₀ᵇ x^(−½) dx = b^(−½). *)
+        let b = vec [| 0.5; 2. |] in
+        let integral b =
+          Nx.sum (Solution.get (ts Nx.rsqrt (Quad.Range.v (Nx.zeros_like b) b)))
+        in
+        equal (Oracle.tensor ~rel:1e-9 ()) (Nx.rsqrt b) (Rune.grad' integral b));
     test "an element that did not converge has a zero derivative" (fun () ->
         (* x^(p − 1) on [0, 1]: integrable for p = 1, not for p = −0.5. *)
         let p = vec [| 1.; -0.5 |] in
-        let solve p =
-          ts
-            (fun x -> Nx.pow x (Nx.sub_s p 1.))
-            (Quad.Range.v (Nx.zeros_like p) (Nx.ones_like p))
-        in
-        equal (Oracle.tensor ())
+        let solve p = ts (fun x -> Nx.pow x (Nx.sub_s p 1.)) (unit_range p) in
+        equal (exact ())
           (Nx.create Nx.bool [| 2 |] [| true; false |])
           (Solution.ok (solve p));
         let g = Rune.grad' (fun p -> Nx.sum (Solution.best (solve p))) p in
-        equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 1 ] g));
-    test "a divergent integral does not converge" (fun () ->
-        let s = ts Nx.recip (Quad.Range.v (vec [| 0. |]) (vec [| 1. |])) in
-        equal (Oracle.tensor ()) (Nx.zeros Nx.bool [| 1 |]) (Solution.ok s));
+        equal (exact ()) (scalar 0.) (Nx.get [ 1 ] g));
     test "compiled equals eager" (fun () ->
         Compiled.here ();
-        let a = vec [| 0.5; 1.; 2.5 |] in
-        let f a = Solution.get (log_moment a) in
-        equal (Oracle.tensor ~rel:1e-13 ()) (f a) (Rune.jit' f a));
+        equal
+          (Oracle.tensor ~rel:1e-13 ())
+          (log_moment a) (Rune.jit' log_moment a));
     test "compiled grad equals eager grad" (fun () ->
         Compiled.here ();
-        let a = vec [| 0.5; 1.; 2.5 |] in
-        let g = Rune.grad' (fun a -> Nx.sum (Solution.get (log_moment a))) in
+        let g = Rune.grad' (fun a -> Nx.sum (log_moment a)) in
         equal (Oracle.tensor ~rel:1e-12 ()) (g a) (Rune.jit' g a));
     test "float32 converges to float32's tolerance" (fun () ->
         let a = Nx.create Nx.float32 [| 2 |] [| 0.5; 2. |] in
         let s =
           Quad.tanh_sinh ~tol:(Tol.rel 1e-5)
             (fun x -> Nx.mul (Nx.pow x (Nx.sub_s a 1.)) (Nx.log x))
-            (Quad.Range.v (Nx.zeros_like a) (Nx.ones_like a))
+            (unit_range a)
         in
         equal
           (Oracle.tensor ~rel:1e-5 ())
           (Nx.create Nx.float32 [| 2 |] [| -4.; -0.25 |])
           (Solution.get s));
+    test "an integrand that changes the shape raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.tanh_sinh") (fun () ->
+            ts (fun x -> Nx.sum ~axes:[ 1 ] x) (unit_range (vec [| 0.; 0. |]))));
   ]
-
-(* Cubature *)
-
-(* Each lane's coordinate [k] of points [x] of shape [... @ [d]]. *)
-let coord k x = Nx.get [ k ] (Nx.moveaxis (Nx.ndim x - 1) 0 x)
-let product x = Nx.prod ~axes:[ Nx.ndim x - 1 ] x
-
-let unit_box lanes d =
-  Quad.Box.v
-    (Nx.zeros f64 (Array.append lanes [| d |]))
-    (Nx.ones f64 (Array.append lanes [| d |]))
 
 let cube ?(budget = 2000) f box =
   Quad.cubature ~tol:(Tol.v ~rel:1e-9 ~abs:1e-13) ~budget f box
 
+(* exp(−50 |x − 0.4|²) on [0, 1]², and its integral. *)
+let peak2 x = Nx.exp (Nx.mul_s (sum_coords (Nx.square (Nx.sub_s x 0.4))) (-50.))
+
+let peak2_integral =
+  let one =
+    Float.sqrt (Float.pi /. 50.)
+    /. 2.
+    *. (Float.erf (0.6 *. Float.sqrt 50.) +. Float.erf (0.4 *. Float.sqrt 50.))
+  in
+  one *. one
+
+(* A monomial Π x_k^(e_k) of total degree at most 7 in d dimensions, d from 2 to
+   10, over a box with corners in [−2, 2]. *)
+let monomial =
+  Gen.(
+    let* d =
+      frequency [ (1, constant 2); (1, int_range 3 9); (1, constant 10) ]
+    in
+    let* total = frequency [ (1, constant 7); (1, int_range 0 6) ] in
+    let* axes = array ~size:(constant total) (int_range 0 (d - 1)) in
+    let+ lo = array ~size:(constant d) (float_range (-2.) 2.)
+    and+ hi = array ~size:(constant d) (float_range (-2.) 2.) in
+    let e = Array.make d 0 in
+    Array.iter (fun k -> e.(k) <- e.(k) + 1) axes;
+    (e, lo, hi))
+
 let cubature_tests =
+  let theta = vec [| 0.5; -1. |] in
+  let integral t =
+    let f x = Nx.exp (Nx.mul (sum_coords x) t) in
+    Solution.get (cube f (unit_box [| 2 |] 2))
+  in
   [
-    test "evaluations count the search's boxes and the answer's 32" (fun () ->
-        (* Budget 2 in two dimensions: 2·2 − 1 boxes searched, then one chunk of
-           32 boxes, 2² + 2·2² + 2·2 + 1 = 17 points each. *)
-        let peak x =
-          Nx.exp
-            (Nx.mul_s
-               (Nx.sum ~axes:[ Nx.ndim x - 1 ] (Nx.square (Nx.sub_s x 0.4)))
-               (-50.))
+    prop "integrates polynomials of total degree 7 in one box" monomial
+      (fun (e, lo, hi) ->
+        let d = Array.length e in
+        cover "d = 2" (d = 2);
+        cover "d = 10" (d = 10);
+        cover "total degree 7" (Array.fold_left ( + ) 0 e = 7);
+        cover "a flipped axis" (Array.exists2 (fun l h -> h < l) lo hi);
+        let f x =
+          List.init d (fun k -> Nx.pow_s (coord k x) (Float.of_int e.(k)))
+          |> List.fold_left Nx.mul (Nx.ones_like (coord 0 x))
         in
-        let s = cube ~budget:2 peak (unit_box [| 1 |] 2) in
-        equal Oracle.status_t Budget_spent (Oracle.status s);
-        equal (Oracle.tensor ())
-          (Nx.create Nx.int32 [| 1 |] [| Int32.of_int (17 * (3 + 32)) |])
-          (Solution.evaluations s));
-    test "a degree-7 monomial is exact in one box" (fun () ->
-        (* ∫ x⁴ y³ over [0, 1]² = 1/20. *)
-        let f x = Nx.mul (Nx.pow_s (coord 0 x) 4.) (Nx.pow_s (coord 1 x) 3.) in
-        let s = cube ~budget:1 f (unit_box [||] 2) in
-        equal
-          (Oracle.tensor ~rel:1e-14 ())
-          (Nx.scalar f64 0.05) (Solution.best s));
-    test "a smooth integral converges in three dimensions" (fun () ->
-        (* ∫ e^(x + y + z) over [0, 1]³ = (e − 1)³. *)
         let s =
-          cube
-            (fun x -> Nx.exp (Nx.sum ~axes:[ Nx.ndim x - 1 ] x))
-            (unit_box [||] 3)
+          Quad.cubature ~tol:(Tol.rel 1e-9) ~budget:1 f
+            (Quad.Box.v (vec lo) (vec hi))
         in
+        let along k =
+          let p = Float.of_int (e.(k) + 1) in
+          ((hi.(k) ** p) -. (lo.(k) ** p)) /. p
+        in
+        let width k = Float.abs (hi.(k) -. lo.(k)) in
+        let product g = List.fold_left ( *. ) 1. (List.init d g) in
+        (* At most 1245 points, weights whose magnitudes sum to under 10 and
+           values up to 2^7: the sum rounds by 1245 · 10 · 2^7 ε of the
+           volume. *)
+        let bound = 1245. *. 10. *. 128. *. epsilon_float *. product width in
+        equal
+          (float_rel ~rel:0. ~abs:(bound +. Float.min_float))
+          (product along)
+          (Nx.item [] (Solution.best s)));
+    test "a smooth integral converges in three dimensions" (fun () ->
+        (* ∫ e^(x + y + z) over [0, 1]³ = (e − 1)³, at the solve's tol. *)
+        let s = cube (fun x -> Nx.exp (sum_coords x)) (unit_box [||] 3) in
         equal
           (Oracle.tensor ~rel:1e-9 ())
-          (Nx.scalar f64 ((Float.exp 1. -. 1.) ** 3.))
+          (scalar ((Float.exp 1. -. 1.) ** 3.))
           (Solution.get s));
     test "each lane integrates its own box" (fun () ->
+        (* ∫ x y over [0, 1] × [0, 2] = 1 and over [−1, 1] × [0, 1] = 0. *)
         let lo = Nx.create f64 [| 2; 2 |] [| 0.; 0.; -1.; 0. |] in
         let hi = Nx.create f64 [| 2; 2 |] [| 1.; 2.; 1.; 1. |] in
-        (* ∫ x y over [0, 1] × [0, 2] = 1 and over [−1, 1] × [0, 1] = 0. *)
-        let s = cube (fun x -> product x) (Quad.Box.v lo hi) in
+        let s = cube product (Quad.Box.v lo hi) in
         equal
           (Oracle.tensor ~rel:1e-12 ~abs:1e-14 ())
           (vec [| 1.; 0. |])
           (Solution.get s));
-    test "a peak refines the partition" (fun () ->
-        let f x =
-          Nx.exp
-            (Nx.mul_s
-               (Nx.sum ~axes:[ Nx.ndim x - 1 ] (Nx.square (Nx.sub_s x 0.4)))
-               (-50.))
-        in
+    test "a peak converges by bisection" (fun () ->
         let s =
-          Quad.cubature ~tol:(Tol.rel 1e-7) ~budget:2000 f (unit_box [||] 2)
-        in
-        let one =
-          Float.sqrt (Float.pi /. 50.)
-          /. 2.
-          *. (Float.erf (0.6 *. Float.sqrt 50.)
-             +. Float.erf (0.4 *. Float.sqrt 50.))
+          Quad.cubature ~tol:(Tol.rel 1e-7) ~budget:2000 peak2 (unit_box [||] 2)
         in
         equal
           (Oracle.tensor ~rel:1e-7 ())
-          (Nx.scalar f64 (one *. one))
-          (Solution.get s));
-    test "grad in a parameter is the exact integral's" (fun () ->
-        (* ∫ e^(θ(x + y)) over [0, 1]² = ((e^θ − 1) / θ)². *)
-        let theta = vec [| 0.5; -1. |] in
-        let integral t =
-          let f x = Nx.exp (Nx.mul (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) t) in
-          Nx.sum (Solution.get (cube f (unit_box [| 2 |] 2)))
+          (scalar peak2_integral) (Solution.get s));
+    test "f receives points of shape [17; k] @ lanes @ [2]" (fun () ->
+        let seen = ref [] in
+        ignore (cube ~budget:4 (recording seen product) (unit_box [| 3 |] 2));
+        List.iter (pieces 17 [| 3; 2 |]) !seen);
+    test "budget boxes end a lane Budget_spent" (fun () ->
+        let s = cube ~budget:2 peak2 (unit_box [||] 2) in
+        equal Oracle.status_t Budget_spent (Oracle.status s));
+    test "evaluations count the search's boxes and the answer's 32" (fun () ->
+        (* Budget 2 in two dimensions: 2·2 − 1 boxes searched, then one chunk of
+           32 boxes, 2² + 2·2² + 2·2 + 1 = 17 points each. *)
+        let s = cube ~budget:2 peak2 (unit_box [| 1 |] 2) in
+        equal (exact ())
+          (Nx.create Nx.int32 [| 1 |] [| Int32.of_int (17 * (3 + 32)) |])
+          (Solution.evaluations s));
+    test "a pole at a point is a non-finite sum" (fun () ->
+        (* The box's center has x = 0.5. *)
+        let s =
+          cube (fun x -> Nx.recip (Nx.sub_s (coord 0 x) 0.5)) (unit_box [||] 2)
         in
-        let d t = 2. *. exp_integral t *. exp_integral' t in
+        equal Oracle.status_t Not_finite (Oracle.status s));
+    test "a box at level 62 ends Stalled" (fun () ->
+        (* The worst box of x^(−½) is [0, 2^−L] × [0, 1], split along x, whose
+           floats never run out: only the level stops it, within a budget of
+           about four boxes per level. *)
+        let s =
+          Quad.cubature ~tol:(Tol.rel 1e-30) ~budget:300
+            (fun x -> Nx.rsqrt (coord 0 x))
+            (unit_box [||] 2)
+        in
+        equal Oracle.status_t Stalled (Oracle.status s));
+    test "grad in a parameter is the exact integral's" (fun () ->
         equal
           (Oracle.tensor ~rel:1e-8 ())
-          (Nx.map_item d theta)
-          (Rune.grad' integral theta));
+          (Nx.map_item squared' theta)
+          (Rune.grad' (fun t -> Nx.sum (integral t)) theta));
+    test "grad in a corner is the integral over that face" (fun () ->
+        (* ∂/∂h of ∫ e^(x + y) over [0, h] × [0, 1] is e^h (e − 1). *)
+        let integral h =
+          let box = Quad.Box.v (vec [| 0.; 0. |]) (Nx.stack [ h; scalar 1. ]) in
+          Solution.get (cube (fun x -> Nx.exp (sum_coords x)) box)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-8 ())
+          (scalar (Float.exp 0.7 *. (Float.exp 1. -. 1.)))
+          (Rune.grad' integral (scalar 0.7)));
+    test "a lane that did not converge has a zero derivative" (fun () ->
+        let solve t =
+          cube ~budget:1
+            (fun x ->
+              Nx.exp (Nx.mul t (sum_coords (Nx.square (Nx.sub_s x 0.4)))))
+            (unit_box [||] 2)
+        in
+        let t = scalar (-50.) in
+        equal Oracle.status_t Budget_spent (Oracle.status (solve t));
+        equal (exact ()) (scalar 0.)
+          (Rune.grad' (fun t -> Solution.best (solve t)) t));
     test "compiled equals eager" (fun () ->
         Compiled.here ();
-        let theta = vec [| 0.5; -1. |] in
-        let integral t =
-          Solution.get
-            (cube
-               (fun x -> Nx.exp (Nx.mul (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) t))
-               (unit_box [| 2 |] 2))
-        in
         equal
           (Oracle.tensor ~rel:1e-13 ())
           (integral theta) (Rune.jit' integral theta));
     test "compiled grad equals eager grad" (fun () ->
         Compiled.here ();
-        let theta = vec [| 0.5; -1. |] in
-        let g =
-          Rune.grad' (fun t ->
-              Nx.sum
-                (Solution.get
-                   (cube
-                      (fun x ->
-                        Nx.exp (Nx.mul (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) t))
-                      (unit_box [| 2 |] 2))))
-        in
+        let g = Rune.grad' (fun t -> Nx.sum (integral t)) in
         equal (Oracle.tensor ~rel:1e-12 ()) (g theta) (Rune.jit' g theta));
-    test "corners broadcast, and a flipped axis flips the sign" (fun () ->
-        (* One unit square shared by two lanes, the second flipped along x. *)
-        let lo = vec [| 0.; 0. |] in
-        let hi = Nx.create f64 [| 2; 2 |] [| 1.; 1.; -1.; 1. |] in
-        let s =
-          cube
-            (fun x -> Nx.add_s (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) 1.)
-            (Quad.Box.v lo hi)
-        in
-        (* ∫ (1 + x + y) over [0, 1]² = 2 and over [0, −1] × [0, 1] is −(1 − 1/2
-           + 1/2) = −1. *)
-        equal (Oracle.tensor ~rel:1e-13 ()) (vec [| 2.; -1. |]) (Solution.get s));
-    test "one dimension raises" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"d = 1 is not in [2, 10]") (fun () ->
-            cube (fun x -> product x) (unit_box [||] 1)));
-    test "eleven dimensions raise" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"d = 11 is not in [2, 10]")
-          (fun () -> cube (fun x -> product x) (unit_box [||] 11)));
+    cases "d outside [2, 10] raises" ~id:(Printf.sprintf "d = %d") [ 1; 11 ]
+      (fun d ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.cubature") (fun () ->
+            cube product (unit_box [||] d)));
     test "a budget below 1 raises" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"budget = 0 is below 1") (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.cubature") (fun () ->
             cube ~budget:0 product (unit_box [||] 2)));
     test "an integrand that keeps the points' last axis raises" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"the integrand returned shape")
-          (fun () -> cube Fun.id (unit_box [||] 2)));
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.cubature") (fun () ->
+            cube Fun.id (unit_box [||] 2)));
   ]
-
-(* Quasi-Monte Carlo *)
 
 let key = Nx.Rng.key 2026
 
+(* ∏ (1 + (x_i − 1/2) / 2), whose integral over [0, 1]^d is 1. *)
+let tilted x = product (Nx.add_s (Nx.div_s (Nx.sub_s x 0.5) 2.) 1.)
+
 let qmc_tests =
+  let theta = vec [| 0.5; -1. |] in
+  let integral t =
+    let f x = Nx.exp (Nx.mul (sum_coords x) t) in
+    Solution.get
+      (Quad.qmc key ~tol:(Tol.rel 1e-5) ~budget:256 f (unit_box [| 2 |] 2))
+  in
   [
-    test "evaluations count the search's chunks and the answer's budget"
-      (fun () ->
-        (* Budget 3: three chunks of 1024 points searched, then three again. *)
-        let s =
-          Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:3 product
-            (unit_box [| 1 |] 2)
-        in
-        equal Oracle.status_t Budget_spent (Oracle.status s);
-        equal (Oracle.tensor ())
-          (Nx.create Nx.int32 [| 1 |] [| Int32.of_int (1024 * (3 + 3)) |])
-          (Solution.evaluations s));
     cases "each dimension's prefix of 2^k points is balanced"
-      ~id:(fun j -> Printf.sprintf "dimension %d" j)
-      [ 0; 1; 2; 7; 100; 555; 1110 ]
+      ~id:(Printf.sprintf "dimension %d") [ 0; 1; 2; 7; 100; 555; 1110 ]
       (fun j ->
         (* 1024 points put one point in each 1/1024 of [0, 1] along any axis, so
            the mean of x_j is within 2^-11 of 1/2. *)
@@ -710,60 +904,7 @@ let qmc_tests =
         in
         equal
           (Oracle.tensor ~abs:(Float.ldexp 1. (-11)) ())
-          (Nx.scalar f64 0.5) (Solution.best s));
-    test "a smooth integral converges" (fun () ->
-        (* ∫ Π (1 + (x_i − 1/2) / 2) over [0, 1]⁵ = 1. *)
-        let f x = product (Nx.add_s (Nx.div_s (Nx.sub_s x 0.5) 2.) 1.) in
-        let s =
-          Quad.qmc key ~tol:(Tol.abs 1e-5) ~budget:1024 f (unit_box [||] 5)
-        in
-        (* The test is statistical: five standard errors. *)
-        equal (Oracle.tensor ~abs:5e-5 ()) (Nx.scalar f64 1.) (Solution.get s));
-    test "an estimate averaged over keys is the integral" (fun () ->
-        (* 64 points of ∫ e^(x + y) over [0, 1]²: each key's estimate is
-           unbiased, so 200 keys' mean is within a few standard errors. *)
-        let f x = Nx.exp (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) in
-        let estimates =
-          List.init 200 (fun i ->
-              Nx.item []
-                (Solution.best
-                   (Quad.qmc (Nx.Rng.key i) ~tol:(Tol.abs 1e-300) ~budget:1 f
-                      (unit_box [||] 2))))
-        in
-        let mean = List.fold_left ( +. ) 0. estimates /. 200. in
-        let sd =
-          Float.sqrt
-            (List.fold_left (fun a e -> a +. ((e -. mean) ** 2.)) 0. estimates
-            /. 199.)
-        in
-        less (Windtrap.float 1.)
-          ~than:(5. *. sd /. Float.sqrt 200.)
-          (Float.abs (mean -. ((Float.exp 1. -. 1.) ** 2.))));
-    test "grad in a parameter estimates the integral's" (fun () ->
-        let theta = vec [| 0.5; -1. |] in
-        let integral t =
-          let f x = Nx.exp (Nx.mul (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) t) in
-          Nx.sum
-            (Solution.get
-               (Quad.qmc key ~tol:(Tol.rel 1e-5) ~budget:1024 f
-                  (unit_box [| 2 |] 2)))
-        in
-        let d t = 2. *. exp_integral t *. exp_integral' t in
-        equal
-          (Oracle.tensor ~rel:1e-3 ())
-          (Nx.map_item d theta)
-          (Rune.grad' integral theta));
-    test "compiled equals eager with the key an argument" (fun () ->
-        Compiled.here ();
-        let f x = Nx.exp (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) in
-        let integral k =
-          Solution.best
-            (Quad.qmc k ~tol:(Tol.rel 1e-5) ~budget:64 f (unit_box [||] 3))
-        in
-        let compiled =
-          Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) integral
-        in
-        equal (Oracle.tensor ~rel:1e-12 ()) (integral key) (compiled key));
+          (scalar 0.5) (Solution.best s));
     cases "the integral of 1 over a box is its signed volume"
       ~id:(fun (name, _, _, _) -> name)
       [
@@ -778,32 +919,135 @@ let qmc_tests =
             (Quad.Box.v (vec lo) (vec hi))
         in
         equal (Oracle.tensor ~rel:1e-15 ()) (scalar volume) (Solution.get s));
-    test "grad in a corner estimates the integral's" (fun () ->
-        (* ∫ e^(x + y) over [0, h] × [0, 1] = (e^h − 1)(e − 1), whose
-           h-derivative is e^h (e − 1). *)
-        let integral h =
-          let lo = vec [| 0.; 0. |] in
-          let hi = Nx.stack [ h; Nx.scalar f64 1. ] in
-          let f x = Nx.exp (Nx.sum ~axes:[ Nx.ndim x - 1 ] x) in
-          Solution.get
-            (Quad.qmc key ~tol:(Tol.rel 1e-5) ~budget:1024 f (Quad.Box.v lo hi))
+    test "no point lies on the box's boundary" (fun () ->
+        (* f is NaN at a coordinate 0 or 1, which would end the lane
+           Not_finite. *)
+        let off_boundary : type b. (float, b) Nx.dtype -> unit =
+         fun dtype ->
+          let f x =
+            let edge = Nx.logical_or (Nx.equal_s x 0.) (Nx.equal_s x 1.) in
+            let on_edge = Nx.any ~axes:[ Nx.ndim x - 1 ] edge in
+            let one = Nx.ones_like (coord 0 x) in
+            Nx.where on_edge (Nx.full_like one Float.nan) one
+          in
+          let box =
+            Quad.Box.v (Nx.zeros dtype [| 3 |]) (Nx.ones dtype [| 3 |])
+          in
+          let s = Quad.qmc key ~tol:(Tol.abs 1e-3) ~budget:16 f box in
+          equal ~msg:(Nx.Dtype.name dtype) Oracle.status_t Converged
+            (Oracle.status s)
         in
-        let h = 0.7 in
-        (* The statistical tolerance of the parameter's test above. *)
+        off_boundary Nx.float64;
+        off_boundary Nx.float32);
+    test "a smooth integral converges" (fun () ->
+        let s =
+          Quad.qmc key ~tol:(Tol.abs 1e-5) ~budget:256 tilted (unit_box [||] 5)
+        in
+        (* The test is statistical: five standard errors. *)
+        equal (Oracle.tensor ~abs:5e-5 ()) (scalar 1.) (Solution.get s));
+    test "a converged lane stops at a power of two chunks" (fun () ->
+        let budget = 256 in
+        let s =
+          Quad.qmc key ~tol:(Tol.abs 1e-5) ~budget tilted (unit_box [||] 5)
+        in
+        (* Evaluations are the chunks searched and the answer's [budget], 1024
+           points each. *)
+        let n = Int32.to_int (Nx.item [] (Solution.evaluations s)) in
+        satisfies ~claim:"a power of two" int
+          (fun k -> k > 0 && k land (k - 1) = 0)
+          ((n / 1024) - budget));
+    test "budget chunks end a lane Budget_spent" (fun () ->
+        let s =
+          Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:3 product (unit_box [||] 2)
+        in
+        equal Oracle.status_t Budget_spent (Oracle.status s));
+    test "evaluations count the search's chunks and the answer's budget"
+      (fun () ->
+        (* Budget 3: three chunks of 1024 points searched, then three again. *)
+        let s =
+          Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:3 product
+            (unit_box [| 1 |] 2)
+        in
+        equal (exact ())
+          (Nx.create Nx.int32 [| 1 |] [| Int32.of_int (1024 * (3 + 3)) |])
+          (Solution.evaluations s));
+    test "a NaN of f ends a lane Not_finite" (fun () ->
+        let s =
+          Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:4
+            (fun x -> Nx.log (Nx.sub_s (coord 0 x) 0.5))
+            (unit_box [||] 2)
+        in
+        equal Oracle.status_t Not_finite (Oracle.status s));
+    test "an estimate averaged over keys is the integral" (fun () ->
+        (* 64 points of ∫ e^(x + y) over [0, 1]²: each key's estimate is
+           unbiased, so 200 keys' mean is within a few standard errors. *)
+        let f x = Nx.exp (sum_coords x) in
+        let estimates =
+          List.init 200 (fun i ->
+              Nx.item []
+                (Solution.best
+                   (Quad.qmc (Nx.Rng.key i) ~tol:(Tol.abs 1e-300) ~budget:1 f
+                      (unit_box [||] 2))))
+        in
+        let mean = List.fold_left ( +. ) 0. estimates /. 200. in
+        let sd =
+          Float.sqrt
+            (List.fold_left (fun a e -> a +. ((e -. mean) ** 2.)) 0. estimates
+            /. 199.)
+        in
+        less (float 1.)
+          ~than:(5. *. sd /. Float.sqrt 200.)
+          (Float.abs (mean -. ((Float.exp 1. -. 1.) ** 2.))));
+    test "grad in a parameter estimates the integral's" (fun () ->
+        (* The derivative is an estimate too: 1e-3 is a few of its standard
+           errors. *)
         equal
           (Oracle.tensor ~rel:1e-3 ())
-          (scalar (Float.exp h *. (Float.exp 1. -. 1.)))
-          (Rune.grad' integral (scalar h)));
-    test "dimensions past the table raise" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"d = 1112 is above 1111") (fun () ->
+          (Nx.map_item squared' theta)
+          (Rune.grad' (fun t -> Nx.sum (integral t)) theta));
+    test "grad in a corner estimates the integral's" (fun () ->
+        (* ∂/∂h of ∫ e^(x + y) over [0, h] × [0, 1] is e^h (e − 1). *)
+        let integral h =
+          let box = Quad.Box.v (vec [| 0.; 0. |]) (Nx.stack [ h; scalar 1. ]) in
+          Solution.get
+            (Quad.qmc key ~tol:(Tol.rel 1e-5) ~budget:256
+               (fun x -> Nx.exp (sum_coords x))
+               box)
+        in
+        equal
+          (Oracle.tensor ~rel:1e-3 ())
+          (scalar (Float.exp 0.7 *. (Float.exp 1. -. 1.)))
+          (Rune.grad' integral (scalar 0.7)));
+    test "a lane that did not converge has a zero derivative" (fun () ->
+        let solve t =
+          Quad.qmc key ~tol:(Tol.abs 1e-300) ~budget:1
+            (fun x -> Nx.exp (Nx.mul (sum_coords x) t))
+            (unit_box [||] 2)
+        in
+        let t = scalar 0.5 in
+        equal Oracle.status_t Budget_spent (Oracle.status (solve t));
+        equal (exact ()) (scalar 0.)
+          (Rune.grad' (fun t -> Solution.best (solve t)) t));
+    test "compiled equals eager with the key an argument" (fun () ->
+        Compiled.here ();
+        let f x = Nx.exp (sum_coords x) in
+        let integral k =
+          Solution.best
+            (Quad.qmc k ~tol:(Tol.rel 1e-5) ~budget:64 f (unit_box [||] 3))
+        in
+        let compiled =
+          Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) integral
+        in
+        equal (Oracle.tensor ~rel:1e-12 ()) (integral key) (compiled key));
+    test "d above 1111 raises" (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.qmc") (fun () ->
             Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:1 product
               (unit_box [||] 1112)));
     test "a budget below 1 raises" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"budget = 0 is below 1") (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.qmc") (fun () ->
             Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:0 product (unit_box [||] 2)));
     test "an integrand that keeps the points' last axis raises" (fun () ->
-        raises_match (Exn.invalid_arg ~sub:"the integrand returned shape")
-          (fun () ->
+        raises_match (Exn.invalid_arg ~sub:"Jera.Quad.qmc") (fun () ->
             Quad.qmc key ~tol:(Tol.rel 1e-3) ~budget:1 Fun.id (unit_box [||] 2)));
   ]
 
@@ -811,13 +1055,18 @@ let () =
   exit
     (run "Jera.Quad"
        [
-         group "Rule" (rule_tests @ exactness_tests);
-         group "Range" range_tests;
-         group "Box" box_tests;
+         group "Rule.gauss" gauss_tests;
+         group "Rule.kronrod" kronrod_tests;
+         group "Rule.nodes" nodes_tests;
+         group "Rule.nodes_at" nodes_at_tests;
+         group "Range.v" range_tests;
+         group "Range.from" from_tests;
+         group "Range.line" line_tests;
+         group "Box.v" box_tests;
          group "fixed" fixed_tests;
          group "cumulative" cumulative_tests;
          group "adaptive" adaptive_tests;
-         group "tanh_sinh" de_tests;
+         group "tanh_sinh" tanh_sinh_tests;
          group "cubature" cubature_tests;
          group "qmc" qmc_tests;
        ])
