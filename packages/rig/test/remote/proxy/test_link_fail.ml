@@ -133,6 +133,18 @@ let fill fd =
   in
   go (Unix.gettimeofday ())
 
+(* Ends [fd]'s stream, as a peer does once it has read its link's abort. The
+   link reads its peer for the bound after the abort, then closes, and the
+   peer's next beat resets the connection: a peer that ends its stream later,
+   as a loaded host may make this one, finds no connection, which link.mli's
+   failure section allows. *)
+let end_stream fd =
+  try Unix.shutdown fd Unix.SHUTDOWN_SEND
+  with
+  | Unix.Unix_error ((Unix.ENOTCONN | Unix.ECONNRESET | Unix.ECONNABORTED), _, _)
+  ->
+    ()
+
 (* Reads what [fd] holds, waiting for no byte. *)
 let drain fd =
   let b = Bytes.create 65536 in
@@ -568,7 +580,9 @@ let severed_abort () =
    bound, then ends its stream, as a peer does, so the close waits for that
    link no longer: a peer that reads nothing for the bound may miss it
    ([Rig_remote]'s failure section), since a connection closed over the
-   peer's beats resets, and Windows then drops what the peer had not read. *)
+   peer's beats resets, and Windows then drops what the peer had not read. A
+   test slowed past the bound ends that stream after the link closed
+   ([end_stream]). *)
 let stalled_abort () =
   with_scene @@ fun s ->
   let woke = waiters s in
@@ -580,7 +594,7 @@ let stalled_abort () =
   let t0 = Unix.gettimeofday () in
   Probe.resume ();
   let received = frames ~wait:true s.q in
-  Unix.shutdown s.q Unix.SHUTDOWN_SEND;
+  end_stream s.q;
   failed ();
   woke ~received why;
   Link.close s.job;
