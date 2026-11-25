@@ -1151,9 +1151,8 @@ module Gaussian : sig
       A Gaussian describes one position, so its tensors have no chain axis;
       {!sample} adds one and {!log_density} reads one. A sampler whose geometry
       differs per chain stacks Gaussians on the chain axis and applies chain
-      [i]'s inside the map over chains. Of the eliminators, {!mean} and
-      {!importance} take Gaussians stacked on a leading axis; the others take
-      one Gaussian.
+      [i]'s inside the map over chains. {!mean} and {!importance} also take
+      Gaussians stacked on a leading axis, as a {!fit} holds them.
 
       {b Preconditioning is a pullback.} The map [color z = m + S A z],
       [A = I + Σ_j (sqrt v_j - 1) u_j u_jᵀ], takes standard normal coordinates
@@ -1298,17 +1297,24 @@ module Gaussian : sig
   val sample : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> n:int -> ('u, 'f, 'd) t -> 'u
   (** [sample u k ~n g] is [n] draws of [g] on a new leading axis.
 
-      Raises [Invalid_argument] if [n < 0]. *)
+      Raises [Invalid_argument] if [n < 0] or if [g] is Gaussians stacked on a
+      leading axis. *)
 
   val log_density : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) t -> 'u -> (float, 'f, 'd) Nx.t
   (** [log_density u g] is [g]'s log density at a position: one value per row of
-      the leading axis. *)
+      the leading axis.
+
+      Raises [Invalid_argument] if [g] is Gaussians stacked on a leading axis.
+  *)
 
   val mean : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) t -> 'u
   (** [mean u g] is [g]'s mean. *)
 
   val variance : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) t -> 'u
-  (** [variance u g] is the diagonal of [g]'s covariance, element by element. *)
+  (** [variance u g] is the diagonal of [g]'s covariance, element by element.
+
+      Raises [Invalid_argument] if [g] is Gaussians stacked on a leading axis.
+  *)
 
   val importance :
     ('u, 'd) Nx.Ptree.t ->
@@ -1351,7 +1357,10 @@ module Gaussian : sig
       [directions], each walked as [u], and [variances]. *)
 
   val pp : ('u, 'd) Nx.Ptree.t -> Format.formatter -> ('u, 'f, 'd) t -> unit
-  (** [pp u ppf g] formats [g]'s dimension and rank. *)
+  (** [pp u ppf g] formats [g]'s dimension and rank.
+
+      Raises [Invalid_argument] if [g] is Gaussians stacked on a leading axis.
+  *)
 end
 
 module Nuts : sig

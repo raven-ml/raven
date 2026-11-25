@@ -334,7 +334,17 @@ let of_precision (type f) u (dtype : (float, f) Nx.dtype) ?low_rank ~mean p :
 
 let batched u f x = Rune.vmap Nx.Ptree.(u @-> returns tensor) f x
 
+(* [one context g] refuses Gaussians stacked on a leading axis, whose variances
+   have two axes: an eliminator of one Gaussian would read the stack's axis as
+   its directions'. *)
+let one context g =
+  if Nx.ndim g.variances <> 1 then
+    invalid_argf "%s: %d Gaussians stacked on a leading axis; it takes one"
+      context
+      (Nx.shape g.variances).(0)
+
 let log_density u g x =
+  one "Norn.Gaussian.log_density" g;
   let dt = Nx.dtype g.variances in
   let d = float_of_int (elements u g.mean) in
   let normaliser =
@@ -357,6 +367,7 @@ let log_density u g x =
 
 let sample u k ~n g =
   let k = Nx.Rng.place (Nx.beside g.variances) k in
+  one "Norn.Gaussian.sample" g;
   if n < 0 then invalid_argf "Norn.Gaussian.sample: n = %d is negative" n;
   let j = ref (-1) in
   let z =
@@ -376,6 +387,7 @@ let mean _ g = g.mean
 let rank g = (Nx.shape g.variances).(Nx.ndim g.variances - 1)
 
 let variance u g =
+  one "Norn.Gaussian.variance" g;
   (* [S² (1 + Σ_j (v_j - 1) u_j²)], element by element. *)
   let w = Nx.sub_s g.variances 1. in
   let k = (Nx.shape w).(0) in
@@ -404,6 +416,7 @@ let ptree (type u f) (u : (u, 'd) Nx.Ptree.t) : ((u, f, 'd) t, 'd) Nx.Ptree.t =
   Nx.Ptree.v walk
 
 let pp u ppf g =
+  one "Norn.Gaussian.pp" g;
   Format.fprintf ppf "gaussian(dimension %d, rank %d)" (elements u g.mean)
     (Nx.shape g.variances).(0)
 

@@ -85,6 +85,11 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Gaussian.sample`, `Gaussian.log_density`, `Gaussian.variance` and
+  `Gaussian.pp` refuse Gaussians stacked on a leading axis, as a fit holds
+  them, naming themselves. They read the stack's axis as the directions':
+  `variance` of a stack of rank-1 Gaussians summed their terms, `pp` printed
+  the stack's length as the rank, and the others raised from Nx.
 - `Smc.init` refuses a likelihood of `-inf` at every particle. The first
   `Smc.step` raised in its place, naming `Norn.Weighted.resample`.
 - `Nuts.init`, `Hmc.init`, `Nested.init` and `Smc.init` refuse a start whose

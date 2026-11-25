@@ -278,6 +278,22 @@ let structure =
               "variances";
             ]
             paths);
+      cases "sample, log_density, variance and pp raise for stacked Gaussians"
+        ~id:fst
+        [
+          ("sample", fun g -> ignore (G.sample pos (Nx.Rng.key 1) ~n:2 g));
+          ( "log_density",
+            fun g ->
+              ignore
+                (G.log_density pos g (of_rows (Nx.zeros Nx.float64 [| 2; 4 |])))
+          );
+          ("variance", fun g -> ignore (G.variance pos g));
+          ("pp", fun g -> ignore (Format.asprintf "%a" (G.pp pos) g));
+        ]
+        (fun (name, f) ->
+          raises_match
+            (Exn.invalid_arg ~sub:("Norn.Gaussian." ^ name))
+            (fun () -> f (stacked (narrow ()) (wide ()))));
       cases "pp gives the dimension and rank" ~id:fst
         [
           ("diagonal", (0, "gaussian(dimension 4, rank 0)"));
