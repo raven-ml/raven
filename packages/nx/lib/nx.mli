@@ -6436,7 +6436,21 @@ module Prim : sig
             ({!Nx_kernel.S.contract}): its result C-contiguous, of the shape
             {!Nx_kernel.Shape.contract} gives. Over contracting pairs cut
             across devices, it closes as {!contract} does, or with [sum]
-            it is the devices' terms, each rounded once into [out]. *)
+            it is the devices' terms, each rounded once into [out].
+
+            A scale is read at its operand's windows where each window holds
+            whole scale blocks, and whole elsewhere, so that a cut of a free
+            axis inside its operand's scale blocks reads that operand whole
+            along it. Under [Rows] the ids are read at [a]'s window of [a_axis],
+            and [b]'s axis of groups may be cut, each device contracting every
+            row against its own groups. Under [Contracting] the contracting
+            pairs are read whole. With [sum] and [b]'s groups of [Rows] cut,
+            [init] joins the term of the device holding the row's group, the
+            first device's for a row in no group. Where a window of the
+            contracting pairs cuts its scales' blocks, it contracts piece by
+            piece at their edges, each piece from the sum of those before, and
+            [β(m) + p + t - 2] stands in place of [β(K)], [β(2m) + p + t - 2] of
+            [β(2K)], [p] the most pieces a window holds. *)
     | Fft : ('d, 'r) fft -> 'r t
         (** A Fourier transform ({!Nx_kernel.S.c2c} and its siblings). *)
     | Linalg : ('d, 'r) linalg -> 'r t
