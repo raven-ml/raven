@@ -410,13 +410,31 @@ type beyond = { mutable past : bool; mutable met : failure list }
 
 let beyond_limits = ref None
 
+(* Under [masking], an operand that no row reads at a row is computed there all
+   the same, and its failures at that row are dropped: [unread] holds those rows
+   of the step's input. *)
+let masking = ref false
+let unread = ref []
+
 let record fr row why =
   match (!beyond_limits, !(fr.failed)) with
   | Some b, _ -> if b.past then b.met <- why :: b.met
+  | None, _ when !masking && List.mem row !unread -> ()
   | None, Some (r, _) when r <= row -> ()
   | None, _ -> fr.failed := Some (row, why)
 
-let fail fr i why = record fr (if fr.one then start fr else fr.at.(i)) why
+let row_of fr i = if fr.one then start fr else fr.at.(i)
+let fail fr i why = record fr (row_of fr i) why
+
+(* [unread_at fr skip f] is [f ()], whose failures at the values [i] of [fr]
+   where [skip i] are dropped under [masking]. *)
+let unread_at fr skip f =
+  if not !masking then f ()
+  else
+    let rows = List.filter skip (List.init (size fr) Fun.id) in
+    let was = !unread in
+    unread := List.map (row_of fr) rows @ was;
+    Fun.protect ~finally:(fun () -> unread := was) f
 
 (* [Failed (row, reason)] is a step's failure at its input's row [row]. *)
 exception Failed of int * string
@@ -602,6 +620,26 @@ let reduce : type a b.
 
 (* Expressions, node by node over a frame *)
 
+let rec local : type a s. (a, s) term -> bool = function
+  | Over _ | Shift _ | Rank _ -> false
+  | Col _ | Lit _ | Null _ | Rows -> true
+  | Int (_, a, b) -> local a && local b
+  | Float (_, a, b) -> local a && local b
+  | Cmp (_, a, b) -> local a && local b
+  | And (a, b) | Or (a, b) -> local a && local b
+  | If (c, a, b) -> local c && local a && local b
+  | Coalesce es -> List.for_all local es
+  | Not a -> local a
+  | Is_null a -> local a
+  | Is_in (_, a) -> local a
+  | Store (_, a) -> local a
+  | Map (_, _, a) -> local a
+  | Bind (_, _, a) -> local a
+  | Cast (_, a) -> local a
+  | Parse (_, a) | Length a | Substring (_, _, a) -> local a
+  | Field (_, a) -> local a
+  | Reduce (_, a) -> local a
+
 let rec eval : type a s. frame -> (a, s) term -> a option array =
  fun fr e ->
   let both f a b =
@@ -628,7 +666,8 @@ let rec eval : type a s. frame -> (a, s) term -> a option array =
           | Some false, _ | _, Some false -> Some false
           | Some true, Some true -> Some true
           | _ -> None)
-        x (eval fr b)
+        x
+        (unread_at fr (fun i -> x.(i) = Some false) (fun () -> eval fr b))
   | Or (a, b) ->
       let x = eval fr a in
       Array.map2
@@ -637,19 +676,28 @@ let rec eval : type a s. frame -> (a, s) term -> a option array =
           | Some true, _ | _, Some true -> Some true
           | Some false, Some false -> Some false
           | _ -> None)
-        x (eval fr b)
+        x
+        (unread_at fr (fun i -> x.(i) = Some true) (fun () -> eval fr b))
   | Not a -> Array.map (Option.map not) (eval fr a)
   | If (c, a, b) ->
       let c = eval fr c in
-      let a = eval fr a in
-      let b = eval fr b in
+      let a =
+        unread_at fr (fun i -> c.(i) <> Some true) (fun () -> eval fr a)
+      in
+      let b = unread_at fr (fun i -> c.(i) = Some true) (fun () -> eval fr b) in
       let at = stored (type_of e) in
       Array.mapi
         (fun i c -> Option.map at (if c = Some true then a.(i) else b.(i)))
         c
   | Is_null a -> Array.map (fun v -> Some (Option.is_none v)) (eval fr a)
   | Coalesce es ->
-      let vs = List.map (eval fr) es and at = stored (type_of e) in
+      let value i vs = List.exists (fun v -> Option.is_some v.(i)) vs in
+      let vs =
+        List.fold_left
+          (fun vs e ->
+            vs @ [ unread_at fr (fun i -> value i vs) (fun () -> eval fr e) ])
+          [] es
+      and at = stored (type_of e) in
       Array.init (size fr) (fun i ->
           Option.map at (List.find_map (fun v -> v.(i)) vs))
   | Store (ty, a) -> Array.map (Option.map (stored ty)) (eval fr a)
@@ -747,26 +795,6 @@ let outs : type s. frame -> s out list -> row array =
   let cs = List.concat_map cells os in
   Array.init (size fr) (fun i -> List.map (fun (n, c) -> (n, c.(i))) cs)
 
-let rec local : type a s. (a, s) term -> bool = function
-  | Over _ | Shift _ | Rank _ -> false
-  | Col _ | Lit _ | Null _ | Rows -> true
-  | Int (_, a, b) -> local a && local b
-  | Float (_, a, b) -> local a && local b
-  | Cmp (_, a, b) -> local a && local b
-  | And (a, b) | Or (a, b) -> local a && local b
-  | If (c, a, b) -> local c && local a && local b
-  | Coalesce es -> List.for_all local es
-  | Not a -> local a
-  | Is_null a -> local a
-  | Is_in (_, a) -> local a
-  | Store (_, a) -> local a
-  | Map (_, _, a) -> local a
-  | Bind (_, _, a) -> local a
-  | Cast (_, a) -> local a
-  | Parse (_, a) | Length a | Substring (_, _, a) -> local a
-  | Field (_, a) -> local a
-  | Reduce (_, a) -> local a
-
 let local_outs os =
   List.for_all (function Out (_, e) -> local e | Keep _ -> true) os
 
@@ -856,8 +884,8 @@ let same_key (Cell (ty, _) as a) (Cell (ty', _) as b) =
   | Some x, Some y -> Type.compare_value t x y = 0
   | _ -> false
 
-(* [order at a b] compares the cells [a] and [b] at the type [at], or is
-   [None] if either is null. *)
+(* [order at a b] compares the cells [a] and [b] at the type [at], or is [None]
+   if either is null. *)
 let order (Type.Any t) a b =
   match (read t a, read t b) with
   | Some x, Some y -> Some (Type.compare_value t x y)
@@ -877,6 +905,7 @@ let met ts =
   match List.find_opt contains ts with
   | Some t -> t
   | None -> invalid_arg "Reference: types that do not meet"
+
 let cell_type (Cell (ty, _)) = Type.Any ty
 
 (* Kleene's logic, [None] being unknown. *)
@@ -896,15 +925,10 @@ let k_or a b =
    9075:1992, 8.11), its general rules taken literally:
 
    3) If D1 is the null value or if E1 < D1, then let S1 = E1 and let T1 = D1.
-      Otherwise, let S1 = D1 and let T1 = E1.
-   5) Likewise S2 and T2.
-   6) The result of the <overlaps predicate> is the result of the following
-      expression:
-        ( S1 > S2 AND NOT ( S1 >= T2 AND T1 >= T2 ) )
-        OR
-        ( S2 > S1 AND NOT ( S2 >= T1 AND T2 >= T1 ) )
-        OR
-        ( S1 = S2 AND ( T1 <> T2 OR T1 = T2 ) ) *)
+   Otherwise, let S1 = D1 and let T1 = E1. 5) Likewise S2 and T2. 6) The result
+   of the <overlaps predicate> is the result of the following expression: ( S1 >
+   S2 AND NOT ( S1 >= T2 AND T1 >= T2 ) ) OR ( S2 > S1 AND NOT ( S2 >= T1 AND T2
+   >= T1 ) ) OR ( S1 = S2 AND ( T1 <> T2 OR T1 = T2 ) ) *)
 let overlaps (d1, e1) (d2, e2) =
   let at = met (List.map cell_type [ d1; e1; d2; e2 ]) in
   let cmp f a b = Option.map f (order at a b) in
@@ -977,7 +1001,7 @@ let assertion side count names i r k =
     raise (Failed (i, why))
   end
 
-let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
+let join ~flip kind (each_left, each_right) on (lschema, rschema) ls rs () =
   let ks = keys on in
   let null (n, Type.Any ty) =
     let (Type.Any st) = storage ty in
@@ -1024,6 +1048,23 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
     | Anti, js -> if js = [] then [ l ] else []
   in
   match on with
+  | All when flip ->
+      let ls = Array.of_seq ls in
+      let rs = Array.of_seq rs in
+      Array.iteri
+        (fun j r -> assertion "right" each_right [] j r (Array.length ls))
+        rs;
+      Array.iteri
+        (fun i l -> assertion "left" each_left [] i l (Array.length rs))
+        ls;
+      let pairs =
+        Array.to_list ls |> List.concat_map (fun l -> out l (Array.to_list rs))
+      in
+      let rest =
+        if kind = Full && ls = [||] then Array.to_list (Array.map unmatched rs)
+        else []
+      in
+      List.to_seq (pairs @ rest) ()
   | All ->
       let rs = Array.of_seq rs in
       let n = ref 0 in
@@ -1039,8 +1080,14 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
       in
       Seq.append (Seq.concat_map each ls) last ()
   | Keys _ | Range _ | Position ->
-      let ls = Array.of_seq ls in
-      let rs = Array.of_seq rs in
+      let ls, rs =
+        if flip then
+          let rs = Array.of_seq rs in
+          (Array.of_seq ls, rs)
+        else
+          let ls = Array.of_seq ls in
+          (ls, Array.of_seq rs)
+      in
       let matches i l j r =
         let keyed () =
           List.for_all
@@ -1060,11 +1107,6 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
               (List.init (Array.length rs) Fun.id))
           ls
       in
-      Array.iteri
-        (fun i l ->
-          assertion "left" each_left (List.map fst ks) i l
-            (List.length hits.(i)))
-        ls;
       let counts =
         Array.mapi
           (fun j _ ->
@@ -1073,10 +1115,24 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
               0 hits)
           rs
       in
-      Array.iteri
-        (fun j r ->
-          assertion "right" each_right (List.map snd ks) j r counts.(j))
-        rs;
+      let left () =
+        Array.iteri
+          (fun i l ->
+            assertion "left" each_left (List.map fst ks) i l
+              (List.length hits.(i)))
+          ls
+      and right () =
+        Array.iteri
+          (fun j r ->
+            assertion "right" each_right (List.map snd ks) j r counts.(j))
+          rs
+      in
+      if flip then (
+        right ();
+        left ())
+      else (
+        left ();
+        right ());
       let pairs =
         List.concat
           (Array.to_list
@@ -1092,13 +1148,41 @@ let join kind (each_left, each_right) on (lschema, rschema) ls rs () =
       in
       List.to_seq (pairs @ rest) ()
 
+(* Under [flips i], the [i]th join a run reads, counted from [0], reads its
+   right input first and checks its right rows' counts first. *)
+let flips = ref (fun (_ : int) -> false)
+let joins_read = ref 0
+
+let rec joins = function
+  | Table _ | Source _ -> 0
+  | Select (_, p)
+  | Derive (_, p)
+  | Filter (_, p)
+  | Slice { plan = p; _ }
+  | Aggregate (_, _, p)
+  | Sort (_, p) ->
+      joins p
+  | Append (p, r) -> joins p + joins r
+  | Join { left; right; _ } -> 1 + joins left + joins right
+
+(* [reading ~masked ~flipped f] is [f ()] under [masking] and [flips]. *)
+let reading ?(masked = false) ?(flipped = fun _ -> false) f =
+  let m = !masking and o = !flips in
+  masking := masked;
+  flips := flipped;
+  joins_read := 0;
+  Fun.protect
+    ~finally:(fun () ->
+      masking := m;
+      flips := o)
+    f
+
 (* [rows ~past p] is [p]'s rows, evaluated as they are read. Where [past], a
    slice from the start reads every row of its input, and marks the rows past
    its own for {!beyond}. *)
 let rec rows ~past : plan -> row Seq.t = function
   | Table t | Source (_, t) -> List.to_seq (table_rows t)
-  | Select (os, p) ->
-      step (local_outs os) (fun fr -> outs fr os) (rows ~past p)
+  | Select (os, p) -> step (local_outs os) (fun fr -> outs fr os) (rows ~past p)
   | Derive (os, p) ->
       step (local_outs os)
         (fun fr -> Array.map2 derived fr.rows (outs fr os))
@@ -1143,7 +1227,9 @@ let rec rows ~past : plan -> row Seq.t = function
   | Append (p, rest) -> Seq.append (rows ~past p) (rows ~past rest)
   | Aggregate (by, os, p) -> aggregate by os (rows ~past p)
   | Join { kind; each_left; each_right; on; left; right } ->
-      join kind (each_left, each_right) on
+      let flip = !flips !joins_read in
+      incr joins_read;
+      join ~flip kind (each_left, each_right) on
         (schema left, schema right)
         (rows ~past left) (rows ~past right)
   | Sort (ks, p) ->
@@ -1152,7 +1238,8 @@ let rec rows ~past : plan -> row Seq.t = function
           (List.stable_sort (compare_keys ks) (List.of_seq (rows ~past p)))
           ()
 
-let run p =
+let run ?masked ?flipped p =
+  reading ?masked ?flipped @@ fun () ->
   match List.of_seq (rows ~past:false p) with
   | exception Failed (row, why) -> Error (row, why)
   | rs ->
@@ -1171,11 +1258,11 @@ let beyond p =
     (fun () -> try ignore (List.of_seq (rows ~past:true p)) with _ -> ());
   List.fold_left
     (fun (raised, reasons) -> function
-      | Raised e -> (e :: raised, reasons)
-      | Data why -> (raised, why :: reasons))
+      | Raised e -> (e :: raised, reasons) | Data why -> (raised, why :: reasons))
     ([], []) b.met
 
-let values e p =
+let values ?masked ?flipped e p =
+  reading ?masked ?flipped @@ fun () ->
   let null = "the value is null; read it through Expr.option" in
   let value fr =
     let v = (eval fr e).(0) in

@@ -155,7 +155,9 @@ type plan =
           its right's, then its left's as it needs them. The assertions check
           the left's rows in order, then the right's: a failure is at the first
           row of that side whose number of matches the count does not allow, its
-          reason naming its keys as {!key_text} writes them. *)
+          reason naming its keys as {!key_text} writes them. Talon states
+          neither order, so {!run} and {!values} can read a join the other way
+          ([flipped]). *)
   | Sort of key list * plan
   | Source of Source.t * Talon.t
       (** [Source (s, t)] reads [s], whose rows are [t]'s. *)
@@ -186,18 +188,40 @@ type column = Column : 'a Type.t * 'a option array -> column
 val decode : Column.t -> column
 (** [decode c] is [c]'s values, an extension's as its storage's. *)
 
-val run : plan -> ((string * column) list, int * string) result
+val run :
+  ?masked:bool ->
+  ?flipped:(int -> bool) ->
+  plan ->
+  ((string * column) list, int * string) result
 (** [run p] is [p]'s rows, column by column, as {!decode} reads them, or
     [Error (row, reason)] where it fails at the row [row] of a step's input,
-    [reason] as the run says it. *)
+    [reason] as the run says it.
+
+    Talon leaves two choices open, which change only which failure a run meets.
+    With [~masked:true] an operand that no row reads drops its failures at that
+    row: the untaken branch of an [If], the operands of a [Coalesce] after its
+    first value, and the right operand of [And] where the left is [false] and of
+    [Or] where it is [true]. With [~flipped], the joins [i] where [flipped i],
+    counted from [0] as the run reads them, read their right input first and
+    check their right rows first. *)
+
+val joins : plan -> int
+(** [joins p] is the number of joins a run of [p] reads, each read of a plan
+    that [p] reads twice counted twice. *)
 
 val beyond : plan -> exn list * string list
 (** [beyond p] is the exceptions that functions of [p]'s expressions raise and
     the reasons its steps fail on rows past a limit: those a slice from the
     start reads past its own rows when it reads all of its input, as an
-    optimized plan may. Every step goes on past every failure, the failing
-    value null. *)
+    optimized plan may. Every step goes on past every failure, the failing value
+    null. *)
 
-val values : 'a expr -> plan -> ('a array, int * string) result
+val values :
+  ?masked:bool ->
+  ?flipped:(int -> bool) ->
+  'a expr ->
+  plan ->
+  ('a array, int * string) result
 (** [values e p] is [e] on each of [p]'s rows, or [Error (row, reason)] where
-    [p] fails, or where [e] fails or is null at [p]'s row [row]. *)
+    [p] fails, or where [e] fails or is null at [p]'s row [row], read as {!run}
+    reads under [masked] and [flipped]. *)
