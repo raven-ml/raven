@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- In a format of one column, `Talon_csv.encode` writes a null as the first
+  non-empty null token. With `~nulls:[""; "NA"]` it wrote an empty line, which
+  `Talon_csv.decode` skips, so the row was lost.
 - `Talon_csv.encode` quotes a field that starts with a UTF-8 byte order mark.
   Written unquoted as a file's first field, the mark was skipped by
   `Talon_csv.decode`, so the value or the header did not read back.

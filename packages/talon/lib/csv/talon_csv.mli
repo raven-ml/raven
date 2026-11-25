@@ -217,15 +217,16 @@ val encode :
     one of [f]'s null tokens, holds the separator, the quote, a line feed or a
     carriage return, or starts with a UTF-8 byte order mark, which {!decode}
     skips at the start of the input. A quote inside a quoted field is doubled. A
-    format of one column writes a null as its first null token, since a record
-    of one empty field is an empty line, which is no record. [eod] indicates
-    whether [Bytesrw.Bytes.Slice.eod] is written on [w] after the records, when
-    they are all written: the caller decides when [w] ends. Defaults to [false].
+    format of one column writes a null as its first non-empty null token, since
+    a record of one empty field is an empty line, which is no record. [eod]
+    indicates whether [Bytesrw.Bytes.Slice.eod] is written on [w] after the
+    records, when they are all written: the caller decides when [w] ends.
+    Defaults to [false].
 
     [Error e] if running [q] fails, if a null is to be written in a format of
-    one column without a null token, at the line it would be on, or if writing
-    to [w] raises [Bytesrw.Bytes.Stream.Error] or [Sys_error]. The records
-    before the failure are written.
+    one column without a non-empty null token, at the line it would be on, or if
+    writing to [w] raises [Bytesrw.Bytes.Stream.Error] or [Sys_error]. The
+    records before the failure are written.
 
     Raises [Invalid_argument] if [q]'s columns are not [f]'s, names and types,
     in order. *)

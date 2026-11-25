@@ -744,11 +744,11 @@ let encode ?(eod = false) f q w =
     Buffer.clear b
   in
   (* A null is an empty field, but a record of one empty field is an empty line,
-     which is no record: one column writes a null as a null token. *)
+     which is no record: one column writes a null as a non-empty null token. *)
   let null =
-    match (f.columns, f.nulls) with
-    | [| _ |], t :: _ -> fun () -> Buffer.add_string b t
-    | [| c |], [] ->
+    match (f.columns, List.find_opt (fun t -> t <> "") f.nulls) with
+    | [| _ |], Some t -> fun () -> Buffer.add_string b t
+    | [| c |], None ->
         fun () ->
           flush ();
           fail ~at:(!line, 1)

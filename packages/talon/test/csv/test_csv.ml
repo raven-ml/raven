@@ -1198,6 +1198,15 @@ let writing =
             (written
                (Csv.format ~header:false [ ("y", any Type.binary) ])
                (of_table t)));
+      test "one column writes a null as its first non-empty null token"
+        (fun () ->
+          let t =
+            v [ ("a", Column.of_options Type.int64 [| Some 1; None |]) ]
+          in
+          equal string "a\n1\nNA\n"
+            (written
+               (Csv.format ~nulls:[ ""; "NA" ] [ ("a", any Type.int64) ])
+               (of_table t)));
     ]
 
 (* Sources *)
