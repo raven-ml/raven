@@ -122,10 +122,9 @@
     so OCaml reports a mismatch at the part. A module without the walk fails
     there with [Unbound value M.walk], as does [M.t] without argument where [M]
     has no [walk]. A structure applied in another order, as [('d, 'a) M.t], is
-    refused at the part, which then holds the set parameter alone; one at a
-    closed payload, as [(int, 'd) Kaun.Linear.t], fails with a type error at the
-    part. [Nx_wide.t]'s first argument is a float format, which this rule walks
-    with [Nx_wide.walk].
+    refused at the part; one at a closed payload, as [(int, 'd) Kaun.Linear.t],
+    fails with a type error at the part. [Nx_wide.t]'s first argument is a float
+    format, which this rule walks with [Nx_wide.walk].
 
     {1:attributes Attributes}
 
@@ -189,4 +188,6 @@
       parameter;
     - a type applied to the wrong number of arguments, and a functor application
       in a type path;
+    - a structure whose set argument is the payload parameter, as
+      [('d, 'a) M.t];
     - a misplaced or repeated attribute. *)

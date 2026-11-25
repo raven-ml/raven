@@ -326,10 +326,10 @@ let () =
                    {|type ('a, 'd) t = { w : 'a; l : ('d, 'a) Linear.t } [@@deriving ptree]|},
                    __POS_OF__
                      {|
-                     File "x.ml", line 1, characters 33-35:
+                     File "x.ml", line 1, characters 32-49:
                      1 | type ('a, 'd) t = { w : 'a; l : ('d, 'a) Linear.t } [@@deriving ptree]
-                                                          ^^
-                     Error: ppx_ptree: field [l] is the set parameter 'd, which holds no value; an array on the set has a tensor type, as 'd Nx.float32_t
+                                                         ^^^^^^^^^^^^^^^^^
+                     Error: ppx_ptree: field [l] has type ('d, 'a) Linear.t, whose set argument is the payload parameter; a structure takes its payload, then its set, as ('a, 'd) M.t
                      |}
                  );
                ];

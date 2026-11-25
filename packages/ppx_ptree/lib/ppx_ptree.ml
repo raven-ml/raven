@@ -567,6 +567,12 @@ and constr env ~ints part ty lid args =
 and structure env ~ints part ty w args =
   let loc = ty.ptyp_loc in
   match args with
+  | [ _; s ] when is_payload env s ->
+      error env ~loc
+        "%s has type %s, whose set argument is the payload parameter; a \
+         structure takes its payload, then its set, as ('a, 'd) M.t"
+        part (show ty);
+      placeholder ~loc
   | [ p; s ] when mentions env p && not (is_payload env p) ->
       whole env part ty w [ s ];
       walk_of env ty
