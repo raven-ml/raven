@@ -85,6 +85,11 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Weighted.resample` never copies a draw of weight zero. A point that
+  rounding put at or past the end of the cumulative weights took the last
+  draw whatever its weight: 100000 float32 draws copied a draw of log weight
+  `-inf` at about one key in 700. It refuses weights none of which is
+  positive, whose draws it chose arbitrarily.
 - `Summary.v` and `Summary.of_weighted` give a finite mean and finite
   quantiles for draws near the largest float, where the sum of the draws or
   the difference of two of them overflowed: draws of `±1e308` had the median

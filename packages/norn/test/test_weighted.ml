@@ -61,6 +61,24 @@ let resample =
                   && float_of_int c <= Float.ceil e +. 1e-9)
                 counts.(i))
             (normalised lw));
+      test "a draw of no weight is never copied, in float32 too" (fun () ->
+          (* At key 199 the last of 100000 float32 points rounds to 1, past the
+             cumulative weights. *)
+          let w =
+            W.
+              {
+                values = Nx.create Nx.float32 [| 2 |] [| 0.; 1. |];
+                log_weights =
+                  Nx.create Nx.float32 [| 2 |] [| 0.; Float.neg_infinity |];
+              }
+          in
+          let x = W.resample t (Nx.Rng.key 199) ~n:100_000 w in
+          equal (float 0.5) 0. (Nx.item [] (Nx.sum x)));
+      test "weights with none positive are refused" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Weighted.resample")
+            (fun () ->
+              W.resample t (Nx.Rng.key 1) ~n:3
+                (weighted [| Float.neg_infinity; Float.neg_infinity |])));
       test "n below 1 is refused" (fun () ->
           raises
             (Invalid_argument "Norn.Weighted.resample: n = 0 is not positive")

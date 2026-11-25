@@ -306,7 +306,7 @@ module Weighted : sig
       cumulative normalised weights, so a draw of normalised weight [w_i] is
       copied [floor (n w_i)] or [ceil (n w_i)] times.
 
-      Raises [Invalid_argument] if [n < 1]. *)
+      Raises [Invalid_argument] if [n < 1] or if no weight is positive. *)
 end
 
 module Diag : sig

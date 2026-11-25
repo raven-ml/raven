@@ -26,6 +26,11 @@ let resample u k ~n w =
   if n < 1 then
     Rows.invalid_argf "Norn.Weighted.resample: n = %d is not positive" n;
   let l = w.log_weights in
+  Nx.check Nx.Ptree.unit
+    (Nx.any (Nx.greater_s l Float.neg_infinity))
+    ()
+    (fun _ () ->
+      Invalid_argument "Norn.Weighted.resample: no weight is positive");
   let dt = Nx.dtype l in
   let m = (Nx.shape l).(0) in
   let cdf = Nx.cumsum (Nx.exp (Nx.sub l (Nx.logsumexp l))) in
@@ -36,10 +41,11 @@ let resample u k ~n w =
          (Noise.uniform k dt [||]))
       (float_of_int n)
   in
-  (* Rounding can leave the last cumulative weight below a point near 1. *)
-  let indices =
-    Nx.minimum_s
-      (Nx.searchsorted ~side:`Right cdf points)
-      (Int64.of_int (m - 1))
+  (* Rounding can leave the last cumulative weight below a point near 1, or put
+     a point at 1: such a point takes the last draw of positive weight, the
+     first at the cumulative weights' end. *)
+  let last =
+    Nx.searchsorted ~side:`Left cdf (Nx.slice [ Nx.R (m - 1, m) ] cdf)
   in
+  let indices = Nx.minimum (Nx.searchsorted ~side:`Right cdf points) last in
   Nx.Ptree.map u (fun _ x -> Nx.take ~axis:0 indices x) w.values
