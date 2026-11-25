@@ -8,7 +8,7 @@ open Hugin_gg
 open Hugin_font
 open Hugin_vg
 
-let invalid substring f = raises_match (Exn.invalid_arg ~sub:substring) f
+let invalid f = raises_match Exn.invalid_arg f
 let pp_float ppf x = Format.fprintf ppf "%.17g" x
 
 let pp_box ppf b =
@@ -17,9 +17,12 @@ let pp_box ppf b =
 
 let box2 = Testable.make ~pp:pp_box ~equal:Box2.equal
 
+(* The boxes compared with it come from [sqrt 2], the sine and cosine of a
+   quarter turn, or a glyph's ink moved by a few points: a few roundings each,
+   within 8 ulps of the expected value. *)
 let near a b =
   Float.equal a b
-  || Float.abs (a -. b) <= 1e-9 *. (1. +. Float.abs a +. Float.abs b)
+  || Float.abs (a -. b) <= 8. *. epsilon_float *. Float.max 1. (Float.abs a)
 
 let box2_near =
   Testable.make ~pp:pp_box ~equal:(fun a b ->
@@ -36,7 +39,7 @@ let square = rect 0. 0. 10. 10.
 let dot = Picture.fill red square
 let bar = Picture.fill Color.blue (rect 20. 0. 5. 30.)
 let line = Path.polyline [| 0.; 10. |] [| 0.; 0. |]
-let pixels = Nx.zeros Nx.uint8 [| 2; 3; 4 |]
+let pixels () = Nx.zeros Nx.uint8 [| 2; 3; 4 |]
 let typeset text = Vg_corpus.typeset text 10.
 let tag_of rows = { Picture.id = Nx.Ptree.Path.v [ Field "dots" ]; rows }
 
@@ -48,11 +51,23 @@ let union a b =
 let shift dx dy b =
   Box2.v (Box2.minx b +. dx) (Box2.miny b +. dy) (Box2.w b) (Box2.h b)
 
-let contains outer inner =
+let encloses outer inner =
   Box2.minx outer <= Box2.minx inner
   && Box2.miny outer <= Box2.miny inner
   && Box2.maxx inner <= Box2.maxx outer
   && Box2.maxy inner <= Box2.maxy outer
+
+(* [tags p] is the ids of the tags in [p], outermost first. *)
+let rec tags (p : Picture.t) =
+  match p with
+  | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> []
+  | Group ps -> List.concat_map tags ps
+  | Clip { picture; _ }
+  | Transform { picture; _ }
+  | Opacity { picture; _ }
+  | Stamp { picture; _ } ->
+      tags picture
+  | Tag { tag; picture } -> Nx.Ptree.Path.to_string tag.id :: tags picture
 
 (* Pictures of rectangles whose numbers are quarters below 2^9, stroked with
    pens that reach half their width, placed by quarters and scaled by 0.5 or 2,
@@ -115,156 +130,268 @@ let rec gen_picture depth =
 
 let gen_picture = Gen.with_pp Picture.pp (gen_picture 3)
 
-(* Constructors *)
+(* Leaves *)
 
-let empties =
-  [
-    ("a fill of the empty path", fun () -> Picture.fill red Path.empty);
-    ( "a stroke of the empty path",
-      fun () -> Picture.stroke (Stroke.v 1.) red Path.empty );
-    ("a stroke of width 0", fun () -> Picture.stroke (Stroke.v 0.) red line);
-    ( "glyphs of a run without glyphs",
-      fun () -> Picture.glyphs red (P2.v 0. 0.) (typeset "") );
-    ( "glyphs of size 0",
-      fun () -> Picture.glyphs red (P2.v 0. 0.) (Vg_corpus.typeset "ab" 0.) );
-    ( "glyphs at nan",
-      fun () -> Picture.glyphs red (P2.v Float.nan 0.) (typeset "ab") );
-    ( "glyphs at infinity",
-      fun () -> Picture.glyphs red (P2.v 0. infinity) (typeset "ab") );
-    ( "an image without rows",
-      fun () ->
-        Picture.image (Box2.v 0. 0. 1. 1.) (Nx.zeros Nx.uint8 [| 0; 2; 3 |]) );
-    ( "an image without columns",
-      fun () ->
-        Picture.image (Box2.v 0. 0. 1. 1.) (Nx.zeros Nx.uint8 [| 2; 0; 1 |]) );
-    ("an image of width 0", fun () -> Picture.image (Box2.v 0. 0. 0. 1.) pixels);
-    ("an image of height 0", fun () -> Picture.image (Box2.v 0. 0. 1. 0.) pixels);
-    ("an empty group", fun () -> Picture.group []);
-    ( "a group of empties",
-      fun () -> Picture.group [ Picture.empty; Picture.empty ] );
-    ("a clip of empty", fun () -> Picture.clip square Picture.empty);
-    ("a clip by the empty path", fun () -> Picture.clip Path.empty dot);
-    ( "a transform of empty",
-      fun () -> Picture.transform (Affine.translate 1. 1.) Picture.empty );
-    ( "a singular transform",
-      fun () -> Picture.transform (Affine.scale 0. 1.) dot );
-    ( "a transform with a nan coefficient",
-      fun () -> Picture.transform { Affine.id with x0 = Float.nan } dot );
-    ("an opacity of empty", fun () -> Picture.opacity 0.5 Picture.empty);
-    ("a stamp of empty", fun () -> Picture.stamp [| 0. |] [| 0. |] Picture.empty);
-    ("a stamp without positions", fun () -> Picture.stamp [||] [||] dot);
-    ("a tag of empty", fun () -> Picture.tag (tag_of (Rows [||])) Picture.empty);
-  ]
+let fill =
+  group "fill"
+    [
+      test "takes the rule `Nonzero by default" (fun () ->
+          equal picture (Picture.fill ~rule:`Nonzero red square) dot);
+      test "is empty for the empty path" (fun () ->
+          equal picture Picture.empty (Picture.fill red Path.empty));
+    ]
 
-let raises =
-  let image shape () =
-    Picture.image (Box2.v 0. 0. 1. 1.) (Nx.zeros Nx.uint8 shape)
-  in
-  let stamp ?fills ?strokes ?scales xs ys () =
-    Picture.stamp ?fills ?strokes ?scales xs ys dot
-  in
-  let grid width height () =
-    Picture.tag (tag_of (Cells { box = Box2.v 0. 0. 1. 1.; width; height })) dot
-  in
-  [
-    ("image of rank 2", "Picture.image", image [| 2; 3 |]);
-    ("image of two channels", "Picture.image", image [| 2; 3; 2 |]);
-    ("image of five channels", "Picture.image", image [| 2; 3; 5 |]);
-    ("image of rank 4", "Picture.image", image [| 1; 2; 3; 4 |]);
-    ("opacity -0.1", "Picture.opacity", fun () -> Picture.opacity (-0.1) dot);
-    ("opacity 1.1", "Picture.opacity", fun () -> Picture.opacity 1.1 dot);
-    ("opacity nan", "Picture.opacity", fun () -> Picture.opacity Float.nan dot);
-    ("stamp with fewer ys", "Picture.stamp", stamp [| 0.; 1. |] [| 0. |]);
-    ( "stamp with fewer fills",
-      "Picture.stamp",
-      stamp ~fills:[| red |] [| 0.; 1. |] [| 0.; 1. |] );
-    ( "stamp with no strokes",
-      "Picture.stamp",
-      stamp ~strokes:[||] [| 0. |] [| 0. |] );
-    ( "stamp with more scales",
-      "Picture.stamp",
-      stamp ~scales:[| 1.; 1. |] [| 0. |] [| 0. |] );
-    ( "stamp with a negative scale",
-      "negative scale",
-      stamp ~scales:[| -1. |] [| 0. |] [| 0. |] );
-    ( "tag of a stamp with fewer rows",
-      "Picture.tag",
-      fun () ->
-        Picture.tag (tag_of (Rows [| 1 |]))
-          (Picture.stamp [| 0.; 1. |] [| 0.; 1. |] dot) );
-    ("tag of a grid 0 wide", "Picture.tag", grid 0 1);
-    ("tag of a grid 0 high", "Picture.tag", grid 1 0);
-    ("tag of a grid -1 wide", "Picture.tag", grid (-1) 3);
-  ]
+let stroke =
+  group "stroke"
+    [
+      cases "is empty for" ~id:fst
+        [
+          ("the empty path", (Stroke.v 1., Path.empty));
+          ("width 0", (Stroke.v 0., line));
+        ]
+        (fun (_, (s, q)) ->
+          equal picture Picture.empty (Picture.stroke s red q));
+    ]
+
+let glyphs =
+  group "glyphs"
+    [
+      cases "is empty for" ~id:fst
+        [
+          ("a run without glyphs", (P2.v 0. 0., ("", 10.)));
+          ("a run of size 0", (P2.v 0. 0., ("ab", 0.)));
+          ("an origin at nan", (P2.v Float.nan 0., ("ab", 10.)));
+          ("an origin at infinity", (P2.v 0. infinity, ("ab", 10.)));
+        ]
+        (fun (_, (at, (text, size))) ->
+          let r = Vg_corpus.typeset text size in
+          equal picture Picture.empty (Picture.glyphs red at r));
+    ]
+
+let image =
+  let image box shape = Picture.image box (Nx.zeros Nx.uint8 shape) in
+  let unit = Box2.v 0. 0. 1. 1. in
+  group "image"
+    [
+      test "keeps its tensor as given" (fun () ->
+          let px = pixels () in
+          let kept =
+            require_match
+              (function
+                | Picture.Image { pixels; _ } -> Some pixels | _ -> None)
+              (Picture.image (Box2.v 0. 0. 3. 2.) px)
+          in
+          let same = Testable.make ~pp:Nx.pp ~equal:( == ) in
+          equal ~msg:"the tensor given, physically" same px kept);
+      cases "is empty for" ~id:fst
+        [
+          ("a tensor without rows", (unit, [| 0; 2; 3 |]));
+          ("a tensor without columns", (unit, [| 2; 0; 1 |]));
+          ("a box of width 0", (Box2.v 0. 0. 0. 1., [| 2; 3; 4 |]));
+          ("a box of height 0", (Box2.v 0. 0. 1. 0., [| 2; 3; 4 |]));
+        ]
+        (fun (_, (box, shape)) -> equal picture Picture.empty (image box shape));
+      cases "raises on a tensor of shape"
+        ~id:(fun s ->
+          String.concat "; " (Array.to_list (Array.map string_of_int s)))
+        [
+          [| 2; 3 |];
+          [| 2; 3; 0 |];
+          [| 2; 3; 2 |];
+          [| 2; 3; 5 |];
+          [| 1; 2; 3; 4 |];
+          (* Without a pixel, which would make it empty. *)
+          [| 0; 2; 2 |];
+        ]
+        (fun shape -> invalid (fun () -> image unit shape));
+    ]
+
+(* Composing *)
+
+let group_ =
+  group "group"
+    [
+      cases "is empty for" ~id:fst
+        [
+          ("no picture", []); ("empties only", [ Picture.empty; Picture.empty ]);
+        ]
+        (fun (_, ps) -> equal picture Picture.empty (Picture.group ps));
+      prop "drops the empty pictures"
+        (Gen.pair Vg_corpus.gen_picture Vg_corpus.gen_picture) (fun (a, b) ->
+          let e = Picture.empty in
+          equal picture
+            (Picture.group [ a; b ])
+            (Picture.group [ e; a; e; b; e ]));
+      prop "of one picture is that picture" Vg_corpus.gen_picture (fun p ->
+          equal picture p (Picture.group [ p ]));
+    ]
+
+let clip =
+  group "clip"
+    [
+      test "takes the rule `Nonzero by default" (fun () ->
+          equal picture
+            (Picture.clip ~rule:`Nonzero square bar)
+            (Picture.clip square bar));
+      cases "is empty for" ~id:fst
+        [
+          ("an empty picture", (square, Picture.empty));
+          ("the empty path", (Path.empty, dot));
+        ]
+        (fun (_, (q, p)) -> equal picture Picture.empty (Picture.clip q p));
+    ]
+
+let transform =
+  group "transform"
+    [
+      cases "is empty for" ~id:fst
+        [
+          ("an empty picture", (Affine.translate 1. 1., Picture.empty));
+          ("a map without inverse", (Affine.scale 0. 1., dot));
+          ( "a map with a nan coefficient",
+            ({ Affine.id with x0 = Float.nan }, dot) );
+        ]
+        (fun (_, (m, p)) -> equal picture Picture.empty (Picture.transform m p));
+    ]
+
+let opacity =
+  group "opacity"
+    [
+      prop "1. leaves the picture as it is" Vg_corpus.gen_picture (fun p ->
+          equal picture p (Picture.opacity 1. p));
+      prop "0. keeps the bounds" Vg_corpus.gen_picture (fun p ->
+          cover "the picture has extent" (Option.is_some (bounds p));
+          equal (option box2) (bounds p) (bounds (Picture.opacity 0. p)));
+      prop "0. keeps the tags"
+        ~examples:[ Picture.tag (tag_of (Rows [| 3 |])) dot ]
+        Vg_corpus.gen_picture
+        (fun p ->
+          cover "the picture has a tag" (tags p <> []);
+          equal (list string) (tags p) (tags (Picture.opacity 0. p)));
+      test "is empty for an empty picture" (fun () ->
+          equal picture Picture.empty (Picture.opacity 0.5 Picture.empty));
+      cases "raises on" ~id:fst
+        [
+          ("-0.1", (-0.1, dot));
+          ("the float below 0.", (Float.pred 0., dot));
+          ("the float above 1.", (Float.succ 1., dot));
+          ("1.1", (1.1, dot));
+          ("nan", (Float.nan, dot));
+          ("infinity", (infinity, dot));
+          ("2. for an empty picture", (2., Picture.empty));
+        ]
+        (fun (_, (a, p)) -> invalid (fun () -> Picture.opacity a p));
+    ]
+
+let render p =
+  Nx.to_array (Hugin_vg_raster.render ~density:1. (Renderable.v 10. 10. p))
 
 let copies () =
-  let xs = [| 1.; 2. |] and ys = [| 3.; 4. |] and rows = [| 4; 5 |] in
+  let xs = [| 1.; 2. |] and ys = [| 3.; 4. |] in
   let fills = [| red; Color.blue |] and scales = [| 1.; 2. |] in
-  let p =
-    Picture.tag (tag_of (Rows rows)) (Picture.stamp ~fills ~scales xs ys dot)
-  in
+  let p = Picture.stamp ~fills ~scales xs ys dot in
   let expected =
-    Picture.tag
-      (tag_of (Rows [| 4; 5 |]))
-      (Picture.stamp ~fills:[| red; Color.blue |] ~scales:[| 1.; 2. |]
-         [| 1.; 2. |] [| 3.; 4. |] dot)
+    Picture.stamp ~fills:[| red; Color.blue |] ~scales:[| 1.; 2. |] [| 1.; 2. |]
+      [| 3.; 4. |] dot
   in
   List.iter (fun a -> a.(0) <- 9.) [ xs; ys; scales ];
   fills.(0) <- Color.green;
-  rows.(0) <- 0;
   equal picture expected p
 
-let opacity_zero () =
-  let tagged = Picture.tag (tag_of (Rows [| 3 |])) dot in
-  let p = Picture.opacity 0. tagged in
-  equal (option box2) (bounds tagged) (bounds p);
-  match p with
-  | Opacity { opacity = 0.; picture = q } -> equal picture tagged q
-  | p -> failf "not an opacity: %a" Picture.pp p
-
-let constructors =
-  group "constructors"
+let stamp =
+  group "stamp"
     [
-      cases "are empty:" ~id:fst empties (fun (_, p) ->
-          equal picture Picture.empty (p ()));
-      cases "raise Invalid_argument on"
-        ~id:(fun (n, _, _) -> n)
-        raises
-        (fun (_, substring, f) -> invalid substring f);
-      test "image keeps its tensor, physically" (fun () ->
-          match Picture.image (Box2.v 0. 0. 3. 2.) pixels with
-          | Image { pixels = px; _ } ->
-              equal ~msg:"physically" bool true (px == pixels)
-          | p -> failf "not an image: %a" Picture.pp p);
-      test "a transparent fill is not empty" (fun () ->
-          not_equal picture Picture.empty
-            (Picture.fill Color.transparent square));
-      test "group drops empties and unwraps a single picture" (fun () ->
-          equal picture dot
-            (Picture.group [ Picture.empty; dot; Picture.empty ]);
-          equal picture dot (Picture.group [ dot ]));
-      test "group keeps its nesting" (fun () ->
-          not_equal picture
-            (Picture.group [ Picture.group [ dot; bar ]; dot ])
-            (Picture.group [ dot; bar; dot ]));
-      test "opacity 1. is the identity" (fun () ->
-          equal picture dot (Picture.opacity 1. dot));
-      test "opacity 0. keeps the picture, its bounds and its tags" opacity_zero;
-      test "a stamp's scales may be nan or infinite" (fun () ->
-          let p =
-            Picture.stamp
-              ~scales:[| neg_infinity; Float.nan; infinity; 1. |]
-              [| 0.; 0.; 0.; 50. |] [| 0.; 0.; 0.; 0. |] dot
-          in
-          equal (option box2) (Some (Box2.v 50. 0. 10. 10.)) (bounds p));
-      test "a tag of anything but a stamp takes rows of any length" (fun () ->
+      test "replaces the colour of a transparent fill" (fun () ->
+          let p = Picture.fill Color.transparent square in
+          equal (array int) (render dot)
+            (render (Picture.stamp ~fills:[| red |] [| 0. |] [| 0. |] p)));
+      cases "skips an instance whose position or scale is" ~id:fst
+        [
+          ("x nan", (Float.nan, 0., 1.));
+          ("y infinity", (50., infinity, 1.));
+          ("nan", (50., 0., Float.nan));
+          ("infinity", (50., 0., infinity));
+          ("-infinity", (50., 0., neg_infinity));
+        ]
+        (fun (_, (x, y, k)) ->
+          equal (option box2)
+            (Some (Box2.v 50. 0. 10. 10.))
+            (bounds
+               (Picture.stamp ~scales:[| 1.; k |] [| 50.; x |] [| 0.; y |] dot)));
+      test "copies its arrays" copies;
+      cases "is empty for" ~id:fst
+        [
+          ("an empty picture", ([| 0. |], Picture.empty));
+          ("no position", ([||], dot));
+        ]
+        (fun (_, (xs, p)) ->
+          equal picture Picture.empty (Picture.stamp xs xs p));
+      cases "raises on" ~id:fst
+        [
+          ("fewer ys", fun () -> Picture.stamp [| 0.; 1. |] [| 0. |] dot);
+          ( "fewer fills",
+            fun () ->
+              Picture.stamp ~fills:[| red |] [| 0.; 1. |] [| 0.; 1. |] dot );
+          ( "no strokes",
+            fun () -> Picture.stamp ~strokes:[||] [| 0. |] [| 0. |] dot );
+          ( "more scales",
+            fun () -> Picture.stamp ~scales:[| 1.; 1. |] [| 0. |] [| 0. |] dot
+          );
+          ( "a scale of -1",
+            fun () -> Picture.stamp ~scales:[| -1. |] [| 0. |] [| 0. |] dot );
+          ( "a scale of the float below 0.",
+            fun () ->
+              Picture.stamp ~scales:[| Float.pred 0. |] [| 0. |] [| 0. |] dot );
+          (* Arguments that would otherwise make it empty. *)
+          ( "fills without position",
+            fun () -> Picture.stamp ~fills:[| red |] [||] [||] dot );
+          ( "a scale of -1 on an empty picture",
+            fun () ->
+              Picture.stamp ~scales:[| -1. |] [| 0. |] [| 0. |] Picture.empty );
+        ]
+        (fun (_, f) -> invalid f);
+    ]
+
+(* Tags *)
+
+let tag =
+  let grid width height p =
+    Picture.tag (tag_of (Cells { box = Box2.v 0. 0. 1. 1.; width; height })) p
+  in
+  group "tag"
+    [
+      test "copies its rows" (fun () ->
+          let rows = [| 4; 5 |] in
+          let p = Picture.tag (tag_of (Rows rows)) dot in
+          rows.(0) <- 0;
+          equal picture (Picture.tag (tag_of (Rows [| 4; 5 |])) dot) p);
+      test "takes rows of any length on a picture other than a stamp" (fun () ->
           let s = Picture.stamp [| 0.; 1. |] [| 0.; 1. |] dot in
           let moved = Picture.transform (Affine.translate 1. 0.) s in
           not_equal picture Picture.empty
             (Picture.tag (tag_of (Rows [| 7 |])) moved);
           not_equal picture Picture.empty
             (Picture.tag (tag_of (Rows [| 1; 2; 3 |])) dot));
-      test "stamp and tag copy their arrays" copies;
+      test "is empty for an empty picture" (fun () ->
+          equal picture Picture.empty
+            (Picture.tag (tag_of (Rows [||])) Picture.empty));
+      cases "raises on" ~id:fst
+        [
+          ( "fewer rows than a stamp's positions",
+            fun () ->
+              Picture.tag (tag_of (Rows [| 1 |]))
+                (Picture.stamp [| 0.; 1. |] [| 0.; 1. |] dot) );
+          ( "more rows than a stamp's positions",
+            fun () ->
+              Picture.tag
+                (tag_of (Rows [| 1; 2 |]))
+                (Picture.stamp [| 0. |] [| 0. |] dot) );
+          ("a grid 0 wide", fun () -> grid 0 1 dot);
+          ("a grid 0 high", fun () -> grid 1 0 dot);
+          ("a grid -1 wide", fun () -> grid (-1) 3 dot);
+          ("a grid 0 wide on an empty picture", fun () -> grid 0 1 Picture.empty);
+        ]
+        (fun (_, f) -> invalid f);
     ]
 
 (* Bounds *)
@@ -284,7 +411,8 @@ let pen_reaches =
   ]
 
 (* [instances wrap (xs, p)] is the union of the bounds of the instances of
-   [stamp xs ys p], each wrapped by [wrap], where [ys] is [1 - xs]. *)
+   [stamp xs ys p], each wrapped by [wrap], where [ys] is [1 - xs], and the
+   bounds of the stamp wrapped. *)
 let instances wrap (xs, p) =
   let ys = Array.map (fun x -> 1. -. x) xs in
   let one i x =
@@ -301,34 +429,48 @@ let stamp_examples =
     (rect 12. 13. 6. 6., ([| 0. |], nested));
   ]
 
-let bounds_group =
+let clip_within (q, p) =
+  let b = bounds (Picture.clip q p) in
+  cover "the clip has extent" (Option.is_some b);
+  match b with
+  | None -> ()
+  | Some b ->
+      let within = function Some o -> encloses o b | None -> false in
+      satisfies ~claim:"within the picture's bounds" box2
+        (fun _ -> within (bounds p))
+        b;
+      satisfies ~claim:"within the path's bounds" box2
+        (fun _ -> within (Path.bounds q))
+        b
+
+let bounds_ =
   group "bounds"
     [
-      test "a fill is bounded by its path" (fun () ->
+      test "of a fill is its path's box" (fun () ->
           equal (option box2) (Some (Box2.v 0. 0. 10. 10.)) (bounds dot));
-      test "a transparent fill has bounds" (fun () ->
+      test "of a transparent fill is its path's box" (fun () ->
           equal (option box2) (bounds dot)
             (bounds (Picture.fill Color.transparent square)));
-      cases "a stroke's path is grown by its pen:"
+      cases "of a stroke is its path's box grown by its pen's reach:"
         ~id:(fun (n, _, _) -> n)
         pen_reaches
         (fun (_, s, r) ->
           equal (option box2_near)
             (Some (Box2.v (-.r) (-.r) (10. +. (2. *. r)) (2. *. r)))
             (bounds (Picture.stroke s red line)));
-      test "glyphs are bounded by their ink at their origin" (fun () ->
+      test "of glyphs is their ink at their origin" (fun () ->
           let ink = Option.get (Run.bounds (typeset "Hi")) in
           equal (option box2_near)
             (Some (shift 5. 7. ink))
             (bounds (Picture.glyphs red (P2.v 5. 7.) (typeset "Hi"))));
-      test "an image is bounded by its box" (fun () ->
+      test "of an image is its box" (fun () ->
           equal (option box2)
             (Some (Box2.v 1. 2. 3. 4.))
-            (bounds (Picture.image (Box2.v 1. 2. 3. 4.) pixels)));
-      test "a path of no area has a flat box" (fun () ->
+            (bounds (Picture.image (Box2.v 1. 2. 3. 4.) (pixels ()))));
+      test "of a path of no area is a flat box" (fun () ->
           let p = Picture.fill red (Path.polyline [| 5.; 5. |] [| 0.; 10. |]) in
           equal (option box2) (Some (Box2.v 5. 0. 0. 10.)) (bounds p));
-      cases "has no extent:" ~id:fst
+      cases "is None without extent:" ~id:fst
         [
           ("empty", Picture.empty);
           ( "a path of gaps",
@@ -340,37 +482,28 @@ let bounds_group =
             Picture.stamp ~scales:[| 0. |] [| 0. |] [| 0. |] dot );
         ]
         (fun (_, p) -> is_none ~pp:pp_box (bounds p));
-      prop "a group is bounded by the union of its pictures'"
-        (Gen.pair Vg_corpus.gen_picture Vg_corpus.gen_picture) (fun (a, b) ->
-          equal (option box2)
-            (union (bounds a) (bounds b))
-            (bounds (Picture.group [ a; b ])));
-      prop "a translation moves the bounds"
+      prop "of a group is the union of its pictures'"
+        (Gen.pair Vg_corpus.gen_picture Vg_corpus.gen_picture)
+        (Law.homomorphic picture (option box2) bounds
+           (fun a b -> Picture.group [ a; b ])
+           union);
+      prop "of a translation are the bounds moved"
         (Gen.triple quarter quarter gen_picture) (fun (dx, dy, p) ->
           equal (option box2)
             (Option.map (shift dx dy) (bounds p))
             (bounds (Picture.transform (Affine.translate dx dy) p)));
-      test "a rotation bounds the rotated box" (fun () ->
+      test "of a rotation is the box of the rotated box" (fun () ->
           let r = Float.sqrt 2. *. 5. in
           equal (option box2_near)
             (Some (Box2.v (-.r) 0. (2. *. r) (2. *. r)))
             (bounds (Picture.transform (Affine.rotate (Float.pi /. 4.)) dot)));
-      prop "a clip is bounded within its picture's bounds and its path's"
+      prop "of a clip lie within its picture's and its path's"
+        ~examples:[ (rect 5. 5. 20. 20., dot) ]
         (Gen.pair
            (Gen.with_pp Path.pp Vg_corpus.gen_path)
            Vg_corpus.gen_picture)
-        (fun (q, p) ->
-          match bounds (Picture.clip q p) with
-          | None -> ()
-          | Some b ->
-              let within = function Some o -> contains o b | None -> false in
-              satisfies ~claim:"within the picture's bounds" box2
-                (fun _ -> within (bounds p))
-                b;
-              satisfies ~claim:"within the path's bounds" box2
-                (fun _ -> within (Path.bounds q))
-                b);
-      cases "a clip of a leaf bounds the meet of their boxes:" ~id:fst
+        clip_within;
+      cases "of a clip of a leaf is the meet of their boxes:" ~id:fst
         [
           ("overlapping", (rect 5. (-5.) 20. 10., Box2.v 5. 0. 5. 5.));
           ( "touching along a vertical edge",
@@ -380,48 +513,39 @@ let bounds_group =
         ]
         (fun (_, (q, b)) ->
           equal (option box2) (Some b) (bounds (Picture.clip q dot)));
-      test "a clip cuts each leaf, not their union" (fun () ->
+      test "of a clip cut each leaf apart" (fun () ->
           let far = Picture.fill Color.blue (rect 20. 20. 10. 10.) in
           equal (option box2)
             (Some (Box2.v 0. 0. 10. 10.))
             (bounds
                (Picture.clip (rect 0. 0. 30. 15.) (Picture.group [ dot; far ]))));
-      prop "a stamp is bounded by its instances"
+      prop "of a stamp are the union of its instances'"
         (Gen.pair gen_placement (Gen.pair gen_positions gen_picture))
         (fun (m, s) ->
           let expected, got = instances (Picture.transform m) s in
           equal (option box2) expected got);
-      prop "a stamp under a clip is bounded by its instances under the clip"
+      prop "of a stamp under a clip are the union of its instances' under it"
         ~examples:stamp_examples
         (Gen.pair gen_rect (Gen.pair gen_positions gen_picture))
         (fun (q, s) ->
           let expected, got = instances (Picture.clip q) s in
+          cover "an instance meets the clip" (Option.is_some got);
           equal (option box2) expected got);
-      test "a stamp skips instances at non-finite positions" (fun () ->
-          let p =
-            Picture.stamp [| Float.nan; 50.; infinity |] [| 0.; 0.; 0. |] dot
-          in
-          equal (option box2) (Some (Box2.v 50. 0. 10. 10.)) (bounds p));
-      test "a scaled stamp scales its geometry and keeps its pens" (fun () ->
+      test "of a stroke in a scaled stamp keep the pen's reach" (fun () ->
           let p = Picture.stroke (Stroke.v 2.) red line in
           equal (option box2)
             (Some (Box2.v (-1.) (-1.) 22. 2.))
             (bounds (Picture.stamp ~scales:[| 2. |] [| 0. |] [| 0. |] p)));
-      test "bounds raises when a corner is not finite" (fun () ->
+      test "raises when a corner is not finite" (fun () ->
           let far =
             Picture.stroke (Stroke.v 1.) red
               (Path.polyline [| 0.; 1e308 |] [| 0.; 0. |])
           in
-          invalid "not finite" (fun () ->
+          invalid (fun () ->
               bounds (Picture.transform (Affine.scale 10. 10.) far)));
     ]
 
 (* Comparing and formatting *)
-
-let font_copy =
-  match Font.of_string (Font.bytes Font.regular) with
-  | Ok f -> f
-  | Error e -> Format.kasprintf failwith "%a" Font.pp_error e
 
 (* Pairs of pictures that differ in one field. *)
 let differ =
@@ -429,7 +553,7 @@ let differ =
     Picture.stamp ?fills ?strokes ?scales xs [| 0. |] dot
   in
   let g ?(at = P2.v 0. 0.) text = Picture.glyphs red at (typeset text) in
-  let img h = Picture.image (Box2.v 0. 0. 3. h) pixels in
+  let img h = Picture.image (Box2.v 0. 0. 3. h) (pixels ()) in
   let px v shape =
     Picture.image (Box2.v 0. 0. 1. 1.) (Nx.full Nx.uint8 shape v)
   in
@@ -441,6 +565,9 @@ let differ =
     ("fill rule", Picture.fill ~rule:`Even_odd red square, dot);
     ("fill colour", Picture.fill Color.blue square, dot);
     ("fill and stroke", Picture.stroke (Stroke.v 1.) red square, dot);
+    ( "group nesting",
+      Picture.group [ Picture.group [ dot; bar ]; dot ],
+      Picture.group [ dot; bar; dot ] );
     ("stamp positions", s [| 0. |], s [| 1. |]);
     ("stamp fills", s ~fills:[| red |] [| 0. |], s [| 0. |]);
     ("stamp strokes", s ~strokes:[| red |] [| 0. |], s [| 0. |]);
@@ -469,26 +596,44 @@ let differ =
     ("tag cells", tag [] (cells 1.), tag [] (cells 2.));
   ]
 
-let comparing =
-  group "comparing"
+let fonts_by_bytes () =
+  let copy = Result.get_ok (Font.of_string (Font.bytes Font.regular)) in
+  let glyphs = [| Font.glyph Font.regular (Uchar.of_char 'a') |] in
+  let run font = Run.v ~font ~size:9. ~text:"a" ~glyphs ~xs:[| 0. |] () in
+  equal picture
+    (Picture.glyphs red (P2.v 0. 0.) (run Font.regular))
+    (Picture.glyphs red (P2.v 0. 0.) (run copy))
+
+let equal_ =
+  group "equal"
     [
-      prop "equal is an equivalence"
+      prop "is an equivalence"
         (Gen.pair Vg_corpus.gen_picture Vg_corpus.gen_picture)
         (Law.equivalence ~respell:Vg_corpus.respell picture);
-      cases "equal tells apart"
+      cases "tells apart pictures that differ in"
         ~id:(fun (n, _, _) -> n)
         differ
         (fun (_, a, b) -> not_equal picture a b);
-      test "equal compares images by elements and fonts by bytes" (fun () ->
+      test "compares image tensors by their elements" (fun () ->
           let px () = Nx.full Nx.uint8 [| 1; 2; 3 |] 7 in
           let b = Box2.v 0. 0. 1. 1. in
-          equal picture (Picture.image b (px ())) (Picture.image b (px ()));
-          let glyphs = [| Font.glyph Font.regular (Uchar.of_char 'a') |] in
-          let r f = Run.v ~font:f ~size:9. ~text:"a" ~glyphs ~xs:[| 0. |] () in
+          equal picture (Picture.image b (px ())) (Picture.image b (px ())));
+      test "compares fonts by their bytes" fonts_by_bytes;
+      cases "compares numbers with Float.equal:" ~id:fst
+        [
+          ("nan equals nan", (Float.nan, Float.nan));
+          ("-0. equals 0.", (-0., 0.));
+        ]
+        (fun (_, (x, x')) ->
           equal picture
-            (Picture.glyphs red (P2.v 0. 0.) (r Font.regular))
-            (Picture.glyphs red (P2.v 0. 0.) (r font_copy)));
-      test "pp formats each case" (fun () ->
+            (Picture.stamp [| x |] [| 0. |] dot)
+            (Picture.stamp [| x' |] [| 0. |] dot));
+    ]
+
+let pp =
+  group "pp"
+    [
+      test "formats each case as an s-expression, paths as path data" (fun () ->
           let p =
             Picture.group
               [
@@ -501,7 +646,7 @@ let comparing =
                   (Picture.stamp ~fills:[| red; Color.blue |] [| 1.; 2. |]
                      [| 3.; 4. |]
                      (Picture.fill ~rule:`Even_odd red square));
-                Picture.image (Box2.v 0. 0. 3. 2.) pixels;
+                Picture.image (Box2.v 0. 0. 3. 2.) (pixels ());
               ]
           in
           expect (Format.asprintf "%a" Picture.pp p)
@@ -524,25 +669,53 @@ let comparing =
 let renderable = Testable.make ~pp:Renderable.pp ~equal:Renderable.equal
 
 let renderables =
-  group "renderables"
+  let r = Renderable.v 360. 240. dot in
+  group "Renderable"
     [
       cases "v raises on a page of"
         ~id:(fun (w, h) -> Printf.sprintf "%g by %g" w h)
-        [ (0., 1.); (1., -1.); (Float.nan, 1.); (1., infinity) ]
-        (fun (w, h) -> invalid "Renderable.v" (fun () -> Renderable.v w h dot));
-      test "v keeps its page and picture" (fun () ->
-          let r = Renderable.v 360. 240. dot in
-          equal float_exact 360. (Renderable.w r);
-          equal float_exact 240. (Renderable.h r);
+        [
+          (0., 1.);
+          (-0., 1.);
+          (1., -1.);
+          (Float.nan, 1.);
+          (1., infinity);
+          (neg_infinity, 1.);
+        ]
+        (fun (w, h) -> invalid (fun () -> Renderable.v w h dot));
+      test "w is the width of the page" (fun () ->
+          equal float_exact 360. (Renderable.w r));
+      test "h is the height of the page" (fun () ->
+          equal float_exact 240. (Renderable.h r));
+      test "picture is the picture on the page" (fun () ->
           equal picture dot (Renderable.picture r));
-      test "equal compares sizes and pictures" (fun () ->
-          let r = Renderable.v 1. 2. dot in
-          equal renderable r (Renderable.v 1. 2. dot);
-          not_equal renderable r (Renderable.v 2. 2. dot);
-          not_equal renderable r (Renderable.v 1. 2. bar));
+      test "equal holds for equal sizes and pictures" (fun () ->
+          equal renderable r (Renderable.v 360. 240. dot));
+      cases "equal tells apart renderables that differ in" ~id:fst
+        [
+          ("width", Renderable.v 1. 240. dot);
+          ("height", Renderable.v 360. 1. dot);
+          ("picture", Renderable.v 360. 240. bar);
+        ]
+        (fun (_, r') -> not_equal renderable r r');
     ]
 
 let () =
   exit
     (run "hugin.vg picture"
-       [ constructors; bounds_group; comparing; renderables ])
+       [
+         fill;
+         stroke;
+         glyphs;
+         image;
+         group_;
+         clip;
+         transform;
+         opacity;
+         stamp;
+         tag;
+         bounds_;
+         equal_;
+         pp;
+         renderables;
+       ])

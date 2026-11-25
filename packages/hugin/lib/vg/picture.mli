@@ -139,7 +139,9 @@ type tag = { id : Nx.Ptree.Path.t; rows : rows }
 (** The type for pictures. The cases are exposed so that renderers can match on
     them, and later versions may add cases. Each is built, validated and
     normalised by the function of the same name, as its documentation says, so a
-    matched value holds the invariants stated there. A picture is a value: the
+    matched value holds the invariants stated there. A function validates its
+    arguments before it normalises them, so it raises on arguments it refuses
+    even where it would otherwise give {!empty}. A picture is a value: the
     arrays a match exposes must not be mutated, and the behaviour of a picture
     whose arrays were mutated is undefined. *)
 type t = private
