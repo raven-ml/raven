@@ -501,15 +501,42 @@ let pp_reads ppf l =
       str "wall-clock datetime of any unit"
   | Some (Any t), _ -> Type.pp ppf t
 
-let rec pp_node_reads ppf = function
+let rec pp_shape ppf = function
   | Prim l -> pp_reads ppf l
-  | List { element; _ } -> Format.fprintf ppf "list[%a]" pp_node_reads element
+  | List { element; _ } -> Format.fprintf ppf "list[%a]" pp_shape element
   | Struct { fields; _ } ->
       let pp_field ppf (n, node) =
-        Format.fprintf ppf "%a %a" Type.pp_name n pp_node_reads node
+        Format.fprintf ppf "%a %a" Type.pp_name n pp_shape node
       in
       Format.fprintf ppf "record[%a]"
         (Format.pp_print_list
            ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
            pp_field)
         fields
+
+(* [tensor_lists node] is the number of lists of [node] and the values below
+   them, when those lists read as a tensor: values of a number type or
+   [bool]. *)
+let rec tensor_lists = function
+  | List { element; _ } ->
+      Option.map (fun (k, values) -> (k + 1, values)) (tensor_lists element)
+  | Struct _ -> None
+  | Prim l -> (
+      match default l with
+      | Some (Any Bool) -> Some (0, "bool or bit")
+      | Some
+          (Any
+             (( Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64
+              | Float16 | Float32 | Float64 ) as t)) ->
+          Some (0, Format.asprintf "%a" Type.pp t)
+      | _ -> None)
+
+let pp_node_reads ppf node =
+  pp_shape ppf node;
+  match tensor_lists node with
+  | Some (1, values) ->
+      Format.fprintf ppf ", or a tensor over %s in place of its list" values
+  | Some (k, values) when k > 1 ->
+      Format.fprintf ppf
+        ", or a tensor over %s in place of its 1 to %d innermost lists" values k
+  | _ -> ()
