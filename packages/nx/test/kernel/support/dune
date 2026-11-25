@@ -61,15 +61,17 @@
    (:include %{lib:nx.cpu:avx2_flags.sexp}))
   (names nx_kernels_support_order)))
 
-; What nx.kernel's suites and nx.cpu's share: elements as their bits, and
-; the cases, references and laws of copies, casts and maps, of reductions
-; and scans, of contractions, of gathers and scatters, of factorisations,
-; and of calls that do not fit.
+; What nx.kernel's suites and nx.cpu's share: elements as their bits, C99
+; Annex F's special values of the float kinds, and the cases, references
+; and laws of copies, casts and maps, of reductions and scans, of
+; contractions, of gathers and scatters, of factorisations, and of calls
+; that do not fit.
 
 (library
  (name nx_kernel_cases)
  (wrapped false)
  (modules
+  annex_f
   elements
   kernels_cases
   reduce_cases
