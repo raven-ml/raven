@@ -3914,6 +3914,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_ragged.unique` and `Nx_ragged.rank` order rows of cells with no element
+  by their number of cells, where every such row compared equal, so a group
+  held rows of different lengths.
 - `Nx_array.transfer` into a destination with no element refuses read-only
   memory, and raises `Rig.Lost` for a lost device's array, wherever its
   memory lies, where off the host it returned.

@@ -349,6 +349,18 @@ let keys (type v s d) fn (x : (v, s, d) Nx.t) : d Nx.packed =
       | 16 -> P (Nx.order_key Nx.uint16 x)
       | _ -> P (Nx.order_key Nx.uint8 x))
 
+(* [row_keys fn r] is the order keys of [r]'s elements and [r]'s offsets in
+   keys, for the function [fn]. Where the cells hold no element, a row is a run
+   of empty cells, which orders by its number of cells (a row of one empty cell
+   is a prefix of a row of two): each row is then the one key of its length. *)
+let row_keys fn r =
+  let values, offsets = elements r in
+  let keyed = keys fn values in
+  if Nx.dim 0 r.values = 0 || Nx.numel r.values > 0 then (keyed, offsets)
+  else
+    let len = lengths r in
+    (keys fn len, Nx.arange_at (Nx.beside len) Nx.int64 0 (length r + 1) 1)
+
 let column m x = Nx.reshape [| m; 1 |] (Nx.bitcast Nx.uint64 x)
 
 (* [codes r] is [rank]'s code for each row of [r]: the number of rows that
@@ -368,12 +380,11 @@ let column m x = Nx.reshape [| m; 1 |] (Nx.bitcast Nx.uint64 x)
    left. *)
 let codes r =
   let n = length r in
-  let values, offsets = elements r in
-  let (P keys) = keys "rank" values in
+  let P keys, offsets = row_keys "rank" r in
   let w = Nx.Dtype.bits (Nx.dtype keys) / 8 in
   (* Every window of up to 64 bytes from an element of a row lies in [keys]. *)
   let keys = Nx.pad [| (0, 64 / w) |] (Nx.Dtype.zero (Nx.dtype keys)) keys in
-  let start = starts offsets and len = lengths { offsets; values } in
+  let start = starts offsets and len = Nx.sub (ends offsets) (starts offsets) in
   let rec round ~seen ~active ~m ~longest ~shortest code =
     if m = 0 || longest = 0 then code
     else
@@ -531,12 +542,11 @@ let unique ?size r =
   | Some k when k < 0 -> err "unique" "size %d, not at least 0" k
   | _ -> ());
   let n = length r in
-  let values, offsets = elements r in
-  let (P keys) = keys "unique" values in
+  let P keys, offsets = row_keys "unique" r in
   let dt = Nx.dtype keys in
   let w = Nx.Dtype.bits dt / 8 in
   let q = 8 / w in
-  let start = starts offsets and len = lengths { offsets; values } in
+  let start = starts offsets and len = Nx.sub (ends offsets) (starts offsets) in
   let here = Nx.beside len in
   if n = 0 then Nx.unique ?size (Nx.zeros_at here Nx.uint64 [| 0 |])
   else

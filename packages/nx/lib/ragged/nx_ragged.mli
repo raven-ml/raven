@@ -125,10 +125,11 @@ val map :
 
 (** {1:summarize Summarizing rows}
 
-    Rows compare element by element in nx's sort order ({!Nx.section-order}):
-    every NaN equals every other, and [-0.] orders before [0.] and differs from
-    it. A row orders before every row it is a prefix of, so byte strings order
-    as [memcmp] orders them. Complex values have no order. *)
+    Rows compare cell by cell, and cells element by element, in nx's sort order
+    ({!Nx.section-order}): every NaN equals every other, and [-0.] orders before
+    [0.] and differs from it. A row orders before every row it is a prefix of,
+    so byte strings order as [memcmp] orders them, and rows of cells with no
+    element order by their number of cells. Complex values have no order. *)
 
 val quantile : float array -> (float, 's, 'd) t -> (float, 's, 'd) Nx.t
 (** [quantile qs r] is [Nx.quantile qs] of each row of [r], over the row's

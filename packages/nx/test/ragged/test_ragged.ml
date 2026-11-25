@@ -1204,6 +1204,18 @@ let identities =
             same_groups [| 0L; 1L; 2L; 0L |] r;
             equal (array int64) [| 0L; 2L; 1L; 0L |]
               (Nx.to_array (Nx_ragged.rank r)));
+        (* Lengths 1, 0, 2 and 1: a row of one empty cell is a proper prefix of
+           a row of two. *)
+        test "rows of cells with no element compare by their number of cells"
+          (fun () ->
+            let r =
+              Nx_ragged.v
+                ~offsets:(int64s [| 0L; 1L; 1L; 3L; 4L |])
+                (Nx.zeros Nx.int32 [| 4; 0 |])
+            in
+            same_groups [| 0L; 1L; 2L; 0L |] r;
+            equal (array int64) [| 1L; 0L; 2L; 1L |]
+              (Nx.to_array (Nx_ragged.rank r)));
         test "unique and rank refuse complex values" (fun () ->
             let r =
               Nx_ragged.of_lengths (int64s [| 1L |])
