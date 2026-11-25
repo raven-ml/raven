@@ -1578,6 +1578,25 @@ let rounded_onto_page =
     (Picture.stamp [| 0. |] [| -0.1 |]
        (Picture.fill red (rect 0. (-1.) 5. 1.05)))
 
+(* Dashes whose square caps reach the page from just past where the walk of
+   their segment on the page stops, a pixel past the page's projection, and
+   within a twentieth of a pixel of it: they start or end there on the page as
+   on a tile, though the walk stops at no point of the path. *)
+let dashes_past_the_walk =
+  let dashed w = Stroke.v ~cap:`Square ~join:`Miter ~dash:[ 3.; 1. ] w in
+  let black = Array.make 4 Color.black in
+  [
+    Picture.stamp ~strokes:black [| 0.; 0.; 13.5; 0. |] [| 0.; 0.; 1.5; 0. |]
+      (Picture.stroke (dashed 4.) Color.black
+         (Path.circle (P2.v 56.1682 0.) 18.0767));
+    Picture.stamp ~fills:black [| 0.; 0.; 0.; 0. |] [| 0.; 0.; 0.; 0. |]
+      (Picture.stroke (dashed 2.) Color.black
+         (Path.close
+            (Path.polyline
+               [| -17.8478; 3.9758; 3.9758; -17.8478 |]
+               [| 0.; 0.; 17.2422; 17.2422 |])));
+  ]
+
 let stamps =
   group "stamps"
     [
@@ -1587,7 +1606,7 @@ let stamps =
           :: sliver :: tiny_circle :: image_on_centres :: pen_meets_clip
           :: rounded_onto_page :: clipped_opacity :: opacity_pen_meets_clip
           :: dash_points_survive :: thin_image :: touching_clip
-          :: shrunk_opacities) gen_stamp (fun s ->
+          :: (shrunk_opacities @ dashes_past_the_walk)) gen_stamp (fun s ->
           (* Instances and the group map their images through maps that round
              apart. *)
           agree_off_lines ~w:60 ~h:60 s (fun s ->
@@ -1898,6 +1917,15 @@ let cut_by_the_page =
              (Picture.transform
                 (Affine.translate 1.9834333955250643 0.)
                 (Picture.image (Box2.v 0. 0. 1. 1.) Vg_corpus.tensor))) );
+      (* A dash that starts 0.04 before where the walk of its segment on the
+         page of 100 stops, a pixel past the page's projection, and whose square
+         cap's corner reaches pixel (94, 99): the dash starts there on both
+         pages, though the walk stops at no point of the path. *)
+      ( 100.,
+        Picture.stroke
+          (Stroke.v ~cap:`Square ~join:`Miter ~dash:[ 3.; 1. ] 4.)
+          Color.black
+          (segment (-16.2056) 73.0283 102.5 92.5426) );
     ]
 
 (* A stroked circle in a stamp nested in another, each position about 0.1 past
