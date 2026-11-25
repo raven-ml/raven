@@ -4343,33 +4343,31 @@ let det a =
   let d, signed = pivots ~by a in
   signed (reduction ~by Prod ~axes:[ -1 ] d)
 
-(* [z / |z|], zero where [z] is: a real's sign, a complex number's phase. *)
-let phase (type v s d) ~by (z : (v, s, d) t) : (v, s, d) t =
-  let unit (type c r) (f : (float, r) D.t) (z : (Complex.t, c, d) t) =
-    let dt = dtype z and m = magnitude_by ~by f z in
-    let held = E.(operand 1 m = const f 0.) in
-    let zero = E.const dt Complex.zero in
-    elementwise ~by dt [ Any z; Any m ]
-      E.(where held zero (operand 0 z / cast dt (operand 1 m)))
-  in
-  match dtype z with
-  | D.Complex64 -> unit D.Float32 z
-  | D.Complex128 -> unit D.Float64 z
-  | _ -> unary ~by Sign z
+(* The logarithms of [x]'s magnitudes, floats of [x]'s precision: a complex
+   number's is its logarithm's real part, which forms no [|x|] that could
+   overflow. *)
+let log_magnitudes (type v s d b) ~by (x : (v, s, d) t)
+    (f : 'r. (float, 'r, d) t -> b) : b =
+  match dtype x with
+  | D.Float32 -> f (unary ~by Log (unary ~by Abs x))
+  | D.Float64 -> f (unary ~by Log (unary ~by Abs x))
+  | D.Complex64 -> f (real_by ~by D.Float32 (unary ~by Log x))
+  | D.Complex128 -> f (real_by ~by D.Float64 (unary ~by Log x))
+  | dt -> invalid_argf "%s: %s has no magnitudes" by (D.name dt)
 
 let slogdet dt a =
   let by = "Nx.slogdet" in
   square_matrices ~by a;
   let d, signed = pivots ~by a in
-  let sign = signed (reduction ~by Prod ~axes:[ -1 ] (phase ~by d)) in
+  let sign = signed (reduction ~by Prod ~axes:[ -1 ] (unary ~by Sign d)) in
   (* A zero pivot beside an infinite one would sum to NaN. *)
   let singular =
     let dt = dtype sign and v = operand 0 sign in
     E.(v = const dt (D.zero dt))
   in
   let logabs =
-    magnitudes ~by d (fun m ->
-        let l = reduction ~by Sum ~axes:[ -1 ] (unary ~by Log m) in
+    log_magnitudes ~by d (fun l ->
+        let l = reduction ~by Sum ~axes:[ -1 ] l in
         let r = dtype l in
         elementwise ~by dt [ Any sign; Any l ]
           (at dt E.(where singular (const r Float.neg_infinity) (operand 1 l))))

@@ -3914,6 +3914,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx.slogdet` of a complex matrix whose pivot's modulus is past the largest
+  float gives a unit sign and its logarithm, where it gave sign `0` and logabs
+  `neg_infinity`; an infinite pivot's sign is its direction, where it was NaN.
 - `Nx.pp`, `Nx.to_string` and `Nx.print` write floats to at most 8
   significant digits, as `0.33333333`, where a `float64` took up to 17 and
   buried the array. An integer of at most 8 digits prints whole, and a float

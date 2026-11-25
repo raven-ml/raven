@@ -910,6 +910,68 @@ let test_det_cases () =
   equal ~msg:"an infinite pivot's sign" float_exact 0. (one sign);
   equal ~msg:"an infinite pivot's logabs" float_exact Float.neg_infinity (one logabs)
 
+(* A 1 × 1 complex matrix, its one pivot. *)
+type pivot = Pivot : (Complex.t, 'c) D.t * Complex.t -> pivot
+
+let pp_pivot ppf (Pivot (dt, z)) =
+  Format.fprintf ppf "%a %h%+hi" D.pp dt z.Complex.re z.im
+
+(* [c (1 + i s)], [c] rounded to [dt]'s parts. *)
+let pivot (type c) (dt : (Complex.t, c) D.t) c s =
+  let c =
+    match dt with
+    | D.Complex64 -> Int32.float_of_bits (Int32.bits_of_float c)
+    | _ -> c
+  in
+  Pivot (dt, { Complex.re = c; im = s *. c })
+
+(* The pivot [c (1 ± i)] is not zero, and its modulus [c √2] is past the largest
+   float of its dtype. Its sign is [(1 ± i) / √2], within [3 u] ({!Nx.sign}),
+   and its logabs [ln c + ln 2 / 2], within 2 ulps of [dt]'s precision
+   ({!Nx.log}): nx.mli 3500, 3507-3511. *)
+let test_slogdet_overflow =
+  cases "a pivot whose modulus overflows keeps a unit sign and its logarithm"
+    ~id:(Format.asprintf "%a" pp_pivot)
+    [
+      pivot D.Complex128 1.5e308 1.;
+      pivot D.Complex128 1.5e308 (-1.);
+      pivot D.Complex64 3e38 1.;
+      pivot D.Complex64 3e38 (-1.);
+    ]
+    (fun (Pivot (dt, z)) ->
+      let u = match dt with D.Complex64 -> 0x1p-24 | _ -> 0x1p-53 in
+      let a = Nx.create dt [| 1; 1 |] [| z |] in
+      let sign, logabs = Nx.slogdet Nx.float64 a in
+      let s = Nx.item [] (Nx.cast Nx.complex128 sign) in
+      let half = Float.sqrt 0.5 in
+      let part = float (3. *. u) in
+      equal ~msg:"sign" (pair part part)
+        (half, Float.copy_sign half z.im)
+        (s.re, s.im);
+      equal ~msg:"logabs"
+        (float_rel ~rel:(4. *. u) ~abs:0.)
+        (Float.log z.re +. (Float.log 2. /. 2.))
+        (Nx.item [] logabs))
+
+(* An infinite pivot is not zero: its sign is the direction its parts point to
+   ({!Nx.sign}), and the logarithm of its magnitude is infinity. *)
+let test_slogdet_infinite =
+  let inf = Float.infinity and half = Float.sqrt 0.5 in
+  cases "an infinite pivot has a unit sign and logabs infinity"
+    ~id:(fun ((z : Complex.t), _) -> Printf.sprintf "%h%+hi" z.re z.im)
+    [
+      ({ Complex.re = inf; im = 0. }, (1., 0.));
+      ({ Complex.re = -.inf; im = 2. }, (-1., 0.));
+      ({ Complex.re = inf; im = -.inf }, (half, -.half));
+    ]
+    (fun (z, want) ->
+      let a = Nx.create Nx.complex128 [| 1; 1 |] [| z |] in
+      let sign, logabs = Nx.slogdet Nx.float64 a in
+      let s = Nx.item [] sign in
+      let part = float (3. *. 0x1p-53) in
+      equal ~msg:"sign" (pair part part) want (s.re, s.im);
+      equal ~msg:"logabs" float_exact inf (Nx.item [] logabs))
+
 (* A batch of a finite matrix and one holding NaN: each function's results
    for the finite one hold, and those of the other are NaN. *)
 let test_nan_alone () =
@@ -1613,6 +1675,8 @@ let () =
            [
              test_det;
              test "det and slogdet at their edges" test_det_cases;
+             test_slogdet_overflow;
+             test_slogdet_infinite;
              test_solve;
              test "solve is NaN for a singular matrix alone" test_solve_singular;
              test_solve_triangular;
