@@ -32,8 +32,10 @@ contract for every verb below.
   its name says "(sampled)".
 - A failure path that needs a limit (files, address space, processes) sets
   it on a forked child alone; no test exhausts a shared resource. A test that
-  forks lives in a suite of its own, since a process that spawned domains
-  cannot fork.
+  forks may share a suite whose module initialisation spawns no domain,
+  since windtrap retires the worker after each test that spawns one. Under
+  `--in-process`, where one process runs every test, a fork after such a
+  test raises.
 - Fixing a bug: write the test, watch it fail, then fix. A bug not yet fixed
   lands as an `xfail` stating the wrong behaviour.
 
