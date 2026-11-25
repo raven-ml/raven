@@ -45,7 +45,7 @@ let mean_near m runs =
 
 (* The spread of [R] runs' ln Z lies within a factor of two of their mean error:
    a calibrated error falls outside with probability 3.9e-4 at 20 runs, from χ²
-   with 19 degrees of freedom, and 1e-20 at 200. *)
+   with 19 degrees of freedom, 1.6e-3 at 16 and 1e-20 at 200. *)
 let spread_is_error m runs =
   test m.name (fun () ->
       Compiled.here ();

@@ -39,17 +39,13 @@ let bad f v x =
   let l = f x in
   Nx.where (Nx.greater_s (Nx.reshape [| -1 |] x) 0.) (Nx.full_like l v) l
 
-(* [densities which v] is the conjugate model's prior and likelihood, the one
-   named [which] made [v] above 0. *)
-let densities which v =
-  if which = "prior" then (bad conjugate.prior v, conjugate.likelihood)
-  else (conjugate.prior, bad conjugate.likelihood v)
-
-let bad_rows =
+(* The conjugate model's prior and likelihood, one of them NaN or +inf above
+   0. *)
+let bad_densities =
   [
-    ("likelihood", Float.nan);
-    ("likelihood", Float.infinity);
-    ("prior", Float.nan);
+    ("likelihood NaN", conjugate.prior, bad conjugate.likelihood Float.nan);
+    ("likelihood +inf", conjugate.prior, bad conjugate.likelihood Float.infinity);
+    ("prior NaN", bad conjugate.prior Float.nan, conjugate.likelihood);
   ]
 
 (* ptree *)
@@ -120,10 +116,9 @@ let init_tests =
               Norn.Smc.init t ~prior:conjugate.prior ~likelihood
                 (conjugate.draw (Nx.Rng.key 2) 100)));
       cases "a density NaN or +inf at a particle is refused"
-        ~id:(fun (which, v) -> Printf.sprintf "%s %g" which v)
-        bad_rows
-        (fun (which, v) ->
-          let prior, likelihood = densities which v in
+        ~id:(fun (name, _, _) -> name)
+        bad_densities
+        (fun (_, prior, likelihood) ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
               Norn.Smc.init t ~prior ~likelihood
                 (conjugate.draw (Nx.Rng.key 2) 100)));
@@ -202,6 +197,14 @@ let step_tests =
                ~likelihood:(counted rows conjugate.likelihood)
                (Nx.Rng.key 3) s);
           equal (list int) [ s.resampled ] (List.sort_uniq compare !rows));
+      (* [log ε] gains the mean acceptance less 0.8, from ε = 1: within [-0.8,
+         0.2]. *)
+      test "a Hamiltonian step moves log ε by the mean acceptance less 0.8"
+        (fun () ->
+          let s = step conjugate (Nx.Rng.key 3) (start conjugate 100) in
+          let log_eps = Float.log (Nx.item [] s.step_size) in
+          at_least float_exact ~than:(-0.8) log_eps;
+          at_most float_exact ~than:0.2 log_eps);
       test "a slice step tunes nothing" (fun () ->
           let s =
             step conjugate (Nx.Rng.key 3) (start ~move:Slice conjugate 100)
@@ -223,10 +226,9 @@ let step_tests =
       (* Particles drawn at or below 0, under a density bad above 0: the first
          step's moves reach past 0. *)
       cases "a density NaN or +inf at a particle is refused"
-        ~id:(fun (which, v) -> Printf.sprintf "%s %g" which v)
-        bad_rows
-        (fun (which, v) ->
-          let prior, likelihood = densities which v in
+        ~id:(fun (name, _, _) -> name)
+        bad_densities
+        (fun (_, prior, likelihood) ->
           let s =
             Norn.Smc.init t ~prior ~likelihood
               (Nx.neg (Nx.abs (conjugate.draw (Nx.Rng.key 2) 100)))
@@ -241,12 +243,12 @@ let step_tests =
    [β E_β (ln L) - ln Z_β], with the particles as the posterior's draws; at [β =
    0], [L^0 = 1] even where [L = 0]. A sum of 1000 terms rounds within 1000 ulps
    of its largest, 1e-12 relatively. *)
-let tempered_information s =
+let tempered_information m s =
   let z = Norn.Smc.evidence s in
-  let beta = Nx.item [] s.Norn.Smc.beta in
+  let beta = match Norn.Evidence.stop z with Temperature b -> b | _ -> 1. in
+  let l = m.likelihood (Norn.Evidence.sample z).values in
   let expected =
-    if beta = 0. then 0.
-    else (beta *. Nx.item [] (Nx.mean s.likelihood)) -. ln_z z
+    if beta = 0. then 0. else (beta *. Nx.item [] (Nx.mean l)) -. ln_z z
   in
   equal (float_rel ~rel:1e-12 ~abs:1e-12) expected (information z)
 
@@ -298,17 +300,17 @@ let evidence_tests =
             (Norn.Evidence.stop (Norn.Smc.evidence (start conjugate 12))));
       test "information at β = 0 is 0, the prior's divergence from itself"
         (fun () ->
-          tempered_information (start conjugate 100);
-          tempered_information (start truncated 100));
+          tempered_information conjugate (start conjugate 100);
+          tempered_information truncated (start truncated 100));
       test "information short of β = 1 is the tempered posterior's" (fun () ->
           let s = step gaussian (Nx.Rng.key 1) (start gaussian particles) in
           less float_exact ~than:1. (Nx.item [] s.beta);
-          tempered_information s);
+          tempered_information gaussian s);
       test "information at β = 1 is the posterior's" (fun () ->
           let s = step conjugate (Nx.Rng.key 1) (start conjugate 100) in
           let s = step conjugate (Nx.Rng.key 2) s in
           equal float_exact 1. (Nx.item [] s.beta);
-          tempered_information s);
+          tempered_information conjugate s);
       test "one chain is one group, and an expectation's error is inf"
         (fun () ->
           let z = Norn.Smc.evidence (start ~resampled:1 conjugate 12) in

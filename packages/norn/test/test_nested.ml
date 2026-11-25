@@ -100,17 +100,15 @@ let init_tests =
               Norn.Nested.init t ~budget ~prior:conjugate.prior ~likelihood
                 (conjugate.draw (Nx.Rng.key 2) 20)));
       cases "a density NaN or +inf at a point is refused"
-        ~id:(fun (which, v) -> Printf.sprintf "%s %g" which v)
+        ~id:(fun (name, _, _) -> name)
         [
-          ("likelihood", Float.nan);
-          ("likelihood", Float.infinity);
-          ("prior", Float.nan);
+          ("likelihood NaN", conjugate.prior, bad conjugate.likelihood Float.nan);
+          ( "likelihood +inf",
+            conjugate.prior,
+            bad conjugate.likelihood Float.infinity );
+          ("prior NaN", bad conjugate.prior Float.nan, conjugate.likelihood);
         ]
-        (fun (which, v) ->
-          let prior, likelihood =
-            if which = "prior" then (bad conjugate.prior v, conjugate.likelihood)
-            else (conjugate.prior, bad conjugate.likelihood v)
-          in
+        (fun (_, prior, likelihood) ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Nested.init") (fun () ->
               Norn.Nested.init t ~budget ~prior ~likelihood
                 (conjugate.draw (Nx.Rng.key 2) 20)));
@@ -139,12 +137,14 @@ let init_tests =
 
 (* Every step starts from [n] live points, so the [j]-th of its deletions, from
    [j = 1], shrinks ln X by [1 / (n - j + 1)]: dead point [i] by [1 / (n - i mod
-   batch)]. The examples are the rows that held the shrinkage when it was
-   checked by counting births. *)
+   batch)], one over the points live at its death. Those are the points born at
+   or before death [i] ([born], [dead_born]) that had not died before it, so
+   counting them holds the births to the same law. *)
 let shrinkage_law =
   prop ~count:20
     ~examples:[ (10, 5, 4); (10, 3, 5); (7, 1, 9); (12, 11, 2) ]
-    "the j-th of a step's deletions shrinks ln X by 1 / (n - j + 1)"
+    "the j-th of a step's deletions shrinks ln X by 1 / (n - j + 1), over the \
+     points born before it"
     Gen.(
       with_pp
         (fun ppf (n, b, k) ->
@@ -157,13 +157,22 @@ let shrinkage_law =
       cover "a batch of one" (batch = 1);
       cover "a batch of all but one" (batch = n - 1);
       let s = steps conjugate k (init ~batch ~budget:k conjugate n) in
-      let expected =
-        Array.init (deaths s) (fun i -> 1. /. float_of_int (n - (i mod batch)))
-      in
+      let live = Array.init (deaths s) (fun i -> n - (i mod batch)) in
       equal
         (array (float 1e-15))
-        expected
-        (Array.sub (Nx.to_array s.shrinkage) 0 (deaths s)))
+        ~msg:"shrinkage"
+        (Array.map (fun l -> 1. /. float_of_int l) live)
+        (Array.sub (Nx.to_array s.shrinkage) 0 (deaths s));
+      let dead_born = ints s.dead_born and born = ints s.born in
+      let counted i =
+        let dead = ref 0 in
+        for j = i to deaths s - 1 do
+          if dead_born.(j) <= i then incr dead
+        done;
+        !dead + Array.fold_left (fun c b -> if b <= i then c + 1 else c) 0 born
+      in
+      equal (array int) ~msg:"points born and live at each death" live
+        (Array.init (deaths s) counted))
 
 (* [counted rows f] is [f] recording in [rows] the leading axis of every
    position it reads. *)
@@ -175,21 +184,6 @@ let step_tests =
   group "step"
     [
       shrinkage_law;
-      test "each replacement is born at the deaths before it" (fun () ->
-          let s = steps conjugate 2 (init ~batch:3 conjugate 10) in
-          let born = ints s.born in
-          equal int ~msg:"live points born at the last step's deaths" 3
-            (Array.fold_left
-               (fun c b -> if b = deaths s then c + 1 else c)
-               0 born);
-          Array.iter
-            (at_most int ~msg:"a live point's birth" ~than:(deaths s))
-            born;
-          Array.iteri
-            (fun i b ->
-              if i < deaths s then
-                at_most int ~msg:"a dead point's birth" ~than:i b)
-            (ints s.dead_born));
       cases "the dead are lowest first, and every live point lies above them"
         ~id:(fun m -> m.name)
         [ conjugate; indicator ]
@@ -204,17 +198,22 @@ let step_tests =
           let last = dead.(Array.length dead - 1) in
           Array.iter
             (at_least float_exact ~msg:"a live point" ~than:last)
-            (Nx.to_array s.likelihood);
+            (Nx.to_array s.likelihood));
+      test "the ranks lie in (0, 1)" (fun () ->
+          let s = steps indicator 5 (init indicator 20) in
           Array.iter
             (fun r ->
-              greater float_exact ~msg:"a rank" ~than:0. r;
-              less float_exact ~msg:"a rank" ~than:1. r)
-            (Nx.to_array s.rank);
+              greater float_exact ~than:0. r;
+              less float_exact ~than:1. r)
+            (Nx.to_array s.rank));
+      test "a lineage is an index of the starting points" (fun () ->
+          let s = steps conjugate 5 (init conjugate 20) in
           Array.iter
             (fun l ->
-              at_least int ~msg:"a lineage" ~than:0 l;
-              less int ~msg:"a lineage" ~than:20 l)
-            (ints s.lineage));
+              at_least int ~than:0 l;
+              less int ~than:20 l)
+            (Array.append (ints s.lineage)
+               (Array.sub (ints s.dead_lineage) 0 (deaths s))));
       test "the densities are evaluated on the batch points being replaced"
         (fun () ->
           let rows = ref [] in
@@ -256,10 +255,11 @@ let evidence_tests =
           in
           let lw = Nx.to_array w.log_weights in
           equal int ~msg:"draws" ((10 * 5) + 10) (Array.length lw);
-          (* The dead buffer's rows past the 15 deaths, before the live. *)
-          equal (array float_exact) ~msg:"the padding"
-            (Array.make 35 Float.neg_infinity)
-            (Array.sub lw 15 35));
+          (* 15 deaths in a buffer of 50: 35 rows of padding. *)
+          equal int ~msg:"draws at weight zero" 35
+            (Array.fold_left
+               (fun c w -> if w = Float.neg_infinity then c + 1 else c)
+               0 lw));
       test "its sample's log weights are normalised" (fun () ->
           let w = Norn.Evidence.sample (nest conjugate 50 (Nx.Rng.key 4)) in
           (* The 1550 dead points' log-sum-exp rounds by at most their count's

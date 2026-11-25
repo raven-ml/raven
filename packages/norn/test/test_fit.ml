@@ -297,7 +297,7 @@ let pathfinder_tests =
              path. Of 10000 paths from these starts with 100 draws per bound,
              none had a mean or a covariance more than 0.1 from the target's: a
              path does with probability below 3e-4 (95% upper bound), so more
-             than 4 of 8 do with probability below 1e-15. *)
+             than 2 of 8 do with probability below 1.6e-9. *)
           let g =
             pf pos ~elbo_draws:100 ~steps:30 gaussian (Nx.Rng.key 1)
               (tiled 2 starts)
@@ -307,7 +307,7 @@ let pathfinder_tests =
             largest (floats (Nx.sub (point (G.mean pos g)) loc)) > 0.1
             || largest (flat (Nx.sub (covariance pos g) cov)) > 0.1
           in
-          at_most int ~than:4
+          at_most int ~than:2
             (List.length (List.filter far (List.init 8 Fun.id))));
       test "a fit's bound is its Gaussian's, from draws of its own" (fun () ->
           (* The chosen iterate's estimates are the largest of many, so the
@@ -482,13 +482,13 @@ let vi_tests =
           (* The bound's maximum is the target itself; the last step keeps its
              gradient noise. Of 2000 chains from these starts, 4 had a mean more
              than 0.1 or a covariance more than 0.15 from the target's: a chain
-             does with probability below 5e-3 (95% upper bound), so more than 5
-             of 10 do with probability below 3e-12. *)
+             does with probability below 5e-3 (95% upper bound), so more than 4
+             of 10 do with probability below 7.8e-10. *)
           let g =
             vi pos ~rank:3 ~draws:100 ~steps:2000 gaussian (Nx.Rng.key 1)
               (tiled 5 (first 2 starts))
           in
-          at_most int ~than:5
+          at_most int ~than:4
             (far g ~chains:10 (fun g ->
                  largest (flat (Nx.sub (covariance pos g) cov)) > 0.15)));
       test "a mean-field fit has the conditionals' variances" (fun () ->
@@ -496,14 +496,14 @@ let vi_tests =
              target's mean and the variances [1 / Λ_ii] of its conditionals. Of
              2000 chains from these starts, 25 had a mean more than 0.1 off or a
              variance more than 30% off: a chain does with probability below
-             0.018 (95% upper bound), so more than 5 of 10 do with probability
-             below 1e-8. *)
+             0.018 (95% upper bound), so more than 4 of 10 do with probability
+             below 4.5e-7. *)
           let g =
             vi pos ~draws:100 ~steps:2000 gaussian (Nx.Rng.key 1)
               (tiled 5 (first 2 starts))
           in
           let conditional = Nx.recip (Nx.diagonal (Nx.inv cov)) in
-          at_most int ~than:5
+          at_most int ~than:4
             (far g ~chains:10 (fun g ->
                  largest
                    (floats
