@@ -13,10 +13,12 @@ let table_w =
   in
   Testable.make ~pp ~equal:Talon.equal
 
+let schema_w = Testable.make ~pp:Schema.pp ~equal:Schema.equal
 let one c = v [ ("a", c) ]
 let nulls vs = Array.fold_left (fun n v -> if v = None then n + 1 else n) 0 vs
 
-let message f =
+(* [refusal f] is the message of the [Invalid_argument] that [f] raises. *)
+let refusal f =
   match f () with _ -> fail "no exception" | exception Invalid_argument m -> m
 
 (* [rows_are ty vs c] asserts that [c] holds [vs]; a column no kind reads, its
@@ -51,7 +53,7 @@ let take_of_split =
     Gen.bind split (fun ((_, t) as s) ->
         Gen.pair (Gen.constant s) (indices (rows t)))
   in
-  prop "take reads the rows at its indices, as one batch" gen
+  prop "is the rows at its indices, as one batch" gen
     (fun ((G.Sample (ty, vs), t), idx) ->
       let r =
         take
@@ -79,13 +81,13 @@ let filter_runs =
             in
             Gen.map (fun d -> (s, rows, d)) drops))
     |> Gen.with_pp (fun ppf (s, rows, drops) ->
-           Format.fprintf ppf "@[<v>%a@,%d rows, dropped %a@]" G.pp_sample s rows
-             (Format.pp_print_list
-                ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ",")
-                Format.pp_print_int)
-             drops)
+        Format.fprintf ppf "@[<v>%a@,%d rows, dropped %a@]" G.pp_sample s rows
+          (Format.pp_print_list
+             ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ",")
+             Format.pp_print_int)
+          drops)
   in
-  prop "a filter keeping long runs reads each row it keeps" gen
+  prop "keeps each row of long runs, as take of their rows does" gen
     (fun (G.Sample (ty, vs), rows, drops) ->
       let n = Array.length vs in
       let rows = if n = 0 then 0 else rows in
@@ -117,7 +119,8 @@ let filter_runs =
       in
       rows_are ty (Array.of_list (List.map row kept)) (column r "a");
       let positions =
-        Nx.create Nx.int64 [| List.length kept |]
+        Nx.create Nx.int64
+          [| List.length kept |]
           (Array.of_list (List.map Int64.of_int kept))
       in
       rows_are ty
@@ -135,8 +138,7 @@ let take_runs =
         Gen.map (fun r -> (s, r)) (Gen.list ~size:(Gen.int_range 1 8) run))
     |> Gen.with_pp (fun ppf (s, _) -> G.pp_sample ppf s)
   in
-  prop "take of runs of rows reads the rows at them" gen
-    (fun (G.Sample (ty, vs), runs) ->
+  prop "reads runs of rows out of order" gen (fun (G.Sample (ty, vs), runs) ->
       let n = Array.length vs in
       let at =
         if n = 0 then []
@@ -154,7 +156,8 @@ let take_runs =
       cover "indices that go backwards" (backwards at);
       let t = one (Column.of_options ty vs) in
       let positions =
-        Nx.create Nx.int64 [| List.length at |]
+        Nx.create Nx.int64
+          [| List.length at |]
           (Array.of_list (List.map Int64.of_int at))
       in
       rows_are ty
@@ -193,41 +196,39 @@ let key_identity (Pair (ty, vs0, vs1)) =
   let expected = Array.for_all2 same vs0 vs1 in
   cover "equal" expected;
   cover "unequal" (not expected);
-  equal bool expected (Talon.equal (table ty vs0) (table ty vs1))
+  let t0 = table ty vs0 and t1 = table ty vs1 in
+  if expected then equal table_w t0 t1 else not_equal table_w t0 t1
 
 let equality =
-  group "Equality"
-    [
-      prop "equal is key identity row by row" pairs key_identity;
-      prop "equal is an equivalence" pairs (fun (Pair (ty, vs0, vs1)) ->
-          Law.equivalence table_w (table ty vs0, table ty vs1));
-      prop "equal ignores batches" split (fun (G.Sample (ty, vs), t) ->
-          equal table_w (table ty vs) t);
-      test "equal makes -0. the key of 0. and every NaN one key" (fun () ->
-          let t xs = one (Column.v Type.float64 xs) in
-          equal table_w (t [| 0.; Float.nan |]) (t [| -0.; -.Float.nan |]);
-          equal bool false (Talon.equal (t [| -0. |]) (t [| 1. |])));
-      test "equal tells a null element or field from a value" (fun () ->
-          let list vs =
-            let child = Column.of_options Type.uint8 vs in
-            let offsets = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
-            let l = Column.Varsize { validity = None; offsets; child } in
-            one
-              (Result.get_ok (Column.of_layout (Any (Type.list Type.uint8)) l))
-          in
-          equal bool false (Talon.equal (list [| None |]) (list [| Some 0 |]));
-          let record v =
-            let ty = Type.record [ ("a", Any Type.bool) ] in
-            one (Column.v ty [| Record.(add Kind.bool "a" v empty) |])
-          in
-          equal bool false (Talon.equal (record None) (record (Some false))));
-      test "equal tells a null from a value and other schemas apart" (fun () ->
-          let t vs = one (Column.of_options Type.bool vs) in
-          equal bool false (Talon.equal (t [| None |]) (t [| Some false |]));
-          equal bool false
-            (Talon.equal (t [| Some false |])
-               (v [ ("b", Column.v Type.bool [| false |]) ])));
-    ]
+  [
+    prop "is key identity row by row" pairs key_identity;
+    prop "is an equivalence" pairs (fun (Pair (ty, vs0, vs1)) ->
+        Law.equivalence table_w (table ty vs0, table ty vs1));
+    prop "ignores batches" split (fun (G.Sample (ty, vs), t) ->
+        equal table_w (table ty vs) t);
+    test "makes -0. the key of 0. and every NaN one key" (fun () ->
+        let t xs = one (Column.v Type.float64 xs) in
+        equal table_w (t [| 0.; Float.nan |]) (t [| -0.; -.Float.nan |]);
+        not_equal table_w (t [| -0. |]) (t [| 1. |]));
+    test "tells a null element or field from a value" (fun () ->
+        let list vs =
+          let child = Column.of_options Type.uint8 vs in
+          let offsets = Nx.create Nx.int64 [| 2 |] [| 0L; 1L |] in
+          let l = Column.Varsize { validity = None; offsets; child } in
+          one (Result.get_ok (Column.of_layout (Any (Type.list Type.uint8)) l))
+        in
+        not_equal table_w (list [| None |]) (list [| Some 0 |]);
+        let record v =
+          let ty = Type.record [ ("a", Any Type.bool) ] in
+          one (Column.v ty [| Record.(add Kind.bool "a" v empty) |])
+        in
+        not_equal table_w (record None) (record (Some false)));
+    test "tells a null from a value and other schemas apart" (fun () ->
+        let t vs = one (Column.of_options Type.bool vs) in
+        not_equal table_w (t [| None |]) (t [| Some false |]);
+        not_equal table_w (t [| Some false |])
+          (v [ ("b", Column.v Type.bool [| false |]) ]));
+  ]
 
 (* Canonical columns *)
 
@@ -337,25 +338,21 @@ let front_cuts =
   ]
 
 let canonical_columns =
-  group "Canonical columns"
-    [
-      cases
-        "column's layout of rows cut from the front of packed storage is their \
-         own bytes"
-        ~id:(fun (n, _, _) -> n)
-        front_cuts
-        (fun (_, cut, own) ->
-          equal (list string)
-            (buffers (column (one own) "a"))
-            (buffers (column (one cut) "a")));
-      prop "column's layout is the same bytes whatever the buffers and batches"
-        split canonical;
-      test "column of one batch of a canonical column is that column" (fun () ->
-          let c = Column.of_options Type.string [| Some "é"; None |] in
-          satisfies ~claim:"the same column" pass
-            (fun c' -> c' == c)
-            (column (one c) "a"));
-    ]
+  [
+    cases "is its rows' own bytes when they are cut from packed storage"
+      ~id:(fun (n, _, _) -> n)
+      front_cuts
+      (fun (_, cut, own) ->
+        equal (list string)
+          (buffers (column (one own) "a"))
+          (buffers (column (one cut) "a")));
+    prop "is the same bytes whatever the buffers and batches" split canonical;
+    test "of one batch of a canonical column is that column" (fun () ->
+        let c = Column.of_options Type.string [| Some "é"; None |] in
+        satisfies ~claim:"the same column" pass
+          (fun c' -> c' == c)
+          (column (one c) "a"));
+  ]
 
 (* Tensors *)
 
@@ -370,122 +367,170 @@ let numbers =
     ]
 
 let tensors =
-  group "Tensors"
-    [
-      test "to_tensor stacks the named columns, cast, across batches" (fun () ->
-          let row i = take (Nx.create Nx.int64 [| 1 |] [| i |]) numbers in
-          let t = of_batches [ row 0L; row 1L ] in
-          equal (array float_exact)
-            [| 0.5; 1.; 1.; 3.; -2.; 0. |]
-            (Nx.to_array (to_tensor Nx.float64 [ "f"; "i"; "b" ] t)));
-      test "to_tensor of no column has the rows" (fun () ->
-          equal (array int) [| 2; 0 |]
-            (Nx.shape (to_tensor Nx.int32 [] numbers)));
-    ]
+  [
+    test "stacks the named columns, cast, across batches" (fun () ->
+        let row i = take (Nx.create Nx.int64 [| 1 |] [| i |]) numbers in
+        let t = of_batches [ row 0L; row 1L ] in
+        equal (array float_exact)
+          [| 0.5; 1.; 1.; 3.; -2.; 0. |]
+          (Nx.to_array (to_tensor Nx.float64 [ "f"; "i"; "b" ] t)));
+    test "of no column has the rows" (fun () ->
+        equal (array int) [| 2; 0 |] (Nx.shape (to_tensor Nx.int32 [] numbers)));
+  ]
 
 let at is = Nx.create Nx.int64 [| Array.length is |] is
 
 (* Text rows of zero, one and several bytes, read at strided and broadcast
    indices: a view's positions, not its memory's. *)
 let texts = v [ ("s", Column.v Type.string [| ""; "a"; "bcd"; "\xc3\xa9" |]) ]
-
 let text_at idx = Column.options Kind.string (column (take idx texts) "s")
 
 let text_views =
   [
-    test "take reads text at strided indices" (fun () ->
+    test "reads text at strided indices" (fun () ->
         let idx = Nx.slice [ Nx.Rs (1, 4, 2) ] (at [| 0L; 1L; 2L; 3L |]) in
-        equal (array (option string))
+        equal
+          (array (option string))
           [| Some "a"; Some "\xc3\xa9" |]
           (text_at idx));
-    test "take reads text at broadcast indices" (fun () ->
+    test "reads text at broadcast indices" (fun () ->
         let idx = Nx.broadcast_to [| 3 |] (at [| 2L |]) in
-        equal (array (option string))
+        equal
+          (array (option string))
           [| Some "bcd"; Some "bcd"; Some "bcd" |]
           (text_at idx));
   ]
 
-(* Refusals *)
+(* Batches *)
 
-let refuse name f expected = (name, (fun () -> ignore (f ())), expected)
+(* A sample, and two tables of it cut into batches. *)
+let two_splits =
+  Gen.bind G.sample (fun (G.Sample (ty, vs) as s) ->
+      let t = one (Column.of_options ty vs) in
+      Gen.map (fun (a, b) -> (s, a, b)) (Gen.pair (G.split t) (G.split t)))
+  |> Gen.with_pp (fun ppf (s, a, b) ->
+      Format.fprintf ppf "@[<v>%a@,%d and %d batches@]" G.pp_sample s
+        (List.length (batches a))
+        (List.length (batches b)))
 
-let refusals =
-  [
-    refuse "v of columns of other lengths" (fun () ->
-        v [ ("a", Column.v Type.int8 [| 1 |]); ("b", Column.v Type.int8 [||]) ])
-    @@ __POS_OF__ {| Talon.v: column "b" has 0 rows, not 1 |};
-    refuse "v of no column without rows" (fun () -> v [])
-    @@ __POS_OF__ {| Talon.v: no column and no rows |};
-    refuse "v of rows other than the columns'" (fun () ->
-        v ~rows:2 [ ("a", Column.v Type.int8 [| 1 |]) ])
-    @@ __POS_OF__ {| Talon.v: column "a" has 1 rows, not 2 |};
-    refuse "v of negative rows" (fun () -> v ~rows:(-1) [])
-    @@ __POS_OF__ {| Talon.v: rows is -1, below 0 |};
-    refuse "v of a duplicate name" (fun () ->
-        v [ ("a", Column.v Type.int8 [||]); ("a", Column.v Type.int8 [||]) ])
-    @@ __POS_OF__ {| Talon.v: duplicate column "a" |};
-    refuse "v of a name that is not UTF-8" (fun () ->
-        v [ ("\xff", Column.v Type.int8 [||]) ])
-    @@ __POS_OF__ {| Talon.v: column name "\255" is not UTF-8 |};
-    refuse "of_batches of no table" (fun () -> of_batches [])
-    @@ __POS_OF__ {| Talon.of_batches: no table |};
-    refuse "of_batches of other schemas" (fun () ->
-        of_batches [ numbers; one (Column.v Type.int8 [||]) ])
-    @@ __POS_OF__
-         {| Talon.of_batches: schemas i int8, f float32, b bool, s string, n int8 and a int8 differ |};
-    refuse "column of a missing name" (fun () -> column numbers "x")
-    @@ __POS_OF__ {| Talon.column: no column "x" |};
-    refuse "take past the rows" (fun () -> take (at [| 0L; 2L |]) numbers)
-    @@ __POS_OF__ {| Talon.take: index 2 of a table of 2 rows |};
-    refuse "take before the rows" (fun () -> take (at [| -1L |]) numbers)
-    @@ __POS_OF__ {| Talon.take: index -1 of a table of 2 rows |};
-    refuse "take of 2-D indices" (fun () ->
-        take (Nx.zeros Nx.int64 [| 1; 1 |]) numbers)
-    @@ __POS_OF__ {| Talon.take: indices of shape [1; 1], not 1-D |};
-    refuse "to_tensor of text" (fun () -> to_tensor Nx.float32 [ "s" ] numbers)
-    @@ __POS_OF__
-         {| Talon.to_tensor: "s" is string, neither numeric nor boolean |};
-    refuse "to_tensor of a null" (fun () ->
-        to_tensor Nx.float32 [ "n" ] numbers)
-    @@ __POS_OF__ {| Talon.to_tensor: "n" has a null |};
-    refuse "to_tensor of a missing name" (fun () ->
-        to_tensor Nx.float32 [ "x" ] numbers)
-    @@ __POS_OF__ {| Talon.to_tensor: no column "x" |};
-  ]
-
-let refusal_cases =
-  cases "Refusals"
-    ~id:(fun (n, _, _) -> n)
-    refusals
-    (fun (_, f, expected) -> expect (message f) expected)
+let batches_of_batches (_, a, b) =
+  let r = of_batches [ a; b ] in
+  cover "several batches each" (List.length (batches a) > 1);
+  equal (list table_w) (batches a @ batches b) (batches r)
 
 let () =
   exit
     (run "Table"
        [
-         group "Rows"
+         group "v"
            [
-             prop "column reads the rows of every split" split column_of_split;
-             take_of_split;
-             filter_runs;
-             take_runs;
-             test "a table of rows without columns keeps them through a run"
-               (fun () ->
-                 let t = v ~rows:3 [] in
-                 equal (pair int int) (3, 2)
-                   ( rows (Error.get_ok (Query.run (Query.of_table t))),
-                     rows
-                       (Error.get_ok
-                          (Query.run
-                             (Query.slice ~offset:1 ~length:5 (Query.of_table t))))
-                   ));
-             test "a table without rows has no batch" (fun () ->
+             test "gives a table without columns its rows" (fun () ->
+                 equal int 3 (rows (v ~rows:3 [])));
+             test "is one batch" (fun () ->
+                 equal int 1
+                   (List.length (batches (one (Column.v Type.int8 [| 1; 2 |])))));
+             test
+               "raises on columns of other lengths or rows, a duplicate name \
+                or a name that is not UTF-8" (fun () ->
+                 let int8s n = Column.v Type.int8 (Array.make n 0) in
+                 expect
+                   (refusal (fun () -> v [ ("a", int8s 1); ("b", int8s 0) ]))
+                 @@ __POS_OF__ {| Talon.v: column "b" has 0 rows, not 1 |};
+                 expect (refusal (fun () -> v []))
+                 @@ __POS_OF__ {| Talon.v: no column and no rows |};
+                 expect (refusal (fun () -> v ~rows:2 [ ("a", int8s 1) ]))
+                 @@ __POS_OF__ {| Talon.v: column "a" has 1 rows, not 2 |};
+                 expect (refusal (fun () -> v ~rows:(-1) []))
+                 @@ __POS_OF__ {| Talon.v: rows is -1, below 0 |};
+                 expect
+                   (refusal (fun () -> v [ ("a", int8s 0); ("a", int8s 0) ]))
+                 @@ __POS_OF__ {| Talon.v: duplicate column "a" |};
+                 expect (refusal (fun () -> v [ ("\xff", int8s 0) ]))
+                 @@ __POS_OF__ {| Talon.v: column name "\255" is not UTF-8 |});
+           ];
+         group "of_batches"
+           [
+             prop "has the rows of every split" split column_of_split;
+             prop "has each table's batches, in order" two_splits
+               batches_of_batches;
+             test "raises on no table or tables of other schemas" (fun () ->
+                 expect (refusal (fun () -> of_batches []))
+                 @@ __POS_OF__ {| Talon.of_batches: no table |};
+                 expect
+                   (refusal (fun () ->
+                        of_batches [ numbers; one (Column.v Type.int8 [||]) ]))
+                 @@ __POS_OF__
+                      {| Talon.of_batches: schemas i int8, f float32, b bool, s string, n int8 and a int8 differ |});
+           ];
+         group "batches"
+           [
+             test "of a table without rows is none" (fun () ->
                  equal int 0
                    (List.length (batches (one (Column.v Type.int8 [||])))));
            ];
-         group "Text views" text_views;
-         equality;
-         canonical_columns;
-         tensors;
-         refusal_cases;
+         group "schema"
+           [
+             test "is the columns' names and types, in order" (fun () ->
+                 let t =
+                   v
+                     [
+                       ("b", Column.v Type.int8 [| 1 |]);
+                       ("a", Column.v Type.string [| "x" |]);
+                     ]
+                 in
+                 equal schema_w
+                   (Schema.v [ ("b", Any Type.int8); ("a", Any Type.string) ])
+                   (schema t));
+           ];
+         group "column"
+           (canonical_columns
+           @ [
+               test "raises on a name the table lacks" (fun () ->
+                   expect (refusal (fun () -> column numbers "x"))
+                   @@ __POS_OF__ {| Talon.column: no column "x" |});
+             ]);
+         group "take"
+           ([ take_of_split; take_runs ]
+           @ text_views
+           @ [
+               test "raises on indices outside the rows or not 1-D" (fun () ->
+                   expect (refusal (fun () -> take (at [| 0L; 2L |]) numbers))
+                   @@ __POS_OF__ {| Talon.take: index 2 of a table of 2 rows |};
+                   expect (refusal (fun () -> take (at [| -1L |]) numbers))
+                   @@ __POS_OF__ {| Talon.take: index -1 of a table of 2 rows |};
+                   expect
+                     (refusal (fun () ->
+                          take (Nx.zeros Nx.int64 [| 1; 1 |]) numbers))
+                   @@ __POS_OF__
+                        {| Talon.take: indices of shape [1; 1], not 1-D |});
+             ]);
+         group "to_tensor"
+           (tensors
+           @ [
+               test
+                 "raises on a column that is text, holds a null or is missing"
+                 (fun () ->
+                   expect
+                     (refusal (fun () -> to_tensor Nx.float32 [ "s" ] numbers))
+                   @@ __POS_OF__
+                        {| Talon.to_tensor: "s" is string, neither numeric nor boolean |};
+                   expect
+                     (refusal (fun () -> to_tensor Nx.float32 [ "n" ] numbers))
+                   @@ __POS_OF__ {| Talon.to_tensor: "n" has a null |};
+                   expect
+                     (refusal (fun () -> to_tensor Nx.float32 [ "x" ] numbers))
+                   @@ __POS_OF__ {| Talon.to_tensor: no column "x" |});
+             ]);
+         group "equal" equality;
+         group "Query.filter" [ filter_runs ];
+         group "Query.run"
+           [
+             test "keeps the rows of a table without columns, through a slice"
+               (fun () ->
+                 let t = v ~rows:3 [] in
+                 let run q = rows (Error.get_ok (Query.run q)) in
+                 equal int 3 (run (Query.of_table t));
+                 equal int 2
+                   (run (Query.slice ~offset:1 ~length:5 (Query.of_table t))));
+           ];
        ])
