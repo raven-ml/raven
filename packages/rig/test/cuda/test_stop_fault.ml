@@ -13,26 +13,15 @@ let second = 1_000_000_000
 let address r = Option.get (C.locate r).address
 let host r = Option.get (C.locate r).host
 
-(* How long a reopen may refuse for the work of a stopped device: the 10 s
-   bound of the kernel that holds the work running, past which it ends by
-   itself. *)
-let patience_ns = 10 * second
-
-(* An open of GPU 0 once it no longer refuses for a stopped device's work, or
-   that refusal after [patience_ns]. *)
-let reopen () =
-  let t0 = Rig.Profile.now () in
-  let rec go () =
-    match Rig_gpu_support.opened (C.gpu 0) with
-    | Error e
-      when Rig.Profile.now () - t0 < patience_ns
-           && String.ends_with ~suffix:"still runs the work of a stopped device"
-                e ->
-        Domain.cpu_relax ();
-        go ()
-    | r -> r
-  in
-  go ()
+(* An open of GPU 0 once it no longer refuses for a stopped device's work, which
+   the 10 s bound of the kernel holding it running ends. *)
+let rec reopen () =
+  match Rig_gpu_support.opened (C.gpu 0) with
+  | Error e
+    when String.ends_with ~suffix:"still runs the work of a stopped device" e ->
+      Domain.cpu_relax ();
+      reopen ()
+  | r -> r
 
 (* Work a stop leaves running that faults afterwards ends there: CUDA runs
    none of the context's work after a fault, the write of the last value

@@ -31,11 +31,11 @@ let[@inline never] stored d n =
   (s, Array.init n values)
 
 (* The parent plays an image's 33 launches through its chains of 17 and 16
-   nodes, then forks. The child, whose device is lost, drops the image and
-   the submission, collects them and closes the device: an unload or a stop
-   there would call CUDA through the parent's driver files, which may crash
-   or hang the child or break the parent's chains; the alarm ends a hang.
-   The parent's chains then play the launches again. *)
+   nodes, then forks. The child, whose device is lost, drops the image and the
+   submission, collects them and closes the device: an unload or a stop there
+   would call CUDA through the parent's driver files, which may crash or hang
+   the child or break the parent's chains. The parent's chains then play the
+   launches again. *)
 let inherited_chains () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   S.with_ @@ fun { d; g } ->
@@ -60,7 +60,6 @@ let inherited_chains () =
   Rig_support.needs_fork ();
   match Unix.fork () with
   | 0 ->
-      ignore (Unix.alarm 5);
       s := None;
       Gc.full_major ();
       let m = Result.get_ok (Rig.software "fork:child-collection") in
@@ -69,7 +68,7 @@ let inherited_chains () =
       Rig.close d;
       Unix._exit (match why with Some "forked" -> 0 | _ -> 1)
   | pid ->
-      (match Unix.waitpid [] pid with
+      (match Rig_support.reaping pid (fun () -> Unix.waitpid [] pid) with
       | _, WEXITED n -> equal int ~msg:"the child's exit" 0 n
       | _, (WSIGNALED n | WSTOPPED n) ->
           failf "the child stopped on signal %d" n);
@@ -84,7 +83,6 @@ let words_in_child () =
   Rig_support.needs_fork ();
   match Unix.fork () with
   | 0 ->
-      ignore (Unix.alarm 5);
       let m = Result.get_ok (Rig.software "fork:child-memory") in
       let empty = Rig.Submission.make m [||] in
       let p = Rig.submit empty ~buffers:[||] ~args:[||] in
@@ -94,7 +92,7 @@ let words_in_child () =
         | Some "forked" when Rig.signaled m = Rig.Point.value p -> 0
         | _ -> 1)
   | pid -> (
-      match Unix.waitpid [] pid with
+      match Rig_support.reaping pid (fun () -> Unix.waitpid [] pid) with
       | _, WEXITED n -> equal int ~msg:"the child's exit" 0 n
       | _, (WSIGNALED n | WSTOPPED n) ->
           failf "the child stopped on signal %d" n)

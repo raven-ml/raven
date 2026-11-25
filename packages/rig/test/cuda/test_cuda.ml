@@ -809,20 +809,14 @@ let lose (t : S.t) flag =
   ignore (lost (fun () -> S.submit_work t [ spinning t flag; fails ]));
   Rig.close t.d
 
-(* GPU 0, opened once the work a stop left running ended, within 10 s of the
-   host's monotonic clock: the bound of that work's kernel. *)
-let reopened () =
-  let t0 = Rig.Profile.now () in
-  let rec go () =
-    match Rig_gpu_support.opened (C.gpu 0) with
-    | Ok g -> g
-    | Error e when Rig.Profile.now () - t0 > 10 * second ->
-        failf "GPU 0 does not open again within 10 s: %s" e
-    | Error _ ->
-        Domain.cpu_relax ();
-        go ()
-  in
-  go ()
+(* GPU 0, opened once the work a stop left running ended, which that work's
+   kernel bounds to 10 s. *)
+let rec reopened () =
+  match Rig_gpu_support.opened (C.gpu 0) with
+  | Ok g -> g
+  | Error _ ->
+      Domain.cpu_relax ();
+      reopened ()
 
 (* A collection needs every domain at a safe point, so it waits for a domain
    whose C call holds the runtime: here, an unload that CUDA holds until the
@@ -1110,14 +1104,11 @@ let own_word_after_running () =
     S.close t;
     H.set64 (host flag) 1;
     (* The submission's record holds the slot until it is collected. *)
-    let t0 = Rig.Profile.now () in
     while
       Gc.full_major ();
       Rig.free_cache t.d;
       W.word_frees t.g = 0
     do
-      if Rig.Profile.now () - t0 > 10 * second then
-        failf "round %d: the word did not go back within 10 s" i;
       Unix.sleepf 0.01
     done;
     equal int ~msg:(strf "round %d: the word's frees" i) 1 (W.word_frees t.g);
@@ -1478,12 +1469,11 @@ let unload_chained () =
   equal (pair int int) ~msg:"ids' pieces and plain launches" (1, 0) counts;
   equal (array int) ~msg:"ids' words" [| 1; 2 |] (words out 2)
 
-(* Spins until [flag] is set, failing if [what] has not come within 10 s. *)
+(* Spins until [flag] is set, naming [what] if the test's timeout ends the
+   wait. *)
 let await flag what =
-  let t0 = Rig.Profile.now () in
+  Rig_support.naming ("waiting for the " ^ what) @@ fun () ->
   while not (Atomic.get flag) do
-    if Rig.Profile.now () - t0 > 10 * second then
-      failf "no %s within 10 s" what;
     Domain.cpu_relax ()
   done
 
