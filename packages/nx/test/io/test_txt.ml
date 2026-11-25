@@ -144,18 +144,20 @@ let below_midpoints =
 
 (* The literals of floats.txt, each with the bits of the float64 nearest it. *)
 let python_floats =
-  In_channel.with_open_text (fixture "floats.txt") In_channel.input_lines
-  |> List.map (fun line ->
-      match String.split_on_char ' ' line with
-      | [ s; bits ] -> (s, Int64.of_string ("0x" ^ bits))
-      | _ -> invalid_arg line)
+  lazy
+    (In_channel.with_open_text (fixture "floats.txt") In_channel.input_lines
+    |> List.map (fun line ->
+        match String.split_on_char ' ' line with
+        | [ s; bits ] -> (s, Int64.of_string ("0x" ^ bits))
+        | _ -> invalid_arg line))
 
 let floats_read =
-  group "floats read"
+  group "float fields"
     [
       test
         "a float field reads as Python's correctly rounded float() reads it, \
          to the bit" (fun () ->
+          let python_floats = Lazy.force python_floats in
           let literals = List.map fst python_floats in
           let path = file (String.concat "\n" literals ^ "\n") in
           let read = Nx.to_array (Nx_io.load_txt Nx.float64 path) in
@@ -231,17 +233,9 @@ let floats_read =
           equal (elements D.Float64) [| expected |] [| read_float s |]);
     ]
 
-let txt =
-  group "text"
+let loads =
+  group "load_txt"
     [
-      prop "a vector or a matrix saved as text loads as itself, NaN aside"
-        text_cases (fun (Case (dt, _, _, _) as c) ->
-          let x = Nx.unpack dt (value c) in
-          covers ~empty:false ~broadcast:false c;
-          cover "a sub-byte dtype" (D.bits dt < 8);
-          Law.round_trip (as_text dt) string
-            (saved "" (fun p x -> Nx_io.save_txt p x))
-            (Nx_io.load_txt dt) x);
       prop
         "a value encoded with a separator loads with it, lines under a comment \
          prefix skipped"
@@ -255,14 +249,6 @@ let txt =
           Law.round_trip (as_text dt) string commented
             (Nx_io.load_txt ~sep ~comments:prefix dt)
             (Nx.unpack dt (value c)));
-      cases "a value with no element writes no row, and its file does not load"
-        ~id:(fun s -> Format.asprintf "%a" Nx.pp_shape s)
-        [ [| 0 |]; [| 0; 3 |]; [| 3; 0 |] ]
-        (fun shape ->
-          let path = temp_file () in
-          Nx_io.save_txt path (Nx.zeros Nx.float32 shape);
-          equal string "" (read path);
-          fails ~path (fun () -> Nx_io.load_txt Nx.float32 path));
       test
         "a file numpy's savetxt wrote, with comment lines and CRLF line ends, \
          loads and saves back as its rows, its floats in %.18e notation from \
@@ -277,52 +263,36 @@ let txt =
           in
           equal string (String.concat "" rows) (read path));
       cases
-        "integers are written in decimal, unsigned ones as unsigned, and a \
-         bool or bit as 1 or 0"
+        "lines are skipped, blank or commented, by the comment prefix trimmed"
         ~id:fst
         [
-          ( "bool",
-            ( "1 0",
-              fun p ->
-                Nx_io.save_txt p (Nx.create Nx.bool [| 2 |] [| true; false |])
-            ) );
-          ( "bit",
-            ( "1 0",
-              fun p ->
-                Nx_io.save_txt p (Nx.create Nx.bit [| 2 |] [| true; false |]) )
-          );
-          ( "int64",
-            ( "-9223372036854775808 9223372036854775807",
-              fun p ->
-                Nx_io.save_txt p
-                  (Nx.create Nx.int64 [| 2 |]
-                     [| Int64.min_int; Int64.max_int |]) ) );
-          ( "uint64",
-            ( "18446744073709551615 0",
-              fun p ->
-                Nx_io.save_txt p (Nx.create Nx.uint64 [| 2 |] [| -1L; 0L |]) )
-          );
-          ( "uint32",
-            ( "4294967295",
-              fun p -> Nx_io.save_txt p (Nx.create Nx.uint32 [| 1 |] [| -1l |])
-            ) );
-          ( "int4",
-            ( "-8 7",
-              fun p -> Nx_io.save_txt p (Nx.create Nx.int4 [| 2 |] [| -8; 7 |])
-            ) );
+          ( "skiprows and #",
+            ( "# a\n1 2\n\n3   4\n  # b\n5 6\n",
+              0,
+              "#",
+              [| 3; 2 |],
+              [| 1l; 2l; 3l; 4l; 5l; 6l |] ) );
+          ( "two rows skipped",
+            ( "# a\n1 2\n\n3   4\n# b\n5 6\n",
+              2,
+              "#",
+              [| 2; 2 |],
+              [| 3l; 4l; 5l; 6l |] ) );
+          ( "a prefix trimmed of blanks",
+            ("% a\n1 2\n", 0, " % ", [| 2 |], [| 1l; 2l |]) );
         ]
-        (fun (_, (expected, save)) ->
-          let path = temp_file () in
-          save path;
-          equal string (expected ^ "\n") (read path));
-      test "rows are skipped and commented" (fun () ->
-          let path = file "# a\n1 2\n\n3   4\n# b\n5 6\n" in
-          equal (array int32)
-            [| 1l; 2l; 3l; 4l; 5l; 6l |]
-            (Nx.to_array (Nx_io.load_txt Nx.int32 path));
-          equal (array int) [| 3; 2 |] (Nx.shape (Nx_io.load_txt Nx.int32 path));
-          equal (array int32) [| 3l; 4l; 5l; 6l |]
-            (Nx.to_array (Nx_io.load_txt ~skiprows:2 Nx.int32 path)));
+        (fun (_, (text, skiprows, comments, shape, elements)) ->
+          let x = Nx_io.load_txt ~skiprows ~comments Nx.int32 (file text) in
+          equal (array int) shape (Nx.shape x);
+          equal (array int32) elements (Nx.to_array x));
+      cases "an empty or blank comment prefix marks no line as a comment"
+        ~id:(Printf.sprintf "%S") [ ""; "  " ] (fun comments ->
+          let path = file "#1\n" in
+          fails ~path ~naming:"line 1" (fun () ->
+              Nx_io.load_txt ~comments Nx.int32 path));
+      test "with the separator \"\" each line is one field" (fun () ->
+          equal (array int32) [| 12l; 3l |]
+            (Nx.to_array (Nx_io.load_txt ~sep:"" Nx.int32 (file "12\n3\n"))));
       test "a float field takes a sign, a point, an exponent or a word"
         (fun () ->
           let path = file "+1e+3 .5 5. -2E-1 NaN -Infinity inf\n" in
@@ -409,14 +379,73 @@ let txt =
         (fun (_, (text, D.Any dt)) ->
           let path = file text in
           fails ~path (fun () -> Nx_io.load_txt dt path));
-      test "a complex dtype, three axes or a negative skiprows are refused"
-        (fun () ->
+      test "a complex dtype or a negative skiprows is refused" (fun () ->
           let path = file "1\n" in
           invalid ~by:"Nx_io.load_txt" (fun () ->
               Nx_io.load_txt Nx.complex64 path);
           invalid ~by:"Nx_io.load_txt" (fun () ->
-              Nx_io.load_txt ~skiprows:(-1) Nx.int8 path);
+              Nx_io.load_txt ~skiprows:(-1) Nx.int8 path));
+    ]
 
+let saves =
+  group "save_txt"
+    [
+      prop "a vector or a matrix saved as text loads as itself, NaN aside"
+        text_cases (fun (Case (dt, _, _, _) as c) ->
+          let x = Nx.unpack dt (value c) in
+          covers ~empty:false ~broadcast:false c;
+          cover "a sub-byte dtype" (D.bits dt < 8);
+          Law.round_trip (as_text dt) string
+            (saved "" (fun p x -> Nx_io.save_txt p x))
+            (Nx_io.load_txt dt) x);
+      cases "a value with no element writes no row, and its file does not load"
+        ~id:(fun s -> Format.asprintf "%a" Nx.pp_shape s)
+        [ [| 0 |]; [| 0; 3 |]; [| 3; 0 |] ]
+        (fun shape ->
+          let path = temp_file () in
+          Nx_io.save_txt path (Nx.zeros Nx.float32 shape);
+          equal string "" (read path);
+          fails ~path (fun () -> Nx_io.load_txt Nx.float32 path));
+      cases
+        "integers are written in decimal, unsigned ones as unsigned, and a \
+         bool or bit as 1 or 0"
+        ~id:fst
+        [
+          ( "bool",
+            ( "1 0",
+              fun p ->
+                Nx_io.save_txt p (Nx.create Nx.bool [| 2 |] [| true; false |])
+            ) );
+          ( "bit",
+            ( "1 0",
+              fun p ->
+                Nx_io.save_txt p (Nx.create Nx.bit [| 2 |] [| true; false |]) )
+          );
+          ( "int64",
+            ( "-9223372036854775808 9223372036854775807",
+              fun p ->
+                Nx_io.save_txt p
+                  (Nx.create Nx.int64 [| 2 |]
+                     [| Int64.min_int; Int64.max_int |]) ) );
+          ( "uint64",
+            ( "18446744073709551615 0",
+              fun p ->
+                Nx_io.save_txt p (Nx.create Nx.uint64 [| 2 |] [| -1L; 0L |]) )
+          );
+          ( "uint32",
+            ( "4294967295",
+              fun p -> Nx_io.save_txt p (Nx.create Nx.uint32 [| 1 |] [| -1l |])
+            ) );
+          ( "int4",
+            ( "-8 7",
+              fun p -> Nx_io.save_txt p (Nx.create Nx.int4 [| 2 |] [| -8; 7 |])
+            ) );
+        ]
+        (fun (_, (expected, save)) ->
+          let path = temp_file () in
+          save path;
+          equal string (expected ^ "\n") (read path));
+      test "a complex value or one of three axes is refused" (fun () ->
           invalid ~by:"Nx_io.save_txt" (fun () ->
               Nx_io.save_txt (temp_file ()) (Nx.zeros Nx.complex128 [| 2 |]));
           invalid ~by:"Nx_io.save_txt" (fun () ->
@@ -433,8 +462,6 @@ let append_txt path x =
     [ Open_wronly; Open_append; Open_creat; Open_binary ] 0o666 path (fun oc ->
       Out_channel.output_string oc text;
       Out_channel.flush oc)
-
-module Mem = (val Nx.devices [ Nx_support.memory 0 ])
 
 (* Values text holds, of no element too, laid out every way, on the host or on
    another set. A broadcast view adds an axis, so its value has one at most. *)
@@ -496,9 +523,13 @@ let has_bound (type v s) (dt : (v, s) D.t) (vs : v array) =
   | D.Float | D.Complex | D.Boolean -> false
 
 let encoded =
-  group "encoded text"
+  group "encode_txt"
     [
       prop "encode_txt is the text save_txt writes"
+        ~examples:
+          (List.map
+             (fun c -> ((c, false), " "))
+             [ empty_case; scalar_case; strided_case; broadcast_case ])
         (Gen.pair encoded_cases separators)
         (fun (((Case (dt, _, _, _) as c), placed), sep) ->
           covers c;
@@ -506,6 +537,7 @@ let encoded =
           let x = Nx.unpack dt (value c) in
           let save p x = Nx_io.save_txt ~sep p x in
           if placed then
+            let module Mem = (val Nx.devices [ Nx_support.memory 0 ]) in
             let y = Nx.place Mem.on x in
             equal string (read (saved "" save y)) (Nx_io.encode_txt ~sep y)
           else equal string (read (saved "" save x)) (Nx_io.encode_txt ~sep x));
@@ -538,6 +570,16 @@ let encoded =
           ( "a float32 NaN",
             ( "nan\n",
               fun () -> Nx_io.encode_txt (Nx.scalar Nx.float32 Float.nan) ) );
+          ( "a NaN of sign bit set",
+            ( "nan\n",
+              fun () -> Nx_io.encode_txt (Nx.scalar Nx.float64 (-.Float.nan)) )
+          );
+          ( "the infinities",
+            ( "inf -inf\n",
+              fun () ->
+                Nx_io.encode_txt
+                  (Nx.create Nx.float64 [| 2 |]
+                     [| Float.infinity; Float.neg_infinity |]) ) );
           ( "bools",
             ( "1 0\n",
               fun () ->
@@ -561,4 +603,4 @@ let encoded =
               Nx_io.encode_txt (Nx.zeros Nx.int8 [| 1; 1; 1 |])));
     ]
 
-let () = exit (run "nx.io text" [ txt; encoded; floats_read ])
+let () = exit (run "nx.io text" [ floats_read; loads; saves; encoded ])
