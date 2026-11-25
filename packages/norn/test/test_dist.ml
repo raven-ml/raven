@@ -170,6 +170,11 @@ let open_bounds =
       ( "gamma of concentration 1 at 0",
         D.gamma ~concentration:(f64 1.) ~rate:(f64 1.7),
         0. );
+      ("gamma below 0", continuous_case "gamma", -1.);
+      ("inverse_gamma below 0", continuous_case "inverse_gamma", -1.);
+      ("beta at 0", continuous_case "beta", 0.);
+      ("beta at 1", continuous_case "beta", 1.);
+      ("beta past 1", continuous_case "beta", 1.5);
       ("uniform at low", D.uniform ~low:(f64 (-1.)) ~high:(f64 3.), -1.);
       ("uniform at high", D.uniform ~low:(f64 (-1.)) ~high:(f64 3.), 3.);
       ( "truncated at low",
