@@ -144,11 +144,7 @@ let locate ~tol search (a0, fa0) (b0, fb0) =
 
 let bracket ~tol f ~lo ~hi =
   let fn = "Jera.Root.bracket" in
-  let lo, hi =
-    match Nx.broadcast_arrays [ lo; hi ] with
-    | [ l; h ] -> (l, h)
-    | _ -> assert false
-  in
+  let lo, hi = Num.broadcast_pair fn ("lo", lo) ("hi", hi) in
   let search x = Rune.detach (f x) in
   let a0 = Nx.minimum (Rune.detach lo) (Rune.detach hi)
   and b0 = Nx.maximum (Rune.detach lo) (Rune.detach hi) in

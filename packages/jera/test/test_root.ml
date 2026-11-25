@@ -135,6 +135,11 @@ let bracket_tests =
             ~lo:(vec [| 2. |]) ~hi:(vec [| 5. |])
         in
         equal (Oracle.tensor ()) (vec [| 0. |]) (Solution.error s));
+    test "ends that do not broadcast raise" (fun () ->
+        raises_with "Jera.Root.bracket" (fun () ->
+            Root.bracket ~tol:tight Fun.id
+              ~lo:(vec [| 0.; 1. |])
+              ~hi:(vec [| 1.; 2.; 3. |])));
     test "the ends broadcast together" (fun () ->
         equal
           (Oracle.tensor ~rel:2e-13 ())

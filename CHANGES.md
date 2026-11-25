@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Root.bracket` raises `Invalid_argument` naming itself, `lo` and `hi` and
+  their shapes when its ends do not broadcast, where `Nx.broadcast_arrays`
+  raised its own error.
 - `Root.bracket` ends an element `Stalled`, where it reported `Converged`, when
   its bracket closes on adjacent floats whose half-width misses `tol`, as under
   `Tol.abs 1e-300` or `Tol.ulps` at a zero of 0. A zero at a given end has
