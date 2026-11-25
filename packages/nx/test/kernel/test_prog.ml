@@ -3,9 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Programs: the kinds' domains against the table prog.mli states, constant
-   bits against an array's bytes, and programs against what they were made
-   of. *)
+(* Programs as prog.mli states them: the kinds' domains against its table,
+   constants' bits against an array's bytes, programs against what they were
+   made of, expressions against a depth-first walk that shares by structure, and
+   ranges against the values a program computes on nx.cpu. *)
 
 open Windtrap
 module A = Nx_array
@@ -15,53 +16,89 @@ module P = Nx_kernel.Prog
 let strf = Printf.sprintf
 let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 let name (D.Any dt) = D.name dt
+let f32 = D.Any D.Float32
+let f64 = D.Any D.Float64
+let i32 = D.Any D.Int32
+let i64 = D.Any D.Int64
+let boolean = D.Any D.Bool
+let bit = D.Any D.Bit
 
-(* Domains *)
+(* Kinds and their names *)
 
+(* Each kind with its name in messages. *)
 let unaries =
   P.
     [
-      Neg; Recip; Abs; Sign; Sqrt; Exp; Exp2; Log; Log2; Log1p; Expm1; Sin;
-      Cos; Tan; Asin; Acos; Atan; Sinh; Cosh; Tanh; Asinh; Acosh; Atanh; Erf;
-      Floor; Ceil; Round; Trunc;
+      (Neg, "neg");
+      (Recip, "recip");
+      (Abs, "abs");
+      (Sign, "sign");
+      (Sqrt, "sqrt");
+      (Exp, "exp");
+      (Exp2, "exp2");
+      (Log, "log");
+      (Log2, "log2");
+      (Log1p, "log1p");
+      (Expm1, "expm1");
+      (Sin, "sin");
+      (Cos, "cos");
+      (Tan, "tan");
+      (Asin, "asin");
+      (Acos, "acos");
+      (Atan, "atan");
+      (Sinh, "sinh");
+      (Cosh, "cosh");
+      (Tanh, "tanh");
+      (Asinh, "asinh");
+      (Acosh, "acosh");
+      (Atanh, "atanh");
+      (Erf, "erf");
+      (Floor, "floor");
+      (Ceil, "ceil");
+      (Round, "round");
+      (Trunc, "trunc");
     ]
 
 let binaries =
   P.
     [
-      Add; Sub; Mul; Fdiv; Idiv; Mod; Pow; Atan2; Maximum; Minimum; And; Or;
-      Xor; Threefry;
+      (Add, "add");
+      (Sub, "sub");
+      (Mul, "mul");
+      (Fdiv, "fdiv");
+      (Idiv, "idiv");
+      (Mod, "mod");
+      (Pow, "pow");
+      (Atan2, "atan2");
+      (Maximum, "maximum");
+      (Minimum, "minimum");
+      (And, "and");
+      (Or, "or");
+      (Xor, "xor");
+      (Threefry, "threefry");
     ]
 
-let compares = P.[ Equal; Not_equal; Less; Less_equal ]
+let compares =
+  P.
+    [
+      (Equal, "equal");
+      (Not_equal, "not_equal");
+      (Less, "less");
+      (Less_equal, "less_equal");
+    ]
+
+let unary_name u = List.assoc u unaries
+let binary_name b = List.assoc b binaries
+let compare_name c = List.assoc c compares
 
 let op1s =
-  P.[ Copy; Cast; Bitcast ] @ List.map (fun u -> P.Unary u) unaries
+  P.[ Copy; Cast; Bitcast ] @ List.map (fun (u, _) -> P.Unary u) unaries
 
 let op2s =
-  List.map (fun b -> P.Binary b) binaries
-  @ List.map (fun c -> P.Compare c) compares
+  List.map (fun (b, _) -> P.Binary b) binaries
+  @ List.map (fun (c, _) -> P.Compare c) compares
 
-(* Each kind's name in messages. *)
-let named ks names k = List.assoc k (List.combine ks names)
-
-let unary_name =
-  named unaries
-    [
-      "neg"; "recip"; "abs"; "sign"; "sqrt"; "exp"; "exp2"; "log"; "log2";
-      "log1p"; "expm1"; "sin"; "cos"; "tan"; "asin"; "acos"; "atan"; "sinh";
-      "cosh"; "tanh"; "asinh"; "acosh"; "atanh"; "erf"; "floor"; "ceil";
-      "round"; "trunc";
-    ]
-
-let binary_name =
-  named binaries
-    [
-      "add"; "sub"; "mul"; "fdiv"; "idiv"; "mod"; "pow"; "atan2"; "maximum";
-      "minimum"; "and"; "or"; "xor"; "threefry";
-    ]
-
-let compare_name = named compares [ "equal"; "not_equal"; "less"; "less_equal" ]
+let op3s = P.[ Where; Fma ]
 
 let op1_name = function
   | P.Copy -> "copy"
@@ -75,516 +112,273 @@ let op2_name = function
 
 let op3_name = function P.Where -> "where" | Fma -> "fma"
 
-(* prog.mli's domains, by kind of number: "Neg, Recip, Sign, Add, Sub, Mul,
-   Pow: every dtype but booleans. Fdiv: floats and complex. Idiv: integers.
-   Abs, Floor, Ceil, Round, Trunc, Mod, Fma: floats and integers. Sqrt, Exp,
-   Exp2, Log, Log2, and Sin to Tanh: floats and complex. Asinh, Acosh, Atanh:
-   complex. Log1p, Expm1, Erf, Atan2: floats. And, Or, Xor: integers and
-   booleans. Threefry: uint64. Maximum, Minimum and the comparisons: every
-   dtype. Copy: every dtype, into itself. Cast: every pair. Bitcast: every
-   pair of one width. Where: a boolean, then two operands of any one
-   dtype." *)
-type cls = Float | Signed | Unsigned | Boolean | Complex
+(* A kind of any arity, for the tables over every kind. *)
+type kind = K1 of P.op1 | K2 of P.op2 | K3 of P.op3
 
-let cls (D.Any dt) : cls =
-  match D.kind dt with
-  | Float -> Float
-  | Signed -> Signed
-  | Unsigned -> Unsigned
-  | Boolean -> Boolean
-  | Complex -> Complex
+let kinds =
+  List.map (fun k -> K1 k) op1s
+  @ List.map (fun k -> K2 k) op2s
+  @ List.map (fun k -> K3 k) op3s
 
-let integers = [ Signed; Unsigned ]
-let reals = Float :: integers
-let numbers = Complex :: reals
-let every = Boolean :: numbers
+let kind_name = function
+  | K1 k -> op1_name k
+  | K2 k -> op2_name k
+  | K3 k -> op3_name k
 
-let unary_domain : P.unary -> cls list = function
-  | Neg | Recip | Sign -> numbers
-  | Abs | Floor | Ceil | Round | Trunc -> reals
-  | Sqrt | Exp | Exp2 | Log | Log2 | Sin | Cos | Tan | Asin | Acos | Atan
-  | Sinh | Cosh | Tanh ->
-      [ Float; Complex ]
-  | Log1p | Expm1 | Erf -> [ Float ]
-  | Asinh | Acosh | Atanh -> [ Complex ]
-
-let binary_domain : P.binary -> cls list = function
-  | Add | Sub | Mul -> numbers
-  | Fdiv -> [ Float; Complex ]
-  | Idiv -> integers
-  | Mod -> reals
-  | Pow -> numbers
-  | Atan2 -> [ Float ]
-  | Maximum | Minimum -> every
-  | And | Or | Xor -> Boolean :: integers
-  | Threefry -> []
-
-let same (D.Any x) (D.Any y) = D.equal x y
-let bits (D.Any dt) = D.bits dt
-
-let want1 k x y =
-  match k with
-  | P.Copy -> same x y
-  | Cast -> true
-  | Bitcast -> bits x = bits y
-  | Unary u -> same x y && List.mem (cls x) (unary_domain u)
-
-let want2 k x =
-  match k with
-  | P.Binary Threefry -> name x = "uint64"
-  | Binary b -> List.mem (cls x) (binary_domain b)
-  | Compare _ -> true
-
-let want3 k c x =
-  match k with
-  | P.Where -> cls c = Boolean
-  | Fma -> same c x && List.mem (cls x) reals
-
-(* Whether [of_node] builds the program of [n] over operands of [ins]. *)
-let builds ins n =
-  match P.of_node ~ins:(Iarray.of_array ins) n with
-  | _ -> true
-  | exception Invalid_argument _ -> false
-
-let test_domains () =
-  let dts = D.all in
-  List.iter
-    (fun (D.Any x as ax) ->
-      List.iter
-        (fun k ->
-          equal
-            ~msg:(strf "%s %s" (op2_name k) (name ax))
-            bool (want2 k ax) (P.accepts2 k x);
-          equal
-            ~msg:(strf "node %s %s" (op2_name k) (name ax))
-            bool (want2 k ax)
-            (builds [| ax; ax |] (Op2 (k, 0, 1))))
-        op2s;
-      List.iter
-        (fun (D.Any y as ay) ->
-          List.iter
-            (fun k ->
-              equal
-                ~msg:(strf "%s %s to %s" (op1_name k) (name ax) (name ay))
-                bool (want1 k ax ay) (P.accepts1 k x y);
-              equal
-                ~msg:(strf "node %s %s to %s" (op1_name k) (name ax) (name ay))
-                bool (want1 k ax ay)
-                (builds [| ax |] (Op1 (k, ay, 0))))
-            op1s;
-          List.iter
-            (fun k ->
-              equal
-                ~msg:(strf "%s %s %s" (op3_name k) (name ax) (name ay))
-                bool (want3 k ax ay) (P.accepts3 k x y);
-              equal
-                ~msg:(strf "node %s %s %s" (op3_name k) (name ax) (name ay))
-                bool (want3 k ax ay)
-                (builds [| ax; ay; ay |] (Op3 (k, 0, 1, 2))))
-            P.[ Where; Fma ])
-        dts)
-    dts;
-  equal ~msg:"two dtypes" bool false
-    (builds [| D.Any D.Float32; D.Any D.Float64 |] (Op2 (Binary Add, 0, 1)))
-
-(* Bits *)
-
-(* An element's bits as a one-element array holds them: its bytes, or a sub-byte
-   code in one byte. *)
-let array_bits (type v s) (dt : (v, s) D.t) (x : v) =
-  let a = A.of_array dt [| 1 |] [| x |] in
-  match D.bits dt with
-  | 1 ->
-      String.make 1
-        (Char.chr (Bool.to_int (A.get (A.expect D.Bit (A.Any a)) [| 0 |])))
-  | 4 ->
-      String.make 1
-        (Char.chr (A.get (Option.get (A.bitcast D.Uint4 a)) [| 0 |]))
-  | _ ->
-      let b = A.to_array (Option.get (A.bitcast D.Uint8 a)) in
-      String.init (Array.length b) (fun i -> Char.chr b.(i))
+(* Nodes and programs *)
 
 let hex s =
   String.concat ""
     (List.init (String.length s) (fun i -> strf "%02x" (Char.code s.[i])))
 
-let law_bits (D.Any dt, f) =
-  let x = D.of_float dt f in
-  equal ~msg:(name (D.Any dt)) string
-    (hex (array_bits dt x))
-    (hex (P.bits dt x))
-
-(* A NaN's bits are those a store of it gives (Dtype's stores): quiet, of its
-   sign, with the top of its payload. Each row is a double's bits, then the
-   float64 and float32 bits of the store. *)
-let nan_stores =
-  [
-    (0xFFF4000000000000L, 0xFFFC000000000000L, 0xFFE00000l);
-    (0x7FF0040000000001L, 0x7FF8040000000001L, 0x7FC02000l);
-    (0x7FF8000000000000L, 0x7FF8000000000000L, 0x7FC00000l);
-    (0x7FFFFFFFFFFFFFFFL, 0x7FFFFFFFFFFFFFFFL, 0x7FFFFFFFl);
-  ]
-
-let test_nan_bits (x, f64, f32) =
-  let x = Int64.float_of_bits x in
-  let word64 s at = String.get_int64_ne s at
-  and word32 s at = String.get_int32_ne s at in
-  equal ~msg:"float64" int64 f64 (word64 (P.bits D.Float64 x) 0);
-  equal ~msg:"float32" int32 f32 (word32 (P.bits D.Float32 x) 0);
-  let c = { Complex.re = x; im = x } in
-  let c128 = P.bits D.Complex128 c and c64 = P.bits D.Complex64 c in
-  equal ~msg:"complex128" (pair int64 int64) (f64, f64)
-    (word64 c128 0, word64 c128 8);
-  equal ~msg:"complex64" (pair int32 int32) (f32, f32)
-    (word32 c64 0, word32 c64 4)
-
-let test_bits_refuse () =
-  raises_match ~msg:"int8" Exn.invalid_arg (fun () -> P.bits D.Int8 128);
-  raises_match ~msg:"uint4" Exn.invalid_arg (fun () -> P.bits D.Uint4 16);
-  raises_match ~msg:"int16" Exn.invalid_arg (fun () -> P.bits D.Int16 (-32769))
-
-(* Programs *)
-
-(* A program drawn from operand dtypes and choices: each node picks, by its
-   choice, one of the nodes the earlier ones admit. *)
-type drawn = {
-  ins : D.any array;
-  nodes : P.node array;
-  types : D.any array;
-  outs : int array;
-}
-
-let base_dtypes =
-  D.
-    [
-      Any Float32; Any Float64; Any Float16; Any Int32; Any Uint8; Any Int64;
-      Any Uint64; Any Bool; Any Complex64; Any Int4;
-    ]
-
-let build ins choices nouts =
-  let types = ref [||] and nodes = ref [] in
-  let add n dt =
-    nodes := n :: !nodes;
-    types := Array.append !types [| dt |]
-  in
-  Array.iter
-    (fun c ->
-      let n = Array.length !types in
-      let pick l = List.nth l (c mod List.length l) in
-      let earlier = List.init n Fun.id in
-      let candidates =
-        List.concat
-          [
-            List.init (Array.length ins) (fun k -> (P.In k, ins.(k)));
-            [ (P.Coord (c mod 3), D.Any D.Int64) ];
-            List.map
-              (fun (D.Any dt as d) ->
-                (P.Const (d, P.bits dt (D.of_float dt (Float.of_int (c mod 7)))), d))
-              base_dtypes;
-            List.concat_map
-              (fun i ->
-                let (D.Any x) = !types.(i) in
-                List.concat_map
-                  (fun (D.Any y as d) ->
-                    List.filter_map
-                      (fun k ->
-                        if P.accepts1 k x y then Some (P.Op1 (k, d, i), d)
-                        else None)
-                      op1s)
-                  base_dtypes)
-              earlier;
-            List.concat_map
-              (fun i ->
-                List.concat_map
-                  (fun j ->
-                    let (D.Any x) = !types.(i) in
-                    if not (same !types.(i) !types.(j)) then []
-                    else
-                      List.filter_map
-                        (fun k ->
-                          if P.accepts2 k x then
-                            Some
-                              ( P.Op2 (k, i, j),
-                                match k with
-                                | Compare _ -> D.Any D.Bool
-                                | Binary _ -> !types.(i) )
-                          else None)
-                        op2s)
-                  earlier)
-              earlier;
-            List.concat_map
-              (fun i ->
-                List.concat_map
-                  (fun j ->
-                    let (D.Any c') = !types.(i) in
-                    let (D.Any x) = !types.(j) in
-                    List.filter_map
-                      (fun k ->
-                        if P.accepts3 k c' x then
-                          Some (P.Op3 (k, i, j, j), !types.(j))
-                        else None)
-                      P.[ Where; Fma ])
-                  earlier)
-              earlier;
-          ]
-      in
-      let n, dt = pick candidates in
-      add n dt)
-    choices;
-  let nodes = Array.of_list (List.rev !nodes) in
-  let n = Array.length nodes in
-  {
-    ins;
-    nodes;
-    types = !types;
-    outs = Array.init (min nouts n) (fun k -> n - 1 - k);
-  }
-
-let pp_drawn ppf d =
-  Format.fprintf ppf "%d operands, %d nodes, outs %a" (Array.length d.ins)
-    (Array.length d.nodes)
-    (Format.pp_print_list Format.pp_print_int)
-    (Array.to_list d.outs)
-
-let drawn =
-  let open Gen in
-  with_pp pp_drawn
-    (let+ ins = array ~size:(int_range 0 3) (of_list ~pp:pp_dtype base_dtypes)
-     and+ choices = array ~size:(int_range 1 8) (int_range 0 1_000_000)
-     and+ nouts = int_range 1 3 in
-     build ins choices nouts)
-
 let pp_node ppf = function
   | P.In k -> Format.fprintf ppf "In %d" k
   | Coord k -> Format.fprintf ppf "Coord %d" k
   | Const (d, s) -> Format.fprintf ppf "Const (%s, %s)" (name d) (hex s)
-  | Op1 (k, d, a) -> Format.fprintf ppf "Op1 (%s, %s, %d)" (op1_name k) (name d) a
+  | Op1 (k, d, a) ->
+      Format.fprintf ppf "Op1 (%s, %s, %d)" (op1_name k) (name d) a
   | Op2 (k, a, b) -> Format.fprintf ppf "Op2 (%s, %d, %d)" (op2_name k) a b
   | Op3 (k, a, b, c) ->
       Format.fprintf ppf "Op3 (%s, %d, %d, %d)" (op3_name k) a b c
 
 let node = Testable.make ~pp:pp_node ~equal:( = )
 
+let pp_parts ppf (ins, nodes, outs) =
+  let list pp ppf xs =
+    let sep ppf () = Format.fprintf ppf ";@ " in
+    Format.pp_print_list ~pp_sep:sep pp ppf xs
+  in
+  let dtype ppf d = Format.pp_print_string ppf (name d) in
+  Format.fprintf ppf
+    "@[<hv 2>{ ins = [%a];@ nodes = [@[<hov>%a@]];@ outs = [%a] }@]"
+    (list dtype) ins (list pp_node) nodes (list Format.pp_print_int) outs
+
+let pp_prog ppf (p : P.t) =
+  pp_parts ppf
+    (Iarray.to_list p.ins, Iarray.to_list p.nodes, Iarray.to_list p.outs)
+
+let structural = Testable.structural ~pp:pp_prog
+
+(* A program's parts as plain arrays, to draw and to rebuild. *)
+type drawn = { ins : D.any array; nodes : P.node array; outs : int array }
+
+let pp_drawn ppf d =
+  pp_parts ppf (Array.to_list d.ins, Array.to_list d.nodes, Array.to_list d.outs)
+
 let program d =
   P.v ~ins:(Iarray.of_array d.ins) (Iarray.of_array d.nodes)
     ~outs:(Iarray.of_array d.outs)
 
-let law_program d =
-  Array.iter
-    (fun n ->
-      cover "an Op3" (match n with P.Op3 _ -> true | _ -> false);
-      cover "an Op2" (match n with P.Op2 _ -> true | _ -> false);
-      cover "an Op1" (match n with P.Op1 _ -> true | _ -> false))
-    d.nodes;
-  let p = program d in
-  equal ~msg:"ins" (list string)
-    (Array.to_list (Array.map name d.ins))
-    (List.map name (Iarray.to_list p.ins));
-  equal ~msg:"outs" (array int) d.outs (Iarray.to_array p.outs);
-  equal ~msg:"nodes" (array node) d.nodes (Iarray.to_array p.nodes);
-  Array.iteri
-    (fun i t ->
-      equal ~msg:(strf "dtype %d" i) string (name t) (name (P.dtype p i)))
-    d.types;
-  let q = program d in
-  equal ~msg:"equal programs" bool true (q = p);
-  equal ~msg:"equal hashes" int (Hashtbl.hash p) (Hashtbl.hash q)
+let drawn_of (p : P.t) =
+  {
+    ins = Iarray.to_array p.ins;
+    nodes = Iarray.to_array p.nodes;
+    outs = Iarray.to_array p.outs;
+  }
 
-(* One node over drawn operands, its references in and around the operands'
-   range, and its program built by v from the operands' nodes. *)
-let one_node =
-  let open Gen in
-  let f32 = D.Any D.Float32 in
-  with_pp
-    (fun ppf (ins, n) ->
-      Format.fprintf ppf "%d operands, %a" (Array.length ins) pp_node n)
-    (let* ins = array ~size:(int_range 0 3) (of_list ~pp:pp_dtype base_dtypes) in
-     let k = Array.length ins in
-     let ref_ = int_range (-1) (k + 1) in
-     let+ n =
-       one_of
-         [
-           map (fun j -> P.In j) ref_;
-           map (fun a -> P.Coord a) (int_range 0 Nx_array.Layout.max_rank);
-           constant ~pp:pp_node (P.Const (f32, P.bits D.Float32 1.5));
-           map (fun j -> P.Op1 (Copy, (if k > 0 && j >= 0 && j < k then ins.(j) else f32), j)) ref_;
-           map (fun (j, l) -> P.Op2 (Binary Add, j, l)) (pair ref_ ref_);
-           map (fun (c, j, l) -> P.Op3 (Where, c, j, l)) (triple ref_ ref_ ref_);
-         ]
-     in
-     (ins, n))
+(* The element of [dt] whose bits are [b]. *)
+let element (type v s) (dt : (v, s) D.t) b : v =
+  A.get (A.v dt (Nx_array.Layout.contiguous [||]) (Rig.Buffer.of_string b)) [||]
 
-let law_of_node (ins, n) =
-  let k = Array.length ins in
-  let built f = match f () with p -> Ok p | exception Invalid_argument _ -> Error () in
-  let by_v =
-    built (fun () ->
-        P.v ~ins:(Iarray.of_array ins)
-          (Iarray.init (k + 1) (fun i -> if i < k then P.In i else n))
-          ~outs:[| k |])
-  in
-  cover "built" (Result.is_ok by_v);
-  cover "refused" (Result.is_error by_v);
-  match (by_v, built (fun () -> P.of_node ~ins:(Iarray.of_array ins) n)) with
-  | Ok p, Ok q -> equal ~msg:"v's program" bool true (p = q)
-  | Error (), Error () -> ()
-  | Ok _, Error () -> fail "of_node refused what v builds"
-  | Error (), Ok _ -> fail "of_node built what v refuses"
-
-(* Whether [n] reads [k] operands, each once, in order. *)
-let reads_in_order k (n : P.node) =
-  match n with
-  | Const _ | Coord _ -> k = 0
-  | Op1 (_, _, 0) -> k = 1
-  | Op2 (_, 0, 1) -> k = 2
-  | Op3 (_, 0, 1, 2) -> k = 3
-  | In _ | Op1 _ | Op2 _ | Op3 _ -> false
-
-(* A kind of two and of three operands reading them in order, and one out
-   of order, which one_node seldom draws. *)
-let singles =
-  let f32 = D.Any D.Float32 and b = D.Any D.Bool in
-  [
-    ([| f32; f32 |], P.Op2 (Compare Less, 0, 1));
-    ([| b; f32; f32 |], P.Op3 (Where, 0, 1, 2));
-    ([| f32; f32 |], P.Op2 (Binary Sub, 1, 0));
-  ]
-
-let law_single_of_node (ins, n) =
-  match P.of_node ~ins:(Iarray.of_array ins) n with
-  | exception Invalid_argument _ -> ()
-  | p ->
-      let want = if reads_in_order (Array.length ins) n then Some n else None in
-      cover "one node" (Option.is_some want);
-      cover "not one node" (Option.is_none want);
-      cover "three operands"
-        (Array.length ins = 3 && match n with Op3 (_, 0, 1, 2) -> true | _ -> false);
-      equal (option node) want (P.single p);
-      equal ~msg:"is_single" bool (Option.is_some want) (P.is_single p)
-
-(* Programs of_node does not build: two outputs, two kind nodes. *)
-let test_single () =
-  let f32 = D.Any D.Float32 in
-  let prog nodes outs =
-    P.v ~ins:[| f32 |] (Iarray.of_array nodes) ~outs:(Iarray.of_array outs)
-  in
-  let none ~msg p =
-    equal ~msg (option node) None (P.single p);
-    equal ~msg bool false (P.is_single p)
-  in
-  none ~msg:"two outputs" (prog [| In 0; Op1 (Unary Neg, f32, 0) |] [| 1; 1 |]);
-  none ~msg:"two nodes"
-    (prog [| In 0; Op1 (Unary Neg, f32, 0); Op1 (Unary Neg, f32, 1) |] [| 2 |])
-
-(* One operand, one output, and that output its operand's In node. *)
-let law_identity d =
-  let want =
-    Array.length d.ins = 1 && Array.length d.outs = 1
-    && d.nodes.(d.outs.(0)) = P.In 0
-  in
-  cover "the identity" want;
-  equal bool want (P.is_identity (program d))
-
-let f32 = D.Any D.Float32
-
-let identity =
-  { ins = [| f32 |]; nodes = [| P.In 0 |]; types = [| f32 |]; outs = [| 0 |] }
-
-let identities =
-  let two = [| f32; f32 |] in
-  [
-    ("the identity", identity, true);
-    ( "Copy of the operand",
-      {
-        identity with
-        nodes = [| In 0; Op1 (Copy, f32, 0) |];
-        types = two;
-        outs = [| 1 |];
-      },
-      false );
-    ( "the operand twice",
-      { identity with nodes = [| In 0; In 0 |]; types = two; outs = [| 1 |] },
-      true );
-    ("two outputs", { identity with outs = [| 0; 0 |] }, false);
-    ("two operands", { identity with ins = two }, false);
-    ( "a constant",
-      {
-        identity with
-        ins = [||];
-        nodes = [| Const (f32, P.bits D.Float32 1.) |];
-      },
-      false );
-  ]
-
-let test_identity (_, d, want) = equal bool want (P.is_identity (program d))
-
-let pp_prog ppf (p : P.t) =
-  let list pp ppf xs =
-    let sep ppf () = Format.fprintf ppf "; " in
-    Format.pp_print_list ~pp_sep:sep pp ppf (Iarray.to_list xs)
-  in
-  let dtype ppf d = Format.pp_print_string ppf (name d) in
-  Format.fprintf ppf "{ ins = [%a]; nodes = [%a]; outs = [%a] }" (list dtype)
-    p.ins (list pp_node) p.nodes (list Format.pp_print_int) p.outs
-
-let test_program_refuses () =
-  let f32 = D.Any D.Float32 in
-  let refuses ~msg ?(ins = [| f32 |]) nodes outs =
-    raises_match ~msg Exn.invalid_arg (fun () ->
-        P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
-          ~outs:(Iarray.of_array outs))
-  in
-  refuses ~msg:"a forward reference" [| P.Op1 (Copy, f32, 1); In 0 |] [| 0 |];
-  refuses ~msg:"a reference to itself" [| P.Op1 (Copy, f32, 0) |] [| 0 |];
-  refuses ~msg:"an operand past ins" [| P.In 1 |] [| 0 |];
-  refuses ~msg:"an axis past max_rank" [| P.Coord Nx_array.Layout.max_rank |] [| 0 |];
-  refuses ~msg:"a kind off its domain" [| P.In 0; Op2 (Binary Idiv, 0, 0) |] [| 1 |];
-  refuses ~msg:"two dtypes"
-    ~ins:[| f32; D.Any D.Float64 |]
-    [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |]
-    [| 2 |];
-  refuses ~msg:"bits of the wrong width" [| P.Const (f32, "\000\000") |] [| 0 |];
-  refuses ~msg:"a bit of 2" [| P.Const (D.Any D.Bit, "\002") |] [| 0 |];
-  refuses ~msg:"an int4 of 16" [| P.Const (D.Any D.Int4, "\016") |] [| 0 |];
-  (* A boolean byte is true iff it is not zero: each is an element. *)
-  ignore (P.v ~ins:[||] [| P.Const (D.Any D.Bool, "\002") |] ~outs:[| 0 |]);
-  refuses ~msg:"no output" [| P.In 0 |] [||];
-  refuses ~msg:"an output past the nodes" [| P.In 0 |] [| 1 |]
-
-let test_dtype_refuses () =
-  let p = P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0 |] in
-  raises_match ~msg:"past the nodes" Exn.invalid_arg (fun () -> P.dtype p 1);
-  raises_match ~msg:"negative" Exn.invalid_arg (fun () -> P.dtype p (-1))
-
-(* The minor words a call of [f] allocates, to the word: they depend on the
-   call, not the machine, so a baseline records them. *)
-let allocated f =
+(* The minor words one call of [f] allocates, over 1000 calls after a first. *)
+let words f =
   ignore (f ());
   let n = 1000 in
   let before = Gc.minor_words () in
   for _ = 1 to n do
     ignore (Sys.opaque_identity (f ()))
   done;
-  Printf.sprintf "%.0f words" ((Gc.minor_words () -. before) /. Float.of_int n)
+  (Gc.minor_words () -. before) /. Float.of_int n
 
-(* A scalar form's program: its checks allocate the nodes' dtypes alone. *)
-let test_v_allocates () =
-  let f32 = D.Any D.Float32 in
-  let ins : D.any iarray = [| f32 |] and outs : int iarray = [| 2 |] in
-  let nodes : P.node iarray =
-    [| P.In 0; P.Const (f32, P.bits D.Float32 2.); P.Op2 (P.Binary Mul, 0, 1) |]
+(* [p]'s outputs over [loads] at [shape], computed by nx.cpu, as their elements'
+   bits. *)
+let compute ?(shape = [| 1 |]) (p : P.t) loads =
+  let dst o =
+    let (D.Any dt) = P.dtype p o in
+    A.Any (A.create Rig.host dt (Iarray.of_array shape))
   in
-  expect (allocated (fun () -> P.v ~ins nodes ~outs))
-  @@ __POS_OF__ {| 8 words |}
+  let dsts = Iarray.map dst p.outs in
+  let loads =
+    Iarray.map (fun (A.Any x) -> Nx_kernel.Plain x) (Iarray.of_array loads)
+  in
+  match Nx_cpu.map p ~dsts loads with
+  | Done -> Ok (Array.map Elements.elements (Iarray.to_array dsts))
+  | answer -> Error answer
 
-(* Expressions *)
+let outputs = Testable.(result (array (array string)) Elements.answer)
 
-(* The element of [dt] whose bits are [b]. *)
-let element (type v s) (dt : (v, s) D.t) b : v =
-  A.get (A.v dt (Nx_array.Layout.contiguous [||]) (Rig.Buffer.of_string b)) [||]
+(* A one-element operand of [d] whose bits are [b]. *)
+let operand1 d b = Elements.of_elements d [| 1 |] [| b |]
 
-(* An expression of some dtype. *)
+(* Drawn programs *)
+
+let base_dtypes =
+  D.
+    [
+      Any Float32;
+      Any Float64;
+      Any Float16;
+      Any Int32;
+      Any Uint8;
+      Any Int64;
+      Any Uint64;
+      Any Bool;
+      Any Complex64;
+      Any Int4;
+    ]
+
+let same (D.Any x) (D.Any y) = D.equal x y
+
+(* Bits that dtypes of one width share: [-0.], three NaN payloads and [1.] at
+   float32 and float64, also an int32, int64 or uint64. *)
+let shared_bits =
+  let four v =
+    let b = Bytes.create 4 in
+    Bytes.set_int32_le b 0 v;
+    Bytes.to_string b
+  in
+  let eight v =
+    let b = Bytes.create 8 in
+    Bytes.set_int64_le b 0 v;
+    Bytes.to_string b
+  in
+  List.map four
+    [ 0x8000_0000l; 0x7fc0_0001l; 0x7fc0_0002l; 0xffc0_0001l; 0x3f80_0000l ]
+  @ List.map eight
+      [
+        0x8000_0000_0000_0000L;
+        0x7ff8_0000_0000_0001L;
+        0x7ff8_0000_0000_0002L;
+        0xfff8_0000_0000_0001L;
+        0x3ff0_0000_0000_0000L;
+      ]
+
+(* Whether [d]'s elements hold the bits [b] as they are. *)
+let holds_bits (D.Any dt) b =
+  String.length b = D.bytes dt 1 && P.bits dt (element dt b) = b
+
+(* The constants of [d] a program draws: [-0.] and the integers 0 to 6, and the
+   shared bits [d] holds. *)
+let constants (D.Any dt as d) =
+  let ints =
+    List.map
+      (fun x -> P.bits dt (D.of_float dt x))
+      [ -0.; 0.; 1.; 2.; 3.; 4.; 5.; 6. ]
+  in
+  List.map
+    (fun b -> P.Const (d, b))
+    (ints @ List.filter (holds_bits d) shared_bits)
+
+(* A program of [n] nodes over operands [ins], each node read from [choices]: an
+   operand, an axis or a constant, a copy of an earlier node, or a kind over
+   earlier nodes of the dtypes it takes. Each kind's first operand is the last
+   kind made, so that the last node reaches most of the program. Half the
+   constants are shared bits in a dtype of their width. Outputs repeat and leave
+   nodes unreached. *)
+let grow ins choices n nouts =
+  let next = ref 0 in
+  let int k =
+    let c = choices.(!next mod Array.length choices) in
+    incr next;
+    c mod k
+  in
+  let pick l = List.nth l (int (List.length l)) in
+  let types = Array.make n i64 and nodes = Array.make n (P.Coord 0) in
+  (* Earlier nodes of [i]'s dtype, [i] among them. *)
+  let alike i k =
+    List.filter (fun j -> same types.(j) types.(i)) (List.init k Fun.id)
+  in
+  let constant () =
+    match int 2 with
+    | 0 ->
+        let d = pick base_dtypes in
+        (pick (constants d), d)
+    | _ ->
+        let b = pick shared_bits in
+        let d = pick (List.filter (fun d -> holds_bits d b) base_dtypes) in
+        (P.Const (d, b), d)
+  in
+  let leaf () =
+    match int 3 with
+    | 0 when Array.length ins > 0 ->
+        let k = int (Array.length ins) in
+        (P.In k, ins.(k))
+    | 1 -> (P.Coord (int 3), i64)
+    | _ -> constant ()
+  in
+  let copy i = (P.Op1 (Copy, types.(i), i), types.(i)) in
+  let op k i =
+    let (D.Any x) = types.(i) in
+    match int 5 with
+    | 0 -> (nodes.(i), types.(i))
+    | 1 -> (
+        let (D.Any y as d) = pick base_dtypes in
+        match List.filter (fun o -> P.accepts1 o x y) op1s with
+        | [] -> copy i
+        | os -> (P.Op1 (pick os, d, i), d))
+    | 2 -> (
+        let j = pick (alike i k) in
+        match List.filter (fun o -> P.accepts2 o x) op2s with
+        | [] -> copy i
+        | os ->
+            let o = pick os in
+            let d =
+              match o with Compare _ -> boolean | Binary _ -> types.(i)
+            in
+            (P.Op2 (o, i, j), d))
+    | 3 when D.is D.Boolean x ->
+        let j = int k in
+        let l = if int 2 = 0 then j else pick (alike j k) in
+        (P.Op3 (Where, i, j, l), types.(j))
+    | _ when P.accepts3 Fma x x ->
+        let j = pick (alike i k) and l = pick (alike i k) in
+        let a, b, c =
+          match int 5 with
+          | 0 -> (i, i, i)
+          | 1 -> (i, i, j)
+          | 2 -> (i, j, i)
+          | 3 -> (j, i, i)
+          | _ -> (i, j, l)
+        in
+        (P.Op3 (Fma, a, b, c), types.(i))
+    | _ -> copy i
+  in
+  let last = ref (-1) in
+  for k = 0 to n - 1 do
+    let nd, dt =
+      if k = 0 || int 5 = 0 then leaf ()
+      else
+        let i = if !last >= 0 then !last else int k in
+        last := k;
+        op k i
+    in
+    nodes.(k) <- nd;
+    types.(k) <- dt
+  done;
+  let outs = Array.init nouts (fun _ -> if int 2 = 0 then n - 1 else int n) in
+  { ins; nodes; outs }
+
+(* Programs of up to 400 nodes over [ins_size] operands, so that of_exprs's
+   lowering scans small programs and crosses to tables past 40 nodes. *)
+let drawn_over ins_size =
+  let open Gen in
+  with_pp pp_drawn
+    (let* n =
+       frequency
+         [ (2, int_range 1 8); (1, int_range 50 100); (1, int_range 170 400) ]
+     in
+     let+ ins = array ~size:ins_size (of_list ~pp:pp_dtype base_dtypes)
+     and+ choices = array ~size:(constant (4 * n)) (int_range 0 0x3FFF_FFFF)
+     and+ nouts = int_range 1 4 in
+     grow ins choices n nouts)
+
+let drawn = drawn_over (Gen.int_range 0 3)
+
+(* Expressions of drawn programs *)
+
 type ex = Ex : ('v, 's) P.E.t -> ex
+
+let any (Ex x) = P.E.any x
 
 (* [y] at [x]'s dtype, which a drawn node gives them both. *)
 let like (type v s w r) (x : (v, s) P.E.t) (y : (w, r) P.E.t) : (v, s) P.E.t =
@@ -593,8 +387,8 @@ let like (type v s w r) (x : (v, s) P.E.t) (y : (w, r) P.E.t) : (v, s) P.E.t =
   | None -> failwith "a drawn node's operands differ in dtype"
 
 (* [d]'s nodes as expressions, each over its operands' expressions, so that a
-   node read twice is one value. A leaf [n] is [e] where [leaf n] is
-   [Some e]. *)
+   node read twice is one value. A leaf [n] is [e] where [leaf n] is [Some
+   e]. *)
 let typed ?(leaf = fun _ -> None) d =
   let e = Array.make (Array.length d.nodes) (Ex (P.E.coord 0)) in
   let leaf_of = function
@@ -628,12 +422,9 @@ let typed ?(leaf = fun _ -> None) d =
     d.nodes;
   e
 
-let any (Ex x) = P.E.any x
-let exprs d = Array.map any (typed d)
-
-(* of_exprs's nodes and outputs as prog.mli states them for [d]'s outputs:
-   the nodes they reach, each structure once, in the order a depth-first
-   walk from the outputs, operands left to right, finishes them. *)
+(* of_exprs's nodes and outputs as prog.mli states them for [d]'s outputs: the
+   nodes they reach, each structure once, in the order a depth-first walk from
+   the outputs, operands left to right, finishes them. *)
 let lowered d =
   let index = Hashtbl.create 16 and nodes = ref [] and count = ref 0 in
   let seen = Array.make (Array.length d.nodes) (-1) in
@@ -674,648 +465,799 @@ let reach d outs =
       match d.nodes.(i) with
       | P.In _ | Coord _ | Const _ -> ()
       | Op1 (_, _, a) -> visit a
-      | Op2 (_, a, b) -> visit a; visit b
-      | Op3 (_, a, b, c) -> visit a; visit b; visit c
+      | Op2 (_, a, b) ->
+          visit a;
+          visit b
+      | Op3 (_, a, b, c) ->
+          visit a;
+          visit b;
+          visit c
     end
   in
   Array.iter visit outs;
   seen
 
-(* [d] without the nodes its outputs do not reach, whose kinds a library
-   may decline. *)
-let pruned d =
-  let keep = reach d d.outs in
-  let at = Array.make (Array.length d.nodes) (-1) and count = ref 0 in
-  Array.iteri (fun i k -> if k then (at.(i) <- !count; incr count)) keep;
-  let renumber = function
-    | (P.In _ | Coord _ | Const _) as nd -> nd
-    | Op1 (k, dt, a) -> Op1 (k, dt, at.(a))
-    | Op2 (k, a, b) -> Op2 (k, at.(a), at.(b))
-    | Op3 (k, a, b, c) -> Op3 (k, at.(a), at.(b), at.(c))
-  in
-  let pick a = Array.of_list (List.filteri (fun i _ -> keep.(i)) (Array.to_list a)) in
-  {
-    d with
-    nodes = Array.map renumber (pick d.nodes);
-    types = pick d.types;
-    outs = Array.map (fun o -> at.(o)) d.outs;
-  }
-
-(* Random elements of [dt]: any bits, a boolean's [0] or [1]. *)
-let random_bits rand (D.Any dt) n =
-  let byte () = Char.chr (Random.State.int rand 256) in
-  let one () =
-    if D.equal dt D.Bool then String.make 1 (Char.chr (Random.State.int rand 2))
-    else String.init (max 1 (D.bits dt / 8)) (fun _ -> byte ())
-  in
-  Array.init n (fun _ -> one ())
-
-let small = [| 2; 3; 2 |]
-
-let random_elements rand d n =
-  Elements.of_elements d small (random_bits rand d n)
-
-(* [p]'s outputs over [loads] at [shape], [2; 3; 2] by default, computed by
-   nx.cpu, as their elements' bits. *)
-let compute ?(shape = small) (p : P.t) loads =
-  let dst o =
-    let (D.Any dt) = P.dtype p o in
-    A.Any (A.create Rig.host dt (Iarray.of_array shape))
-  in
-  let dsts = Iarray.map dst p.outs in
-  let loads =
-    Iarray.map (fun (A.Any x) -> Nx_kernel.Plain x) (Iarray.of_array loads)
-  in
-  match Nx_cpu.map p ~dsts loads with
-  | Done -> Ok (Array.map Elements.elements (Iarray.to_array dsts))
-  | answer -> Error answer
-
-let outputs = Testable.(result (array (array string)) Elements.answer)
-
-(* [p]'s outputs over [loads] as {!compute} gives them, with every NaN
-   element, and every NaN part of a complex element, as the string "nan":
-   only a move specifies a NaN result's bits, so two programs computing
-   the same value may give NaNs of different signs or payloads. Every
-   other element keeps its bits. *)
-let any_nan (p : P.t) loads =
-  let blind d e = if Elements.nan_of d e then "nan" else e in
-  let one (D.Any dt as d) e =
-    if not (D.is D.Complex dt) then blind d e
-    else
-      let h = String.length e / 2 in
-      let part = if h = 4 then D.Any D.Float32 else D.Any D.Float64 in
-      blind part (String.sub e 0 h) ^ blind part (String.sub e h h)
-  in
-  let out i es = Array.map (one (P.dtype p (Iarray.get p.outs i))) es in
-  Result.map (Array.mapi out) (compute p loads)
-
-(* Whether each element of each output of [d]'s program over [loads] reads a
-   NaN's sign or payload: a Bitcast of a float reads its operand's bits, and
-   where that operand is a NaN an earlier kind left them unspecified
-   (prog.mli, Results), so two programs computing the same values may give
-   different bits from there on, as nx.cpu's vector and scalar code may. A
-   map computes each index from the operands' elements at it alone, so each
-   element is followed apart. *)
-let nan_bits d loads =
-  let p = program (pruned d) in
-  let nodes = Iarray.to_array p.nodes in
-  let value i =
-    let q =
-      P.v ~ins:p.ins (Iarray.of_array (Array.sub nodes 0 (i + 1))) ~outs:[| i |]
-    in
-    match compute q loads with Ok a -> Some a.(0) | Error _ -> None
-  in
-  let n = Array.fold_left ( * ) 1 small in
-  let read = Array.make (Array.length nodes) None in
-  let rec reads i =
-    match read.(i) with
-    | Some r -> r
-    | None ->
-        let any = Array.make n false in
-        let join j =
-          Array.iteri (fun e b -> if b then any.(e) <- true) (reads j)
-        in
-        (match nodes.(i) with
-        | P.In _ | Coord _ | Const _ -> ()
-        | Op1 (k, _, x) -> (
-            join x;
-            let (D.Any dt) = P.dtype p x in
-            match (k, value x) with
-            | Bitcast, Some es when D.is D.Float dt || D.is D.Complex dt ->
-                let d = D.Any dt in
-                Array.iteri
-                  (fun e el -> if Elements.nan_of d el then any.(e) <- true)
-                  es
-            | _ -> ())
-        | Op2 (_, x, y) -> join x; join y
-        | Op3 (_, x, y, z) -> join x; join y; join z);
-        read.(i) <- Some any;
-        any
-  in
-  Array.map reads (Iarray.to_array p.outs)
-
-(* [r], {!any_nan}'s outputs, with each element [nan_bits] marks unspecified. *)
-let blinded marks r =
-  Result.map
-    (Array.mapi (fun o es ->
-         Array.mapi (fun e v -> if marks.(o).(e) then "NaN bits" else v) es))
-    r
-
-(* Substitution *)
-
-let structural = Testable.structural ~pp:pp_prog
-
-(* [p] as a drawn program. *)
-let drawn_of (p : P.t) =
-  {
-    ins = Iarray.to_array p.ins;
-    nodes = Iarray.to_array p.nodes;
-    types = Array.init (Iarray.length p.nodes) (P.dtype p);
-    outs = Iarray.to_array p.outs;
-  }
-
-(* [subst ?outs ~ins f p] of [d]'s program [p], checked against prog.mli:
-   of_exprs's program over [ins] of the outputs [outs] selects, each leaf [n]
-   they reach replaced by [f n]'s expression where it is [Some], and as v
-   builds it; [f] called once on each such leaf and on no other node. Is the
-   result. *)
-let check_subst ?outs ~ins f d =
-  let ins = Iarray.of_array ins in
-  let calls = ref [] in
-  let called n =
-    calls := n :: !calls;
-    Option.map any (f n)
-  in
-  let s = P.subst ?outs ~ins called (program d) in
-  let picked =
-    match outs with
-    | None -> d.outs
-    | Some o -> Array.map (Array.get d.outs) (Iarray.to_array o)
-  in
-  let reached = reach d picked in
-  let leaves =
-    List.filteri
-      (fun i (nd : P.node) ->
-        reached.(i)
-        && match nd with In _ | Coord _ | Const _ -> true | _ -> false)
-      (Array.to_list d.nodes)
-  in
-  equal ~msg:"f's calls" (list node)
-    (List.sort compare leaves)
-    (List.sort compare !calls);
-  let e = typed ~leaf:f d in
-  let want = P.of_exprs ~ins (Iarray.of_array (Array.map (fun o -> any e.(o)) picked)) in
-  equal ~msg:"of_exprs's program" structural want s;
-  equal ~msg:"as v builds it" bool true
-    (s = P.v ~ins:s.ins s.nodes ~outs:s.outs);
-  s
-
-let law_subst_keeps d =
-  let s = check_subst ~ins:d.ins (fun _ -> None) d in
-  let nodes, outs = lowered d in
-  equal ~msg:"nodes" (array node) nodes (Iarray.to_array s.nodes);
-  equal ~msg:"outs" (array int) outs (Iarray.to_array s.outs);
-  cover "fewer nodes than drawn"
-    (Iarray.length s.nodes < Array.length d.nodes)
-
-let without k a =
-  Array.of_list (List.filteri (fun i _ -> i <> k) (Array.to_list a))
-
-(* The substitution that binds operand [k] of [ins] to [x]: [In k] is [x],
-   and [In i] for [i > k] is [In (i - 1)]. *)
-let binds ins k x : P.node -> ex option = function
-  | P.In i when i = k -> Some x
-  | In i when i > k ->
-      let (D.Any dt) = ins.(i) in
-      Some (Ex (P.E.input (i - 1) dt))
-  | In _ | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _ -> None
-
-(* An expression drawn over [ins], its last node cast to [dt]. *)
-let ending ins choices dt =
-  let d = build ins choices 1 in
-  let last = Array.length d.nodes - 1 in
-  let d = { d with nodes = Array.append d.nodes [| P.Op1 (Cast, dt, last) |] } in
-  (typed d).(last + 1)
-
-let binding =
+(* Each axis's offset, all zero one draw in three. *)
+let offsets =
   let open Gen in
-  with_pp
-    (fun ppf (d, k, _, _) -> Format.fprintf ppf "%a, operand %d" pp_drawn d k)
-    (let+ d = drawn
-     and+ k = int_range 0 2
-     and+ choices = array ~size:(int_range 1 6) (int_range 0 1_000_000)
-     and+ seed = int in
-     (d, k, choices, seed))
+  frequency
+    [
+      (1, constant [| 0; 0; 0 |]); (2, array ~size:(constant 3) (int_range 0 3));
+    ]
 
-(* [d]'s operand [k] bound to [x] by subst, checked as check_subst does over
-   [d]'s other operands, and its outputs' bits on nx.cpu against [d]'s over
-   [x]'s value, over operands drawn from [seed]. Whether nx.cpu computed
-   [x]. *)
-let check_bind d k x seed =
-  let others = without k d.ins in
-  let s = check_subst ~ins:others (binds d.ins k x) d in
+(* The substitution adding [off] to each coordinate. *)
+let shift off : P.node -> ex option = function
+  | Coord c when off.(c) <> 0 ->
+      Some (Ex P.E.(coord c + const D.Int64 (Int64.of_int off.(c))))
+  | _ -> None
+
+(* subst of [d]'s program over [ins], each leaf [n] replaced by [f n]'s
+   expression where it is [Some]. *)
+let subst ?outs ~ins f d =
+  P.subst ?outs ~ins:(Iarray.of_array ins)
+    (fun n -> Option.map any (f n))
+    (program d)
+
+(* Programs *)
+
+let test_box_muller () =
+  let f = D.Float32 in
+  let lit x = P.E.const f x in
+  let u1 = P.E.input 0 f and u2 = P.E.input 1 f in
+  let z = P.E.(sqrt (lit (-2.) * log u1) * cos (lit (2. *. Float.pi) * u2)) in
+  let p = P.of_exprs ~ins:[| f32; f32 |] [| P.E.any z |] in
+  let const x = P.Const (f32, P.bits f x) in
+  (* The walk from z: sqrt's product, -2 then log u1, then cos's product, 2 pi
+     then u2, then z. *)
+  let want : P.node array =
+    [|
+      const (-2.);
+      In 0;
+      Op1 (Unary Log, f32, 1);
+      Op2 (Binary Mul, 0, 2);
+      Op1 (Unary Sqrt, f32, 3);
+      const (2. *. Float.pi);
+      In 1;
+      Op2 (Binary Mul, 5, 6);
+      Op1 (Unary Cos, f32, 7);
+      Op2 (Binary Mul, 4, 8);
+    |]
+  in
+  equal ~msg:"nodes" (array node) want (Iarray.to_array p.nodes);
+  equal ~msg:"outs" (array int) [| 9 |] (Iarray.to_array p.outs)
+
+let law_equal_programs d =
+  let p = program d and q = program d in
+  equal structural p q;
+  equal ~msg:"hashes" int (Hashtbl.hash p) (Hashtbl.hash q)
+
+(* Domains *)
+
+(* prog.mli's domains, by kind of number: "Neg, Recip, Sign, Add, Sub, Mul, Pow:
+   every dtype but booleans. Fdiv: floats and complex. Idiv: integers. Abs,
+   Floor, Ceil, Round, Trunc, Mod, Fma: floats and integers. Sqrt, Exp, Exp2,
+   Log, Log2, and Sin to Tanh: floats and complex. Asinh, Acosh, Atanh: complex.
+   Log1p, Expm1, Erf, Atan2: floats. And, Or, Xor: integers and booleans.
+   Threefry: uint64. Maximum, Minimum and the comparisons: every dtype. Copy:
+   every dtype, into itself. Cast: every pair. Bitcast: every pair of one width.
+   Where: a boolean, then two operands of any one dtype." *)
+type cls = Float | Signed | Unsigned | Boolean | Complex
+
+let cls (D.Any dt) : cls =
+  match D.kind dt with
+  | Float -> Float
+  | Signed -> Signed
+  | Unsigned -> Unsigned
+  | Boolean -> Boolean
+  | Complex -> Complex
+
+let integers = [ Signed; Unsigned ]
+let reals = Float :: integers
+let numbers = Complex :: reals
+let every = Boolean :: numbers
+
+let unary_domain : P.unary -> cls list = function
+  | Neg | Recip | Sign -> numbers
+  | Abs | Floor | Ceil | Round | Trunc -> reals
+  | Sqrt | Exp | Exp2 | Log | Log2 | Sin | Cos | Tan | Asin | Acos | Atan | Sinh
+  | Cosh | Tanh ->
+      [ Float; Complex ]
+  | Log1p | Expm1 | Erf -> [ Float ]
+  | Asinh | Acosh | Atanh -> [ Complex ]
+
+let binary_domain : P.binary -> cls list = function
+  | Add | Sub | Mul | Pow -> numbers
+  | Fdiv -> [ Float; Complex ]
+  | Idiv -> integers
+  | Mod -> reals
+  | Atan2 -> [ Float ]
+  | Maximum | Minimum -> every
+  | And | Or | Xor -> Boolean :: integers
+  | Threefry -> []
+
+let width (D.Any dt) = D.bits dt
+
+let in_domain1 k x y =
+  match k with
+  | P.Copy -> same x y
+  | Cast -> true
+  | Bitcast -> width x = width y
+  | Unary u -> same x y && List.mem (cls x) (unary_domain u)
+
+let in_domain2 k x =
+  match k with
+  | P.Binary Threefry -> name x = "uint64"
+  | Binary b -> List.mem (cls x) (binary_domain b)
+  | Compare _ -> true
+
+let in_domain3 k c x =
+  match k with
+  | P.Where -> cls c = Boolean
+  | Fma -> same c x && List.mem (cls x) reals
+
+let names_where f = List.map name (List.filter f D.all)
+
+let test_domain = function
+  | K1 k ->
+      List.iter
+        (fun (D.Any x as ax) ->
+          equal ~msg:(name ax) (list string)
+            (names_where (in_domain1 k ax))
+            (names_where (fun (D.Any y) -> P.accepts1 k x y)))
+        D.all
+  | K2 k ->
+      equal (list string)
+        (names_where (in_domain2 k))
+        (names_where (fun (D.Any x) -> P.accepts2 k x))
+  | K3 k ->
+      List.iter
+        (fun (D.Any c as ac) ->
+          equal ~msg:(name ac) (list string)
+            (names_where (in_domain3 k ac))
+            (names_where (fun (D.Any x) -> P.accepts3 k c x)))
+        D.all
+
+(* Bits *)
+
+(* An element's bits as a one-element array holds them: its bytes, or a sub-byte
+   code in one byte. *)
+let array_bits (type v s) (dt : (v, s) D.t) (x : v) =
+  let a = A.of_array dt [| 1 |] [| x |] in
+  match D.bits dt with
+  | 1 ->
+      String.make 1
+        (Char.chr (Bool.to_int (A.get (A.expect D.Bit (A.Any a)) [| 0 |])))
+  | 4 ->
+      String.make 1
+        (Char.chr (A.get (Option.get (A.bitcast D.Uint4 a)) [| 0 |]))
+  | _ ->
+      let b = A.to_array (Option.get (A.bitcast D.Uint8 a)) in
+      String.init (Array.length b) (fun i -> Char.chr b.(i))
+
+(* The value of [dt] that the words [w] and [w'] give: [w] as a double for a
+   float, [w] and [w'] as the parts of a complex number, [w]'s low bits for an
+   integer, signed or not, and [w <> 0] for a boolean. *)
+let value_of_words (type v s) (dt : (v, s) D.t) w w' : v =
+  let low n = Int64.to_int w land ((1 lsl n) - 1) in
+  let signed n =
+    let u = low n in
+    if u >= 1 lsl (n - 1) then u - (1 lsl n) else u
+  in
+  match (D.kind dt, dt) with
+  | Float, _ -> Int64.float_of_bits w
+  | Complex, _ ->
+      { Complex.re = Int64.float_of_bits w; im = Int64.float_of_bits w' }
+  | Boolean, _ -> w <> 0L
+  | _, D.Int64 -> w
+  | _, D.Uint64 -> w
+  | _, D.Int32 -> Int64.to_int32 w
+  | _, D.Uint32 -> Int64.to_int32 w
+  | _, D.Int16 -> signed 16
+  | _, D.Uint16 -> low 16
+  | _, D.Int8 -> signed 8
+  | _, D.Uint8 -> low 8
+  | _, D.Int4 -> signed 4
+  | _, D.Uint4 -> low 4
+  | _ -> invalid_arg (D.name dt)
+
+(* The float formats a store rounds into, as each format's facts. *)
+let rounded_formats =
+  [
+    ("float32", D.float_format D.Float32);
+    ("float16", D.float_format D.Float16);
+    ("bfloat16", D.float_format D.Bfloat16);
+    ("float8_e4m3fn", D.float_format D.Float8_e4m3fn);
+    ("float8_e5m2", D.float_format D.Float8_e5m2);
+    ("float4_e2m1fn", D.float_format D.Float4_e2m1fn);
+  ]
+
+(* A double halfway between two neighbours of format [f] in a binade from its
+   least normal value to its largest, of either sign: [(2m + 1) 2^(e - p)], [m]
+   of [p] bits, [p] the format's significand. *)
+let tie (f : D.float_format) =
+  let open Gen in
+  let p = f.fraction_bits + 1 in
+  let _, lo = Float.frexp f.min_normal and _, hi = Float.frexp f.max_finite in
+  let+ e = int_range (lo - 1) (hi - 1)
+  and+ m = int_range (1 lsl (p - 1)) ((1 lsl p) - 1)
+  and+ negative = bool in
+  let x = Float.ldexp (Float.of_int ((2 * m) + 1)) (e - p) in
+  Int64.bits_of_float (if negative then -.x else x)
+
+(* Whether [x] is halfway between two neighbours of format [f]: within its
+   normal values and of one more significant bit than [f] holds, the last
+   set. *)
+let is_tie (f : D.float_format) x =
+  let m, _ = Float.frexp x in
+  let s = Float.ldexp m (f.fraction_bits + 2) in
+  Float.is_finite x
+  && Float.abs x >= f.min_normal
+  && Float.abs x <= f.max_finite
+  && Float.is_integer s
+  && Float.rem s 2. <> 0.
+
+let word =
+  let open Gen in
+  frequency
+    [
+      (1, int64);
+      (1, map Int64.bits_of_float float);
+      (6, one_of (List.map (fun (_, f) -> tie f) rounded_formats));
+    ]
+
+(* Words a store treats apart: signed zeros, infinities, quiet and signalling
+   NaNs of both signs, the extremes of a double, the largest finite values of
+   the narrow floats and the doubles past them that round or saturate, the least
+   subnormals and the halves below them, and every integer width's extremes in
+   the low bits. *)
+let special_words =
+  List.map Int64.bits_of_float
+    [
+      0.;
+      -0.;
+      infinity;
+      neg_infinity;
+      Float.max_float;
+      65504.;
+      65519.;
+      65520.;
+      448.;
+      464.;
+      480.;
+      57344.;
+      61440.;
+      6.;
+      7.;
+      0x1p-24;
+      0x1p-25;
+      0x1p-149;
+      0x1p-150;
+      0x1.fe0000000001p127;
+      0x1.ffffffp127;
+    ]
+  @ [
+      0x7FF8000000000001L;
+      0x7FF0000000000001L;
+      0xFFF4000000000000L;
+      -1L;
+      1L;
+      0x7L;
+      0x8L;
+      0xFL;
+      0x7FL;
+      0x80L;
+      0xFFL;
+      0x7FFFL;
+      0x8000L;
+      0xFFFFL;
+      0x7FFFFFFFL;
+      0x80000000L;
+      0xFFFFFFFFL;
+      Int64.max_int;
+      Int64.min_int;
+    ]
+
+let law_bits (w, w') =
+  List.iter
+    (fun (fmt, f) ->
+      cover ("a tie of " ^ fmt)
+        (is_tie f (Int64.float_of_bits w) || is_tie f (Int64.float_of_bits w')))
+    rounded_formats;
+  List.iter
+    (fun (D.Any dt) ->
+      let x = value_of_words dt w w' in
+      equal ~msg:(D.name dt) string (hex (array_bits dt x)) (hex (P.bits dt x)))
+    D.all
+
+(* A NaN's bits are those a store of it gives (Dtype's stores): quiet, of its
+   sign, with the top of its payload. Each row is a double's bits, then the
+   float64 and float32 bits of the store. *)
+let nan_stores =
+  [
+    (0xFFF4000000000000L, 0xFFFC000000000000L, 0xFFE00000l);
+    (0x7FF0040000000001L, 0x7FF8040000000001L, 0x7FC02000l);
+    (0x7FF8000000000000L, 0x7FF8000000000000L, 0x7FC00000l);
+    (0x7FFFFFFFFFFFFFFFL, 0x7FFFFFFFFFFFFFFFL, 0x7FFFFFFFl);
+  ]
+
+let test_nan_bits (x, b64, b32) =
+  let x = Int64.float_of_bits x in
+  let word64 s at = String.get_int64_le s at
+  and word32 s at = String.get_int32_le s at in
+  equal ~msg:"float64" int64 b64 (word64 (P.bits D.Float64 x) 0);
+  equal ~msg:"float32" int32 b32 (word32 (P.bits D.Float32 x) 0);
+  let c = { Complex.re = x; im = x } in
+  let c128 = P.bits D.Complex128 c and c64 = P.bits D.Complex64 c in
+  equal ~msg:"complex128" (pair int64 int64) (b64, b64)
+    (word64 c128 0, word64 c128 8);
+  equal ~msg:"complex64" (pair int32 int32) (b32, b32)
+    (word32 c64 0, word32 c64 4)
+
+(* The integer dtypes OCaml writes as [int], with the range each name states. *)
+type int_dtype = Ints : string * (int, 's) D.t * int * int -> int_dtype
+
+let int_dtypes =
+  [
+    Ints ("int16", D.Int16, -32768, 32767);
+    Ints ("uint16", D.Uint16, 0, 65535);
+    Ints ("int8", D.Int8, -128, 127);
+    Ints ("uint8", D.Uint8, 0, 255);
+    Ints ("int4", D.Int4, -8, 7);
+    Ints ("uint4", D.Uint4, 0, 15);
+  ]
+
+let test_int_range (Ints (_, dt, lo, hi)) =
+  raises_match ~msg:"below" Exn.invalid_arg (fun () -> P.bits dt (lo - 1));
+  raises_match ~msg:"above" Exn.invalid_arg (fun () -> P.bits dt (hi + 1));
+  equal ~msg:"least" string (hex (array_bits dt lo)) (hex (P.bits dt lo));
+  equal ~msg:"greatest" string (hex (array_bits dt hi)) (hex (P.bits dt hi))
+
+(* v *)
+
+let law_v d =
+  let has f = Array.exists f d.nodes in
+  cover "an Op1" (has (function P.Op1 _ -> true | _ -> false));
+  cover "an Op2" (has (function P.Op2 _ -> true | _ -> false));
+  cover "an Op3" (has (function P.Op3 _ -> true | _ -> false));
+  let p = program d in
   equal ~msg:"ins" (list string)
-    (Array.to_list (Array.map name others))
-    (List.map name (Iarray.to_list s.ins));
-  let q = P.of_exprs ~ins:(Iarray.of_array others) [| any x |] in
-  let rand = Random.State.make [| seed |] in
-  let loads = Array.map (fun t -> random_elements rand t 12) others in
-  match compute q loads with
-  | Error _ -> false
-  | Ok out ->
-      let given = Elements.of_elements d.ins.(k) small out.(0) in
-      let all =
-        Array.init (Array.length d.ins) (fun i ->
-            if i = k then given else loads.(if i < k then i else i - 1))
-      in
-      let marks = nan_bits d all in
-      equal ~msg:"outputs' bits" outputs
-        (blinded marks (any_nan (program (pruned d)) all))
-        (blinded marks (any_nan s loads));
-      true
+    (Array.to_list (Array.map name d.ins))
+    (List.map name (Iarray.to_list p.ins));
+  equal ~msg:"nodes" (array node) d.nodes (Iarray.to_array p.nodes);
+  equal ~msg:"outs" (array int) d.outs (Iarray.to_array p.outs)
 
-let law_bind (d, k, choices, seed) =
-  assume (k < Array.length d.ins);
-  cover "p reads operand k" (Array.mem (P.In k) d.nodes);
-  cover "an operand after k" (k < Array.length d.ins - 1);
-  cover "k is 0" (k = 0);
-  cover "x computed"
-    (check_bind d k (ending (without k d.ins) choices d.ins.(k)) seed)
+(* Whether [of_node], v over the operands' nodes, builds [n] over [ins]. *)
+let builds ins n =
+  match P.of_node ~ins:(Iarray.of_array ins) n with
+  | _ -> true
+  | exception Invalid_argument _ -> false
 
-(* Expressions whose value is an operand, a coordinate or a constant, bound
-   at k = 0, with p reading or outputting In k. *)
-let test_subst_leaves () =
-  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 and i64 = D.Any D.Int64 in
-  let p ins nodes outs =
-    drawn_of
-      (P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
-         ~outs:(Iarray.of_array outs))
-  in
-  let sum = p [| f32; f32 |] [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |] [| 2 |] in
-  equal ~msg:"an operand" bool true
-    (check_bind sum 0 (Ex (P.E.input 0 D.Float32)) 1);
-  let scaled =
-    p [| i64; f32 |]
-      [| P.In 0; In 1; Op1 (Cast, f32, 0); Op2 (Binary Mul, 2, 1) |]
-      [| 3 |]
-  in
-  equal ~msg:"a coordinate" bool true (check_bind scaled 0 (Ex (P.E.coord 1)) 2);
-  let passed = p [| f32; f64 |] [| P.In 0; In 1 |] [| 0; 1 |] in
-  equal ~msg:"a constant, output as p's In k" bool true
-    (check_bind passed 0 (Ex (P.E.const D.Float32 2.5)) 3)
+let test_v_kinds = function
+  | K1 k ->
+      List.iter
+        (fun (D.Any x as ax) ->
+          equal ~msg:(name ax) (list string)
+            (names_where (fun (D.Any y) -> P.accepts1 k x y))
+            (names_where (fun y -> builds [| ax |] (Op1 (k, y, 0)))))
+        D.all
+  | K2 k ->
+      equal (list string)
+        (names_where (fun (D.Any x) -> P.accepts2 k x))
+        (names_where (fun x -> builds [| x; x |] (Op2 (k, 0, 1))))
+  | K3 k ->
+      List.iter
+        (fun (D.Any c as ac) ->
+          equal ~msg:(name ac) (list string)
+            (names_where (fun (D.Any x) -> P.accepts3 k c x))
+            (names_where (fun x -> builds [| ac; x; x |] (Op3 (k, 0, 1, 2)))))
+        D.all
 
-(* A drawn program with [Coord a] and its double added, the double an output,
-   so that a kind reads a coordinate; each axis's offset. *)
-let shifting =
-  let open Gen in
-  with_pp
-    (fun ppf (d, off) ->
-      Format.fprintf ppf "%a, offsets %a" pp_drawn d Elements.pp_ints off)
-    (let+ d = drawn
-     and+ a = int_range 0 2
-     and+ off = array ~size:(int_range 3 3) (int_range 0 3) in
-     let n = Array.length d.nodes in
-     let added = [| P.Coord a; Op2 (Binary Add, n, n) |] in
-     let i64 = D.Any D.Int64 in
-     ( {
-         d with
-         nodes = Array.append d.nodes added;
-         types = Array.append d.types [| i64; i64 |];
-         outs = Array.append d.outs [| n + 1 |];
-       },
-       off ))
+(* Each row: a program v refuses, as its operands, nodes and outputs. *)
+let ill_formed : (string * D.any array * P.node array * int array) list =
+  [
+    ("a forward reference", [| f32 |], [| Op1 (Copy, f32, 1); In 0 |], [| 0 |]);
+    ("a reference to itself", [| f32 |], [| Op1 (Copy, f32, 0) |], [| 0 |]);
+    ("a negative reference", [| f32 |], [| In 0; Op1 (Copy, f32, -1) |], [| 1 |]);
+    ("an operand past ins", [| f32 |], [| In 1 |], [| 0 |]);
+    ("a negative operand", [| f32 |], [| In (-1) |], [| 0 |]);
+    ( "an axis past max_rank",
+      [||],
+      [| Coord Nx_array.Layout.max_rank |],
+      [| 0 |] );
+    ("a negative axis", [||], [| Coord (-1) |], [| 0 |]);
+    ( "a kind off its domain",
+      [| f32 |],
+      [| In 0; Op2 (Binary Idiv, 0, 0) |],
+      [| 1 |] );
+    ( "two dtypes",
+      [| f32; f64 |],
+      [| In 0; In 1; Op2 (Binary Add, 0, 1) |],
+      [| 2 |] );
+    ( "a where over branches of two dtypes",
+      [| boolean; f32; f64 |],
+      [| In 0; In 1; In 2; Op3 (Where, 0, 1, 2) |],
+      [| 3 |] );
+    ( "an fma whose last two operands differ in dtype",
+      [| f32; f64 |],
+      [| In 0; In 1; Op3 (Fma, 0, 0, 1) |],
+      [| 2 |] );
+    ( "an fma whose first operand is of another dtype",
+      [| f32; f64 |],
+      [| In 0; In 1; Op3 (Fma, 1, 0, 0) |],
+      [| 2 |] );
+    ("bits of the wrong width", [||], [| Const (f32, "\000\000") |], [| 0 |]);
+    ("a bool of no byte", [||], [| Const (boolean, "") |], [| 0 |]);
+    ("a bool of two bytes", [||], [| Const (boolean, "\001\001") |], [| 0 |]);
+    ("a bit of 2", [||], [| Const (bit, "\002") |], [| 0 |]);
+    ("an int4 of 16", [||], [| Const (D.Any D.Int4, "\016") |], [| 0 |]);
+    ("no output", [| f32 |], [| In 0 |], [||]);
+    ("an output past the nodes", [| f32 |], [| In 0 |], [| 1 |]);
+    ("a negative output", [| f32 |], [| In 0 |], [| -1 |]);
+  ]
 
-(* subst adding [off] to each coordinate. *)
-let law_subst_coords (d, off) =
-  let shift : P.node -> ex option = function
-    | Coord c when off.(c) <> 0 ->
-        Some (Ex P.E.(coord c + const D.Int64 (Int64.of_int off.(c))))
-    | _ -> None
-  in
-  ignore (check_subst ~ins:d.ins shift d);
-  let reached = (pruned d).nodes in
-  cover "a coordinate shifted"
-    (Array.exists (function P.Coord c -> off.(c) <> 0 | _ -> false) reached);
-  cover "a coordinate kept"
-    (Array.exists (function P.Coord c -> off.(c) = 0 | _ -> false) reached)
+let test_ill_formed (_, ins, nodes, outs) =
+  raises_match Exn.invalid_arg (fun () -> program { ins; nodes; outs })
 
-(* A drawn program, outputs selected among its own by index. *)
-let selecting =
-  let open Gen in
-  with_pp
-    (fun ppf (d, sel) ->
-      Format.fprintf ppf "%a, selecting %a" pp_drawn d Elements.pp_ints sel)
-    (let+ d = drawn
-     and+ sel = array ~size:(int_range 1 4) (int_range 0 1_000) in
-     (d, Array.map (fun k -> k mod Array.length d.outs) sel))
+(* A Const of [dt] and bits [b] as Where's condition between two float32
+   operands, 1. and 2.: the first where it is true. *)
+let bool_consts =
+  [
+    ("a bool of 0", boolean, "\000", false);
+    ("a bool of 1", boolean, "\001", true);
+    ("a bool of 2", boolean, "\002", true);
+    ("a bool of 128", boolean, "\128", true);
+    ("a bool of 255", boolean, "\255", true);
+    ("a bit of 0", bit, "\000", false);
+    ("a bit of 1", bit, "\001", true);
+  ]
 
-(* subst's outputs with [outs] are [d]'s at [outs], in that order. *)
-let law_subst_outs (d, sel) =
-  ignore (check_subst ~outs:(Iarray.of_array sel) ~ins:d.ins (fun _ -> None) d);
-  let n = Array.length sel in
-  cover "an output twice"
-    (List.length (List.sort_uniq Int.compare (Array.to_list sel)) < n);
-  cover "an output dropped"
-    (List.exists (fun o -> not (Array.mem o sel)) (List.init (Array.length d.outs) Fun.id));
-  cover "outputs reordered"
-    (List.exists (fun j -> sel.(j) > sel.(j + 1)) (List.init (n - 1) Fun.id))
-
-let test_subst_refuses () =
-  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
+let test_bool_const (_, dt, b, holds) =
   let p =
-    P.of_exprs ~ins:[| f32; f64 |]
-      P.E.[| any (input 0 D.Float32); any (input 1 D.Float64); any (coord 0) |]
+    program
+      {
+        ins = [| f32; f32 |];
+        nodes = [| Const (dt, b); In 0; In 1; Op3 (Where, 0, 1, 2) |];
+        outs = [| 3 |];
+      }
   in
-  let refuses ~msg ?outs ins f =
-    raises_match ~msg Exn.invalid_arg (fun () ->
-        P.subst ?outs ~ins:(Iarray.of_array ins) f p)
-  in
-  let in1 x : P.node -> P.E.any option = function
-    | P.In 1 -> Some x
-    | _ -> None
-  in
-  let keep _ = None in
-  refuses ~msg:"an expression of another dtype" [| f32 |]
-    (in1 P.E.(any (const D.Float32 1.)));
-  refuses ~msg:"a coordinate's expression of another dtype" [| f32; f64 |]
-    (function P.Coord _ -> Some P.E.(any (const D.Int32 1l)) | _ -> None);
-  refuses ~msg:"a read of an operand the result lacks" [| f32 |]
-    (in1 P.E.(any (cast D.Float64 (input 1 D.Float32))));
-  refuses ~msg:"a read of an operand at another dtype" [| f32 |]
-    (in1 P.E.(any (input 0 D.Float64)));
-  refuses ~msg:"a kept operand past ins" [| f32 |] keep;
-  refuses ~msg:"a kept operand at another dtype" [| f32; f32 |] keep;
-  refuses ~msg:"an output past p's" ~outs:[| 3 |] [| f32; f64 |] keep;
-  refuses ~msg:"a negative output" ~outs:[| -1 |] [| f32; f64 |] keep;
-  refuses ~msg:"no output" ~outs:[||] [| f32; f64 |] keep;
-  ignore (P.subst ~ins:[| f32 |] (in1 P.E.(any (const D.Float64 1.))) p);
-  (* A leaf the selected outputs do not reach is not substituted, and need
-     not fit [ins]. *)
-  let unreached : P.node -> P.E.any option = function
-    | P.In 1 -> failwith "subst substituted an unreached leaf"
-    | _ -> None
-  in
-  ignore (P.subst ~outs:[| 0; 2 |] ~ins:[| f32 |] unreached p)
+  let one x = operand1 f32 (P.bits D.Float32 x) in
+  let want = P.bits D.Float32 (if holds then 1. else 2.) in
+  equal outputs (Ok [| [| want |] |]) (compute p [| one 1.; one 2. |])
 
-(* of_exprs of [d]'s outputs, the odd ones from a second build, so that every
-   node they reach is a value apart from the first build's and merges by its
-   structure; checked against {!lowered} and against [d]'s program over
-   operands drawn from [seed]. Is the lowered program. *)
-let check_exprs d seed =
-  let first = exprs d and second = exprs d in
-  let out k i = if k mod 2 = 0 then first.(i) else second.(i) in
-  let q = P.of_exprs ~ins:(Iarray.of_array d.ins) (Iarray.of_array (Array.mapi out d.outs)) in
-  let nodes, outs = lowered d in
-  equal ~msg:"nodes" (array node) nodes (Iarray.to_array q.nodes);
-  equal ~msg:"outs" (array int) outs (Iarray.to_array q.outs);
-  equal ~msg:"ins" (list string) (Array.to_list (Array.map name d.ins))
-    (List.map name (Iarray.to_list q.ins));
-  let rand = Random.State.make [| seed |] in
-  let loads = Array.map (fun t -> random_elements rand t 12) d.ins in
-  let marks = nan_bits d loads in
-  let want = blinded marks (any_nan (program (pruned d)) loads) in
-  equal ~msg:"outputs' bits" outputs want (blinded marks (any_nan q loads));
-  q
-
-let law_of_exprs (d, seed) =
-  let q = check_exprs d seed in
-  cover "outputs of two builds" (Array.length d.outs >= 2);
-  cover "fewer nodes than drawn" (Iarray.length q.nodes < Array.length d.nodes)
-
-(* Programs grown node by node, up to 400, so that the walk's tables grow,
-   a third of them up to 80, so that lowerings that scan and lowerings that
-   cross to tables are both reached: each node is an operand, an axis, a
-   constant, a copy of an earlier node's structure, or a kind over earlier
-   nodes of the dtypes it takes. Constants
-   are small integers, [-0.], NaNs with payloads, and the same bits in dtypes
-   of one width. Outputs repeat and leave nodes unreached. *)
-
-(* Bits that some dtypes of each width share: [-0.], three NaN payloads and
-   [1.] at float32 and float64, also an int32, int64 or uint64. *)
-let shared_bits =
-  let four v = let b = Bytes.create 4 in Bytes.set_int32_ne b 0 v; Bytes.to_string b in
-  let eight v = let b = Bytes.create 8 in Bytes.set_int64_ne b 0 v; Bytes.to_string b in
-  List.map four [ 0x8000_0000l; 0x7fc0_0001l; 0x7fc0_0002l; 0xffc0_0001l; 0x3f80_0000l ]
-  @ List.map eight
-      [
-        0x8000_0000_0000_0000L; 0x7ff8_0000_0000_0001L; 0x7ff8_0000_0000_0002L;
-        0xfff8_0000_0000_0001L; 0x3ff0_0000_0000_0000L;
-      ]
-
-(* The constants of [dt] a grown program draws: [-0.] and the integers 0 to
-   6, and the shared bits of [dt]'s width that its elements hold. *)
-let constants (D.Any dt as d) =
-  let ints = List.map (fun x -> P.bits dt (D.of_float dt x)) [ -0.; 0.; 1.; 2.; 3.; 4.; 5.; 6. ] in
-  let shared =
-    List.filter
-      (fun b ->
-        String.length b = D.bytes dt 1 && P.bits dt (element dt b) = b)
-      shared_bits
+(* Twenty operands, each an output; an expression of operand 20; a node over
+   operand 19. *)
+let test_many_operands () =
+  let ins n = Iarray.init n (fun _ -> f32) in
+  let p =
+    P.v ~ins:(ins 20)
+      (Iarray.init 20 (fun k -> P.In k))
+      ~outs:(Iarray.init 20 Fun.id)
   in
-  List.map (fun b -> P.Const (d, b)) (ints @ shared)
+  equal ~msg:"v" (array int) (Array.init 20 Fun.id) (Iarray.to_array p.outs);
+  let q = P.of_exprs ~ins:(ins 21) [| P.E.(any (input 20 D.Float32)) |] in
+  equal ~msg:"of_exprs" (array node) [| P.In 20 |] (Iarray.to_array q.nodes);
+  let r = P.of_node ~ins:(ins 20) (Op2 (Binary Add, 0, 19)) in
+  equal ~msg:"of_node" node (Op2 (Binary Add, 0, 19)) (Iarray.get r.nodes 20)
 
-let grow rand ins n nouts =
-  let types = Array.make n (D.Any D.Int64) and nodes = Array.make n (P.Coord 0) in
-  let int k = Random.State.int rand k in
-  let pick l = List.nth l (int (List.length l)) in
-  (* Earlier nodes of [i]'s dtype, [i] among them. *)
-  let alike i k =
-    List.filter (fun j -> same types.(j) types.(i)) (List.init k Fun.id)
+(* Its 8 words, the words it allocated when the budget was set, are the program
+   and its nodes' dtypes; flambda inlines some allocations away. *)
+let test_v_allocates () =
+  let ins : D.any iarray = [| f32 |] and outs : int iarray = [| 2 |] in
+  let nodes : P.node iarray =
+    [| P.In 0; P.Const (f32, P.bits D.Float32 2.); P.Op2 (P.Binary Mul, 0, 1) |]
   in
-  (* Half the constants are shared bits, in a dtype of their width. *)
-  let constant () =
-    match int 2 with
-    | 0 ->
-        let d = pick base_dtypes in
-        (pick (constants d), d)
-    | _ ->
-        let b = pick shared_bits in
-        let holds (D.Any dt) =
-          String.length b = D.bytes dt 1 && P.bits dt (element dt b) = b
-        in
-        let d = pick (List.filter holds base_dtypes) in
-        (P.Const (d, b), d)
-  in
-  let leaf () =
-    match int 3 with
-    | 0 when Array.length ins > 0 ->
-        let k = int (Array.length ins) in
-        (P.In k, ins.(k))
-    | 1 -> (P.Coord (int 3), D.Any D.Int64)
-    | _ -> constant ()
-  in
-  let copy i = (P.Op1 (Copy, types.(i), i), types.(i)) in
-  (* A kind over [i] and earlier nodes of the dtypes it takes. *)
-  let op k i =
-    let (D.Any x) = types.(i) in
-    match int 5 with
-    | 0 -> (nodes.(i), types.(i))
-    | 1 -> (
-        let (D.Any y as d) = pick base_dtypes in
-        match List.filter (fun o -> P.accepts1 o x y) op1s with
-        | [] -> copy i
-        | os -> (P.Op1 (pick os, d, i), d))
-    | 2 -> (
-        let j = pick (alike i k) in
-        match List.filter (fun o -> P.accepts2 o x) op2s with
-        | [] -> copy i
-        | os ->
-            let o = pick os in
-            let d = match o with Compare _ -> D.Any D.Bool | Binary _ -> types.(i) in
-            (P.Op2 (o, i, j), d))
-    | 3 when D.is D.Boolean x ->
-        let j = int k in
-        let l = if int 2 = 0 then j else pick (alike j k) in
-        (P.Op3 (Where, i, j, l), types.(j))
-    | _ when P.accepts3 Fma x x ->
-        let j = pick (alike i k) and l = pick (alike i k) in
-        let a, b, c =
-          match int 5 with
-          | 0 -> (i, i, i)
-          | 1 -> (i, i, j)
-          | 2 -> (i, j, i)
-          | 3 -> (j, i, i)
-          | _ -> (i, j, l)
-        in
-        (P.Op3 (Fma, a, b, c), types.(i))
-    | _ -> copy i
-  in
-  (* Each kind's first operand is the last kind made, so that the last node
-     reaches most of the program. *)
-  let last = ref (-1) in
-  for k = 0 to n - 1 do
-    let nd, dt =
-      if k = 0 || int 5 = 0 then leaf ()
-      else
-        let i = if !last >= 0 then !last else int k in
-        last := k;
-        op k i
-    in
-    nodes.(k) <- nd;
-    types.(k) <- dt
-  done;
-  let outs = Array.init nouts (fun _ -> if int 2 = 0 then n - 1 else int n) in
-  { ins; nodes; types; outs }
+  at_most (float 0.5) ~than:8. (words (fun () -> P.v ~ins nodes ~outs))
 
-let grown =
+let law_holds_as_v (d, off) =
+  let check what (p : P.t) =
+    equal ~msg:what structural p (P.v ~ins:p.ins p.nodes ~outs:p.outs)
+  in
+  let ins = Iarray.of_array d.ins in
+  let exprs = Array.map any (typed d) in
+  check "of_exprs"
+    (P.of_exprs ~ins (Iarray.of_array (Array.map (Array.get exprs) d.outs)));
+  check "subst" (subst ~ins:d.ins (shift off) d)
+
+(* of_node *)
+
+(* One node over drawn operands, its references in and around the operands'
+   range. *)
+let one_node =
   let open Gen in
-  with_pp pp_drawn
-    (let+ ins = array ~size:(int_range 0 3) (of_list ~pp:pp_dtype base_dtypes)
-     and+ n = frequency [ (1, int_range 1 80); (2, int_range 1 400) ]
-     and+ nouts = int_range 1 4
-     and+ seed = int in
-     grow (Random.State.make [| seed |]) ins n nouts)
+  with_pp
+    (fun ppf (ins, n) ->
+      Format.fprintf ppf "%a over [%s]" pp_node n
+        (String.concat "; " (Array.to_list (Array.map name ins))))
+    (let* ins =
+       array ~size:(int_range 0 3) (of_list ~pp:pp_dtype base_dtypes)
+     in
+     let k = Array.length ins in
+     let ref_ = int_range (-1) (k + 1) in
+     let+ n =
+       one_of
+         [
+           map (fun j -> P.In j) ref_;
+           map (fun a -> P.Coord a) (int_range 0 Nx_array.Layout.max_rank);
+           constant ~pp:pp_node (P.Const (f32, P.bits D.Float32 1.5));
+           map
+             (fun j ->
+               P.Op1 (Copy, (if j >= 0 && j < k then ins.(j) else f32), j))
+             ref_;
+           map (fun (j, l) -> P.Op2 (Binary Add, j, l)) (pair ref_ ref_);
+           map (fun (c, j, l) -> P.Op3 (Where, c, j, l)) (triple ref_ ref_ ref_);
+         ]
+     in
+     (ins, n))
 
-(* Whether two of [q]'s constants have the same bits and two dtypes. *)
-let shared_constant (q : P.t) =
-  let consts =
-    List.filter_map
-      (function P.Const (d, b) -> Some (d, b) | _ -> None)
-      (Iarray.to_list q.nodes)
+let law_of_node (ins, n) =
+  let k = Array.length ins in
+  let built f =
+    match f () with p -> Some p | exception Invalid_argument _ -> None
   in
-  List.exists
-    (fun (d, b) -> List.exists (fun (d', b') -> b = b' && not (same d d')) consts)
-    consts
+  let by_v =
+    built (fun () ->
+        P.v ~ins:(Iarray.of_array ins)
+          (Iarray.init (k + 1) (fun i -> if i < k then P.In i else n))
+          ~outs:[| k |])
+  in
+  cover "built" (Option.is_some by_v);
+  cover "refused" (Option.is_none by_v);
+  equal (option structural) by_v
+    (built (fun () -> P.of_node ~ins:(Iarray.of_array ins) n))
 
-let law_of_grown_exprs (d, seed) =
-  let q = check_exprs d seed in
-  let n = Iarray.length q.nodes and r = Array.length (pruned d).nodes in
-  let nodes = Iarray.to_list q.nodes in
-  let has f = List.exists f nodes in
-  let is_nan (D.Any dt) b =
-    match D.kind dt with Float -> Float.is_nan (element dt b) | _ -> false
-  in
-  let is_minus_zero (D.Any dt) b =
-    match D.kind dt with
-    | Float ->
-        let v = element dt b in
-        v = 0. && Float.sign_bit v
-    | _ -> false
-  in
-  cover "at most 40 nodes" (n <= 40);
-  cover "41 to 80 nodes" (n > 40 && n <= 80);
-  cover "over 128 nodes" (n > 128);
-  cover "a merge" (n < r);
-  cover "a node unreached" (r < Array.length d.nodes);
-  let rec repeats = function [] -> false | o :: os -> List.mem o os || repeats os in
-  cover "an output repeated" (repeats (Array.to_list d.outs));
-  cover "a -0. constant" (has (function P.Const (d, b) -> is_minus_zero d b | _ -> false));
-  cover "a NaN constant" (has (function P.Const (d, b) -> is_nan d b | _ -> false));
-  cover "one constant's bits in two dtypes" (shared_constant q);
-  cover "a Where over two nodes"
-    (has (function P.Op3 (Where, _, b, c) -> b <> c | _ -> false));
-  cover "a Where over one node" (has (function P.Op3 (Where, _, b, c) -> b = c | _ -> false));
-  cover "an Fma over three nodes"
-    (has (function P.Op3 (Fma, a, b, c) -> a <> b && b <> c && a <> c | _ -> false));
-  cover "an Fma over one node" (has (function P.Op3 (Fma, a, b, c) -> a = b && b = c | _ -> false))
+(* dtype *)
 
-let test_of_exprs_two_builds () =
-  (* Two builds of one chain of 15000 nodes, each node a constant or a sum
-     over the last: apart as values, one program, both outputs its last
-     node. *)
-  let chain () =
-    let y = ref (P.E.input 0 D.Int64) in
-    for i = 1 to 7499 do
-      y := P.E.(!y + const D.Int64 (Int64.of_int i))
-    done;
-    P.E.any !y
-  in
-  let q = P.of_exprs ~ins:[| D.Any D.Int64 |] [| chain (); chain () |] in
-  equal ~msg:"nodes" int 14999 (Iarray.length q.nodes);
-  equal ~msg:"outs" (array int) [| 14998; 14998 |] (Iarray.to_array q.outs)
+(* Each node's dtype as dtype states it: its operand's for In, int64 for Coord,
+   the one it names for Const and Op1, its operands' for a Binary kind, bool for
+   a Compare kind, and its last two operands' for Op3. *)
+let stated_dtypes d =
+  let t = Array.make (Array.length d.nodes) i64 in
+  Array.iteri
+    (fun i n ->
+      t.(i) <-
+        (match n with
+        | P.In k -> d.ins.(k)
+        | Coord _ -> i64
+        | Const (dt, _) | Op1 (_, dt, _) -> dt
+        | Op2 (Binary _, a, _) -> t.(a)
+        | Op2 (Compare _, _, _) -> boolean
+        | Op3 (_, _, b, _) -> t.(b)))
+    d.nodes;
+  t
 
-let test_of_exprs_fresh_copies () =
-  (* A sum of two fresh builds of one sum, 16 levels deep: 2^17 - 1
-     expressions, apart as values, of 17 nodes. A lowering that scanned
-     its walked expressions while it held few nodes would compare billions
-     of pairs. *)
-  let rec tree d =
-    if d = 0 then P.E.input 0 D.Int64
-    else
-      let a = tree (d - 1) in
-      let b = tree (d - 1) in
-      P.E.(a + b)
-  in
-  let q = P.of_exprs ~ins:[| D.Any D.Int64 |] [| P.E.any (tree 16) |] in
+let law_dtype d =
+  let p = program d in
+  equal (array string)
+    (Array.map name (stated_dtypes d))
+    (Array.init (Array.length d.nodes) (fun i -> name (P.dtype p i)))
+
+let test_dtype_refuses at =
+  let p = P.v ~ins:[| f32 |] [| P.In 0 |] ~outs:[| 0 |] in
+  raises_match Exn.invalid_arg (fun () -> P.dtype p at)
+
+(* is_identity *)
+
+let identity = { ins = [| f32 |]; nodes = [| P.In 0 |]; outs = [| 0 |] }
+
+(* Programs beside the identity that is_identity tells apart. *)
+let near_identities =
+  [
+    identity;
+    { identity with nodes = [| In 0; Op1 (Copy, f32, 0) |]; outs = [| 1 |] };
+    { identity with nodes = [| In 0; In 0 |]; outs = [| 1 |] };
+    { identity with outs = [| 0; 0 |] };
+    { identity with ins = [| f32; f32 |] };
+    { identity with ins = [||]; nodes = [| Const (f32, P.bits D.Float32 1.) |] };
+  ]
+
+let law_identity d =
   let want =
-    Array.init 17 (fun i : P.node ->
-        if i = 0 then In 0 else Op2 (Binary Add, i - 1, i - 1))
+    Array.length d.ins = 1
+    && Array.length d.outs = 1
+    && d.nodes.(d.outs.(0)) = P.In 0
   in
-  equal ~msg:"nodes" (array node) want (Iarray.to_array q.nodes);
-  equal ~msg:"outs" (array int) [| 16 |] (Iarray.to_array q.outs)
+  cover "the identity" want;
+  cover "not the identity" (not want);
+  satisfies
+    ~claim:(if want then "is_identity" else "not is_identity")
+    structural
+    (fun p -> P.is_identity p = want)
+    (program d)
 
-(* Each kind function makes the node its kind's constructor makes. *)
-let test_exprs_kind_functions () =
-  let ins = [| D.Any D.Float32; D.Any D.Float32; D.Any D.Bool; D.Any D.Uint64 |] in
-  let x = P.E.input 0 D.Float32 and y = P.E.input 1 D.Float32 in
-  let c = P.E.input 2 D.Bool and w = P.E.input 3 D.Uint64 in
-  let lowered e = (P.of_exprs ~ins:(Iarray.of_array ins) [| e |]).nodes in
-  let same name e e' =
-    equal ~msg:name (array node) (Iarray.to_array (lowered e'))
-      (Iarray.to_array (lowered e))
+(* single and is_single *)
+
+(* Whether [n] reads [k] operands, each once, in order. *)
+let reads_in_order k (n : P.node) =
+  match n with
+  | Const _ | Coord _ -> k = 0
+  | Op1 (_, _, 0) -> k = 1
+  | Op2 (_, 0, 1) -> k = 2
+  | Op3 (_, 0, 1, 2) -> k = 3
+  | In _ | Op1 _ | Op2 _ | Op3 _ -> false
+
+(* A kind of two and of three operands reading them in order, and one out of
+   order, which one_node seldom draws. *)
+let singles =
+  [
+    ([| f32; f32 |], P.Op2 (Compare Less, 0, 1));
+    ([| boolean; f32; f32 |], P.Op3 (Where, 0, 1, 2));
+    ([| f32; f32 |], P.Op2 (Binary Sub, 1, 0));
+  ]
+
+let law_single (ins, n) =
+  let p =
+    match P.of_node ~ins:(Iarray.of_array ins) n with
+    | p -> Some p
+    | exception Invalid_argument _ -> None
   in
-  let u k f = same (unary_name k) (P.E.any (f x)) (P.E.any (P.E.op1 (Unary k) D.Float32 x)) in
-  let b k f = same (binary_name k) (P.E.any (f x y)) (P.E.any (P.E.binary k x y)) in
-  let cmp k f = same (compare_name k) (P.E.any (f x y)) (P.E.any (P.E.compare k x y)) in
-  let complex_only = P.[ Asinh; Acosh; Atanh ] in
-  List.iter2 u
-    (List.filter (fun k -> not (List.mem k complex_only)) unaries)
+  let in_order = reads_in_order (Array.length ins) n in
+  cover "a node reading its operands in order" (Option.is_some p && in_order);
+  cover "a node reading them otherwise" (Option.is_some p && not in_order);
+  cover "three operands in order"
+    (Option.is_some p && in_order && Array.length ins = 3);
+  match p with
+  | None -> ()
+  | Some p ->
+      equal (option node) (if in_order then Some n else None) (P.single p)
+
+(* Programs of two outputs and of two kind nodes. *)
+let not_of_node =
+  [
+    ( "two outputs",
+      {
+        ins = [| f32 |];
+        nodes = [| In 0; Op1 (Unary Neg, f32, 0) |];
+        outs = [| 1; 1 |];
+      } );
+    ( "two kind nodes",
+      {
+        ins = [| f32 |];
+        nodes = [| In 0; Op1 (Unary Neg, f32, 0); Op1 (Unary Neg, f32, 1) |];
+        outs = [| 2 |];
+      } );
+  ]
+
+let test_not_single (_, d) = equal (option node) None (P.single (program d))
+
+let law_is_single d =
+  let p = program d in
+  let last = Iarray.get p.nodes (Iarray.length p.nodes - 1) in
+  let want = P.single p = Some last in
+  cover "a single program" want;
+  cover "another program" (not want);
+  satisfies
+    ~claim:(if want then "is_single" else "not is_single")
+    structural
+    (fun p -> P.is_single p = want)
+    p
+
+let is_single_examples =
+  List.map
+    (fun (ins, n) -> drawn_of (P.of_node ~ins:(Iarray.of_array ins) n))
+    singles
+  @ List.map snd not_of_node
+
+let test_is_single_allocates () =
+  let single = P.of_node ~ins:[| f32; f32 |] (Op2 (Binary Add, 0, 1)) in
+  let two = program (List.assoc "two kind nodes" not_of_node) in
+  at_most ~msg:"a single program" (float 0.5) ~than:0.
+    (words (fun () -> P.is_single single));
+  at_most ~msg:"two kind nodes" (float 0.5) ~than:0.
+    (words (fun () -> P.is_single two))
+
+(* E *)
+
+let test_expr_dtypes () =
+  let x = P.E.input 0 D.Float32 in
+  equal (list string)
+    [ "float16"; "int64"; "int8"; "bool"; "uint4" ]
     P.E.
       [
-        neg; recip; abs; sign; sqrt; exp; exp2; log; log2; log1p; expm1; sin; cos;
-        tan; asin; acos; atan; sinh; cosh; tanh; erf; floor; ceil; round; trunc;
-      ];
-  let z = P.E.input 0 D.Complex64 in
-  let lowered_z e = (P.of_exprs ~ins:[| D.Any D.Complex64 |] [| e |]).nodes in
-  List.iter2
-    (fun k f ->
-      equal ~msg:(unary_name k) (array node)
-        (Iarray.to_array (lowered_z (P.E.any (P.E.op1 (Unary k) D.Complex64 z))))
-        (Iarray.to_array (lowered_z (P.E.any (f z)))))
-    complex_only P.E.[ asinh; acosh; atanh ];
-  List.iter2 b
-    P.[ Add; Sub; Mul; Fdiv; Mod; Pow; Atan2; Maximum; Minimum ]
-    P.E.[ add; sub; mul; fdiv; rem; pow; atan2; maximum; minimum ];
-  List.iter2 cmp compares P.E.[ equal; not_equal; less; less_equal ];
-  same "threefry" (P.E.any (P.E.threefry w w)) (P.E.any (P.E.binary Threefry w w));
-  same "logxor" (P.E.any (P.E.logxor w w)) (P.E.any (P.E.binary Xor w w));
-  same "copy" (P.E.any (P.E.copy x)) (P.E.any (P.E.op1 Copy D.Float32 x));
-  same "cast" (P.E.any (P.E.cast D.Int8 x)) (P.E.any (P.E.op1 Cast D.Int8 x));
-  same "cast into its own dtype" (P.E.any (P.E.cast D.Float32 x)) (P.E.any x);
-  same "bitcast" (P.E.any (P.E.bitcast D.Int32 x)) (P.E.any (P.E.op1 Bitcast D.Int32 x));
-  same "where" (P.E.any (P.E.where c x y)) (P.E.any (P.E.op3 Where c x y));
-  same "fma" (P.E.any (P.E.fma x y x)) (P.E.any (P.E.op3 Fma x y x))
+        D.name (dtype (input 1 D.Float16));
+        D.name (dtype (coord 0));
+        D.name (dtype (cast D.Int8 x));
+        D.name (dtype (less x x));
+        D.name (dtype (const D.Uint4 3));
+      ]
 
-(* Each operator over two operands lowers as the function prog.mli names,
-   [>] and [>=] with their operands swapped. *)
+(* Operands of the kind functions' rows: two float32, a bool, a uint64, a
+   complex64 and an int32. *)
+let fn_ins = [| f32; f32; boolean; D.Any D.Uint64; D.Any D.Complex64; i32 |]
+
+(* Each row: a kind function's expression, then its kind's constructor's. *)
+let kind_functions =
+  let x = P.E.input 0 D.Float32 and y = P.E.input 1 D.Float32 in
+  let c = P.E.input 2 D.Bool and w = P.E.input 3 D.Uint64 in
+  let z = P.E.input 4 D.Complex64 and n = P.E.input 5 D.Int32 in
+  let u k f =
+    (unary_name k, P.E.any (f x), P.E.(any (op1 (Unary k) D.Float32 x)))
+  in
+  let uz k f =
+    (unary_name k, P.E.any (f z), P.E.(any (op1 (Unary k) D.Complex64 z)))
+  in
+  let b k f = (binary_name k, P.E.any (f x y), P.E.(any (binary k x y))) in
+  let bi k f =
+    (binary_name k ^ " on int32", P.E.any (f n n), P.E.(any (binary k n n)))
+  in
+  let bw k f =
+    (binary_name k ^ " on uint64", P.E.any (f w w), P.E.(any (binary k w w)))
+  in
+  let cmp k f = (compare_name k, P.E.any (f x y), P.E.(any (compare k x y))) in
+  P.E.
+    [
+      u Neg neg;
+      u Recip recip;
+      u Abs abs;
+      u Sign sign;
+      u Sqrt sqrt;
+      u Exp exp;
+      u Exp2 exp2;
+      u Log log;
+      u Log2 log2;
+      u Log1p log1p;
+      u Expm1 expm1;
+      u Sin sin;
+      u Cos cos;
+      u Tan tan;
+      u Asin asin;
+      u Acos acos;
+      u Atan atan;
+      u Sinh sinh;
+      u Cosh cosh;
+      u Tanh tanh;
+      uz Asinh asinh;
+      uz Acosh acosh;
+      uz Atanh atanh;
+      u Erf erf;
+      u Floor floor;
+      u Ceil ceil;
+      u Round round;
+      u Trunc trunc;
+      b Add add;
+      b Sub sub;
+      b Mul mul;
+      b Fdiv fdiv;
+      b Mod rem;
+      b Pow pow;
+      b Atan2 atan2;
+      b Maximum maximum;
+      b Minimum minimum;
+      bi Idiv idiv;
+      bi And logand;
+      bi Or logor;
+      bw Xor logxor;
+      bw Threefry threefry;
+      cmp Equal equal;
+      cmp Not_equal not_equal;
+      cmp Less less;
+      cmp Less_equal less_equal;
+      ("copy", any (copy x), any (op1 Copy D.Float32 x));
+      ("cast", any (cast D.Int8 x), any (op1 Cast D.Int8 x));
+      ("bitcast", any (bitcast D.Int32 x), any (op1 Bitcast D.Int32 x));
+      ("where", any (where c x y), any (op3 Where c x y));
+      ("fma", any (fma x y x), any (op3 Fma x y x));
+    ]
+
+let of_expr ~ins e = P.of_exprs ~ins:(Iarray.of_array ins) [| e |]
+
+let test_kind_function (_, got, want) =
+  equal structural (of_expr ~ins:fn_ins want) (of_expr ~ins:fn_ins got)
+
+let test_cast_own_dtype () =
+  let x = P.E.input 0 D.Float32 in
+  equal (array node) [| P.In 0 |]
+    (Iarray.to_array (of_expr ~ins:[| f32 |] P.E.(any (cast D.Float32 x))).nodes)
+
+(* Each operator over two operands lowers as the function prog.mli names, [>]
+   and [>=] with their operands swapped. *)
 let operators =
   let x = P.E.input 0 D.Float32 and y = P.E.input 1 D.Float32 in
   let c = P.E.input 0 D.Bool and e = P.E.input 1 D.Bool in
   let v = P.E.input 0 D.Uint64 and w = P.E.input 1 D.Uint64 in
-  let f32 = D.Any D.Float32 and b = D.Any D.Bool and u64 = D.Any D.Uint64 in
+  let u64 = D.Any D.Uint64 in
   P.E.
     [
-      ("~-", f32, any (~-x), any (neg x));
+      ("~-", f32, any ~-x, any (neg x));
       ("+", f32, any (x + y), any (add x y));
       ("-", f32, any (x - y), any (sub x y));
       ("*", f32, any (x * y), any (mul x y));
@@ -1326,8 +1268,8 @@ let operators =
       ("land", u64, any (v land w), any (logand v w));
       ("lor", u64, any (v lor w), any (logor v w));
       ("lxor", u64, any (v lxor w), any (logxor v w));
-      ("&&", b, any (c && e), any (logand c e));
-      ("||", b, any (c || e), any (logor c e));
+      ("&&", boolean, any (c && e), any (logand c e));
+      ("||", boolean, any (c || e), any (logor c e));
       ("=", f32, any (x = y), any (equal x y));
       ("<>", f32, any (x <> y), any (not_equal x y));
       ("<", f32, any (x < y), any (less x y));
@@ -1337,15 +1279,19 @@ let operators =
     ]
 
 let test_operator (_, dt, e, want) =
-  let of_expr e = P.of_exprs ~ins:[| dt; dt |] [| e |] in
-  equal structural (of_expr want) (of_expr e)
+  equal structural
+    (of_expr ~ins:[| dt; dt |] want)
+    (of_expr ~ins:[| dt; dt |] e)
 
-let test_exprs_refuse () =
-  let f32 = D.Any D.Float32 and i32 = D.Any D.Int32 in
-  let refuses ~msg want f =
-    let got = match f () with _ -> false | exception Invalid_argument _ -> true in
-    equal ~msg bool want got
-  in
+(* [f ()] returns, or the test fails naming what it refused. *)
+let takes ~msg f =
+  match f () with
+  | _ -> ()
+  | exception Invalid_argument m -> failf "%s: refused (%s)" msg m
+
+let refuses ?msg f = raises_match ?msg Exn.invalid_arg f
+
+let test_constructors () =
   List.iter
     (fun (D.Any a) ->
       let x = P.E.input 0 a in
@@ -1353,89 +1299,433 @@ let test_exprs_refuse () =
         (fun (D.Any y) ->
           List.iter
             (fun k ->
-              refuses ~msg:(strf "op1 %s %s %s" (op1_name k) (D.name a) (D.name y))
-                (not (P.accepts1 k a y))
-                (fun () -> P.E.op1 k y x))
+              let msg =
+                strf "op1 %s %s %s" (op1_name k) (D.name a) (D.name y)
+              in
+              let f () = P.E.op1 k y x in
+              if P.accepts1 k a y then takes ~msg f else refuses ~msg f)
             op1s)
-        base_dtypes;
+        D.all;
       List.iter
-        (fun k ->
-          refuses ~msg:(strf "binary %s %s" (binary_name k) (D.name a))
-            (not (P.accepts2 (Binary k) a))
-            (fun () -> P.E.binary k x x))
+        (fun (k, kname) ->
+          let msg = strf "binary %s %s" kname (D.name a) in
+          let f () = P.E.binary k x x in
+          if P.accepts2 (Binary k) a then takes ~msg f else refuses ~msg f)
         binaries;
       List.iter
         (fun (D.Any c) ->
           let c = P.E.input 1 c in
           List.iter
             (fun k ->
-              refuses
-                ~msg:(strf "op3 %s %s %s" (op3_name k) (D.name (P.E.dtype c)) (D.name a))
-                (not (P.accepts3 k (P.E.dtype c) a))
-                (fun () -> P.E.op3 k c x x))
-            P.[ Where; Fma ])
-        base_dtypes)
-    base_dtypes;
-  (* The kinds of floats and complex numbers check their operand, as no type
-     states that domain. *)
-  let z = P.E.input 0 D.Complex64 and n = P.E.input 0 D.Int32 in
-  let takes name (f : 'v 's. ('v, 's) P.E.t -> ('v, 's) P.E.t) =
-    refuses ~msg:(name ^ " complex64") false (fun () -> f z);
-    refuses ~msg:(name ^ " int32") true (fun () -> f n)
-  in
-  takes "sqrt" P.E.sqrt;
-  takes "exp" P.E.exp;
-  takes "exp2" P.E.exp2;
-  takes "log" P.E.log;
-  takes "log2" P.E.log2;
-  takes "sin" P.E.sin;
-  takes "cos" P.E.cos;
-  takes "tan" P.E.tan;
-  takes "asin" P.E.asin;
-  takes "acos" P.E.acos;
-  takes "atan" P.E.atan;
-  takes "sinh" P.E.sinh;
-  takes "cosh" P.E.cosh;
-  takes "tanh" P.E.tanh;
-  takes "asinh" P.E.asinh;
-  takes "acosh" P.E.acosh;
-  takes "atanh" P.E.atanh;
-  raises_match ~msg:"an axis past max_rank" Exn.invalid_arg (fun () ->
-      P.E.coord Nx_array.Layout.max_rank);
-  raises_match ~msg:"a negative axis" Exn.invalid_arg (fun () -> P.E.coord (-1));
-  raises_match ~msg:"a negative operand" Exn.invalid_arg (fun () ->
-      P.E.input (-1) D.Float32);
-  let x = P.E.any (P.E.input 0 D.Float32) in
-  raises_match ~msg:"no output" Exn.invalid_arg (fun () ->
-      P.of_exprs ~ins:[| f32 |] [||]);
-  raises_match ~msg:"an operand past ins" Exn.invalid_arg (fun () ->
-      P.of_exprs ~ins:[||] [| x |]);
-  raises_match ~msg:"an operand of another dtype" Exn.invalid_arg (fun () ->
-      P.of_exprs ~ins:[| i32 |] [| x |])
+              let msg =
+                strf "op3 %s %s %s" (op3_name k)
+                  (D.name (P.E.dtype c))
+                  (D.name a)
+              in
+              let f () = P.E.op3 k c x x in
+              if P.accepts3 k (P.E.dtype c) a then takes ~msg f
+              else refuses ~msg f)
+            op3s)
+        D.all)
+    D.all
 
-(* No bound on a program's operands and outputs: twenty operands, each an
-   output, an expression of operand 20, and a node over operand 19. *)
-let test_many_operands () =
-  let f32 = D.Any D.Float32 in
-  let ins n = Iarray.init n (fun _ -> f32) in
-  let p =
-    P.v ~ins:(ins 20) (Iarray.init 20 (fun k -> P.In k))
-      ~outs:(Iarray.init 20 Fun.id)
-  in
-  equal ~msg:"v" (array int) (Array.init 20 Fun.id) (Iarray.to_array p.outs);
-  let q = P.of_exprs ~ins:(ins 21) [| P.E.(any (input 20 D.Float32)) |] in
-  equal ~msg:"of_exprs" (array node) [| P.In 20 |] (Iarray.to_array q.nodes);
-  let r = P.of_node ~ins:(ins 20) (Op2 (Binary Add, 0, 19)) in
-  equal ~msg:"of_node" node (Op2 (Binary Add, 0, 19))
-    (Iarray.get r.nodes 20)
+(* The kind functions whose operands any dtype types: each checks its operands
+   as v does. *)
+type unary_fn = { unary : P.unary; f : 'v 's. ('v, 's) P.E.t -> ('v, 's) P.E.t }
 
-let floats =
-  Gen.one_of
+type binary_fn = {
+  binary : P.binary;
+  g : 'v 's. ('v, 's) P.E.t -> ('v, 's) P.E.t -> ('v, 's) P.E.t;
+}
+
+let unary_fns =
+  P.E.
     [
-      Gen.float;
-      Gen.of_list ~pp:Format.pp_print_float
-        [ 0.; -0.; 1.; -1.5; 448.; 1e30; -1e-40; Float.nan; infinity; neg_infinity ];
+      { unary = Neg; f = neg };
+      { unary = Recip; f = recip };
+      { unary = Abs; f = abs };
+      { unary = Sign; f = sign };
+      { unary = Sqrt; f = sqrt };
+      { unary = Exp; f = exp };
+      { unary = Exp2; f = exp2 };
+      { unary = Log; f = log };
+      { unary = Log2; f = log2 };
+      { unary = Sin; f = sin };
+      { unary = Cos; f = cos };
+      { unary = Tan; f = tan };
+      { unary = Asin; f = asin };
+      { unary = Acos; f = acos };
+      { unary = Atan; f = atan };
+      { unary = Sinh; f = sinh };
+      { unary = Cosh; f = cosh };
+      { unary = Tanh; f = tanh };
+      { unary = Asinh; f = asinh };
+      { unary = Acosh; f = acosh };
+      { unary = Atanh; f = atanh };
+      { unary = Floor; f = floor };
+      { unary = Ceil; f = ceil };
+      { unary = Round; f = round };
+      { unary = Trunc; f = trunc };
     ]
+
+let binary_fns =
+  P.E.
+    [
+      { binary = Add; g = add };
+      { binary = Sub; g = sub };
+      { binary = Mul; g = mul };
+      { binary = Fdiv; g = fdiv };
+      { binary = Idiv; g = idiv };
+      { binary = Mod; g = rem };
+      { binary = Pow; g = pow };
+      { binary = Maximum; g = maximum };
+      { binary = Minimum; g = minimum };
+      { binary = And; g = logand };
+      { binary = Or; g = logor };
+      { binary = Xor; g = logxor };
+    ]
+
+let test_unary_fn r =
+  List.iter
+    (fun (D.Any dt) ->
+      let x = P.E.input 0 dt in
+      let msg = D.name dt and f () = r.f x in
+      if P.accepts1 (Unary r.unary) dt dt then takes ~msg f else refuses ~msg f)
+    D.all
+
+let test_binary_fn r =
+  List.iter
+    (fun (D.Any dt) ->
+      let x = P.E.input 0 dt in
+      let msg = D.name dt and f () = r.g x x in
+      if P.accepts2 (Binary r.binary) dt then takes ~msg f else refuses ~msg f)
+    D.all
+
+let leaf_refusals : (string * (unit -> unit)) list =
+  [
+    ("input -1", fun () -> ignore (P.E.input (-1) D.Float32));
+    ("coord -1", fun () -> ignore (P.E.coord (-1)));
+    ("coord max_rank", fun () -> ignore (P.E.coord Nx_array.Layout.max_rank));
+    ("const int8 128", fun () -> ignore (P.E.const D.Int8 128));
+    ("const uint4 -1", fun () -> ignore (P.E.const D.Uint4 (-1)));
+  ]
+
+let test_leaf_refuses (_, f) = refuses f
+
+(* of_exprs *)
+
+(* A -0. of float32 and an int32 of the same bits, both outputs, which drawn
+   programs reach one run in a few. *)
+let signed_zero =
+  {
+    ins = [||];
+    nodes =
+      [|
+        Const (f32, P.bits D.Float32 (-0.));
+        Const (i32, P.bits D.Int32 Int32.min_int);
+      |];
+    outs = [| 0; 1 |];
+  }
+
+(* Whether two of [q]'s constants have the same bits and two dtypes. *)
+let shared_constant (q : P.t) =
+  let consts =
+    List.filter_map
+      (function P.Const (d, b) -> Some (d, b) | _ -> None)
+      (Iarray.to_list q.nodes)
+  in
+  List.exists
+    (fun (d, b) ->
+      List.exists (fun (d', b') -> b = b' && not (same d d')) consts)
+    consts
+
+let law_of_exprs d =
+  (* The odd outputs from a second build, so that every node they reach is a
+     value apart from the first build's and merges by its structure. *)
+  let first = Array.map any (typed d) and second = Array.map any (typed d) in
+  let out k i = if k mod 2 = 0 then first.(i) else second.(i) in
+  let q =
+    P.of_exprs ~ins:(Iarray.of_array d.ins)
+      (Iarray.of_array (Array.mapi out d.outs))
+  in
+  let n = Iarray.length q.nodes in
+  let reached =
+    Array.fold_left (fun a r -> if r then a + 1 else a) 0 (reach d d.outs)
+  in
+  let has f = Iarray.exists f q.nodes in
+  let float_const (f : float -> bool) =
+    has (function
+      | P.Const (D.Any dt, b) -> (
+          match D.kind dt with Float -> f (element dt b) | _ -> false)
+      | _ -> false)
+  in
+  cover "at most 40 nodes" (n <= 40);
+  cover "41 to 80 nodes" (n > 40 && n <= 80);
+  cover "over 128 nodes" (n > 128);
+  cover "outputs of two builds" (Array.length d.outs >= 2);
+  cover "a merge" (n < reached);
+  cover "a node unreached" (reached < Array.length d.nodes);
+  let rec repeats = function
+    | [] -> false
+    | o :: os -> List.mem o os || repeats os
+  in
+  cover "an output repeated" (repeats (Array.to_list d.outs));
+  cover "a -0. constant" (float_const (fun x -> x = 0. && Float.sign_bit x));
+  cover "a NaN constant" (float_const Float.is_nan);
+  cover "one constant's bits in two dtypes" (shared_constant q);
+  cover "a Where over two nodes"
+    (has (function P.Op3 (Where, _, b, c) -> b <> c | _ -> false));
+  cover "a Where over one node"
+    (has (function P.Op3 (Where, _, b, c) -> b = c | _ -> false));
+  cover "an Fma over three nodes"
+    (has (function
+      | P.Op3 (Fma, a, b, c) -> a <> b && b <> c && a <> c
+      | _ -> false));
+  cover "an Fma over one node"
+    (has (function P.Op3 (Fma, a, b, c) -> a = b && b = c | _ -> false));
+  let nodes, outs = lowered d in
+  equal ~msg:"nodes" (array node) nodes (Iarray.to_array q.nodes);
+  equal ~msg:"outs" (array int) outs (Iarray.to_array q.outs);
+  equal ~msg:"ins" (list string)
+    (Array.to_list (Array.map name d.ins))
+    (List.map name (Iarray.to_list q.ins))
+
+let test_of_exprs_two_builds () =
+  (* Two builds of one chain of 15000 nodes, each node a constant or a sum over
+     the last: apart as values, one program, both outputs its last node. *)
+  let chain () =
+    let y = ref (P.E.input 0 D.Int64) in
+    for i = 1 to 7499 do
+      y := P.E.(!y + const D.Int64 (Int64.of_int i))
+    done;
+    P.E.any !y
+  in
+  let q = P.of_exprs ~ins:[| i64 |] [| chain (); chain () |] in
+  equal ~msg:"nodes" int 14999 (Iarray.length q.nodes);
+  equal ~msg:"outs" (array int) [| 14998; 14998 |] (Iarray.to_array q.outs)
+
+let test_of_exprs_fresh_copies () =
+  (* A sum of two fresh builds of one sum, 16 levels deep: 2^17 - 1 expressions,
+     apart as values, of 17 nodes. A lowering that scanned its walked
+     expressions while it held few nodes would compare billions of pairs. *)
+  let rec tree d =
+    if d = 0 then P.E.input 0 D.Int64
+    else
+      let a = tree (d - 1) in
+      let b = tree (d - 1) in
+      P.E.(a + b)
+  in
+  let q = P.of_exprs ~ins:[| i64 |] [| P.E.any (tree 16) |] in
+  let want =
+    Array.init 17 (fun i : P.node ->
+        if i = 0 then In 0 else Op2 (Binary Add, i - 1, i - 1))
+  in
+  equal ~msg:"nodes" (array node) want (Iarray.to_array q.nodes);
+  equal ~msg:"outs" (array int) [| 16 |] (Iarray.to_array q.outs)
+
+let of_exprs_refusals =
+  let x = P.E.any (P.E.input 0 D.Float32) in
+  [
+    ("no output", [| f32 |], [||]);
+    ("an operand past ins", [||], [| x |]);
+    ("an operand of another dtype", [| i32 |], [| x |]);
+  ]
+
+let test_of_exprs_refuses (_, ins, outs) =
+  refuses (fun () ->
+      P.of_exprs ~ins:(Iarray.of_array ins) (Iarray.of_array outs))
+
+(* subst *)
+
+(* of_exprs's program over [ins] of [d]'s outputs [picked], each leaf replaced
+   as [f] says: subst's result as prog.mli defines it. *)
+let substituted ~ins f d picked =
+  let e = typed ~leaf:f d in
+  P.of_exprs ~ins:(Iarray.of_array ins)
+    (Iarray.of_array (Array.map (fun o -> any e.(o)) picked))
+
+let law_subst (d, off) =
+  let reached = reach d d.outs in
+  let coord f =
+    List.exists Fun.id
+      (List.mapi
+         (fun i nd ->
+           match nd with P.Coord c -> reached.(i) && f off.(c) | _ -> false)
+         (Array.to_list d.nodes))
+  in
+  cover "a coordinate shifted" (coord (fun o -> o <> 0));
+  cover "a coordinate kept" (coord (fun o -> o = 0));
+  cover "no leaf replaced" (Array.for_all (fun o -> o = 0) off);
+  let s = subst ~ins:d.ins (shift off) d in
+  cover "fewer nodes than drawn" (Iarray.length s.nodes < Array.length d.nodes);
+  equal structural (substituted ~ins:d.ins (shift off) d d.outs) s
+
+(* A drawn program, and one to four outputs picked among its own by index. *)
+let selecting =
+  let open Gen in
+  with_pp
+    (fun ppf (d, sel) ->
+      Format.fprintf ppf "%a, picking %a" pp_drawn d Elements.pp_ints sel)
+    (let+ d = drawn
+     and+ sel = array ~size:(int_range 1 4) (int_range 0 1_000) in
+     (d, Array.map (fun k -> k mod Array.length d.outs) sel))
+
+let keep _ = None
+
+let law_subst_calls (d, sel) =
+  let calls = ref [] in
+  let f n =
+    calls := n :: !calls;
+    None
+  in
+  ignore
+    (P.subst ~outs:(Iarray.of_array sel) ~ins:(Iarray.of_array d.ins) f
+       (program d));
+  let picked = Array.map (Array.get d.outs) sel in
+  let reached = reach d picked in
+  let is_leaf = function P.In _ | Coord _ | Const _ -> true | _ -> false in
+  let leaves =
+    List.filteri (fun i nd -> reached.(i) && is_leaf nd) (Array.to_list d.nodes)
+  in
+  cover "a leaf unreached"
+    (Array.exists Fun.id
+       (Array.mapi (fun i nd -> is_leaf nd && not reached.(i)) d.nodes));
+  equal (list node) (List.sort compare leaves) (List.sort compare !calls)
+
+let law_subst_outs (d, sel) =
+  let n = Array.length sel in
+  cover "an output twice"
+    (List.length (List.sort_uniq Int.compare (Array.to_list sel)) < n);
+  cover "an output dropped"
+    (List.exists
+       (fun o -> not (Array.mem o sel))
+       (List.init (Array.length d.outs) Fun.id));
+  cover "outputs reordered"
+    (List.exists (fun j -> sel.(j) > sel.(j + 1)) (List.init (n - 1) Fun.id));
+  equal structural
+    (substituted ~ins:d.ins keep d (Array.map (Array.get d.outs) sel))
+    (subst ~outs:(Iarray.of_array sel) ~ins:d.ins keep d)
+
+let without k a =
+  Array.of_list (List.filteri (fun i _ -> i <> k) (Array.to_list a))
+
+(* The substitution that binds operand [k] of [ins] to [x]: [In k] is [x], and
+   [In i] for [i > k] is [In (i - 1)]. *)
+let binds ins k x : P.node -> ex option = function
+  | P.In i when i = k -> Some x
+  | In i when i > k ->
+      let (D.Any dt) = ins.(i) in
+      Some (Ex (P.E.input (i - 1) dt))
+  | In _ | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _ -> None
+
+(* [d]'s operand [k] bound to [x], an expression over its other operands: the
+   program over them that substituted states. *)
+let check_bind d k x =
+  let others = without k d.ins in
+  let s = subst ~ins:others (binds d.ins k x) d in
+  equal ~msg:"ins" (list string)
+    (Array.to_list (Array.map name others))
+    (List.map name (Iarray.to_list s.ins));
+  equal structural (substituted ~ins:others (binds d.ins k x) d d.outs) s
+
+(* A drawn program over one operand or more, an operand [k] of it, and an
+   expression drawn over the others, cast to operand [k]'s dtype. *)
+let binding =
+  let open Gen in
+  with_pp
+    (fun ppf (d, k, x) ->
+      Format.fprintf ppf "%a,@ operand %d,@ bound to %a" pp_drawn d k pp_drawn x)
+    (let* d = drawn_over (int_range 1 3) in
+     let+ k = int_range 0 (Array.length d.ins - 1)
+     and+ n = int_range 1 6
+     and+ choices = array ~size:(constant 24) (int_range 0 0x3FFF_FFFF) in
+     (d, k, grow (without k d.ins) choices n 1))
+
+let law_bind (d, k, x) =
+  cover "p reads operand k" (Array.mem (P.In k) d.nodes);
+  cover "an operand after k" (k < Array.length d.ins - 1);
+  cover "k is 0" (k = 0);
+  let (D.Any dt) = d.ins.(k) in
+  let (Ex e) = (typed x).(x.outs.(0)) in
+  check_bind d k (Ex (P.E.cast dt e))
+
+let test_bind_leaf (_, d, k, x) = check_bind (drawn_of d) k x
+
+let bind_leaves =
+  let p ins nodes outs =
+    P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
+      ~outs:(Iarray.of_array outs)
+  in
+  [
+    ( "an operand",
+      p [| f32; f32 |] [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |] [| 2 |],
+      0,
+      Ex (P.E.input 0 D.Float32) );
+    ( "a coordinate",
+      p [| i64; f32 |]
+        [| P.In 0; In 1; Op1 (Cast, f32, 0); Op2 (Binary Mul, 2, 1) |]
+        [| 3 |],
+      0,
+      Ex (P.E.coord 1) );
+    ( "a constant, output as p's In k",
+      p [| f32; f64 |] [| P.In 0; In 1 |] [| 0; 1 |],
+      0,
+      Ex (P.E.const D.Float32 2.5) );
+  ]
+
+(* A program of a float32 operand, a float64 operand and a coordinate, each an
+   output. *)
+let three_leaves () =
+  P.of_exprs ~ins:[| f32; f64 |]
+    P.E.[| any (input 0 D.Float32); any (input 1 D.Float64); any (coord 0) |]
+
+let in1 x : P.node -> P.E.any option = function P.In 1 -> Some x | _ -> None
+
+let test_replaced_leaf () =
+  let s =
+    P.subst ~ins:[| f32 |]
+      (in1 P.E.(any (const D.Float64 1.)))
+      (three_leaves ())
+  in
+  equal (list string) [ "float32" ] (List.map name (Iarray.to_list s.ins))
+
+let test_unreached_leaf () =
+  let unreached : P.node -> P.E.any option = function
+    | P.In 1 -> failwith "subst passed f a leaf no picked output reaches"
+    | _ -> None
+  in
+  let s = P.subst ~outs:[| 0; 2 |] ~ins:[| f32 |] unreached (three_leaves ()) in
+  equal (array node) [| P.In 0; Coord 0 |] (Iarray.to_array s.nodes)
+
+let subst_refusals =
+  [
+    ( "an expression of another dtype",
+      None,
+      [| f32 |],
+      in1 P.E.(any (const D.Float32 1.)) );
+    ( "a coordinate's expression of another dtype",
+      None,
+      [| f32; f64 |],
+      function P.Coord _ -> Some P.E.(any (const D.Int32 1l)) | _ -> None );
+    ( "a read of an operand the result lacks",
+      None,
+      [| f32 |],
+      in1 P.E.(any (cast D.Float64 (input 1 D.Float32))) );
+    ( "a read of an operand at another dtype",
+      None,
+      [| f32 |],
+      in1 P.E.(any (input 0 D.Float64)) );
+    ("a kept operand past ins", None, [| f32 |], keep);
+    ("a kept operand at another dtype", None, [| f32; f32 |], keep);
+    ("an output past p's", Some [| 3 |], [| f32; f64 |], keep);
+    ("a negative output", Some [| -1 |], [| f32; f64 |], keep);
+    ("no output", Some [||], [| f32; f64 |], keep);
+  ]
+
+let test_subst_refuses (_, outs, ins, f) =
+  let outs = Option.map Iarray.of_array outs in
+  refuses (fun () ->
+      P.subst ?outs ~ins:(Iarray.of_array ins) f (three_leaves ()))
 
 (* Ranges *)
 
@@ -1446,7 +1736,7 @@ let unsigned (D.Any dt) = D.is D.Unsigned dt
 let value (D.Any dt) e =
   match (D.kind dt, D.bits dt) with
   | Boolean, _ -> if e.[0] = '\000' then 0L else 1L
-  | Signed, 4 -> Int64.of_int (((Char.code e.[0] land 15) lxor 8) - 8)
+  | Signed, 4 -> Int64.of_int ((Char.code e.[0] land 15 lxor 8) - 8)
   | Unsigned, 4 -> Int64.of_int (Char.code e.[0] land 15)
   | Signed, 8 -> Int64.of_int (String.get_int8 e 0)
   | Unsigned, 8 -> Int64.of_int (String.get_uint8 e 0)
@@ -1495,18 +1785,23 @@ let extremes (D.Any dt as d) =
 let ints =
   D.
     [
-      Any Int8; Any Uint8; Any Int16; Any Uint16; Any Int32; Any Uint32;
-      Any Int64; Any Uint64; Any Int4; Any Uint4;
+      Any Int8;
+      Any Uint8;
+      Any Int16;
+      Any Uint16;
+      Any Int32;
+      Any Uint32;
+      Any Int64;
+      Any Uint64;
+      Any Int4;
+      Any Uint4;
     ]
 
-let i64 = D.Any D.Int64
-let boolean = D.Any D.Bool
-let bit = D.Any D.Bit
 let booleans = [ boolean; bit ]
 let is_bool (D.Any dt) = D.is D.Boolean dt
 
-(* A value of [d]: small, at or beside an end, or anywhere; a bool's byte
-   any byte, true where it is not 0. *)
+(* A value of [d]: small, at or beside an end, or anywhere; a bool's byte any
+   byte, true where it is not 0. *)
 let draw_value d =
   let open Gen in
   if same d boolean then of_list [ 0L; 0L; 1L; 1L; 2L; 128L; 255L ]
@@ -1540,7 +1835,7 @@ let flipped (D.Any dt) =
   | D.Uint4 -> D.Any D.Int4
   | dt -> invalid_arg (D.name dt)
 
-(* A pair program's tree, each node of the dtype its maker gives it, over
+(* A ranged program's tree, each node of the dtype its maker gives it, over
    operand 0 of float32 and the loads [loads], whose operand [k + 1] is
    [loads.(k)]. *)
 type tree =
@@ -1557,8 +1852,8 @@ let rec dtype_of_tree = function
 
 let const d x = Leaf (P.Const (d, element_of d x), d)
 
-(* A leaf of [d]: a coordinate, a constant, or a load, each cast to [d]
-   where it is of another dtype. *)
+(* A leaf of [d]: a coordinate, a constant, or a load, each cast to [d] where it
+   is of another dtype. *)
 let leaf loads (D.Any dt as d) =
   let open Gen in
   let cast l = if same (dtype_of_tree l) d then l else T1 (Cast, d, l) in
@@ -1664,7 +1959,10 @@ let rec tree loads depth (D.Any dt as d) =
           T2 (Binary b, x, y)
         else
           let byte = D.bits dt = 8 in
-          let* s = of_list ~pp:pp_dtype (flipped d :: (if byte then [ boolean ] else [])) in
+          let* s =
+            of_list ~pp:pp_dtype
+              (flipped d :: (if byte then [ boolean ] else []))
+          in
           let+ x = at s in
           T1 (Bitcast, d, x)
     | Complex -> leaf ()
@@ -1704,13 +2002,14 @@ let lower t =
   ignore (go t : int);
   Array.of_list (List.rev !nodes)
 
-let ins c = Array.append [| f32 |] c.loads
+let ranged_ins c = Array.append [| f32 |] c.loads
 
 (* The program of every integer and boolean node of [c] as an output. *)
 let all_ranged c =
   let p =
-    P.v ~ins:(Iarray.of_array (ins c)) (Iarray.of_array c.nodes)
-      ~outs:[| 0 |]
+    P.v
+      ~ins:(Iarray.of_array (ranged_ins c))
+      (Iarray.of_array c.nodes) ~outs:[| 0 |]
   in
   let outs =
     List.filter
@@ -1735,10 +2034,20 @@ let pp_ranged ppf c =
     c.values
 
 (* Offsets that put the coordinates near the ends of each width. *)
-let offsets =
+let coordinate_offsets =
   Gen.of_list
-    [ 0L; 0L; 5L; 125L; 254L; 32765L; 65533L; 0x7FFF_FFFDL; 0xFFFF_FFFDL;
-      0x7FFF_FFFF_FFFF_FFF0L ]
+    [
+      0L;
+      0L;
+      5L;
+      125L;
+      254L;
+      32765L;
+      65533L;
+      0x7FFF_FFFDL;
+      0xFFFF_FFFDL;
+      0x7FFF_FFFF_FFFF_FFF0L;
+    ]
 
 let ranged_cases =
   let open Gen in
@@ -1749,7 +2058,7 @@ let ranged_cases =
      let* out = of_list ~pp:pp_dtype (booleans @ booleans @ ints) in
      let* t = tree loads 3 out in
      let* shape = array ~size:(constant 3) (int_range 1 4) in
-     let* offsets = array ~size:(constant 3) offsets in
+     let* offsets = array ~size:(constant 3) coordinate_offsets in
      let n = Array.fold_left ( * ) 1 shape in
      let values d =
        frequency
@@ -1766,20 +2075,42 @@ let ranged_cases =
            v :: vs
      in
      let+ values = each (Array.to_list loads) in
-     {
-       loads;
-       nodes = lower t;
-       shape;
-       offsets;
-       values = Array.of_list values;
-     })
+     { loads; nodes = lower t; shape; offsets; values = Array.of_list values })
 
+let elements1 d x = operand1 d (element_of d x)
 
-let elements1 d x = Elements.of_elements d [| 1 |] [| element_of d x |]
+(* The box of [c]: the least and greatest of each load and coordinate, the
+   float32 operand's as 0. *)
+let bounds c =
+  Array.concat
+    [
+      [| elements1 f32 0L; elements1 f32 0L |];
+      Array.concat
+        (List.mapi
+           (fun k d ->
+             let v = c.values.(k) in
+             let pick f =
+               Array.fold_left
+                 (fun a x -> if f (order d x a) then x else a)
+                 v.(0) v
+             in
+             let least = pick (fun o -> o < 0)
+             and most = pick (fun o -> o > 0) in
+             [| elements1 d least; elements1 d most |])
+           (Array.to_list c.loads));
+      Array.concat
+        (List.init 3 (fun a ->
+             let lo = c.offsets.(a) in
+             let hi = Int64.add lo (Int64.of_int (c.shape.(a) - 1)) in
+             [| elements1 i64 lo; elements1 i64 hi |]));
+    ]
 
-(* Every integer and boolean node of a drawn program lies, at every index of
-   the box, within its range over the box: the least and greatest of each
-   load and coordinate there. *)
+let refused what = function
+  | Ok r -> r
+  | Error a -> failf "%s refused: %a" what Nx_array_support.pp_answer a
+
+(* Every integer and boolean node of a drawn program lies, at every index of the
+   box, within its range over the box. *)
 let law_ranges c =
   let p = all_ranged c in
   let n = Array.fold_left ( * ) 1 c.shape in
@@ -1792,44 +2123,17 @@ let law_ranges c =
              (Array.map (element_of d) c.values.(k)))
          c.loads)
   in
-  let shift : P.node -> ex option = function
-    | Coord a when c.offsets.(a) <> 0L ->
-        Some (Ex P.E.(coord a + const D.Int64 c.offsets.(a)))
-    | _ -> None
+  let shifted =
+    P.subst ~ins:p.ins
+      (function
+        | Coord a when c.offsets.(a) <> 0L ->
+            Some P.E.(any (coord a + const D.Int64 c.offsets.(a)))
+        | _ -> None)
+      p
   in
-  let shifted = P.subst ~ins:p.ins (fun n -> Option.map any (shift n)) p in
-  let values =
-    match compute ~shape:c.shape shifted loads with
-    | Ok v -> v
-    | Error a -> failf "the program refused: %a" Nx_array_support.pp_answer a
-  in
-  let bounds =
-    Array.concat
-      [
-        [| elements1 f32 0L; elements1 f32 0L |];
-        Array.concat
-          (List.mapi
-             (fun k d ->
-               let v = c.values.(k) in
-               let pick f = Array.fold_left (fun a x -> if f (order d x a) then x else a) v.(0) v in
-               let least = pick (fun o -> o < 0) and most = pick (fun o -> o > 0) in
-               [| elements1 d least; elements1 d most |])
-             (Array.to_list c.loads));
-        Array.concat
-          (List.init 3 (fun a ->
-               let lo = c.offsets.(a) in
-               let hi = Int64.add lo (Int64.of_int (c.shape.(a) - 1)) in
-               [| elements1 i64 lo; elements1 i64 hi |]));
-      ]
-  in
+  let values = refused "the program" (compute ~shape:c.shape shifted loads) in
   let q = P.ranges ~axes:3 p in
-  (* It holds as v states. *)
-  ignore (P.v ~ins:q.ins q.nodes ~outs:q.outs : P.t);
-  let r =
-    match compute ~shape:[| 1 |] q bounds with
-    | Ok r -> r
-    | Error a -> failf "the ranges refused: %a" Nx_array_support.pp_answer a
-  in
+  let r = refused "the ranges" (compute q (bounds c)) in
   let outs = Iarray.to_array p.outs in
   let at = Hashtbl.create 16 in
   Array.iteri (fun o i -> Hashtbl.replace at i o) outs;
@@ -1840,17 +2144,6 @@ let law_ranges c =
     (value d r.(2 * o).(0), value d r.((2 * o) + 1).(0))
   in
   let ranged i = Hashtbl.mem at i in
-  Array.iter
-    (fun i ->
-      let d = P.dtype p i in
-      let lo, hi = range i in
-      Array.iteri
-        (fun j x ->
-          if order d x lo < 0 || order d x hi > 0 then
-            failf "node %d (%s) is %Ld at index %d, outside [%Ld, %Ld]" i
-              (name d) x j lo hi)
-        (vals i))
-    outs;
   (* What the case reaches. *)
   let all f a = Array.for_all f a and exists f a = Array.exists f a in
   let node i = Iarray.get p.nodes i in
@@ -1891,8 +2184,8 @@ let law_ranges c =
   in
   let cast_unfit i =
     match node i with
-    | Op1 (Cast, d, x)
-      when ranged x && not (is_bool (P.dtype p x) || is_bool d) ->
+    | Op1 (Cast, d, x) when ranged x && not (is_bool (P.dtype p x) || is_bool d)
+      ->
         exists (outside (P.dtype p x) d) (vals x)
     | _ -> false
   in
@@ -1917,104 +2210,352 @@ let law_ranges c =
     | Op1 (_, _, x) | Op2 (_, x, _) -> P.dtype p x = f32
     | _ -> false
   in
-  cover "an integer or boolean computed from a float" (exists from_float outs)
+  cover "an integer or boolean computed from a float" (exists from_float outs);
+  Array.iter
+    (fun i ->
+      let d = P.dtype p i in
+      let lo, hi = range i in
+      Array.iteri
+        (fun j x ->
+          if order d x lo < 0 || order d x hi > 0 then
+            failf "node %d (%s) is %Ld at index %d, outside [%Ld, %Ld]" i
+              (name d) x j lo hi)
+        (vals i))
+    outs
+
+(* The range of [p]'s one output over [box]: its least and greatest elements. *)
+let range_of ~axes p box =
+  let r = refused "the ranges" (compute (P.ranges ~axes p) box) in
+  (r.(0).(0), r.(1).(0))
+
+let ends (D.Any dt) =
+  match D.kind dt with
+  | Boolean -> (P.bits dt false, P.bits dt true)
+  | _ ->
+      let lo, hi = extremes (D.Any dt) in
+      (element_of (D.Any dt) lo, element_of (D.Any dt) hi)
+
+(* The program of [nodes] over [ins] whose output is its last node. *)
+let last_out ins nodes =
+  P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
+    ~outs:[| Array.length nodes - 1 |]
+
+(* Each row: a program, the axes of its box, the box, and the output's dtype,
+   whose whole range is its range (prog.mli: "the range is the dtype's whole
+   range"). *)
+let wrapping =
+  let i8 = D.Any D.Int8 and u8 = D.Any D.Uint8 and p = last_out in
+  [
+    ( "an int8 add whose greatest sum passes 127",
+      0,
+      p [| i8 |]
+        [| In 0; Const (i8, P.bits D.Int8 10); Op2 (Binary Add, 0, 1) |],
+      [| elements1 i8 100L; elements1 i8 120L |],
+      i8 );
+    ( "a uint8 sub whose least difference is below 0",
+      0,
+      p [| u8 |]
+        [| Const (u8, P.bits D.Uint8 0); In 0; Op2 (Binary Sub, 0, 1) |],
+      [| elements1 u8 0L; elements1 u8 1L |],
+      u8 );
+    ( "an int8 cast of a coordinate up to 200",
+      1,
+      p [||] [| Coord 0; Op1 (Cast, i8, 0) |],
+      [| elements1 i64 0L; elements1 i64 200L |],
+      i8 );
+  ]
+
+let from_floats =
+  let p = last_out in
+  [
+    ( "an int32 cast of a float32",
+      0,
+      p [| f32 |] [| In 0; Op1 (Cast, i32, 0) |],
+      [| elements1 f32 1L; elements1 f32 2L |],
+      i32 );
+    ( "a comparison of float32s",
+      0,
+      p [| f32; f32 |] [| In 0; In 1; Op2 (Compare Less, 0, 1) |],
+      [|
+        elements1 f32 1L; elements1 f32 1L; elements1 f32 2L; elements1 f32 2L;
+      |],
+      boolean );
+  ]
+
+let test_whole_range (_, axes, p, box, d) =
+  equal (pair string string) (ends d) (range_of ~axes p box)
 
 (* A cast into bit over a coordinate's bounds [lo, hi]: [Cast Bit] of the
-   coordinate, and of it with [true]. The range is that of [x <> 0] over
-   [lo, hi], of bit's dtype. *)
+   coordinate, and of it with [true]. The range is that of [x <> 0] over [lo,
+   hi], of bit's dtype. *)
 let bit_casts =
-  [ ("zero", (0L, 0L), ("\000", "\000")); ("apart from zero", (1L, 3L), ("\001", "\001"));
-    ("across zero", (0L, 2L), ("\000", "\001")) ]
+  [
+    ("zero", (0L, 0L), ("\000", "\000"));
+    ("apart from zero", (1L, 3L), ("\001", "\001"));
+    ("across zero", (0L, 2L), ("\000", "\001"));
+  ]
 
-let test_bit_cast (_, (lo, hi), (want_lo, want_hi)) =
-  let bit = D.Any D.Bit in
+let test_bit_cast (_, (lo, hi), want) =
   let p =
     P.v ~ins:[||]
-      [| P.Coord 0; Op1 (Cast, bit, 0); Const (bit, P.bits D.Bit true);
-         Op2 (Binary And, 1, 2) |]
+      [|
+        P.Coord 0;
+        Op1 (Cast, bit, 0);
+        Const (bit, P.bits D.Bit true);
+        Op2 (Binary And, 1, 2);
+      |]
       ~outs:[| 3 |]
   in
-  let q = P.ranges ~axes:1 p in
-  let q = P.v ~ins:q.ins q.nodes ~outs:q.outs in
-  let bounds = [| elements1 i64 lo; elements1 i64 hi |] in
-  match compute ~shape:[| 1 |] q bounds with
-  | Ok r ->
-      equal ~msg:"least" (array string) [| want_lo |] r.(0);
-      equal ~msg:"greatest" (array string) [| want_hi |] r.(1)
-  | Error a -> failf "the ranges refused: %a" Nx_array_support.pp_answer a
+  equal (pair string string) want
+    (range_of ~axes:1 p [| elements1 i64 lo; elements1 i64 hi |])
+
+let law_no_float_bounds c =
+  let p = all_ranged c in
+  cover "a node reads the float operand"
+    (Iarray.exists (function P.In 0 -> true | _ -> false) p.nodes);
+  let q = P.ranges ~axes:3 p in
+  let reads =
+    List.filter_map
+      (function P.In i when i < 2 -> Some i | _ -> None)
+      (Iarray.to_list q.nodes)
+  in
+  equal (list int) [] reads
+
+let law_range_operands c =
+  let q = P.ranges ~axes:3 (all_ranged c) in
+  let bounds d = [ name d; name d ] in
+  equal (list string)
+    (List.concat_map bounds (Array.to_list (ranged_ins c))
+    @ List.concat_map bounds [ i64; i64; i64 ])
+    (List.map name (Iarray.to_list q.ins))
+
+let ranged_picks =
+  let open Gen in
+  with_pp
+    (fun ppf (c, sel) ->
+      Format.fprintf ppf "%a,@ picking %a" pp_ranged c Elements.pp_ints sel)
+    (let+ c = ranged_cases
+     and+ sel = array ~size:(int_range 1 4) (int_range 0 1_000) in
+     let n = Iarray.length (all_ranged c).outs in
+     (c, Array.map (fun k -> k mod n) sel))
+
+let law_range_outs (c, sel) =
+  let p = all_ranged c in
+  let n = Array.length sel in
+  cover "an output picked twice"
+    (List.length (List.sort_uniq Int.compare (Array.to_list sel)) < n);
+  cover "outputs reordered"
+    (List.exists (fun j -> sel.(j) > sel.(j + 1)) (List.init (n - 1) Fun.id));
+  let all = refused "the ranges" (compute (P.ranges ~axes:3 p) (bounds c)) in
+  let want =
+    Array.concat
+      (List.map
+         (fun k -> [| all.(2 * k); all.((2 * k) + 1) |])
+         (Array.to_list sel))
+  in
+  equal outputs (Ok want)
+    (compute (P.ranges ~axes:3 ~outs:(Iarray.of_array sel) p) (bounds c))
+
+let test_range_axes () =
+  let p = P.v ~ins:[| i32 |] [| In 0 |] ~outs:[| 0 |] in
+  List.iter
+    (fun axes ->
+      equal ~msg:(strf "axes %d" axes) int
+        ((2 * axes) + 2)
+        (Iarray.length (P.ranges ~axes p).ins))
+    (List.init (Nx_array.Layout.max_rank + 1) Fun.id)
+
+let range_refusals =
+  let p = last_out in
+  let ints = p [| i32 |] [| In 0 |] in
+  [
+    ("negative axes", fun () -> P.ranges ~axes:(-1) ints);
+    ( "axes past max_rank",
+      fun () -> P.ranges ~axes:(Nx_array.Layout.max_rank + 1) ints );
+    ( "an output reading the coordinate of axis axes",
+      fun () -> P.ranges ~axes:2 (p [||] [| Coord 2 |]) );
+    ("a float32 output", fun () -> P.ranges ~axes:0 (p [| f32 |] [| In 0 |]));
+    ( "a complex64 output",
+      fun () -> P.ranges ~axes:0 (p [| D.Any D.Complex64 |] [| In 0 |]) );
+    ("no output", fun () -> P.ranges ~axes:0 ~outs:[||] ints);
+    ("an output past p's", fun () -> P.ranges ~axes:0 ~outs:[| 1 |] ints);
+    ("a negative output", fun () -> P.ranges ~axes:0 ~outs:[| -1 |] ints);
+  ]
+
+let test_range_refuses (_, f) = refuses f
 
 let tests =
   [
-    group "domains"
-      [ test "every kind and dtype as prog.mli states" test_domains ];
-    group "bits"
-      [
-        prop "bits are a one-element array's bytes"
-          (Gen.pair (Gen.of_list ~pp:pp_dtype D.all) floats)
-          law_bits;
-        cases "a NaN's bits are its store's"
-          ~id:(fun (x, _, _) -> strf "%016Lx" x)
-          nan_stores test_nan_bits;
-        test "refuses an int outside the dtype's range" test_bits_refuse;
-      ];
     group "programs"
       [
-        prop "a program holds what v was given" drawn law_program;
-        test "v refuses ill-formed programs" test_program_refuses;
-        prop "of_node is v over the operands' nodes" one_node law_of_node;
-        prop ~examples:singles
-          "single is of_node's node where it reads its operands in order"
-          one_node law_single_of_node;
-        test "single is None but for of_node's programs" test_single;
-        prop ~examples:[ identity ]
-          "is_identity is one operand, one output, that operand's In" drawn
-          law_identity;
-        cases "is_identity at named programs"
-          ~id:(fun (n, _, _) -> n)
-          identities test_identity;
-        test "dtype refuses a node past the program" test_dtype_refuses;
-        test "v of three nodes allocates its baseline" test_v_allocates;
+        test
+          "the Box-Muller example is one node per distinct subexpression, in \
+           the walk's finish order"
+          test_box_muller;
+        prop "equal programs are equal and hash alike" drawn law_equal_programs;
       ];
-    group "expressions"
+    group "domains"
       [
-        prop "of_exprs is the outputs' distinct nodes, computing as they do"
-          (Gen.pair drawn Gen.int) law_of_exprs;
-        prop "of_exprs is so for programs of hundreds of nodes"
-          (Gen.pair grown Gen.int) law_of_grown_exprs;
+        cases "each kind takes the dtypes its domain lists" ~id:kind_name kinds
+          test_domain;
+      ];
+    group "bits"
+      [
+        prop ~count:200
+          ~examples:(List.map (fun w -> (w, w)) special_words)
+          "bits dt x is the bytes of a one-element array of x, at every dtype"
+          (Gen.pair word word) law_bits;
+        cases "a NaN stores quiet, of its sign, with the top of its payload"
+          ~id:(fun (x, _, _) -> strf "%016Lx" x)
+          nan_stores test_nan_bits;
+        cases "an int outside the dtype's range raises, its ends do not"
+          ~id:(fun (Ints (n, _, _, _)) -> n)
+          int_dtypes test_int_range;
+      ];
+    group "v"
+      [
+        prop "v keeps its operands, nodes and outputs" drawn law_v;
+        cases
+          "v takes a kind's node exactly where accepts1, accepts2 or accepts3 \
+           takes its dtypes"
+          ~id:kind_name kinds test_v_kinds;
+        cases "v raises Invalid_argument for an ill-formed program"
+          ~id:(fun (n, _, _, _) -> n)
+          ill_formed test_ill_formed;
+        cases
+          "a Const of bool takes any byte and of bit 0 or 1, true iff not zero"
+          ~id:(fun (n, _, _, _) -> n)
+          bool_consts test_bool_const;
+        test "a program takes any number of operands and outputs"
+          test_many_operands;
+        test "v checks a program allocating only its nodes' dtypes"
+          test_v_allocates;
+        prop "of_exprs and subst make programs that hold as v states"
+          (Gen.pair drawn offsets) law_holds_as_v;
+      ];
+    group "of_node"
+      [
+        prop
+          "of_node ~ins n is v over In 0 to In (k - 1) then n, raising where v \
+           does"
+          one_node law_of_node;
+      ];
+    group "dtype"
+      [
+        prop "dtype is each node's as dtype states" drawn law_dtype;
+        cases "dtype raises for a node past the program or negative"
+          ~id:string_of_int [ 1; -1 ] test_dtype_refuses;
+      ];
+    group "is_identity"
+      [
+        prop ~examples:near_identities
+          "is_identity is true iff one operand, one output, its In" drawn
+          law_identity;
+      ];
+    group "single"
+      [
+        prop ~examples:singles
+          "single of of_node's program is its node iff the node reads its \
+           operands in order"
+          one_node law_single;
+        cases "single is None for a program of_node does not make" ~id:fst
+          not_of_node test_not_single;
+      ];
+    group "is_single"
+      [
+        prop ~examples:is_single_examples
+          "is_single is true iff single gives the last node" drawn law_is_single;
+        test "is_single allocates nothing" test_is_single_allocates;
+      ];
+    group "E"
+      [
+        test "dtype is the dtype of the expression's node" test_expr_dtypes;
+        cases "each kind function makes its kind's node"
+          ~id:(fun (n, _, _) -> n)
+          kind_functions test_kind_function;
+        test "cast into an expression's own dtype is the expression"
+          test_cast_own_dtype;
+        cases "each operator makes the node of the function it names"
+          ~id:(fun (n, _, _, _) -> n)
+          operators test_operator;
+        test "a constructor raises where v refuses its node" test_constructors;
+        cases "a kind function of one operand raises where v refuses its node"
+          ~id:(fun r -> unary_name r.unary)
+          unary_fns test_unary_fn;
+        cases "a kind function of two operands raises where v refuses its node"
+          ~id:(fun r -> binary_name r.binary)
+          binary_fns test_binary_fn;
+        cases "input, coord and const raise as stated" ~id:fst leaf_refusals
+          test_leaf_refuses;
+      ];
+    group "of_exprs"
+      [
+        prop ~count:300 ~examples:[ signed_zero ]
+          "of_exprs's nodes are the outputs' distinct subexpressions once, in \
+           depth-first finish order, whichever builds made them"
+          drawn law_of_exprs;
         test "of_exprs merges two builds of 15000 nodes"
           test_of_exprs_two_builds;
         test "of_exprs merges 2^17 fresh copies into 17 nodes"
           test_of_exprs_fresh_copies;
-        test "each kind function makes its kind's node"
-          test_exprs_kind_functions;
-        cases "each operator makes the node of the function it names"
-          ~id:(fun (n, _, _, _) -> n)
-          operators test_operator;
-        test "constructors and of_exprs refuse as v does" test_exprs_refuse;
-        test "programs take any number of operands and outputs"
-          test_many_operands;
+        cases
+          "of_exprs raises for no output, an In past ins or of another dtype"
+          ~id:(fun (n, _, _) -> n)
+          of_exprs_refusals test_of_exprs_refuses;
       ];
-    group "substitution"
+    group "subst"
       [
-        prop "subst keeping every leaf is p lowered as of_exprs lowers it"
-          drawn law_subst_keeps;
-        prop "subst is so for programs of hundreds of nodes" grown
-          law_subst_keeps;
-        prop "subst binding an operand is p over its value" binding law_bind;
-        test "subst binds an operand to an operand, a coordinate or a constant"
-          test_subst_leaves;
-        prop "subst offsetting coordinates is p at the offset index" shifting
-          law_subst_coords;
-        prop "subst with outs is the outputs of p it selects" selecting
+        prop
+          "subst is of_exprs of the outputs with each reached leaf replaced by \
+           f's expression"
+          (Gen.pair drawn offsets) law_subst;
+        prop
+          "subst calls f once on each leaf the picked outputs reach, and on \
+           nothing else"
+          selecting law_subst_calls;
+        prop
+          "subst replacing In k by an expression over the other operands \
+           lowers p over it"
+          binding law_bind;
+        cases "subst binds an operand to an operand, a coordinate or a constant"
+          ~id:(fun (n, _, _, _) -> n)
+          bind_leaves test_bind_leaf;
+        prop "subst with outs is the outputs of p it picks, in order" selecting
           law_subst_outs;
-        test "subst refuses what does not fit" test_subst_refuses;
+        test "a leaf f replaces needs no operand of ins" test_replaced_leaf;
+        test
+          "a leaf the picked outputs do not reach is not passed to f and needs \
+           no operand of ins"
+          test_unreached_leaf;
+        cases "subst raises where its expressions or outs do not fit"
+          ~id:(fun (n, _, _, _) -> n)
+          subst_refusals test_subst_refuses;
       ];
     group "ranges"
       [
-        prop ~count:400 "every node lies within its range over the box"
+        prop ~count:400 "every output lies within its range over the box"
           ranged_cases law_ranges;
-        cases "a cast into bit has bit's range" ~id:(fun (n, _, _) -> n)
+        cases "a kind that may wrap has its dtype's whole range"
+          ~id:(fun (n, _, _, _, _) -> n)
+          wrapping test_whole_range;
+        cases "a node computed from a float has its dtype's whole range"
+          ~id:(fun (n, _, _, _, _) -> n)
+          from_floats test_whole_range;
+        cases "a cast into bit has bit's range"
+          ~id:(fun (n, _, _) -> n)
           bit_casts test_bit_cast;
+        prop "no node of ranges reads a float operand's bounds" ranged_cases
+          law_no_float_bounds;
+        prop
+          "ranges's operands are each operand's least and greatest, then each \
+           axis's"
+          ranged_cases law_range_operands;
+        prop
+          "ranges ~outs picks the kth output's range as outputs 2k and 2k + 1"
+          ranged_picks law_range_outs;
+        test "ranges takes axes from 0 to max_rank" test_range_axes;
+        cases "ranges raises for axes, outputs or outs it cannot range" ~id:fst
+          range_refusals test_range_refuses;
       ];
   ]
 
