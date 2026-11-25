@@ -43,14 +43,15 @@ val create :
       holds (see {!Pretoken_cache.create} and {!with_encoder}); [0] disables it.
       Defaults to {!Pretoken_cache.default_capacity}.
 
-    Raises [Invalid_argument] if an id is not {!Id_table.in_range}, or if
-    [unk_token] is not in [vocab]. *)
+    A [vocab] without [unk_token] is a model whose encoding raises at a word
+    that needs it. Raises [Invalid_argument] if an id is not
+    {!Id_table.in_range}. *)
 
-val from_file : vocab_file:string -> t
-(** [from_file ~vocab_file] loads a model from a BERT-style [vocab.txt] file
+val from_file : ?unk_token:string -> vocab_file:string -> unit -> t
+(** [from_file ~vocab_file ()] loads a model from a BERT-style [vocab.txt] file
     (one token per line, trimmed, its ID the line's number from 0; a blank line
-    holds the empty token). Uses BERT defaults:
-    [unk_token = "[UNK]"], [continuing_subword_prefix = "##"],
+    holds the empty token). [unk_token] is as in {!create}; the others are
+    BERT's defaults: [continuing_subword_prefix = "##"],
     [max_input_chars_per_word = 100]. *)
 
 (** {1:tokenization Tokenization} *)
@@ -64,7 +65,8 @@ val encode_into :
     A word longer than {!create}'s [max_input_chars_per_word] in UTF-8
     characters, and one that no run of subwords covers, is the unknown token
     alone, recorded in [opaque] as three integers: its index in [ids], [1], and
-    [len], the bytes of the word it stands for. *)
+    [len], the bytes of the word it stands for. Raises [Failure] at such a word
+    when the vocabulary does not hold the unknown token. *)
 
 val token_table : t -> string Id_table.t
 (** [token_table t] maps an id to its token string, prefix included, and [""]
@@ -127,13 +129,14 @@ val train :
   initial_alphabet:string list ->
   continuing_subword_prefix:string ->
   end_of_word_suffix:string option ->
+  unk_token:string option ->
   (string * int) list ->
   t * string list
 (** [train ~min_frequency ~vocab_size ~show_progress ~special_tokens
      ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-     ~end_of_word_suffix word_counts] learns a WordPiece vocabulary from
-    [word_counts], each word paired with the number of times it occurs, using
-    BPE merge training internally.
+     ~end_of_word_suffix ~unk_token word_counts] learns a WordPiece vocabulary
+    from [word_counts], each word paired with the number of times it occurs,
+    using BPE merge training internally.
 
     - [min_frequency] is the minimum pair frequency to merge.
     - [vocab_size] is the target vocabulary size.
@@ -143,5 +146,7 @@ val train :
     - [initial_alphabet] seeds the character set, one code point per string.
     - [continuing_subword_prefix] is set on the resulting model.
     - [end_of_word_suffix] appended to final subwords if given.
+    - [unk_token] is the model's, as in {!create}. No token is added for it: the
+      vocabulary holds it only when [special_tokens] does.
 
     Returns [(model, special_tokens)]. *)

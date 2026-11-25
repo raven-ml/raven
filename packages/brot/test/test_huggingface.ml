@@ -528,6 +528,25 @@ let test_no_truncation_or_padding () =
   in
   equal (array int) [| 1; 1 |] (ids t "b b")
 
+(* The model's [unk_token] member, and for a Unigram the entry at [unk_id], of
+   the file to_json writes. *)
+let test_unk_token =
+  cases "reads the model's unknown token as unk_token" ~id:fst
+    [
+      ( "bpe",
+        fun () -> bpe ~vocab:[ ("<unk>", 0); ("a", 1) ] ~unk_token:"<unk>" () );
+      ( "wordpiece",
+        fun () ->
+          wordpiece ~vocab:[ ("<unk>", 0); ("a", 1) ] ~unk_token:"<unk>" () );
+      ( "word_level",
+        fun () ->
+          word_level ~vocab:[ ("<unk>", 0); ("a", 1) ] ~unk_token:"<unk>" () );
+      ( "unigram",
+        fun () -> unigram ~vocab:[ ("<unk>", 0.0); ("a", -1.0) ] ~unk_id:0 () );
+    ]
+    (fun (_, make) ->
+      equal (option string) (Some "<unk>") (unk_token (reload (make ()))))
+
 (* to_json *)
 
 let test_written_bpe_flags () =
@@ -567,6 +586,12 @@ let test_written_roles () =
   equal ~msg:"added tokens" (list string)
     (List.map flags (added_tokens t))
     (List.map flags (added_tokens read))
+
+(* word_level's unk_token defaults to "<unk>". *)
+let test_written_word_level_unk () =
+  let t = word_level ~vocab:[ ("<unk>", 0); ("a", 1) ] () in
+  equal ~msg:"before" (array int) [| 1; 0 |] (ids t "a b");
+  equal ~msg:"read back" (array int) [| 1; 0 |] (ids (reload t) "a b")
 
 (* Tokenizers [to_json] can write, each built anew per case. *)
 let models =
@@ -829,6 +854,7 @@ let () =
                test_added_token_ids;
              test "reads no truncation or padding member"
                test_no_truncation_or_padding;
+             test_unk_token;
            ];
          group "to_json"
            [
@@ -844,6 +870,8 @@ let () =
                "writes no role marker, so of_json reads them back as added \
                 tokens alone"
                test_written_roles;
+             test "writes a WordLevel's unknown token"
+               test_written_word_level_unk;
              test_read_back;
              test "keeps LLaMA's byte fallback through of_json"
                test_llama_read_back;

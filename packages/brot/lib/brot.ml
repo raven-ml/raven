@@ -105,7 +105,6 @@ type t = {
   pad_token : string option;
   pad_id : int option;
   pad_type_id : int;
-  unk_token : string option;
   batch_buffers : batch_buffers;
 }
 
@@ -149,6 +148,15 @@ let alg_vocab algorithm =
   | Alg_unigram m ->
       Unigram.get_vocab m |> List.mapi (fun i (token, _) -> (token, i))
   | Alg_chars m -> Chars.get_vocab m
+
+(* The token a model emits for text its vocabulary does not hold, which a
+   Unigram model names by its position. *)
+let alg_unk_token = function
+  | Alg_bpe m -> Bpe.get_unk_token m
+  | Alg_wordpiece m -> Some (Wordpiece.get_unk_token m)
+  | Alg_wordlevel m -> Some (Word_level.get_unk_token m)
+  | Alg_unigram m -> Option.bind (Unigram.get_unk_id m) (Unigram.id_to_token m)
+  | Alg_chars _ -> None
 
 let alg_vocab_size algorithm =
   match algorithm with
@@ -442,7 +450,7 @@ let fit_to_pipeline ~spaces pre algorithm =
   | _ -> algorithm
 
 let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
-    ?eos_token ?pad_token ?unk_token algorithm =
+    ?eos_token ?pad_token algorithm =
   let given =
     List.filter (fun (a : added_token) -> a.content <> "") added_tokens
   in
@@ -497,7 +505,6 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     pad_token;
     pad_id;
     pad_type_id = 0;
-    unk_token;
     batch_buffers = { free = Atomic.make []; kept = Atomic.make 0 };
   }
 
@@ -523,7 +530,7 @@ let added_tokens t =
 let bos_token t = t.bos_token
 let eos_token t = t.eos_token
 let pad_token t = t.pad_token
-let unk_token t = t.unk_token
+let unk_token t = alg_unk_token t.algorithm
 
 (* The added tokens that the model does not already hold. *)
 let added_vocab t =
@@ -572,7 +579,7 @@ let bpe ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
          ?byte_fallback ?ignore_merges ())
   in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token algorithm
+    ?pad_token algorithm
 
 let wordpiece ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?vocab ?continuing_subword_prefix
@@ -586,7 +593,7 @@ let wordpiece ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
          ?max_input_chars_per_word ?cache_capacity ())
   in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token algorithm
+    ?pad_token algorithm
 
 let word_level ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?vocab () =
@@ -595,7 +602,7 @@ let word_level ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
   in
   let algorithm = Alg_wordlevel (Word_level.create ?vocab ?unk_token ()) in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token algorithm
+    ?pad_token algorithm
 
 let unigram ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     ?pad_token ?unk_token ?vocab ?unk_id ?byte_fallback ?cache_capacity () =
@@ -611,13 +618,13 @@ let unigram ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
     Alg_unigram (Unigram.create ?unk_id ?byte_fallback ?cache_capacity vocab)
   in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token algorithm
+    ?pad_token algorithm
 
 let chars ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token () =
+    ?pad_token () =
   let algorithm = Alg_chars (Chars.create ()) in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token algorithm
+    ?pad_token algorithm
 
 let from_model_file ~vocab ?merges ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token () =
@@ -625,19 +632,20 @@ let from_model_file ~vocab ?merges ?normalizer ?pre ?post ?decoder ?added_tokens
     match merges with
     | Some merges_file ->
         Alg_bpe
-          (Bpe.from_files ~byte_level:(byte_level_pipeline pre)
+          (Bpe.from_files ~byte_level:(byte_level_pipeline pre) ?unk_token
              ~vocab_file:vocab ~merges_file ())
-    | None -> Alg_wordpiece (Wordpiece.from_file ~vocab_file:vocab)
+    | None ->
+        Alg_wordpiece (Wordpiece.from_file ?unk_token ~vocab_file:vocab ())
   in
   create ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token ?eos_token
-    ?pad_token ?unk_token algorithm
+    ?pad_token algorithm
 
 let add_tokens t tokens =
   create ?normalizer:t.normalizer ?pre:t.pre_tokenizer ?post:t.post_processor
     ?decoder:t.decoder
     ~added_tokens:(added_tokens t @ tokens)
     ?bos_token:t.bos_token ?eos_token:t.eos_token ?pad_token:t.pad_token
-    ?unk_token:t.unk_token t.algorithm
+    t.algorithm
 
 (* Encoding *)
 
@@ -1983,13 +1991,13 @@ let train_bpe ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
   let trained_model, trained_tokens =
     Bpe.train ~min_frequency ~vocab_size ~show_progress:false ~special_tokens
       ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-      ~end_of_word_suffix ~max_token_length words
+      ~end_of_word_suffix ~max_token_length ~unk_token words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
   in
   create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
-    ?eos_token ?pad_token ?unk_token (Alg_bpe trained_model)
+    ?eos_token ?pad_token (Alg_bpe trained_model)
 
 let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
@@ -2003,13 +2011,13 @@ let train_wordpiece ?init ?normalizer ?pre ?post ?decoder ?added_tokens
   let trained_model, trained_tokens =
     Wordpiece.train ~min_frequency ~vocab_size ~show_progress:false
       ~special_tokens ~limit_alphabet ~initial_alphabet
-      ~continuing_subword_prefix ~end_of_word_suffix words
+      ~continuing_subword_prefix ~end_of_word_suffix ~unk_token words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
   in
   create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
-    ?eos_token ?pad_token ?unk_token (Alg_wordpiece trained_model)
+    ?eos_token ?pad_token (Alg_wordpiece trained_model)
 
 let train_word_level ?init ?normalizer ?pre ?post ?decoder ?added_tokens
     ?bos_token ?eos_token ?pad_token ?unk_token ?(vocab_size = 30000)
@@ -2018,13 +2026,13 @@ let train_word_level ?init ?normalizer ?pre ?post ?decoder ?added_tokens
   let words = training_words ?normalizer ?pre data in
   let trained_model, trained_tokens =
     Word_level.train ~vocab_size ~min_frequency ~show_progress:false
-      ~special_tokens words
+      ~special_tokens ~unk_token words
   in
   let all_added =
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
   in
   create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
-    ?eos_token ?pad_token ?unk_token (Alg_wordlevel trained_model)
+    ?eos_token ?pad_token (Alg_wordlevel trained_model)
 
 let train_unigram ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     ?eos_token ?pad_token ?unk_token ?(vocab_size = 8000) data =
@@ -2039,7 +2047,7 @@ let train_unigram ?init ?normalizer ?pre ?post ?decoder ?added_tokens ?bos_token
     merge_added_tokens_from_training ~requested:added_tokens ~trained_tokens
   in
   create ?normalizer ?pre ?post ?decoder ~added_tokens:all_added ?bos_token
-    ?eos_token ?pad_token ?unk_token (Alg_unigram trained_model)
+    ?eos_token ?pad_token (Alg_unigram trained_model)
 
 (* JSON serialization *)
 
@@ -2130,7 +2138,7 @@ let alg_to_json = function
       json_obj
         [
           ("type", Jsont.Json.string "WordLevel");
-          ("unk_token", Jsont.Json.string "[UNK]");
+          ("unk_token", Jsont.Json.string (Word_level.get_unk_token wl));
           ("vocab", vocab_to_json (Word_level.get_vocab wl));
         ]
   | Alg_unigram ug ->

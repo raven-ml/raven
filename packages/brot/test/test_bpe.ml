@@ -864,6 +864,23 @@ let test_unknown_character () =
   equal ~msg:"after a merged word" (list string) [] (tokens t "z");
   equal ~msg:"after a known character" (list string) [ "a" ] (tokens t "az")
 
+(* HF: BPE(unk_token="<unk>") over a vocabulary without it encodes "a" and
+   raises "Unk token `<unk>` not found in the vocabulary" at "az". Each walk a
+   word starts with: characters, affixed characters and bytes. *)
+let test_missing_unk () =
+  let vocab = [ ("a", 0); ("b", 1) ] and unk_token = "<unk>" in
+  let plain = bpe ~vocab ~unk_token () in
+  let affixed = bpe ~vocab ~unk_token ~end_of_word_suffix:"</w>" () in
+  let bytes =
+    bpe
+      ~pre:(Pre_tokenizer.byte_level ~add_prefix_space:false ())
+      ~vocab ~unk_token ()
+  in
+  equal ~msg:"known" (list string) [ "a" ] (tokens plain "a");
+  List.iter
+    (fun (msg, t) -> raises_match ~msg Exn.failure (fun () -> encode t "az"))
+    [ ("characters", plain); ("affixed", affixed); ("bytes", bytes) ]
+
 (* HF: a byte fallback never lets a pending unknown token out, so the unknown
    token follows the bytes after it and comes out at the next vocabulary hit or
    at the end of the word; [fuse_unk] joins the unknown tokens of a run, across
@@ -1069,6 +1086,8 @@ let () =
              test
                "gives no token for a character vocab lacks, without unk_token"
                test_unknown_character;
+             test "raises Failure at a character when vocab lacks unk_token"
+               test_missing_unk;
              held_unknown;
              test "reports offsets in the order of the tokens"
                test_held_unknown_offsets;

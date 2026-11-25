@@ -1125,10 +1125,11 @@ val bpe :
       [added_tokens] and numbered like them when [vocab] does not hold it. One
       that [added_tokens] already holds keeps the flags given there. Default:
       none.
-    - [unk_token]: token for unknown characters. Configures both the role and
-      the BPE model's unknown handling. It is a model parameter, never matched
-      atomically in the input. Without one, a character that neither [vocab] nor
-      [byte_fallback] covers gives no token. Default: none.
+    - [unk_token]: the token a character stands as when neither [vocab] nor
+      [byte_fallback] covers it. It is a model parameter, never matched
+      atomically in the input. Without one, such a character gives no token;
+      with one that [vocab] does not hold, encoding raises [Failure] at it.
+      Default: none.
     - [vocab]: initial vocabulary as [(token, id)] pairs. A token given twice
       keeps only its last pair. The ids may leave gaps of any size: the
       tokenizer's memory follows the number of tokens. Raises
@@ -1194,7 +1195,9 @@ val wordpiece :
     - [vocab]: initial vocabulary as [(token, id)] pairs. A token given twice
       keeps only its last pair. The ids are as in {!bpe}'s [vocab]. Default:
       [[]].
-    - [unk_token]: token for out-of-vocabulary words. Default: ["[UNK]"].
+    - [unk_token]: the token a word stands as when no run of pieces covers it. A
+      [vocab] that does not hold it encodes the words it covers, and encoding
+      raises [Failure] at a word that needs it. Default: ["[UNK]"].
     - [continuing_subword_prefix]: prefix for non-initial subwords. Default:
       ["##"].
     - [max_input_chars_per_word]: words of more characters than this, a byte
@@ -1236,7 +1239,9 @@ val word_level :
 
     - [vocab]: initial vocabulary as [(word, id)] pairs. The ids are as in
       {!bpe}'s [vocab]. Default: [[]].
-    - [unk_token]: token for out-of-vocabulary words. Default: ["<unk>"].
+    - [unk_token]: the token a word not in [vocab] stands as. A [vocab] that
+      does not hold it encodes the words it holds, and encoding raises [Failure]
+      at any other. Default: ["<unk>"].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
     [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
@@ -1277,8 +1282,8 @@ val unigram :
       in [vocab], if it is there.
     - [byte_fallback]: spell such a run out as byte tokens (["<0xFF>"]) when the
       vocabulary holds one for every byte of it. Default: [false].
-    - [unk_token]: the role marker, and the model's unknown entry when [vocab]
-      holds it and [unk_id] is not given. Default: none.
+    - [unk_token]: the model's unknown entry when [vocab] holds it and [unk_id]
+      is not given. Default: none.
     - [cache_capacity]: the most entries of a pretoken cache, which keeps the
       ids of pretokens of up to 15 bytes so that one seen before is not
       encoded again. The tokenizer makes a cache for each encoding that runs
@@ -1301,7 +1306,6 @@ val chars :
   ?bos_token:string ->
   ?eos_token:string ->
   ?pad_token:string ->
-  ?unk_token:string ->
   unit ->
   t
 (** [chars ()] is a byte-level tokenizer: each byte of the input is one token
@@ -1338,11 +1342,13 @@ val from_model_file :
     - [merges]: path to merges file ([merges.txt]). One merge per line as
       space-separated token pairs. Lines starting with ["#version"] are skipped.
 
+    - [unk_token]: as in {!bpe} with [merges], and as in {!wordpiece} without.
+
     Raises [Sys_error] if a file cannot be read and [Failure] if one is not in
     its format.
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
-    [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
+    [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
 
 val add_tokens : t -> added_token list -> t
 (** [add_tokens t tokens] is [t] with [tokens] registered as added tokens,
@@ -1386,7 +1392,9 @@ val pad_token : t -> string option
 (** [pad_token t] is [t]'s padding token, if any. *)
 
 val unk_token : t -> string option
-(** [unk_token t] is [t]'s unknown token, if any. *)
+(** [unk_token t] is the token [t]'s model stands unknown text as, if any,
+    defaults included, whether or not its vocabulary holds it. A Unigram model's
+    is its entry at [unk_id]; a {!chars} model has none. *)
 
 (** {1:vocab Vocabulary} *)
 
@@ -1773,9 +1781,11 @@ val train_wordpiece :
     - [continuing_subword_prefix]: prefix for non-initial subwords. Default:
       ["##"].
     - [end_of_word_suffix]: suffix marking word boundaries. Default: none.
+    - [unk_token]: as in {!wordpiece}. The trained vocabulary holds it only when
+      [added_tokens] or [init] carries it. Default: ["[UNK]"].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
-    [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
+    [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
 
 val train_word_level :
   ?init:t ->
@@ -1803,9 +1813,11 @@ val train_word_level :
       [30000].
     - [min_frequency]: minimum frequency for a word to be included. Default:
       [0].
+    - [unk_token]: as in {!word_level}. The trained vocabulary holds it only
+      when [added_tokens] or [init] carries it. Default: ["<unk>"].
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
-    [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
+    [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
 
 val train_unigram :
   ?init:t ->
@@ -1831,13 +1843,13 @@ val train_unigram :
       trained one. Its model does not. Default: create new.
     - [vocab_size]: target vocabulary size including special tokens. Default:
       [8000].
-    - [unk_token]: also names the model's unknown entry when [added_tokens] or
-      [init] carries it, since a trained vocabulary of whole words covers no
-      character on its own. Without one, the trained tokenizer raises [Failure]
-      on any word it was not trained on. Default: none.
+    - [unk_token]: names the model's unknown entry when [added_tokens] or [init]
+      carries it, since a trained vocabulary of whole words covers no character
+      on its own. Without one, the trained tokenizer raises [Failure] on any
+      word it was not trained on. Default: none.
 
     Pipeline parameters ([normalizer], [pre], [post], [decoder], [added_tokens],
-    [bos_token], [eos_token], [pad_token], [unk_token]) are as in {!bpe}. *)
+    [bos_token], [eos_token], [pad_token]) are as in {!bpe}. *)
 
 (** {1:model_files Model files} *)
 

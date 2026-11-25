@@ -19,7 +19,8 @@ val create : ?vocab:(string * int) list -> ?unk_token:string -> unit -> t
 
     - [vocab] is the initial vocabulary as [(token, id)] pairs. Defaults to
       [[]].
-    - [unk_token] is the token emitted for unknown words. Defaults to ["[UNK]"].
+    - [unk_token] is the token emitted for unknown words. Defaults to ["<unk>"].
+      A [vocab] without it is a model whose encoding raises at an unknown word.
 
     Raises [Invalid_argument] if an id is not {!Id_table.in_range}. *)
 
@@ -33,8 +34,8 @@ val encode_into :
 
     A word absent from the vocabulary is [unk_token], recorded in [opaque] as
     three integers: its index in [ids], [1], and [len], the bytes of the word it
-    stands for; and nothing at all when the vocabulary does not hold that
-    either. *)
+    stands for. Raises [Failure] at such a word when the vocabulary does not
+    hold [unk_token]. *)
 
 val token_table : t -> string Id_table.t
 (** [token_table t] maps an id to its token string, and [""] for an id no token
@@ -60,6 +61,9 @@ val get_vocab : t -> (string * int) list
 val get_vocab_size : t -> int
 (** [get_vocab_size t] is the number of tokens in the vocabulary. *)
 
+val get_unk_token : t -> string
+(** [get_unk_token t] is {!create}'s [unk_token]. *)
+
 (** {1:serialization Serialization} *)
 
 val save : t -> folder:string -> unit -> string list
@@ -74,9 +78,10 @@ val train :
   min_frequency:int ->
   show_progress:bool ->
   special_tokens:string list ->
+  unk_token:string option ->
   (string * int) list ->
   t * string list
-(** [train ~vocab_size ~min_frequency ~show_progress ~special_tokens
+(** [train ~vocab_size ~min_frequency ~show_progress ~special_tokens ~unk_token
      word_counts] learns a vocabulary from [word_counts], each word paired with
     the number of times it occurs.
 
@@ -85,5 +90,6 @@ val train :
     - [show_progress] is ignored.
     - [special_tokens] take the first ids, in order; the words are numbered
       after them.
+    - [unk_token] is the model's, as in {!create}.
 
     Returns [(model, special_tokens)]. *)

@@ -154,8 +154,6 @@ let create ~vocab ?(unk_token = "[UNK]") ?(continuing_subword_prefix = "##")
     ?(max_input_chars_per_word = 100)
     ?(cache_capacity = Pretoken_cache.default_capacity) () =
   let tokens = Id_table.of_vocab ~who:"Wordpiece.create" vocab in
-  if Hashtbl.length vocab > 0 && not (Hashtbl.mem vocab unk_token) then
-    invalid_arg "Wordpiece.create: unk_token not in vocab";
   let prefix_len = String.length continuing_subword_prefix in
   let lens =
     Id_table.mapi ~absent:0
@@ -201,12 +199,18 @@ let read_file ~vocab_file =
        with End_of_file -> ());
       vocab)
 
-let from_file ~vocab_file =
+let from_file ?unk_token ~vocab_file () =
   let vocab = read_file ~vocab_file in
-  create ~vocab ()
+  create ~vocab ?unk_token ()
+
+let missing_unk model =
+  failwith
+    (Printf.sprintf "WordPiece: the unknown token %S is not in the vocabulary"
+       model.unk_token)
 
 (* The unknown token, standing for the whole word. *)
 let add_unknown model ids ~opaque ~len =
+  if model.unk_id < 0 then missing_unk model;
   Ints.add opaque (Ints.length ids);
   Ints.add opaque 1;
   Ints.add opaque len;
@@ -217,7 +221,9 @@ let add_unknown model ids ~opaque ~len =
    dropped. The trie cursors are held outside the walk: a [ref] taken per
    position would allocate once per subword. *)
 let encode_into model ids ~opaque text ~pos ~len =
-  if Hashtbl.length model.vocab > 0 && len > 0 then begin
+  (* An empty vocabulary holds no piece, nor the unknown token. *)
+  if len > 0 && Hashtbl.length model.vocab = 0 then missing_unk model
+  else if len > 0 then begin
     let stop = pos + len in
     let chars = ref 0 and k = ref pos in
     while !k < stop do
@@ -331,33 +337,26 @@ let save model ~path ?name () =
         vocab_list);
   vocab_file
 
-let from_bpe bpe =
+let from_bpe ~unk_token bpe =
   let vocab = Hashtbl.create (Bpe.get_vocab_size bpe) in
   List.iter (fun (k, id) -> Hashtbl.add vocab k id) (Bpe.get_vocab bpe);
-  let unk_token =
-    match Bpe.get_unk_token bpe with Some u -> u | None -> "[UNK]"
-  in
-  if not (Hashtbl.mem vocab unk_token) then begin
-    let max_id = Hashtbl.fold (fun _ id acc -> max id acc) vocab (-1) in
-    Hashtbl.add vocab unk_token (max_id + 1)
-  end;
   let continuing_subword_prefix =
     match Bpe.get_continuing_subword_prefix bpe with
     | Some p -> p
     | None -> "##"
   in
-  create ~vocab ~unk_token ~continuing_subword_prefix ()
+  create ~vocab ?unk_token ~continuing_subword_prefix ()
 
 (* Trainer *)
 
 let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-    ~end_of_word_suffix word_counts =
+    ~end_of_word_suffix ~unk_token word_counts =
   let bpe_trained, result_tokens =
     Bpe.train ~min_frequency ~vocab_size ~show_progress ~special_tokens
       ~limit_alphabet ~initial_alphabet
       ~continuing_subword_prefix:(Some continuing_subword_prefix)
-      ~end_of_word_suffix ~max_token_length:None word_counts
+      ~end_of_word_suffix ~max_token_length:None ~unk_token:None word_counts
   in
-  let wordpiece_model = from_bpe bpe_trained in
+  let wordpiece_model = from_bpe ~unk_token bpe_trained in
   (wordpiece_model, result_tokens)

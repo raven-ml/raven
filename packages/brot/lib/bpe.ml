@@ -562,6 +562,15 @@ let build_char_table vocab ~prefix ~suffix =
     vocab;
   { ascii; multi = Merge_map.create !entries }
 
+(* A character that needs the unknown token, which the model names and its
+   vocabulary lacks. Without a name the character gives no token. *)
+let missing_unk model =
+  match model.unk_token with
+  | None -> ()
+  | Some unk ->
+      failwith
+        (Printf.sprintf "BPE: the unknown token %S is not in the vocabulary" unk)
+
 (* Emits one byte fallback token for each of the [byte_len] bytes at [src]
    offset [offset], and is [false], having emitted nothing, if any of them has
    no fallback token. A pending unknown token stays pending across a fallback:
@@ -615,6 +624,7 @@ let init_word_bytes model word text pos stop =
           if !pending > 0 then add_symbol word unk_id !pending;
           pending := 1
         end
+      else missing_unk model
     end
   done;
   if !pending > 0 then add_symbol word unk_id !pending
@@ -652,11 +662,10 @@ let init_word_fast model word text pos stop =
       end;
       add_symbol word id byte_len
     end
-    else if
-      (not (byte_fallback && try_byte_fallback model word text !i byte_len))
-      && unk_id >= 0
+    else if not (byte_fallback && try_byte_fallback model word text !i byte_len)
     then
-      if fuse_unk then pending := !pending + byte_len
+      if unk_id < 0 then missing_unk model
+      else if fuse_unk then pending := !pending + byte_len
       else begin
         if !pending > 0 then add_symbol word unk_id !pending;
         pending := byte_len
@@ -682,12 +691,12 @@ let init_word_slow model word text pos stop =
     end
   in
   let handle_unk byte_len =
-    if model.unk_id >= 0 then
-      if model.fuse_unk then pending := !pending + byte_len
-      else begin
-        if !pending > 0 then add_symbol word model.unk_id !pending;
-        pending := byte_len
-      end
+    if model.unk_id < 0 then missing_unk model
+    else if model.fuse_unk then pending := !pending + byte_len
+    else begin
+      if !pending > 0 then add_symbol word model.unk_id !pending;
+      pending := byte_len
+    end
   in
   while !i < stop do
     let b = Char.code (String.unsafe_get text !i) in
@@ -1765,9 +1774,9 @@ let read_files ~vocab_file ~merges_file =
   in
   (vocab, merges)
 
-let from_files ?byte_level ~vocab_file ~merges_file () =
+let from_files ?byte_level ?unk_token ~vocab_file ~merges_file () =
   let vocab, merges = read_files ~vocab_file ~merges_file in
-  create ?byte_level ~vocab ~merges ()
+  create ?byte_level ?unk_token ~vocab ~merges ()
 
 let save model ~path ?name () =
   let vocab_file =
@@ -1955,7 +1964,7 @@ let iter_chars word f =
 
 let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-    ~end_of_word_suffix ~max_token_length word_counts =
+    ~end_of_word_suffix ~max_token_length ~unk_token word_counts =
   let _ = show_progress in
   let vocab = Hashtbl.create 10000 in
   let tokens = Dynarray.create () in
@@ -2168,6 +2177,6 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
   done;
   let trained_model =
     create ~vocab ~merges:(List.rev !merges) ?continuing_subword_prefix
-      ?end_of_word_suffix ()
+      ?end_of_word_suffix ?unk_token ()
   in
   (trained_model, special_tokens)

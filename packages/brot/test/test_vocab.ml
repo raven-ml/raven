@@ -98,11 +98,34 @@ let test_added_tokens () =
     [ x; y; added_token "<s>"; added_token "<pad>" ]
     (added_tokens t)
 
-(* bos_token, eos_token, pad_token, unk_token *)
+(* bos_token, eos_token, pad_token *)
 
 let role accessor make =
   equal ~msg:"given" (option string) (Some "<r>") (accessor (make (Some "<r>")));
   equal ~msg:"none" (option string) None (accessor (make None))
+
+(* unk_token *)
+
+let unk_tokens =
+  cases "is the model's unknown token, defaults included" ~id:fst
+    [
+      ("bpe given", fun () -> (Some "<u>", bpe ~unk_token:"<u>" ()));
+      ("bpe none", fun () -> (None, bpe ()));
+      ("wordpiece default", fun () -> (Some "[UNK]", wordpiece ()));
+      ("word_level default", fun () -> (Some "<unk>", word_level ()));
+      ( "unigram by unk_id",
+        fun () ->
+          (Some "<u>", unigram ~vocab:[ ("<u>", 0.); ("a", -1.) ] ~unk_id:0 ())
+      );
+      ("chars", fun () -> (None, chars ()));
+      ( "a JSON round trip",
+        fun () ->
+          let t = bpe ~vocab:[ ("a", 0); ("<u>", 1) ] ~unk_token:"<u>" () in
+          (Some "<u>", Result.get_ok (of_json (to_json t))) );
+    ]
+    (fun (_, make) ->
+      let expected, t = make () in
+      equal (option string) expected (unk_token t))
 
 (* vocab *)
 
@@ -326,11 +349,7 @@ let () =
              test "is the token given, or None" (fun () ->
                  role pad_token (fun pad_token -> bpe ?pad_token ()));
            ];
-         group "unk_token"
-           [
-             test "is the token given, or None" (fun () ->
-                 role unk_token (fun unk_token -> bpe ?unk_token ()));
-           ];
+         group "unk_token" [ unk_tokens ];
          group "vocab" [ empty_vocab; vocab_law ];
          group "vocab_size" [ size_law ];
          group "token_to_id" [ token_law; unheld_token ];

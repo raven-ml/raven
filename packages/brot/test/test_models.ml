@@ -416,6 +416,15 @@ let test_custom_prefix () =
   in
   equal (list string) [ "run"; "@@ning" ] (tokens t "running")
 
+(* HF: a WordPiece without its unknown token encodes "a aa" as [0, 0, 1] and
+   raises "Missing [UNK] token from the vocabulary" at "z". *)
+let test_wordpiece_no_unk () =
+  let t =
+    wordpiece ~pre:Pre_tokenizer.whitespace ~vocab:[ ("a", 0); ("##a", 1) ] ()
+  in
+  equal ~msg:"known words" (array int) [| 0; 0; 1 |] (encode_ids t "a aa");
+  raises_match ~msg:"an unknown word" Exn.failure (fun () -> encode t "a z")
+
 (* A token given twice is its last pair on every path that reads the vocabulary,
    whichever walk the model encodes with. *)
 let last_pair t ~pairs =
@@ -474,6 +483,15 @@ let test_word_ids () =
 let test_word_level_split () =
   let t = word_level ~vocab:(numbered [ "<unk>"; "a"; ","; "b"; "c" ]) () in
   equal (list string) [ "a"; ","; "b"; "c" ] (tokens t "a,b\t c")
+
+(* HF: a WordLevel without its unknown token raises "Missing [UNK] token from
+   the vocabulary" at a word it lacks, and encodes a text of known words. *)
+let test_word_level_no_unk () =
+  let t = word_level ~vocab:[ ("a", 0) ] () in
+  equal ~msg:"known words" (array int) [| 0; 0 |] (encode_ids t "a a");
+  raises_match ~msg:"an unknown word" Exn.failure (fun () -> encode t "a zz");
+  raises_match ~msg:"no vocabulary" Exn.failure (fun () ->
+      encode (word_level ()) "no numbers here")
 
 (* unigram *)
 
@@ -873,6 +891,20 @@ let test_malformed () =
   raises_match ~msg:"an id past 2^31" Exn.failure (fun () ->
       from_model_file ~vocab:(file {|{"c": 1e300}|}) ~merges:(file "") ())
 
+(* HF: BPE.from_file(unk_token="<unk>") encodes "az" as [0, 1], and
+   WordPiece.from_file(unk_token="<unk>") as ["<unk>"]. *)
+let test_files_unk_token () =
+  let bpe_files =
+    from_model_file
+      ~vocab:(file {|{"a": 0, "<unk>": 1}|})
+      ~merges:(file "#version: 0.2\n") ~unk_token:"<unk>" ()
+  in
+  equal ~msg:"vocab.json" (array int) [| 0; 1 |] (encode_ids bpe_files "az");
+  let wordpiece_file =
+    from_model_file ~vocab:(file "<unk>\na\n") ~unk_token:"<unk>" ()
+  in
+  equal ~msg:"vocab.txt" (list string) [ "<unk>" ] (tokens wordpiece_file "az")
+
 let () =
   exit
     (run "Constructors"
@@ -896,6 +928,8 @@ let () =
                test_stray_bytes;
              test "prefixes later pieces with continuing_subword_prefix"
                test_custom_prefix;
+             test "raises Failure at a word when vocab lacks unk_token"
+               test_wordpiece_no_unk;
              test "keeps a token given twice as its last pair"
                test_wordpiece_given_twice;
              test "allocates for its tokens, not its largest id" (fun () ->
@@ -909,6 +943,8 @@ let () =
                test_word_ids;
              test "splits on white space and punctuation without pre"
                test_word_level_split;
+             test "raises Failure at a word neither vocab nor unk_token holds"
+               test_word_level_no_unk;
              test "allocates for its tokens, not its largest id" (fun () ->
                  sparse_ids sparse_word_level);
              test "refuses an id negative or 2^31 and past" (fun () ->
@@ -950,5 +986,6 @@ let () =
                test_bpe_files;
              test "raises Sys_error for a file it cannot read" test_unreadable;
              test "raises Failure for a file not in its format" test_malformed;
+             test "gives the model unk_token" test_files_unk_token;
            ];
        ])

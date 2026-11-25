@@ -364,6 +364,16 @@ let test_bpe_pipeline () =
     [ Some "<s>"; Some "</s>"; Some "<pad>" ]
     [ bos_token t; eos_token t; pad_token t ]
 
+(* tokenizers 0.23.1: Tokenizer(BPE(unk_token="<unk>")) trained with BpeTrainer
+   on ["a"] and the special token "<unk>" encodes "za" as [0, 1]. *)
+let test_bpe_unk () =
+  let t =
+    train_bpe ~unk_token:"<unk>"
+      ~added_tokens:[ added_token "<unk>" ]
+      (texts [ "a" ])
+  in
+  equal (array int) [| 0; 1 |] (encode_ids t "za")
+
 (* Words over a few characters, one outside the BMP, so that they share pairs
    and a corpus can run out of them. *)
 let words =
@@ -443,6 +453,29 @@ let test_wordpiece_prefix () =
   in
   equal (list string) [ "newest"; "low"; "@@est" ] (tokens t "newest lowest")
 
+(* tokenizers 0.23.1's WordPieceTrainer keeps the caller's unknown token and
+   adds none of its own: 13 entries below, the alphabet of 11 ([a]-[f] and
+   [##b]-[##f]) and the two special tokens. *)
+let test_wordpiece_unk () =
+  let t =
+    train_wordpiece ~pre:split ~unk_token:"<unk>"
+      ~added_tokens:[ added_token "<unk>" ]
+      (texts [ "ab ab" ])
+  in
+  equal ~msg:"z ab" (list string) [ "<unk>"; "ab" ] (tokens t "z ab");
+  equal ~msg:"[UNK]" (option int) None (token_to_id t "[UNK]")
+
+let test_wordpiece_vocab_size () =
+  let corpus = texts [ "abcdef abcdef abc" ] in
+  let added_tokens = [ added_token "<s>"; added_token "</s>" ] in
+  let t = train_wordpiece ~pre:split ~added_tokens ~vocab_size:8 corpus in
+  let bpe =
+    train_bpe ~pre:split ~added_tokens ~vocab_size:8
+      ~continuing_subword_prefix:"##" corpus
+  in
+  equal ~msg:"vocabulary" (list string) (vocabulary bpe) (vocabulary t);
+  equal ~msg:"vocab_size" int 13 (vocab_size t)
+
 let wordpiece_case =
   let open Gen in
   let+ words = words
@@ -454,8 +487,6 @@ let wordpiece_case =
   and+ prefix = option (constant ~pp:Format.pp_print_string "@@") in
   (words, vocab_size, min_frequency, limit_alphabet, initial_alphabet, prefix)
 
-(* With the unknown token among the special tokens both trainers count it, so
-   the vocabularies compare whole. *)
 let test_wordpiece_is_bpe_training =
   prop "learns the vocabulary train_bpe learns over the same words"
     wordpiece_case
@@ -468,15 +499,13 @@ let test_wordpiece_is_bpe_training =
         prefix )
     ->
       let corpus = texts [ String.concat " " words ] in
-      let added_tokens = [ added_token "[UNK]" ] in
       let wordpiece =
-        train_wordpiece ~pre:split ~added_tokens ~vocab_size ~min_frequency
-          ?limit_alphabet ~initial_alphabet ?continuing_subword_prefix:prefix
-          corpus
+        train_wordpiece ~pre:split ~vocab_size ~min_frequency ?limit_alphabet
+          ~initial_alphabet ?continuing_subword_prefix:prefix corpus
       in
       let bpe =
-        train_bpe ~pre:split ~added_tokens ~vocab_size ~min_frequency
-          ?limit_alphabet ~initial_alphabet
+        train_bpe ~pre:split ~vocab_size ~min_frequency ?limit_alphabet
+          ~initial_alphabet
           ~continuing_subword_prefix:(Option.value prefix ~default:"##")
           corpus
       in
@@ -506,6 +535,17 @@ let test_word_level_specials () =
       ~vocab_size:4 (texts [ "a a a b b c" ])
   in
   equal (list string) [ "[UNK]"; "[CLS]"; "a"; "b" ] (vocabulary t)
+
+(* tokenizers 0.23.1: WordLevel(unk_token="[UNK]") trained with
+   WordLevelTrainer(special_tokens=["[UNK]"]) on "a a b" gives "a zz" the tokens
+   a and [UNK]. *)
+let test_word_level_unk () =
+  let t =
+    train_word_level ~pre:split ~unk_token:"[UNK]"
+      ~added_tokens:[ added_token "[UNK]" ]
+      (texts [ "a a b" ])
+  in
+  equal (list string) [ "a"; "[UNK]" ] (tokens t "a zz")
 
 let test_word_level_min_frequency () =
   let t =
@@ -656,6 +696,7 @@ let () =
                test_bpe_repeated_merge;
              test "takes the pipeline and role markers as bpe does"
                test_bpe_pipeline;
+             test "gives the model unk_token's unknown handling" test_bpe_unk;
              test_bpe_vocab_size;
              test_bpe_spells_words;
              test "reads a byte that opens no character as a character"
@@ -667,6 +708,9 @@ let () =
                test_wordpiece_subwords;
              test "prefixes subwords with continuing_subword_prefix"
                test_wordpiece_prefix;
+             test "spells an unseen word as unk_token" test_wordpiece_unk;
+             test "adds no token past what train_bpe learns"
+               test_wordpiece_vocab_size;
              test_wordpiece_is_bpe_training;
            ];
          group "train_word_level"
@@ -676,6 +720,7 @@ let () =
                test_word_level_whole_text;
              test "numbers the words after the special tokens"
                test_word_level_specials;
+             test "spells an unseen word as unk_token" test_word_level_unk;
              test "leaves out a word below min_frequency"
                test_word_level_min_frequency;
              test_word_level_most_frequent;

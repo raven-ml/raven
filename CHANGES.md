@@ -5573,6 +5573,15 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.unk_token` is the model's unknown token, defaults included, and
+  `~unk_token` reaches the model from `from_model_file`, the trainers and
+  `to_json`, which dropped it.
+- **Breaking:** a WordPiece, word-level or BPE model whose vocabulary lacks its
+  unknown token raises `Failure` at the word that needs it, as Hugging Face
+  does, where the others dropped the word and WordPiece refused to load.
+- **Breaking:** `train_wordpiece` adds no `[UNK]` of its own, so trained ids
+  change; the vocabulary holds the unknown token when the added tokens do.
+- **Breaking:** `Brot.chars` takes no `?unk_token`: every byte has a token.
 - `train_bpe` reads a byte that opens no character as a character of one byte,
   as encoding does. It skipped the byte and merged across it: `"a\xffb"`
   taught it `ab`.

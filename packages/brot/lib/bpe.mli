@@ -98,7 +98,9 @@ val create :
       A non-zero value disables the cache and [ignore_merges], both of which
       would reuse a choice that is drawn per occurrence.
     - [unk_token] is emitted for characters whose affixed form is not in [vocab]
-      (when {!byte_fallback} is off). No default.
+      (when {!byte_fallback} is off). Encoding raises [Failure] at such a
+      character when [vocab] does not hold [unk_token]. No default: without one,
+      such a character gives no token.
     - [continuing_subword_prefix] is prepended to every character of a word but
       the first before merging, so continuation subwords carry it. No default;
       [""] is the same as none.
@@ -120,9 +122,14 @@ val spaceable : vocab -> bool
     holds a space, which would read as one holding ["▁"] there. *)
 
 val from_files :
-  ?byte_level:bool -> vocab_file:string -> merges_file:string -> unit -> t
+  ?byte_level:bool ->
+  ?unk_token:string ->
+  vocab_file:string ->
+  merges_file:string ->
+  unit ->
+  t
 (** [from_files ~vocab_file ~merges_file ()] loads a BPE model from
-    HuggingFace-format files. [byte_level] is as in {!create}.
+    HuggingFace-format files. [byte_level] and [unk_token] are as in {!create}.
 
     - [vocab_file] is a JSON object mapping token strings to integer IDs.
     - [merges_file] is a text file with one space-separated merge pair per line.
@@ -317,12 +324,14 @@ val train :
   continuing_subword_prefix:string option ->
   end_of_word_suffix:string option ->
   max_token_length:int option ->
+  unk_token:string option ->
   (string * int) list ->
   t * string list
 (** [train ~min_frequency ~vocab_size ~show_progress ~special_tokens
      ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
-     ~end_of_word_suffix ~max_token_length word_counts] learns BPE merges from
-    [word_counts], each word paired with the number of times it occurs.
+     ~end_of_word_suffix ~max_token_length ~unk_token word_counts] learns BPE
+    merges from [word_counts], each word paired with the number of times it
+    occurs.
 
     Each word starts out as its characters, in the form the affixes give them,
     and the most frequent adjacent pair is merged over and over until
@@ -345,5 +354,6 @@ val train :
     - [max_token_length] holds a merge back once the run of characters it would
       join reaches that many. The merges of single characters that open the
       training are not held back.
+    - [unk_token] is the model's, as in {!create}.
 
     Returns [(model, special_tokens)]. *)

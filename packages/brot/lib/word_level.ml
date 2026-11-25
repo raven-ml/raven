@@ -37,9 +37,13 @@ let create ?(vocab = []) ?(unk_token = "<unk>") () =
     unk_id;
   }
 
+let missing_unk model =
+  failwith
+    (Printf.sprintf "WordLevel: the unknown token %S is not in the vocabulary"
+       model.unk_token)
+
 (* A word absent from the vocabulary is the unknown token, recorded as standing
-   for the whole word, and nothing at all when the vocabulary does not hold that
-   either. *)
+   for the whole word. *)
 let encode_into model ids ~opaque text ~pos ~len =
   if len > 0 then begin
     let word =
@@ -49,12 +53,11 @@ let encode_into model ids ~opaque text ~pos ~len =
     match Hashtbl.find_opt model.vocab word with
     | Some id -> Ints.add ids id
     | None ->
-        if model.unk_id >= 0 then begin
-          Ints.add opaque (Ints.length ids);
-          Ints.add opaque 1;
-          Ints.add opaque len;
-          Ints.add ids model.unk_id
-        end
+        if model.unk_id < 0 then missing_unk model;
+        Ints.add opaque (Ints.length ids);
+        Ints.add opaque 1;
+        Ints.add opaque len;
+        Ints.add ids model.unk_id
   end
 
 let token_table model = model.token_table
@@ -66,6 +69,7 @@ let get_vocab model =
   Hashtbl.fold (fun token id acc -> (token, id) :: acc) model.vocab []
 
 let get_vocab_size model = Hashtbl.length model.vocab
+let get_unk_token model = model.unk_token
 
 let json_obj pairs =
   Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
@@ -98,8 +102,8 @@ let save model ~folder () =
     (fun () -> output_string oc (json_to_string json));
   [ "wordlevel.json" ]
 
-let train ~vocab_size ~min_frequency ~show_progress ~special_tokens word_counts
-    =
+let train ~vocab_size ~min_frequency ~show_progress ~special_tokens ~unk_token
+    word_counts =
   let _ = show_progress in
   let items =
     List.filter (fun (_, count) -> count >= min_frequency) word_counts
@@ -116,4 +120,5 @@ let train ~vocab_size ~min_frequency ~show_progress ~special_tokens word_counts
         vocab_items := (word, !idx) :: !vocab_items;
         incr idx))
     items;
-  (create ~vocab:(specials @ List.rev !vocab_items) (), special_tokens)
+  ( create ~vocab:(specials @ List.rev !vocab_items) ?unk_token (),
+    special_tokens )
