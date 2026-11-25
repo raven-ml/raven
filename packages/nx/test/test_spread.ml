@@ -364,8 +364,12 @@ let moments (type s) (x : (float, s, Nx.host) Nx.t) =
 
 let fl32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
-(* Ordinary lanes keep the kernels' moments' bits, then the scale and the
-   root taken once in the carrier. *)
+(* Ordinary lanes keep the kernels' moments' bits, then the scale and the root
+   taken once in the carrier. A lane of magnitudes below 1 takes its root from
+   the moments of the lane scaled by [2^k] into [[1, 2)], then scaled back: a
+   power of two changes no bit of moments that fit, and it keeps the squares of
+   [[least subnormal; 0]] from underflowing, where {!Nx.std} still states the
+   root of the exact variance. *)
 let ordinary =
   Gen.(
     let* is64 = bool in
@@ -382,10 +386,15 @@ let law_ordinary (is64, n, ddof, xs) =
   cover "a ddof above one" (ddof > 1);
   let run (type s) (dt : (float, s) D.t) round =
     let x = Nx.cast dt (Nx.create float64 [| n |] xs) in
-    let v = moments x in
     let scale = Float.of_int n /. Float.of_int (n - ddof) in
-    let want_v = if ddof = 0 then v else round (v *. round scale) in
-    let want_s = round (sqrt want_v) in
+    let corrected v = if ddof = 0 then v else round (v *. round scale) in
+    let want_v = corrected (moments x) in
+    let es = Nx.to_array x in
+    let m = Array.fold_left (fun m e -> Float.max m (Float.abs e)) 0. es in
+    let k = if m = 0. || m >= 1. then 0 else 1 - snd (Float.frexp m) in
+    let up = Nx.create dt [| n |] (Array.map (fun e -> Float.ldexp e k) es) in
+    let root = round (sqrt (corrected (moments up))) in
+    let want_s = round (Float.ldexp root (-k)) in
     exactly ~msg:"var, the kernels' bits" want_v (number (Nx.var ~ddof x));
     exactly ~msg:"std, the root" want_s (number (Nx.std ~ddof x))
   in
@@ -411,5 +420,10 @@ let () =
            ~id:(fun (i, c) -> Printf.sprintf "%d %s" i c.name)
            (List.mapi (fun i c -> (i, c)) lanes_for_views)
            (fun (_, c) -> check_views c);
-         prop "ordinary lanes keep the kernels' bits" ordinary law_ordinary;
+         prop "ordinary lanes keep the kernels' bits" ordinary law_ordinary
+           ~examples:
+             [
+               (true, 2, 0, [| 0x1.000000ap-511; 0. |]);
+               (false, 2, 0, [| 0x1p-140; 0. |]);
+             ];
        ])
