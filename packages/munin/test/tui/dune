@@ -1,19 +1,38 @@
+(library
+ (name munin_tui_fixture)
+ (wrapped false)
+ (modules fixture)
+ (libraries munin munin_float_text unix))
+
 (test
  (name test_munin_tui)
  (package munin)
- (modules test_munin_tui fixture)
+ (modules test_munin_tui)
  (deps
   ../support/child.exe
   (glob_files golden/*.txt))
  (libraries
   munin
   munin.tui
-  munin_float_text
+  munin_tui_fixture
   unix
   windtrap
   mosaic
   mosaic.test
   matrix
-  matrix.test
+  matrix.test))
+
+(test
+ (name test_tui_modules)
+ (package munin)
+ (modules test_tui_modules)
+ (libraries
+  munin
+  munin.tui
+  munin_tui_fixture
+  munin_float_text
+  unix
+  windtrap
+  matrix
   matrix.charts
   matrix.grid))
