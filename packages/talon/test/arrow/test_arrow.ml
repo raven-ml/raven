@@ -244,13 +244,16 @@ let undeclared_decimals =
           contains ~sub:"l undeclared ← list<item: decimal128(9, 2)>"
             (text "decimals_nested.arrow"));
       cases "a declared decimal reads as pyarrow reads it"
-        ~id:(String.concat " ") decimal_lines (function
-        | [ file; name; ty; values ] ->
-            let f = A.with_type name (declaration name ty) (declared file) in
-            let c = column (Error.get_ok (read_as f (support file))) name in
-            equal string ty (type_text (Column.type_ c));
-            equal string values (rendered c)
-        | line -> failf "a golden line of %d fields" (List.length line));
+        ~id:(fun line ->
+          String.concat " " (List.filteri (fun i _ -> i < 3) line))
+        decimal_lines
+        (function
+          | [ file; name; ty; values ] ->
+              let f = A.with_type name (declaration name ty) (declared file) in
+              let c = column (Error.get_ok (read_as f (support file))) name in
+              equal string ty (type_text (Column.type_ c));
+              equal string values (rendered c)
+          | line -> failf "a golden line of %d fields" (List.length line));
       cases
         "source, file and encode raise for an undeclared column, naming it and \
          its types"
@@ -613,8 +616,10 @@ let reading =
           let t =
             Talon.v [ ("x", Column.v Type.int64 (Array.init n Fun.id)) ]
           in
-          let path = temp_file ~suffix:".arrow" () in
+          (* Each compression writes a file of its own, since Windows refuses
+             to truncate a file whose pages are mapped. *)
           let held compression =
+            let path = temp_file ~suffix:".arrow" () in
             Out_channel.with_open_bin path (fun oc ->
                 Error.get_ok
                   (A.encode
