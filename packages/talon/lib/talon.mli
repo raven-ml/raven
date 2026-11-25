@@ -1574,9 +1574,9 @@ module Expr : sig
       - a NaN [before] holds no key, and a NaN [after] every key from the
         window's lower limit on, NaN included.
 
-      A float sum's bits depend on the window's rows, their places once the
-      frame's rows are sorted by partition, then by key, and whether the
-      window has [before] or [~exclude_key:true] with [after]. They may differ
+      A float sum's bits depend on the window's rows, the rows of each
+      partition of the frame in key order, and whether the window has
+      [before] or [~exclude_key:true] with [after]. They may differ
       from {!Query.aggregate}'s over the same rows. With [~exclude_key:true]
       and [after], [var] and [std] are {!Query.aggregate}'s over the window's
       rows. Otherwise, with [before], they come from {!Nx.moments_ranges} over
