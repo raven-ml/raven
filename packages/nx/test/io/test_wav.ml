@@ -3,12 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* WAV. Files built here byte by byte from RIFF's specification,
+(* WAV, as nx_io.mli's Audio section states it. Files built here byte by byte
+   from RIFF's Multimedia Programming Interface and Data Specifications 1.0,
    WAVEFORMATEXTENSIBLE and EBU Tech 3306 load as the samples they encode, each
-   in the top bits of its dtype, for every container and coding a load reads;
-   G.711 codes and files libsndfile wrote load as libsndfile reads them; every
-   other coding, a size past the file and a set bit below a sample's valid bits
-   raise [Failure] naming the file, and nothing else. *)
+   in the top bits of its dtype; G.711's codes load as its tables state them;
+   files libsndfile wrote load as libsndfile reads them; every file a load does
+   not read raises [Failure] naming it, and nothing else; a save loads back as
+   what it saved. *)
 
 open Windtrap
 open Io_support
@@ -45,22 +46,29 @@ let extensible ?(rate = 8000) ?(mask = 0) ~code ~channels ~container valid =
   ^ le 2 22 ^ le 2 valid ^ le 4 mask ^ guid code
 
 let wav ?id fmt data = riff ?id [ chunk "fmt " fmt; chunk "data" data ]
+let pcm16 = plain ~code:1 ~channels:1 ~container:2 16
 let load_one path = Audio.samples (Nx_io.load_audio path)
+
+(* The chunks of a RIFF file [s] after its form type, as identifiers and
+   bodies. *)
+let chunks_of s =
+  let rec walk at acc =
+    if at + 8 > String.length s then List.rev acc
+    else
+      let id = String.sub s at 4 in
+      let n = Int32.to_int (String.get_int32_le s (at + 4)) land 0xffff_ffff in
+      let n = Int.min n (String.length s - at - 8) in
+      walk (at + 8 + n + (n land 1)) ((id, String.sub s (at + 8) n) :: acc)
+  in
+  walk 12 []
 
 (* Values *)
 
 (* The value of [dt] whose elements' bytes, little-endian, are [s]. *)
 let of_le (type v s) (dt : (v, s) D.t) shape s =
-  let w = D.bytes dt 1 in
-  let host =
-    if not Sys.big_endian then s
-    else
-      String.init (String.length s) (fun i ->
-          s.[(i / w * w) + (w - 1 - (i mod w))])
-  in
   Nx.P
     (Nx.Repr.unsafe_of_array Nx.Host.v
-       (A.v dt (L.contiguous shape) (Rig.Buffer.of_string host)))
+       (A.v dt (L.contiguous shape) (Rig.Buffer.of_string s)))
 
 (* The dtype of a PCM container of [k] bytes. *)
 let pcm_dtype k =
@@ -89,17 +97,21 @@ let facts a =
 
 let facts_t = pair (triple int int int) (pair int int)
 
+(* The speakers of a WAV file of [c] channels that states none. *)
+let default_mask c = match c with 1 -> 0x4 | 2 -> 0x3 | _ -> 0
+
 (* Containers *)
 
 (* A case: a container of [k] bytes, its [valid] bits, [c] channels, [rows]
-   rows, WAVEFORMATEXTENSIBLE or plain, and the containers' bytes, zero below
-   the valid bits. *)
+   rows, the rate and, for WAVEFORMATEXTENSIBLE, the mask, and the containers'
+   bytes, zero below the valid bits. *)
 type pcm = {
   k : int;
   valid : int;
   c : int;
   rows : int;
-  ext : bool;
+  rate : int;
+  mask : int option;
   data : string;
 }
 
@@ -107,10 +119,24 @@ let pcm_gen =
   let open Gen in
   let* k = int_range 1 8 in
   let* valid = int_range 1 (8 * k) in
-  let* ext = if (valid + 7) / 8 = k then bool else constant true in
+  let* mask =
+    let stated = frequency [ (1, constant 0); (2, int_range 0 0xffff_ffff) ] in
+    (* A plain fmt chunk states its bits rounded up to bytes. *)
+    let some = map Option.some stated in
+    if (valid + 7) / 8 = k then frequency [ (1, constant None); (1, some) ]
+    else some
+  in
   let* c = frequency [ (3, int_range 1 2); (1, int_range 3 9) ] in
   let* rows =
     frequency [ (1, constant 0); (1, constant 1); (4, int_range 2 9) ]
+  in
+  let* rate =
+    frequency
+      [
+        (1, constant 0);
+        (1, of_list [ 1; 0xffff_ffff ]);
+        (2, int_range 0 0xffff_ffff);
+      ]
   in
   let+ data = string_of ~size:(constant (k * c * rows)) char in
   (* Each container's bits below its top [valid] are cleared. *)
@@ -127,44 +153,75 @@ let pcm_gen =
         Char.chr (Char.code ch land keep))
       data
   in
-  { k; valid; c; rows; ext; data }
+  { k; valid; c; rows; rate; mask; data }
 
 let pcm_gen =
   Gen.with_pp
     (fun ppf p ->
-      Format.fprintf ppf "%d valid bits in %d bytes, %d channels, %d rows, %s"
-        p.valid p.k p.c p.rows
-        (if p.ext then "extensible" else "plain"))
+      Format.fprintf ppf
+        "%d valid bits in %d bytes, %d channels, %d rows at %d, %s" p.valid p.k
+        p.c p.rows p.rate
+        (match p.mask with
+        | None -> "plain"
+        | Some m -> Printf.sprintf "extensible, mask 0x%x" m))
     pcm_gen
 
 let pcm_file p =
   let fmt =
-    if p.ext then
-      extensible ~mask:0x5 ~code:1 ~channels:p.c ~container:p.k p.valid
-    else plain ~code:1 ~channels:p.c ~container:p.k p.valid
+    match p.mask with
+    | Some mask ->
+        extensible ~rate:p.rate ~mask ~code:1 ~channels:p.c ~container:p.k
+          p.valid
+    | None -> plain ~rate:p.rate ~code:1 ~channels:p.c ~container:p.k p.valid
   in
   file ~suffix:".wav" (wav fmt p.data)
 
+(* The draws reach containers of 1, 3 and 8 bytes with p = 1/8 each, plain fmt
+   chunks with p = 0.17 and no row with p = 1/6: at 200 cases the rarest misses
+   a run with (7/8)^200 = 2.6e-12. *)
 let containers =
-  prop "PCM loads as its containers in the top bits of its dtype" pcm_gen
-    (fun p ->
+  prop ~count:200
+    "PCM loads as its containers in the top bits of its dtype, at the rate and \
+     with the mask the file states"
+    pcm_gen (fun p ->
       cover "1 byte" (p.k = 1);
       cover "3 bytes" (p.k = 3);
       cover "5 to 7 bytes" (p.k >= 5 && p.k <= 7);
       cover "8 bytes" (p.k = 8);
       cover "fewer valid bits than the container's" (p.valid < 8 * p.k);
-      cover "plain" (not p.ext);
+      cover "plain" (p.mask = None);
+      cover "a stated mask of 0" (p.mask = Some 0);
       cover "more than 2 channels" (p.c > 2);
       cover "no row" (p.rows = 0);
+      cover "a rate of 0" (p.rate = 0);
       let a = Nx_io.load_audio (pcm_file p) in
-      let mask =
-        if p.ext then 0x5 else match p.c with 1 -> 4 | 2 -> 3 | _ -> 0
-      in
-      equal facts_t ((8000, p.rows, p.c), (p.valid, mask)) (facts a);
+      let mask = Option.value p.mask ~default:(default_mask p.c) in
+      equal facts_t ((p.rate, p.rows, p.c), (p.valid, mask)) (facts a);
       equal packed (expected ~k:p.k ~c:p.c p.data) (Audio.samples a))
 
+(* Two rows of two floats' bytes: a signalling NaN, a NaN with a payload, -0.
+   and an infinity, at both widths. *)
+let float_specials =
+  let bytes64 v =
+    String.init 8 (fun i ->
+        Char.chr (Int64.to_int (Int64.shift_right_logical v (8 * i)) land 0xff))
+  in
+  let f32 = [ 0x7f800001; 0xffc00123; 0x80000000; 0x7f800000 ] in
+  let f64 =
+    [
+      0x7ff0000000000001L;
+      0xfff8000000000abcL;
+      Int64.min_int;
+      0x7ff0000000000000L;
+    ]
+  in
+  [
+    (0, (2, String.concat "" (List.map (le 4) f32)));
+    (1, (2, String.concat "" (List.map bytes64 f64)));
+  ]
+
 let floats =
-  prop "IEEE floats load as stored, every bit kept"
+  prop "IEEE floats load as stored, every bit kept" ~examples:float_specials
     Gen.(
       pair (int_range 0 1)
         (pair (int_range 0 5) (string_of ~size:(constant 80) char)))
@@ -172,8 +229,7 @@ let floats =
       let k = if double = 1 then 8 else 4 in
       let c = 2 in
       let data = String.sub bits 0 (rows * c * k) in
-      let dt = if k = 8 then D.Any D.Float64 else D.Any D.Float32 in
-      let (D.Any dt) = dt in
+      let (D.Any dt) = if k = 8 then D.Any D.Float64 else D.Any D.Float32 in
       List.iter
         (fun fmt ->
           let a = Nx_io.load_audio (file (wav fmt data)) in
@@ -184,61 +240,70 @@ let floats =
           extensible ~mask:3 ~code:3 ~channels:c ~container:k (8 * k);
         ])
 
-(* A signalling NaN, a NaN with a payload, -0. and the infinities, at both
-   widths. *)
-let float_specials =
-  test "float specials load bit for bit" (fun () ->
-      let f32 = [ 0x7f800001l; 0xffc00123l; 0x80000000l; 0x7f800000l ] in
-      let data =
-        String.concat ""
-          (List.map (fun v -> le 4 (Int32.to_int v land 0xffffffff)) f32)
-      in
-      equal packed
-        (of_le D.Float32 [| 2; 2 |] data)
-        (load_one (file (wav (plain ~code:3 ~channels:2 ~container:4 32) data)));
-      let f64 =
-        [
-          0x7ff0000000000001L;
-          0xfff8000000000abcL;
-          Int64.min_int;
-          0x7ff0000000000000L;
-        ]
-      in
-      let data =
-        String.concat ""
-          (List.map
-             (fun v ->
-               String.init 8 (fun i ->
-                   Char.chr
-                     (Int64.to_int (Int64.shift_right_logical v (8 * i))
-                     land 0xff)))
-             f64)
-      in
-      equal packed
-        (of_le D.Float64 [| 2; 2 |] data)
-        (load_one (file (wav (plain ~code:3 ~channels:2 ~container:8 64) data))))
-
 (* G.711 *)
 
-let g711 =
+(* A file of one channel of [codes], A-law (6) or mu-law (7), plain or
+   WAVEFORMATEXTENSIBLE. *)
+let g711_file ~code ~ext codes =
+  let fmt =
+    if ext then extensible ~mask:4 ~code ~channels:1 ~container:1 8
+    else plain ~code ~channels:1 ~container:1 8
+  in
+  file (wav fmt codes)
+
+let g711_one ~code ~ext byte =
+  let x = load_one (g711_file ~code ~ext (String.make 1 (Char.chr byte))) in
+  (Nx.to_array (Nx.unpack Nx.int16 x)).(0)
+
+let g711_tables =
+  cases
+    "G.711's tabled codes load as their decoder output in the top bits of int16"
+    ~id:(fun (law, byte, _) -> Printf.sprintf "%s 0x%02x" law byte)
+    [
+      (* Table 1a/G.711, A-law, positive input values: the character signal
+         before the inversion of its even bits (0x55), and the decoder output y
+         in the 13-bit code, so the int16 is 8 y. *)
+      ("A-law", 0xff lxor 0x55, 4032 * 8);
+      ("A-law", 0xf0 lxor 0x55, 2112 * 8);
+      ("A-law", 0xe0 lxor 0x55, 1056 * 8);
+      ("A-law", 0x80 lxor 0x55, 1 * 8);
+      (* Table 1b/G.711, A-law, negative input values. *)
+      ("A-law", 0x00 lxor 0x55, -1 * 8);
+      ("A-law", 0x20 lxor 0x55, -66 * 8);
+      ("A-law", 0x7f lxor 0x55, -4032 * 8);
+      (* Table 2a/G.711, mu-law, positive input values: the character signal,
+         and y in the 14-bit code, so the int16 is 4 y. *)
+      ("mu-law", 0x80, 8031 * 4);
+      ("mu-law", 0x8f, 4191 * 4);
+      ("mu-law", 0xef, 33 * 4);
+      ("mu-law", 0xfe, 2 * 4);
+      ("mu-law", 0xff, 0);
+      (* Table 2b/G.711, mu-law, negative input values, and 3.2: "the character
+         signal ... should be 00000010 and the value at the decoder output is
+         -7519". *)
+      ("mu-law", 0x7f, 0);
+      ("mu-law", 0x02, -7519 * 4);
+      ("mu-law", 0x01, -7775 * 4);
+      ("mu-law", 0x00, -8031 * 4);
+    ]
+    (fun (law, byte, value) ->
+      let code = if law = "A-law" then 6 else 7 in
+      equal ~msg:"plain" int value (g711_one ~code ~ext:false byte);
+      equal ~msg:"extensible" int value (g711_one ~code ~ext:true byte))
+
+let g711_libsndfile =
   cases "every G.711 code loads as libsndfile reads it" ~id:fst
     [ ("A-law", (6, "wav_alaw", 13)); ("mu-law", (7, "wav_mulaw", 14)) ]
     (fun (_, (code, name, bits)) ->
-      let data = String.init 256 Char.chr in
+      let reference = Nx_io.load_npy (fixture (name ^ ".npy")) in
+      let codes = String.init 256 Char.chr in
       List.iter
-        (fun fmt ->
-          let a = Nx_io.load_audio (file (wav fmt data)) in
+        (fun ext ->
+          let a = Nx_io.load_audio (g711_file ~code ~ext codes) in
           equal facts_t ((8000, 256, 1), (bits, 4)) (facts a);
-          equal packed
-            (Nx_io.load_npy (fixture (name ^ ".npy")))
-            (Audio.samples a))
-        [
-          plain ~code ~channels:1 ~container:1 8;
-          extensible ~mask:4 ~code ~channels:1 ~container:1 8;
-        ];
-      equal packed
-        (Nx_io.load_npy (fixture (name ^ ".npy")))
-        (load_one (fixture (name ^ ".wav"))))
+          equal packed reference (Audio.samples a))
+        [ false; true ];
+      equal packed reference (load_one (fixture (name ^ ".wav"))))
 
 (* libsndfile *)
 
@@ -262,73 +327,9 @@ let libsndfile =
 (* [junk n] is a chunk of [n] bytes a load skips. *)
 let junk n = chunk "JUNK" (String.make n 'j')
 
-let layout =
-  group "layout"
-    [
-      test "float32 at a multiple of 4 bytes loads over the file's pages"
-        (fun () ->
-          let data = String.make 8 '\001' in
-          let fmt = chunk "fmt " (plain ~code:3 ~channels:2 ~container:4 32) in
-          let s = riff [ fmt; chunk "data" data ] in
-          equal int 0 ((String.length s - 8) mod 4);
-          equal memory Over_file (memory_of (load_one (file s))));
-      test "float32 at 2 bytes past a multiple of 4 loads into its own memory"
-        (fun () ->
-          let data = String.make 8 '\001' in
-          let fmt = chunk "fmt " (plain ~code:3 ~channels:2 ~container:4 32) in
-          let s = riff [ fmt; junk 2; chunk "data" data ] in
-          equal int 2 ((String.length s - 8) mod 4);
-          let x = load_one (file s) in
-          equal memory Own_memory (memory_of x);
-          equal packed (of_le D.Float32 [| 1; 2 |] data) x);
-      test "a chunk of an odd size is followed by its pad byte" (fun () ->
-          let data = "\001\002" in
-          let s =
-            riff
-              [
-                junk 1;
-                chunk "fmt " (plain ~code:1 ~channels:1 ~container:2 16);
-                junk 5;
-                chunk "data" data;
-              ]
-          in
-          equal packed (of_le D.Int16 [| 1; 1 |] data) (load_one (file s)));
-      test "a 24-bit file loads into memory of its own" (fun () ->
-          let path =
-            file
-              (wav (plain ~code:1 ~channels:1 ~container:3 24) "\001\002\003")
-          in
-          equal memory Own_memory (memory_of (load_one path)));
-      test "nothing after data is read" (fun () ->
-          let s =
-            wav (plain ~code:1 ~channels:1 ~container:2 16) "\001\002"
-            ^ "LIST\255\255\255\255"
-          in
-          let a = Nx_io.load_audio (file s) in
-          equal int 1 (Audio.length a));
-      test "a data size of 0xFFFFFFFF runs to the end of the file" (fun () ->
-          let fmt = chunk "fmt " (plain ~code:1 ~channels:2 ~container:2 16) in
-          let data = "\001\002\003\004\005\006\007\008" in
-          let s = riff [ fmt ] ^ "data" ^ le 4 0xffffffff ^ data in
-          let a = Nx_io.load_audio (file s) in
-          equal int 2 (Audio.length a);
-          equal packed (of_le D.Int16 [| 2; 2 |] data) (Audio.samples a));
-      test "a data size of 0 is no row" (fun () ->
-          let s =
-            riff
-              [
-                chunk "fmt " (plain ~code:1 ~channels:1 ~container:2 16);
-                chunk "data" "";
-              ]
-            ^ "\001\002"
-          in
-          equal int 0 (Audio.length (Nx_io.load_audio (file s))));
-    ]
-
-(* RF64 *)
-
 (* An RF64 file whose ds64 chunk states the data's size, with the data chunk's
-   size 0xFFFFFFFF, and a JUNK chunk whose size the table states. *)
+   size 0xFFFFFFFF, and a JUNK chunk whose size the table states (EBU Tech 3306,
+   3.4). *)
 let rf64 data =
   let fmt = chunk "fmt " (plain ~code:1 ~channels:2 ~container:2 16) in
   let n = String.length data in
@@ -343,208 +344,306 @@ let rf64 data =
   "RF64" ^ le 4 0xffffffff ^ "WAVE" ^ ds64 ^ fmt ^ "JUNK" ^ le 4 0xffffffff
   ^ junk_body ^ "data" ^ le 4 0xffffffff ^ data ^ "trailing"
 
-let rf64_cases =
-  group "RF64"
+let float32_data = chunk "data" (String.make 8 '\001')
+let float32_fmt = chunk "fmt " (plain ~code:3 ~channels:2 ~container:4 32)
+
+let wav_files =
+  group "WAV"
     [
-      test "the ds64 chunk states the sizes of 0xFFFFFFFF" (fun () ->
+      containers;
+      floats;
+      g711_tables;
+      g711_libsndfile;
+      libsndfile;
+      test "a chunk of an odd size is followed by its pad byte" (fun () ->
+          let data = "\001\002" in
+          let s =
+            riff [ junk 1; chunk "fmt " pcm16; junk 5; chunk "data" data ]
+          in
+          equal packed (of_le D.Int16 [| 1; 1 |] data) (load_one (file s)));
+      cases "nothing after the data chunk is read" ~id:fst
+        [
+          ( "a chunk past the file's end",
+            (wav pcm16 "\001\002" ^ "LIST\255\255\255\255", 1) );
+          ( "the bytes of a row, after data of no row",
+            (riff [ chunk "fmt " pcm16; chunk "data" "" ] ^ "\001\002", 0) );
+        ]
+        (fun (_, (s, rows)) ->
+          equal int rows (Audio.length (Nx_io.load_audio (file s))));
+      test "a data size of 0xFFFFFFFF runs to the end of the file" (fun () ->
+          let fmt = chunk "fmt " (plain ~code:1 ~channels:2 ~container:2 16) in
+          let data = "\001\002\003\004\005\006\007\008" in
+          let s = riff [ fmt ] ^ "data" ^ le 4 0xffffffff ^ data in
+          let a = Nx_io.load_audio (file s) in
+          equal int 2 (Audio.length a);
+          equal packed (of_le D.Int16 [| 2; 2 |] data) (Audio.samples a));
+      test "an RF64 file's ds64 chunk states the sizes of 0xFFFFFFFF" (fun () ->
           let data = "\001\002\003\004\005\006\007\008" in
           let a = Nx_io.load_audio (file (rf64 data)) in
           equal int 2 (Audio.length a);
           equal packed (of_le D.Int16 [| 2; 2 |] data) (Audio.samples a));
-      test "an RF64 file without a ds64 chunk first" (fun () ->
-          let s =
-            wav ~id:"RF64"
-              (plain ~code:1 ~channels:1 ~container:2 16)
-              "\001\002"
-          in
-          let path = file s in
-          fails ~naming:"ds64" ~path (fun () -> Nx_io.load_audio path));
+      cases
+        "samples lie over the file's pages where their valid bits fill \
+         containers of 1, 2, 4 or 8 bytes at a multiple of their size"
+        ~id:fst
+        [
+          ( "float32 at a multiple of 4",
+            (riff [ float32_fmt; float32_data ], Over_file) );
+          ( "float32 at 2 past a multiple of 4",
+            (riff [ float32_fmt; junk 2; float32_data ], Own_memory) );
+          ( "24-bit PCM",
+            ( wav (plain ~code:1 ~channels:1 ~container:3 24) "\001\002\003",
+              Own_memory ) );
+          ( "20 valid bits in 4 bytes",
+            ( wav
+                (extensible ~code:1 ~channels:1 ~container:4 20)
+                "\000\016\002\003",
+              Own_memory ) );
+        ]
+        (fun (_, (s, where)) ->
+          equal memory where (memory_of (load_one (file s))));
     ]
 
-(* Refusals *)
+(* Audio.samples *)
 
-let pcm16 = plain ~code:1 ~channels:1 ~container:2 16
-
-let refused =
-  cases "a file a load does not read raises naming it" ~id:fst
+let samples =
+  group "Audio.samples"
     [
-      ("a RIFX form", (wav ~id:"RIFX" pcm16 "\000\001", "RIFX"));
-      ( "an Ogg stream",
-        ("OggS\000\002" ^ String.make 30 '\000', "neither a WAV nor a FLAC") );
-      ("no data chunk", (riff [ chunk "fmt " pcm16 ], "no data chunk"));
-      ( "fmt after data",
-        (riff [ chunk "data" "\000\001"; chunk "fmt " pcm16 ], "before the fmt")
-      );
-      ( "two fmt chunks",
-        ( riff [ chunk "fmt " pcm16; chunk "fmt " pcm16; chunk "data" "" ],
-          "two fmt" ) );
-      ( "a short fmt chunk",
-        ( riff [ chunk "fmt " (String.sub pcm16 0 14); chunk "data" "" ],
-          "fewer than 16" ) );
-      ( "no channel",
-        (wav (plain ~code:1 ~channels:0 ~container:2 16) "", "no channel") );
-      ( "a block that is not whole containers",
-        ( wav (le 2 1 ^ le 2 2 ^ le 4 8000 ^ le 4 24000 ^ le 2 3 ^ le 2 8) "",
-          "blocks of 3" ) );
-      ( "containers of 9 bytes",
-        (wav (plain ~code:1 ~channels:1 ~container:9 72) "", "blocks of 9") );
-      ( "24 bits in 4 bytes, plain, as Cool Edit writes floats",
-        (wav (plain ~code:1 ~channels:1 ~container:4 24) "", "24 bits in 4") );
-      ( "17 bits in 2 bytes",
-        (wav (plain ~code:1 ~channels:1 ~container:2 17) "", "17 bits in 2") );
-      ( "0 valid bits",
-        (wav (plain ~code:1 ~channels:1 ~container:2 0) "", "0 valid") );
-      ( "extensible, 0 valid bits",
-        (wav (extensible ~code:1 ~channels:1 ~container:2 0) "", "0 valid") );
-      ( "extensible, valid bits past the container",
-        (wav (extensible ~code:1 ~channels:1 ~container:2 17) "", "17 bits in 2")
-      );
-      ( "extensible, a container of other bits",
-        ( wav
-            (String.sub (extensible ~code:1 ~channels:1 ~container:2 16) 0 14
-            ^ le 2 24
-            ^ String.sub (extensible ~code:1 ~channels:1 ~container:2 16) 16 24
-            )
-            "",
-          "24 bits in containers of 2" ) );
-      ( "extensible in fewer than 40 bytes",
-        ( wav
-            (String.sub (extensible ~code:1 ~channels:1 ~container:2 16) 0 38)
-            "",
-          "fewer than 40" ) );
-      ( "extensible, an unknown SubFormat",
-        ( wav
-            (String.sub (extensible ~code:1 ~channels:1 ~container:2 16) 0 39
-            ^ "\x72")
-            "",
-          "SubFormat" ) );
-      ("ADPCM", (wav (plain ~code:2 ~channels:1 ~container:2 4) "", "format 2"));
-      ( "float of 16 bits",
-        (wav (plain ~code:3 ~channels:1 ~container:2 16) "", "format 3") );
-      ( "float of 3 bytes",
-        (wav (plain ~code:3 ~channels:1 ~container:3 24) "", "format 3") );
-      ( "A-law of 2 bytes",
-        (wav (plain ~code:6 ~channels:1 ~container:2 16) "", "format 6") );
-      ( "data holding part of a row",
-        ( wav (plain ~code:1 ~channels:2 ~container:2 16) "\001\002\003",
-          "part of a row" ) );
-      ( "a data size of 0x80000000, as arecord writes to a pipe",
-        ( riff [ chunk "fmt " pcm16 ] ^ "data" ^ le 4 0x80000000 ^ "\001\002",
-          "states 2147483648 bytes" ) );
-      ( "a data size of 0x7ffff000, as sox once wrote",
-        ( riff [ chunk "fmt " pcm16 ] ^ "data" ^ le 4 0x7ffff000 ^ "\001\002",
-          "states 2147479552 bytes" ) );
-      ( "a chunk past the end",
-        ( riff [ chunk "fmt " pcm16 ] ^ "LIST" ^ le 4 100 ^ "ab",
-          "ends past the file" ) );
-      ( "an RF64 size the ds64 chunk does not state",
-        ( (let s = rf64 "\001\002\003\004" in
-           (* The table's chunk is renamed. *)
-           let i = 12 + 8 + 28 in
-           String.sub s 0 i ^ "KNUJ"
-           ^ String.sub s (i + 4) (String.length s - i - 4)),
-          "no size for \"JUNK\"" ) );
+      cases "a set bit below the valid bits raises naming the row" ~id:fst
+        [
+          ("20 bits in 3 bytes", (3, 20));
+          ("24 bits in 4 bytes", (4, 24));
+          ("12 bits in 2 bytes", (2, 12));
+        ]
+        (fun (_, (k, valid)) ->
+          (* Row 2's second sample has its lowest bit set. *)
+          let dirty = Bytes.make (k * 2 * 3) '\000' in
+          Bytes.set dirty (k * 5) '\001';
+          let fmt = extensible ~code:1 ~channels:2 ~container:k valid in
+          let path = file (wav fmt (Bytes.to_string dirty)) in
+          let a = Nx_io.load_audio path in
+          equal int 3 (Audio.length a);
+          fails ~naming:"row 2" ~path (fun () -> Audio.samples a));
     ]
-    (fun (_, (s, naming)) ->
-      let path = file ~suffix:".wav" s in
-      fails ~naming ~path (fun () -> Nx_io.load_audio path))
-
-(* Valid bits *)
-
-(* 20 valid bits in containers of 3 bytes, and 24 in 4: a container whose bits
-   below them are set raises naming its row. *)
-let low_bits =
-  cases "a set bit below the valid bits raises naming the row" ~id:fst
-    [
-      ("20 bits in 3 bytes", (3, 20));
-      ("24 bits in 4 bytes", (4, 24));
-      ("12 bits in 2 bytes", (2, 12));
-    ]
-    (fun (_, (k, valid)) ->
-      let clean = String.make (k * 2 * 3) '\000' in
-      let fmt = extensible ~code:1 ~channels:2 ~container:k valid in
-      let a = Nx_io.load_audio (file (wav fmt clean)) in
-      equal int 3 (Audio.length a);
-      (* Row 2's second sample has its lowest bit set. *)
-      let dirty = Bytes.of_string clean in
-      Bytes.set dirty (k * 5) '\001';
-      let path = file (wav fmt (Bytes.to_string dirty)) in
-      let a = Nx_io.load_audio path in
-      fails ~naming:"row 2" ~path (fun () -> Audio.samples a))
 
 (* Windows and blocks *)
 
-let pieces =
-  List.map
-    (fun name -> fixture (name ^ ".wav"))
-    [
-      "wav_sf_pcm_u8";
-      "wav_sf_pcm_24";
-      "wav_sf_double";
-      "wavex_sf_pcm24";
-      "wav_alaw";
-    ]
+(* Files to read in pieces, and their samples, loaded once in each worker that
+   asks. *)
+let whole =
+  lazy
+    (List.map
+       (fun name ->
+         let path = fixture (name ^ ".wav") in
+         (path, load_one path))
+       [
+         "wav_sf_pcm_u8";
+         "wav_sf_pcm_24";
+         "wav_sf_double";
+         "wavex_sf_pcm24";
+         "wav_alaw";
+       ])
 
-let whole = List.map (fun p -> (p, load_one p)) pieces
 let slice (Nx.P x) ~row ~rows = Nx.P (Nx.slice [ Nx.R (row, row + rows) ] x)
 
+(* A file, a row and a count of rows in it, and a block's rows. *)
 let piece =
   let open Gen in
   let* path, (Nx.P x as p) =
-    of_list ~pp:(fun ppf (p, _) -> Format.pp_print_string ppf p) whole
+    bind unit (fun () ->
+        of_list
+          ~pp:(fun ppf (p, _) -> Format.pp_print_string ppf p)
+          (Lazy.force whole))
   in
   let n = (Nx.shape x).(0) in
   let* row = int_range 0 n in
   let+ rows = int_range 0 (n - row) and+ k = int_range 1 (n + 1) in
   (path, p, row, rows, k)
 
-let windows =
-  prop "a window is the slice of the samples it covers" piece
-    (fun (path, x, row, rows, _) ->
-      cover "no row" (rows = 0);
-      cover "from a row past 0" (row > 0 && rows > 0);
-      let w = Audio.window (Nx_io.load_audio path) ~row ~rows in
-      equal memory Own_memory (memory_of w);
-      equal packed (slice x ~row ~rows) w)
+let window =
+  group "Audio.window"
+    [
+      (* "no row" has p = 0.147 a case: at 150 cases it misses a run with
+         0.853^150 = 4.3e-11. *)
+      prop ~count:150 "a window is the slice of the samples it covers" piece
+        (fun (path, x, row, rows, _) ->
+          cover "no row" (rows = 0);
+          cover "from a row past 0" (row > 0 && rows > 0);
+          let w = Audio.window (Nx_io.load_audio path) ~row ~rows in
+          equal memory Own_memory (memory_of w);
+          equal packed (slice x ~row ~rows) w);
+      test "a window and a block read their rows' bytes alone" (fun () ->
+          (* 20 valid bits in 3 bytes, row 5 of 8 with its lowest bit set. *)
+          let data = Bytes.make (3 * 8) '\000' in
+          Bytes.set data (3 * 5) '\001';
+          let path =
+            file
+              (wav
+                 (extensible ~code:1 ~channels:1 ~container:3 20)
+                 (Bytes.to_string data))
+          in
+          let a = Nx_io.load_audio path in
+          ignore (Audio.window a ~row:0 ~rows:5);
+          ignore (Audio.window a ~row:6 ~rows:2);
+          fails ~naming:"row 5" ~path (fun () -> Audio.window a ~row:4 ~rows:2);
+          let bs = Audio.blocks a ~rows:3 in
+          ignore (List.of_seq (Seq.take 1 bs));
+          fails ~naming:"row 5" ~path (fun () -> List.of_seq bs));
+    ]
 
-let joined =
-  prop "blocks joined are the samples from their row" piece
-    (fun (path, (Nx.P x as p), row, _, rows) ->
-      let n = (Nx.shape x).(0) in
-      cover "several blocks" (n - row > rows);
-      let bs = List.of_seq (Audio.blocks ~row (Nx_io.load_audio path) ~rows) in
-      equal int ((n - row + rows - 1) / rows) (List.length bs);
-      match bs with
-      | [] -> equal int n row
-      | bs ->
-          let dt = Nx.dtype x in
-          equal packed
-            (slice p ~row ~rows:(n - row))
-            (Nx.P (Nx.concatenate ~axis:0 (List.map (Nx.unpack dt) bs))))
+let blocks =
+  group "Audio.blocks"
+    [
+      prop "blocks joined are the samples from their row" piece
+        (fun (path, (Nx.P x as p), row, _, rows) ->
+          let n = (Nx.shape x).(0) in
+          cover "several blocks" (n - row > rows);
+          let bs =
+            List.of_seq (Audio.blocks ~row (Nx_io.load_audio path) ~rows)
+          in
+          equal int ((n - row + rows - 1) / rows) (List.length bs);
+          match bs with
+          | [] -> equal int n row
+          | bs ->
+              let dt = Nx.dtype x in
+              equal packed
+                (slice p ~row ~rows:(n - row))
+                (Nx.P (Nx.concatenate ~axis:0 (List.map (Nx.unpack dt) bs))));
+    ]
 
-let read_rows =
-  test "a window reads its rows, and a set bit below the valid ones raises"
-    (fun () ->
-      (* 20 valid bits in 3 bytes, row 5 of 8 with its lowest bit set. *)
-      let data = Bytes.make (3 * 8) '\000' in
-      Bytes.set data (3 * 5) '\001';
-      let path =
-        file
-          (wav
-             (extensible ~code:1 ~channels:1 ~container:3 20)
-             (Bytes.to_string data))
-      in
-      let a = Nx_io.load_audio path in
-      ignore (Audio.window a ~row:0 ~rows:5);
-      ignore (Audio.window a ~row:6 ~rows:2);
-      fails ~naming:"row 5" ~path (fun () -> Audio.window a ~row:4 ~rows:2);
-      let bs = Audio.blocks a ~rows:3 in
-      ignore (Seq.take 1 bs |> List.of_seq);
-      fails ~naming:"row 5" ~path (fun () -> List.of_seq bs);
-      invalid ~by:"Nx_io.Audio.window" (fun () -> Audio.window a ~row:7 ~rows:2);
-      invalid ~by:"Nx_io.Audio.blocks" (fun () -> Audio.blocks a ~rows:0))
+(* load_audio *)
 
-(* Saving *)
+let small =
+  riff
+    [
+      chunk "fmt " (extensible ~code:1 ~channels:2 ~container:3 20);
+      junk 3;
+      chunk "data" (String.make 12 '\000');
+    ]
+
+let load =
+  group "load_audio"
+    [
+      cases "a file a load does not read raises naming it" ~id:fst
+        [
+          ("a RIFX form", (wav ~id:"RIFX" pcm16 "\000\001", "RIFX"));
+          ( "a RIFF form that is not WAVE",
+            ("RIFF" ^ le 4 4 ^ "AVI ", "neither a WAV nor a FLAC") );
+          ( "an Ogg stream",
+            ("OggS\000\002" ^ String.make 30 '\000', "neither a WAV nor a FLAC")
+          );
+          ("no data chunk", (riff [ chunk "fmt " pcm16 ], "no data chunk"));
+          ( "fmt after data",
+            ( riff [ chunk "data" "\000\001"; chunk "fmt " pcm16 ],
+              "before the fmt" ) );
+          ( "two fmt chunks",
+            ( riff [ chunk "fmt " pcm16; chunk "fmt " pcm16; chunk "data" "" ],
+              "two fmt" ) );
+          ( "a short fmt chunk",
+            ( riff [ chunk "fmt " (String.sub pcm16 0 14); chunk "data" "" ],
+              "fewer than 16" ) );
+          ( "no channel",
+            (wav (plain ~code:1 ~channels:0 ~container:2 16) "", "no channel")
+          );
+          ( "a block that is not whole containers",
+            ( wav (le 2 1 ^ le 2 2 ^ le 4 8000 ^ le 4 24000 ^ le 2 3 ^ le 2 8) "",
+              "blocks of 3" ) );
+          ( "containers of 9 bytes",
+            (wav (plain ~code:1 ~channels:1 ~container:9 72) "", "blocks of 9")
+          );
+          ( "24 bits in 4 bytes, plain, as Cool Edit writes floats",
+            (wav (plain ~code:1 ~channels:1 ~container:4 24) "", "24 bits in 4")
+          );
+          ( "17 bits in 2 bytes",
+            (wav (plain ~code:1 ~channels:1 ~container:2 17) "", "17 bits in 2")
+          );
+          ( "0 valid bits",
+            (wav (plain ~code:1 ~channels:1 ~container:2 0) "", "0 valid") );
+          ( "extensible, 0 valid bits",
+            (wav (extensible ~code:1 ~channels:1 ~container:2 0) "", "0 valid")
+          );
+          ( "extensible, valid bits past the container",
+            ( wav (extensible ~code:1 ~channels:1 ~container:2 17) "",
+              "17 bits in 2" ) );
+          ( "extensible, a container of other bits",
+            ( wav
+                (String.sub
+                   (extensible ~code:1 ~channels:1 ~container:2 16)
+                   0 14
+                ^ le 2 24
+                ^ String.sub
+                    (extensible ~code:1 ~channels:1 ~container:2 16)
+                    16 24)
+                "",
+              "24 bits in containers of 2" ) );
+          ( "extensible in fewer than 40 bytes",
+            ( wav
+                (String.sub
+                   (extensible ~code:1 ~channels:1 ~container:2 16)
+                   0 38)
+                "",
+              "fewer than 40" ) );
+          ( "extensible, an unknown SubFormat",
+            ( wav
+                (String.sub
+                   (extensible ~code:1 ~channels:1 ~container:2 16)
+                   0 39
+                ^ "\x72")
+                "",
+              "SubFormat" ) );
+          ( "ADPCM",
+            (wav (plain ~code:2 ~channels:1 ~container:2 4) "", "format 2") );
+          ( "float of 16 bits",
+            (wav (plain ~code:3 ~channels:1 ~container:2 16) "", "format 3") );
+          ( "float of 3 bytes",
+            (wav (plain ~code:3 ~channels:1 ~container:3 24) "", "format 3") );
+          ( "A-law of 2 bytes",
+            (wav (plain ~code:6 ~channels:1 ~container:2 16) "", "format 6") );
+          ( "data holding part of a row",
+            ( wav (plain ~code:1 ~channels:2 ~container:2 16) "\001\002\003",
+              "part of a row" ) );
+          ( "a data size of 0x80000000, as arecord writes to a pipe",
+            ( riff [ chunk "fmt " pcm16 ] ^ "data" ^ le 4 0x80000000 ^ "\001\002",
+              "states 2147483648 bytes" ) );
+          ( "a data size of 0x7ffff000, as sox once wrote",
+            ( riff [ chunk "fmt " pcm16 ] ^ "data" ^ le 4 0x7ffff000 ^ "\001\002",
+              "states 2147479552 bytes" ) );
+          ( "a chunk past the end",
+            ( riff [ chunk "fmt " pcm16 ] ^ "LIST" ^ le 4 100 ^ "ab",
+              "ends past the file" ) );
+          ( "an RF64 file without a ds64 chunk first",
+            (wav ~id:"RF64" pcm16 "\001\002", "ds64") );
+          ( "an RF64 size the ds64 chunk does not state",
+            ( (let s = rf64 "\001\002\003\004" in
+               (* The table's chunk is renamed. *)
+               let i = 12 + 8 + 28 in
+               String.sub s 0 i ^ "KNUJ"
+               ^ String.sub s (i + 4) (String.length s - i - 4)),
+              "no size for \"JUNK\"" ) );
+          ( "an RF64 ds64 table past its chunk",
+            ( "RF64" ^ le 4 0xffffffff ^ "WAVE"
+              ^ chunk "ds64" (le 8 0 ^ le 8 0 ^ le 8 0 ^ le 4 1),
+              "past the chunk" ) );
+          ( "an RF64 data size of 2^40",
+            ( "RF64" ^ le 4 0xffffffff ^ "WAVE"
+              ^ chunk "ds64" (le 8 0 ^ le 8 (1 lsl 40) ^ le 8 0 ^ le 4 0)
+              ^ chunk "fmt " pcm16 ^ "data" ^ le 4 0xffffffff ^ "\001\002",
+              "states 1099511627776 bytes" ) );
+        ]
+        (fun (_, (s, naming)) ->
+          let path = file ~suffix:".wav" s in
+          within_budget @@ fun () ->
+          fails ~naming ~path (fun () -> Nx_io.load_audio path));
+      test "a directory fails, naming it" (fun () ->
+          let path = temp_dir () in
+          fails ~path (fun () -> Nx_io.load_audio path));
+      test "every proper prefix of a file raises" (fun () ->
+          prefixes_fail Nx_io.load_audio small);
+      test "a flipped byte loads or raises Failure" (fun () ->
+          flips_load_or_fail (fun p -> Audio.samples (Nx_io.load_audio p)) small);
+    ]
+
+(* save_wav *)
 
 (* A case to save: a dtype, rows and channels, the significant bits of an
    integer sample, a channel mask if stated, and a view of the samples. *)
@@ -614,39 +713,112 @@ let samples_of s =
   | Broadcast -> Nx.P (Nx.reshape [| 2 * sh.(0); sh.(1) |] x)
   | _ -> Nx.P x
 
-let round_trips =
-  prop "a save loads back as its samples, rate, bits and mask" saves (fun s ->
-      let (Nx.P x) = samples_of s in
-      let n, c = match Nx.shape x with [| n; c |] -> (n, c) | _ -> (0, 0) in
-      let w = D.bytes (Nx.dtype x) 1 in
-      cover "no row" (n = 0);
-      cover "more than 2 channels" (c > 2);
-      cover "fewer bits than the dtype's"
-        (Option.exists (fun b -> b < 8 * w) s.bits);
-      cover "a stated mask" (s.mask <> None);
-      cover "strided"
-        (match s.case with
-        | Case (_, _, _, Transposed) -> n > 1 && c > 1
-        | _ -> false);
-      cover "floats" (D.is D.Float (Nx.dtype x));
-      let path = temp_file ~suffix:".wav" () in
-      Nx_io.save_wav ?bits:s.bits ?channel_mask:s.mask path ~rate:s.rate x;
-      let a = Nx_io.load_audio path in
-      let mask =
-        Option.value s.mask ~default:(match c with 1 -> 4 | 2 -> 3 | _ -> 0)
-      in
-      equal facts_t
-        ((s.rate, n, c), (Option.value s.bits ~default:(8 * w), mask))
-        (facts a);
-      equal packed (Nx.P x) (Audio.samples a))
+(* A traced value has no bytes: [traced f] is [f trace] inside an
+   interpretation, [trace x] a value of [x]'s form that it traces. *)
+type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
 
-let saved path = Nx_io.load_audio path
+let traced f =
+  let mark i ~by op =
+    Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Mark) op
+  in
+  Nx.Prim.interpret ~name:"test.io" Values mark (fun i ->
+      f (fun x -> Nx.Prim.traced i (Nx.Prim.form x) Mark))
 
-let save_cases =
-  group "saving"
+(* The fmt chunk's format tag and whether the file holds a fact chunk. *)
+let form_of path =
+  let cs = chunks_of (read path) in
+  (String.get_uint16_le (List.assoc "fmt " cs) 0, List.mem_assoc "fact" cs)
+
+let plain_pcm = 1
+let ieee_float = 3
+let wave_extensible = 0xfffe
+
+let save =
+  group "save_wav"
     [
-      test "a save of 4- and 8-byte samples loads over the file's pages"
-        (fun () ->
+      (* "strided" has p = 0.139 a case and "no row" p = 0.158: at 150 cases the
+         rarer misses a run with 0.861^150 = 1.8e-10. *)
+      prop ~count:150 "a save loads back as its samples, rate, bits and mask"
+        saves (fun s ->
+          let (Nx.P x) = samples_of s in
+          let n, c =
+            match Nx.shape x with [| n; c |] -> (n, c) | _ -> (0, 0)
+          in
+          let w = D.bytes (Nx.dtype x) 1 in
+          cover "no row" (n = 0);
+          cover "more than 2 channels" (c > 2);
+          cover "fewer bits than the dtype's"
+            (Option.exists (fun b -> b < 8 * w) s.bits);
+          cover "a stated mask" (s.mask <> None);
+          cover "strided"
+            (match s.case with
+            | Case (_, _, _, Transposed) -> n > 1 && c > 1
+            | _ -> false);
+          cover "floats" (D.is D.Float (Nx.dtype x));
+          let path = temp_file ~suffix:".wav" () in
+          Nx_io.save_wav ?bits:s.bits ?channel_mask:s.mask path ~rate:s.rate x;
+          let a = Nx_io.load_audio path in
+          let mask = Option.value s.mask ~default:(default_mask c) in
+          equal facts_t
+            ((s.rate, n, c), (Option.value s.bits ~default:(8 * w), mask))
+            (facts a);
+          equal packed (Nx.P x) (Audio.samples a));
+      cases
+        "the fmt chunk is WAVEFORMATEXTENSIBLE past two channels, for PCM of \
+         more than 16 bits, other bits than its container's or a mask other \
+         than the default, and a fact chunk comes with floats"
+        ~id:fst
+        [
+          ( "int16, 1 channel",
+            (Nx.P (Nx.zeros Nx.int16 [| 2; 1 |]), None, None, (plain_pcm, false))
+          );
+          ( "int16, 2 channels",
+            (Nx.P (Nx.zeros Nx.int16 [| 2; 2 |]), None, None, (plain_pcm, false))
+          );
+          ( "int16, 3 channels",
+            ( Nx.P (Nx.zeros Nx.int16 [| 2; 3 |]),
+              None,
+              None,
+              (wave_extensible, false) ) );
+          ( "uint8",
+            (Nx.P (Nx.zeros Nx.uint8 [| 2; 1 |]), None, None, (plain_pcm, false))
+          );
+          ( "int32",
+            ( Nx.P (Nx.zeros Nx.int32 [| 2; 1 |]),
+              None,
+              None,
+              (wave_extensible, false) ) );
+          ( "int16 of 12 bits",
+            ( Nx.P (Nx.zeros Nx.int16 [| 2; 1 |]),
+              Some 12,
+              None,
+              (wave_extensible, false) ) );
+          ( "int16, the default mask stated",
+            ( Nx.P (Nx.zeros Nx.int16 [| 2; 2 |]),
+              None,
+              Some 0x3,
+              (plain_pcm, false) ) );
+          ( "int16, another mask",
+            ( Nx.P (Nx.zeros Nx.int16 [| 2; 2 |]),
+              None,
+              Some 0x5,
+              (wave_extensible, false) ) );
+          ( "float32, 2 channels",
+            ( Nx.P (Nx.zeros Nx.float32 [| 2; 2 |]),
+              None,
+              None,
+              (ieee_float, true) ) );
+          ( "float64, 3 channels",
+            ( Nx.P (Nx.zeros Nx.float64 [| 2; 3 |]),
+              None,
+              None,
+              (wave_extensible, true) ) );
+        ]
+        (fun (_, (Nx.P x, bits, channel_mask, form)) ->
+          let path = temp_file ~suffix:".wav" () in
+          Nx_io.save_wav ?bits ?channel_mask path ~rate:8000 x;
+          equal (pair int bool) form (form_of path));
+      test "samples of 4 and 8 bytes load back over the file's pages" (fun () ->
           List.iter
             (fun (Nx.P x) ->
               List.iter
@@ -654,8 +826,7 @@ let save_cases =
                   let x = Nx.reshape [| 6 / c; c |] x in
                   let path = temp_file ~suffix:".wav" () in
                   Nx_io.save_wav path ~rate:8000 x;
-                  equal memory Over_file
-                    (memory_of (Audio.samples (saved path))))
+                  equal memory Over_file (memory_of (load_one path)))
                 [ 1; 2; 3 ])
             [
               Nx.P (Nx.create Nx.int16 [| 6 |] [| 1; 2; 3; 4; 5; 6 |]);
@@ -671,9 +842,17 @@ let save_cases =
           in
           let path = temp_file ~suffix:".wav" () in
           Nx_io.save_wav ~bits:24 path ~rate:48000 x;
-          let s = read path in
-          equal int 12 (String.length s - String.index_from s 36 'd' - 8);
-          equal packed (Nx.P x) (Audio.samples (saved path)));
+          equal int 12
+            (String.length (List.assoc "data" (chunks_of (read path))));
+          equal packed (Nx.P x) (load_one path));
+      test "a value of another set saves as its host copy" (fun () ->
+          let module M = (val Nx.devices [ Nx_support.memory 0 ]) in
+          let x = Nx.create Nx.int16 [| 3; 2 |] [| 1; -2; 3; -4; 5; -6 |] in
+          let host = temp_file ~suffix:".wav" () in
+          let other = temp_file ~suffix:".wav" () in
+          Nx_io.save_wav host ~rate:8000 x;
+          Nx_io.save_wav other ~rate:8000 (Nx.place M.on x);
+          equal string (read host) (read other));
       test "a set bit below the bits raises naming the row and leaves the file"
         (fun () ->
           let path = file ~suffix:".wav" "before" in
@@ -681,24 +860,7 @@ let save_cases =
           raises_match (Exn.invalid_arg ~sub:"Nx_io.save_wav: row 2") (fun () ->
               Nx_io.save_wav ~bits:24 path ~rate:8000 x);
           equal string "before" (read path));
-      test "a FLAC file saves as the WAV file that loads as it" (fun () ->
-          List.iter
-            (fun name ->
-              let a = Nx_io.load_audio name in
-              let (Nx.P x) = Audio.samples a in
-              let path = temp_file ~suffix:".wav" () in
-              Nx_io.save_wav ~bits:(Audio.bits a) path ~rate:(Audio.rate a) x;
-              let b = saved path in
-              equal facts_t (facts a) (facts b);
-              equal packed (Nx.P x) (Audio.samples b))
-            [
-              fixture "flac_depth_12.flac";
-              fixture "flac_depth_20.flac";
-              fixture "flac_depth_24.flac";
-              fixture "flac_depth_32.flac";
-              Filename.concat "cut" "ietf_subset_37.flac";
-            ]);
-      cases "a value WAV does not store raises" ~id:fst
+      cases "a value WAV does not store raises naming save_wav" ~id:fst
         [
           ( "a vector",
             (Nx.P (Nx.zeros Nx.int16 [| 4 |]), None, None, 8000, "1 axes") );
@@ -760,48 +922,25 @@ let save_cases =
         ]
         (fun (_, (Nx.P x, bits, channel_mask, rate, sub)) ->
           let path = temp_file ~suffix:".wav" () in
-          raises_match (Exn.invalid_arg ~sub:"Nx_io.save_wav: ") (fun () ->
-              Nx_io.save_wav ?bits ?channel_mask path ~rate x);
-          raises_match (Exn.invalid_arg ~sub) (fun () ->
-              Nx_io.save_wav ?bits ?channel_mask path ~rate x));
-    ]
-
-(* Corruption *)
-
-let small =
-  riff
-    [
-      chunk "fmt " (extensible ~code:1 ~channels:2 ~container:3 20);
-      junk 3;
-      chunk "data" (String.make 12 '\000');
-    ]
-
-let corrupted =
-  group "corrupted files"
-    [
-      test "every proper prefix of a file raises" (fun () ->
-          prefixes_fail Nx_io.load_audio small);
-      test "a flipped byte loads or raises Failure" (fun () ->
-          flips_load_or_fail (fun p -> Audio.samples (Nx_io.load_audio p)) small);
+          raises_match
+            (function
+              | Invalid_argument m as e ->
+                  String.starts_with ~prefix:"Nx_io.save_wav: " m
+                  && Exn.invalid_arg ~sub e
+              | _ -> false)
+            (fun () -> Nx_io.save_wav ?bits ?channel_mask path ~rate x));
+      test "a traced value raises naming save_wav" (fun () ->
+          let x = Nx.zeros Nx.int16 [| 4; 1 |] in
+          let path = temp_file ~suffix:".wav" () in
+          traced @@ fun trace ->
+          invalid ~by:"Nx_io.save_wav" (fun () ->
+              Nx_io.save_wav path ~rate:8000 (trace x)));
+      test "a dead value raises naming save_wav" (fun () ->
+          let x = Nx.zeros Nx.int16 [| 4; 1 |] in
+          ignore (Nx.neg (Nx.donate x));
+          invalid ~by:"Nx_io.save_wav" (fun () ->
+              Nx_io.save_wav (temp_file ~suffix:".wav" ()) ~rate:8000 x));
     ]
 
 let () =
-  exit
-    (run "nx.io WAV"
-       [
-         containers;
-         floats;
-         float_specials;
-         g711;
-         libsndfile;
-         layout;
-         rf64_cases;
-         refused;
-         low_bits;
-         windows;
-         joined;
-         read_rows;
-         round_trips;
-         save_cases;
-         corrupted;
-       ])
+  exit (run "nx.io WAV" [ wav_files; samples; blocks; window; load; save ])
