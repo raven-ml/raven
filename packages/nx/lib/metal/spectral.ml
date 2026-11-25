@@ -124,6 +124,11 @@ let barrier_links = 4
 let givens_links = 30
 let tree_links = 8 * (barrier_links + 1)
 
+(* The links of a loop's step over device memory whose reads are in flight
+   together, a quarter of a dependent read: td_step's and larft's, measured on
+   the M1 Max. *)
+let overlapped_links = Plan.read_links / 4
+
 (* The operations of a multiply-add of the format: four at complex64. *)
 let mac f = if f.cx then 4 else 1
 let cost ~bytes ~ops ~chain = { Plan.bytes; ops; chain }
@@ -513,14 +518,27 @@ let tridiagonal c ~a ~tw ~tp ~nb ~n =
        set l K.sp_td_step_nbk nbk;
        set l K.sp_td_step_i i;
        set l K.sp_td_step_per tp;
-       (* The column's update by the panel's i reflectors and W's columns, its
-          reflector's norm, and W's column finished. *)
-       let len = n - !j0 in
+       (* W's column p = i - 1 finished, then column i's update by the panel's i
+          reflectors and its reflector. Each step over a reflector is two
+          multiply-adds and overlapped reads. W's column takes a SIMD-group's
+          sums over every 32nd row, a reflector a SIMD-group, then each thread's
+          rows corrected by p reflectors; the column, each thread's rows updated
+          by i. Each part passes over its rows at four dependent reads a row. *)
+       let len = n - !j0 and p = Int.max 0 (i - 1) in
+       let step = (2 * mac f) + overlapped_links in
+       let passes = 4 * Plan.read_links in
+       let rows = cdiv len threads in
+       let w =
+         if i = 0 then 0
+         else
+           (cdiv p (threads / 32) * cdiv len 32 * step)
+           + (rows * ((p * step) + passes))
+       in
+       let column = if i = nbk then 0 else rows * ((i * step) + passes) in
+       let trees = (6 * tree_links) + (3 * div_links) + (8 * barrier_links) in
        each c k l ~first:K.sp_td_step_first ~last:K.sp_td_step_count ~nb
          ~shared:K.sp_td_lds
-         ~chain:
-           ((cdiv len threads * ((4 * tnb) + 8) * mac f)
-           + (6 * tree_links) + (3 * div_links) + (8 * barrier_links))
+         ~chain:(w + column + trees)
          ~bytes:(4 * len * tnb * t));
       let col = !j0 + i in
       if i < nbk && col < n - 1 then begin
@@ -825,8 +843,12 @@ let back c ~tw ~tp ~z ~nb ~n =
        set l K.sp_larft_nbk nbk;
        set l K.sp_larft_parts f.parts;
        set l K.sp_larft_per tp;
+       (* Column i's thread 0 sums i products, each a multiply-add and
+          overlapped reads, then the group meets twice. *)
        each c k l ~first:K.sp_larft_first ~last:K.sp_larft_count ~nb ~shared:0
-         ~chain:(nbk * ((nbk * mac f) + (2 * barrier_links)))
+         ~chain:
+           ((nbk * (nbk - 1) / 2 * (mac f + overlapped_links))
+           + (nbk * 2 * barrier_links))
          ~bytes:(3 * tnb * tnb * t));
       let wv = at nn and zs = { at = zb; off = !j0 + 1; s = nn } in
       let w2 = { at = snd w2; off = 0; s = tnb * n } in
