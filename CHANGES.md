@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- A JSON value of another type than its column's fails with its text, as the
+  `.mli` says: `"\"1.5\"": column "a": a string does not read as float64`. The
+  error of `Talon_json.decode`, `source` and `file` gave its place alone.
 - `Query.optimize`, a run and `Query.equal` take work linear in a plan's
   steps where a step is reached from several places at several levels, as
   in `q |> append q` repeated: each such step is rewritten or compared once,

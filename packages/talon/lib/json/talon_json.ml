@@ -314,9 +314,20 @@ let is_value_start c =
   | '"' | 't' | 'f' | 'n' | '{' | '[' | '-' | '0' .. '9' -> true
   | _ -> false
 
+(* The bytes of a mismatched value kept for its error. [Error.pp] shows 64 bytes
+   of a text and cuts before a UTF-8 sequence that its 65th byte would split; 68
+   bytes hold whole any sequence that reaches byte 65, so the cut falls where
+   the full text's would. *)
+let shown_text = 68
+
 let mismatch s c first what =
   if not (is_value_start first) then Scan.unexpected s "expected a value";
-  Scan.fail s (Scan.pos s)
+  let p = Scan.pos s in
+  Scan.skip_value s;
+  let text =
+    Bytes.sub_string (Scan.bytes s) p (min shown_text (Scan.pos s - p))
+  in
+  Scan.fail s p ~text
     (Printf.sprintf "column %s: %s does not read as %s, %s. %s" (quoted c.path)
        (json_type first) (type_name c.ty) what c.fix)
 

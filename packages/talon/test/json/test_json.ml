@@ -386,6 +386,23 @@ let values =
           equal string
             "line 1, column 1: byte 0: expected a value, found the byte 'x'"
             (fails ~f:flat "xyz"));
+      (* Error.pp quotes a text, a quote and a backslash escaped, and cuts one
+         past 64 bytes with an ellipsis. *)
+      cases "a value of another JSON type fails with its text"
+        ~id:(fun (_, value, _) -> value)
+        [
+          (Type.Any Type.float64, {|"1.5"|}, {|"\"1.5\""|});
+          (Type.Any Type.bool, "1", {|"1"|});
+          (Type.Any (Type.list Type.int64), {|{"x": [1]}|}, {|"{\"x\": [1]}"|});
+          ( Type.Any Type.int64,
+            "[" ^ String.concat "," (List.init 40 (Fun.const "1")) ^ "]",
+            {|"[|} ^ String.concat "," (List.init 32 (Fun.const "1")) ^ {|"…|}
+          );
+        ]
+        (fun (ty, value, text) ->
+          contains
+            ~sub:(": " ^ text ^ ": ")
+            (fails ~f:(J.format [ ("a", ty) ]) ({|{"a":|} ^ value ^ "}")));
       test "an empty input and an empty array have no rows" (fun () ->
           equal int 0 (Talon.rows (Error.get_ok (read flat "")));
           let f = J.format ~framing:J.Array [ ("a", any Type.int64) ] in
@@ -442,13 +459,14 @@ let cases =
     ( "a string in a number column",
       float_col,
       {|{"a":"1.5"}|},
-      "line 1, column 6: byte 5: column \"a\": a string does not read as \
-       float64, which holds a number. Declare another type (with_type)." );
+      "line 1, column 6: byte 5: \"\\\"1.5\\\"\": column \"a\": a string does \
+       not read as float64, which holds a number. Declare another type \
+       (with_type)." );
     ( "a number in a boolean column",
       bool_col,
       {|{"a":1}|},
-      "line 1, column 6: byte 5: column \"a\": a number does not read as bool, \
-       which holds a boolean. Declare another type (with_type)." );
+      "line 1, column 6: byte 5: \"1\": column \"a\": a number does not read \
+       as bool, which holds a boolean. Declare another type (with_type)." );
     ( "leading zero",
       int_col,
       {|{"a":01}|},
@@ -535,8 +553,9 @@ let cases =
     ( "a later row names its line",
       int_col,
       "{\"a\":1}\n{\"a\":\"x\"}\n",
-      "line 2, column 6: byte 13: column \"a\": a string does not read as \
-       int64, which holds a number. Declare another type (with_type)." );
+      "line 2, column 6: byte 13: \"\\\"x\\\"\": column \"a\": a string does \
+       not read as int64, which holds a number. Declare another type \
+       (with_type)." );
     ( "a trailing comma in an array",
       arr,
       {|[{"a":1},]|},
@@ -596,8 +615,9 @@ let deep =
       test "a value deeper than its type is a type error" (fun () ->
           let f = J.format [ ("a", any (Type.list Type.int64)) ] in
           equal string
-            "line 1, column 7: byte 6: column \"a[]\": an array does not read as \
-             int64, which holds a number. Declare another type (with_type)."
+            "line 1, column 7: byte 6: \"[1]\": column \"a[]\": an array does \
+             not read as int64, which holds a number. Declare another type \
+             (with_type)."
             (fails ~f {|{"a":[[1]]}|}));
     ]
 
@@ -697,8 +717,9 @@ let files =
           let q = Query.of_source source in
           equal string
             (Printf.sprintf
-               "%s:2:6: byte 13: column \"x\": a string does not read as int64, \
-                which holds a number. Declare another type (with_type)."
+               "%s:2:6: byte 13: \"\\\"oops\\\"\": column \"x\": a string does \
+                not read as int64, which holds a number. Declare another type \
+                (with_type)."
                path)
             (match Query.run q with
             | Ok _ -> "read"
