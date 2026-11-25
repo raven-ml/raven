@@ -303,7 +303,7 @@ let type_of tag t : arrow =
   | _ -> (
       match List.find_opt (fun (n, _, _) -> n = tag) nullary with
       | Some (_, a, _) -> a
-      | None -> Unsupported (Printf.sprintf "type %d" tag))
+      | None -> Unsupported (Printf.sprintf "of tag %d" tag))
 
 let extension_name = "ARROW:extension:name"
 let extension_metadata = "ARROW:extension:metadata"

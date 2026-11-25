@@ -419,7 +419,9 @@ let values =
           starts_with
             ~prefix:(place 1 1 0 ^ text ^ ": ")
             (decode_error flat row));
-      cases "a row that breaks the syntax fails at the byte that breaks it"
+      cases
+        "a row that breaks the syntax fails at the byte of the value or escape \
+         that breaks it"
         ~id:fst
         [ ("xyz", (1, 0)); ("nonsense", (1, 0)); ("[1,}", (4, 3)) ]
         (fun (row, (column, byte)) ->
