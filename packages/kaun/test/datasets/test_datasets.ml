@@ -122,6 +122,79 @@ let reads_no_curlrc () =
   in
   equal ~msg:"curl's first argument" (option string) (Some "-q") first
 
+(* A [curl] alone on [PATH] that appends its arguments to [log] and writes
+   "part" where it is told to; then, while [kill] exists, kills the process
+   that ran it, as a Ctrl-C or a crash mid-download would, and otherwise fails
+   as curl does on a 404. *)
+let partial_curl ~log ~kill =
+  let bin = temp_dir ~prefix:"bin" () in
+  let curl = Filename.concat bin "curl" in
+  Out_channel.with_open_bin curl (fun oc ->
+      output_string oc
+        (String.concat "\n"
+           [
+             "#!/bin/sh";
+             Printf.sprintf "printf '%%s\\n' \"$@\" >> %s" (Filename.quote log);
+             "out=";
+             "while [ $# -gt 0 ]; do [ \"$1\" = -o ] && out=$2; shift; done";
+             "if [ -n \"$out\" ]; then printf part > \"$out\"; else printf part; fi";
+             Printf.sprintf "[ -e %s ] && kill -9 $PPID" (Filename.quote kill);
+             "exit 22";
+             "";
+           ]));
+  Unix.chmod curl 0o755;
+  setenv "PATH" (Some bin)
+
+let lines path =
+  if Sys.file_exists path then
+    List.filter (( <> ) "")
+      (String.split_on_char '\n'
+         (In_channel.with_open_bin path In_channel.input_all))
+  else []
+
+(* A download killed midway leaves nothing at its cache path, and the next
+   load downloads the file again. *)
+let killed_download () =
+  if Sys.win32 then skip ~reason:"the curl stand-in is a shell script" ();
+  let root = fresh_root () in
+  let dir = temp_dir ~prefix:"curl" () in
+  let log = Filename.concat dir "arguments" in
+  let kill = Filename.concat dir "kill" in
+  Out_channel.with_open_bin kill ignore;
+  partial_curl ~log ~kill;
+  (match Unix.fork () with
+  | 0 ->
+      (try ignore (Kaun_datasets.mnist ()) with _ -> ());
+      Unix._exit 0
+  | pid ->
+      let ended = function
+        | Unix.WEXITED n -> Printf.sprintf "exited %d" n
+        | Unix.WSIGNALED n -> Printf.sprintf "killed by signal %d" n
+        | Unix.WSTOPPED n -> Printf.sprintf "stopped by signal %d" n
+      in
+      equal ~msg:"the loader" string (ended (Unix.WSIGNALED Sys.sigkill))
+        (ended (snd (Unix.waitpid [] pid))));
+  let gz =
+    Filename.concat
+      (Filename.concat (Filename.concat root "datasets") "mnist")
+      "train-images-idx3-ubyte.gz"
+  in
+  equal ~msg:"the cache path" bool false (Sys.file_exists gz);
+  Sys.remove kill;
+  let runs = List.length (List.filter (( = ) "-q") (lines log)) in
+  raises_match (fun e -> Exn.failure e) (fun () -> Kaun_datasets.mnist ());
+  let urls =
+    List.filter
+      (fun a -> String.length a > 8 && String.sub a 0 8 = "https://")
+      (lines log)
+  in
+  equal ~msg:"the cache path after a failed download" bool false
+    (Sys.file_exists gz);
+  equal ~msg:"the next load's first download" (option string)
+    (Some
+       "https://ossci-datasets.s3.amazonaws.com/mnist/train-images-idx3-ubyte.gz")
+    (List.nth_opt urls runs)
+
 let selects_fashion () =
   let root = fresh_root () in
   seed_mnist ~first_label:0 (dataset_dir root "mnist");
@@ -182,6 +255,10 @@ let () =
              test "reads Fashion-MNIST when fashion is true" selects_fashion;
              test "raises Failure on a download error" download_error;
              test "runs curl without the user's configuration" reads_no_curlrc;
+             test
+               "leaves nothing at the cache path of a download killed \
+                midway, and downloads it again"
+               killed_download;
              cases "raises Failure on a file of the wrong magic number" ~id:fst
                [
                  ( "images",

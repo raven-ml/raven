@@ -5006,6 +5006,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun_datasets` downloads to a file beside the cache path and renames it
+  once complete: a download killed midway left a partial file that every
+  later load took for the dataset and failed on.
 - `Kaun.Attention.cached` attends under a `Cache_index.select` index: it
   raised on any selection. `Attention.attend` takes dense keys of a row per
   query, `batch * n` rows, which `Attention.Cache.extend` returns under a

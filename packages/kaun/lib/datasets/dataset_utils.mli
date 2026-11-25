@@ -28,10 +28,13 @@ val get_cache_dir : ?getenv:(string -> string option) -> string -> string
 
 val ensure_file : string -> string -> unit
 (** [ensure_file url dest] downloads [url] to [dest], creating [dest]'s
-    directory, unless [dest] exists.
+    directory, unless [dest] exists. The download is written to a file beside
+    [dest] and renamed to [dest] once complete: [dest] holds a whole download
+    or nothing, even when the process dies midway.
 
-    Raises [Failure] if [curl] is missing or the download fails, in which case
-    [dest] is removed. Raises as {!mkdir_p} does. *)
+    Raises [Failure] if [curl] is missing, the download fails or its file
+    cannot be renamed to [dest], leaving [dest] as it was. Raises as
+    {!mkdir_p} does. *)
 
 val ensure_decompressed_gz : gz_path:string -> target_path:string -> bool
 (** [ensure_decompressed_gz ~gz_path ~target_path] is [true] if [target_path]

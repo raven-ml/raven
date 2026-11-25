@@ -18,7 +18,9 @@
     Downloading requires [curl] on the [PATH], which runs without reading the
     user's curl configuration files: a proxy or a CA bundle is set through
     curl's environment variables, such as [https_proxy] and
-    [CURL_CA_BUNDLE]. *)
+    [CURL_CA_BUNDLE]. A file enters the cache whole once downloaded, so a
+    download that fails or is killed midway is downloaded again by the next
+    load. *)
 
 val mnist :
   ?fashion:bool ->

@@ -65,45 +65,6 @@ let get_cache_dir ?(getenv = Sys.getenv_opt) dataset_name =
   if path <> "" && path.[String.length path - 1] = sep then path
   else path ^ Filename.dir_sep
 
-(* [run prog args] runs [prog] without a shell, so no argument needs quoting and
-   the lookup on [PATH] is the same on every system. It is [None] when [prog] is
-   missing: exit code 127 from the forked child on Unix, [ENOENT] from process
-   creation on Windows. *)
-let run prog args =
-  let rec wait pid =
-    try snd (Unix.waitpid [] pid)
-    with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
-  in
-  match
-    wait
-      (Unix.create_process prog
-         (Array.of_list (prog :: args))
-         Unix.stdin Unix.stdout Unix.stderr)
-  with
-  | Unix.WEXITED 127 -> None
-  | status -> Some status
-  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> None
-
-let curl_download ~url ~dest () =
-  mkdir_p (Filename.dirname dest);
-  (* [-q] first: curl reads no ~/.curlrc, whose options, such as [-o], would
-     act on the download. *)
-  match run "curl" [ "-q"; "-L"; "--fail"; "-s"; "-o"; dest; url ] with
-  | None -> failwith "curl not found on PATH"
-  | Some (Unix.WEXITED 0) -> ()
-  | Some _ ->
-      (try Sys.remove dest with Sys_error _ -> ());
-      failwith (Printf.sprintf "Failed to download %s" url)
-
-let download_file url dest_path =
-  Log.info (fun m -> m "Downloading %s to %s" (Filename.basename url) dest_path);
-  curl_download ~url ~dest:dest_path ();
-  Log.info (fun m -> m "Downloaded %s" (Filename.basename dest_path))
-
-let ensure_file url dest_path =
-  if not (Sys.file_exists dest_path) then download_file url dest_path
-  else Log.debug (fun m -> m "Found %s" dest_path)
-
 (* [create_beside dst] is a file created exclusively beside [dst], under a
    random name, and its descriptor: a name a crashed run left behind is skipped
    for another. *)
@@ -117,6 +78,70 @@ let create_beside dst =
         go (tries - 1)
   and rng = Random.State.make_self_init () in
   go 16
+
+(* [run prog args] runs [prog] without a shell, so no argument needs quoting and
+   the lookup on [PATH] is the same on every system, its output to [out]. It is
+   [None] when [prog] is missing: exit code 127 from the forked child on Unix,
+   [ENOENT] from process creation on Windows. *)
+let run ?(out = Unix.stdout) prog args =
+  let rec wait pid =
+    try snd (Unix.waitpid [] pid)
+    with Unix.Unix_error (Unix.EINTR, _, _) -> wait pid
+  in
+  match
+    wait
+      (Unix.create_process prog
+         (Array.of_list (prog :: args))
+         Unix.stdin out Unix.stderr)
+  with
+  | Unix.WEXITED 127 -> None
+  | status -> Some status
+  | exception Unix.Unix_error (Unix.ENOENT, _, _) -> None
+
+(* curl writes to the file created beside [dest], through the descriptor that
+   made it, which is synced and then renamed to [dest]: [dest] holds a whole
+   download or nothing, even when the process dies midway, and [ensure_file]
+   never takes a partial file for the download. A failure removes the
+   temporary file. A rename onto a [dest] another process completed meanwhile
+   keeps that one, as Windows refuses to replace it. *)
+let curl_download ~url ~dest () =
+  mkdir_p (Filename.dirname dest);
+  let tmp, fd = create_beside dest in
+  let remove () = try Sys.remove tmp with Sys_error _ -> () in
+  let fetch () =
+    (* [-q] first: curl reads no ~/.curlrc, whose options, such as [-o], would
+       act on the download. *)
+    let status = run ~out:fd "curl" [ "-q"; "-L"; "--fail"; "-s"; url ] in
+    if status = Some (Unix.WEXITED 0) then Unix.fsync fd;
+    status
+  in
+  match Fun.protect ~finally:(fun () -> Unix.close fd) fetch with
+  | Some (Unix.WEXITED 0) -> (
+      try Unix.rename tmp dest with
+      | Unix.Unix_error _ when Sys.file_exists dest -> remove ()
+      | Unix.Unix_error (e, _, _) ->
+          remove ();
+          failwith
+            (Printf.sprintf "%s: cannot rename the download to %s: %s" url
+               dest (Unix.error_message e)))
+  | None ->
+      remove ();
+      failwith "curl not found on PATH"
+  | Some _ ->
+      remove ();
+      failwith (Printf.sprintf "Failed to download %s" url)
+  | exception e ->
+      remove ();
+      raise e
+
+let download_file url dest_path =
+  Log.info (fun m -> m "Downloading %s to %s" (Filename.basename url) dest_path);
+  curl_download ~url ~dest:dest_path ();
+  Log.info (fun m -> m "Downloaded %s" (Filename.basename dest_path))
+
+let ensure_file url dest_path =
+  if not (Sys.file_exists dest_path) then download_file url dest_path
+  else Log.debug (fun m -> m "Found %s" dest_path)
 
 let rec write_all fd b off n =
   if n > 0 then
