@@ -4703,6 +4703,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun_hf.download_file` gives curl the token on its standard input
+  (`-H @-`), never on its command line, where every user of the machine
+  could read it in `/proc` while a download ran. A token holding a CR, an
+  LF or a NUL, which would end its header, raises `Invalid_argument`.
 - `Kaun.Fn.keep_top_k` keeps the row's maximum at `~k:Int64.min_int`, as
   at any `k <= 1`. It subtracted 1 from `k` before clamping, which wrapped
   to the top and kept every entry.

@@ -42,7 +42,9 @@ val download_file :
     their own. Optional arguments:
 
     - [token], a HuggingFace API token sent as a bearer token, for private
-      repositories. Defaults to the value of [HF_TOKEN], if set.
+      repositories. Defaults to the value of [HF_TOKEN], if set. curl is given
+      it on its standard input, never on its command line, which every user of
+      the machine can read.
     - [cache_dir], the cache root. Defaults as in {!cache_path}.
     - [offline], whether the network must not be touched. Defaults to [false].
       Cached files are returned either way; when [true] a missing file raises
@@ -50,8 +52,9 @@ val download_file :
     - [revision], the branch name, tag, or commit hash to fetch from. Defaults
       to ["main"].
 
-    Raises [Failure] if the download fails or if [offline] is [true] and the
-    file is not cached. *)
+    Raises [Invalid_argument] if the token it would send holds a CR, an LF or a
+    NUL, which would end its header, and [Failure] if the download fails or if
+    [offline] is [true] and the file is not cached. *)
 
 val download_url :
   ?cache_dir:string -> ?offline:bool -> sha256:string -> string -> string

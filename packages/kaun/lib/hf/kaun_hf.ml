@@ -90,11 +90,11 @@ let clear_cache ?cache_dir ?repo_id () =
 (* [curl] runs without a shell, so no argument needs quoting and the lookup on
    [PATH] is the same on every system. A missing program is exit code 127 from
    the forked child on Unix and [ENOENT] from process creation on Windows. *)
-let spawn args out =
+let spawn ~stdin args out =
   try
     Unix.create_process "curl"
       (Array.of_list ("curl" :: args))
-      Unix.stdin out Unix.stderr
+      stdin out Unix.stderr
   with Unix.Unix_error (Unix.ENOENT, _, _) -> failwith err_no_curl
 
 let rec wait pid =
@@ -106,17 +106,17 @@ let succeeded = function
   | Unix.WEXITED 127 -> failwith err_no_curl
   | Unix.WEXITED _ | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> false
 
-let curl args ~out = succeeded (wait (spawn args out))
+let curl ~stdin args ~out = succeeded (wait (spawn ~stdin args out))
 
 (* [curl args] with its output read through a pipe, each chunk given to [f]
    as it arrives. *)
-let curl_read args ~f =
+let curl_read ~stdin args ~f =
   let r, w = Unix.pipe ~cloexec:true () in
   let pid =
     Fun.protect
       ~finally:(fun () -> Unix.close w)
       (fun () ->
-        try spawn args w
+        try spawn ~stdin args w
         with e ->
           Unix.close r;
           raise e)
@@ -140,13 +140,45 @@ let curl_read args ~f =
       ignore (wait pid);
       raise e
 
+(* The headers curl reads on its standard input ([-H @-]), so that none, a
+   token's above all, appears on its command line, which every user of the
+   machine can read. They are written to the pipe before curl starts: at most
+   1024 bytes, well under the 4096 a pipe is made with on Windows and the page a
+   Linux pipe keeps at least, so the write cannot block with no reader, and it
+   cannot raise SIGPIPE while this process holds the read end. *)
+let max_header_bytes = 1024
+
+let header_input headers =
+  let lines = List.map (fun (k, v) -> k ^ ": " ^ v ^ "\n") headers in
+  let text = String.concat "" lines in
+  if String.length text > max_header_bytes then
+    invalid_arg
+      (Printf.sprintf "Kaun_hf: the headers %s exceed %d bytes"
+         (String.concat ", " (List.map fst headers))
+         max_header_bytes);
+  let r, w = Unix.pipe ~cloexec:true () in
+  Fun.protect
+    ~finally:(fun () -> Unix.close w)
+    (fun () ->
+      try ignore (Unix.write_substring w text 0 (String.length text))
+      with e ->
+        Unix.close r;
+        raise e);
+  r
+
+let with_headers headers f =
+  match headers with
+  | [] -> f ~stdin:Unix.stdin []
+  | _ ->
+      let r = header_input headers in
+      Fun.protect
+        ~finally:(fun () -> Unix.close r)
+        (fun () -> f ~stdin:r [ "-H"; "@-" ])
+
 (* With [sha256], the download is hashed as it is written and refused unless
    its digest is [sha256]. *)
 let curl_download ?sha256 ~headers ~url ~dest () =
   mkdir_p (Filename.dirname dest);
-  let headers =
-    List.concat_map (fun (k, v) -> [ "-H"; k ^ ": " ^ v ]) headers
-  in
   (* The download is written to the descriptor that created the file: a name
      reopened would follow a link put there meanwhile. *)
   let temp, oc =
@@ -156,17 +188,18 @@ let curl_download ?sha256 ~headers ~url ~dest () =
       ".part"
   in
   let remove_temp () = try Sys.remove temp with Sys_error _ -> () in
-  let args = [ "-L"; "--fail"; "-s" ] @ headers @ [ url ] in
   let fetch () =
+    with_headers headers @@ fun ~stdin header_args ->
+    let args = [ "-L"; "--fail"; "-s" ] @ header_args @ [ url ] in
     match sha256 with
-    | None -> curl ~out:(Unix.descr_of_out_channel oc) args
+    | None -> curl ~stdin ~out:(Unix.descr_of_out_channel oc) args
     | Some want ->
         let h = Sha256.init () in
         let f b n =
           Sha256.feed h b 0 n;
           output oc b 0 n
         in
-        let ok = curl_read args ~f in
+        let ok = curl_read ~stdin args ~f in
         flush oc;
         let got = Sha256.hex h in
         if ok && got <> want then
@@ -197,6 +230,10 @@ let download_file ?token ?cache_dir ?(offline = false) ?(revision = "main")
     in
     let headers =
       match token with
+      | Some t
+        when String.exists (fun c -> c = '\r' || c = '\n' || c = '\000') t ->
+          invalid_arg
+            "Kaun_hf.download_file: the token holds a CR, an LF or a NUL"
       | Some t -> [ ("Authorization", "Bearer " ^ t) ]
       | None -> []
     in

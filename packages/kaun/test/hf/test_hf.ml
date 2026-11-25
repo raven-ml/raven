@@ -58,10 +58,11 @@ let entry name weights =
   Nx.to_array (Archive.tensor ~shape Nx.float32 name weights)
 
 (* A [curl] on [PATH] that writes its arguments to the file it returns, one per
-   line, then writes the file a [file://] URL names, before any query or
-   fragment, fails as curl does on a 404 after a partial write for a URL holding
-   "missing", and writes "payload" for any other URL. [HF_TOKEN] is unset, so no
-   inherited token reaches the log. *)
+   line, and, given [-H @-], what it reads on its standard input to that file's
+   [given] beside it ({!given}); then writes the file a [file://] URL names,
+   before any query or fragment, fails as curl does on a 404 after a partial
+   write for a URL holding "missing", and writes "payload" for any other URL.
+   [HF_TOKEN] is unset, so no inherited token reaches the log. *)
 let curl_stand_in () =
   if Sys.win32 then skip ~reason:"the curl stand-in is a shell script" ();
   let bin = temp_dir ~prefix:"bin" () in
@@ -72,6 +73,8 @@ let curl_stand_in () =
        [
          "#!/bin/sh";
          Printf.sprintf "printf '%%s\\n' \"$@\" > %s" (Filename.quote log);
+         Printf.sprintf "for a; do [ \"$a\" = @- ] && cat > %s; done"
+           (Filename.quote (log ^ ".given"));
          "for url; do :; done";
          "case \"$url\" in";
          "  file://*) path=${url#file://}; path=${path%%\\?*}; exec cat \
@@ -91,6 +94,11 @@ let ran log =
   if Sys.file_exists log then
     Some (List.filter (( <> ) "") (String.split_on_char '\n' (read log)))
   else None
+
+(* What curl read on its standard input, if it read it. *)
+let given log =
+  let path = log ^ ".given" in
+  if Sys.file_exists path then Some (read path) else None
 
 let curl_never_ran log =
   equal ~msg:"curl's arguments" (option (list string)) None (ran log)
@@ -233,6 +241,13 @@ let under_umask () =
 
 let bearer t = "Authorization: Bearer " ^ t
 
+let holds ~sub s =
+  let n = String.length sub in
+  let rec at i =
+    i + n <= String.length s && (String.sub s i n = sub || at (i + 1))
+  in
+  at 0
+
 (* The token passed, [HF_TOKEN], and the header curl must send. *)
 let tokens =
   [
@@ -241,19 +256,39 @@ let tokens =
     ("neither", (None, None), None);
   ]
 
+(* The header reaches curl on its standard input; its command line, which every
+   user of the machine can read, holds no token. *)
 let sends_token (_, (token, hf_token), header) =
   let log = curl_stand_in () in
   setenv "HF_TOKEN" hf_token;
   ignore
     (Hf.download_file ?token ~cache_dir:(temp_dir ()) ~file:"f.json" "acme/tiny");
   let args = Option.value (ran log) ~default:[] in
-  match header with
-  | Some h -> mem ~msg:"the header" string h args
-  | None ->
-      satisfies ~claim:"no Authorization header" (list string)
-        (List.for_all (fun a ->
-             not (String.starts_with ~prefix:"Authorization" a)))
-        args
+  let secret =
+    match (token, hf_token) with
+    | Some t, _ | None, Some t -> t
+    | None, None -> "Authorization"
+  in
+  satisfies
+    ~claim:("no argument holds " ^ secret)
+    (list string)
+    (List.for_all (fun a -> not (holds ~sub:secret a)))
+    args;
+  equal ~msg:"curl's standard input" (option string)
+    (Option.map (fun h -> h ^ "\n") header)
+    (given log)
+
+(* A line break in a token would end its header and start another; a NUL would
+   end it. The token is refused before curl runs, and the message does not print
+   it. *)
+let refuses_token (_, token) =
+  let log = curl_stand_in () in
+  raises_match
+    (function Invalid_argument m -> not (holds ~sub:"s3cret" m) | _ -> false)
+    (fun () ->
+      Hf.download_file ~token ~cache_dir:(temp_dir ()) ~file:"f.json"
+        "acme/tiny");
+  curl_never_ran log
 
 (* The Hub serves a file of a repository at a revision at
    https://huggingface.co/<repo_id>/resolve/<revision>/<file> (the Hub's
@@ -523,6 +558,15 @@ let () =
              cases "sends the token, else HF_TOKEN, as a bearer token"
                ~id:(fun (id, _, _) -> id)
                tokens sends_token;
+             cases "raises on a token holding a CR, an LF or a NUL" ~id:fst
+               [
+                 ("a trailing LF", "s3cret\n");
+                 ("a trailing CRLF", "s3cret\r\n");
+                 ("an LF inside", "s3c\nret");
+                 ("a CR inside", "s3c\rret");
+                 ("a NUL", "s3c\000ret");
+               ]
+               refuses_token;
              test "fetches the revision" fetches_revision;
            ];
          group "download_url"
