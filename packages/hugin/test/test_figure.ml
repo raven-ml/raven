@@ -8,6 +8,7 @@ open Windtrap
 
 let f32 shape = Nx.zeros Nx.float32 shape
 let i32 shape = Nx.zeros Nx.int32 shape
+let i64 shape = Nx.zeros Nx.int64 shape
 let mask shape = Nx.full Nx.bool shape true
 let v = f32 [| 3 |]
 let m = f32 [| 2; 3 |]
@@ -19,282 +20,33 @@ let draw_nothing (_ : Mark.rows) = Picture.empty
 let mark ?shape bindings = Mark.v ~name:"m" ?shape bindings draw_nothing
 let a = dot ~x:(num v) ~y:(num v) ()
 
-(* [made f] makes the value [f] makes, whatever its type. *)
+(* Figures have no printer: a failure names them by its test's row or case. *)
+let figure = Testable.of_equal Hugin.equal
+let path segs = Nx.Ptree.Path.v segs
+
+(* Construction errors. [refused ~sub f] states that [f ()] raises
+   [Invalid_argument], with [sub] in its message when given, and [made f] that
+   it returns: the rows of a table give each refused value beside the nearest
+   values that are made. *)
+
+let refused ?sub f () = raises_match (Exn.invalid_arg ?sub) f
 let made f () = ignore (f ())
+let checks name rows = cases name ~id:fst rows (fun (_, check) -> check ())
 
-(* Construction errors *)
+(* pp_warning *)
 
-(* Every value a constructor refuses, beside the nearest values it accepts. A
-   lift's shape errors raise when its mark is made. *)
-let refused =
-  [
-    ( "num of complex64",
-      made (fun () -> on_x (num (Nx.zeros Nx.complex64 [| 2 |]))) );
-    ("num of bool", made (fun () -> on_x (num (mask [| 2 |]))));
-    ( "num with a valid that grows",
-      made (fun () -> on_x (num ~valid:(mask [| 3; 3 |]) v)) );
-    ( "num with a valid of another length",
-      made (fun () -> on_x (num ~valid:(mask [| 4 |]) v)) );
-    ("cat of floats", made (fun () -> on_fill (cat (f32 [| 2 |]))));
-    ("cat of bools", made (fun () -> on_fill (cat (mask [| 2 |]))));
-    ( "cat with a repeated label",
-      made (fun () -> on_fill (cat ~labels:[| "a"; "b"; "a" |] (i32 [| 2 |])))
-    );
-    ( "cat with a valid that grows",
-      made (fun () -> on_fill (cat ~valid:(mask [| 2; 2 |]) (i32 [| 2 |]))) );
-    ( "dim one past the last axis",
-      made (fun () -> line ~y:(num m) ~stroke:(dim 2) ()) );
-    ( "dim one before the first axis",
-      made (fun () -> line ~y:(num m) ~stroke:(dim (-3)) ()) );
-    ( "dim labels one short",
-      made (fun () -> line ~y:(num m) ~stroke:(dim ~labels:[| "a" |] 0) ()) );
-    ( "dim labels one long",
-      made (fun () ->
-          line ~y:(num m) ~stroke:(dim ~labels:[| "a"; "b"; "c" |] 0) ()) );
-    ( "a dim mask that does not broadcast",
-      made (fun () -> rect ~fx:(dim ~valid:(mask [| 4 |]) 0) ~y:(num v) ()) );
-    ( "index one past the last axis",
-      made (fun () -> line ~x:(index 2) ~y:(num m) ()) );
-    ( "index of a shape without axes",
-      made (fun () -> line ~y:(num (f32 [||])) ()) );
-    ( "channels that do not broadcast",
-      made (fun () -> dot ~x:(num v) ~y:(num (f32 [| 4 |])) ()) );
-    ("rect with x2 without x", made (fun () -> rect ~x2:(num v) ()));
-    ("rect with y2 without y", made (fun () -> rect ~y2:(num v) ()));
-    ("rule without positions", made (fun () -> rule ()));
-    ("rule with x2 alone", made (fun () -> rule ~x2:(num v) ()));
-    ("rule with x and x2 only", made (fun () -> rule ~x:(num v) ~x2:(num v) ()));
-    ( "rule with x, x2 and y2",
-      made (fun () -> rule ~x:(num v) ~x2:(num v) ~y2:(num v) ()) );
-    ("image of rank 1", made (fun () -> image (f32 [| 4 |])));
-    ("image with two channels", made (fun () -> image (f32 [| 2; 2; 2 |])));
-    ("image with five channels", made (fun () -> image (f32 [| 3; 2; 2; 5 |])));
-    ("image of int32", made (fun () -> image (i32 [| 2; 2 |])));
-    ("image of bool", made (fun () -> image (mask [| 2; 2 |])));
-    ("contour of rank 1", made (fun () -> contour ~fill:(num v) ()));
-    ( "contour with a constant fill",
-      made (fun () ->
-          contour ~fill:(const Color.red) ~x:(num v)
-            ~y:(num (f32 [| 2; 1 |]))
-            ()) );
-    ( "contour with x varying along the rows",
-      made (fun () -> contour ~x:(num m) ~fill:(num m) ()) );
-    ( "contour with y varying along the columns",
-      made (fun () -> contour ~y:(num (f32 [| 3 |])) ~fill:(num m) ()) );
-    ( "contour with x the index of the rows",
-      made (fun () -> contour ~x:(index 0) ~fill:(num m) ()) );
-    ( "contour with y the index of the columns",
-      made (fun () -> contour ~y:(index 1) ~fill:(num m) ()) );
-    ( "contour faceted along its rows",
-      made (fun () -> contour ~fx:(dim 0) ~fill:(num m) ()) );
-    ( "contour faceted along its columns",
-      made (fun () ->
-          contour ~fy:(strings [| "a"; "b"; "c" |]) ~fill:(num m) ()) );
-    ( "Mark.v binding a role twice",
-      made (fun () ->
-          mark [ Mark.bind Role.x (num v); Mark.bind Role.x (num v) ]) );
-    ( "Mark.v binding two value roles of one name",
-      made (fun () ->
-          mark
-            [
-              Mark.bind (Role.value ~name:"a") (num v);
-              Mark.bind (Role.value ~name:"a") (num v);
-            ]) );
-    ( "Mark.v binding two parameters of one name",
-      made (fun () ->
-          mark
-            [
-              Mark.bind (Role.param ~name:"a" ~equal:Int.equal) (const 0);
-              Mark.bind (Role.param ~name:"a" ~equal:Int.equal) (const 0);
-            ]) );
-    ( "Mark.v with x2 without x",
-      made (fun () -> mark [ Mark.bind Role.x2 (num v) ]) );
-    ( "Mark.v with y2 without y",
-      made (fun () -> mark [ Mark.bind Role.y2 (num v) ]) );
-    ( "Mark.v with x of quantities and x2 of categories",
-      made (fun () ->
-          mark
-            [ Mark.bind Role.x (num v); Mark.bind Role.x2 (cat (i32 [| 3 |])) ])
-    );
-    ( "Mark.v with y of categories and y2 of quantities",
-      made (fun () ->
-          mark
-            [ Mark.bind Role.y (cat (i32 [| 3 |])); Mark.bind Role.y2 (num v) ])
-    );
-    ( "Mark.v with a scale on the text role",
-      made (fun () ->
-          mark [ Mark.bind Role.text (num ~scale:(Scale.log ()) v) ]) );
-    ( "Mark.v with a title on the text role",
-      made (fun () ->
-          mark [ Mark.bind Role.text (strings ~title:"t" [| "a" |]) ]) );
-    ( "Mark.v with a title on a value role",
-      made (fun () ->
-          mark [ Mark.bind (Role.value ~name:"angle") (num ~title:"t" v) ]) );
-    ( "Mark.v with a negative dimension",
-      made (fun () -> mark ~shape:[| 2; -1 |] []) );
-    ( "Mark.v with a shape the channels do not broadcast with",
-      made (fun () -> mark ~shape:[| 2 |] [ Mark.bind Role.x (num v) ]) );
-    ( "Mark.broadcast with a negative dimension",
-      made (fun () -> Mark.broadcast ~shape:[| -1 |] []) );
-    ( "Mark.broadcast of a dim past the shape",
-      made (fun () -> Mark.broadcast [ Mark.bind Role.fill (dim 0) ]) );
-    ( "Role.param of an empty name",
-      made (fun () -> Role.param ~name:"" ~equal:Int.equal) );
-    ( "Role.param of a built-in role's name",
-      made (fun () -> Role.param ~name:"x" ~equal:Int.equal) );
-    ("Role.value of an empty name", made (fun () -> Role.value ~name:""));
-    ( "Role.value of a built-in role's name",
-      made (fun () -> Role.value ~name:"fill") );
-    ("name axis", made (fun () -> name "axis" a));
-    ("name legend", made (fun () -> name "legend" a));
-    ("name panel", made (fun () -> name "panel" a));
-    ("name cell", made (fun () -> name "cell" a));
-    ( "a grid width of zero",
-      made (fun () -> grid ~widths:[ 1.; 0. ] [ [ a; a ] ]) );
-    ("a negative grid height", made (fun () -> grid ~heights:[ -1. ] [ [ a ] ]));
-    ("a nan grid width", made (fun () -> grid ~widths:[ Float.nan ] [ [ a ] ]));
-    ( "an infinite grid width",
-      made (fun () -> grid ~widths:[ Float.infinity ] [ [ a ] ]) );
-    ("a span of no rows", made (fun () -> span ~rows:0 a));
-    ("a span of no columns", made (fun () -> span ~cols:0 a));
-    ( "a scale shared twice",
-      made (fun () -> share [ ("x", `Shared); ("x", `Independent) ] a) );
-    ( "an interval init out of order",
-      made (fun () -> View.interval "i" ~init:(Some (2., 1.))) );
-    ( "an interval init with nan",
-      made (fun () -> View.interval "i" ~init:(Some (Float.nan, 1.))) );
-    ( "an interval set to infinity",
-      made (fun () ->
-          View.set
-            (View.interval "i" ~init:None)
-            (Some (0., Float.infinity))
-            View.empty) );
-    ("a zoom of an unnamed scale", made (fun () -> View.zoom (Scale.linear ())));
-    ( "a zoom of a band scale",
-      made (fun () -> View.zoom (Scale.band ~name:"b" ())) );
-    ("a figure of zero width", made (fun () -> Size.figure 0. 10.));
-    ("a figure of nan height", made (fun () -> Size.figure 10. Float.nan));
-    ("panels of infinite width", made (fun () -> Size.panels Float.infinity 10.));
-    ("a theme of size zero", made (fun () -> Theme.v ~size:0. ()));
-    ("a theme without fonts", made (fun () -> Theme.v ~fonts:[] ()));
-    ("an aspect of zero", made (fun () -> Coord.cartesian ~aspect:0. ()));
-    ("an aspect of nan", made (fun () -> Coord.cartesian ~aspect:Float.nan ()));
-  ]
-
-let accepted =
-  [
-    ( "num of integers with a valid that broadcasts",
-      made (fun () -> on_x (num ~valid:(mask [| 2; 1 |]) (i32 [| 2; 3 |]))) );
-    ( "num with a valid of rank 0",
-      made (fun () -> on_x (num ~valid:(mask [||]) m)) );
-    ("cat of uint8", made (fun () -> on_fill (cat (Nx.zeros Nx.uint8 [| 2 |]))));
-    ( "cat of uint64",
-      made (fun () -> on_fill (cat (Nx.zeros Nx.uint64 [| 2 |]))) );
-    ( "dim labels that repeat",
-      made (fun () -> line ~y:(num m) ~stroke:(dim ~labels:[| "a"; "a" |] 0) ())
-    );
-    ( "index of the first axis counted from the last",
-      made (fun () -> line ~x:(index (-2)) ~y:(num m) ()) );
-    ( "a dim mask that joins the shape",
-      made (fun () -> rect ~fx:(dim ~valid:(mask [| 4 |]) 0) ()) );
-    ( "a mark of constants",
-      made (fun () -> dot ~x:(const 0.5) ~y:(const 0.5) ()) );
-    ("rule with x alone", made (fun () -> rule ~x:(num v) ()));
-    ( "rule with y and x2 and x",
-      made (fun () -> rule ~y:(num v) ~x:(num v) ~x2:(num v) ()) );
-    ( "rule with x, x2, y and y2",
-      made (fun () -> rule ~x:(num v) ~x2:(num v) ~y:(num v) ~y2:(num v) ()) );
-    ( "image of uint8 RGB",
-      made (fun () -> image (Nx.zeros Nx.uint8 [| 2; 2; 3 |])) );
-    ( "images over a datum axis",
-      made (fun () -> image ~fx:(dim 0) (f32 [| 5; 2; 2; 4 |])) );
-    ( "contour on the axes of a field",
-      made (fun () ->
-          contour
-            ~x:(num (f32 [| 3 |]))
-            ~y:(num (f32 [| 2; 1 |]))
-            ~fill:(num m) ()) );
-    ( "contour of fields faceted along a datum axis",
-      made (fun () -> contour ~fill:(num (f32 [| 4; 2; 3 |])) ~fx:(dim 0) ()) );
-    ( "Mark.v with x of quantities and x2 a constant",
-      made (fun () ->
-          mark [ Mark.bind Role.x (num v); Mark.bind Role.x2 (const 1.) ]) );
-    ( "Mark.v with strings beside a tensor of their length",
-      made (fun () ->
-          mark
-            [
-              Mark.bind Role.x (num v);
-              Mark.bind Role.fill (strings [| "a"; "b"; "c" |]);
-            ]) );
-    ("name axes", made (fun () -> name "axes" a));
-    ( "the least positive weight",
-      made (fun () -> grid ~widths:[ Float.min_float ] [ [ a ] ]) );
-    ("a span of one cell", made (fun () -> span a));
-    ( "an interval init of one point",
-      made (fun () -> View.interval "i" ~init:(Some (1., 1.))) );
-  ]
-
-let construction =
-  group "construction"
+let pp_warning_ =
+  group "pp_warning"
     [
-      cases "refuses" ~id:fst refused (fun (_, f) ->
-          raises_match (Exn.invalid_arg ?sub:None) f);
-      cases "accepts" ~id:fst accepted (fun (_, f) -> f ());
+      test "formats the id, then the message" (fun () ->
+          let id = path [ Field "a"; Index 1 ]
+          and msg = "x: 1 value is missing" in
+          in_order
+            ~subs:[ Nx.Ptree.Path.to_string id; msg ]
+            (Format.asprintf "%a" pp_warning (id, msg)));
     ]
 
-(* Lifts *)
-
-(* [copied lift fresh] states that the figure [lift] makes of an array [fresh]
-   makes stays equal to the figure of a second such array once the first
-   changes: a lift that kept the caller's array would change with it. *)
-let copied lift fresh =
-  let arr = fresh () in
-  let f = lift arr in
-  arr.(0) <- arr.(1);
-  equal bool true (Hugin.equal f (lift (fresh ())))
-
-let copies =
-  let fill c = dot ~x:(num v) ~y:(num v) ~fill:c () in
-  let labels () = [| "a"; "b"; "c" |] in
-  [
-    ("cat labels", fun () -> copied (fun a -> fill (cat ~labels:a codes)) labels);
-    ("strings", fun () -> copied (fun a -> fill (strings a)) labels);
-    ("dim labels", fun () -> copied (fun a -> fill (dim ~labels:a 0)) labels);
-    ( "floats",
-      fun () -> copied (fun a -> rule ~y:(floats a) ()) (fun () -> [| 0.; 1. |])
-    );
-  ]
-
-let kinds =
-  let quantitative : float Scale.kind option -> string = function
-    | Some Quantitative -> "quantitative"
-    | None -> "none"
-  and categorical : string Scale.kind option -> string = function
-    | Some Categorical -> "categorical"
-    | None -> "none"
-  in
-  [
-    ("num", "quantitative", quantitative (kind (num v)));
-    ("floats", "quantitative", quantitative (kind (floats [| 0. |])));
-    ("index", "quantitative", quantitative (kind (index 0)));
-    ("a float constant", "none", quantitative (kind (const 0.5)));
-    ("cat", "categorical", categorical (kind (cat (i32 [| 2 |]))));
-    ("strings", "categorical", categorical (kind (strings [| "a" |])));
-    ("dim", "categorical", categorical (kind (dim 0)));
-    ("a string constant", "none", categorical (kind (const "a")));
-  ]
-
-let lifts =
-  group "lifts"
-    [
-      cases "a lift copies its array" ~id:fst copies (fun (_, f) -> f ());
-      cases "kind is the kind of the scale a lift reads"
-        ~id:(fun (n, _, _) -> n)
-        kinds
-        (fun (_, expected, got) -> equal string expected got);
-    ]
-
-(* Equality *)
+(* equal *)
 
 (* A recipe names the tensors and functions a figure is built from by their
    index in fixed pools, so that two recipes are equal iff they build figures
@@ -527,6 +279,44 @@ let gen_pair =
       in
       (r, r'))
 
+(* A recipe of each node, each paired with every near miss: the examples hold
+   every argument the recipes vary. *)
+let near_misses =
+  List.concat_map
+    (fun r -> List.map (fun r' -> (r, r')) (variants r))
+    [
+      R_dot (0, 1, None);
+      R_dot (0, 1, Some 0);
+      R_line (0, false);
+      R_mapped (0, 0);
+      R_level 0.;
+      R_level Float.nan;
+      R_custom None;
+      R_custom (Some 2.);
+      R_axis ("x", false, None);
+      R_axis ("x", false, Some "a");
+      R_legend ("a", true, None);
+      R_legend ("a", true, Some "a");
+      R_bind ("a", 0);
+      R_layer [ R_bar 0 ];
+      R_grid (None, [ [ R_bar 0; R_bar 1 ] ]);
+      R_grid (Some [ 2. ], [ [ R_bar 0 ] ]);
+      R_span (1, 1, R_bar 0);
+      R_title ("a", 0, R_bar 0);
+      R_name ("a", R_bar 0);
+      R_share ("x", false, R_bar 0);
+      R_coord (None, R_bar 0);
+    ]
+
+let recipes_law (r, r') =
+  (* [compare] equates the nan of a level with itself, as [Float.equal] does. *)
+  let same = compare r r' = 0 in
+  cover "equal recipes" same;
+  cover "different recipes" (not same);
+  cover "recipes that differ in one argument"
+    (List.exists (fun v -> compare v r' = 0) (variants r));
+  equal bool same (Hugin.equal (build r) (build r'))
+
 (* Pairs the recipes cannot state, from [equal]'s and the lifts' contracts. *)
 let param_parity = Role.param ~name:"k" ~equal:(fun a b -> a mod 2 = b mod 2)
 let param_of k = mark [ Mark.bind param_parity (const k) ]
@@ -594,8 +384,6 @@ let pairs =
       fun () -> (line ~y:(num v) (), line ~curve:Curve.linear ~y:(num v) ()) );
   ]
 
-(* Every built-in mark rebuilt from the same tensors and values is equal to
-   the first. *)
 let builtins =
   [
     ("dot", fun () -> dot ~x:(num v) ~y:(num v) ~size:(num v) ());
@@ -615,66 +403,447 @@ let builtins =
     ("contour", fun () -> contour ~fill:(num m) ());
   ]
 
-let equality =
+let equal_ =
   group "equal"
     [
-      prop "figures are equal iff their recipes are" gen_pair (fun (r, r') ->
-          (* [compare] equates the nan of a level with itself, as [Float.equal]
-             does. *)
-          let same = compare r r' = 0 in
-          cover "equal recipes" same;
-          cover "different recipes" (not same);
-          cover "recipes that differ in one argument"
-            (List.exists (fun v -> compare v r' = 0) (variants r));
-          equal bool same (Hugin.equal (build r) (build r')));
-      cases "a figure differs from each of its near misses"
-        ~id:(Format.asprintf "%a" pp_recipe)
-        [
-          R_dot (0, 1, None);
-          R_dot (0, 1, Some 0);
-          R_line (0, false);
-          R_mapped (0, 0);
-          R_level 0.;
-          R_level Float.nan;
-          R_custom None;
-          R_custom (Some 2.);
-          R_axis ("x", false, None);
-          R_axis ("x", false, Some "a");
-          R_legend ("a", true, None);
-          R_legend ("a", true, Some "a");
-          R_bind ("a", 0);
-          R_layer [ R_bar 0 ];
-          R_grid (None, [ [ R_bar 0; R_bar 1 ] ]);
-          R_grid (Some [ 2. ], [ [ R_bar 0 ] ]);
-          R_span (1, 1, R_bar 0);
-          R_title ("a", 0, R_bar 0);
-          R_name ("a", R_bar 0);
-          R_share ("x", false, R_bar 0);
-          R_coord (None, R_bar 0);
-        ]
-        (fun r ->
-          List.iter
-            (fun r' ->
-              equal
-                ~msg:(Format.asprintf "%a" pp_recipe r')
-                bool false
-                (Hugin.equal (build r) (build r')))
-            (variants r));
-      cases "equal on pairs the recipes cannot state"
+      prop "is true iff the figures' recipes are" ~examples:near_misses gen_pair
+        recipes_law;
+      cases "is true iff the arguments are, on leaves the recipes cannot build"
         ~id:(fun (n, _, _) -> n)
         pairs
         (fun (_, same, f) ->
           let f, f' = f () in
           equal bool same (Hugin.equal f f'));
-      cases "a built-in mark rebuilt is equal" ~id:fst builtins (fun (_, f) ->
-          equal bool true (Hugin.equal (f ()) (f ())));
-      prop "a title is its rich text" Gen.string (fun s ->
-          equal bool true (Hugin.equal (title s a) (title' (Text.v s) a));
-          equal bool true
-            (Hugin.equal (axis ~title:s "x") (axis' ~title:(Text.v s) "x")));
+      cases "holds of a built-in mark and itself rebuilt" ~id:fst builtins
+        (fun (_, f) -> equal figure (f ()) (f ()));
     ]
 
-(* Views *)
+(* Channels *)
+
+(* [copied lift fresh] states that the figure [lift] makes of an array [fresh]
+   makes stays equal to the figure of a second such array once the first
+   changes: a lift that kept the caller's array would change with it. *)
+let copied lift fresh =
+  let arr = fresh () in
+  let f = lift arr in
+  arr.(0) <- arr.(1);
+  equal figure (lift (fresh ())) f
+
+let labels () = [| "a"; "b"; "c" |]
+let fill c = dot ~x:(num v) ~y:(num v) ~fill:c ()
+
+let num_ =
+  group "num"
+    [
+      checks "raises iff its dtype is complex or boolean or its valid grows it"
+        [
+          ( "complex64",
+            refused (fun () -> on_x (num (Nx.zeros Nx.complex64 [| 2 |]))) );
+          ("bool", refused (fun () -> on_x (num (mask [| 2 |]))));
+          ( "a valid that grows it",
+            refused (fun () -> on_x (num ~valid:(mask [| 3; 3 |]) v)) );
+          ( "a valid of another length",
+            refused (fun () -> on_x (num ~valid:(mask [| 4 |]) v)) );
+          ( "integers with a valid that broadcasts",
+            made (fun () ->
+                on_x (num ~valid:(mask [| 2; 1 |]) (i32 [| 2; 3 |]))) );
+          ("a valid of rank 0", made (fun () -> on_x (num ~valid:(mask [||]) m)));
+        ];
+    ]
+
+let time_ =
+  group "time"
+    [
+      checks "raises iff its counts are not integers or its valid grows them"
+        [
+          ( "float64 counts",
+            refused (fun () -> time Time.S (Nx.zeros Nx.float64 [| 1 |])) );
+          ( "a valid that grows them",
+            refused (fun () ->
+                on_x (time ~valid:(mask [| 2; 3 |]) Time.S (i64 [| 3 |]))) );
+          ("int64 counts", made (fun () -> on_x (time Time.S (i64 [| 3 |]))));
+          ( "uint8 counts with a valid that broadcasts",
+            made (fun () ->
+                on_x
+                  (time ~valid:(mask [| 1 |]) Time.Ms
+                     (Nx.zeros Nx.uint8 [| 3 |]))) );
+        ];
+    ]
+
+let cat_ =
+  group "cat"
+    [
+      checks
+        "raises iff its codes are not integers, a label repeats or its valid \
+         grows them"
+        [
+          ("floats", refused (fun () -> on_fill (cat (f32 [| 2 |]))));
+          ("bools", refused (fun () -> on_fill (cat (mask [| 2 |]))));
+          ( "a repeated label",
+            refused (fun () ->
+                on_fill (cat ~labels:[| "a"; "b"; "a" |] (i32 [| 2 |]))) );
+          ( "a valid that grows them",
+            refused (fun () ->
+                on_fill (cat ~valid:(mask [| 2; 2 |]) (i32 [| 2 |]))) );
+          ("uint8", made (fun () -> on_fill (cat (Nx.zeros Nx.uint8 [| 2 |]))));
+          ( "uint64 with distinct labels",
+            made (fun () ->
+                on_fill
+                  (cat ~labels:[| "a"; "b" |] (Nx.zeros Nx.uint64 [| 2 |]))) );
+        ];
+      test "copies its labels" (fun () ->
+          copied (fun a -> fill (cat ~labels:a codes)) labels);
+    ]
+
+let strings_ =
+  group "strings"
+    [
+      test "copies its array" (fun () ->
+          copied (fun a -> fill (strings a)) labels);
+    ]
+
+let floats_ =
+  group "floats"
+    [
+      test "copies its array" (fun () ->
+          copied (fun a -> rule ~y:(floats a) ()) (fun () -> [| 0.; 1. |]));
+    ]
+
+let dim_ =
+  group "dim"
+    [
+      checks
+        "makes its mark raise iff the shape lacks its axis or its labels \
+         differ in length"
+        [
+          ( "one past the last axis",
+            refused (fun () -> line ~y:(num m) ~stroke:(dim 2) ()) );
+          ( "one before the first axis",
+            refused (fun () -> line ~y:(num m) ~stroke:(dim (-3)) ()) );
+          ( "labels one short",
+            refused (fun () ->
+                line ~y:(num m) ~stroke:(dim ~labels:[| "a" |] 0) ()) );
+          ( "labels one long",
+            refused (fun () ->
+                line ~y:(num m) ~stroke:(dim ~labels:[| "a"; "b"; "c" |] 0) ())
+          );
+          ( "a mask that does not broadcast",
+            refused (fun () ->
+                rect ~fx:(dim ~valid:(mask [| 4 |]) 0) ~y:(num v) ()) );
+          ( "the first axis counted from the last",
+            made (fun () -> line ~y:(num m) ~stroke:(dim (-2)) ()) );
+          ( "labels that repeat",
+            made (fun () ->
+                line ~y:(num m) ~stroke:(dim ~labels:[| "a"; "a" |] 0) ()) );
+          ( "a mask that joins the shape",
+            made (fun () -> rect ~fx:(dim ~valid:(mask [| 4 |]) 0) ()) );
+        ];
+      test "copies its labels" (fun () ->
+          copied (fun a -> fill (dim ~labels:a 0)) labels);
+      test "joins its valid to the mark's shape" (fun () ->
+          equal (array int) [| 4 |]
+            (Mark.broadcast [ Mark.bind Role.fx (dim ~valid:(mask [| 4 |]) 0) ]));
+    ]
+
+let index_ =
+  group "index"
+    [
+      checks "makes its mark raise iff the shape lacks its axis"
+        [
+          ( "one past the last axis",
+            refused (fun () -> line ~x:(index 2) ~y:(num m) ()) );
+          ( "a shape without axes",
+            refused (fun () -> line ~y:(num (f32 [||])) ()) );
+          ( "the first axis counted from the last",
+            made (fun () -> line ~x:(index (-2)) ~y:(num m) ()) );
+        ];
+    ]
+
+let kind_ =
+  let quantitative : float Scale.kind option -> string = function
+    | Some Quantitative -> "quantitative"
+    | None -> "none"
+  and temporal : Time.t Scale.kind option -> string = function
+    | Some Temporal -> "temporal"
+    | None -> "none"
+  and categorical : string Scale.kind option -> string = function
+    | Some Categorical -> "categorical"
+    | None -> "none"
+  in
+  group "kind"
+    [
+      cases "is the kind of the scale a lift reads, or none for a constant"
+        ~id:(fun (n, _, _) -> n)
+        [
+          ("num", "quantitative", fun () -> quantitative (kind (num v)));
+          ( "floats",
+            "quantitative",
+            fun () -> quantitative (kind (floats [| 0. |])) );
+          ("index", "quantitative", fun () -> quantitative (kind (index 0)));
+          ("a float constant", "none", fun () -> quantitative (kind (const 0.5)));
+          ( "time",
+            "temporal",
+            fun () -> temporal (kind (time Time.S (i64 [| 1 |]))) );
+          ("cat", "categorical", fun () -> categorical (kind (cat codes)));
+          ( "strings",
+            "categorical",
+            fun () -> categorical (kind (strings [| "a" |])) );
+          ("dim", "categorical", fun () -> categorical (kind (dim 0)));
+          ("a string constant", "none", fun () -> categorical (kind (const "a")));
+        ]
+        (fun (_, expected, got) -> equal string expected (got ()));
+    ]
+
+(* Marks *)
+
+let marks =
+  group "marks"
+    [
+      checks "raise iff their channels do not broadcast together"
+        [
+          ( "x of 3 beside y of 4",
+            refused (fun () -> dot ~x:(num v) ~y:(num (f32 [| 4 |])) ()) );
+          ( "x of 3 beside y of 1",
+            made (fun () -> dot ~x:(num v) ~y:(num (f32 [| 1 |])) ()) );
+          ( "constants alone",
+            made (fun () -> dot ~x:(const 0.5) ~y:(const 0.5) ()) );
+        ];
+    ]
+
+let area_ =
+  group "area"
+    [
+      checks "raises iff it stacks with y2 or stacks a y of no quantities"
+        [
+          ( "a stack with y2",
+            refused ~sub:"stack" (fun () ->
+                area ~y:(num v) ~y2:(num v) ~stack:`Zero ()) );
+          ( "a stack of strings",
+            refused ~sub:"stack" (fun () ->
+                area ~y:(strings [| "a" |]) ~stack:`Zero ()) );
+          ( "a stack of instants",
+            refused ~sub:"stack" (fun () ->
+                area ~y:(time Time.S (i64 [| 1 |])) ~stack:`Zero ()) );
+          ( "a stack of a constant",
+            refused ~sub:"stack" (fun () ->
+                area ~x:(num v) ~y:(const 0.5) ~stack:`Zero ()) );
+          ( "a stack of quantities",
+            made (fun () -> area ~y:(num v) ~stack:`Zero ()) );
+          ("y and y2", made (fun () -> area ~y:(num v) ~y2:(num v) ()));
+        ];
+    ]
+
+let rect_ =
+  group "rect"
+    [
+      checks
+        "raises iff x2 comes without x, y2 without y, or a stack has not \
+         exactly one length"
+        [
+          ("x2 without x", refused (fun () -> rect ~x2:(num v) ()));
+          ("y2 without y", refused (fun () -> rect ~y2:(num v) ()));
+          ( "a stack of two categories",
+            refused ~sub:"stack" (fun () ->
+                rect ~x:(dim 0) ~y:(dim 1) ~fill:(num m) ~stack:`Zero ()) );
+          ( "two categories",
+            made (fun () -> rect ~x:(dim 0) ~y:(dim 1) ~fill:(num m) ()) );
+          ( "a stack of a category and an instant",
+            refused ~sub:"stack" (fun () ->
+                rect ~x:(dim 0) ~y:(time Time.S (i64 [| 1 |])) ~stack:`Zero ())
+          );
+          ( "a stack of two lengths",
+            refused ~sub:"stack" (fun () ->
+                rect ~x:(num v) ~y:(num v) ~stack:`Zero ()) );
+          ( "a stack of a category and a length",
+            made (fun () -> rect ~x:(dim 0) ~y:(num v) ~stack:`Zero ()) );
+          ("x and x2", made (fun () -> rect ~x:(num v) ~x2:(num v) ()));
+        ];
+    ]
+
+let rule_ =
+  group "rule"
+    [
+      checks
+        "raises iff x2 comes without x, y2 without y, or its channels match no \
+         case"
+        [
+          ("no position", refused (fun () -> rule ()));
+          ("x2 alone", refused (fun () -> rule ~x2:(num v) ()));
+          ("x and x2 only", refused (fun () -> rule ~x:(num v) ~x2:(num v) ()));
+          ( "x, x2 and y2",
+            refused (fun () -> rule ~x:(num v) ~x2:(num v) ~y2:(num v) ()) );
+          ("x alone", made (fun () -> rule ~x:(num v) ()));
+          ( "y, x and x2",
+            made (fun () -> rule ~y:(num v) ~x:(num v) ~x2:(num v) ()) );
+          ( "x, x2, y and y2",
+            made (fun () ->
+                rule ~x:(num v) ~x2:(num v) ~y:(num v) ~y2:(num v) ()) );
+        ];
+    ]
+
+let image_ =
+  group "image"
+    [
+      checks "raises iff its rank, channels or dtype is not an image's"
+        [
+          ("rank 1", refused (fun () -> image (f32 [| 4 |])));
+          ("two channels", refused (fun () -> image (f32 [| 2; 2; 2 |])));
+          ("five channels", refused (fun () -> image (f32 [| 3; 2; 2; 5 |])));
+          ("int32", refused (fun () -> image (i32 [| 2; 2 |])));
+          ("bool", refused (fun () -> image (mask [| 2; 2 |])));
+          ("uint8 RGB", made (fun () -> image (Nx.zeros Nx.uint8 [| 2; 2; 3 |])));
+          ( "RGBA over a datum axis in panels",
+            made (fun () -> image ~fx:(dim 0) (f32 [| 5; 2; 2; 4 |])) );
+        ];
+    ]
+
+let contour_ =
+  group "contour"
+    [
+      checks
+        "raises iff its shape, fill, x, y or facets place no field in one panel"
+        [
+          ("rank 1", refused (fun () -> contour ~fill:(num v) ()));
+          ( "a constant fill",
+            refused (fun () ->
+                contour ~fill:(const Color.red) ~x:(num v)
+                  ~y:(num (f32 [| 2; 1 |]))
+                  ()) );
+          ( "x varying along the rows",
+            refused (fun () -> contour ~x:(num m) ~fill:(num m) ()) );
+          ( "y varying along the columns",
+            refused (fun () -> contour ~y:(num (f32 [| 3 |])) ~fill:(num m) ())
+          );
+          ( "x the index of the rows",
+            refused (fun () -> contour ~x:(index 0) ~fill:(num m) ()) );
+          ( "y the index of the columns",
+            refused (fun () -> contour ~y:(index 1) ~fill:(num m) ()) );
+          ( "faceted along its rows",
+            refused (fun () -> contour ~fx:(dim 0) ~fill:(num m) ()) );
+          ( "faceted along its columns",
+            refused (fun () ->
+                contour ~fy:(strings [| "a"; "b"; "c" |]) ~fill:(num m) ()) );
+          ( "on the axes of a field",
+            made (fun () ->
+                contour
+                  ~x:(num (f32 [| 3 |]))
+                  ~y:(num (f32 [| 2; 1 |]))
+                  ~fill:(num m) ()) );
+          ( "fields faceted along a datum axis",
+            made (fun () ->
+                contour ~fill:(num (f32 [| 4; 2; 3 |])) ~fx:(dim 0) ()) );
+        ];
+    ]
+
+(* Composing *)
+
+let grid_ =
+  group "grid"
+    [
+      checks "raises iff a weight is not finite and positive"
+        [
+          ( "a width of zero",
+            refused (fun () -> grid ~widths:[ 1.; 0. ] [ [ a; a ] ]) );
+          ( "a negative height",
+            refused (fun () -> grid ~heights:[ -1. ] [ [ a ] ]) );
+          ( "a nan width",
+            refused (fun () -> grid ~widths:[ Float.nan ] [ [ a ] ]) );
+          ( "an infinite width",
+            refused (fun () -> grid ~widths:[ Float.infinity ] [ [ a ] ]) );
+          ( "the least positive width",
+            made (fun () -> grid ~widths:[ Float.min_float ] [ [ a ] ]) );
+        ];
+    ]
+
+let span_ =
+  group "span"
+    [
+      checks "raises iff it covers less than one row or column"
+        [
+          ("no rows", refused (fun () -> span ~rows:0 a));
+          ("no columns", refused (fun () -> span ~cols:0 a));
+          ("one cell", made (fun () -> span a));
+        ];
+    ]
+
+let share_ =
+  group "share"
+    [
+      checks "raises iff it names a scale twice"
+        [
+          ( "x twice",
+            refused (fun () -> share [ ("x", `Shared); ("x", `Independent) ] a)
+          );
+          ( "x and y",
+            made (fun () -> share [ ("x", `Shared); ("y", `Independent) ] a) );
+        ];
+    ]
+
+let title_ =
+  group "title"
+    [
+      prop "title s is title' of the text s" Gen.string (fun s ->
+          equal figure (title' (Text.v s) a) (title s a));
+    ]
+
+let name_ =
+  group "name"
+    [
+      checks "raises iff the name is a generated node's segment"
+        [
+          ("axis", refused (fun () -> name "axis" a));
+          ("legend", refused (fun () -> name "legend" a));
+          ("panel", refused (fun () -> name "panel" a));
+          ("cell", refused (fun () -> name "cell" a));
+          ("axes", made (fun () -> name "axes" a));
+        ];
+    ]
+
+(* Guides as figures *)
+
+let axis_ =
+  group "axis"
+    [
+      prop "axis ~title:s is axis' of the text s" Gen.string (fun s ->
+          equal figure (axis' ~title:(Text.v s) "x") (axis ~title:s "x"));
+    ]
+
+let legend_ =
+  group "legend"
+    [
+      checks "raises iff ncol is less than 1"
+        [
+          ("ncol 0", refused (fun () -> legend ~ncol:0 "color"));
+          ("ncol 1", made (fun () -> legend ~ncol:1 "color"));
+        ];
+    ]
+
+(* Coord *)
+
+let coord_t = Testable.make ~pp:Coord.pp ~equal:Coord.equal
+
+let coord_ =
+  group "Coord"
+    [
+      checks "cartesian raises iff the aspect is not finite and positive"
+        [
+          ("zero", refused (fun () -> Coord.cartesian ~aspect:0. ()));
+          ("negative", refused (fun () -> Coord.cartesian ~aspect:(-1.) ()));
+          ("nan", refused (fun () -> Coord.cartesian ~aspect:Float.nan ()));
+          ( "infinite",
+            refused (fun () -> Coord.cartesian ~aspect:Float.infinity ()) );
+          ( "the least positive float",
+            made (fun () -> Coord.cartesian ~aspect:Float.min_float ()) );
+        ];
+      test "equal is true iff the aspects are" (fun () ->
+          equal coord_t (Coord.cartesian ()) (Coord.cartesian ());
+          equal coord_t
+            (Coord.cartesian ~aspect:2. ())
+            (Coord.cartesian ~aspect:2. ());
+          not_equal coord_t (Coord.cartesian ()) (Coord.cartesian ~aspect:1. ()));
+    ]
+
+(* View *)
 
 (* A model of views: a user key is identified by its name and a zoom key by its
    node, and a view binds each to one value of one sort. *)
@@ -688,7 +857,7 @@ type slot = User of string | Zoomed of int
 
 let names = [ "a"; "b" ]
 let nodes = [ 0; 1 ]
-let at k = if k = 0 then None else Some (Nx.Ptree.Path.v [ Index k ])
+let at k = if k = 0 then None else Some (path [ Index k ])
 let number s = View.number s ~init:1.
 let choice s = View.choice s ~init:"i"
 let interval s = View.interval s ~init:(Some (0., 1.))
@@ -816,62 +985,337 @@ let reads_law ops =
         (View.get (zoom k) view))
     nodes
 
-let views =
+let view = Testable.make ~pp:View.pp ~equal:View.equal
+
+let equal_views_law (ops, ops') =
+  let same = equal_model (model ops) (model ops') in
+  cover "equal views" same;
+  cover "equal views set in another order" (same && compare ops ops' <> 0);
+  cover "different views" (not same);
+  (if same then equal else not_equal) view (apply ops) (apply ops')
+
+let view_ =
+  let unset = View.interval "i" ~init:None in
   group "View"
     [
-      prop "a key reads the last value set on its name and sort, or its initial"
+      checks "interval raises iff its init is not finite and ordered"
+        [
+          ( "an init out of order",
+            refused (fun () -> View.interval "i" ~init:(Some (2., 1.))) );
+          ( "an init with nan",
+            refused (fun () -> View.interval "i" ~init:(Some (Float.nan, 1.)))
+          );
+          ( "an init reaching infinity",
+            refused (fun () ->
+                View.interval "i" ~init:(Some (0., Float.infinity))) );
+          ( "an init of one point",
+            made (fun () -> View.interval "i" ~init:(Some (1., 1.))) );
+        ];
+      checks "zoom raises iff its scale is unnamed or categorical"
+        [
+          ("an unnamed scale", refused (fun () -> View.zoom (Scale.linear ())));
+          ( "a band scale",
+            refused (fun () -> View.zoom (Scale.band ~name:"b" ())) );
+          ( "a named time scale",
+            made (fun () -> View.zoom (Scale.time ~name:"t" ())) );
+        ];
+      checks "set raises iff an interval is not finite and ordered"
+        [
+          ( "an interval reaching infinity",
+            refused (fun () ->
+                View.set unset (Some (0., Float.infinity)) View.empty) );
+          ( "an interval with nan",
+            refused (fun () -> View.set unset (Some (0., Float.nan)) View.empty)
+          );
+          ( "an interval out of order",
+            refused (fun () -> View.set unset (Some (1., 0.)) View.empty) );
+          ( "an interval of one point",
+            made (fun () -> View.set unset (Some (1., 1.)) View.empty) );
+          ("no interval", made (fun () -> View.set unset None View.empty));
+        ];
+      prop
+        "get reads the last value set on its key's name and sort, or its \
+         initial"
         gen_ops reads_law;
-      prop "views are equal iff they bind the same keys to equal values"
-        gen_programs (fun (ops, ops') ->
-          let same = equal_model (model ops) (model ops') in
-          cover "equal views" same;
-          cover "equal views set in another order"
-            (same && compare ops ops' <> 0);
-          cover "different views" (not same);
-          equal bool same (View.equal (apply ops) (apply ops')));
+      prop "equal is true iff the views bind the same keys to equal values"
+        gen_programs equal_views_law;
     ]
 
-(* Sizes, themes and coordinate systems *)
+(* Size *)
 
+let size_t = Testable.make ~pp:Size.pp ~equal:Size.equal
+
+let size_ =
+  group "Size"
+    [
+      checks "figure and panels raise iff a length is not finite and positive"
+        [
+          ("a figure of zero width", refused (fun () -> Size.figure 0. 10.));
+          ( "a figure of negative width",
+            refused (fun () -> Size.figure (-1.) 10.) );
+          ( "a figure of nan height",
+            refused (fun () -> Size.figure 10. Float.nan) );
+          ( "panels of infinite width",
+            refused (fun () -> Size.panels Float.infinity 10.) );
+          ("panels of nan height", refused (fun () -> Size.panels 10. Float.nan));
+          ( "a figure of the least positive lengths",
+            made (fun () -> Size.figure Float.min_float Float.min_float) );
+          ( "panels of the largest lengths",
+            made (fun () -> Size.panels Float.max_float Float.max_float) );
+        ];
+      (* [mm l] is [l *. 72. /. 25.4]: two roundings, each within half an ulp,
+         put 25.4 mm within [epsilon_float] of 72 relatively. *)
+      test "mm 25.4 is 72 points" (fun () ->
+          equal (float_rel ~rel:epsilon_float ~abs:0.) 72. (Size.mm 25.4));
+      (* [dpi d] is [d /. 72.], a correctly rounded division, exact for 144. *)
+      test "dpi 144 is 2 device pixels per point" (fun () ->
+          equal float_exact 2. (Size.dpi 144.));
+      test "equal is true iff the sizes fix the same length to equal values"
+        (fun () ->
+          equal size_t (Size.panels 1. 2.) (Size.panels 1. 2.);
+          not_equal size_t (Size.figure 1. 2.) (Size.panels 1. 2.);
+          not_equal size_t (Size.panels 1. 2.) (Size.panels 1. 3.));
+    ]
+
+(* Theme *)
+
+let theme = Testable.make ~pp:Theme.pp ~equal:Theme.equal
 let color = Testable.make ~pp:Color.pp ~equal:Color.equal
+let scheme = Testable.make ~pp:Scheme.pp ~equal:Scheme.equal
+let font = Testable.make ~pp:Font.pp ~equal:Font.equal
+let locale = Testable.make ~pp:Locale.pp ~equal:Locale.equal
 let first s = (Scheme.colors 1 s).(0)
 
-let presentation =
-  group "presentation"
+(* The colours of viridis that [Theme.dark]'s scheme ramps through. *)
+let dark_stops = List.init 13 (fun i -> 0.4 +. (0.05 *. Float.of_int i))
+
+(* WCAG 2.2's relative luminance of an opaque sRGB colour, and the contrast
+   ratio of two colours. *)
+let luminance c =
+  let lin v =
+    if v <= 0.04045 then v /. 12.92 else Float.pow ((v +. 0.055) /. 1.055) 2.4
+  in
+  (0.2126 *. lin (Color.r c))
+  +. (0.7152 *. lin (Color.g c))
+  +. (0.0722 *. lin (Color.b c))
+
+let contrast a b =
+  let la = luminance a and lb = luminance b in
+  (Float.max la lb +. 0.05) /. (Float.min la lb +. 0.05)
+
+let theme_ =
+  group "Theme"
     [
-      test "mm and dpi convert to points" (fun () ->
-          equal (float 1e-12) 72. (Size.mm 25.4);
-          equal (float 1e-12) 2. (Size.dpi 144.));
-      test "sizes are equal iff they fix the same length to equal values"
-        (fun () ->
-          equal bool false (Size.equal (Size.figure 1. 2.) (Size.panels 1. 2.));
-          equal bool false (Size.equal (Size.panels 1. 2.) (Size.panels 1. 3.));
-          equal bool true (Size.equal (Size.panels 1. 2.) (Size.panels 1. 2.)));
-      test "the default theme states its defaults" (fun () ->
+      checks
+        "v raises iff the size is not finite and positive or fonts is empty"
+        [
+          ("a size of zero", refused (fun () -> Theme.v ~size:0. ()));
+          ("a negative size", refused (fun () -> Theme.v ~size:(-1.) ()));
+          ( "an infinite size",
+            refused (fun () -> Theme.v ~size:Float.infinity ()) );
+          ("no fonts", refused (fun () -> Theme.v ~fonts:[] ()));
+          ("one font", made (fun () -> Theme.v ~fonts:[ Font.bold ] ()));
+          ( "the least positive size",
+            made (fun () -> Theme.v ~size:Float.min_float ()) );
+        ];
+      test "default is v with the defaults v states" (fun () ->
           let th = Theme.default in
           equal color (Color.gray 0.1) (Theme.ink th);
           equal color Color.white (Theme.paper th);
           equal color (first Scheme.tableau10) (Theme.accent th);
           equal float_exact 10. (Theme.size th);
-          equal bool true
-            (List.equal Font.equal [ Font.regular; Font.bold ] (Theme.fonts th));
-          equal bool true (Scheme.equal Scheme.tableau10 (Theme.palette th));
-          equal bool true (Scheme.equal Scheme.viridis (Theme.scheme th));
-          equal bool true (Locale.equal Locale.default (Theme.locale th));
-          equal bool true (Theme.equal th (Theme.v ())));
+          equal (list font) [ Font.regular; Font.bold ] (Theme.fonts th);
+          equal scheme Scheme.tableau10 (Theme.palette th);
+          equal scheme Scheme.viridis (Theme.scheme th);
+          equal locale Locale.default (Theme.locale th);
+          equal theme (Theme.v ()) th);
       test "the accent defaults to the palette's first colour" (fun () ->
           equal color (first Scheme.dark2)
             (Theme.accent (Theme.v ~palette:Scheme.dark2 ())));
-      test "themes differing in accent alone differ" (fun () ->
-          equal bool false
-            (Theme.equal Theme.default (Theme.v ~accent:Color.red ())));
-      test "coordinate systems compare their aspects" (fun () ->
-          equal bool true
-            (Coord.equal (Coord.cartesian ()) (Coord.cartesian ()));
-          equal bool false
-            (Coord.equal (Coord.cartesian ()) (Coord.cartesian ~aspect:1. ())));
+      cases "the presets are the themes of v they state"
+        ~id:(fun (n, _, _) -> n)
+        [
+          ( "dark",
+            (fun () ->
+              let stops = List.map (Scheme.color Scheme.viridis) dark_stops in
+              Theme.v ~ink:(Color.gray 0.92) ~paper:(Color.gray 0.1)
+                ~scheme:(Scheme.ramp (Array.of_list stops))
+                ()),
+            Theme.dark );
+          ("talk", (fun () -> Theme.v ~size:16. ()), Theme.talk);
+          ("poster", (fun () -> Theme.v ~size:20. ()), Theme.poster);
+        ]
+        (fun (_, stated, preset) -> equal theme (stated ()) preset);
+      cases "dark's scheme colours contrast with its paper at 3:1 or more"
+        ~id:(Printf.sprintf "viridis at %.2f") dark_stops (fun u ->
+          let paper = Theme.paper Theme.dark in
+          at_least float_exact ~than:3.
+            (contrast (Scheme.color Scheme.viridis u) paper));
+      test "equal tells apart themes that differ in accent alone" (fun () ->
+          not_equal theme Theme.default (Theme.v ~accent:Color.red ()));
+    ]
+
+(* Extending *)
+
+let role_ =
+  group "Role"
+    [
+      checks "value and param raise iff the name is empty or a built-in role's"
+        [
+          ( "a parameter of an empty name",
+            refused (fun () -> Role.param ~name:"" ~equal:Int.equal) );
+          ( "a parameter named x",
+            refused (fun () -> Role.param ~name:"x" ~equal:Int.equal) );
+          ("a value of an empty name", refused (fun () -> Role.value ~name:""));
+          ("a value named fill", refused (fun () -> Role.value ~name:"fill"));
+          ("a value named angle", made (fun () -> Role.value ~name:"angle"));
+          ( "a parameter named xs",
+            made (fun () -> Role.param ~name:"xs" ~equal:Int.equal) );
+        ];
+    ]
+
+let mark_ =
+  group "Mark"
+    [
+      checks
+        "bind raises iff it stacks a role other than x and y or a channel of \
+         no quantities"
+        [
+          ( "a stacked opacity",
+            refused ~sub:"stack" (fun () ->
+                Mark.bind ~stack:`Zero Role.opacity (num v)) );
+          ( "a stacked dim on y",
+            refused ~sub:"stack" (fun () ->
+                Mark.bind ~stack:`Zero Role.y (dim 0)) );
+          ( "stacked quantities on y",
+            made (fun () -> Mark.bind ~stack:`Zero Role.y (num v)) );
+        ];
+      checks
+        "broadcast raises iff the shape has a negative dimension or a dim does \
+         not fit"
+        [
+          ( "a negative dimension",
+            refused (fun () -> Mark.broadcast ~shape:[| -1 |] []) );
+          ( "a dim past the shape",
+            refused (fun () -> Mark.broadcast [ Mark.bind Role.fill (dim 0) ])
+          );
+          ( "a dim of a shape given",
+            made (fun () ->
+                Mark.broadcast ~shape:[| 2 |] [ Mark.bind Role.fill (dim 0) ])
+          );
+        ];
+      checks "v raises iff its bindings or its shape break a rule it states"
+        [
+          ( "a role bound twice",
+            refused (fun () ->
+                mark [ Mark.bind Role.x (num v); Mark.bind Role.x (num v) ]) );
+          ( "two value roles of one name",
+            refused (fun () ->
+                mark
+                  [
+                    Mark.bind (Role.value ~name:"a") (num v);
+                    Mark.bind (Role.value ~name:"a") (num v);
+                  ]) );
+          ( "two parameters of one name",
+            refused (fun () ->
+                mark
+                  [
+                    Mark.bind (Role.param ~name:"a" ~equal:Int.equal) (const 0);
+                    Mark.bind (Role.param ~name:"a" ~equal:Int.equal) (const 0);
+                  ]) );
+          ( "x2 without x",
+            refused (fun () -> mark [ Mark.bind Role.x2 (num v) ]) );
+          ( "y2 without y",
+            refused (fun () -> mark [ Mark.bind Role.y2 (num v) ]) );
+          ( "x of quantities and x2 of categories",
+            refused (fun () ->
+                mark [ Mark.bind Role.x (num v); Mark.bind Role.x2 (cat codes) ])
+          );
+          ( "y of categories and y2 of quantities",
+            refused (fun () ->
+                mark [ Mark.bind Role.y (cat codes); Mark.bind Role.y2 (num v) ])
+          );
+          ( "a stacked y and y2",
+            refused ~sub:"stack" (fun () ->
+                mark
+                  [
+                    Mark.bind ~stack:`Zero Role.y (num v);
+                    Mark.bind Role.y2 (num v);
+                  ]) );
+          ( "x and y stacked",
+            refused ~sub:"stack" (fun () ->
+                mark
+                  [
+                    Mark.bind ~stack:`Zero Role.x (num v);
+                    Mark.bind ~stack:`Zero Role.y (num v);
+                  ]) );
+          ( "a scale on the text role",
+            refused (fun () ->
+                mark [ Mark.bind Role.text (num ~scale:(Scale.log ()) v) ]) );
+          ( "a title on the text role",
+            refused (fun () ->
+                mark [ Mark.bind Role.text (strings ~title:"t" [| "a" |]) ]) );
+          ( "a title on a value role",
+            refused (fun () ->
+                mark [ Mark.bind (Role.value ~name:"angle") (num ~title:"t" v) ])
+          );
+          ( "a negative dimension",
+            refused (fun () -> mark ~shape:[| 2; -1 |] []) );
+          ( "a shape the channels do not broadcast with",
+            refused (fun () -> mark ~shape:[| 2 |] [ Mark.bind Role.x (num v) ])
+          );
+          ( "x of quantities and x2 a constant",
+            made (fun () ->
+                mark [ Mark.bind Role.x (num v); Mark.bind Role.x2 (const 1.) ])
+          );
+          ( "a stacked y and an x",
+            made (fun () ->
+                mark
+                  [
+                    Mark.bind Role.x (num v);
+                    Mark.bind ~stack:`Zero Role.y (num v);
+                  ]) );
+          ( "strings beside a tensor of their length",
+            made (fun () ->
+                mark
+                  [
+                    Mark.bind Role.x (num v);
+                    Mark.bind Role.fill (strings [| "a"; "b"; "c" |]);
+                  ]) );
+        ];
     ]
 
 let () =
   exit
-    (run "hugin figures" [ construction; lifts; equality; views; presentation ])
+    (run "hugin figures"
+       [
+         pp_warning_;
+         equal_;
+         num_;
+         time_;
+         cat_;
+         strings_;
+         floats_;
+         dim_;
+         index_;
+         kind_;
+         marks;
+         area_;
+         rect_;
+         rule_;
+         image_;
+         contour_;
+         coord_;
+         view_;
+         grid_;
+         span_;
+         share_;
+         title_;
+         name_;
+         axis_;
+         legend_;
+         size_;
+         theme_;
+         role_;
+         mark_;
+       ])
