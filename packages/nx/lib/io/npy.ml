@@ -12,10 +12,6 @@ module L = Nx_array.Layout
 
 let magic = "\x93NUMPY"
 
-(* nx reads headers of at most this many bytes, its own bound: NumPy's np.load
-   reads 10,000 by default, and more when its [max_header_size] is raised. *)
-let max_header = 1 lsl 20
-
 (* Dtypes *)
 
 let code (type v s) (dt : (v, s) D.t) =
@@ -231,7 +227,8 @@ let header read ~length =
     | _ -> Fail.failf "the npy version %d.%d" major minor
   in
   let n = le preamble 8 width in
-  if n > max_header then Fail.failf "a header of more than %d bytes" max_header;
+  (* The header's bytes lie in the file, so its length bounds what [read]
+     allocates. *)
   let data = 8 + width + n in
   if data > length then Fail.failf "the file ends inside its header";
   let d, fortran, shape = dictionary (read (8 + width) n) in

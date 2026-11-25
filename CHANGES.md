@@ -3914,6 +3914,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.load_npy`, `load_npy_rows` and `load_npz` read an npy header of any
+  length its version allows, up to 4 GiB in 2.0 and 3.0, where they refused one
+  past 1 MiB. A header length past the file still fails as a short file.
 - `Nx.conv`, `Nx.conv_transpose` and `Nx.correlate` refusals name their
   argument (`x`, `w`, `init`, `kernel`) and the `place` of it, where a cut
   the groups or taps cannot read named an internal operand `y` and an axis

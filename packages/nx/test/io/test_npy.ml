@@ -150,6 +150,32 @@ let npy =
         (fun (_, dict) ->
           let path = file (npy_file dict "\000\000") in
           fails ~path (fun () -> Nx_io.load_npy path));
+      (* numpy.lib.format, "Format Version 2.0": "The version 2.0 format extends
+         the header size to 4 GiB". *)
+      test "a version 2.0 header padded past 1 MiB loads" (fun () ->
+          let dict =
+            "{'descr': '<i2', 'fortran_order': False, 'shape': (2,), }"
+          in
+          let used = 12 + String.length dict + 1 in
+          let n = (1 lsl 20) + 64 - used - 1 in
+          let header = dict ^ String.make n ' ' ^ "\n" in
+          let path =
+            file
+              ("\x93NUMPY\002\000"
+              ^ String.init 4 (fun i ->
+                  Char.chr ((String.length header lsr (8 * i)) land 0xff))
+              ^ header ^ "\001\000\002\000")
+          in
+          equal packed
+            (Nx.P (Nx.create Nx.int16 [| 2 |] [| 1; 2 |]))
+            (Nx_io.load_npy path));
+      test "a version 2.0 header length past the file fails as a short file"
+        (fun () ->
+          let path =
+            file ("\x93NUMPY\002\000\xff\xff\xff\xff" ^ String.make 10 ' ')
+          in
+          fails ~path ~naming:"the file ends inside its header" (fun () ->
+              Nx_io.load_npy path));
       cases "a dtype npy lacks is refused, naming the save"
         ~id:(fun (D.Any dt) -> D.name dt)
         D.
