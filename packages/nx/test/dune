@@ -112,8 +112,7 @@
   golden/correlate.golden
   golden/extend.golden
   golden/moments_ranges.golden
-  golden/spread.golden
-  golden/ceil_padding.golden))
+  golden/spread.golden))
 
 ; Widths past what an array holds, for a function that allocates by its
 ; widths before its result exists, under a limit of its memory (see
