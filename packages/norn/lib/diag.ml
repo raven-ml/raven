@@ -150,23 +150,35 @@ let log_binomial lf n k p =
     +. (float_of_int k *. Float.log p)
     +. (float_of_int (n - k) *. Float.log1p (-.p))
 
+(* Pointwise p-values within this relative distance are equal: the rounding of
+   two tails that are equal, summed in different orders, is far below it. *)
+let tie = 1e-9
+
 (* [uniformity ~n ~points] is the simultaneous p-value of the counts below each
    of [points] evenly spaced points, of [n] ranks. *)
 let uniformity ~n ~points =
   let lf = log_factorials n in
   let z i = float_of_int i /. float_of_int (points + 1) in
-  let cdf =
+  (* Each tail summed from its own end, so that a small tail keeps its digits
+     and two equal tails compute alike. *)
+  let tails =
     Array.init points (fun i ->
-        let p = z (i + 1) in
-        let acc = ref 0. in
-        Array.init (n + 1) (fun x ->
-            acc := !acc +. Float.exp (log_binomial lf n x p);
-            Float.min 1. !acc))
+        let mass =
+          Array.init (n + 1) (fun x ->
+              Float.exp (log_binomial lf n x (z (i + 1))))
+        in
+        let below = Array.copy mass and above = Array.copy mass in
+        for x = 1 to n do
+          below.(x) <- below.(x - 1) +. mass.(x)
+        done;
+        for x = n - 1 downto 0 do
+          above.(x) <- above.(x + 1) +. mass.(x)
+        done;
+        (below, above))
   in
   let pointwise i x =
-    let below = cdf.(i).(x) in
-    let above = if x = 0 then 1. else 1. -. cdf.(i).(x - 1) in
-    Float.min 1. (2. *. Float.min below above)
+    let below, above = tails.(i) in
+    Float.min 1. (2. *. Float.min below.(x) above.(x))
   in
   (* [inside lo hi] is the probability that every count lies in its interval. *)
   let inside lo hi =
@@ -198,13 +210,16 @@ let uniformity ~n ~points =
   fun counts ->
     let g = ref 1. in
     Array.iteri (fun i c -> g := Float.min !g (pointwise i c)) counts;
+    (* A count as far as the farthest lies outside the bands, borders included
+       (Säilynoja et al., eq. 15): equal within rounding is equal. *)
+    let in_band i x = pointwise i x > !g *. (1. +. tie) in
     let lo = Array.make points 0 and hi = Array.make points (-1) in
     for i = 0 to points - 1 do
       for x = n downto 0 do
-        if pointwise i x > !g then lo.(i) <- x
+        if in_band i x then lo.(i) <- x
       done;
       for x = 0 to n do
-        if pointwise i x > !g then hi.(i) <- x
+        if in_band i x then hi.(i) <- x
       done
     done;
     let empty = Array.exists2 (fun l h -> h < l) lo hi in

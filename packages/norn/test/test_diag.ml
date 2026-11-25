@@ -241,9 +241,58 @@ let ranks =
             (item (Diag.rank t ~truth:(Nx.scalar Nx.float64 9.) d)));
     ]
 
+(* [enumerated ~ranks:n ~draws:l] is the simultaneous p-value of every tuple of
+   [n] ranks in [0, ..., l], tuple [t] read in base [l + 1], computed in
+   integers over the [(l + 1)^n] equally likely tuples. The count below point
+   [i] is binomial [(n, i / (l + 1))], a count's pointwise p-value twice its
+   smaller tail, at most 1 (Säilynoja et al. 2022, eq. 13), and a tuple's
+   p-value the share of tuples whose least pointwise p-value is at most its own,
+   borders included (eq. 15). Every quantity is scaled by [(l + 1)^n]. *)
+let enumerated ~ranks:n ~draws:l =
+  let rec pow a b = if b = 0 then 1 else a * pow a (b - 1) in
+  let rec choose n k =
+    if k = 0 then 1 else choose n (k - 1) * (n - k + 1) / k
+  in
+  let d = pow (l + 1) n in
+  let rank t r = t / pow (l + 1) r mod (l + 1) in
+  let tail i lo hi =
+    let s = ref 0 in
+    for k = lo to hi do
+      s := !s + (choose n k * pow i k * pow (l + 1 - i) (n - k))
+    done;
+    !s
+  in
+  let least t =
+    let g = ref d in
+    for i = 1 to l do
+      let c =
+        List.length (List.filter (fun r -> rank t r < i) (List.init n Fun.id))
+      in
+      g := min !g (min d (2 * min (tail i 0 c) (tail i c n)))
+    done;
+    !g
+  in
+  let least = Array.init d least in
+  let p g = Array.fold_left (fun k h -> if h <= g then k + 1 else k) 0 least in
+  ( List.init n (fun r ->
+        Nx.create Nx.float64 [| d |]
+          (Array.init d (fun t -> float_of_int (rank t r)))),
+    Array.map (fun g -> float_of_int (p g) /. float_of_int d) least )
+
+let enumeration =
+  prop "is the share of uniform ranks at least as far, borders included"
+    Gen.(pair (int_range 1 5) (int_range 1 4))
+    (fun (n, l) ->
+      let ranks, expected = enumerated ~ranks:n ~draws:l in
+      equal
+        (array (float 1e-12))
+        expected
+        (Nx.to_array (Diag.rank_uniformity t ~draws:l ranks)))
+
 let uniformity =
   group "rank_uniformity"
     [
+      enumeration;
       test "two ranks at zero of one draw have a p-value of one half" (fun () ->
           (* The count below 1 is binomial (2, 1/2): 0, 1, 2 with 1/4, 1/2, 1/4,
              pointwise p-values 1/2, 1, 1/2. Both ranks at 0 count 2, and a

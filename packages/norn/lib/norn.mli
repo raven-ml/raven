@@ -402,8 +402,9 @@ module Diag : sig
       (Säilynoja, Bürkner and Vehtari 2022), computed exactly, with no
       simulation: the probability, under uniformity, that the count of ranks
       below some point [i / (draws + 1)] strays from its expectation at least as
-      far, in pointwise p-value, as the ranks' farthest count. Below [alpha]
-      rejects uniformity at level [alpha].
+      far, in pointwise p-value, as the ranks' farthest count. A count's
+      pointwise p-value is twice the smaller of its binomial tails, at most
+      [1]. Below [alpha] rejects uniformity at level [alpha].
 
       Raises [Invalid_argument] if [ranks] is empty, if [draws < 1], or if a
       rank is not an integer in [0], ..., [draws]. *)
