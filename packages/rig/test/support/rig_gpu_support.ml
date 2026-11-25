@@ -702,6 +702,7 @@ module type Conformance = sig
   val copy_words : t -> dst:Rig.Buffer.t -> src:Rig.Buffer.t -> work
   val spin : t -> ns:int -> work
   val clock_error : since:int -> int
+  val age : t -> bool
   val launch_binary : unit -> string option
   val wide_binary : t -> string option
 end

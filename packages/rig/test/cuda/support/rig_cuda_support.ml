@@ -242,6 +242,12 @@ let copy_words t ~dst ~src =
    measured on kimchi's sm_89, over at most the time since open. *)
 let clock_error ~since = 5_500 + (since / 100_000)
 
+(* rig_cuda.mli: a timed submit that finds the device's last measure 8 s old
+   measures again, and [backdate_measure] dates that measure 8 s back. *)
+let age t =
+  Rig_cuda.backdate_measure t.g;
+  true
+
 (* The kernel [spin] holds until its flag, a zero word here, is not 0, or for
    its nanoseconds. *)
 

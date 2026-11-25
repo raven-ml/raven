@@ -421,6 +421,14 @@ module type Conformance = sig
       its wait, [since] nanoseconds after the device opened, from its
       driver's interface. *)
 
+  val age : t -> bool
+  (** [age t] makes [t] measure its clock against the host's again at its next
+      timed submit or settle, as its driver states, and is [true]: it idles past
+      the age at which the driver measures again, or dates its last measure back
+      where the driver lets it. The program calls nothing of [t] before that
+      submit or settle. It does nothing and is [false] where [t] measures its
+      clock at open only, or times its work on the host's clock. *)
+
   val launch_binary : unit -> string option
   (** [launch_binary ()] is a binary of the driver's fixtures holding the launch
       laws' kernels, or [None] where the driver runs no launch. Their parameters

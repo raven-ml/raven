@@ -337,6 +337,18 @@ let clock_error ~since =
   | Some Pci -> 5_000 + (since / 100_000)
   | Some Kernel | None -> 5_000 + 625
 
+(* rig_nv.mli: through the kernel driver a device converts its stamps through
+   its first measure, at open, and its latest, "once they lie a second apart",
+   measuring at most every 62.5 ms; over PCI it measures at open only. *)
+let measures_apart_s = 1.
+
+let age _ =
+  match path () with
+  | Some Pci -> false
+  | Some Kernel | None ->
+      Unix.sleepf (measures_apart_s +. 0.2);
+      true
+
 let spin t ~ns =
   let flag = Rig_gpu_support.arguments t.d (String.make 8 '\000') in
   launching t "spin" ~params:16 ~blocks:1

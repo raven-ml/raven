@@ -190,6 +190,18 @@ let clock_error ~since =
   if driverless () then 5_000 + (since / 100_000)
   else 5_000 + 625 + 10_000 + 5_000
 
+(* rig_amd.mli: through KFD a device converts its stamps through its first
+   measure, at open, and its latest, "once they lie a second apart", measuring
+   at most every 62.5 ms; with no kernel driver it measures at open only. *)
+let measures_apart_s = 1.
+
+let age _ =
+  if driverless () then false
+  else begin
+    Unix.sleepf (measures_apart_s +. 0.2);
+    true
+  end
+
 (* kernels.cl's [spin flag n] sleeps [n] times 127 x 64 cycles, at most 2.1 us
    at 4 GHz, then sets its flag, a word of its own here. *)
 let spin t ~ns =

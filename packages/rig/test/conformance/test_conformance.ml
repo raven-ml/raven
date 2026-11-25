@@ -1068,15 +1068,11 @@ let spans (module G : Gpu) () =
   in
   List.iter span shapes
 
-(* How long a device idles before its next submission's span: past every
-   driver's age for a new measure of its clock, a second. *)
-let idle_s = 1.2
-
-(* Checks that [submit ()]'s work, profiled alone and waited for, has one
-   span on [d], which lies within the host's window from before the submit to
-   after the wait, up to the error [clock_error] states for a device
-   [opened] then. *)
-let within d ~opened clock_error what submit =
+(* Checks that [submit ()]'s work, profiled alone and waited for, has one span
+   on [d], which lies within the host's window from before the submit to after
+   the wait, up to the error [clock_error] states for a device [opened] then,
+   and lasts at least [lasts]. *)
+let within d ~opened ~lasts clock_error what submit =
   let t0 = Rig.Profile.now () in
   let (), events = Rig.Profile.take (fun () -> Rig.Point.wait (submit ())) in
   let t1 = Rig.Profile.now () in
@@ -1092,30 +1088,42 @@ let within d ~opened clock_error what submit =
       let error = clock_error ~since:(t1 - opened) in
       at_least int ~msg:(what ^ ": the span's start") ~than:(t0 - error) start;
       at_most int ~msg:(what ^ ": the span's stop") ~than:(t1 + error) stop;
-      at_most int ~msg:(what ^ ": the span's start") ~than:stop start
+      at_least int ~msg:(what ^ ": the span's length") ~than:lasts (stop - start)
   | spans ->
       equal int ~msg:(what ^ ": the device's spans") 1 (List.length spans)
 
+(* Over 1.2 s, a clock that drifts at twice the 10 ppm its driver states moves
+   24 us from the host's, past the 17.5 us at most that driver allows then. *)
+let drift_ns = 1_200_000_000
+
+(* A span converted through a measure the device missed is held at the end of
+   the span before and lasts no time: one of [spin_ns] shows it. *)
+let spin_ns = 100_000
+
 (* A submission's span, profiled alone, lies within the host's window from
-   before the submit to after the wait, on the host clock, up to the error
-   its driver states: before and after the device idles past the age at
-   which it measures its clock again, and right after it did. *)
-let spans_after_idle (module G : Gpu) () =
+   before the submit to after the wait, on the host clock, up to the error its
+   driver states, and lasts at least its work: at open; where that error grows
+   with time, 1.2 s later, as the clock drifts; and once [G.age] makes the
+   device measure its clock again, at the new measure and right after. *)
+let spans_after_measure (module G : Gpu) () =
   let opened = Rig.Profile.now () in
   G.with_ @@ fun t ->
-  let n = 64 in
-  let src = filled ~memory:(both t.d) t.d (pattern n 6) in
-  let dst = filled ~memory:(both t.d) t.d (String.make n '\000') in
-  let uses = [ (src, Rig.Read); (dst, Rig.Read_write) ] in
-  let s, buffers, args =
-    Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
-  in
-  let within = within t.d ~opened G.clock_error in
+  let s, buffers, args = Rig_gpu_support.prepare t.d [ G.spin t ~ns:spin_ns ] in
+  let within = within t.d ~opened ~lasts:spin_ns G.clock_error in
   let within what = within what (fun () -> Rig.submit s ~buffers ~args) in
   within "at open";
-  Unix.sleepf idle_s;
-  within "after idling";
-  within "after the measure"
+  let drifts = G.clock_error ~since:drift_ns > G.clock_error ~since:0 in
+  if drifts then begin
+    Unix.sleepf (Float.of_int drift_ns /. 1e9);
+    within "as the clock drifts"
+  end;
+  let measures = G.age t in
+  if not (drifts || measures) then
+    skip ~reason:"the device's times neither drift nor take a new measure" ();
+  if measures then begin
+    within "at the new measure";
+    within "after the new measure"
+  end
 
 (* A profile stopped while its work runs drops the work's entry, though the
    device still writes the work's times when it ends: the spans of the
@@ -1131,7 +1139,7 @@ let spans_after_stop (module G : Gpu) () =
   let s, buffers, args =
     Rig_gpu_support.prepare ~fixed:uses t.d [ G.copy_words t ~dst ~src ]
   in
-  let within = within t.d ~opened G.clock_error in
+  let within = within t.d ~opened ~lasts:0 G.clock_error in
   let within what = within what (fun () -> Rig.submit s ~buffers ~args) in
   let spun = ref None in
   raises Exit (fun () ->
@@ -1168,15 +1176,16 @@ let spans_nested (module G : Gpu) () =
   equal (list (pair int int)) ~msg:"the outer profile's spans" !inner
     (on_device outer)
 
-(* A profile around submissions, waited for once: [crossing] of them, then,
-   after the device idled past every driver's age for a new measure of its
-   clock, [many] more. Where a copy runs beside the first queue they are, in
+(* A profile around submissions, waited for once: [crossing] of them, then, once
+   [G.age] made the device measure its clock again at its next timed submit or
+   settle, [many] more. Where a copy runs beside the first queue they are, in
    turn, work, a copy, a copy then work, and work then a copy, so that values
    run on either queue or on both. It records one span of each, and each span
-   ends before the next starts, across the measure, since a value's work
-   starts once every earlier value's has completed. [many] exceeds every
-   driver's ring of stamps, so later submits convert the first values' stamps
-   before the measure, and settles the rest after it. *)
+   ends before the next starts, across the measure, since a value's work starts
+   once every earlier value's has completed. [many] exceeds every driver's ring
+   of stamps, so submits convert stamps as they reuse their slots and the settle
+   converts the rest: a driver that measures in settle converts the two through
+   different measures. *)
 let crossing = 64
 let many = 33_000
 
@@ -1209,7 +1218,7 @@ let spans_across (module G : Gpu) () =
         for i = 0 to crossing - 1 do
           ignore (submit i)
         done;
-        Unix.sleepf idle_s;
+        ignore (G.age t : bool);
         for i = crossing to total - 2 do
           ignore (submit i)
         done;
@@ -2460,10 +2469,12 @@ let laws (module G : Gpu) =
         (device_order g);
       test "a profile around a submission records a span that bounds its work"
         (spans g);
-      test "spans follow each other across a new measure, on either queue"
+      test
+        "spans follow each other across the ring of stamps and any new \
+         measure, on either queue"
         (spans_across g);
-      test "a span lies within its window after the device idles"
-        (spans_after_idle g);
+      test "a span lies within its window as the clock drifts and is measured"
+        (spans_after_measure g);
       test "spans after a profile stopped while its work ran lie within theirs"
         (spans_after_stop g);
       test "a value read by nested profiles has one span in both"
