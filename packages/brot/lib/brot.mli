@@ -178,8 +178,9 @@ module Encoding : sig
       returned, with [enc] itself, and its {!val-overflowing}, as the one
       window.
 
-      Raises [Invalid_argument] if [max_length > 0], [enc] is truncated and
-      [stride] is not less than [max_length]. *)
+      Raises [Invalid_argument] if [max_length] or [stride] is negative, or if
+      [max_length > 0], [enc] is truncated and [stride] is not less than
+      [max_length]. *)
 
   val pad :
     t ->

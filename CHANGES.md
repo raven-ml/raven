@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.Encoding.truncate` raises `Invalid_argument` on a negative `stride` or
+  `max_length`. A negative stride lost tokens between windows.
 - **Breaking:** `train_wordpiece` drops `?end_of_word_suffix`. The WordPiece
   model matches no suffix, so a word whose trained last piece carried it
   encoded as the unknown token.

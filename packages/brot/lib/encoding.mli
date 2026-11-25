@@ -116,8 +116,9 @@ val truncate :
     [max_length] is [0], all tokens move to {!val-overflowing} and {!val-empty}
     is returned.
 
-    Raises [Invalid_argument] if [enc] is truncated and [stride] is not less
-    than [max_length]. *)
+    Raises [Invalid_argument] if [max_length] or [stride] is negative, or if
+    [max_length > 0], [enc] is truncated and [stride] is not less than
+    [max_length]. *)
 
 val pad :
   t ->

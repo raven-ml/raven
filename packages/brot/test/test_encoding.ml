@@ -244,6 +244,10 @@ let raises_on_wide_stride (max_length, wider, longer, direction) =
     (fun () ->
       Encoding.truncate ~stride:(max_length + wider) ~direction enc ~max_length)
 
+let raises_on_negative (stride, max_length, direction) =
+  raises_match Exn.invalid_arg (fun () ->
+      Encoding.truncate ~stride ~direction (numbered (positions 10)) ~max_length)
+
 (* pad *)
 
 let pads (n, window, target_length, direction) =
@@ -346,6 +350,14 @@ let () =
                Gen.(
                  quad (int_range 1 6) (int_range 0 6) (int_range 0 6) direction)
                raises_on_wide_stride;
+             cases "raises Invalid_argument on a negative stride or max_length"
+               ~id:(fun (stride, max_length, direction) ->
+                 Printf.sprintf "stride %d, max_length %d, %s" stride max_length
+                   (match direction with
+                   | `Left -> "`Left"
+                   | `Right -> "`Right"))
+               [ (-2, 3, `Right); (-2, 3, `Left); (0, -1, `Right) ]
+               raises_on_negative;
            ];
          group "pad"
            [

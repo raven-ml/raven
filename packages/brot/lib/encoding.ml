@@ -201,6 +201,8 @@ let slice t start len =
   }
 
 let truncate ?(stride = 0) ?(direction = `Right) t ~max_length =
+  if stride < 0 || max_length < 0 then
+    invalid_arg "Encoding.truncate: stride and max_length must be non-negative";
   let encoding_len = length t in
   if max_length >= encoding_len then t
   else if max_length = 0 then { empty with overflowing = [ t ] }
