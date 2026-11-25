@@ -2351,10 +2351,6 @@ let is_unigram json =
 
 (* File I/O *)
 
-let write_string_to_file path s =
-  let oc = open_out_bin path in
-  Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc s)
-
 let from_file path =
   try
     let ic = open_in_bin path in
@@ -2381,7 +2377,7 @@ let from_file path =
 let save_pretrained t ~path =
   let text = Json_text.to_string (to_json t) in
   (try Sys.mkdir path 0o755 with Sys_error _ -> ());
-  write_string_to_file (Filename.concat path "tokenizer.json") text
+  File_out.write (Filename.concat path "tokenizer.json") text
 
 let save_model_files ?prefix t ~folder = alg_save t.algorithm ~folder ?prefix ()
 

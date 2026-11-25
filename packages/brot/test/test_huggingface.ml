@@ -52,6 +52,7 @@ let write_file path contents =
       Out_channel.output_string oc contents)
 
 let read_file path = In_channel.with_open_bin path In_channel.input_all
+let files folder = List.sort String.compare (Array.to_list (Sys.readdir folder))
 
 (* The path of [t] saved by [save_pretrained] into a fresh directory. *)
 let saved t =
@@ -172,6 +173,21 @@ let test_bpe_files () =
     (fun text ->
       equal ~msg:text (array int) (ids (bpe_model ()) text) (ids read text))
     [ "abc"; "ab"; "cab"; "" ]
+
+(* [old.json], a second name for [vocab.json] taken before the save, still reads
+   the old text after it: the save wrote a new file and renamed it over the old
+   one, so one that fails or crashes leaves the old file as it was. *)
+let test_bpe_files_replaced () =
+  let folder = temp_dir () in
+  let vocab = Filename.concat folder "vocab.json" in
+  write_file vocab "old";
+  Unix.link vocab (Filename.concat folder "old.json");
+  ignore (save_model_files (bpe_model ()) ~folder);
+  equal ~msg:"the replaced file" string "old"
+    (read_file (Filename.concat folder "old.json"));
+  equal ~msg:"files" (list string)
+    [ "merges.txt"; "old.json"; "vocab.json" ]
+    (files folder)
 
 let wordpiece_model () =
   wordpiece
@@ -893,6 +909,48 @@ let test_saved_scores () =
     (List.map hex
        (scores (require_ok ~pp:Format.pp_print_string (from_file path))))
 
+(* As in [test_bpe_files_replaced]. *)
+let test_saved_replaced () =
+  let path = temp_dir () in
+  let file = Filename.concat path "tokenizer.json" in
+  write_file file "old";
+  Unix.link file (Filename.concat path "old.json");
+  save_pretrained (bpe ~vocab:[ ("a", 0) ] ()) ~path;
+  equal ~msg:"the replaced file" string "old"
+    (read_file (Filename.concat path "old.json"));
+  equal ~msg:"files" (list string) [ "old.json"; "tokenizer.json" ] (files path);
+  ignore (require_ok ~pp:Format.pp_print_string (from_file file))
+
+let test_saved_read_only () =
+  let path = temp_dir () in
+  let file = Filename.concat path "tokenizer.json" in
+  write_file file "old";
+  Unix.chmod file 0o444;
+  raises_match (Exn.sys_error ~sub:"") (fun () ->
+      save_pretrained (bpe ~vocab:[ ("a", 0) ] ()) ~path);
+  equal ~msg:"tokenizer.json" string "old" (read_file file);
+  equal ~msg:"files" (list string) [ "tokenizer.json" ] (files path)
+
+(* A link's target gets the new text and the link stays a link. Making a
+   symbolic link on Windows takes a privilege a test run may not hold. *)
+let test_saved_through_link () =
+  if Sys.win32 then skip ~reason:"symbolic links need a privilege" ();
+  let path = temp_dir () in
+  let target = Filename.concat (temp_dir ()) "real.json" in
+  let file = Filename.concat path "tokenizer.json" in
+  write_file target "old";
+  Unix.symlink target file;
+  save_pretrained (bpe ~vocab:[ ("a", 0) ] ()) ~path;
+  equal ~msg:"a link" bool true ((Unix.lstat file).st_kind = Unix.S_LNK);
+  ignore (require_ok ~pp:Format.pp_print_string (from_file target))
+
+let test_saved_onto_directory () =
+  let path = temp_dir () in
+  Sys.mkdir (Filename.concat path "tokenizer.json") 0o755;
+  raises_match (Exn.sys_error ~sub:"") (fun () ->
+      save_pretrained (bpe ~vocab:[ ("a", 0) ] ()) ~path);
+  equal ~msg:"files" (list string) [ "tokenizer.json" ] (files path)
+
 let test_unwritable_path () =
   let file = temp_file () in
   raises_match (Exn.sys_error ~sub:"") (fun () ->
@@ -940,6 +998,10 @@ let () =
                "writes vocab.json and merges.txt, which from_model_file reads \
                 back"
                test_bpe_files;
+             test
+               "replaces each file whole, leaving the file it replaced as it \
+                was"
+               test_bpe_files_replaced;
              test
                "writes a WordPiece vocab.txt, which from_model_file reads back"
                test_wordpiece_files;
@@ -1014,6 +1076,20 @@ let () =
                "writes Unigram scores as tokenizers writes them, and integers \
                 as digits"
                test_saved_scores;
+             test
+               "replaces tokenizer.json whole, leaving the file it replaced as \
+                it was"
+               test_saved_replaced;
+             test
+               "raises Sys_error and leaves tokenizer.json as it was when it \
+                is read-only"
+               test_saved_read_only;
+             test "writes through a symbolic link to the file it names"
+               test_saved_through_link;
+             test
+               "raises Sys_error and leaves no other file when tokenizer.json \
+                is a directory"
+               test_saved_onto_directory;
              test "raises Sys_error when path cannot be written"
                test_unwritable_path;
              test "raises Invalid_argument on a token that is not UTF-8"

@@ -1542,9 +1542,8 @@ type exec = int -> (int -> unit) -> unit
     raises on a new domain before the runtime has set it up crashes the
     program. So the executor blocks the [signals] the program handles while it
     starts its domains, which keep that mask. Blocking them takes the
-    [threads.posix] and [unix] libraries in the caller's program; brot
-    depends on neither. On Windows, which has no signal masks, [signals] is
-    [[]].
+    [threads.posix] library in the caller's program, which brot does not
+    depend on. On Windows, which has no signal masks, [signals] is [[]].
     {[
       let spawn ~signals d n task =
         let next = Atomic.make 0 in
@@ -1879,9 +1878,13 @@ val save_model_files : ?prefix:string -> t -> folder:string -> string list
     tokenizers' [Model.save] does and returns their paths. BPE writes
     [vocab.json] and [merges.txt], WordPiece [vocab.txt], WordLevel [vocab.json]
     and Unigram [unigram.json]; a {!chars} tokenizer writes none. With [prefix],
-    each name is preceded by [prefix] and [-].
+    each name is preceded by [prefix] and [-]. Each file is replaced as
+    {!save_pretrained} replaces [tokenizer.json], one after the other, so a
+    crash between BPE's two can leave a new [vocab.json] beside the old
+    [merges.txt].
 
-    Raises [Invalid_argument] if a token a JSON file holds is not valid UTF-8. *)
+    Raises [Invalid_argument] if a token a JSON file holds is not valid UTF-8,
+    and [Sys_error] if a file is read-only or cannot be written. *)
 
 (** {1:huggingface HuggingFace compatibility} *)
 
@@ -1951,6 +1954,12 @@ val save_pretrained : t -> path:string -> unit
 (** [save_pretrained t ~path] saves [t] to [path] in HuggingFace format. Creates
     [path/tokenizer.json].
 
+    The file is written beside [tokenizer.json] under another name, synced to
+    the disk and renamed over it, or over the file it links to. A save that
+    fails leaves the previous [tokenizer.json] as it was; a crash leaves the old
+    file or the new one, and may leave the temporary [.tokenizer.json.*.tmp]. A
+    replaced file keeps its permissions.
+
     Numbers are written as tokenizers writes them, the same on every system. A
     Unigram score is the shortest decimal that reads back as the double, and a
     BPE dropout the shortest that reads back in single precision, as in [0.1],
@@ -1958,7 +1967,8 @@ val save_pretrained : t -> path:string -> unit
     digits.
 
     Raises [Invalid_argument] if a token is not valid UTF-8, since JSON text
-    holds UTF-8 alone, and [Sys_error] if [path] cannot be written. *)
+    holds UTF-8 alone, and [Sys_error] if [path] cannot be written or
+    [tokenizer.json] is read-only. *)
 
 (** {1:tiktoken tiktoken encodings}
 

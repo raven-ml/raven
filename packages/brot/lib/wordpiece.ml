@@ -341,15 +341,13 @@ let save model ~path ?name () =
     |> List.sort compare
     |> List.map (fun (_, k) -> k)
   in
-  let oc = open_out_bin vocab_file in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () ->
-      List.iter
-        (fun token ->
-          output_string oc token;
-          output_char oc '\n')
-        vocab_list);
+  let b = Buffer.create 4096 in
+  List.iter
+    (fun token ->
+      Buffer.add_string b token;
+      Buffer.add_char b '\n')
+    vocab_list;
+  File_out.write vocab_file (Buffer.contents b);
   vocab_file
 
 let from_bpe ~unk_token bpe =

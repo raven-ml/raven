@@ -15,6 +15,7 @@
   chars
   decoder
   encoding
+  file_out
   float_text
   grapheme
   grapheme_data
@@ -38,7 +39,7 @@
   (language c)
   (names brot_kernels)
   (flags :standard -std=c11 -O3 -Wall -Wextra (:include werror_flags.sexp)))
- (libraries re jsont jsont.bytesrw uucp uunf))
+ (libraries re jsont jsont.bytesrw uucp uunf unix))
 
 (rule
  (target werror_flags.sexp)

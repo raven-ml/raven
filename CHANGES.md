@@ -5615,6 +5615,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `save_pretrained` and `save_model_files` write each file beside its name,
+  sync it and rename it into place, so a failed or interrupted save keeps the
+  previous file. They wrote over it in place. brot now links `unix`.
 - **Breaking:** `train_unigram` is removed. It ran no EM training: it kept the
   most frequent whole words, so its model covered no word it had not seen.
   Train a Unigram model with Hugging Face's tokenizers and load it with

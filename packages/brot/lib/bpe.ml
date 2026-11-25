@@ -1833,28 +1833,29 @@ let save model ~path ?name () =
          (fun (k, v) -> (Jsont.Json.name k, Jsont.Json.int v))
          vocab_items)
   in
-  (* Rendered before either file is opened, so a refused vocabulary leaves the
+  (* Rendered before either file is written, so a refused vocabulary leaves the
      folder as it was. *)
   let vocab_text = Json_text.to_string vocab_json in
-  let oc = open_out_bin vocab_file in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc vocab_text);
-  let oc = open_out_bin merges_file in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () ->
-      output_string oc "#version: 0.2\n";
-      let merges_list =
-        Merge_map.fold
-          (fun key packed acc ->
-            let a = Id_table.get model.tokens (merge_left key) in
-            let b = Id_table.get model.tokens (merge_right key) in
-            (merge_rank packed, a, b) :: acc)
-          model.merges []
-        |> List.sort (fun (r1, _, _) (r2, _, _) -> compare r1 r2)
-      in
-      List.iter (fun (_, a, b) -> Printf.fprintf oc "%s %s\n" a b) merges_list)
+  let merges_list =
+    Merge_map.fold
+      (fun key packed acc ->
+        let a = Id_table.get model.tokens (merge_left key) in
+        let b = Id_table.get model.tokens (merge_right key) in
+        (merge_rank packed, a, b) :: acc)
+      model.merges []
+    |> List.sort (fun (r1, _, _) (r2, _, _) -> compare r1 r2)
+  in
+  let merges = Buffer.create 4096 in
+  Buffer.add_string merges "#version: 0.2\n";
+  List.iter
+    (fun (_, a, b) ->
+      Buffer.add_string merges a;
+      Buffer.add_char merges ' ';
+      Buffer.add_string merges b;
+      Buffer.add_char merges '\n')
+    merges_list;
+  File_out.write vocab_file vocab_text;
+  File_out.write merges_file (Buffer.contents merges)
 
 (* Training *)
 
