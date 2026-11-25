@@ -1110,7 +1110,9 @@ module Gaussian : sig
       A Gaussian describes one position, so its tensors have no chain axis;
       {!sample} adds one and {!log_density} reads one. A sampler whose geometry
       differs per chain stacks Gaussians on the chain axis and applies chain
-      [i]'s inside the map over chains.
+      [i]'s inside the map over chains. Of the eliminators, {!mean} and
+      {!importance} take Gaussians stacked on a leading axis; the others take
+      one Gaussian.
 
       {b Preconditioning is a pullback.} The map [color z = m + S A z],
       [A = I + Σ_j (sqrt v_j - 1) u_j u_jᵀ], takes standard normal coordinates
@@ -1298,6 +1300,8 @@ module Gaussian : sig
         Norn.Weighted.resample u (Nx.Rng.fold_in k 2) ~n:100
           { w with log_weights = s.log_weights }
       ]}
+
+      Under {!Rune.jit} it draws and weighs as it does eagerly.
 
       Raises [Invalid_argument] if [n < 1], or if [lp] does not return one log
       density per draw. *)
