@@ -1017,7 +1017,17 @@ let search fn repeats y m ~tol ~budget mem ~at y0 =
         (Nx.logical_not (Nx.isfinite norm))
         s.unfinite
     in
-    let stalled = Nx.logical_and stepping (Nx.equal t_end t) in
+    (* The time's resolution is the floats' spacing at the interval's larger
+       end: near t = 0 the spacing is subnormal, and a lane must stop as soon
+       there as elsewhere in the interval. *)
+    let resolution =
+      Nx.mul_s (Nx.maximum (Nx.abs a) (Nx.abs b)) (0.5 *. Num.eps dtype)
+    in
+    let stalled =
+      Nx.logical_and stepping
+        (Nx.logical_or (Nx.equal t_end t)
+           (Nx.less (Nx.abs (Nx.sub t_end t)) resolution))
+    in
     let st =
       Elementwise.settle st (Nx.logical_and stalled unfinite) Not_finite
     in

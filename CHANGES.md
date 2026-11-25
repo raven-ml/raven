@@ -1281,6 +1281,12 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- An Ode solve stops a lane whose step falls below the time's resolution at
+  the larger end of its interval, so a lane near `t = 0` ends `Stalled` or
+  `Not_finite` as it does elsewhere. Near 0 the floats' spacing is
+  subnormal, and a lane needed some 460 rejections to stop there: a field
+  non-finite past `t0 = 0` spent its budget where the same field past
+  `t0 = 1` ended `Not_finite`.
 - `Ode.path`'s domain runs to `t1` itself, as `jera.mli` states: its last
   break was `t0 + (t1 − t0)`, which rounds apart from `t1` (one ulp over
   `[-7.074863082399303, 4.437342817489506]`), and `Piecewise.eval` at `t1`

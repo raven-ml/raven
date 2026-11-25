@@ -809,6 +809,20 @@ let solve =
         in
         equal Oracle.status_t Not_finite
           (Oracle.status (solve1 f ~t0:0. ~t1:1. (scalar 1.))));
+    cases "a field non-finite past t0 ends the lane Not_finite wherever t0 is"
+      ~id:(Printf.sprintf "t0 = %g") [ 0.; 1. ] (fun t0 ->
+        (* Near t = 0 the floats' spacing is subnormal; the steps stop at the
+           resolution of the interval's larger end all the same. *)
+        let f t y =
+          Nx.where (Nx.greater_s t t0) (Nx.full_like y Float.nan) (Nx.neg y)
+        in
+        let s =
+          Ode.solve one Ode.tsit5 ~tol:(Tol.rel 1e-8) ~budget:100 f
+            ~t0:(scalar t0)
+            ~t1:(scalar (t0 +. 1.))
+            (scalar 1.)
+        in
+        equal Oracle.status_t Not_finite (Oracle.status s));
     test "a blow-up ends its lane Stalled" (fun () ->
         (* y' = y² from 1 is 1 / (1 − t): the steps shrink toward t = 1 until
            they fall below the time's resolution, the values still finite. *)

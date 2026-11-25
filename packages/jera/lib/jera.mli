@@ -1683,12 +1683,13 @@ module Ode : sig
       The solution's error is, per component, the sum of the magnitudes of the
       accepted steps' local estimates: it estimates the error the steps made,
       not the global error, which [tol] does not bound. An attempt with a
-      non-finite stage is rejected. A step below the time's resolution ends the
-      lane [Not_finite] if the last attempt rejected had a non-finite stage and
-      [Stalled] otherwise, and [budget] attempted steps end it [Budget_spent].
-      The last step of an interval lands on its end exactly. {b Stability.} An
-      explicit method's controller keeps [h] inside its stability region, so on
-      a stiff field its steps fall to that limit and the budget runs out first.
+      non-finite stage is rejected. A step below the time's resolution at the
+      larger end of its interval ends the lane [Not_finite] if the last attempt
+      rejected had a non-finite stage and [Stalled] otherwise, and [budget]
+      attempted steps end it [Budget_spent]. The last step of an interval lands
+      on its end exactly. {b Stability.} An explicit method's controller keeps
+      [h] inside its stability region, so on a stiff field its steps fall to
+      that limit and the budget runs out first.
       {b Cost.} Choosing the first step costs two evaluations, and each attempt
       the method's evaluations per step. The answer evaluates the field once at
       the start and each accepted step again; {!Solution.evaluations} counts
