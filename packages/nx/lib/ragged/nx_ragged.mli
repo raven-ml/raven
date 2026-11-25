@@ -104,7 +104,7 @@ val take : indices:'d Nx.int64_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Cost: one read, of the result's length.
 
     Raises [Invalid_argument] if [indices] is not 1-D, or if the rows' lengths
-    sum past [int64]'s range. *)
+    sum past [max_int]. *)
 
 val concat : ('v, 's, 'd) t list -> ('v, 's, 'd) t
 (** [concat rs] is the rows of [rs] one after the other. A single ragged array
