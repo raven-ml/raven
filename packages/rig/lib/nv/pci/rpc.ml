@@ -457,7 +457,8 @@ let resume ~libos =
           mask handoff,
           Is
             (Defs.nv_pgc6_bsi_secure_scratch_14_boot_stage_3_handoff_value_done
-            lsl fst handoff) );
+           lsl fst handoff),
+          ~ms:Falcon.poll_ms );
       Expect
         ("SEC2 failed", sec2 + L.nv_pfalcon_falcon_mailbox0, 0xffff_ffff, Is 0);
     ]
@@ -510,11 +511,19 @@ let sequence ~libos body =
                 [ Falcon.Modify (at P.addr, m lor x, x) ])
           else if op = Gsp_defs.gsp_seq_buf_opcode_reg_poll then
             let module P = Gsp_defs.Seq_reg_poll in
-            (* The poll's timeout and error are the runner's. *)
+            (* The payload's timeout and error go unread: the poll takes a
+               step's bound. *)
             take P.sizeof (fun () ->
                 let r = at P.addr in
                 let x = at P.val_ in
-                [ Falcon.Poll (strf "register 0x%x" r, r, at P.mask, Is x) ])
+                [
+                  Falcon.Poll
+                    ( strf "register 0x%x" r,
+                      r,
+                      at P.mask,
+                      Is x,
+                      ~ms:Falcon.poll_ms );
+                ])
           else if op = Gsp_defs.gsp_seq_buf_opcode_delay_us then
             let module P = Gsp_defs.Seq_delay_us in
             take P.sizeof (fun () -> [ Falcon.Delay (at P.val_) ])

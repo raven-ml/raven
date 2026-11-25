@@ -46,14 +46,14 @@ type op =
   | Write of int * int
   | Modify of int * int * int
   | Copy of int * int
-  | Poll of string * int * int * cond
+  | Poll of (string * int * int * cond * ms:int)
   | Delay of int
   | Read of int
   | When of int * int * cond * op list
   | Expect of string * int * int * cond
 
-(* How long a poll waits: the GPU's boot steps take milliseconds; a step that
-   takes 30 s has failed. *)
+(* How long a boot or stop step's poll waits: the steps take milliseconds; a
+   step that takes 30 s has failed. *)
 let poll_ms = 30_000
 
 let meets c r mask = function
@@ -81,9 +81,9 @@ let rec run c = function
       | Read r ->
           ignore (Chip.get c r : int);
           continue ()
-      | Poll (what, r, mask, cond) -> (
+      | Poll (what, r, mask, cond, ~ms) -> (
           match
-            Rig_pci.Function.wait c.fn ~us:(poll_ms * 1000) what (fun () ->
+            Rig_pci.Function.wait c.fn ~us:(ms * 1000) what (fun () ->
                 meets c r mask cond)
           with
           | Ok () -> continue ()
@@ -133,10 +133,11 @@ let wait_reset : Chip.family -> op list = function
           ( "the FSP's boot",
             B.nv_therm_i2cs_scratch,
             mask B.nv_therm_i2cs_scratch_data,
-            Is Defs.nv_therm_i2cs_scratch_fsp_boot_complete_status_success );
+            Is Defs.nv_therm_i2cs_scratch_fsp_boot_complete_status_success,
+            ~ms:poll_ms );
       ]
   | Ampere | Ada ->
-      let poll what (r, m, c) = Poll (what, r, m, c) in
+      let poll what (r, m, c) = Poll (what, r, m, c, ~ms:poll_ms) in
       [
         poll "the GPU's boot to unlock its progress" unlocked;
         poll "the GPU's boot" completed;
@@ -169,12 +170,13 @@ let reset base core =
   ]
   @ propagate @ [ reset 0 ] @ propagate
   @ [
-    Poll
-      ( "the falcon's memories to be scrubbed",
-        hwcfg2,
-        mask L.nv_pfalcon_falcon_hwcfg2_mem_scrubbing,
-        Is Defs.nv_pfalcon_falcon_hwcfg2_mem_scrubbing_done );
-  ]
+      Poll
+        ( "the falcon's memories to be scrubbed",
+          hwcfg2,
+          mask L.nv_pfalcon_falcon_hwcfg2_mem_scrubbing,
+          Is Defs.nv_pfalcon_falcon_hwcfg2_mem_scrubbing_done,
+          ~ms:poll_ms );
+    ]
   @
   match core with
   | `Riscv ->
@@ -210,7 +212,8 @@ let reset base core =
                         mask L.nv_priscv_riscv_bcr_ctrl_valid,
                         Is
                           (put L.nv_priscv_riscv_bcr_ctrl_valid
-                             Defs.nv_priscv_riscv_bcr_ctrl_valid_true) );
+                             Defs.nv_priscv_riscv_bcr_ctrl_valid_true),
+                        ~ms:poll_ms );
                   ] );
               Copy (Defs.nv_pmc_boot_0, base + L.nv_pfalcon_falcon_rm);
             ] );
@@ -242,7 +245,8 @@ let wait_halt base =
       ( "the falcon to halt",
         base + L.nv_pfalcon_falcon_cpuctl,
         mask L.nv_pfalcon_falcon_cpuctl_halted,
-        Not 0 );
+        Not 0,
+        ~ms:poll_ms );
   ]
 
 (* DMA *)
@@ -252,16 +256,15 @@ type section = { off : int; pa : int; va : int; size : int }
 (* A DMA command moves 256 bytes (DMATRFCMD_SIZE_256B). *)
 let chunk = 256
 
+(* How long a chunk's transfer may take. nouveau (nvkm_falcon_dma_wr) and
+   nova-core (dma_wr) wait for each chunk to complete before they send the next,
+   for at most 2 s each, and so does [dma]: each of its polls bounds one chunk,
+   as theirs do. A chunk moves from the GPU's memory in microseconds. *)
+let dma_ms = 2_000
+
 let dma base ~imem ~image s =
   let r x = base + x in
   let cmd = r L.nv_pfalcon_falcon_dmatrfcmd in
-  let ready =
-    Poll
-      ( "the falcon's DMA queue",
-        cmd,
-        mask L.nv_pfalcon_falcon_dmatrfcmd_full,
-        Is 0 )
-  in
   let command =
     put L.nv_pfalcon_falcon_dmatrfcmd_size
       Defs.nv_pfalcon_falcon_dmatrfcmd_size_256b
@@ -277,22 +280,22 @@ let dma base ~imem ~image s =
       (fun i ->
         let x = i * chunk in
         [
-          ready;
           Write (r L.nv_pfalcon_falcon_dmatrfmoffs, s.pa + x);
           Write (r L.nv_pfalcon_falcon_dmatrffboffs, s.va + x);
           Write (cmd, command);
+          Poll
+            ( "the falcon's DMA",
+              cmd,
+              mask L.nv_pfalcon_falcon_dmatrfcmd_idle,
+              Not 0,
+              ~ms:dma_ms );
         ])
   in
   [
-    ready;
     Write (r L.nv_pfalcon_falcon_dmatrfbase, lo32 (src lsr 8));
     Write (r L.nv_pfalcon_falcon_dmatrfbase1, hi32 (src lsr 8) land 0x1ff);
   ]
   @ List.concat chunks
-  @ [
-      Poll
-        ("the falcon's DMA", cmd, mask L.nv_pfalcon_falcon_dmatrfcmd_idle, Not 0);
-    ]
 
 (* Heavy-secure ucodes *)
 
@@ -399,7 +402,8 @@ let suspended : Chip.family -> op list = function
           ( "the GSP's firmware to suspend",
             L.nv_pgsp_falcon_mailbox0,
             all,
-            Is processor_suspended );
+            Is processor_suspended,
+            ~ms:poll_ms );
       ]
   | Blackwell ->
       [
@@ -407,7 +411,8 @@ let suspended : Chip.family -> op list = function
           ( "the GSP's core to halt",
             gsp + Defs.nv_priscv_riscv_cpuctl,
             mask Defs.nv_priscv_riscv_cpuctl_halted,
-            Not 0 );
+            Not 0,
+            ~ms:poll_ms );
       ]
 
 let fwsec_sb fwsec =
@@ -530,7 +535,8 @@ let fsp kind payload =
         ( "the FSP's answer",
           B.nv_pfsp_msgq_head 0,
           all,
-          Differs (B.nv_pfsp_msgq_tail 0) );
+          Differs (B.nv_pfsp_msgq_tail 0),
+          ~ms:poll_ms );
       Write (emem, config ~write:false ~read:true);
       Copy (B.nv_pfsp_msgq_head 0, B.nv_pfsp_msgq_tail 0);
     ]
@@ -542,5 +548,6 @@ let cot payload =
         ( "the GSP's boot",
           gsp + B.nv_pfalcon_falcon_hwcfg2,
           mask B.nv_pfalcon_falcon_hwcfg2_riscv_br_priv_lockdown,
-          Is 0 );
+          Is 0,
+          ~ms:poll_ms );
     ]

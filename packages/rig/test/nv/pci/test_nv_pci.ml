@@ -585,7 +585,7 @@ let test_search () =
 
    The tree's GPU states 8 GiB of memory, which BAR 1 reaches the first 256 MiB
    of. Its registers keep what is written, so the falcon's first DMA never
-   completes: the open fails at the poll's bound, 30 s, having taken the boot's
+   completes: the open fails at the DMA poll's bound, having taken the boot's
    system memory from the tree's huge pages, at the frames its page map gives
    from 64 GiB on, where this library places it, having written FWSEC to the
    GPU's memory, and having named a page of that system memory as the one the
@@ -717,7 +717,7 @@ let booted =
         test_search;
     ]
 
-(* The falcon's poll waits 30 s before the boot fails. *)
+(* The falcon's DMA poll waits out its bound before the boot fails. *)
 let failed_boot =
   group "a failed boot"
     [

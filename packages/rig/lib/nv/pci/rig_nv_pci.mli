@@ -341,12 +341,13 @@ module Falcon : sig
     | Write of int * int
     | Modify of int * int * int
     | Copy of int * int
-    | Poll of string * int * int * cond
+    | Poll of (string * int * int * cond * ms:int)
     | Delay of int
     | Read of int
     | When of int * int * cond * op list
     | Expect of string * int * int * cond
 
+  val poll_ms : int
   val gsp : int
   val sec2 : int
   val reset : int -> [ `Falcon | `Riscv ] -> op list

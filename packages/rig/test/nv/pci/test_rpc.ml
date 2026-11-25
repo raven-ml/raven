@@ -625,8 +625,8 @@ let rec pp_op ppf (o : Falcon.op) =
   | Write (r, x) -> Format.fprintf ppf "write 0x%x 0x%x" r x
   | Modify (r, m, x) -> Format.fprintf ppf "modify 0x%x 0x%x 0x%x" r m x
   | Copy (r, r') -> Format.fprintf ppf "copy 0x%x 0x%x" r r'
-  | Poll (what, r, m, c) ->
-      Format.fprintf ppf "poll %S 0x%x 0x%x %a" what r m cond c
+  | Poll (what, r, m, c, ~ms) ->
+      Format.fprintf ppf "poll %S 0x%x 0x%x %a for %d ms" what r m cond c ms
   | Delay n -> Format.fprintf ppf "delay %d" n
   | Read r -> Format.fprintf ppf "read 0x%x" r
   | When (r, m, c, ops) ->
@@ -657,7 +657,8 @@ let test_sequence =
         [ Modify (0x2000, 0xf3, 0x13) ] );
       ( "a poll, its timeout and error left",
         [ 2; 0x3000; 0xff; 0x10; 1000; 0 ],
-        [ Poll ("register 0x3000", 0x3000, 0xff, Is 0x10) ] );
+        [ Poll ("register 0x3000", 0x3000, 0xff, Is 0x10, ~ms:Falcon.poll_ms) ]
+      );
       ("a delay", [ 3; 20 ], [ Delay 20 ]);
       ("a store", [ 4; 0x4000; 2 ], []);
       ("a core reset", [ 5 ], core_reset);

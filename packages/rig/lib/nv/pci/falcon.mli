@@ -22,9 +22,9 @@ type op =
   | Modify of int * int * int
       (** [Modify (r, mask, x)] sets the bits [mask] of [r] to those of [x]. *)
   | Copy of int * int  (** [Copy (r, r')] writes [r]'s value to [r']. *)
-  | Poll of string * int * int * cond
-      (** [Poll (what, r, mask, c)] waits for [r]'s bits [mask] to meet [c], for
-          at most 30 seconds; [what] names what is waited for. *)
+  | Poll of (string * int * int * cond * ms:int)
+      (** [Poll (what, r, mask, c, ~ms)] waits at most [ms] milliseconds for
+          [r]'s bits [mask] to meet [c]; [what] names what it waits for. *)
   | Delay of int  (** [Delay us] waits [us] microseconds. *)
   | Read of int
       (** [Read r] reads [r], which also makes the writes before it reach the
@@ -34,6 +34,11 @@ type op =
   | Expect of string * int * int * cond
       (** [Expect (what, r, mask, c)] fails, naming [what] and [r]'s value,
           unless [r]'s bits [mask] meet [c]. *)
+
+val poll_ms : int
+(** [poll_ms] is the bound of a poll for a step of the GPU's boot or stop, 30
+    seconds: the steps take milliseconds, and one that takes 30 seconds has
+    failed. A poll of a falcon's DMA waits less. *)
 
 val run : Chip.t -> op list -> (unit, string) result
 (** [run c ops] performs [ops] in order on [c]'s registers. [Error] names the
