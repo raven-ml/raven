@@ -102,7 +102,11 @@ let loaders =
     ("npy", fun p -> ignore (Nx_io.load_npy p));
     ("npz", fun p -> ignore (Nx_io.load_npz p));
     ("safetensors", fun p -> ignore (Nx_io.load_safetensors p));
+    ("npy rows", fun p -> ignore (Nx_io.load_npy_rows p ~row:[||] ~rows:[||]));
+    ("safetensors metadata", fun p -> ignore (Nx_io.load_safetensors_metadata p));
     ("gguf", fun p -> ignore (Nx_io.load_gguf p));
+    ("pytorch", fun p -> ignore (Nx_io.load_pytorch p));
+    ("hdf5", fun p -> ignore (Nx_io.load_hdf5 p));
     ("text", fun p -> ignore (Nx_io.load_txt Nx.float32 p));
     ("image", fun p -> ignore (Nx_io.load_image p));
   ]
@@ -282,10 +286,9 @@ let fate (h : held_model) =
   cover "its file saved over" (ending = Some Saved_over);
   if not Sys.win32 then cover "its file removed" (ending = Some Removed)
 
-(* A save syncs its file and its directory, milliseconds where every other
-   call takes microseconds, so the cheap calls are drawn more often: a
-   command of weight [w] is listed [w] times, which windtrap counts as one
-   command. *)
+(* A save syncs its file and its directory, milliseconds where every other call
+   takes microseconds, so the cheap calls are drawn more often: a command of
+   weight [w] is listed [w] times, which windtrap counts as one command. *)
 let weighted l = List.concat_map (fun (w, c) -> List.init w (fun _ -> c)) l
 
 let commands =
@@ -335,8 +338,9 @@ let commands =
              Nx.P (value_of h.loaded))
            (fun x -> Nx.P x) );
        ( 1,
-         command "collect" (Gen.unit @-> returns unit) Gc.full_major
-           Gc.full_major );
+         command "collect"
+           (Gen.unit @-> returns unit)
+           Gc.full_major Gc.full_major );
      ]
     @
     (* Sys.remove may delete without POSIX semantics, which rig.disk states
@@ -356,14 +360,54 @@ let commands =
 let loaded =
   group "loaded values"
     [
-      (* Programs of 30 calls make about 3 saves, and read or save a value
-         whose file was saved over, or removed, or save one to its own file,
-         each in at least one case in seven, so every run reaches each
-         label. *)
+      (* Programs of 30 calls make about 3 saves, and read or save a value whose
+         file was saved over, or removed, or save one to its own file, each in
+         at least one case in seven, so every run reaches each label. *)
       stateful ~steps:30
         "a value loaded over its file's pages keeps its value after a save to \
          its file's path or a delete of the file, and saves again"
         commands;
+    ]
+
+(* Concurrent loads and saves *)
+
+(* The archive [seed] saves: one entry of 1000 bytes of [seed]. *)
+let archive_of seed =
+  Archive.of_list [ ("z", Nx.P (Nx.full Nx.uint8 [| 1000 |] seed)) ]
+
+(* The reference: the archive last saved, if any. *)
+type saved = { mutable last : int option }
+
+let shared : (saved, string) abstract = abstract "dir"
+let which = Gen.int_range 0 1
+
+let concurrent_commands =
+  [
+    command "dir"
+      (Gen.unit @-> makes shared)
+      (fun () -> { last = None })
+      (fun () -> temp_dir ());
+    command "save"
+      (shared ^-> which @-> returns unit)
+      (fun m i -> m.last <- Some i)
+      (fun d i -> Nx_io.save_npz (path d) (archive_of (1 + i)));
+    (* Before a save, the path names no file and both sides fail. *)
+    command "load"
+      (shared ^-> returns archive)
+      (fun m ->
+        match m.last with
+        | None -> failwith "no file"
+        | Some i -> archive_of (1 + i))
+      (fun d -> Nx_io.load_npz (path d));
+  ]
+
+let concurrent =
+  group "concurrent loads and saves"
+    [
+      stateful ~domains:2 ~count:20 ~steps:6
+        "loads and saves of one path from two domains each see a whole file, \
+         the last saved"
+        concurrent_commands;
     ]
 
 (* Errors *)
@@ -371,11 +415,12 @@ let loaded =
 (* How a call in a child process ended. *)
 exception Raised_in_child of string
 
-(* [in_child ~seconds f] runs [f] in a forked child, then raises as it did:
-   [Failure] with its message, any other exception as [Raised_in_child] with its
-   text. Fails if the child still runs after [seconds]: a load blocked inside a
-   system call would hang the suite, since no timeout interrupts one. *)
-let in_child ~seconds f =
+(* [in_child f] runs [f] in a forked child, then raises as it did: [Failure]
+   with its message, any other exception as [Raised_in_child] with its text. The
+   parent waits for the child to end: a load blocked inside a system call, which
+   no timeout interrupts, hangs the child alone, until the test's limit ends the
+   test and the child is killed. *)
+let in_child f =
   let r, w = Unix.pipe ~cloexec:true () in
   match Unix.fork () with
   | 0 ->
@@ -390,22 +435,14 @@ let in_child ~seconds f =
   | child -> (
       Unix.close w;
       let ic = Unix.in_channel_of_descr r in
-      let deadline = Unix.gettimeofday () +. seconds in
-      let rec wait () =
-        match Unix.waitpid [ Unix.WNOHANG ] child with
-        | 0, _ when Unix.gettimeofday () < deadline ->
-            Unix.sleepf 0.01;
-            wait ()
-        | 0, _ ->
-            Unix.kill child Sys.sigkill;
+      let outcome =
+        Fun.protect
+          ~finally:(fun () ->
+            (try Unix.kill child Sys.sigkill with Unix.Unix_error _ -> ());
             ignore (Unix.waitpid [] child);
-            close_in ic;
-            failf "the call still ran after %g s" seconds
-        | _ -> ()
+            close_in ic)
+          (fun () -> In_channel.input_all ic)
       in
-      wait ();
-      let outcome = In_channel.input_all ic in
-      close_in ic;
       let text = String.sub outcome 1 (String.length outcome - 1) in
       match outcome.[0] with
       | 'R' -> ()
@@ -430,8 +467,7 @@ let errors =
              load runs where the test can stop it. *)
           let fifo = Filename.concat (temp_dir ()) "fifo" in
           Unix.mkfifo fifo 0o600;
-          fails ~path:fifo (fun () ->
-              in_child ~seconds:10. (fun () -> load fifo)));
+          fails ~path:fifo (fun () -> in_child (fun () -> load fifo)));
       cases "a save into a missing directory fails, naming the path" ~id:name
         saves (fun s ->
           let path = Filename.concat (temp_dir ()) "missing/x" in
@@ -456,8 +492,7 @@ let errors =
          ~id:fst
          (List.map (fun s -> (s.name, (s.shape, s.save))) saves
          @ [
-             ( "encode_txt",
-               ([| 2; 9 |], fun _ x -> ignore (Nx_io.encode_txt x)) );
+             ("encode_txt", ([| 2; 9 |], fun _ x -> ignore (Nx_io.encode_txt x)));
              ("encode_png", (image, fun _ x -> ignore (Nx_io.encode_png x)));
            ])
          (fun (_, (shape, save)) ->
@@ -483,4 +518,4 @@ let writable dir =
 
 let () =
   if writable shm then Filename.set_temp_dir_name shm;
-  exit (run "nx.io saving" [ saving; loaded; errors ])
+  exit (run "nx.io saving" [ loaded; saving; concurrent; errors ])
