@@ -157,3 +157,32 @@ let truncated =
       Float.log (1. -. Float.erfc (1. /. (sigma *. Float.sqrt 2.)))
       -. log_volume;
   }
+
+(* [constant c] is the likelihood [e^c] everywhere under the standard normal
+   prior: [Z = e^c], and the posterior is the prior. *)
+let constant c =
+  {
+    name = Printf.sprintf "a constant likelihood of %g" c;
+    prior = (fun x -> normal_at x (Nx.zeros Nx.float64 [| 1 |]) 1.);
+    likelihood = (fun x -> Nx.full Nx.float64 [| rows x |] c);
+    draw = (fun k n -> Nx.Rng.normal ~key:k Nx.float64 [| n; 1 |]);
+    log_z = c;
+  }
+
+(* A likelihood of 1 on [-1, 1] and 0 outside, under the uniform prior on [-5,
+   5]: every point of nonzero likelihood ties. [Z] is the prior's mass on
+   [-1, 1], 0.2, and the posterior is the prior cut to it. *)
+let indicator =
+  let prior, draw, log_volume = cube 1 in
+  {
+    name = "a likelihood of 1 on [-1, 1] and 0 outside";
+    prior;
+    likelihood =
+      (fun x ->
+        Nx.where
+          (Nx.all ~axes:[ 1 ] (Nx.less_equal (Nx.abs x) (f64 1.)))
+          (Nx.zeros Nx.float64 [| rows x |])
+          (Nx.full Nx.float64 [| rows x |] Float.neg_infinity));
+    draw;
+    log_z = Float.log 2. -. log_volume;
+  }

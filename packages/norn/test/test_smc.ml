@@ -7,121 +7,123 @@ open Windtrap
 open Evidence_models
 
 let t = Nx.Ptree.tensor
-
-(* ln Z and its error. On models whose evidence is known, a run's [ln Z] is
-   within three of its errors of the truth, and over [runs] runs the spread of
-   [ln Z] is within a factor of two of the mean error. Over 20 runs a calibrated
-   error leaves the spread outside that factor with probability about 4e-4, from
-   χ² with 19 degrees of freedom; the fixed keys make each outcome the same on
-   every run. *)
-
 let particles = 1000
-let runs = 20
 let budget = 100
 
-let temper ?move m i =
-  let k = Nx.Rng.fold_in (Nx.Rng.key 80) i in
+let stop =
+  Testable.structural ~pp:(fun ppf -> function
+    | Norn.Evidence.Converged -> Format.pp_print_string ppf "Converged"
+    | Remaining r -> Format.fprintf ppf "Remaining %.17g" r
+    | Temperature b -> Format.fprintf ppf "Temperature %.17g" b)
+
+let ln_z z = Nx.item [] (Norn.Evidence.log_evidence z)
+let error z = Nx.item [] (Norn.Evidence.error z)
+let information z = Nx.item [] (Norn.Evidence.information z)
+
+(* [start m n] is the state at β = 0 of [n] prior draws of [m]. *)
+let start ?move ?resampled m n =
+  Norn.Smc.init t ?move ?resampled ~prior:m.prior ~likelihood:m.likelihood
+    (m.draw (Nx.Rng.key 2) n)
+
+let step m = Norn.Smc.step t ~prior:m.prior ~likelihood:m.likelihood
+
+(* [temper m] is a run on [m] from 1000 prior draws. *)
+let temper ?move m =
+  let k = Nx.Rng.key 80 in
   Norn.Smc.run t ?move ~budget ~prior:m.prior ~likelihood:m.likelihood
     (Nx.Rng.fold_in k 0)
     (m.draw (Nx.Rng.fold_in k 1) particles)
 
-(* [runs_of m] is the ln Z law's runs on [m], compiled as one function mapped
-   over their keys: eager, the ten-dimensional Gaussian's take ten times as
-   long. *)
-let runs_of m =
-  let ez = Norn.Evidence.ptree t in
-  let one k =
-    Norn.Smc.run t ~budget ~prior:m.prior ~likelihood:m.likelihood
-      (Nx.Rng.fold_in k 0)
-      (m.draw (Nx.Rng.fold_in k 1) particles)
-  in
-  let all =
-    Rune.jit
-      Nx.Ptree.(Nx.Rng.ptree @-> returns ez)
-      (Rune.vmap Nx.Ptree.(Nx.Rng.ptree @-> returns ez) one)
-      (Nx.Rng.split_batch ~n:runs (Nx.Rng.key 80))
-  in
-  List.init runs (fun i ->
-      Nx.Ptree.map ez (fun _ x -> Nx.slice [ Nx.I i ] x) all)
+(* [bad f v x] is [f x] with [v] where the position is above 0. *)
+let bad f v x =
+  let l = f x in
+  Nx.where (Nx.greater_s (Nx.reshape [| -1 |] x) 0.) (Nx.full_like l v) l
 
-let within_errors m =
-  test m.name (fun () ->
-      Compiled.here ();
-      let zs = runs_of m in
-      let ln z = Nx.item [] (Norn.Evidence.log_evidence z) in
-      let err z = Nx.item [] (Norn.Evidence.error z) in
-      let z0 = List.hd zs in
-      at_most (float 1e-12)
-        ~than:(3. *. err z0)
-        ~msg:(Printf.sprintf "ln Z = %g, the truth %g" (ln z0) m.log_z)
-        (Float.abs (ln z0 -. m.log_z));
-      let n = float_of_int runs in
-      let values = List.map ln zs in
-      let mean = List.fold_left ( +. ) 0. values /. n in
-      let spread =
-        Float.sqrt
-          (List.fold_left (fun s v -> s +. ((v -. mean) ** 2.)) 0. values
-          /. (n -. 1.))
-      in
-      let error = List.fold_left (fun s z -> s +. err z) 0. zs /. n in
-      satisfies ~claim:"the spread within a factor of two of the error"
-        (float 1e-12)
-        (fun r -> r > 0.5 && r < 2.)
-        (spread /. error))
+(* [densities which v] is the conjugate model's prior and likelihood, the one
+   named [which] made [v] above 0. *)
+let densities which v =
+  if which = "prior" then (bad conjugate.prior v, conjugate.likelihood)
+  else (conjugate.prior, bad conjugate.likelihood v)
 
-(* The default chains: the largest divisor of N not above sqrt N. *)
-let chains =
-  cases "the default chains"
-    ~id:(fun (n, m) -> Printf.sprintf "%d particles, %d chains" n m)
-    [ (1000, 25); (12, 3); (16, 4); (13, 1); (2, 1) ]
-    (fun (n, m) ->
-      let s =
-        Norn.Smc.init t ~prior:conjugate.prior ~likelihood:conjugate.likelihood
-          (conjugate.draw (Nx.Rng.key 2) n)
-      in
-      equal int m s.resampled)
+let bad_rows =
+  [
+    ("likelihood", Float.nan);
+    ("likelihood", Float.infinity);
+    ("prior", Float.nan);
+  ]
+
+(* ptree *)
+
+let ptree_tests =
+  group "ptree"
+    [
+      test "a state crosses a compiled function with its resampled and move"
+        (fun () ->
+          Compiled.here ();
+          let s = start ~move:Slice ~resampled:4 conjugate 20 in
+          let u = Norn.Smc.ptree t in
+          let s' = Rune.jit Nx.Ptree.(u @-> returns u) Fun.id s in
+          equal int 4 s'.resampled;
+          match s'.move with
+          | Slice -> ()
+          | Hmc -> fail "the state came back with Hamiltonian moves");
+    ]
 
 (* init *)
 
 let init_tests =
   group "init"
     [
-      chains;
+      cases "the default chains are the largest divisor of N not above sqrt N"
+        ~id:(fun (n, m) -> Printf.sprintf "%d particles, %d chains" n m)
+        [ (1000, 25); (12, 3); (16, 4); (13, 1); (2, 1) ]
+        (fun (n, m) -> equal int m (start conjugate n).resampled);
       test "the default move is Hamiltonian" (fun () ->
-          let s =
-            Norn.Smc.init t ~prior:conjugate.prior
-              ~likelihood:conjugate.likelihood
-              (conjugate.draw (Nx.Rng.key 2) 12)
-          in
-          match s.move with
-          | Norn.Smc.Hmc -> ()
-          | Norn.Smc.Slice -> fail "the default move is Slice");
-      test "resampled must divide the particles into chains" (fun () ->
-          raises
-            (Invalid_argument
-               "Norn.Smc.init: resampled = 30 does not divide 100 particles \
-                into chains of two or more") (fun () ->
-              Norn.Smc.init t ~resampled:30 ~prior:conjugate.prior
-                ~likelihood:conjugate.likelihood
-                (conjugate.draw (Nx.Rng.key 2) 100)));
-      test "a density of one value for all particles is refused" (fun () ->
-          raises_match
-            (Exn.invalid_arg
-               ~sub:
-                 "Norn.Smc.init: the density returned shape [] for a position \
-                  of 100 chains") (fun () ->
-              Norn.Smc.init t
-                ~prior:(fun x -> Nx.sum (conjugate.prior x))
-                ~likelihood:conjugate.likelihood
-                (conjugate.draw (Nx.Rng.key 2) 100)));
-      test "a likelihood that reads the other particles is refused" (fun () ->
+          match (start conjugate 12).move with
+          | Hmc -> ()
+          | Slice -> fail "the default move is Slice");
+      test "the step size and the length start at 1" (fun () ->
+          let s = start conjugate 12 in
+          equal float_exact 1. (Nx.item [] s.step_size);
+          equal float_exact 1. (Nx.item [] s.length));
+      test "chains of two states are allowed" (fun () ->
+          equal int 50 (start ~resampled:50 conjugate 100).resampled);
+      cases
+        "a resampled that leaves a chain of fewer than two states is refused"
+        ~id:(fun (n, m) ->
+          match m with
+          | Some m -> Printf.sprintf "%d particles, resampled %d" n m
+          | None -> Printf.sprintf "%d particle, the default" n)
+        [ (100, Some 30); (100, Some 0); (100, Some 100); (1, None) ]
+        (fun (n, resampled) ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
+              start ?resampled conjugate n));
+      cases
+        "a density is refused that does not return one log density per particle"
+        ~id:fst
+        [
+          ( "one value for all particles",
+            fun x -> Nx.sum (conjugate.likelihood x) );
           (* Centred on the particles' mean, which their order leaves. *)
-          let likelihood x =
-            conjugate.likelihood (Nx.sub x (Nx.mean ~axes:[ 0 ] x))
-          in
+          ( "a value that reads the other particles",
+            fun x -> conjugate.likelihood (Nx.sub x (Nx.mean ~axes:[ 0 ] x)) );
+        ]
+        (fun (_, likelihood) ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
               Norn.Smc.init t ~prior:conjugate.prior ~likelihood
                 (conjugate.draw (Nx.Rng.key 2) 100)));
+      cases "a density NaN or +inf at a particle is refused"
+        ~id:(fun (which, v) -> Printf.sprintf "%s %g" which v)
+        bad_rows
+        (fun (which, v) ->
+          let prior, likelihood = densities which v in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
+              Norn.Smc.init t ~prior ~likelihood
+                (conjugate.draw (Nx.Rng.key 2) 100)));
+      test "a start that holds no tensor is refused" (fun () ->
+          let none () = Nx.zeros Nx.float64 [| 1 |] in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Smc.init") (fun () ->
+              Norn.Smc.init Nx.Ptree.unit ~prior:none ~likelihood:none ()));
     ]
 
 (* step *)
@@ -150,267 +152,327 @@ let keeps_half s s' =
     at_most float_exact ~than:half (ess (beta' *. (1. +. 2e-3)))
   end
 
-let next_temperature =
-  cases "the next temperature keeps half the smallest step's effective size"
-    ~id:(fun m -> m.name)
-    [ conjugate; gaussian; truncated ]
-    (fun m ->
-      let step = Norn.Smc.step t ~prior:m.prior ~likelihood:m.likelihood in
-      let s0 =
-        Norn.Smc.init t ~prior:m.prior ~likelihood:m.likelihood
-          (m.draw (Nx.Rng.key 2) particles)
-      in
-      let s1 = step (Nx.Rng.key 3) s0 in
-      keeps_half s0 s1;
-      keeps_half s1 (step (Nx.Rng.key 4) s1))
+(* [counted rows f] is [f] recording in [rows] the leading axis of every
+   position it reads. *)
+let counted rows f x =
+  rows := (Nx.shape x).(0) :: !rows;
+  f x
 
 let step_tests =
   group "step"
     [
-      next_temperature;
-      test "a step at β = 1 leaves the evidence" (fun () ->
+      cases "the next temperature keeps half the smallest step's effective size"
+        ~id:(fun m -> m.name)
+        [ conjugate; gaussian; truncated ]
+        (fun m ->
+          let s0 = start m particles in
+          let s1 = step m (Nx.Rng.key 3) s0 in
+          keeps_half s0 s1;
+          keeps_half s1 (step m (Nx.Rng.key 4) s1));
+      cases "the densities are evaluated on the M chains of a move"
+        ~id:(function Norn.Smc.Hmc -> "Hmc" | Slice -> "Slice")
+        [ Norn.Smc.Hmc; Slice ]
+        (fun move ->
+          let s = start ~move conjugate 100 in
+          let rows = ref [] in
+          ignore
+            (Norn.Smc.step t
+               ~prior:(counted rows conjugate.prior)
+               ~likelihood:(counted rows conjugate.likelihood)
+               (Nx.Rng.key 3) s);
+          equal (list int) [ s.resampled ] (List.sort_uniq compare !rows));
+      test "a slice step tunes nothing" (fun () ->
           let s =
-            Norn.Smc.init t ~resampled:10 ~prior:conjugate.prior
-              ~likelihood:conjugate.likelihood
-              (conjugate.draw (Nx.Rng.key 2) 100)
+            step conjugate (Nx.Rng.key 3) (start ~move:Slice conjugate 100)
           in
-          let step =
-            Norn.Smc.step t ~prior:conjugate.prior
-              ~likelihood:conjugate.likelihood
-          in
+          equal float_exact 1. (Nx.item [] s.step_size);
+          equal float_exact 1. (Nx.item [] s.length));
+      test "a step at β = 1 leaves the evidence" (fun () ->
           let rec warm s i =
             if Nx.item [] s.Norn.Smc.beta >= 1. then s
-            else warm (step (Nx.Rng.key i) s) (i + 1)
+            else warm (step conjugate (Nx.Rng.key i) s) (i + 1)
           in
-          let s = warm s 0 in
-          let s' = step (Nx.Rng.key 99) s in
-          equal float_exact
+          let s = warm (start ~resampled:10 conjugate 100) 0 in
+          let s' = step conjugate (Nx.Rng.key 99) s in
+          equal float_exact ~msg:"ln Z"
             (Nx.item [] s.log_evidence)
-            (Nx.item [] s'.log_evidence));
-      test "a NaN likelihood at a particle is refused" (fun () ->
-          let likelihood x =
-            let l = conjugate.likelihood x in
-            Nx.where
-              (Nx.greater_s (Nx.reshape [| -1 |] x) 0.)
-              (Nx.full_like l Float.nan) l
+            (Nx.item [] s'.log_evidence);
+          equal float_exact ~msg:"its variance" (Nx.item [] s.variance)
+            (Nx.item [] s'.variance));
+      (* Particles drawn at or below 0, under a density bad above 0: the first
+         step's moves reach past 0. *)
+      cases "a density NaN or +inf at a particle is refused"
+        ~id:(fun (which, v) -> Printf.sprintf "%s %g" which v)
+        bad_rows
+        (fun (which, v) ->
+          let prior, likelihood = densities which v in
+          let s =
+            Norn.Smc.init t ~prior ~likelihood
+              (Nx.neg (Nx.abs (conjugate.draw (Nx.Rng.key 2) 100)))
           in
-          let start = Nx.neg (Nx.abs (conjugate.draw (Nx.Rng.key 2) 100)) in
-          let s = Norn.Smc.init t ~prior:conjugate.prior ~likelihood start in
-          raises_match
-            (Exn.invalid_arg ~sub:"Norn.Smc.step: the density is nan")
-            (fun () ->
-              Norn.Smc.step t ~prior:conjugate.prior ~likelihood (Nx.Rng.key 3)
-                s));
+          raises_match (Exn.invalid_arg ~sub:"Norn.Smc.step") (fun () ->
+              Norn.Smc.step t ~prior ~likelihood (Nx.Rng.key 3) s));
     ]
 
 (* evidence *)
 
-(* Expectations: the particles are [M] chains of equal mass, so
-   [effective_groups] is [M], and x's error is the variance between chains, [M /
-   (M - 1) Σ_g (m_g - m)² / M²] for chain means [m_g], its root widened by [t /
-   1.96], [t] the 0.975 quantile of Student's t with [M - 1] degrees of freedom:
-   12.706205 at one, 2.063899 at 24, to their seven digits. *)
-let between_chains =
-  cases "an expectation's error is the variance between chains, widened"
-    ~id:(fun (m, _) -> Printf.sprintf "%d chains" m)
-    [ (2, 12.706205); (25, 2.063899) ]
-    (fun (m, t975) ->
-      let k = Nx.Rng.key 81 in
-      let z =
-        Norn.Smc.run t ~resampled:m ~budget ~prior:conjugate.prior
-          ~likelihood:conjugate.likelihood (Nx.Rng.fold_in k 0)
-          (conjugate.draw (Nx.Rng.fold_in k 1) particles)
-      in
-      equal (float 1e-9) ~msg:"effective groups" (float_of_int m)
-        (Nx.item [] (Norn.Evidence.effective_groups z));
-      let x =
-        Nx.to_array (Nx.reshape [| -1 |] (Norn.Evidence.sample z).values)
-      in
-      let n = Array.length x in
-      let mean = Array.fold_left ( +. ) 0. x /. float_of_int n in
-      let between = ref 0. in
-      for g = 0 to m - 1 do
-        let s = ref 0. and c = ref 0 in
-        Array.iteri
-          (fun i v ->
-            if i mod m = g then begin
-              s := !s +. v;
-              incr c
-            end)
-          x;
-        let d = (!s /. float_of_int !c) -. mean in
-        between := !between +. (d *. d)
-      done;
-      let mf = float_of_int m in
-      let sd = Float.sqrt (mf /. (mf -. 1.) *. !between /. (mf *. mf)) in
-      let e, err = Norn.Evidence.expectation t Fun.id z in
-      equal (float 1e-9) ~msg:"the mean" mean (Nx.item [ 0 ] e);
-      equal
-        (float (2e-6 *. sd *. t975))
-        ~msg:"the error"
-        (sd *. t975 /. 1.959963984540054)
-        (Nx.item [ 0 ] err))
-
-(* H is the divergence of the tempered posterior [L^β π / Z_β] from the prior:
-   [β E_β (ln L) - ln Z_β], with the particles as the posterior's draws. A sum
-   of 1000 terms rounds within 1000 ulps of its largest, 1e-12 relatively. *)
-let information_at_beta s =
+(* H is the divergence of the tempered posterior [L^β π / Z_β] from the prior,
+   [β E_β (ln L) - ln Z_β], with the particles as the posterior's draws; at [β =
+   0], [L^0 = 1] even where [L = 0]. A sum of 1000 terms rounds within 1000 ulps
+   of its largest, 1e-12 relatively. *)
+let tempered_information s =
   let z = Norn.Smc.evidence s in
   let beta = Nx.item [] s.Norn.Smc.beta in
-  let mean_l = Nx.item [] (Nx.mean s.likelihood) in
   let expected =
-    if beta = 0. then 0. else (beta *. mean_l) -. Nx.item [] s.log_evidence
+    if beta = 0. then 0.
+    else (beta *. Nx.item [] (Nx.mean s.likelihood)) -. ln_z z
   in
+  equal (float_rel ~rel:1e-12 ~abs:1e-12) expected (information z)
+
+(* The particles are [M] chains of equal mass, so [effective_groups] is [M], and
+   x's error is the variance between chains, [M / (M - 1) Σ_g (m_g - m)² / M²]
+   for chain means [m_g], its root widened by [t / 1.96], [t] the 0.975 quantile
+   of Student's t with [M - 1] degrees of freedom: 12.706205 at one, 2.063899 at
+   24, to their seven digits. *)
+let between_chains (m, t975) =
+  let k = Nx.Rng.key 81 in
+  let z =
+    Norn.Smc.run t ~resampled:m ~budget ~prior:conjugate.prior
+      ~likelihood:conjugate.likelihood (Nx.Rng.fold_in k 0)
+      (conjugate.draw (Nx.Rng.fold_in k 1) particles)
+  in
+  equal (float 1e-9) ~msg:"effective groups" (float_of_int m)
+    (Nx.item [] (Norn.Evidence.effective_groups z));
+  let x = Nx.to_array (Nx.reshape [| -1 |] (Norn.Evidence.sample z).values) in
+  let n = Array.length x in
+  let mean = Array.fold_left ( +. ) 0. x /. float_of_int n in
+  let between = ref 0. in
+  for g = 0 to m - 1 do
+    let s = ref 0. and c = ref 0 in
+    Array.iteri
+      (fun i v ->
+        if i mod m = g then begin
+          s := !s +. v;
+          incr c
+        end)
+      x;
+    let d = (!s /. float_of_int !c) -. mean in
+    between := !between +. (d *. d)
+  done;
+  let mf = float_of_int m in
+  let sd = Float.sqrt (mf /. (mf -. 1.) *. !between /. (mf *. mf)) in
+  let e, err = Norn.Evidence.expectation t Fun.id z in
+  equal (float 1e-9) ~msg:"the mean" mean (Nx.item [ 0 ] e);
   equal
-    (float_rel ~rel:1e-12 ~abs:1e-12)
-    expected
-    (Nx.item [] (Norn.Evidence.information z))
+    (float (2e-6 *. sd *. t975))
+    ~msg:"the error"
+    (sd *. t975 /. 1.959963984540054)
+    (Nx.item [ 0 ] err)
 
 let evidence_tests =
   group "evidence"
     [
+      test "short of β = 1 it stops at the temperature" (fun () ->
+          equal stop (Temperature 0.)
+            (Norn.Evidence.stop (Norn.Smc.evidence (start conjugate 12))));
       test "information at β = 0 is 0, the prior's divergence from itself"
         (fun () ->
-          let start = conjugate.draw (Nx.Rng.key 2) 100 in
-          information_at_beta
-            (Norn.Smc.init t ~prior:conjugate.prior
-               ~likelihood:conjugate.likelihood start);
-          (* [L^0] is 1 where [L] is 0. *)
-          let zero_above x l =
-            Nx.where
-              (Nx.greater_s (Nx.reshape [| -1 |] x) 0.)
-              (Nx.full_like l Float.neg_infinity)
-              l
-          in
-          information_at_beta
-            (Norn.Smc.init t ~prior:conjugate.prior
-               ~likelihood:(fun x -> zero_above x (conjugate.likelihood x))
-               start));
+          tempered_information (start conjugate 100);
+          tempered_information (start truncated 100));
       test "information short of β = 1 is the tempered posterior's" (fun () ->
-          let s =
-            Norn.Smc.init t ~prior:gaussian.prior
-              ~likelihood:gaussian.likelihood
-              (gaussian.draw (Nx.Rng.key 2) 1000)
-          in
-          let s =
-            Norn.Smc.step t ~prior:gaussian.prior
-              ~likelihood:gaussian.likelihood (Nx.Rng.key 1) s
-          in
+          let s = step gaussian (Nx.Rng.key 1) (start gaussian particles) in
           less float_exact ~than:1. (Nx.item [] s.beta);
-          information_at_beta s);
-      test "short of β = 1 it stops at the temperature" (fun () ->
-          let s =
-            Norn.Smc.init t ~prior:conjugate.prior
-              ~likelihood:conjugate.likelihood
-              (conjugate.draw (Nx.Rng.key 2) 12)
+          tempered_information s);
+      test "information at β = 1 is the posterior's" (fun () ->
+          let s = step conjugate (Nx.Rng.key 1) (start conjugate 100) in
+          let s = step conjugate (Nx.Rng.key 2) s in
+          equal float_exact 1. (Nx.item [] s.beta);
+          tempered_information s);
+      test "one chain is one group, and an expectation's error is inf"
+        (fun () ->
+          let z = Norn.Smc.evidence (start ~resampled:1 conjugate 12) in
+          equal float_exact 1. (Nx.item [] (Norn.Evidence.effective_groups z));
+          let _, err = Norn.Evidence.expectation t Fun.id z in
+          equal float_exact Float.infinity (Nx.item [ 0 ] err));
+      test "an expectation has f's shape, and f runs once on one draw"
+        (fun () ->
+          let z = Norn.Smc.evidence (start conjugate 12) in
+          let seen = ref [] in
+          let f x =
+            seen := Nx.shape x :: !seen;
+            Nx.broadcast_to [| 2; 3 |] (Nx.reshape [| 1; 1 |] x)
           in
-          match Norn.Evidence.stop (Norn.Smc.evidence s) with
-          | Temperature b -> equal float_exact 0. b
-          | Converged -> fail "converged at β = 0"
-          | Remaining _ -> fail "stopped as nested sampling does");
-      between_chains;
+          let e, err = Norn.Evidence.expectation t f z in
+          equal (list (array int)) [ [| 1 |] ] !seen;
+          equal (array int) [| 2; 3 |] (Nx.shape e);
+          equal (array int) [| 2; 3 |] (Nx.shape err));
+      cases "an expectation's error is the variance between chains, widened"
+        ~id:(fun (m, _) -> Printf.sprintf "%d chains" m)
+        [ (2, 12.706205); (25, 2.063899) ]
+        between_chains;
     ]
 
 (* run *)
 
-(* Two temperatures of the ten-dimensional Gaussian, short of beta = 1. *)
+(* Two temperatures of the ten-dimensional Gaussian, short of β = 1. *)
 let spent () =
   Norn.Smc.run t ~budget:2 ~prior:gaussian.prior ~likelihood:gaussian.likelihood
     (Nx.Rng.key 1)
     (gaussian.draw (Nx.Rng.key 2) particles)
 
-(* Slice moves need no derivative. *)
-let slice =
-  test "slice moves recover the evidence within three errors" (fun () ->
-      let z = temper ~move:Slice conjugate 0 in
-      let ln = Nx.item [] (Norn.Evidence.log_evidence z) in
-      at_most (float 1e-12)
-        ~than:(3. *. Nx.item [] (Norn.Evidence.error z))
-        ~msg:(Printf.sprintf "ln Z = %g, the truth %g" ln conjugate.log_z)
-        (Float.abs (ln -. conjugate.log_z)))
-
-(* Under the conjugate model x's posterior is N(Σ y / 6, 1 / 6), y's sum 5.7, so
-   E x = 0.95 and E x² = 1 / 6 + 0.95². An expectation's error is its standard
-   deviation between the 25 chains times t / 1.96, t = 2.063899 at 24 degrees of
-   freedom: three errors are 3.16 standard deviations, beyond which Student's t
-   with 24 degrees of freedom lies with probability 0.0042, so the two moments
-   fail falsely with probability below 0.9%. *)
-let moments =
-  test "an expectation is within three errors of the posterior's" (fun () ->
-      let z = temper conjugate 0 in
-      let f x = Nx.concatenate ~axis:0 [ x; Nx.square x ] in
-      let e, err = Norn.Evidence.expectation t f z in
-      List.iteri
-        (fun i (name, truth) ->
-          at_most (float 1e-12)
-            ~than:(3. *. Nx.item [ i ] err)
-            ~msg:name
-            (Float.abs (Nx.item [ i ] e -. truth)))
-        [ ("E x", 0.95); ("E x²", (1. /. 6.) +. (0.95 *. 0.95)) ])
-
-(* [keyed_run m k start] runs as [run] is documented to: [init], then step [s]
-   keyed [fold_in k s] until [β = 1], then the evidence. *)
-let keyed_run m k start =
-  let step = Norn.Smc.step t ~prior:m.prior ~likelihood:m.likelihood in
+(* [keyed_run m k x] runs as [run] is documented to: [init], then step [s] keyed
+   [fold_in k s] until [β = 1], then the evidence. *)
+let keyed_run m k x =
   let rec go s =
     if Nx.item [] s.Norn.Smc.beta >= 1. then s
-    else go (step (Nx.Rng.fold_in k (Int32.to_int (Nx.item [] s.steps))) s)
+    else go (step m (Nx.Rng.fold_in k (Int32.to_int (Nx.item [] s.steps))) s)
   in
   Norn.Smc.evidence
-    (go (Norn.Smc.init t ~prior:m.prior ~likelihood:m.likelihood start))
+    (go (Norn.Smc.init t ~prior:m.prior ~likelihood:m.likelihood x))
+
+(* The ln Z laws read [runs] runs on a model, compiled as one function mapped
+   over their keys: eager, the ten-dimensional Gaussian's take ten times as
+   long. *)
+let runs = 20
+
+let runs_of m =
+  fixture (fun () ->
+      let ez = Norn.Evidence.ptree t in
+      let one k =
+        Norn.Smc.run t ~budget ~prior:m.prior ~likelihood:m.likelihood
+          (Nx.Rng.fold_in k 0)
+          (m.draw (Nx.Rng.fold_in k 1) particles)
+      in
+      let all =
+        Rune.jit
+          Nx.Ptree.(Nx.Rng.ptree @-> returns ez)
+          (Rune.vmap Nx.Ptree.(Nx.Rng.ptree @-> returns ez) one)
+          (Nx.Rng.split_batch ~n:runs (Nx.Rng.key 80))
+      in
+      List.init runs (fun i ->
+          Nx.Ptree.map ez (fun _ x -> Nx.slice [ Nx.I i ] x) all))
+
+let mean xs = List.fold_left ( +. ) 0. xs /. float_of_int (List.length xs)
+
+let spread xs =
+  let m = mean xs in
+  Float.sqrt
+    (List.fold_left (fun s v -> s +. ((v -. m) ** 2.)) 0. xs
+    /. float_of_int (List.length xs - 1))
+
+(* The mean of 20 runs' ln Z lies within three of its standard errors, their
+   spread over sqrt 20, of the truth: beyond lies Student's t with 19 degrees of
+   freedom, with probability 0.74%. *)
+let mean_near (m, runs) =
+  test m.name (fun () ->
+      Compiled.here ();
+      let values = List.map ln_z (runs ()) in
+      at_most float_exact
+        ~than:
+          (3. *. spread values /. Float.sqrt (float_of_int (List.length values)))
+        ~msg:(Printf.sprintf "mean ln Z %g, the truth %g" (mean values) m.log_z)
+        (Float.abs (mean values -. m.log_z)))
+
+(* The spread of 20 runs' ln Z lies within a factor of two of their mean error:
+   a calibrated error falls outside with probability 3.9e-4, from χ² with 19
+   degrees of freedom. *)
+let spread_is_error (m, runs) =
+  test m.name (fun () ->
+      Compiled.here ();
+      let zs = runs () in
+      let ratio = spread (List.map ln_z zs) /. mean (List.map error zs) in
+      let msg = "the spread of ln Z over the mean error" in
+      greater float_exact ~than:0.5 ~msg ratio;
+      less float_exact ~than:2. ~msg ratio)
+
+let law_runs =
+  List.map (fun m -> (m, runs_of m)) [ conjugate; gaussian; mixture; truncated ]
 
 let run_tests =
   group "run"
     [
+      test "a budget below one is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Smc.run") (fun () ->
+              Norn.Smc.run t ~budget:0 ~prior:conjugate.prior
+                ~likelihood:conjugate.likelihood (Nx.Rng.key 1)
+                (conjugate.draw (Nx.Rng.key 2) 100)));
+      test "a run is init, then steps keyed by their count" (fun () ->
+          let k = Nx.Rng.key 3 and x = conjugate.draw (Nx.Rng.key 2) 100 in
+          let z =
+            Norn.Smc.run t ~budget ~prior:conjugate.prior
+              ~likelihood:conjugate.likelihood k x
+          in
+          let z' = keyed_run conjugate k x in
+          equal float_exact ~msg:"ln Z" (ln_z z') (ln_z z);
+          equal float_exact ~msg:"its error" (error z') (error z);
+          equal (array float_exact) ~msg:"the sample"
+            (Nx.to_array (Norn.Evidence.sample z').values)
+            (Nx.to_array (Norn.Evidence.sample z).values));
+      test "a run within its budget converges" (fun () ->
+          equal stop Converged (Norn.Evidence.stop (temper conjugate)));
       test "a spent budget stops at the temperature reached" (fun () ->
           match Norn.Evidence.stop (spent ()) with
           | Temperature b ->
               greater float_exact ~than:0. b;
               less float_exact ~than:1. b
-          | Converged -> fail "converged in two temperatures"
-          | Remaining _ -> fail "stopped as nested sampling does");
+          | s -> failf "stopped as %a" (Testable.pp stop) s);
       test "pp states the temperature a spent budget reached" (fun () ->
           let z = spent () in
           match Norn.Evidence.stop z with
           | Temperature b ->
-              let f x = Nx.item [] x in
               equal string
                 (Printf.sprintf
                    "ln Z = %.2f ± %.2f, H = %.2f nats, budget spent at β = %.2f"
-                   (f (Norn.Evidence.log_evidence z))
-                   (f (Norn.Evidence.error z))
-                   (f (Norn.Evidence.information z))
-                   b)
+                   (ln_z z) (error z) (information z) b)
                 (Format.asprintf "%a" Norn.Evidence.pp z)
-          | _ -> fail "the run did not stop at a temperature");
-      test "a run within its budget converges" (fun () ->
-          match Norn.Evidence.stop (temper conjugate 0) with
-          | Converged -> ()
-          | _ -> fail "the run stopped short of beta = 1");
-      test "a budget below one is refused" (fun () ->
-          raises (Invalid_argument "Norn.Smc.run: budget = 0 is not positive")
-            (fun () ->
-              Norn.Smc.run t ~budget:0 ~prior:conjugate.prior
-                ~likelihood:conjugate.likelihood (Nx.Rng.key 1)
-                (conjugate.draw (Nx.Rng.key 2) 100)));
-      test "a run is init, then steps keyed by their count" (fun () ->
-          let k = Nx.Rng.key 3 and start = conjugate.draw (Nx.Rng.key 2) 100 in
-          let z =
-            Norn.Smc.run t ~budget ~prior:conjugate.prior
-              ~likelihood:conjugate.likelihood k start
-          in
-          let z' = keyed_run conjugate k start in
-          equal float_exact
-            (Nx.item [] (Norn.Evidence.log_evidence z'))
-            (Nx.item [] (Norn.Evidence.log_evidence z));
-          equal float_exact
-            (Nx.item [] (Norn.Evidence.error z'))
-            (Nx.item [] (Norn.Evidence.error z));
-          equal (array float_exact)
-            (Nx.to_array (Norn.Evidence.sample z').values)
-            (Nx.to_array (Norn.Evidence.sample z).values));
-      slice;
-      moments;
+          | s -> failf "stopped as %a" (Testable.pp stop) s);
+      test "pp of a converged run states ln Z, its error and H" (fun () ->
+          let z = temper conjugate in
+          equal string
+            (Printf.sprintf "ln Z = %.2f ± %.2f, H = %.2f nats" (ln_z z)
+               (error z) (information z))
+            (Format.asprintf "%a" Norn.Evidence.pp z));
+      (* Every step's weights are equal, [e^(db c)], so ln Z sums the steps' [db
+         c] to [c], within the rounding of means of 1000 equal terms. *)
+      cases "a constant likelihood's ln Z is that constant, with no error"
+        ~id:(fun c -> Printf.sprintf "%g" c)
+        [ 0.; -1000.; 7.5 ]
+        (fun c ->
+          let z = temper (constant c) in
+          equal stop ~msg:"stop" Converged (Norn.Evidence.stop z);
+          equal (float_rel ~rel:1e-12 ~abs:1e-12) ~msg:"ln Z" c (ln_z z);
+          equal (float 1e-12) ~msg:"its error" 0. (error z));
+      (* Slice moves need no derivative. A calibrated error misses by three with
+         probability 0.27%. *)
+      test "slice moves recover the evidence within three errors" (fun () ->
+          let z = temper ~move:Slice conjugate in
+          at_most float_exact
+            ~than:(3. *. error z)
+            ~msg:
+              (Printf.sprintf "ln Z = %g, the truth %g" (ln_z z) conjugate.log_z)
+            (Float.abs (ln_z z -. conjugate.log_z)));
+      (* Under the conjugate model x's posterior is N(Σ y / 6, 1 / 6), y's sum
+         5.7, so E x = 0.95 and E x² = 1 / 6 + 0.95². An expectation's error is
+         its standard deviation between the 25 chains times t / 1.96, t =
+         2.063899 at 24 degrees of freedom: three errors are 3.16 standard
+         deviations, beyond which Student's t with 24 degrees of freedom lies
+         with probability 0.0042, so the two moments fail falsely with
+         probability below 0.9%. *)
+      test "an expectation is within three errors of the posterior's" (fun () ->
+          let z = temper conjugate in
+          let f x = Nx.concatenate ~axis:0 [ x; Nx.square x ] in
+          let e, err = Norn.Evidence.expectation t f z in
+          List.iteri
+            (fun i (name, truth) ->
+              at_most float_exact
+                ~than:(3. *. Nx.item [ i ] err)
+                ~msg:name
+                (Float.abs (Nx.item [ i ] e -. truth)))
+            [ ("E x", 0.95); ("E x²", (1. /. 6.) +. (0.95 *. 0.95)) ]);
+      group "ln Z's mean over 20 runs is within three standard errors of"
+        (List.map mean_near law_runs);
+      group "ln Z's spread over 20 runs is its error, on"
+        (List.map spread_is_error law_runs);
       test "replicates recover the dogs posterior" (fun () ->
           Compiled.here ();
           Recovery.smc ~replicates:16 ~draws:100
@@ -420,11 +482,4 @@ let run_tests =
 let () =
   exit
     (run "Norn.Smc"
-       [
-         init_tests;
-         step_tests;
-         evidence_tests;
-         run_tests;
-         group "ln Z"
-           (List.map within_errors [ conjugate; gaussian; mixture; truncated ]);
-       ])
+       [ ptree_tests; init_tests; step_tests; evidence_tests; run_tests ])

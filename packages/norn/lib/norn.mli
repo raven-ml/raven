@@ -2020,7 +2020,8 @@ module Smc : sig
   (** The type for states of tempering over positions ['u]. *)
 
   val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) state, 'd) Nx.Ptree.t
-  (** [ptree u] is the structure of states over [u]. It reports [resampled]. *)
+  (** [ptree u] is the structure of states over [u]. It reports [resampled] and
+      [move], so a compiled function returns a state with both. *)
 
   val init :
     ('u, 'd) Nx.Ptree.t ->
@@ -2038,8 +2039,9 @@ module Smc : sig
       theorem 2), and a thousand particles make 25 chains of 40.
 
       Raises [Invalid_argument] if [resampled] does not divide [N] into chains
-      of two states or more, or if a density does not return one log density per
-      particle, each read from its own row. *)
+      of two states or more, [start] holds no tensor, or if a density does not
+      return one log density per particle, each read from its own row, or is NaN
+      or [+inf] at a particle. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->
