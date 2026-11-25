@@ -328,6 +328,7 @@ let get_vocab model = Hashtbl.fold (fun k v acc -> (k, v) :: acc) model.vocab []
 let get_vocab_size model = Hashtbl.length model.vocab
 let get_unk_token model = model.unk_token
 let get_continuing_subword_prefix model = model.continuing_subword_prefix
+let get_max_input_chars_per_word model = model.max_input_chars_per_word
 
 let save model ~path ?name () =
   let vocab_file =

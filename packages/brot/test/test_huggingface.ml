@@ -603,6 +603,15 @@ let test_written_word_level_unk () =
   equal ~msg:"before" (array int) [| 1; 0 |] (ids t "a b");
   equal ~msg:"read back" (array int) [| 1; 0 |] (ids (reload t) "a b")
 
+let test_written_max_input_chars () =
+  let t =
+    wordpiece
+      ~vocab:[ ("[UNK]", 0); ("a", 1); ("##a", 2) ]
+      ~max_input_chars_per_word:3 ()
+  in
+  equal ~msg:"before" (array int) [| 0 |] (ids t "aaaa");
+  equal ~msg:"read back" (array int) [| 0 |] (ids (reload t) "aaaa")
+
 (* Tokenizers [to_json] can write, each built anew per case. *)
 let models =
   [
@@ -883,6 +892,8 @@ let () =
                test_written_roles;
              test "writes a WordLevel's unknown token"
                test_written_word_level_unk;
+             test "writes a WordPiece's max_input_chars_per_word"
+               test_written_max_input_chars;
              test_read_back;
              test "keeps LLaMA's byte fallback through of_json"
                test_llama_read_back;

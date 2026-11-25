@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.to_json` writes a WordPiece's own `max_input_chars_per_word`, where it
+  wrote 100, so a reloaded tokenizer split words its limit made unknown.
 - A SentencePiece BPE model without an unknown token or fallback tokens merges
   across a character it has no piece for, as Hugging Face does: `"▁ü▁▁▁a▁a"`
   gave `[0; 31; 30; 30]` where tokenizers gives `[31; 31; 1; 30]`.

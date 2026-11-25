@@ -2125,7 +2125,8 @@ let alg_to_json = function
           ("unk_token", Jsont.Json.string (Wordpiece.get_unk_token wp));
           ( "continuing_subword_prefix",
             Jsont.Json.string (Wordpiece.get_continuing_subword_prefix wp) );
-          ("max_input_chars_per_word", Jsont.Json.int 100);
+          ( "max_input_chars_per_word",
+            Jsont.Json.int (Wordpiece.get_max_input_chars_per_word wp) );
           ("vocab", vocab_to_json (Wordpiece.get_vocab wp));
         ]
   | Alg_wordlevel wl ->

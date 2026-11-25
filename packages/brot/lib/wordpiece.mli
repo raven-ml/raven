@@ -111,6 +111,10 @@ val get_continuing_subword_prefix : t -> string
 (** [get_continuing_subword_prefix t] is the subword continuation prefix (e.g.
     ["##"]). *)
 
+val get_max_input_chars_per_word : t -> int
+(** [get_max_input_chars_per_word t] is {!create}'s [max_input_chars_per_word].
+*)
+
 (** {1:serialization Serialization} *)
 
 val save : t -> path:string -> ?name:string -> unit -> string
