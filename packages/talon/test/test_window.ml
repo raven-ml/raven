@@ -611,17 +611,24 @@ let batch_law f =
   let run t = exec (Query.select (outs (window f)) (Query.of_table t)) in
   same_bits (run (Talon.of_batches [ half 0; half 1 ])) (run t)
 
-(* Places are keys spaced equally: along keys [c + s * o], bounds [s * b] and [s
-   * a] hold the rows that [b] and [a] hold over places in [o]'s order, in that
-   order, so they compute the same bits. *)
+(* Places are keys spaced equally: along keys [c + s p], [p] a row's place in
+   its partition in [o]'s order, bounds [s b] and [s a] hold the rows that [b]
+   and [a] hold over places, in that order, so each partition's rows sort alike
+   by key and the reductions compute the same bits. *)
 let grid =
   let open Gen in
   let* f = frame_of [ Places ] in
   let+ s, c = pair (int_range 1 4) (int_range (-5) 5) in
   let lit = function Per_row _ -> Absent | b -> b in
-  let k = Array.map (fun o -> Some (I (c + (s * o)))) f.o in
+  (* Each row's place among its partition's rows in [o]'s order. *)
+  let place i =
+    let mine j = (not f.partitioned) || f.g.(j) = f.g.(i) in
+    Array.fold_left ( + ) 0
+      (Array.mapi (fun j o -> if mine j && o < f.o.(i) then 1 else 0) f.o)
+  in
+  let k = Array.mapi (fun i _ -> Some (I (c + (s * place i)))) f.o in
   let before = lit f.before and after = lit f.after in
-  ({ f with k; before; after; partitioned = false }, s)
+  ({ f with k; before; after }, s)
 
 let grid_law (f, s) =
   let scaled = function
@@ -634,6 +641,7 @@ let grid_law (f, s) =
   let outputs f = exec (Query.select (outs (window f)) q) in
   cover "running" (f.before = Absent);
   cover "excluding" f.exclude;
+  cover "partitions" (f.partitioned && Array.length f.o > 2);
   same_bits (outputs keys) (outputs { f with ordered = true })
 
 (* Moments at large magnitudes *)
@@ -1188,9 +1196,9 @@ let golden name =
   in
   rows lines
 
-(* Polars sums in its own order: over at most 160 values of magnitude at most
-   25, any two orders differ by at most 160 · 2^-53 · 4000 ≈ 7e-11 on each side.
-   Its max picks a value. *)
+(* gen/window.py draws every value as a multiple of 1/4 below 25, so a sum of up
+   to 183 of them is exact in any order and a mean rounds once: sums, means and
+   maxima compare by their bits. *)
 let oracle name =
   let rows = golden name in
   let split l = Array.of_list (String.split_on_char ' ' l) in
@@ -1215,10 +1223,10 @@ let oracle name =
   let values e = Error.get_ok (Query.values (Expr.option e) q) in
   let number = function "null" -> None | s -> Some (float_of_string s) in
   let expect i = Array.map number (col i) in
-  equal (array (option (within 1e-10))) (expect 2) (values (w (Expr.sum x)));
+  equal (array (option exact_w)) (expect 2) (values (w (Expr.sum x)));
   equal (array (option exact_w)) (expect 3) (values (w (Expr.max x)));
   equal
-    (array (option (within 1e-10)))
+    (array (option exact_w))
     (expect 4)
     (values (w ~exclude_key:true (Expr.mean x)))
 
@@ -1367,7 +1375,9 @@ let () =
                large_law;
              prop ~count:300 "var far from zero is the variance of the spread"
                offset offset_law;
-             cases "var and std at large magnitudes"
+             cases
+               "var and std of values near the float range's ends are the \
+                exact ones"
                ~id:(fun (n, _, _, _, _) -> n)
                large_cases large_case;
              test "agrees with Polars' rolling windows over datetimes"
@@ -1375,8 +1385,11 @@ let () =
              test "agrees with Polars' rolling windows over integers" (fun () ->
                  oracle "int");
              test "a row whose key is null runs no reduction" no_window;
-             test "median holds its gathered rows in chunks of 2^20" gathered;
-             test "its problems" problems;
+             test
+               "a running median over 1,049,076 gathered rows is each prefix's"
+               gathered;
+             test "an on, a bound or a reduction it cannot take is a problem"
+               problems;
              test "a reduction's data error names its row" data_error;
            ];
          group "Kit windows"
