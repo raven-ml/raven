@@ -2449,7 +2449,7 @@ Withdrawn: multi-device is out of scope, see README.
   run`, `› a narrowing of a value that moves with a loop's trips is refused`,
   `› a loop's trips move with an outer loop's trip`,
   `GPUs › <kind> › a call's grid moves with its loop's trips` and `runs › runs
-  of one schedule from two domains each compute their own`; the Ops suite
+  of one schedule from two domains land as some order of them`; the Ops suite
   (`test/uop/ops`): `sym_compile › computes what exact arithmetic does,
   variables within 50`, `› within 2147483648`, `› at the int extremes`,
   `› computes exactly where int arithmetic overflows` and `› raises as exact
@@ -3723,7 +3723,8 @@ values.
   first call on CUDA, 2.5 ms of 60 ms on NV, and 3.3-4.2 ms (1-4%) of its
   prefill and first step on an R9700, against a driver function and an image
   table (about 80 lines).
-- **Pinned by:** the Tolk_engine suite: `link and run › recorded`, `GPUs`
+- **Pinned by:** the Tolk_engine suite: `link and run › each recorded program writes
+  what its tensors compute`, `GPUs`
   (each recorded program, loop and refusal on Metal, CUDA, NV and AMD where
   the machine has one), `lanes and words` and `runs`; the jit goldens
   (`test/engine/jit/*_lowered.golden`), which `gen/engine/jit.py` makes
@@ -4660,9 +4661,9 @@ the walk of `Rangeify.fix_store_hazard`.
   select_no_lane_rangeified.golden` and `select_no_lane_rows_rangeified.golden`;
   `Tolk.Schedule › create_schedule › recorded › select_no_lane_schedule.golden`,
   `select_one_lane_schedule.golden`, `select_no_lane_rows_schedule.golden`; and
-  `Tolk_engine › link and run › recorded › select_no_lane writes what its
-  tensors compute` and its `select_one_lane` and `select_no_lane_rows`
-  versions, which run the kernels on the host.
+  `Tolk_engine › link and run › each recorded program writes what its
+  tensors compute › select_no_lane` and its `select_one_lane` and
+  `select_no_lane_rows` rows, which run the kernels on the host.
 
 ## D173. A schedule linked per run makes its arenas at each run
 

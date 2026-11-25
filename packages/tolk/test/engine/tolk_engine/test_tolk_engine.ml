@@ -20,8 +20,9 @@ let value =
 
 let values = array value
 
-(* The recorded programs name tinygrad's devices: its CPU is also CPU:0, PYTHON
-   is a software device, and its disk is named after a directory. *)
+(* The recorded programs name the devices of their generator: its CPU is also
+   CPU:0, PYTHON is a software device, and its disk is named after a
+   directory. *)
 let named =
   ("CPU:0", host)
   :: ("PYTHON", List.assoc "CPU:3" (Run.devices ()))
@@ -87,8 +88,11 @@ let targets =
         "a target's renderer is made once, and shared by the devices that \
          compile for it" (fun () ->
           ignore (Run.target host);
-          is_true (Engine.renderer host == Engine.renderer host);
-          is_true (Engine.renderer host == Engine.renderer (device "CPU:1"));
+          let name ppf (r : Renderer.t) = Format.pp_print_string ppf r.name in
+          let renderer = Testable.make ~pp:name ~equal:( == ) in
+          let made = Engine.renderer host in
+          equal renderer made (Engine.renderer host);
+          equal renderer made (Engine.renderer (device "CPU:1"));
           raises_match Exn.invalid_arg (fun () ->
               Engine.renderer Rig_disk.device));
       test "Metal compiles for its GPU family" (fun () ->
@@ -836,7 +840,8 @@ let shift_counts_prop name d =
    weak expression past the base's type must not wrap there. [powered dt b e] is
    the power on [dt]'s bits, by squares and products at the type's width: an
    integer to a negative power truncates towards 0, so it is 0 but for 1 and,
-   in a signed type, -1. *)
+   in a signed type, -1. Its kernel is one per type, compiled once; Clang
+   takes most of two seconds for the eight, cold. *)
 
 let powered dt b e : Dtype.value =
   let two = Bigint.of_int 2 in
@@ -1573,16 +1578,8 @@ let linked ?(devices = devices) big =
 
 let slot_values = list (pair int values)
 
-(* The programs kept from the [slow] tag, one of each kind of call: a kernel, a
-   copy between devices, a bound scalar and the disk. The others take seconds
-   to compile and are tagged. Variables are reached by `a schedule runs with
-   each binding of its variables`. *)
-let by_default =
-  [ "add"; "copy"; "precompiled_scalar"; "disk_store" ]
-
 let writes_what_it_computes name =
-  (if List.mem name by_default then Fun.id else slow)
-  @@ test (name ^ " writes what its tensors compute") (fun () ->
+  test name (fun () ->
       let big = program name in
       let s, vars, storage = linked big in
       Engine.run ~vars s (slots storage);
@@ -2522,8 +2519,9 @@ let flag_from d f linear =
 (* A loop of at most [max] trips on the device [d] around a call that adds one
    to a carry [c], from zero, stores the carry it read into its row of [ys], 16
    bytes apart, and stores into the flag [f] whether the new carry is below
-   [limit]. The flag starts as [0 < limit]. Is the schedule linked, with its
-   carry and its rows. *)
+   [limit], which the call loads, so that every limit runs one program. The
+   flag starts as [0 < limit]. Is the schedule linked, with its carry and its
+   rows. *)
 let flag_loop ?(devices = devices) d (limit, max) =
   let at = d in
   let p slot dt = Shape.param ~shape:[ Int 1 ] ~device:at slot dt in
@@ -2532,20 +2530,23 @@ let flag_loop ?(devices = devices) d (limit, max) =
     Ops.sink
       [
         Ops.store (p 0 Float32) next;
-        Ops.store (p 1 Bool) Ops.O.(next < float (Float.of_int limit));
+        Ops.store (p 1 Bool) Ops.O.(next < p 3 Float32);
         Ops.store (p 2 Float32) (p 0 Float32);
       ]
   in
   let c = Ops.new_buffer at 1 Float32
   and f = Ops.new_buffer at 1 Bool
-  and ys = Ops.new_buffer at (4 * max) Float32 in
+  and ys = Ops.new_buffer at (4 * max) Float32
+  and lim = Ops.new_buffer at 1 Float32 in
   let r = Ops.range ~axis_type:Loop (Int max) [ 100 ] in
   let row =
     Shape.shrink ys
       [ Some (Sym Ops.O.(r * int 4), Sym Ops.O.((r * int 4) + int 1)) ]
   in
   let e =
-    Ops.backedge (Ops.call ~precompile:true body [ c; f; row ]) ~loop:r ~cond:f
+    Ops.backedge
+      (Ops.call ~precompile:true body [ c; f; row; lim ])
+      ~loop:r ~cond:f
   in
   let linear, _ =
     Schedule.create_linear_with_vars ~cores:Cores.host
@@ -2556,10 +2557,14 @@ let flag_loop ?(devices = devices) d (limit, max) =
   let on = devices d in
   let c_buffer = Run.buffer on Float32 [| `Float 0. |]
   and f_buffer = Run.buffer on Bool [| `Bool (0 < limit) |]
-  and ys_buffer = Run.buffer on Float32 (floats (Array.make (4 * max) (-1.))) in
+  and ys_buffer = Run.buffer on Float32 (floats (Array.make (4 * max) (-1.)))
+  and lim_buffer = Run.buffer on Float32 [| `Float (Float.of_int limit) |] in
   let s =
     Engine.link ~devices
-      ~bound:[ (c, c_buffer); (init, f_buffer); (ys, ys_buffer) ]
+      ~bound:
+        [
+          (c, c_buffer); (init, f_buffer); (ys, ys_buffer); (lim, lim_buffer);
+        ]
       compiled
   in
   (s, c_buffer, ys_buffer)
@@ -2587,6 +2592,23 @@ let scalar_kernel name ~dst ~src f =
   Ops.sink ~kernel:(Ops.kernel_info ~name ())
     [ Ops.end_ (Ops.store (at 0 dst) (f (at 1 src))) [ i ] ]
 
+(* A kernel that stores whether twice the one float of its parameter 1 is
+   below the one float of its parameter 2, the limit, into its parameter 0:
+   every limit runs one program. *)
+let below =
+  let i = Ops.range ~axis_type:Weak (Int 1) [ 0 ] in
+  let at slot dt = Ops.index (Shape.placeholder ~slot [ 1 ] dt) [ i ] in
+  Ops.sink ~kernel:(Ops.kernel_info ~name:"below" ())
+    [
+      Ops.end_
+        (Ops.store (at 0 Bool) Ops.O.(at 1 Float32 * float 2. < at 2 Float32))
+        [ i ];
+    ]
+
+(* A buffer of [d] holding [limit]. *)
+let limit_buffer d limit =
+  Run.buffer d Float32 [| `Float (Float.of_int limit) |]
+
 (* A loop of at most [max] trips on the device [d] around four calls each trip:
    the first stores [c + 1] into [t], and the others read it to store [2 t] into
    the carry [c], whether [2 t] is below [limit] into the flag [f], and [t] into
@@ -2598,13 +2620,12 @@ let loops_around_calls ?(devices = devices) d (limit, max) =
   let k name dst f = scalar_kernel name ~dst ~src:Float32 f in
   let inc = k "inc" Float32 (fun x -> Ops.O.(x + float 1.))
   and twice = k "twice" Float32 (fun x -> Ops.O.(x * float 2.))
-  and below =
-    k "below" Bool (fun x -> Ops.O.(x * float 2. < float (Float.of_int limit)))
   and copy = k "copy" Float32 Fun.id in
   let c = Ops.new_buffer at 1 Float32
   and t = Ops.new_buffer at 1 Float32
   and f = Ops.new_buffer at 1 Bool
-  and ys = Ops.new_buffer at (4 * max) Float32 in
+  and ys = Ops.new_buffer at (4 * max) Float32
+  and lim = Ops.new_buffer at 1 Float32 in
   let r = Ops.range ~axis_type:Loop (Int max) [ 100 ] in
   let row =
     Shape.shrink ys
@@ -2620,7 +2641,7 @@ let loops_around_calls ?(devices = devices) d (limit, max) =
                  [
                    Ops.call inc [ t; c ];
                    Ops.call twice [ c; t ];
-                   Ops.call below [ f; t ];
+                   Ops.call below [ f; t; lim ];
                    Ops.call copy [ row; t ];
                  ])
             ~loop:r ~cond:f;
@@ -2639,6 +2660,7 @@ let loops_around_calls ?(devices = devices) d (limit, max) =
           (t, Run.buffer on Float32 [| `Float (-1.) |]);
           (init, Run.buffer on Bool [| `Bool (0 < limit) |]);
           (ys, ys_buffer);
+          (lim, limit_buffer on limit);
         ]
       compiled
   in
@@ -2689,8 +2711,6 @@ let loops_across_devices ~devices ~flag gpu (limit, max) =
   let k name dst f = scalar_kernel name ~dst ~src:Float32 f in
   let inc = k "inc" Float32 (fun x -> Ops.O.(x + float 1.))
   and twice = k "twice" Float32 (fun x -> Ops.O.(x * float 2.))
-  and below =
-    k "below" Bool (fun x -> Ops.O.(x * float 2. < float (Float.of_int limit)))
   and copy = k "copy" Float32 Fun.id in
   let flag_device =
     match flag with Host_program -> "CPU" | Gpu_kernel -> gpu
@@ -2701,7 +2721,8 @@ let loops_across_devices ~devices ~flag gpu (limit, max) =
   and t' = Ops.new_buffer on_host 1 Float32
   and c' = Ops.new_buffer on_host 1 Float32
   and f = Ops.new_buffer flag_device 1 Bool
-  and ys = Ops.new_buffer on_host (4 * max) Float32 in
+  and ys = Ops.new_buffer on_host (4 * max) Float32
+  and lim = Ops.new_buffer flag_device 1 Float32 in
   let r = Ops.range ~axis_type:Loop (Int max) [ 100 ] in
   let row =
     Shape.shrink ys
@@ -2709,8 +2730,8 @@ let loops_across_devices ~devices ~flag gpu (limit, max) =
   in
   let flag_call =
     match flag with
-    | Host_program -> Ops.call below [ f; t' ]
-    | Gpu_kernel -> Ops.call below [ f; t ]
+    | Host_program -> Ops.call below [ f; t'; lim ]
+    | Gpu_kernel -> Ops.call below [ f; t; lim ]
   in
   let linear =
     Ops.v Op.Linear
@@ -2749,6 +2770,7 @@ let loops_across_devices ~devices ~flag gpu (limit, max) =
           ( init,
             Run.buffer (devices flag_device) Bool [| `Bool (0 < limit) |] );
           (ys, ys_buffer);
+          (lim, limit_buffer (devices flag_device) limit);
         ]
       compiled
   in
@@ -3853,9 +3875,8 @@ let off_start_read_no_after () =
         (fun i a ->
           match Shape.param_start (Ops.nth c 0) i with
           | Some param ->
-              equal bool ~msg:"the argument starts where its parameter takes it"
-                true
-                (Shape.fits_start ~param (Shape.storage_phase a))
+              satisfies ~claim:"a start its parameter takes" (pair int int)
+                (Shape.fits_start ~param) (Shape.storage_phase a)
           | None -> ())
         (Ops.src_without_body c))
     (List.concat_map member (Ops.src linear));
@@ -5077,7 +5098,11 @@ let loop_reads_earlier_states () =
    row of each buffer moving 16 bytes a trip, the sum of runs that move with the
    trip or stay fixed, reads each run as the trip starts, whatever storage the
    loop has written. Fixed runs start at any element, off 16 bytes too. The
-   buffers live on [d] of [devices]. *)
+   buffers live on [d] of [devices].
+
+   Each case compiles the program it draws, about 30 ms of Clang on fudge, a
+   warm cache included: the laws over drawn loops take a second or more by
+   their counts alone. *)
 
 type loop_step = {
   target : int;  (* The buffer written, at [lo + 4 t]. *)
@@ -5513,7 +5538,8 @@ let valid_slot_store =
    elements and leaves the others. The target is the bytes read back as
    float32, or of the other type itself; one row or rows of two; from a
    constant or a bound start; its value a constant or a run of the state it
-   stores into. *)
+   stores into. Each case compiles the program it draws, as the loop laws'
+   cases do. *)
 
 type byte_store = {
   of_state : bool;  (* The storage after a store of [x + 1]. *)
@@ -6475,11 +6501,11 @@ let gathered_stores =
 let schedules =
   group "link and run"
     [
-      group "recorded" (List.map writes_what_it_computes recorded);
-      slow @@ test "custom_kernel runs its custom kernel" runs_a_custom_kernel;
+      group "each recorded program writes what its tensors compute"
+        (List.map writes_what_it_computes recorded);
+      test "custom_kernel runs its custom kernel" runs_a_custom_kernel;
       group "custom kernels with variables" (custom_kernel_scalars ());
-      slow
-      @@ test "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
+      test "assign_bitcast stores through a bitcast" stores_through_a_bitcast;
       test "a schedule runs with each binding of its variables"
         runs_each_binding;
       test "a kernel whose call binds no variable reads it from the run alone"
@@ -6716,33 +6742,61 @@ let refusals =
 
 (* Runs
 
-   A linked schedule's runs share its storage: two domains running one schedule
-   on their own parameters each read back what theirs compute. A run allocates
-   and loads nothing, and a linked schedule holds its storage while
-   reachable. *)
+   A linked schedule's runs share its storage, and runs of one schedule are
+   serialized: from two domains, runs that each add their own parameter times
+   their own variable to [x] land as some order of them, each adding its own
+   once. A run allocates and loads nothing, and a linked schedule holds its
+   storage while reachable. *)
 
-let serialized ?(devices = devices) name () =
-  let s, vars, big = parameterized ~devices name in
-  let mine = storage_of ~devices big
-  and theirs = storage_of ~devices ~seed:4 big in
-  let expect storage = expected ~vars big storage in
-  let loop storage () =
-    let slots = slots storage and want = expect storage in
-    let bad = ref None in
-    for k = 1 to 200 do
-      Engine.run ~vars s slots;
-      let got = by_slot storage contents in
-      if !bad = None && not (Testable.equal slot_values want got) then
-        bad := Some (k, got)
-    done;
-    !bad
+(* A schedule on [d] that adds its parameter 0, one float, times its variable
+   [k] to [x], one float from zero, bound to a buffer of [d]. Is it linked,
+   and [x]'s buffer. *)
+let accumulating ?(devices = devices) d =
+  let x = Ops.new_buffer d 1 Float32 and inc = Ops.new_buffer d 1 Float32 in
+  let k =
+    Shape.bind
+      (Ops.variable ~dtype:Int32 "k" (Dtype.Value.of_int 1)
+         (Dtype.Value.of_int 3))
+      (`Int Bigint.one)
   in
-  let other = Domain.spawn (loop theirs) in
-  let here = loop mine () in
-  let there = Domain.join other in
-  let no_mismatch = option (pair int slot_values) in
-  equal no_mismatch ~msg:"this domain" None here;
-  equal no_mismatch ~msg:"the other domain" None there
+  let k1 = Shape.reshape (Ops.cast k Float32) [ Int 1 ] in
+  let added = Ops.O.(x + (inc * k1)) in
+  let big = Ops.sink [ Ops.after x [ Ops.store x added ] ] in
+  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host big in
+  let linear =
+    Ops.substitute ~calls:Skip ~pass:Fixed_point linear
+      [ (inc, Shape.param ~shape:[ Ops.Int 1 ] ~device:d 0 Float32) ]
+  in
+  let xb = Run.buffer (devices d) Float32 [| `Float 0. |] in
+  (Engine.link ~devices ~bound:[ (x, xb) ] (compile ~devices linear), xb)
+
+(* The model of a schedule is the sum its runs added: a run of [a] and [k]
+   adds [a * k]. A run lost to another domain's, or one that took another
+   run's parameter or variable, leaves a sum no order of the calls explains.
+   A read is of one float, which a concurrent run cannot tear. *)
+let serialized ?(devices = devices) d =
+  let schedule = abstract "s" in
+  let a = Gen.int_range 1 4 and k = Gen.int_range 1 3 in
+  stateful ~domains:2 ~count:10 ~steps:8
+    "runs of one schedule from two domains land as some order of them"
+    [
+      command "link"
+        (Gen.unit @-> makes schedule)
+        (fun () -> ref 0)
+        (fun () -> accumulating ~devices d);
+      command "run"
+        (a @-> k @-> schedule ^-> returns unit)
+        (fun a k sum -> sum := !sum + (a * k))
+        (fun a k (s, _) ->
+          let inc =
+            Run.buffer (devices d) Float32 [| `Float (Float.of_int a) |]
+          in
+          Engine.run ~vars:[ ("k", k) ] s [| Some inc |]);
+      command "read"
+        (schedule ^-> returns values)
+        (fun sum -> [| `Float (Float.of_int !sum) |])
+        (fun (_, xb) -> Run.values Float32 xb);
+    ]
 
 (* The allocations and loads a profile of [f] records. *)
 let allocations_and_loads f =
@@ -7313,8 +7367,7 @@ let reports_each_kernel ?(devices = devices) name () =
     (fun words ->
       if List.mem "tm" words then begin
         let t = seconds_of words in
-        at_least float_exact ~msg:"time" ~than:0. t;
-        less float_exact ~msg:"time" ~than:1. t
+        at_least float_exact ~msg:"time" ~than:0. t
       end)
     lines
 
@@ -7358,8 +7411,7 @@ let reports_kernels_of_one_name () =
 let runs =
   group "runs"
     [
-      test "runs of one schedule from two domains each compute their own"
-        (serialized "contiguous");
+      serialized "CPU";
       test "a run of kernels allocates and loads nothing"
         (allocates_nothing "contiguous");
       test "a run of copies allocates and loads nothing"
@@ -7489,8 +7541,10 @@ let counts_grouped_kernels () =
         | _ -> None)
       events
   in
-  equal ~msg:"a submission of several kernels" bool true
-    (List.exists (fun (names, _) -> List.length names > 1) works);
+  satisfies ~claim:"a submission of several kernels among the run's work"
+    (list (pair (list string) int))
+    (List.exists (fun (names, _) -> List.length names > 1))
+    works;
   let ns = List.fold_left (fun ns (_, d) -> ns + d) 0 works in
   equal ~msg:"the time" (float 1e-12) (Float.of_int ns *. 1e-9) t
 
@@ -7505,18 +7559,20 @@ let refuses_a_loop limit () =
   equal ~msg:"the carry, untouched" values (floats [| 0. |])
     (Run.values Float32 c)
 
-let positive name =
+(* A time is of work the call ran: positive, and within the host's times
+   around the call. *)
+let within_the_call name =
   let s, slots = timed name in
+  let t0 = Rig.Profile.now () in
   let t = Engine.time ~vars:n_bound s slots in
+  let window = Float.of_int (Rig.Profile.now () - t0) *. 1e-9 in
   greater float_exact ~than:0. t;
-  less float_exact ~than:1. t
+  at_most float_exact ~msg:"the call's window" ~than:window t
 
 let leaves_the_profile name =
   let s, slots = timed name in
-  let t, taken, _ = profiled (fun () -> Engine.time ~vars:n_bound s slots) in
-  greater float_exact ~than:0. t;
-  less float_exact ~than:1. t;
-  is_true ~msg:"taken" taken
+  let _, taken, _ = profiled (fun () -> Engine.time ~vars:n_bound s slots) in
+  satisfies ~claim:"a profile still taken" bool Fun.id taken
 
 let runs_once name =
   let s, slots = timed name in
@@ -7631,10 +7687,62 @@ let reads_scrub name =
   let reads, _ = spans () in
   equal int ~msg:"reads without a scrub" 0 (List.length reads)
 
+(* Footprint
+
+   What a link of a recorded program makes on each device it names and the
+   host, the host and the software device CPU:1, whose images' code, which
+   [footprint] leaves out, counts in no budget. A first link, uncounted, makes
+   whatever the process makes once. *)
+
+let footprint_of_link (name, named) =
+  let compiled, _ = schedule (program name) in
+  let counted = Engine.footprint ~devices compiled in
+  ignore (Sys.opaque_identity (Engine.link ~devices compiled));
+  let on = List.map device named in
+  (* Four rounds of collection, each returning what it collected to its
+     device: a chain of finalisers frees its memory a round late. *)
+  let allocated () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      List.iter Rig.free_cache on
+    done;
+    List.map Rig.allocated on
+  in
+  let before = allocated () in
+  let s = Engine.link ~devices compiled in
+  let after = allocated () in
+  ignore (Sys.opaque_identity s);
+  let by_name l =
+    List.sort compare (List.map (fun (d, n) -> (Rig.name d, n)) l)
+  in
+  let made = by_name (List.combine on (List.map2 ( - ) after before)) in
+  satisfies ~claim:"some bytes made" (list (pair string int))
+    (List.exists (fun (_, n) -> n > 0))
+    made;
+  equal (list (pair string int)) made (by_name counted)
+
+let footprint_makes_nothing () =
+  let compiled, _ = schedule (program "copy") in
+  let _, allocations, loads =
+    allocations_and_loads (fun () -> Engine.footprint ~devices compiled)
+  in
+  equal int ~msg:"allocations" 0 allocations;
+  equal int ~msg:"loads" 0 loads
+
 let timing =
   let on f = cases "on" ~id:fst timed_on (fun (_, name) -> f name) in
   group "timing"
     [
+      cases "footprint is what link makes on each device and the host"
+        ~id:fst
+        [
+          ("add", [ "CPU" ]);
+          ("copy", [ "CPU:1"; "CPU" ]);
+          ("assign", [ "CPU" ]);
+        ]
+        footprint_of_link;
+      test "footprint makes no memory and loads no image"
+        footprint_makes_nothing;
       cases "run takes the slots of a linked schedule" ~id:Fun.id
         [ "add" ] slots_fit;
       test "link_call refuses a name the map does not hold" (fun () ->
@@ -7655,7 +7763,7 @@ let timing =
           Engine.run ~vars:n_bound s slots);
       group "a profile taken around a time leaves its value"
         [ on time_under_profile ];
-      group "a time is positive, under a second" [ on positive ];
+      group "a time is positive, within the call" [ on within_the_call ];
       test "a time counts a submission of several kernels"
         counts_grouped_kernels;
       cases "a time refuses a loop of any trips" ~id:string_of_int [ 0; 1; 2 ]
@@ -8059,8 +8167,7 @@ let on_gpu kind name = match name with "CPU:1" -> Gpus.gpu kind | n -> device n
 let gpu_names = [ "CPU"; "CPU:1" ]
 
 let computes_on devices name =
-  slow
-  @@ test (name ^ " writes what its tensors compute") (fun () ->
+  test name (fun () ->
       let big = program name in
       let s, vars, storage = linked ~devices big in
       Engine.run ~vars s (slots storage);
@@ -8099,7 +8206,7 @@ let on_a_gpu kind =
         (one_name_two_types ~devices);
       test "kernels whose sizes are one name of two values report at DEBUG=2"
         (sizes_from_calls ~devices ~debug:2);
-      group "recorded"
+      group "each recorded program writes what its tensors compute"
         (List.map (computes_on devices)
            [
              "add";
@@ -8110,33 +8217,24 @@ let on_a_gpu kind =
              "variable_shrink";
              "variable_reduce";
            ]);
-      slow
-      @@ cases "a schedule runs on the buffers each run binds to its parameters"
-           ~id:Fun.id [ "copy"; "copy_view" ] (fun name ->
-             runs_on_its_slots ~devices name ());
-      slow
-      @@ test "runs of one schedule from two domains each compute their own"
-           (serialized ~devices "copy");
-      slow
-      @@ test "a run allocates and loads nothing"
-           (allocates_nothing ~devices ~names:gpu_names "copy");
-      slow
-      @@ test "a run of one kernel allocates at most 400 minor words" (fun () ->
+      cases "a schedule runs on the buffers each run binds to its parameters"
+        ~id:Fun.id [ "copy"; "copy_view" ] (fun name ->
+          runs_on_its_slots ~devices name ());
+      serialized ~devices "CPU:1";
+      test "a run allocates and loads nothing"
+        (allocates_nothing ~devices ~names:gpu_names "copy");
+      test "a run of one kernel allocates at most 400 minor words" (fun () ->
           at_most int ~than:400 (run_words ~devices "CPU:1" ()));
-      slow
-      @@ test
-           "a store through a gather writes each row at its loaded index and \
-            drops an invalid one"
-           (stores_through_a_gather ~devices "CPU:1" [| 6; -1; 8; 2 |]);
-      slow
-      @@ prop "a loop runs its call while its flag holds, at most its trips"
-           Gen.(pair (int_range (-1) 6) (int_range 1 5))
-           (fun bounds -> loops_while_a_flag_holds ~devices "CPU:1" bounds);
-      slow
-      @@ prop "a loop runs its calls in order each trip while its flag holds"
-           loop_bounds (fun bounds ->
-             loops_around_calls ~devices "CPU:1" bounds);
-      slow @@ loops_across_devices_on ~devices "CPU:1";
+      test
+        "a store through a gather writes each row at its loaded index and \
+         drops an invalid one"
+        (stores_through_a_gather ~devices "CPU:1" [| 6; -1; 8; 2 |]);
+      prop "a loop runs its call while its flag holds, at most its trips"
+        Gen.(pair (int_range (-1) 6) (int_range 1 5))
+        (fun bounds -> loops_while_a_flag_holds ~devices "CPU:1" bounds);
+      prop "a loop runs its calls in order each trip while its flag holds"
+        loop_bounds (fun bounds -> loops_around_calls ~devices "CPU:1" bounds);
+      loops_across_devices_on ~devices "CPU:1";
       reads_trips_on ~devices "CPU:1";
       test "a call's scalar arguments of mixed widths reach its kernel"
         (reads_mixed_scalars ~devices "CPU:1");
@@ -8168,9 +8266,8 @@ let on_a_gpu kind =
       run_refuses ~devices ~says:off_its_phase
         "a buffer its kernel writes off its phase" "copy"
         (rebound 2 off_phase);
-      slow
-      @@ test "at DEBUG=2, a run prints a line per kernel"
-           (reports_each_kernel ~devices "CPU:1");
+      test "at DEBUG=2, a run prints a line per kernel"
+        (reports_each_kernel ~devices "CPU:1");
     ]
 
 let () =

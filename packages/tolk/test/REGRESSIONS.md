@@ -1365,7 +1365,7 @@ movements are removed afterwards.
 | tinygrad: null/test_schedule.py (the other kernel-count tests of TestSchedule, TestContiguous, TestSimpleSchedule, TestFusionOp, TestBufferView, TestLimitBufs, TestCopyFolding) | kernel counts of the whole scheduler | dropped here: Rangeify's section (L6); every behaviour of `run_rangeify` they reach is one of the rules and recorded graphs above |
 | tinygrad: null/test_arange.py, runtime/test_arange.py | aranges, gathers and embeddings compile to few operations | `IX › run_rangeify › recorded graphs › arange`, `embedding`, `gather`, `two_gathers`, `cumsum`, `triu` (`_rangeified.golden`); the operation counts are Simplify's and Codegen's sections |
 | tinygrad: runtime/test_arange.py::TestIndexing::test_index_collapse_float_idx, test_index_collapse_cast_wraps | a selection by a float equality or comparison, and by an equality under a cast that wraps, is not solved for the range | D24: `Tolk.Simplify › keeping values ›` "a float x + y < c is left, where moving y rounds", "x + y <> c under a narrowing cast is left" |
-| tinygrad: runtime/test_arange.py::TestIndexing::test_index_collapse_no_valid_lane | a selection that no lane takes, summed or read, is 0 | `IX › run_rangeify › recorded graphs › select_no_lane_rangeified.golden`, `select_no_lane_rows_rangeified.golden`; `SC › create_schedule › recorded › select_no_lane_kernels.golden`, `select_one_lane_kernels.golden`, `select_no_lane_rows_kernels.golden`; the values: `EN › link and run › recorded › select_no_lane writes what its tensors compute`, and `select_one_lane`, `select_no_lane_rows` (D172) |
+| tinygrad: runtime/test_arange.py::TestIndexing::test_index_collapse_no_valid_lane | a selection that no lane takes, summed or read, is 0 | `IX › run_rangeify › recorded graphs › select_no_lane_rangeified.golden`, `select_no_lane_rows_rangeified.golden`; `SC › create_schedule › recorded › select_no_lane_kernels.golden`, `select_one_lane_kernels.golden`, `select_no_lane_rows_kernels.golden`; the values: `EN › link and run › each recorded program writes what its tensors compute › select_no_lane`, and `select_one_lane`, `select_no_lane_rows` (D172) |
 | tinygrad: external/external_test_schedule_scaling.py | scheduling time grows linearly | dropped: a timing benchmark |
 | tinygrad: external/external_uop_gc.py (`apply_movement_op.cache_clear`) | the cache of indices releases its graphs | dropped: tinygrad's `functools.cache`; the port memoizes nothing |
 
@@ -1545,9 +1545,9 @@ lasts only while the index carries it, and a caller masks padded values.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: runtime/test_assign.py::TestAssign::test_post_permuted_assignment, test_post_flipped_assignment, test_post_flipped_assignment_axis1, test_post_reshape_assignment | a value that reads its destination through a permute or flip is materialised first; through a reshape it is not | preparation leaves it to rangeify, which stages a store's value that reads its destination at another index: `PR › prepare_rangeify › recorded ›` `assign_permuted_self_prepared.golden`, `assign_flipped_self_prepared.golden`, `assign_reshaped_self_prepared.golden`, their values, `hazard_behind_other_after_prepared.golden`, `flip_of_other_prepared.golden`; the stage: `SC › create_schedule › recorded › assign_permuted_self_kernels.golden`, `EN › link and run › recorded › assign_permuted_self writes what its tensors compute` |
+| tinygrad: runtime/test_assign.py::TestAssign::test_post_permuted_assignment, test_post_flipped_assignment, test_post_flipped_assignment_axis1, test_post_reshape_assignment | a value that reads its destination through a permute or flip is materialised first; through a reshape it is not | preparation leaves it to rangeify, which stages a store's value that reads its destination at another index: `PR › prepare_rangeify › recorded ›` `assign_permuted_self_prepared.golden`, `assign_flipped_self_prepared.golden`, `assign_reshaped_self_prepared.golden`, their values, `hazard_behind_other_after_prepared.golden`, `flip_of_other_prepared.golden`; the stage: `SC › create_schedule › recorded › assign_permuted_self_kernels.golden`, `EN › link and run › each recorded program writes what its tensors compute › assign_permuted_self` |
 | tinygrad: runtime/test_assign.py::TestAssign::test_overlapping_shrink_assignment_forward, test_overlapping_shrink_assignment_reverse, test_overlapping_shrink_assignment_pending, test_nonoverlapping_shrink_assignment | a shrunk destination read through another shrink is materialised | in rangeify, as above; preparation: `assign_shifted_self_prepared.golden`, `assign_disjoint_self_prepared.golden`, `assign_shrunk_self_prepared.golden`, `assign_shrunk_in_place_prepared.golden` (the destination's own shrink is safe), `assign_overlapping_shrink_pending_prepared.golden`, their values |
-| tinygrad: runtime/test_assign.py::TestAssign::test_flipped_assignment_from_self, test_add_row_from_self, test_roll_assignment_from_self | a store whose value reads its destination at other indices, a flip, a row and a roll of it, writes the old values | `SC › create_schedule › recorded › assign_flipped_from_self_kernels.golden`, `add_row_from_self_kernels.golden`, `roll_from_self_kernels.golden` (the value staged, a kernel of its own); `SC › create_schedule › values`, `EN › link and run › recorded › <name> writes what its tensors compute` for each |
+| tinygrad: runtime/test_assign.py::TestAssign::test_flipped_assignment_from_self, test_add_row_from_self, test_roll_assignment_from_self | a store whose value reads its destination at other indices, a flip, a row and a roll of it, writes the old values | `SC › create_schedule › recorded › assign_flipped_from_self_kernels.golden`, `add_row_from_self_kernels.golden`, `roll_from_self_kernels.golden` (the value staged, a kernel of its own); `SC › create_schedule › values`, `EN › link and run › each recorded program writes what its tensors compute › <name>` for each |
 | tinygrad: runtime/test_assign.py::TestAssign::test_assign_slice_add (its kernel count) | `x[0] += 1`, repeated, stores each in place, a kernel each | `add_at_first_twice_prepared.golden`, whose stores read their destination's shrink and copy nothing |
 | tinygrad: runtime/test_assign.py::TestAssign::test_assign_bitcast, test_assign_bitcast_unrealized, test_assign_double_bitcast, test_assign_shrink_then_bitcast, test_assign_bitcast_different_size | a store into a bitcast stores the value bitcast | `assign_bitcast_prepared.golden`, `assign_double_bitcast_prepared.golden`, `assign_shrink_then_bitcast_prepared.golden`, `assign_bitcast_wider_prepared.golden`, their values; `PR › prepare_rangeify › earliest rewrites › a store into a bitcast of storage stores the value bitcast` |
 | tinygrad: runtime/test_setitem.py::TestSetitem::test_setitem_through_bitcast | a slice stored through a bitcast view | dropped: the `Tensor` surface (`tensor.py`'s setitem); a store into a bitcast is the row above's |
@@ -1760,12 +1760,12 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 ## Engine
 
 The suite is `Tolk_engine` (`engine/tolk_engine/`), written `EN`
-below. `EN › link and run › recorded` runs the Schedule suite's recorded
+below. `EN › link and run › each recorded program writes what its tensors
+compute` runs the Schedule suite's recorded
 programs end to end: each is scheduled, compiled for the devices it names
 (the host and software devices, `Run.devices`), linked with its storage bound
 to buffers of small integers, and run, and its storage then holds what its
-tensors compute (Tensors), with each variable at the value it runs with. One
-program of each kind of call runs by default, the rest are slow. `EN › link
+tensors compute (Tensors), with each variable at the value it runs with. `EN › link
 and run › a schedule runs on the buffers each run binds to its parameters`
 makes a program's buffers parameters of the compiled schedule and runs it on
 two sets of buffers. `EN › GPUs` runs recorded programs, loops, a gather and
@@ -1798,9 +1798,9 @@ device and on Metal.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: runtime/test_rangeify.py::TestDoubleMatmul::test_double_matmul, in Indexing's section | the numbers of two matmuls | `EN › link and run › recorded › double_matmul writes what its tensors compute` (slow) |
-| tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots, in Cstyle's section | a compiled program's variables are not its call's slots | `EN › link and run › recorded › precompiled_scalar writes what its tensors compute` |
-| tinygrad: runtime/test_linearizer.py::TestLinearizer::test_arg_dedup, test_load_removed, test_assign_fold, in Codegen's section | realized values | `EN › link and run › recorded` (assign, setitem, read_then_overwrite; slow) |
+| tinygrad: runtime/test_rangeify.py::TestDoubleMatmul::test_double_matmul, in Indexing's section | the numbers of two matmuls | `EN › link and run › each recorded program writes what its tensors compute › double_matmul` (slow) |
+| tinygrad: null/test_call.py::TestCallCodegen::test_compiled_scalar_slots_are_not_call_slots, in Cstyle's section | a compiled program's variables are not its call's slots | `EN › link and run › each recorded program writes what its tensors compute › precompiled_scalar` |
+| tinygrad: runtime/test_linearizer.py::TestLinearizer::test_arg_dedup, test_load_removed, test_assign_fold, in Codegen's section | realized values | `EN › link and run › each recorded program writes what its tensors compute` (assign, setitem, read_then_overwrite) |
 | tinygrad: null/test_tensor_uop_representation.py (5 tests) | a realized value is a BUFFER | dropped: the engine binds storage to a BUFFER at link and keeps no realized state (D3); a realized value is rune's (L9) |
 
 ## Jit
