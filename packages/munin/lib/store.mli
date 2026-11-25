@@ -38,13 +38,13 @@ val root : t -> string
 (** {1:runs Runs} *)
 
 val runs : ?prev:Run.t list -> t -> Run.t list
-(** [runs s] is the runs of [s], newest first by start time, then by id.
-    For each run it reads the first and last records of its log, its tags
-    and its notes, and probes the lock of a run without an end
+(** [runs s] is the runs of [s], newest first by start time, then by id, the
+    greater first. For each run it reads the first and last records of its log,
+    its tags and its notes, and probes the lock of a run without an end
     ({!Store_format.section-status}). It reads no other part of a log. A
     directory that is not a readable run of this format is left out, and
-    {!check} names it. So is a run whose log cannot be opened, such as a
-    live run on an SMB mount ({!Store_format.section-network}).
+    {!check} names it. So is a run whose log cannot be opened, such as a live
+    run on an SMB mount ({!Store_format.section-network}).
 
     [prev] is a listing of [s] made earlier. With it, [runs] reads the
     first record only of the runs [prev] lacks, and the last record and
@@ -61,7 +61,8 @@ val runs : ?prev:Run.t list -> t -> Run.t list
 
 val run : t -> string -> Run.t option
 (** [run s id] is the run [id] of [s], read as {!val-runs} reads it, or [None]
-    if [s] has no run [id].
+    if [s] has no run [id]. An [id] that is not one segment
+    ({!Store_format.section-names}) names no run.
 
     Raises [Failure] if [id]'s log does not start as a run of this format, and
     [Sys_error] if it cannot be opened. *)
@@ -128,9 +129,10 @@ val artifact :
   t -> string -> [ `Latest | `Version of int | `Alias of string ] ->
   Artifact.t option
 (** [artifact s name sel] is the version of [name] that [sel] selects: its
-    latest ({!Store_format.section-artifacts}), the version numbered [n],
-    or the version the alias names. It is [None] if there is no such version or
-    it was deleted. *)
+    latest ({!Store_format.section-artifacts}), the version numbered [n], or the
+    version the alias names. It is [None] if there is no such version or it was
+    deleted. A version file that does not follow
+    {!Store_format.section-artifacts} is no version, and {!check} names it. *)
 
 val aliases : t -> string -> (string * int) list
 (** [aliases s name] is [name]'s aliases and the numbers of the versions
@@ -156,12 +158,12 @@ val delete_artifact : t -> Artifact.t -> unit
 (** {1:maintenance Maintenance} *)
 
 val gc : t -> int
-(** [gc s] removes the blobs of [s] that no version names, the [.]-named
-    work that crashed writers left under [blobs/] and [artifacts/], and
-    what a {!delete_run} cut short left under [runs/], and is the number
-    of entries it removed. It waits for the
-    publications in progress, and those that start wait for it
-    ({!Store_format.section-blobs}). *)
+(** [gc s] removes the blobs of [s] that no version names, the [.]-named work
+    that crashed writers left under [blobs/] and [artifacts/], and what a
+    {!delete_run} cut short left under [runs/], and is the number of entries it
+    removed. It waits for the publications in progress, and those that start
+    wait for it ({!Store_format.section-blobs}). On a missing root it does
+    nothing and creates nothing. *)
 
 val check : t -> (string * string) list
 (** [check s] is each path of [s] that breaks the format, with what is

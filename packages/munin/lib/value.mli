@@ -14,13 +14,14 @@ type t = [ `Bool of bool | `Int of int | `Float of float | `String of string ]
 (** The type for values. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp ppf v] prints [v] for people and for tab-separated output: a
-    boolean as [true] or [false], an integer in decimal, a float in the
-    fewest significant digits that read back to it, with a fraction or an
-    exponent when it is integral, or as [nan], [inf] or [-inf], and a
-    string with each backslash and control character escaped as a JSON
-    string escapes it, so that a tab prints as a backslash and [t]. The
-    text is the same on every system and holds no tab or line feed. *)
+(** [pp ppf v] prints [v] for people and for tab-separated output: a boolean as
+    [true] or [false], an integer in decimal, a float as
+    {!Store_format.section-values} writes it, in the fewest significant digits
+    that read back to it and with a fraction or an exponent, such as [1.0] or
+    [1e+16], or as [nan], [inf] or [-inf], and a string with each backslash and
+    control character escaped as a JSON string escapes it, so that a tab prints
+    as a backslash and [t]. The text is the same on every system and holds no
+    tab or line feed. *)
 
 val to_float : t -> float option
 (** [to_float v] is [f] for [`Float f], the float nearest [n] for

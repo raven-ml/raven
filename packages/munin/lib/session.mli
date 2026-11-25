@@ -119,12 +119,12 @@ val resume : ?provenance:Provenance.t -> Run.t -> step:int -> t
     run has ended or another writer holds its lock. *)
 
 val within : t -> (t -> 'a) -> 'a
-(** [within s f] is [f s], after which it finishes [s] as [`Finished]. When
-    [f] raises [Sys.Break] it finishes [s] as [`Killed], and when [f]
-    raises another exception [e], as [`Failed (Printexc.to_string e)]; it
-    then raises [f]'s exception again with its backtrace. If finishing [s]
-    raises after [f] raised, [f]'s exception is raised, and the run, left
-    without an end, reads as crashed. *)
+(** [within s f] is [f s], after which it finishes [s] as [`Finished]. When [f]
+    raises [Sys.Break] it finishes [s] as [`Killed], and when [f] raises another
+    exception [e], as [`Failed (Printexc.to_string e)]; it then raises [f]'s
+    exception again with its backtrace. If finishing [s] raises after [f]
+    raised, [f]'s exception is raised, and the run reads as {!finish} left it:
+    with its end once that is written, and crashed if it could not be. *)
 
 val finish : ?status:[ `Finished | `Failed of string | `Killed ] -> t -> unit
 (** [finish s] stops [s]'s samplers, waiting for a reading in progress,
@@ -236,12 +236,13 @@ val sample : t -> every:float -> reading list -> unit
 val log_file : t -> step:int -> key:string -> string -> unit
 (** [log_file s ~step ~key path] copies the file [path] into [s]'s run and
     appends a [file] record that names the copy at [step]
-    ({!Store_format.section-files}). It returns once the copy and its
-    record are written; other threads' writes to [s] proceed meanwhile.
-    Readers find the file with {!History.files}.
+    ({!Store_format.section-files}). It copies [path] in pieces, so its memory
+    does not grow with the file's size. It returns once the copy and its record
+    are written; other threads' writes to [s] proceed meanwhile. Readers find
+    the file with {!History.files}.
 
-    Raises [Invalid_argument] if [key] is not a key or [step] is not a
-    step, and [Sys_error] if [path] cannot be read. *)
+    Raises [Invalid_argument] if [key] is not a key or [step] is not a step, and
+    [Sys_error] if [path] cannot be read. *)
 
 (** {1:artifacts Artifacts} *)
 

@@ -2346,6 +2346,18 @@ let runs_tests =
             (fun v -> setenv v None)
             [ "RAVEN_TRACKING_DIR"; "XDG_DATA_HOME"; "HOME" ];
           raises_match Exn.failure (fun () -> Store.open_ ()));
+      cases "an id that is not one segment names no run"
+        ~id:(Printf.sprintf "%S") [ ""; ".hidden"; "a/b"; "../runs/.hidden" ]
+        (fun id ->
+          let store = new_store () in
+          (* A run's log in a [.]-named directory, which readers ignore. *)
+          let dir = Filename.concat (Store.root store) "runs/.hidden" in
+          mkdir_p (Filename.dirname dir);
+          mkdir_p dir;
+          write_file
+            (Filename.concat dir "events.jsonl")
+            (text_of_lines [ start_line ]);
+          equal (option string) None (Option.map Run.id (Store.run store id)));
       test "runs are listed newest first by start time, then by id" (fun () ->
           let store = new_store () in
           let write id time =
@@ -2824,6 +2836,14 @@ let maintenance_tests =
           equal (list string)
             (List.sort compare [ alias; Artifact.path a ])
             (List.map fst (Store.check store)));
+      test "check names a version file that does not follow the format"
+        (fun () ->
+          let store = new_store () in
+          let file = Filename.concat (Store.root store) "artifacts/x/1.json" in
+          mkdir_p (Filename.concat (Store.root store) "artifacts");
+          mkdir_p (Filename.dirname file);
+          write_file file {|{"format":1,"time":1.0}|};
+          equal (list string) [ file ] (List.map fst (Store.check store)));
       test "check names a blob whose content does not match its digest"
         (fun () ->
           let store = new_store () in
@@ -2964,6 +2984,19 @@ let lifecycle_tests =
                  raise Sys.Break)
            with Sys.Break -> ());
           equal status `Killed (Run.status (require_some (Store.run store !id))));
+      test "within raises f's exception when finishing raises too" (fun () ->
+          let store = new_store () in
+          let s = start store in
+          let reading, await, _ =
+            counting (fun n -> if n > 1 then raise Exit else [])
+          in
+          Session.sample s ~every:0.001 [ reading ];
+          await 2;
+          (* finish raises the sampler's Exit after it wrote the end. *)
+          raises (Failure "boom") (fun () ->
+              Session.within s (fun _ -> failwith "boom"));
+          equal status (`Failed "Failure(\"boom\")")
+            (Run.status (reread store s)));
       test "finishing a finished session does nothing" (fun () ->
           let store = new_store () in
           let s = start store in
