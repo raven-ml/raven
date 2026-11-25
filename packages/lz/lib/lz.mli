@@ -87,38 +87,38 @@
     waiting. Other domains run, but every minor collection stops all
     domains, so it waits for the call to end.
 
-    Since the collector never moves a buffer's bytes, a call releases the domain
-    lock once it has done a threshold of work, and takes it back when it
-    returns. A decode's work is the bytes it has read and written. An encode's
-    work is its input, counted before it is compressed. A whole-buffer encode
-    counts all of its input at its start. A deflate, zlib or gzip encoder step
-    counts the input it compresses, which includes input that earlier steps
-    took ({!Encoder}). A Zstandard encoder step counts all the input it holds
-    that no block has compressed yet, once that passes 128 KiB or the step has
-    [~last:true], so input it keeps counts again in the step that compresses
-    it. It also counts the bytes of its window it moves to make room for new
-    input, over 4 MiB at levels 9 to 12. The threshold is 8 KiB, except
-    4 KiB when deflate, zlib or gzip encodes and 16 KiB when LZ4 or Snappy
-    decodes. An LZW or LZF decode releases the lock at its first check. So
-    a short call holds the lock whatever the size of its input and
-    destination, and a long one releases it whatever the size of its
-    input: a decode of a few KiB that writes megabytes releases it, and a
-    step on a few bytes that writes a few hundred holds it, unless it moves
-    a Zstandard window. While the lock is released, another
-    thread of the domain may take it, and the call then waits on return until
-    that thread yields it.
+    Since the collector never moves a buffer's bytes, a call releases the
+    domain lock once it has done a threshold of work, and takes it back when
+    it returns. A decode's work is the bytes it has read and written. An
+    encode's work is its input, counted before it is compressed. A
+    whole-buffer encode counts all of its input at its start. A deflate, zlib
+    or gzip encoder step counts the input it compresses, which includes input
+    that earlier steps took ({!Encoder}), and compresses a byte only once
+    8 KiB of input follow it or the step has [~last:true]. A Zstandard encoder
+    step counts all the input it holds that no block has compressed yet, once
+    that passes 128 KiB or the step has [~last:true], so input it keeps counts
+    again in the step that compresses it. It also counts the bytes of its
+    window it moves to make room for new input, over 4 MiB at levels 9 to 12.
+    The threshold is 8 KiB, except 4 KiB when deflate, zlib or gzip encodes
+    and 16 KiB when LZ4 or Snappy decodes. An LZW or LZF decode releases the
+    lock at its first check. So a short call holds the lock whatever the size
+    of its input and destination, and a long one releases it whatever the size
+    of its input: a decode of a few KiB that writes megabytes releases it, and
+    a step on a few bytes that writes a few hundred holds it, unless it moves
+    a Zstandard window. While the lock is released, another thread of the
+    domain may take it, and the call then waits on return until that thread
+    yields it.
 
-    A call checks its work between the units it works in: a format's
-    blocks and members, each 32 KiB of a decode's output except a Zstandard
-    decode's, and each 32 KiB of an LZW or LZF decode's input and output. A
-    Zstandard decode checks before a block only once 4 KiB of work has
-    added up since its last check, so that small blocks in a row are one
-    unit. An LZ4 or Snappy decode also
-    checks before it copies 32 KiB or more, and releases the lock before
-    the copy when the copy would bring its work to the threshold. A call
-    may thus go on for one unit past its threshold before it releases the
-    lock, and a call whose last unit takes it past the threshold holds the
-    lock to its end. *)
+    A call checks its work between the units it works in: a format's blocks
+    and members, each 32 KiB of a decode's output except a Zstandard decode's,
+    and each 32 KiB of an LZW or LZF decode's input and output. A Zstandard
+    decode checks before a block only once 4 KiB of work has added up since
+    its last check, so that small blocks in a row are one unit. An LZ4 or
+    Snappy decode also checks before it copies 32 KiB or more, and releases
+    the lock before the copy when the copy would bring its work to the
+    threshold. A call may thus go on for one unit past its threshold before it
+    releases the lock, and a call whose last unit takes it past the threshold
+    holds the lock to its end. *)
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
