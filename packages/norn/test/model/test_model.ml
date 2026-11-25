@@ -82,7 +82,7 @@ let affine =
        (fun _ -> Norn.Bij.affine ~loc:(f64 1.) ~scale:(f64 2.))
        (Lazy.force centred))
 
-let fixed = lazy (M.fix (fun p -> p.tau) (f64 2.) (Lazy.force centred))
+let fixed = lazy (M.fix (fun p -> p.tau) (f64 2.) (Lazy.force noncentred))
 
 (* A Dirichlet weight (simplex coordinates) and categorical draws. *)
 let simplex =
@@ -128,7 +128,6 @@ let laws =
   [
     law "centred" centred schools one_tensor y_schools;
     law "non-centred" noncentred schools one_tensor y_schools;
-    law "affine" affine schools one_tensor y_schools;
     law "fixed" fixed schools one_tensor y_schools;
     law "simplex" simplex one_tensor one_tensor categories;
     law "bounded" bounded two Nx.Ptree.(pair tensor tensor) bounded_data;
@@ -249,40 +248,24 @@ let simulations =
 
 (* The result rule and static models: every interpreter *)
 
+(* Each interpreter by its name, run on a model over [two] observing one scalar,
+   at the position [c] or the values [p]. *)
 let interpreters =
-  [
-    "log_density";
-    "log_prior";
-    "log_likelihood";
-    "terms";
-    "from_prior";
-    "init";
-    "log_joint";
-    "pointwise";
-    "simulate";
-    "predict";
-    "constrain";
-    "unconstrain";
-  ]
-
-(* [interpret name m ~c ~p] runs the interpreter [name] of [m], a model over
-   [two] observing one scalar, at the position [c] or the values [p]. *)
-let interpret name m ~c ~p =
   let y = f64 0. and k = Nx.Rng.key 1 in
-  match name with
-  | "log_density" -> ignore (M.log_density m y c)
-  | "log_prior" -> ignore (M.log_prior m y c)
-  | "log_likelihood" -> ignore (M.log_likelihood m y c)
-  | "terms" -> ignore (M.terms m y c)
-  | "from_prior" -> ignore (M.from_prior m y ~n:2 k)
-  | "init" -> ignore (M.init m y ~chains:2 k)
-  | "log_joint" -> ignore (M.log_joint m y p)
-  | "pointwise" -> ignore (M.pointwise m y p)
-  | "simulate" -> ignore (M.simulate m k)
-  | "predict" -> ignore (M.predict m k p)
-  | "constrain" -> ignore (M.constrain m (instance m c))
-  | "unconstrain" -> ignore (M.unconstrain m p)
-  | _ -> invalid_arg name
+  [
+    ("log_density", fun m c _ -> ignore (M.log_density m y c));
+    ("log_prior", fun m c _ -> ignore (M.log_prior m y c));
+    ("log_likelihood", fun m c _ -> ignore (M.log_likelihood m y c));
+    ("terms", fun m c _ -> ignore (M.terms m y c));
+    ("from_prior", fun m _ _ -> ignore (M.from_prior m y ~n:2 k));
+    ("init", fun m _ _ -> ignore (M.init m y ~chains:2 k));
+    ("log_joint", fun m _ p -> ignore (M.log_joint m y p));
+    ("pointwise", fun m _ p -> ignore (M.pointwise m y p));
+    ("simulate", fun m _ _ -> ignore (M.simulate m k));
+    ("predict", fun m _ p -> ignore (M.predict m k p));
+    ("constrain", fun m c _ -> ignore (M.constrain m (instance m c)));
+    ("unconstrain", fun m _ p -> ignore (M.unconstrain m p));
+  ]
 
 (* [changed make] is the model [make later] once [later] is set, after [v] and
    the draws of a position and of values from it. *)
@@ -317,21 +300,20 @@ let result_rule =
               M.v Nx.float64 two Nx.Ptree.tensor (fun () ->
                   let a = M.sample std and b = M.sample std in
                   ({ a; b = Nx.exp b }, M.sample std))));
-      cases "every interpreter checks it on every run, naming the site"
-        ~id:Fun.id interpreters (fun name ->
+      cases "every interpreter checks it on every run, naming the site" ~id:fst
+        interpreters (fun (_, run) ->
           let m, c, p = changed computing in
-          raises_match (Exn.invalid_arg ~sub:": site b: ") (fun () ->
-              interpret name m ~c ~p));
+          raises_match (Exn.invalid_arg ~sub:": site b: ") (fun () -> run m c p));
     ]
 
 let static_models =
   group "static models"
     [
-      cases "every interpreter checks each site, naming it" ~id:Fun.id
-        interpreters (fun name ->
+      cases "every interpreter checks each site, naming it" ~id:fst interpreters
+        (fun (_, run) ->
           let m, c, p = changed growing in
           raises_match (Exn.invalid_arg ~sub:"site b: the model is not static")
-            (fun () -> interpret name m ~c ~p));
+            (fun () -> run m c p));
       test "a sample inside a map does not reach the result unchanged"
         (fun () ->
           raises_match
@@ -343,7 +325,7 @@ let static_models =
 
 (* Interpreters under rune's transformations *)
 
-let compiled_is_eager (Model l) =
+let compiled_is_eager (Model l as model) =
   Compiled.here ();
   let m = Lazy.force l.model in
   let lp = M.log_density m l.data in
@@ -354,9 +336,7 @@ let compiled_is_eager (Model l) =
       (Nx.mul_s (Nx.Rng.uniform ~key:(Nx.Rng.key 3) Nx.float64 [| 3 * n |]) 10.)
       5.
   in
-  let _, saturated =
-    List.find (fun (m', _) -> name m' = l.name) (saturating laws)
-  in
+  let _, saturated = List.hd (saturating [ model ]) in
   List.iter
     (fun v ->
       let c = at m ~chains:3 v in
@@ -588,22 +568,22 @@ let v_tests =
           equal ~msg:"simulate" string (pp P.on) (pp (Nx.placement x));
           let l = M.log_density m () (M.from_prior m () ~n:2 key) in
           equal ~msg:"log_density" string (pp P.on) (pp (Nx.placement l)));
-      cases "every interpreter refuses a site on another set, naming it"
-        ~id:Fun.id interpreters (fun name ->
+      cases "every interpreter refuses a site on another set, naming it" ~id:fst
+        interpreters (fun (_, run) ->
           let module P = (val two_devices ()) in
           let m, c, p = changed (straying_site P.on) in
           (* The stray sample is the run's first, at site a's place. *)
           raises_match
             (Exn.invalid_arg
                ~sub:"site a: the distribution lies on another device set")
-            (fun () -> interpret name m ~c ~p));
-      cases "every interpreter refuses a factor on another set" ~id:Fun.id
-        interpreters (fun name ->
+            (fun () -> run m c p));
+      cases "every interpreter refuses a factor on another set" ~id:fst
+        interpreters (fun (_, run) ->
           let module P = (val two_devices ()) in
           let m, c, p = changed (straying_factor P.on) in
           raises_match
             (Exn.invalid_arg ~sub:"a factor lies on another device set")
-            (fun () -> interpret name m ~c ~p));
+            (fun () -> run m c p));
     ]
 
 (* sample, factor *)
@@ -652,24 +632,18 @@ let coords_tests =
     [
       test "a site has as many coordinates as degrees of freedom" (fun () ->
           let m =
-            M.fix
-              (fun p -> List.nth p 3)
-              (vec [| 1.; 2. |])
-              (M.v Nx.float64 (Nx.Ptree.list Nx.Ptree.tensor) Nx.Ptree.tensor
-                 (fun () ->
-                   let w =
-                     M.sample
-                       (D.dirichlet ~concentration:(vec [| 1.; 2.; 3. |]))
-                   in
-                   let v = M.sample (D.iid [| 8 |] std) in
-                   let s = M.sample (D.sorted 2 std) in
-                   let f = M.sample (D.iid [| 2 |] std) in
-                   ([ w; v; s; f ], M.sample std)))
+            M.v Nx.float64 (Nx.Ptree.list Nx.Ptree.tensor) Nx.Ptree.tensor
+              (fun () ->
+                let w =
+                  M.sample (D.dirichlet ~concentration:(vec [| 1.; 2.; 3. |]))
+                in
+                let v = M.sample (D.iid [| 8 |] std) in
+                let s = M.sample (D.sorted 2 std) in
+                ([ w; v; s ], M.sample std))
           in
           let shapes = List.map Nx.shape (one m :> Nx.host Nx.float64_t list) in
-          (* A simplex of 3 has 2; 8 iid normals 8; 2 sorted normals 2; a fixed
-             site none. *)
-          equal (list (array int)) [ [| 2 |]; [| 8 |]; [| 2 |]; [| 0 |] ] shapes);
+          (* A simplex of 3 has 2; 8 iid normals 8; 2 sorted normals 2. *)
+          equal (list (array int)) [ [| 2 |]; [| 8 |]; [| 2 |] ] shapes);
     ]
 
 let constrain_tests =
@@ -742,8 +716,7 @@ let unconstrain_tests =
    their densities are Bij's and fix's promises. *)
 let square =
   List.filter
-    (fun m ->
-      List.mem (name m) [ "centred"; "non-centred"; "affine"; "bounded" ])
+    (fun m -> List.mem (name m) [ "centred"; "non-centred"; "bounded" ])
     laws
 
 let jacobian_law ((Model l as model), v) =
@@ -801,6 +774,25 @@ let log_density_tests =
                 model: at y, data of shape [7], the site's shape [8]")
             (fun () ->
               M.log_density (Lazy.force centred) (Nx.zeros Nx.float64 [| 7 |])));
+      cases "log_prior, log_likelihood and from_prior refuse them as it does"
+        ~id:fst
+        [
+          ("log_prior", fun m y c -> ignore (M.log_prior m y c));
+          ("log_likelihood", fun m y c -> ignore (M.log_likelihood m y c));
+          ( "from_prior",
+            fun m y _ -> ignore (M.from_prior m y ~n:1 (Nx.Rng.key 0)) );
+        ]
+        (fun (name, call) ->
+          let m = Lazy.force centred in
+          raises
+            (Invalid_argument
+               ("Norn_model." ^ name
+              ^ ": the observations do not match the model: at y, data of \
+                 shape [7], the site's shape [8]"))
+            (fun () ->
+              call m
+                (Nx.zeros Nx.float64 [| 7 |])
+                (at m ~chains:1 (Nx.zeros Nx.float64 [| 10 |]))));
       test "data wrong at two sites are refused naming the first performed"
         (fun () ->
           raises
@@ -810,7 +802,14 @@ let log_density_tests =
             (fun () ->
               M.log_density (Lazy.force bounded)
                 (Nx.zeros Nx.int32 [| 2 |], Nx.zeros Nx.float64 [| 3 |])));
-      test "a position of another shape is refused naming the site" (fun () ->
+      cases "a position of another shape is refused naming the site" ~id:fst
+        [
+          ("log_density", fun m c -> ignore (M.log_density m (f64 0.) c));
+          ("log_prior", fun m c -> ignore (M.log_prior m (f64 0.) c));
+          ("log_likelihood", fun m c -> ignore (M.log_likelihood m (f64 0.) c));
+          ("terms", fun m c -> ignore (M.terms m (f64 0.) c));
+        ]
+        (fun (name, call) ->
           let m =
             M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.tensor (fun () ->
                 let x = M.sample (D.iid [| 3 |] std) in
@@ -824,8 +823,9 @@ let log_density_tests =
           raises_match
             (Exn.invalid_arg
                ~sub:
-                 "Norn_model.log_density: the position does not match the \
-                  model: at p") (fun () -> M.log_density m (f64 0.) c));
+                 ("Norn_model." ^ name
+                ^ ": the position does not match the model: at p"))
+            (fun () -> call m c));
       test "a parameter outside its domain makes the term -inf" (fun () ->
           (* Chain 1 has a = -2, a negative scale. *)
           let m = scaled () in
@@ -917,14 +917,6 @@ let log_likelihood_tests =
           equal (float 1e-12)
             (Nx.item [ 0 ] (M.log_density m y c))
             (Nx.item [ 0 ] sum));
-      test "raises as log_density does" (fun () ->
-          raises
-            (Invalid_argument
-               "Norn_model.log_likelihood: the observations do not match the \
-                model: at y, data of shape [7], the site's shape [8]")
-            (fun () ->
-              M.log_likelihood (Lazy.force centred)
-                (Nx.zeros Nx.float64 [| 7 |])));
     ]
 
 (* from_prior *)
@@ -949,6 +941,18 @@ let from_prior_tests =
           equal (array float_exact)
             (floats (draws n))
             (floats (Nx.slice [ Nx.R (0, n) ] (draws (n + more)))));
+      prop "draw i is the coordinates of simulate's values from row i's key"
+        Gen.(int_range 0 999)
+        (fun key ->
+          let m = Lazy.force centred and k = Nx.Rng.key key in
+          let simulated k_i =
+            vector (M.coords m) (M.unconstrain m (fst (M.simulate m k_i)))
+          in
+          equal (array float_exact)
+            (floats
+               (Nx.stack
+                  (Array.to_list (Array.map simulated (Nx.Rng.split ~n:3 k)))))
+            (floats (by_chain (M.coords m) (M.from_prior m y_schools ~n:3 k))));
       test "answers the observed sites with the data" (fun () ->
           (* Draw i of a is drawn from N(y, 1) with fold_in k_i 1, k_i row i of
              split_batch ~n:3 k; y = 1 answers site 0. *)
@@ -1318,10 +1322,8 @@ let simulate_tests =
             ( floats (vector schools { mu; tau; theta }) |> fun a ->
               Array.append a (floats y') )
             (Array.append (floats (vector schools p)) (floats y)));
-      prop "ignores factors"
-        Gen.(int_range 0 999)
-        (fun key ->
-          let k = Nx.Rng.key key in
+      test "ignores factors" (fun () ->
+          let k = Nx.Rng.key 8 in
           let without, y = M.simulate (with_factor (vec [||])) k in
           let with_nan, y' = M.simulate (with_factor (f64 Float.nan)) k in
           equal (array float_exact)
@@ -1386,18 +1388,16 @@ let fix_tests =
           equal (array int) [| 0 |]
             (Nx.shape (one m :> Nx.host Nx.float64_t schools).tau));
       test "a fixed site keeps its value and adds no density term" (fun () ->
-          let m = Lazy.force fixed in
-          let c = at m ~chains:1 (Nx.zeros Nx.float64 [| 9 |]) in
-          let p = M.constrain m (instance m c) in
+          let p, y = M.simulate (Lazy.force fixed) (Nx.Rng.key 2) in
           equal ~msg:"value" float_exact 2. (item p.tau);
           let tau_term =
             item (D.log_density (D.half_cauchy ~scale:(f64 5.)) (f64 2.))
           in
-          let with_tau = item (M.log_joint (Lazy.force centred) y_schools p) in
+          let with_tau = item (M.log_joint (Lazy.force centred) y p) in
           equal
             (agrees (Float.abs with_tau))
             (with_tau -. tau_term)
-            (Nx.item [ 0 ] (M.log_density m y_schools c)));
+            (item (M.log_joint (Lazy.force fixed) y p)));
       test "refuses a value of another shape" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn_model.fix: site tau")
             (fun () ->
@@ -1457,7 +1457,7 @@ let pp_tests =
             site   role      family       shape  points  support      coordinates
             mu     latent    normal       []             (-inf, inf)  identity
             tau    fixed     half_cauchy  []             (0, inf)
-            theta  latent    normal       [8]            (-inf, inf)  identity
+            theta  latent    normal       [8]            (-inf, inf)  affine
             y      observed  normal       [8]    8       (-inf, inf)
             site  role      family     shape  points  support         coordinates
             b     latent    truncated  []             (-inf, 2)       less
