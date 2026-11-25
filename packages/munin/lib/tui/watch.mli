@@ -37,11 +37,11 @@ type state =
 
 val state : Munin.Run.status -> t option -> now:float -> state
 (** [state status w ~now] is the state of a run of [status] watched by [w]. A
-    sample arrived recently when it arrived within three usual gaps, the
-    median gap between the last 32 arrivals, and never less than 10 s; with
-    fewer than two arrivals timed, any arrival is recent. With [None], before
-    any poll watched the run, a run a writer holds is [Running] and one whose
-    lock is not probed [Silent]. *)
+    sample arrived recently when it arrived within three usual gaps, the median
+    gap between the last 32 arrivals, and never less than 10 s; with fewer than
+    two arrivals timed, any arrival is recent. With [None], before any poll
+    watched the run, a run a writer holds is [Running] and one whose lock is not
+    probed [Silent]. *)
 
 val word : state -> string
 (** [word s] is [s]'s word: [starting], [running], [live], ... *)

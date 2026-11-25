@@ -641,9 +641,9 @@ let quiet_heron =
     ()
 
 (* Short runs of the sweep, for the tests whose claim needs a run's state,
-   metrics and readings but not its length: 600 steps, every metric and
-   reading of a sweep run. [short_running]'s writer holds it; the others
-   finished before it started. *)
+   metrics and readings but not its length: 600 steps, every metric and reading
+   of a sweep run. [short_running]'s writer holds it; the others finished before
+   it started. *)
 let short ~id ~name ~started ?status ended =
   sweep_run ~id ~name ~started ~pid:4300 ~commit ~dirty:false ~tags:[] base
     ~upto:600 ~ended ?status ()
@@ -653,8 +653,7 @@ let short_running =
     ~started:(now -. 400.) ~status:`Running None
 
 let short_amber =
-  short ~id:"20261101T113000Z-5a5a0002" ~name:"amber-fox"
-    ~started:(now -. 3000.)
+  short ~id:"20261101T113000Z-5a5a0002" ~name:"amber-fox" ~started:(now -. 3000.)
     (Some (`Finished, true))
 
 let short_brisk =
@@ -668,6 +667,7 @@ let runs = sweep @ [ mlp_wide; mlp_base ]
 (* Writing *)
 
 let mkdir path = if not (Sys.file_exists path) then Sys.mkdir path 0o755
+
 let log_text r =
   String.concat "\n" (start_record r :: Lazy.force r.records) ^ "\n"
 
@@ -843,8 +843,8 @@ let law_provenance =
 let declare ?goal ?step_metric key =
   metric_record ~time:1. ?goal ?step_metric key
 
-(* [values step kvs] logs the metrics [kvs] at [step]; [sample (step, v)]
-   logs [m]. *)
+(* [values step kvs] logs the metrics [kvs] at [step]; [sample (step, v)] logs
+   [m]. *)
 let values ?(time = 2.) step kvs = samples_record "metrics" ~time ~step kvs
 let sample (step, v) = values step [ ("m", v) ]
 let reading ~time step kvs = samples_record "reading" ~time ~step kvs
@@ -863,9 +863,9 @@ let finished = end_record ~time:4. `Finished
 (* The ids of the logs a process wrote, so that each is new. *)
 let logs = ref 0
 
-(* [write_log store records] writes a run of [records] into [store], with
-   the metric [m] declared unless [declare] says otherwise, and is its id
-   and its log's path. *)
+(* [write_log store records] writes a run of [records] into [store], with the
+   metric [m] declared unless [declare] says otherwise, and is its id and its
+   log's path. *)
 let write_log store ?goal ?steps ?declare:declared ?(started = 1)
     ?(experiment = "law") ?name ?id ?(params = []) records =
   let declared = Option.value declared ~default:[ declare ?goal "m" ] in
@@ -891,7 +891,8 @@ let write_log store ?goal ?steps ?declare:declared ?(started = 1)
         | Some n -> [ member "steps" (string_of_int n) ]
         | None -> [])
       @ [
-          member "params" (fields (List.map (fun (k, v) -> (k, value v)) params));
+          member "params"
+            (fields (List.map (fun (k, v) -> (k, value v)) params));
           member "provenance" law_provenance;
         ])
   in

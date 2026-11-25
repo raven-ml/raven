@@ -23,9 +23,9 @@ let rec remove path =
 let child = Filename.concat (Sys.getcwd ()) "../support/child.exe"
 
 (* [with_store ?name runs f] is [f store], [store] a store of [runs] at
-   [~/name], the home being the test's own directory, and lets the writers
-   that hold its runs go after. The root is joined with [/], which Windows
-   also takes, so that a screen names it as [~/name] there too. *)
+   [~/name], the home being the test's own directory, and lets the writers that
+   hold its runs go after. The root is joined with [/], which Windows also
+   takes, so that a screen names it as [~/name] there too. *)
 let with_store ?(name = "store") runs f =
   let home = temp_dir () in
   setenv "HOME" (Some home);
@@ -33,8 +33,8 @@ let with_store ?(name = "store") runs f =
   Fun.protect ~finally:Fixture.release (fun () -> f store)
 
 (* The directory of the stores that the cases of one law share, which the
-   process removes as it ends, after the writers that hold their runs let
-   go, since Windows removes no file a process holds open. *)
+   process removes as it ends, after the writers that hold their runs let go,
+   since Windows removes no file a process holds open. *)
 let shared =
   lazy
     (let dir = Filename.temp_dir "munin_tui" "" in
@@ -100,12 +100,13 @@ let show ?(script = ignore) ?profile ~cols ~rows store screen keys =
 let golden name text =
   expect_file ~file:("packages/munin/test/tui/golden/" ^ name ^ ".txt") text
 
-(* A terminal of 16 colours: matrix's emulator, from an environment that
-   names no more. *)
+(* A terminal of 16 colours: matrix's emulator, from an environment that names
+   no more. *)
 let sixteen = { T.Profile.vte with env = [ ("TERM", "xterm") ] }
 
 (* A terminal whose user asked for no colour. *)
-let no_colour = { T.Profile.vte with env = ("NO_COLOR", "1") :: T.Profile.vte.env }
+let no_colour =
+  { T.Profile.vte with env = ("NO_COLOR", "1") :: T.Profile.vte.env }
 
 let char c = Text (String.make 1 c)
 let times n k = List.init n (fun _ -> k)
@@ -121,8 +122,8 @@ let before row sep =
   find 0
 
 (* [main_screen ~cols ~rows keys] is the main store's screen after [keys],
-   tidy-otter having logged its step 12,400 while the dashboard watched, so
-   that an arrival makes it live. *)
+   tidy-otter having logged its step 12,400 while the dashboard watched, so that
+   an arrival makes it live. *)
 let main_screen ?(start = Munin_tui.Runs) ?profile ~cols ~rows keys =
   with_store Fixture.runs @@ fun store ->
   let script _ = feed store Fixture.tidy_otter ~step:12400 in
@@ -134,13 +135,12 @@ let layout_test ~golden:file ?start ?(crashed = true) ~cols ~rows keys name =
       if crashed then needs_crashed ();
       golden file (T.Screen.text (main_screen ?start ~cols ~rows keys)))
 
-(* A screen's text and styles, compared with its golden: the claim is what
-   the styles show. *)
+(* A screen's text and styles, compared with its golden: the claim is what the
+   styles show. *)
 let style_test ~golden:file ?profile ~cols ~rows keys name =
   test name (fun () ->
       needs_crashed ();
-      golden file
-        (T.Screen.styled (main_screen ?profile ~cols ~rows keys)))
+      golden file (T.Screen.styled (main_screen ?profile ~cols ~rows keys)))
 
 (* The dashboard opens with its cursor on tidy-otter, the newest run, and its
    chart on train/loss. amber-fox is the second run and dusty-mole the fifth:
@@ -152,16 +152,16 @@ let screens =
   group "screens"
     [
       layout_test ~golden:"dashboard-80x24" ~cols:80 ~rows:24 []
-        "below 100 columns a line names the run and one line of values \
-         takes the hero's place";
+        "below 100 columns a line names the run and one line of values takes \
+         the hero's place";
       layout_test ~golden:"dashboard-100x30" ~cols:100 ~rows:30 []
-        "at 100 columns and 30 lines both panes, the hero and two small \
-         charts show";
+        "at 100 columns and 30 lines both panes, the hero and two small charts \
+         show";
       layout_test ~golden:"dashboard-120x40" ~cols:120 ~rows:40 []
         "at 120 columns the runs pane takes 34 columns and the run pane 28";
       layout_test ~golden:"dashboard-160x48" ~cols:160 ~rows:48 []
-        "from 150 columns the panes take 42 and 34, the hero four values \
-         and three small charts";
+        "from 150 columns the panes take 42 and 34, the hero four values and \
+         three small charts";
       style_test ~golden:"overlays-120x40" ~cols:120 ~rows:40 overlay_two
         "overlays draw in their colours beside the cursor's run";
       style_test ~golden:"overlays-120x40-no-colour" ~profile:no_colour
@@ -169,30 +169,31 @@ let screens =
         "without colour an overlay's line and legend end in its letter";
       layout_test ~golden:"strips-120x40" ~cols:120 ~rows:40
         (overlay_two @ [ Key Enter ])
-        "at strips each metric is a strip with its value and its \
-         difference to the first overlay";
-      (* Zoom's step cursor starts on the latest val/loss sample, and each
-         move left goes back one sample. *)
+        "at strips each metric is a strip with its value and its difference to \
+         the first overlay";
+      (* Zoom's step cursor starts on the latest val/loss sample, and each move
+         left goes back one sample. *)
       style_test ~golden:"zoom-120x40" ~cols:120 ~rows:40
         (overlay_two @ [ Key Enter; Key Enter ] @ times 8 (Key Left))
-        "zoom draws the raw extent faint behind the line, a step cursor and \
-         a readout";
-      layout_test ~golden:"info-120x40" ~cols:120 ~rows:40 [ char 'i' ]
+        "zoom draws the raw extent faint behind the line, a step cursor and a \
+         readout";
+      layout_test ~golden:"info-120x40" ~cols:120 ~rows:40
+        [ char 'i' ]
         "i shows everything about the run over the centre";
-      layout_test ~golden:"help-80x24" ~cols:80 ~rows:24 [ char '?' ]
+      layout_test ~golden:"help-80x24" ~cols:80 ~rows:24
+        [ char '?' ]
         "? shows the keys";
       layout_test ~golden:"small-50x14" ~crashed:false ~cols:50 ~rows:14
         ~start:(Munin_tui.Run (Some (id_of Fixture.tidy_otter)))
-        []
-        "below 60 columns a line per live run asks for a larger terminal";
+        [] "below 60 columns a line per live run asks for a larger terminal";
       test "a store without runs shows how a program starts one" (fun () ->
           with_store ~name:"empty" [] @@ fun store ->
           golden "empty-120x40"
             (T.Screen.text (show ~cols:120 ~rows:40 store Munin_tui.Runs [])));
     ]
 
-(* A terminal of 16 colours draws the text a 24-bit one draws: colour
-   repeats what the text says. *)
+(* A terminal of 16 colours draws the text a 24-bit one draws: colour repeats
+   what the text says. *)
 let sixteen_colours =
   test "a terminal of 16 colours shows the 24-bit screen's text" (fun () ->
       with_store Fixture.[ short_running; short_amber ] @@ fun store ->
@@ -201,9 +202,9 @@ let sixteen_colours =
       in
       equal string (text None) (text (Some sixteen)))
 
-(* Without colour the cursor's row of the runs pane and the cursor's strip,
-   two rows from its mark to the screen's last column but its margin, are
-   reverse video. *)
+(* Without colour the cursor's row of the runs pane and the cursor's strip, two
+   rows from its mark to the screen's last column but its margin, are reverse
+   video. *)
 let reverse_video =
   test "without colour the cursor's row and strip are reverse video" (fun () ->
       with_store Fixture.[ short_running; short_amber ] @@ fun store ->
@@ -241,8 +242,8 @@ let reverse_video =
             (plain r (range x (T.Screen.cols sc - 2))))
         [ y; y + 1 ])
 
-(* A kept filter that keeps no run: the pane holds it, and the centre says
-   why it is empty. *)
+(* A kept filter that keeps no run: the pane holds it, and the centre says why
+   it is empty. *)
 let filter_none =
   test "a kept filter that keeps no run stays, and the centre says so"
     (fun () ->
@@ -263,12 +264,22 @@ let filter_none =
 (* [holds sub s] is whether [s] holds [sub]. *)
 let holds sub s =
   let n = String.length sub in
-  let rec go i = i + n <= String.length s && (String.sub s i n = sub || go (i + 1)) in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
   go 0
 
 let braille_dots =
-  [ (0x01, 0, 0); (0x02, 0, 1); (0x04, 0, 2); (0x40, 0, 3);
-    (0x08, 1, 0); (0x10, 1, 1); (0x20, 1, 2); (0x80, 1, 3) ]
+  [
+    (0x01, 0, 0);
+    (0x02, 0, 1);
+    (0x04, 0, 2);
+    (0x40, 0, 3);
+    (0x08, 1, 0);
+    (0x10, 1, 1);
+    (0x20, 1, 2);
+    (0x80, 1, 3);
+  ]
 
 (* States *)
 
@@ -281,7 +292,10 @@ let chars s =
     else
       let c = Char.code s.[i] in
       let k =
-        if c < 0x80 then 1 else if c < 0xE0 then 2 else if c < 0xF0 then 3 else 4
+        if c < 0x80 then 1
+        else if c < 0xE0 then 2
+        else if c < 0xF0 then 3
+        else 4
       in
       let k = min k (n - i) in
       go (i + k) (String.sub s i k :: acc)
@@ -292,8 +306,8 @@ let chars s =
 let from col row =
   String.concat "" (List.filteri (fun i _ -> i >= col) (chars row))
 
-(* The run pane's heading, [³ run], starts its column, and its first two
-   lines follow a blank one. *)
+(* The run pane's heading, [³ run], starts its column, and its first two lines
+   follow a blank one. *)
 let run_pane screen =
   let row, col =
     match T.Screen.find screen "³" with
@@ -310,12 +324,12 @@ let run_pane_name screen =
     (List.filter (( <> ) "") (String.split_on_char ' ' (run_pane screen)))
     1
 
-(* [run_pane_heading screen] is the run pane's first line: the run's glyph,
-   name and state word. *)
+(* [run_pane_heading screen] is the run pane's first line: the run's glyph, name
+   and state word. *)
 let run_pane_heading screen = before (run_pane screen) " / "
 
-(* [legend_entry screen name] is the legend's entry of the run [name], up to
-   the gap before the next entry. *)
+(* [legend_entry screen name] is the legend's entry of the run [name], up to the
+   gap before the next entry. *)
 let legend_entry screen name =
   match T.Screen.find screen ("━ " ^ name) with
   | (y, x) :: _ ->
@@ -327,8 +341,8 @@ let legend_entry screen name =
    state word, and what it says of its time. tidy-otter reads running until a
    sample arrives, live once one has, and stalled once its usual gap of 23 s,
    from two arrivals, has passed three times. far-node and lost-node have no
-   writer, so their lock is not probed. Each row is a store of its one run,
-   read by a session: ten sessions, the test's time. *)
+   writer, so their lock is not probed. Each row is a store of its one run, read
+   by a session: ten sessions, the test's time. *)
 let states_test =
   test "the run pane names each state with its glyph and its time" (fun () ->
       needs_crashed ();
@@ -367,26 +381,29 @@ let states_test =
       in
       golden "states" (String.concat "\n" lines ^ "\n"))
 
-(* A run whose writer holds its lock may log again after a pause, so a
-   stalled run keeps its rounded end and its axis does not change when
-   samples arrive again. *)
+(* A run whose writer holds its lock may log again after a pause, so a stalled
+   run keeps its rounded end and its axis does not change when samples arrive
+   again. *)
 let stalled_end =
   test "a stalled run keeps its rounded end" (fun () ->
       let r =
         Fixture.sweep_run ~id:"20261101T120000Z-5a11ed00" ~name:"paused"
-          ~started:(Fixture.now -. 100.) ~pid:4242 ~commit:Fixture.commit ~dirty:false ~tags:[]
-          Fixture.base ~upto:150 ~ended:None ~status:`Running ()
+          ~started:(Fixture.now -. 100.) ~pid:4242 ~commit:Fixture.commit
+          ~dirty:false ~tags:[] Fixture.base ~upto:150 ~ended:None
+          ~status:`Running ()
       in
       with_store ~name:"stalled" [ r ] @@ fun store ->
       let run = Option.get (Store.run store r.id) in
       (* Samples arrived at 0 and 1 s, and none for 999 s since. *)
       let watch =
-        Watch.observe (Watch.observe (Watch.start ~samples:0) ~now:0. ~samples:2) ~now:1.
-          ~samples:4
+        Watch.observe
+          (Watch.observe (Watch.start ~samples:0) ~now:0. ~samples:2)
+          ~now:1. ~samples:4
       in
       let f =
-        Munin_tui.Facts.of_run ~now:1000. ~history:(Some (History.read run)) ~hint:None
-          ~watch:(Some watch) ~pauses:[] run
+        Munin_tui.Facts.of_run ~now:1000.
+          ~history:(Some (History.read run))
+          ~hint:None ~watch:(Some watch) ~pauses:[] run
       in
       equal ~msg:"its state" string "stalled" (Watch.word f.state);
       equal ~msg:"its end, 150 rounded up" float_exact 200. f.x_end)
@@ -476,8 +493,8 @@ let short_of_steps =
       in
       let run = show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [] in
       let runs = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
-      (* The screen's percentages: the run has no accuracy, so they are
-         its progress. *)
+      (* The screen's percentages: the run has no accuracy, so they are its
+         progress. *)
       let percents screen =
         List.concat_map
           (fun y ->
@@ -490,14 +507,16 @@ let short_of_steps =
       equal ~msg:"on the runs" (list string) [ "99%" ] (percents runs))
 
 (* Runs that log as programs do: the cursor's every 10 steps with the value
-   [step / 1000], the overlaid run [marked] samples of [0]. A strip compares
-   the two at the latest step both logged, so its difference is the cursor's
-   value there. *)
+   [step / 1000], the overlaid run [marked] samples of [0]. A strip compares the
+   two at the latest step both logged, so its difference is the cursor's value
+   there. *)
 let paired =
   cases "a strip compares the run with its overlay at the same step"
     ~id:(fun (name, _, _) -> name)
     [
-      ("the overlay logs every 100 steps", List.init 21 (fun k -> k * 100), "+0.9000");
+      ( "the overlay logs every 100 steps",
+        List.init 21 (fun k -> k * 100),
+        "+0.9000" );
       ( "the overlay ends in the cursor's last column",
         List.init 99 (fun k -> k * 10) @ [ 989 ],
         "+0.9800" );
@@ -553,8 +572,8 @@ let all_orphans =
       let screen =
         show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [ char 'i' ]
       in
-      (* The keys of the info's metrics: the first word of each row of its
-         value column, from [metrics] to [notes]. *)
+      (* The keys of the info's metrics: the first word of each row of its value
+         column, from [metrics] to [notes]. *)
       let row label =
         match T.Screen.find screen label with
         | p :: _ -> p
@@ -573,11 +592,11 @@ let all_orphans =
       in
       equal (list string) [ "m" ] keys)
 
-(* Below 100 columns the nav line counts the cursor's run among the runs
-   kept. Past 30 runs every experiment but the cursor's starts folded, and a
-   folded header's cursor is on its experiment's first run, which has no line
-   of its own: three experiments of 11 runs, the newest open, and 11 moves
-   down reach the second's header, whose first run is the 12th kept. *)
+(* Below 100 columns the nav line counts the cursor's run among the runs kept.
+   Past 30 runs every experiment but the cursor's starts folded, and a folded
+   header's cursor is on its experiment's first run, which has no line of its
+   own: three experiments of 11 runs, the newest open, and 11 moves down reach
+   the second's header, whose first run is the 12th kept. *)
 let nav_count =
   test "the nav line counts a folded experiment's run among the runs kept"
     (fun () ->
@@ -585,10 +604,13 @@ let nav_count =
       List.iteri
         (fun e experiment ->
           for k = 1 to 11 do
-            ignore (Fixture.write_log store ~experiment ~started:((e * 11) + k) [])
+            ignore
+              (Fixture.write_log store ~experiment ~started:((e * 11) + k) [])
           done)
         [ "first"; "second"; "third" ];
-      let screen = show ~cols:90 ~rows:30 store Munin_tui.Runs (times 11 (char 'j')) in
+      let screen =
+        show ~cols:90 ~rows:30 store Munin_tui.Runs (times 11 (char 'j'))
+      in
       (* The nav line's count: what follows its [›], up to a double space. *)
       let count =
         match T.Screen.find screen "›  " with
@@ -602,10 +624,10 @@ let nav_count =
 (* What the dashboard holds *)
 
 (* A run that a sample arrived from stays live through depths, cursor moves and
-   the runs looked at in between: the dashboard holds what it read of a run
-   with its arrivals while it shows the run. Each case logs a new step of
-   tidy-otter while the dashboard watches, then takes the keys, and reads
-   tidy-otter's glyph back in the runs pane, [●] for live. *)
+   the runs looked at in between: the dashboard holds what it read of a run with
+   its arrivals while it shows the run. Each case logs a new step of tidy-otter
+   while the dashboard watches, then takes the keys, and reads tidy-otter's
+   glyph back in the runs pane, [●] for live. *)
 let held =
   let key_gen =
     Gen.with_pp
@@ -629,12 +651,11 @@ let held =
                (1, constant (Text "]"));
              ]))
   in
-  (* Each case starts a writer and runs a session of up to 18 s of polls,
-     about 50 ms: the law's time is its 30 sessions. *)
-  prop ~count:30 "a live run stays live through depths and cursor moves"
-    key_gen (fun keys ->
-      (* Two runs, so that j and k move the cursor off tidy-otter and
-         back. *)
+  (* Each case starts a writer and runs a session of up to 18 s of polls, about
+     50 ms: the law's time is its 30 sessions. *)
+  prop ~count:30 "a live run stays live through depths and cursor moves" key_gen
+    (fun keys ->
+      (* Two runs, so that j and k move the cursor off tidy-otter and back. *)
       with_store Fixture.[ short_running; short_amber ] @@ fun store ->
       let script _ = feed store Fixture.short_running ~step:650 in
       cover "the keys open a run" (List.mem (Key Enter) keys);
@@ -668,7 +689,8 @@ let held =
    is never missed. Any fold of it would fail and name the run. *)
 let kept_pane =
   test "a cursor back on an ended run reads nothing of it" (fun () ->
-      with_store Fixture.[ short_running; short_amber; short_brisk ] @@ fun store ->
+      with_store Fixture.[ short_running; short_amber; short_brisk ]
+      @@ fun store ->
       let log =
         Filename.concat
           (Run.dir (Option.get (Store.run store (id_of Fixture.short_amber))))
@@ -737,17 +759,17 @@ let ended_away =
         T.advance t (3 * second);
         T.Terminal.screen term
       in
-      (* The last 50 samples, all 9, are what the legend gives at the run's
-         last step. *)
+      (* The last 50 samples, all 9, are what the legend gives at the run's last
+         step. *)
       equal ~msg:"the legend" (option string) (Some "━ late-end 9")
         (legend_entry screen "late-end");
       equal ~msg:"the run pane" (option string) (Some "✓ late-end  finished")
         (run_pane_heading screen))
 
-(* A run ends between two timer polls after logging its last samples, while
-   the dashboard draws it as a trend only (the cursor is on another run) or as
-   the cursor's strips with no readout of its metric: what it draws of the run
-   is what it draws of the same run read whole after its end. *)
+(* A run ends between two timer polls after logging its last samples, while the
+   dashboard draws it as a trend only (the cursor is on another run) or as the
+   cursor's strips with no readout of its metric: what it draws of the run is
+   what it draws of the same run read whole after its end. *)
 let ended_between =
   let late ~between keys =
     with_store [ Fixture.short_amber ] @@ fun store ->
@@ -800,7 +822,9 @@ let ended_between =
         part y ^ "\n" ^ part (y + 1)
     | [] -> fail "no strip of val/loss"
   in
-  cases ~id:(fun (n, _, _) -> n) "a run that ends between polls is drawn as if read whole"
+  cases
+    ~id:(fun (n, _, _) -> n)
+    "a run that ends between polls is drawn as if read whole"
     [ ("trend", [ char 'j' ], trend); ("strip", [ Key Enter ], strip) ]
     (fun (_, keys, part) ->
       equal string
@@ -849,8 +873,8 @@ let observed screen =
     let _, style = T.Screen.cell screen ~row ~col in
     Matrix.Ansi.Attr.mem Bold style.Matrix.Ansi.Style.attrs
   in
-  (* The crumbs follow blanks, one column each, so a byte offset in the row
-     is their column; each crumb is 9 columns after the one before. *)
+  (* The crumbs follow blanks, one column each, so a byte offset in the row is
+     their column; each crumb is 9 columns after the one before. *)
   let crumbs = before last "charts › strips › zoom" in
   if holds "↑↓ scroll" last then "info"
   else if holds "esc close" last then "help"
@@ -860,7 +884,11 @@ let observed screen =
     | None -> "unknown: " ^ String.trim last
     | Some lead -> (
         let at = String.length lead in
-        match List.find_opt (fun (d, _) -> bold (at + (9 * d))) [ (0, "charts"); (1, "strips"); (2, "zoom") ] with
+        match
+          List.find_opt
+            (fun (d, _) -> bold (at + (9 * d)))
+            [ (0, "charts"); (1, "strips"); (2, "zoom") ]
+        with
         | Some (_, name) -> name
         | None -> "unknown: " ^ String.trim last)
 
@@ -870,10 +898,9 @@ let model_name st =
   else if st.info then "info"
   else match st.depth with 0 -> "charts" | 1 -> "strips" | _ -> "zoom"
 
-(* The keys of the navigation. In the filter [q], [?] and [j] are typed,
-   and are in no name, id, experiment, tag, state or param of the run, so a
-   filter with text keeps no run, and Enter and [i] then have no run to act
-   on. *)
+(* The keys of the navigation. In the filter [q], [?] and [j] are typed, and are
+   in no name, id, experiment, tag, state or param of the run, so a filter with
+   text keeps no run, and Enter and [i] then have no run to act on. *)
 let nav_keys =
   [ Key Enter; Key Escape; Text "i"; Text "?"; Text "/"; Text "q"; Text "j" ]
 
@@ -883,12 +910,11 @@ let key_name = function
   | Key Escape -> "Esc"
   | Key _ | Chord _ -> "key"
 
-(* A key the model takes from [st]: outside the filter [q] quits, which ends
-   the session, and in it [i] and [/] are typed, which the run's state word
-   [silent] and others may hold: both are left out. *)
+(* A key the model takes from [st]: outside the filter [q] quits, which ends the
+   session, and in it [i] and [/] are typed, which the run's state word [silent]
+   and others may hold: both are left out. *)
 let takes st k =
-  if st.typing then not (List.mem k [ Text "i"; Text "/" ])
-  else k <> Text "q"
+  if st.typing then not (List.mem k [ Text "i"; Text "/" ]) else k <> Text "q"
 
 let start_state =
   {
@@ -900,8 +926,8 @@ let start_state =
     typed = false;
   }
 
-(* [path ~from goal] is the fewest keys that take the model from [from] to
-   a state [goal] holds of, by breadth first search. *)
+(* [path ~from goal] is the fewest keys that take the model from [from] to a
+   state [goal] holds of, by breadth first search. *)
 let path ~from goal =
   let seen = Hashtbl.create 64 in
   let rec go = function
@@ -925,8 +951,8 @@ let path ~from goal =
   Hashtbl.add seen from ();
   go [ (from, []) ]
 
-(* Every state the keys reach from the start, each with the fewest keys
-   that reach it. *)
+(* Every state the keys reach from the start, each with the fewest keys that
+   reach it. *)
 let reachable =
   let seen = Hashtbl.create 64 in
   let rec go acc = function
@@ -948,23 +974,22 @@ let reachable =
   Hashtbl.add seen start_state ();
   go [] [ (start_state, []) ]
 
-(* From each state the keys reach, each key once: the dashboard of one run
-   shows what the model of the keys table says, its depth or layer and
-   whether its filter keeps no run, a refused Enter or [i] and Esc
-   clearing the filter included. A row reaches its state,
-   takes a key, and comes back by the fewest keys, so one session checks
-   every key from the state. *)
+(* From each state the keys reach, each key once: the dashboard of one run shows
+   what the model of the keys table says, its depth or layer and whether its
+   filter keeps no run, a refused Enter or [i] and Esc clearing the filter
+   included. A row reaches its state, takes a key, and comes back by the fewest
+   keys, so one session checks every key from the state. *)
 let navigation =
   cases
     ~id:(fun (_, keys) ->
       if keys = [] then "the start"
       else String.concat " " (List.map key_name keys))
-    "each key goes where the keys table says, from every state"
-    reachable
+    "each key goes where the keys table says, from every state" reachable
     (fun (st, keys) ->
       with_store ~name:"navigation" [] @@ fun store ->
       ignore
-        (Fixture.write_log store (List.init 20 (fun i -> Fixture.sample (i, 1.))));
+        (Fixture.write_log store
+           (List.init 20 (fun i -> Fixture.sample (i, 1.))));
       setenv "TZ" (Some "UTC");
       let term = T.Terminal.create ~cols:120 ~rows:40 () in
       (elapsed := fun () -> 0);
@@ -983,15 +1008,16 @@ let navigation =
             press k;
             let n = model_key st k in
             let screen = T.Terminal.screen term in
-            (* Whether the kept filter keeps no run, which the centre says
-               where help or the run's facts do not cover it; while a
-               filter is typed the interface states nothing of it. *)
+            (* Whether the kept filter keeps no run, which the centre says where
+               help or the run's facts do not cover it; while a filter is typed
+               the interface states nothing of it. *)
             let hidden = n.help || n.info || n.typing in
             let says_none =
               if hidden then None
               else Some (T.Screen.find screen "no run matches the filter" <> [])
             in
-            equal ~msg:("after " ^ key_name k)
+            equal
+              ~msg:("after " ^ key_name k)
               (pair string (option bool))
               (model_name n, if hidden then None else Some (keeps_none n))
               (observed screen, says_none);
@@ -1006,8 +1032,7 @@ let six store =
   List.iter
     (fun k ->
       ignore
-        (Fixture.write_log store ~started:k
-           ~name:(Printf.sprintf "r%d" k)
+        (Fixture.write_log store ~started:k ~name:(Printf.sprintf "r%d" k)
            (List.init 20 (fun i -> Fixture.sample (i, Float.of_int (i * k))))))
     [ 1; 2; 3; 4; 5; 6 ]
 
@@ -1020,8 +1045,8 @@ let listed screen =
         (String.split_on_char ' ' (pane screen y)))
     (List.init (T.Screen.rows screen) Fun.id)
 
-(* The names the legend gives, on the row of its first entry: the word
-   after each [━ ]. *)
+(* The names the legend gives, on the row of its first entry: the word after
+   each [━ ]. *)
 let legend screen =
   match List.filter (fun (_, x) -> x > 42) (T.Screen.find screen "━ ") with
   | (y, _) :: _ ->
@@ -1030,7 +1055,8 @@ let legend screen =
         | None -> []
         | Some head ->
             let rest =
-              String.sub r (String.length head + String.length "━ ")
+              String.sub r
+                (String.length head + String.length "━ ")
                 (String.length r - String.length head - String.length "━ ")
             in
             List.hd (String.split_on_char ' ' rest) :: names rest
@@ -1085,9 +1111,9 @@ let train_store store =
 let shift = { Matrix.Input.Keystroke.no_mods with shift = true }
 let ctrl = { Matrix.Input.Keystroke.no_mods with ctrl = true }
 
-(* Keys the table gives as one another: the screen after each is the
-   same. At zoom, at 120 columns, the screen holds no time that the keys'
-   seconds would change. *)
+(* Keys the table gives as one another: the screen after each is the same. At
+   zoom, at 120 columns, the screen holds no time that the keys' seconds would
+   change. *)
 let alike =
   cases
     ~id:(fun (name, _, _) -> name)
@@ -1100,9 +1126,9 @@ let alike =
         [ Key Escape; Key Down; char 'k' ],
         [ Key Escape; Key Down; Key Up ] );
       ("shift left is ten lefts", [ Chord (shift, Left) ], times 10 (Key Left));
-      ("shift right is ten rights",
+      ( "shift right is ten rights",
         times 12 (Key Left) @ [ Chord (shift, Right) ],
-        times 2 (Key Left));
+        times 2 (Key Left) );
       ("- undoes +", [ char '+'; char '-' ], []);
     ]
     (fun (_, a, b) ->
@@ -1117,8 +1143,11 @@ let alike =
 
 let smoothing =
   cases ~id:fst "s turns smoothing off and on, as zoom's title says"
-    [ ("smoothed", ([], true)); ("s", ([ char 's' ], false));
-      ("s s", ([ char 's'; char 's' ], true)) ]
+    [
+      ("smoothed", ([], true));
+      ("s", ([ char 's' ], false));
+      ("s s", ([ char 's'; char 's' ], true));
+    ]
     (fun (_, (keys, smoothed)) ->
       with_store ~name:"smoothing" [] @@ fun store ->
       train_store store;
@@ -1174,9 +1203,9 @@ let ctrl_c =
       in
       equal string "ended" (if ended then "ended" else "running"))
 
-(* A resize changes the charts' dot columns: until the poll that reduces
-   the series to them ends, the chart draws its axes alone, then its line.
-   The polls wait in a queue until the test lets them run. *)
+(* A resize changes the charts' dot columns: until the poll that reduces the
+   series to them ends, the chart draws its axes alone, then its line. The polls
+   wait in a queue until the test lets them run. *)
 let resized =
   test "after a resize a chart draws its axes alone until its poll" (fun () ->
       with_store ~name:"resized" [] @@ fun store ->
@@ -1243,14 +1272,14 @@ let unknown_run =
       | Error why ->
           satisfies ~claim:"names the run" string (holds "absent") why)
 
-(* The seconds a child may take: a dashboard that starts there waits on
-   input forever, and the alarm ends it. *)
+(* The seconds a child may take: a dashboard that starts there waits on input
+   forever, and the alarm ends it. *)
 let child_limit = 5
 
-(* [without_terminal f] is what [f ()] returns as text in a child whose
-   standard input and output are [/dev/null], not terminals, read back
-   through a pipe, and how the child ended. The child exits on every path,
-   an exception's text its output, and the parent reaps it. *)
+(* [without_terminal f] is what [f ()] returns as text in a child whose standard
+   input and output are [/dev/null], not terminals, read back through a pipe,
+   and how the child ended. The child exits on every path, an exception's text
+   its output, and the parent reaps it. *)
 let without_terminal f =
   let r, w = Unix.pipe ~cloexec:true () in
   match Unix.fork () with
@@ -1315,38 +1344,60 @@ let never_writes =
       ignore
         (show ~cols:120 ~rows:40 store Munin_tui.Runs
            [
-             Key Enter; Key Enter; char '+'; Key Escape; char 'i'; Key Escape;
-             char '?'; Key Escape; Text " "; char 'r'; char 's'; char 'y';
-             char 'o'; char 'e'; char '/'; char 'x'; Key Escape;
+             Key Enter;
+             Key Enter;
+             char '+';
+             Key Escape;
+             char 'i';
+             Key Escape;
+             char '?';
+             Key Escape;
+             Text " ";
+             char 'r';
+             char 's';
+             char 'y';
+             char 'o';
+             char 'e';
+             char '/';
+             char 'x';
+             Key Escape;
            ]);
       equal
         (list (pair string (pair int float_exact)))
         before
         (tree (Store.root store)))
 
-(* Where the runs pane is hidden, the filter shows it while it is typed:
-   the text typed is in its line, and Enter keeps it. *)
+(* Where the runs pane is hidden, the filter shows it while it is typed: the
+   text typed is in its line, and Enter keeps it. *)
 let hidden_filter =
   test "the filter shows the runs pane where it is hidden" (fun () ->
-      with_store ~name:"hidden" Fixture.[ short_running; short_amber ] @@ fun store ->
+      with_store ~name:"hidden" Fixture.[ short_running; short_amber ]
+      @@ fun store ->
       List.iter
         (fun (what, cols, rows, hide) ->
-          let typing = show ~cols ~rows store Munin_tui.Runs (hide @ [ char '/'; Text "cifar" ]) in
+          let typing =
+            show ~cols ~rows store Munin_tui.Runs
+              (hide @ [ char '/'; Text "cifar" ])
+          in
           let lines =
             List.filter (holds "/ cifar")
               (List.init (T.Screen.rows typing) (T.Screen.row typing))
           in
-          equal ~msg:(what ^ ": lines with the filter typed") int 1 (List.length lines);
-          let kept = show ~cols ~rows store Munin_tui.Runs (hide @ [ char '/'; Text "cifar"; Key Enter ]) in
+          equal
+            ~msg:(what ^ ": lines with the filter typed")
+            int 1 (List.length lines);
+          let kept =
+            show ~cols ~rows store Munin_tui.Runs
+              (hide @ [ char '/'; Text "cifar"; Key Enter ])
+          in
           equal ~msg:(what ^ ": after Enter") string "charts" (observed kept))
         [ ("80 columns", 80, 24, []); ("hidden by 1", 120, 40, [ char '1' ]) ])
 
 (* The strips scroll *)
 
-(* At 120 columns the strips own the centre: a strip's first row holds [▌]
-   at column 35 for the cursor's, or a blank, then its label. *)
+(* At 120 columns the strips own the centre: a strip's first row holds [▌] at
+   column 35 for the cursor's, or a blank, then its label. *)
 let strip_col = 35
-
 let strip_cell screen row col = fst (T.Screen.cell screen ~row ~col)
 
 (* [strip_label screen row] is the label of the strip whose first row is
@@ -1356,9 +1407,9 @@ let strip_label screen row =
     (String.concat ""
        (List.init 16 (fun i -> strip_cell screen row (strip_col + 1 + i))))
 
-(* [strip_rows screen] is the first row of each strip shown: below the
-   legend, whose rule starts at the strips' column, and above the status
-   bar, a mark or a blank at the strips' column and a label after it. *)
+(* [strip_rows screen] is the first row of each strip shown: below the legend,
+   whose rule starts at the strips' column, and above the status bar, a mark or
+   a blank at the strips' column and a label after it. *)
 let strip_rows screen =
   let at = strip_cell screen in
   let rows = List.init (T.Screen.rows screen - 1) Fun.id in
@@ -1387,14 +1438,15 @@ let strips screen =
    strips shown: a move to a strip shown leaves them where they are. *)
 let strips_scroll =
   (* One run, whose strips are its own beside any other. *)
-  let store =
-    lazy
-      (shared_store "strips"
-         [ Fixture.short_running ])
+  let store = lazy (shared_store "strips" [ Fixture.short_running ]) in
+  let move =
+    Gen.of_list
+      ~pp:(fun ppf k ->
+        Format.pp_print_string ppf (if k = "j" then "down" else "up"))
+      [ "j"; "k" ]
   in
-  let move = Gen.of_list ~pp:(fun ppf k -> Format.pp_print_string ppf (if k = "j" then "down" else "up")) [ "j"; "k" ] in
-  (* Twelve moves down pass the strips 20 rows show, so every case scrolls;
-     the moves drawn after go either way. *)
+  (* Twelve moves down pass the strips 20 rows show, so every case scrolls; the
+     moves drawn after go either way. *)
   let down = List.init 12 (fun _ -> "j") in
   prop ~count:15 "a strip's move scrolls the least that shows it"
     (Gen.list ~size:(Gen.int_range 0 16) move)
@@ -1418,36 +1470,51 @@ let strips_scroll =
              let screen = T.Terminal.screen term in
              let shown', cursor = strips screen in
              (match cursor with
-             | None -> fail ("the cursor's strip is not shown whole:\n" ^ T.Screen.text screen)
+             | None ->
+                 fail
+                   ("the cursor's strip is not shown whole:\n"
+                  ^ T.Screen.text screen)
              | Some c ->
-                 if List.mem c shown then equal ~msg:("after " ^ k) (list string) shown shown'
+                 if List.mem c shown then
+                   equal ~msg:("after " ^ k) (list string) shown shown'
                  else scrolled := true);
              (shown', cursor))
            (strips (T.Terminal.screen term))
            moves);
       cover "a move scrolls" !scrolled)
 
-(* [strip_ink screen] is, for each strip under the legend whose two rows
-   are above the status bar, its label and its braille dots, each its dot
-   column, its dot row and its colour. *)
+(* [strip_ink screen] is, for each strip under the legend whose two rows are
+   above the status bar, its label and its braille dots, each its dot column,
+   its dot row and its colour. *)
 let strip_ink screen =
   let dots ~top row col =
     let ch, style = T.Screen.cell screen ~row ~col in
-    let cp = if ch = "" then 0 else Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar ch 0)) in
+    let cp =
+      if ch = "" then 0
+      else Uchar.to_int (Uchar.utf_decode_uchar (String.get_utf_8_uchar ch 0))
+    in
     if cp < 0x2800 || cp > 0x28FF then []
     else
       List.filter_map
         (fun (bit, dx, dy) ->
           if (cp - 0x2800) land bit = 0 then None
-          else Some ((2 * col) + dx, (4 * (row - top)) + dy, style.Matrix.Ansi.Style.fg))
+          else
+            Some
+              ( (2 * col) + dx,
+                (4 * (row - top)) + dy,
+                style.Matrix.Ansi.Style.fg ))
         braille_dots
   in
   let cols = List.init (T.Screen.cols screen) Fun.id in
-  let ink top = List.concat_map (fun row -> List.concat_map (dots ~top row) cols) [ top; top + 1 ] in
+  let ink top =
+    List.concat_map
+      (fun row -> List.concat_map (dots ~top row) cols)
+      [ top; top + 1 ]
+  in
   List.map (fun row -> (strip_label screen row, ink row)) (strip_rows screen)
 
-(* The strips of a run that recorded readings end with its machine's, live
-   or ended: the readings the run pane gives, in its order. *)
+(* The strips of a run that recorded readings end with its machine's, live or
+   ended: the readings the run pane gives, in its order. *)
 let machine_strips =
   cases
     ~id:(fun (name, _) -> name)
@@ -1490,27 +1557,32 @@ let machine_strips =
       List.iter
         (fun (label, ink) ->
           if List.mem label last then
-            let columns = List.sort_uniq compare (List.map (fun (c, _, _) -> c) ink) in
+            let columns =
+              List.sort_uniq compare (List.map (fun (c, _, _) -> c) ink)
+            in
             let floored =
               List.sort_uniq compare
-                (List.filter_map (fun (c, r, _) -> if r = 7 then Some c else None) ink)
+                (List.filter_map
+                   (fun (c, r, _) -> if r = 7 then Some c else None)
+                   ink)
             in
             begin
               not_equal ~msg:(label ^ ": its columns") (list int) [] columns;
-              equal ~msg:(label ^ ": its columns at the floor") (list int)
-                columns floored
+              equal
+                ~msg:(label ^ ": its columns at the floor")
+                (list int) columns floored
             end)
         (strip_ink screen))
 
 (* [last_dot ink] is the rightmost dot column of [ink]. *)
 let last_dot ink = List.fold_left (fun e (c, _, _) -> max e c) (-1) ink
 
-(* Law 1: the strips share one x axis, so that a column is one moment in
-   each. The cursor's run ended at step 3,000 with [m], [n] and readings of
-   its GPU's memory; the overlay ended at 5,000 with [m] alone. The cursor's
-   line ends in one dot column in every strip, though the overlay widens
-   neither [n]'s nor the machine's. The cursor's colour is that of [n],
-   which the overlay does not draw. *)
+(* Law 1: the strips share one x axis, so that a column is one moment in each.
+   The cursor's run ended at step 3,000 with [m], [n] and readings of its GPU's
+   memory; the overlay ended at 5,000 with [m] alone. The cursor's line ends in
+   one dot column in every strip, though the overlay widens neither [n]'s nor
+   the machine's. The cursor's colour is that of [n], which the overlay does not
+   draw. *)
 let shared_axis =
   test "the strips share one x axis" (fun () ->
       with_store ~name:"shared" [] @@ fun store ->
@@ -1518,33 +1590,41 @@ let shared_axis =
       let ended = Fixture.finished in
       ignore
         (Fixture.write_log store ~declare ~started:1
-           (List.init 51 (fun k -> Fixture.values (k * 100) [ ("m", 1.) ]) @ [ ended ]));
+           (List.init 51 (fun k -> Fixture.values (k * 100) [ ("m", 1.) ])
+           @ [ ended ]));
       let cursor k =
         [
           Fixture.values (k * 100) [ ("m", 0.); ("n", 0.) ];
           Fixture.reading ~time:2. (k * 100) [ ("dev/CUDA:0/used_bytes", 1e9) ];
         ]
       in
-      ignore (Fixture.write_log store ~declare ~started:2 (List.concat (List.init 31 cursor) @ [ ended ]));
+      ignore
+        (Fixture.write_log store ~declare ~started:2
+           (List.concat (List.init 31 cursor) @ [ ended ]));
       (* The cursor's run, the newest, is the first row: overlay the second,
          come back and open the strips. *)
       let screen =
-        show ~cols:120 ~rows:40 store Munin_tui.Runs [ char 'j'; Text " "; char 'k'; Key Enter ]
+        show ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ char 'j'; Text " "; char 'k'; Key Enter ]
       in
       let strips = strip_ink screen in
-      equal ~msg:"the strips" (list string) [ "m"; "n"; "VRAM" ] (List.map fst strips);
-      let colour = match List.assoc "n" strips with (_, _, c) :: _ -> c | [] -> None in
-      let mine key = List.filter (fun (_, _, c) -> c = colour) (List.assoc key strips) in
+      equal ~msg:"the strips" (list string) [ "m"; "n"; "VRAM" ]
+        (List.map fst strips);
+      let colour =
+        match List.assoc "n" strips with (_, _, c) :: _ -> c | [] -> None
+      in
+      let mine key =
+        List.filter (fun (_, _, c) -> c = colour) (List.assoc key strips)
+      in
       let n = last_dot (mine "n") in
       equal ~msg:"the cursor's last dot column in m" int n (last_dot (mine "m"));
       equal ~msg:"its last in VRAM" int n (last_dot (List.assoc "VRAM" strips)))
 
-(* A reading is drawn at the step it carries, the run's latest step when it
-   was read, so its column is the column of a metric's sample at that step.
-   The run reads its GPU's memory at step 0 before its first sample of [m],
-   then at each of [m]'s steps from 300 to 600; [n] spans the steps 0 to
-   1,000. The machine's strip starts in [n]'s first dot column and ends in
-   [m]'s last. *)
+(* A reading is drawn at the step it carries, the run's latest step when it was
+   read, so its column is the column of a metric's sample at that step. The run
+   reads its GPU's memory at step 0 before its first sample of [m], then at each
+   of [m]'s steps from 300 to 600; [n] spans the steps 0 to 1,000. The machine's
+   strip starts in [n]'s first dot column and ends in [m]'s last. *)
 let reading_steps =
   test "a reading is drawn at its step" (fun () ->
       with_store ~name:"reading-steps" [] @@ fun store ->
@@ -1552,25 +1632,43 @@ let reading_steps =
       let vram = "dev/CUDA:0/used_bytes" in
       let n = List.init 101 (fun k -> Fixture.values (k * 10) [ ("n", 1.) ]) in
       let paired k =
-        [ Fixture.values (k * 10) [ ("m", 1.) ]; Fixture.reading ~time:2. (k * 10) [ (vram, 1e9) ] ]
+        [
+          Fixture.values (k * 10) [ ("m", 1.) ];
+          Fixture.reading ~time:2. (k * 10) [ (vram, 1e9) ];
+        ]
       in
-      let read = (Fixture.reading ~time:2. 0 [ (vram, 1e9) ] :: n) @ List.concat (List.init 31 (fun k -> paired (30 + k))) in
-      let id, _ = Fixture.write_log store ~declare (read @ [ Fixture.finished ]) in
-      let strips = strip_ink (show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [ Key Enter ]) in
-      equal ~msg:"the strips" (list string) [ "m"; "n"; "VRAM" ] (List.map fst strips);
+      let read =
+        (Fixture.reading ~time:2. 0 [ (vram, 1e9) ] :: n)
+        @ List.concat (List.init 31 (fun k -> paired (30 + k)))
+      in
+      let id, _ =
+        Fixture.write_log store ~declare (read @ [ Fixture.finished ])
+      in
+      let strips =
+        strip_ink
+          (show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [ Key Enter ])
+      in
+      equal ~msg:"the strips" (list string) [ "m"; "n"; "VRAM" ]
+        (List.map fst strips);
       let first ink = List.fold_left (fun e (c, _, _) -> min e c) max_int ink in
       let ink key = List.assoc key strips in
-      equal ~msg:"its first dot column, n's" int (first (ink "n")) (first (ink "VRAM"));
-      equal ~msg:"its last, m's" int (last_dot (ink "m")) (last_dot (ink "VRAM")))
+      equal ~msg:"its first dot column, n's" int
+        (first (ink "n"))
+        (first (ink "VRAM"));
+      equal ~msg:"its last, m's" int
+        (last_dot (ink "m"))
+        (last_dot (ink "VRAM")))
 
-(* [resumed_log store ~crashed] is the id of a run that read 20 GB of GPU
-   memory from step 450 to 700, its records timed [crashed], then resumed
-   from step 400 at 3 s and read 1 GB from there to 1,000. *)
+(* [resumed_log store ~crashed] is the id of a run that read 20 GB of GPU memory
+   from step 450 to 700, its records timed [crashed], then resumed from step 400
+   at 3 s and read 1 GB from there to 1,000. *)
 let resumed_log store ~crashed =
   let vram = "dev/CUDA:0/used_bytes" in
   let attempt ~time ~from ~upto gb =
     List.concat
-      (List.init (((upto - from) / 50) + 1) (fun k ->
+      (List.init
+         (((upto - from) / 50) + 1)
+         (fun k ->
            let step = from + (k * 50) in
            [
              Fixture.values ~time step [ ("m", 1.) ];
@@ -1585,67 +1683,81 @@ let resumed_log store ~crashed =
   in
   fst (Fixture.write_log store records)
 
-(* A resume abandons the history after its step: the strips draw the
-   history the run kept: [resumed_log]'s machine strip draws a constant
-   1 GB, every dot column at one height. The log's order decides, so the
-   resumed writer's clock may be behind the crashed one's: the resume is
-   logged at 3 s, after readings logged at 5 s. *)
+(* A resume abandons the history after its step: the strips draw the history the
+   run kept: [resumed_log]'s machine strip draws a constant 1 GB, every dot
+   column at one height. The log's order decides, so the resumed writer's clock
+   may be behind the crashed one's: the resume is logged at 3 s, after readings
+   logged at 5 s. *)
 let resumed_readings =
   cases "a resume leaves the readings it abandoned out of the strips"
     ~id:(fun (name, _) -> name)
-    [ ("the resumed writer's clock ahead", 2.); ("the resumed writer's clock behind", 5.) ]
+    [
+      ("the resumed writer's clock ahead", 2.);
+      ("the resumed writer's clock behind", 5.);
+    ]
     (fun (_, crashed) ->
       with_store ~name:"resumed" [] @@ fun store ->
       let id = resumed_log store ~crashed in
-      let strips = strip_ink (show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [ Key Enter ]) in
+      let strips =
+        strip_ink
+          (show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [ Key Enter ])
+      in
       let tops = Hashtbl.create 64 in
       List.iter
         (fun (c, r, _) ->
           let top = Option.value (Hashtbl.find_opt tops c) ~default:max_int in
           Hashtbl.replace tops c (min top r))
         (List.assoc "VRAM" strips);
-      let heights = List.sort_uniq compare (Hashtbl.fold (fun _ r acc -> r :: acc) tops []) in
+      let heights =
+        List.sort_uniq compare (Hashtbl.fold (fun _ r acc -> r :: acc) tops [])
+      in
       equal ~msg:"the top dot rows of its columns" (list int)
-        [ List.hd heights ] heights)
+        [ List.hd heights ]
+        heights)
 
 (* Zoom's cursor walks the samples the chart draws: on the VRAM of
-   [resumed_log]'s run, twelve moves left from the latest step reach step
-   400, the resumed attempt's first, and one more stays there, below the
-   abandoned steps. *)
+   [resumed_log]'s run, twelve moves left from the latest step reach step 400,
+   the resumed attempt's first, and one more stays there, below the abandoned
+   steps. *)
 let resumed_cursor =
   test "zoom's cursor skips the readings a resume abandoned" (fun () ->
       with_store ~name:"resumed-cursor" [] @@ fun store ->
       let id = resumed_log store ~crashed:2. in
       let zoom = [ Key Enter; Key Down; Key Enter ] in
       let at lefts =
-        let screen = show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) (zoom @ times lefts (Key Left)) in
-        List.find_opt (fun s -> holds ("at step " ^ s) (T.Screen.text screen)) [ "400"; "700"; "1,000" ]
+        let screen =
+          show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id))
+            (zoom @ times lefts (Key Left))
+        in
+        List.find_opt
+          (fun s -> holds ("at step " ^ s) (T.Screen.text screen))
+          [ "400"; "700"; "1,000" ]
       in
       equal ~msg:"the start" (option string) (Some "1,000") (at 0);
       equal ~msg:"twelve moves left" (option string) (Some "400") (at 12);
       equal ~msg:"one more" (option string) (Some "400") (at 13))
 
-(* The strips list shows whole strips: at any height and after any moves,
-   the strips from a first, in order, right under the legend, the cursor's
-   among them, as many as fit, and a line that says how many follow. A
-   strip takes three lines with the gap under it, the machine's header one
-   more over its first strip shown, and the line of those that follow two
-   with its gap. *)
+(* The strips list shows whole strips: at any height and after any moves, the
+   strips from a first, in order, right under the legend, the cursor's among
+   them, as many as fit, and a line that says how many follow. A strip takes
+   three lines with the gap under it, the machine's header one more over its
+   first strip shown, and the line of those that follow two with its gap. *)
 let strips_whole =
   (* One run, whose strips are its own beside any other. *)
-  let store =
-    lazy
-      (shared_store "whole" [ Fixture.short_running ])
-  in
+  let store = lazy (shared_store "whole" [ Fixture.short_running ]) in
   let start = Munin_tui.Run (Some (id_of Fixture.short_running)) in
   let every =
-    lazy (fst (strips (show ~cols:120 ~rows:100 (Lazy.force store) start [ Key Enter ])))
+    lazy
+      (fst
+         (strips
+            (show ~cols:120 ~rows:100 (Lazy.force store) start [ Key Enter ])))
   in
   let machine = [ "GPU busy"; "VRAM"; "CPU busy"; "RAM" ] in
   let gen =
     Gen.(
       with_pp
-        (fun ppf (rows, downs) -> Format.fprintf ppf "%d rows, %d down" rows downs)
+        (fun ppf (rows, downs) ->
+          Format.fprintf ppf "%d rows, %d down" rows downs)
         (pair (int_range 16 40) (int_range 0 24)))
   in
   prop ~count:20
@@ -1656,7 +1768,8 @@ let strips_whole =
       let every = Lazy.force every in
       let n = List.length every in
       let screen =
-        show ~cols:120 ~rows (Lazy.force store) start (Key Enter :: times downs (Key Down))
+        show ~cols:120 ~rows (Lazy.force store) start
+          (Key Enter :: times downs (Key Down))
       in
       let at = strip_cell screen and label = strip_label screen in
       let status = rows - 1 in
@@ -1667,7 +1780,11 @@ let strips_whole =
       let firsts = strip_rows screen in
       let shown = List.map label firsts in
       let k = List.length shown in
-      let first = match shown with [] -> n | s :: _ -> Option.value (List.find_index (( = ) s) every) ~default:n in
+      let first =
+        match shown with
+        | [] -> n
+        | s :: _ -> Option.value (List.find_index (( = ) s) every) ~default:n
+      in
       let follows = n - first - k in
       let header = List.exists (fun s -> List.mem s machine) shown in
       cover "strips are hidden above" (first > 0);
@@ -1679,43 +1796,58 @@ let strips_whole =
         (List.filteri (fun i _ -> i >= first && i < first + k) every)
         shown;
       List.iter
-        (fun row -> at_most ~msg:("the second row of " ^ label row) int ~than:(status - 1) (row + 1))
+        (fun row ->
+          at_most
+            ~msg:("the second row of " ^ label row)
+            int ~than:(status - 1) (row + 1))
         firsts;
-      let top = if header && List.mem (List.hd shown) machine then legend + 3 else legend + 2 in
+      let top =
+        if header && List.mem (List.hd shown) machine then legend + 3
+        else legend + 2
+      in
       equal ~msg:"the first strip's row" int top (List.hd firsts);
-      let mores = List.filter (fun row -> holds " more" (T.Screen.row screen row)) lines in
-      let expected = if follows = 0 then [] else [ Printf.sprintf "+%d more" follows ] in
+      let mores =
+        List.filter (fun row -> holds " more" (T.Screen.row screen row)) lines
+      in
+      let expected =
+        if follows = 0 then [] else [ Printf.sprintf "+%d more" follows ]
+      in
       equal ~msg:"the line of those that follow" (list string) expected
-        (List.map (fun row -> String.trim (String.concat "" (List.init 10 (fun i -> at row (strip_col + i))))) mores);
-      (* The lines no strip, gap or line of those that follow takes cannot
-         hold the strip after the last shown, nor, when none follows, the
-         one before the first. The last strip's gap is room when none
-         follows. *)
+        (List.map
+           (fun row ->
+             String.trim
+               (String.concat ""
+                  (List.init 10 (fun i -> at row (strip_col + i)))))
+           mores);
+      (* The lines no strip, gap or line of those that follow takes cannot hold
+         the strip after the last shown, nor, when none follows, the one before
+         the first. The last strip's gap is room when none follows. *)
       let last = List.nth firsts (k - 1) in
       let room = status - if follows > 0 then last + 4 else last + 2 in
       let need =
         if follows = 0 then 3
         else
-          let next_header = (not header) && List.mem (List.nth every (first + k)) machine in
+          let next_header =
+            (not header) && List.mem (List.nth every (first + k)) machine
+          in
           (if follows = 1 then 1 else 3) + if next_header then 1 else 0
       in
-      if first > 0 || follows > 0 then less ~msg:"the lines left" int ~than:need room)
+      if first > 0 || follows > 0 then
+        less ~msg:"the lines left" int ~than:need room)
 
 (* The data path *)
 
 (* One poll at a time. A poll asked for while one runs waits for it, and the
-   asks made meanwhile make one poll after it. The polls run off the loop:
-   here each waits in a queue until the test releases the oldest. A tick
-   asks for one, and so does a key that moves the cursor, once the first
-   poll chose it; a poll's result may ask for another, for what the screen
-   it chose lacks. *)
+   asks made meanwhile make one poll after it. The polls run off the loop: here
+   each waits in a queue until the test releases the oldest. A tick asks for
+   one, and so does a key that moves the cursor, once the first poll chose it; a
+   poll's result may ask for another, for what the screen it chose lacks. *)
 type phase = Idle | Reading | Again
-
 type path = { phase : phase; cursor : int; chosen : bool }
 
 let data_path_test =
-  (* Three runs of a few samples, so that the cursor's moves meet both ends
-     of the list: the newest without an end, the others ended. *)
+  (* Three runs of a few samples, so that the cursor's moves meet both ends of
+     the list: the newest without an end, the others ended. *)
   let store =
     lazy
       (let root = Filename.concat (Lazy.force shared) "path" in
@@ -1731,8 +1863,8 @@ let data_path_test =
   in
   let last = 2 in
   let path = abstract "p" in
-  (* The system: the calls so far, replayed on a fresh dashboard each time,
-     and the number of polls that wait after the last. *)
+  (* The system: the calls so far, replayed on a fresh dashboard each time, and
+     the number of polls that wait after the last. *)
   let replay calls =
     let term = T.Terminal.create ~cols:120 ~rows:40 () in
     let held = Queue.create () in
@@ -1759,7 +1891,9 @@ let data_path_test =
     replay !calls
   in
   let waiting p = match p.phase with Idle -> 0 | Reading | Again -> 1 in
-  let ask p = p := { !p with phase = (if !p.phase = Idle then Reading else Again) } in
+  let ask p =
+    p := { !p with phase = (if !p.phase = Idle then Reading else Again) }
+  in
   let key = Gen.of_list ~pp:Format.pp_print_string [ "j"; "k" ] in
   let tick =
     command "tick"
@@ -1769,9 +1903,9 @@ let data_path_test =
         waiting !p)
       (call `Tick)
   in
-  (* Each call replays every call before it on a fresh dashboard, so a
-     program of [steps] calls costs steps²/2 sessions: few steps and more
-     programs reach the cover at less cost. *)
+  (* Each call replays every call before it on a fresh dashboard, so a program
+     of [steps] calls costs steps²/2 sessions: few steps and more programs reach
+     the cover at less cost. *)
   stateful ~count:80 ~steps:8
     "one poll runs at a time, and the asks meanwhile make one after it"
     [
@@ -1786,7 +1920,9 @@ let data_path_test =
       command "key"
         (key @-> path ^-> returns int)
         (fun k p ->
-          let cursor = max 0 (min last (!p.cursor + if k = "j" then 1 else -1)) in
+          let cursor =
+            max 0 (min last (!p.cursor + if k = "j" then 1 else -1))
+          in
           if !p.chosen && cursor <> !p.cursor then begin
             p := { !p with cursor };
             ask p
@@ -1794,8 +1930,8 @@ let data_path_test =
           waiting !p)
         (fun k -> call (`Key (Text k)));
       (* The first poll chooses the cursor, so it asks for another; asks made
-         while a poll ran make one after it; any other poll may ask for what
-         the screen it read lacks. *)
+         while a poll ran make one after it; any other poll may ask for what the
+         screen it read lacks. *)
       command "release"
         (path ^-> judges int)
         (fun p outcome ->
@@ -1811,9 +1947,9 @@ let data_path_test =
         (call `Release);
     ]
 
-(* A run without a metric sample: one without an end says the charts are
-   to come, an ended one that it logged none, each on the row of the runs
-   pane's heading, as the hero is. *)
+(* A run without a metric sample: one without an end says the charts are to
+   come, an ended one that it logged none, each on the row of the runs pane's
+   heading, as the hero is. *)
 let no_sample =
   cases
     ~id:(fun (name, _, _) -> name)
@@ -1826,24 +1962,32 @@ let no_sample =
       with_store ~name:"no-sample" [] @@ fun store ->
       ignore (Fixture.write_log store ~declare:[] records);
       let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
-      let row text = match T.Screen.find screen text with (y, _) :: _ -> Some y | [] -> None in
+      let row text =
+        match T.Screen.find screen text with
+        | (y, _) :: _ -> Some y
+        | [] -> None
+      in
       equal (option int) (row "¹ runs") (row says);
       equal ~msg:"the sentence ends there" (option string) (Some "")
         (Option.map
            (fun y ->
              (* What follows the sentence, up to the run pane's border. *)
              let r = T.Screen.row screen y in
-             let at = String.length (Option.get (before r says)) + String.length says in
+             let at =
+               String.length (Option.get (before r says)) + String.length says
+             in
              let tail = String.sub r at (String.length r - at) in
              String.trim (Option.value (before tail "│") ~default:tail))
            (row says)))
 
-(* [r] with no other run of the experiment to draw: the legend has no entry
-   for them. *)
+(* [r] with no other run of the experiment to draw: the legend has no entry for
+   them. *)
 let no_others =
   test "r with no other run to draw adds no legend entry" (fun () ->
       with_store ~name:"no-others" [] @@ fun store ->
-      ignore (Fixture.write_log store (List.init 20 (fun i -> Fixture.sample (i, Float.of_int i))));
+      ignore
+        (Fixture.write_log store
+           (List.init 20 (fun i -> Fixture.sample (i, Float.of_int i))));
       let before_r = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
       let after_r = show ~cols:120 ~rows:40 store Munin_tui.Runs [ char 'r' ] in
       let others sc = List.length (T.Screen.find sc "others") in
@@ -1851,26 +1995,30 @@ let no_others =
       equal ~msg:"after r" int 0 (others after_r))
 
 (* Runs of one name, listed or drawn, each end in the end of its id, the
-   shortest that tells them apart, at least four characters; a run of a
-   name of its own has none. The ids differ in their last character. *)
+   shortest that tells them apart, at least four characters; a run of a name of
+   its own has none. The ids differ in their last character. *)
 let same_names =
   test "runs of one name are told apart by their ids" (fun () ->
       with_store ~name:"same-names" [] @@ fun store ->
       let run ?name () =
-        fst (Fixture.write_log store ?name (List.init 20 (fun i -> Fixture.sample (i, Float.of_int i))))
+        fst
+          (Fixture.write_log store ?name
+             (List.init 20 (fun i -> Fixture.sample (i, Float.of_int i))))
       in
       let ids = List.init 3 (fun _ -> run ~name:"cnn-adam" ()) in
       let lone = run ~name:"lone" () in
-      (* The cursor on the newest, lone; down to each cnn-adam to overlay
-         it, the last under the cursor. *)
-      let keys = [ char 'j'; Text " "; char 'j'; Text " "; char 'j'; Text " " ] in
+      (* The cursor on the newest, lone; down to each cnn-adam to overlay it,
+         the last under the cursor. *)
+      let keys =
+        [ char 'j'; Text " "; char 'j'; Text " "; char 'j'; Text " " ]
+      in
       let screen = show ~cols:160 ~rows:48 store Munin_tui.Runs keys in
       let tail id = String.sub id (String.length id - 4) 4 in
       List.iter
         (fun id ->
           let label = "cnn-adam " ^ tail id in
-          (* The legend's entry, whole, and the runs pane's row, left of
-             column 42, whose name gives way to the id's end. *)
+          (* The legend's entry, whole, and the runs pane's row, left of column
+             42, whose name gives way to the id's end. *)
           let pane =
             List.filter
               (fun (_, x) -> x < 42)
@@ -1882,12 +2030,14 @@ let same_names =
             (legend_entry screen label);
           equal ~msg:(tail id) int 1 (List.length pane))
         ids;
-      equal ~msg:"lone" (list (pair int int)) []
+      equal ~msg:"lone"
+        (list (pair int int))
+        []
         (T.Screen.find screen ("lone " ^ tail lone)))
 
-(* Two runs of one name whose ids share their last five characters take
-   six: the fewest that tell them apart. The strips' header keeps the
-   suffix whole and cuts the name. *)
+(* Two runs of one name whose ids share their last five characters take six: the
+   fewest that tell them apart. The strips' header keeps the suffix whole and
+   cuts the name. *)
 let long_suffixes =
   test "same-named runs whose ids end alike take longer suffixes" (fun () ->
       with_store ~name:"long-suffixes" [] @@ fun store ->
@@ -1899,14 +2049,18 @@ let long_suffixes =
       run "20261101T000000Z-00a12345";
       run "20261101T000000Z-00b12345";
       (* Overlay the newest, then the cursor to the other, and strips. *)
-      let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Text " "; char 'j'; Key Enter ] in
+      let screen =
+        show ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ Text " "; char 'j'; Key Enter ]
+      in
       List.iter
         (fun label ->
-          equal ~msg:label (option string) (Some ("━ " ^ label))
+          equal ~msg:label (option string)
+            (Some ("━ " ^ label))
             (legend_entry screen label))
         [ "cnn-adam a12345"; "cnn-adam b12345" ];
-      (* The strips' header names the overlay after [vs], up to the run
-         pane's border. *)
+      (* The strips' header names the overlay after [vs], up to the run pane's
+         border. *)
       let vs =
         List.map
           (fun (y, x) ->
@@ -1916,13 +2070,15 @@ let long_suffixes =
       in
       equal ~msg:"the header's overlay" (list string) [ "vs cn… b12345" ] vs)
 
-(* [Run None] puts the cursor on the newest run without an end that has
-   not crashed. A run written without a writer file and without an end
-   reads silent: it has no end. *)
+(* [Run None] puts the cursor on the newest run without an end that has not
+   crashed. A run written without a writer file and without an end reads silent:
+   it has no end. *)
 let run_none_newest =
   test "Run None opens on the newest run without an end" (fun () ->
       with_store ~name:"run-none" [] @@ fun store ->
-      let samples = List.init 20 (fun i -> Fixture.sample (i, Float.of_int i)) in
+      let samples =
+        List.init 20 (fun i -> Fixture.sample (i, Float.of_int i))
+      in
       ignore (Fixture.write_log store ~name:"going" ~started:1 samples);
       ignore
         (Fixture.write_log store ~name:"ended" ~started:2
@@ -1935,9 +2091,12 @@ let run_none_newest =
 let run_none_waits =
   test "Run None waits for a run to start" (fun () ->
       with_store ~name:"run-none-waits" [] @@ fun store ->
-      let samples = List.init 20 (fun i -> Fixture.sample (i, Float.of_int i)) in
+      let samples =
+        List.init 20 (fun i -> Fixture.sample (i, Float.of_int i))
+      in
       let ended = Fixture.finished in
-      ignore (Fixture.write_log store ~name:"ended" ~started:1 (samples @ [ ended ]));
+      ignore
+        (Fixture.write_log store ~name:"ended" ~started:1 (samples @ [ ended ]));
       let term = T.Terminal.create ~cols:120 ~rows:40 () in
       (elapsed := fun () -> 0);
       let app = Munin_tui.app ~clock store (Munin_tui.Run None) in
@@ -1951,7 +2110,8 @@ let run_none_waits =
         (waiting, T.Terminal.screen term)
       in
       let says screen text =
-        List.map (fun (y, _) -> String.trim (T.Screen.row screen y))
+        List.map
+          (fun (y, _) -> String.trim (T.Screen.row screen y))
           (T.Screen.find screen text)
       in
       equal ~msg:"before a run starts" (list string)
@@ -1966,57 +2126,85 @@ let run_none_waits =
    directory, param keys and error. *)
 let long_run =
   let w =
-    { Fixture.seed = 5; lr = 1e-3; warmup = 100; floor = 0.3; val_floor = 0.4; overfit = 0.;
-      rate = 2.; nan_from = None }
+    {
+      Fixture.seed = 5;
+      lr = 1e-3;
+      warmup = 100;
+      floor = 0.3;
+      val_floor = 0.4;
+      overfit = 0.;
+      rate = 2.;
+      nan_from = None;
+    }
   in
   {
-    (Fixture.sweep_run ~id:"20261101T020000Z-0c0c0c0c" ~name:"conservative-baseline"
-       ~started:1793500000.0 ~pid:9610 ~commit:Fixture.commit ~dirty:false ~tags:[] w ~upto:1130
+    (Fixture.sweep_run ~id:"20261101T020000Z-0c0c0c0c"
+       ~name:"conservative-baseline" ~started:1793500000.0 ~pid:9610
+       ~commit:Fixture.commit ~dirty:false ~tags:[] w ~upto:1130
        ~ended:
          (Some
             ( `Failed
-                "Rig.Lost (CUDA:0, \"out of memory\") while allocating 2.0 GiB for the activations of conv12",
+                "Rig.Lost (CUDA:0, \"out of memory\") while allocating 2.0 GiB \
+                 for the activations of conv12",
               false ))
        ())
     with
     host = "build-node-with-a-long-name.cluster.internal";
     command =
-      [ "/home/ada/src/resnet/_build/default/examples/train/train.exe"; "--learning-rate"; "0.001" ];
+      [
+        "/home/ada/src/resnet/_build/default/examples/train/train.exe";
+        "--learning-rate";
+        "0.001";
+      ];
     cwd = "/home/ada/src/resnet/experiments/cifar/a/rather/deep/directory";
     params =
-      [ ("step_size", `Float 0.001); ("max_iterations", `Int 50); ("batch_size", `Int 64) ];
+      [
+        ("step_size", `Float 0.001);
+        ("max_iterations", `Int 50);
+        ("batch_size", `Int 64);
+      ];
   }
 
 (* The info's value column, from [label]'s row to [next]'s: the rows' text
    between the column and the next border, joined without blanks. *)
 let info_values screen label next =
-  let y, x = match T.Screen.find screen label with p :: _ -> p | [] -> failf "no %s" label in
-  let y_end = match T.Screen.find screen next with (y', _) :: _ -> y' | [] -> failf "no %s" next in
+  let y, x =
+    match T.Screen.find screen label with
+    | p :: _ -> p
+    | [] -> failf "no %s" label
+  in
+  let y_end =
+    match T.Screen.find screen next with
+    | (y', _) :: _ -> y'
+    | [] -> failf "no %s" next
+  in
   let value y =
     let rest = from (x + 12) (T.Screen.row screen y) in
     let rest = Option.value (before rest "│") ~default:rest in
     String.concat ""
-      (List.filter (fun c -> not (List.mem c [ " "; "█"; "▀"; "▄" ])) (chars rest))
+      (List.filter
+         (fun c -> not (List.mem c [ " "; "█"; "▀"; "▄" ]))
+         (chars rest))
   in
   String.concat "" (List.init (y_end - y) (fun i -> value (y + i)))
 
 let no_blanks s = String.concat "" (String.split_on_char ' ' s)
 
 (* Rule: a cut text ends in […] and keeps a blank before the next column; a
-   number and the info's facts are never cut. The screens of [long_run],
-   drawn once. *)
+   number and the info's facts are never cut. The screens of [long_run], drawn
+   once. *)
 let long_screens =
   lazy
-    (with_store ~name:"long" [ long_run; Fixture.short_amber ] @@ fun store ->
-     let at = Munin_tui.Run (Some long_run.id) in
-     List.map
-       (fun (name, cols, rows, keys) -> (name, show ~cols ~rows store at keys))
-       [
-         ("160x48", 160, 48, []);
-         ("120x40", 120, 40, []);
-         ("info 120x40", 120, 40, [ char 'i' ]);
-         ("info 80x24", 80, 24, [ char 'i' ]);
-       ])
+    ( with_store ~name:"long" [ long_run; Fixture.short_amber ] @@ fun store ->
+      let at = Munin_tui.Run (Some long_run.id) in
+      List.map
+        (fun (name, cols, rows, keys) -> (name, show ~cols ~rows store at keys))
+        [
+          ("160x48", 160, 48, []);
+          ("120x40", 120, 40, []);
+          ("info 120x40", 120, 40, [ char 'i' ]);
+          ("info 80x24", 80, 24, [ char 'i' ]);
+        ] )
 
 let long_screen name = List.assoc name (Lazy.force long_screens)
 let found name sub = List.length (T.Screen.find (long_screen name) sub)
@@ -2041,13 +2229,15 @@ let banner_whole =
       equal ~msg:"its start" int 1 (found "120x40" "at step 1,100: Rig.Lost");
       equal ~msg:"its end" int 1 (found "120x40" "conv12"))
 
-(* The run pane's params: each value starts in one column, one past the
-   longest key's width. *)
+(* The run pane's params: each value starts in one column, one past the longest
+   key's width. *)
 let param_keys =
   test "a param key takes the longest key's width" (fun () ->
       let sc = long_screen "160x48" in
       let value_column key =
-        match List.filter (fun (_, x) -> x > 120) (T.Screen.find sc (key ^ " ")) with
+        match
+          List.filter (fun (_, x) -> x > 120) (T.Screen.find sc (key ^ " "))
+        with
         | (y, x) :: _ ->
             let cells = chars (T.Screen.row sc y) in
             let rec first i =
@@ -2079,10 +2269,10 @@ let cut_blank =
             (T.Screen.find sc "…"))
         (Lazy.force long_screens))
 
-(* A run whose values outgrow their columns: sampled floats as params, and
-   four metrics with a goal under long keys. A number shows whole: the run
-   pane prints a param by the value rule, info gives it exactly, and the line
-   of values keeps the metrics that fit. *)
+(* A run whose values outgrow their columns: sampled floats as params, and four
+   metrics with a goal under long keys. A number shows whole: the run pane
+   prints a param by the value rule, info gives it exactly, and the line of
+   values keeps the metrics that fit. *)
 let value_screens =
   let keys =
     [
@@ -2095,28 +2285,29 @@ let value_screens =
   let goal k = if holds "loss" k then `Minimize else `Maximize in
   let value k s = if holds "loss" k then 1. /. s else 0.9 -. (0.5 /. s) in
   lazy
-    (with_store ~name:"long-values" [] @@ fun store ->
-     ignore
-       (Fixture.write_log store
-          ~params:
-            [
-              ("learning_rate", `Float 0.0004213752718364);
-              ("weight_decay", `Float 0.00031622776601683794);
-            ]
-          ~declare:(List.map (fun k -> Fixture.declare ~goal:(goal k) k) keys)
-          (List.init 40 (fun i ->
-               let s = Float.of_int (i + 1) in
-               Fixture.values ((i + 1) * 100)
-                 (List.map (fun k -> (k, value k s)) keys))));
-     List.map
-       (fun (name, cols, rows, keys) ->
-         (name, show ~cols ~rows store Munin_tui.Runs keys))
-       [
-         ("120x40", 120, 40, []);
-         ("80x24", 80, 24, []);
-         ("info", 120, 40, [ char 'i' ]);
-         ("help", 80, 24, [ char '?' ]);
-       ])
+    ( with_store ~name:"long-values" [] @@ fun store ->
+      ignore
+        (Fixture.write_log store
+           ~params:
+             [
+               ("learning_rate", `Float 0.0004213752718364);
+               ("weight_decay", `Float 0.00031622776601683794);
+             ]
+           ~declare:(List.map (fun k -> Fixture.declare ~goal:(goal k) k) keys)
+           (List.init 40 (fun i ->
+                let s = Float.of_int (i + 1) in
+                Fixture.values
+                  ((i + 1) * 100)
+                  (List.map (fun k -> (k, value k s)) keys))));
+      List.map
+        (fun (name, cols, rows, keys) ->
+          (name, show ~cols ~rows store Munin_tui.Runs keys))
+        [
+          ("120x40", 120, 40, []);
+          ("80x24", 80, 24, []);
+          ("info", 120, 40, [ char 'i' ]);
+          ("help", 80, 24, [ char '?' ]);
+        ] )
 
 let value_screen name = List.assoc name (Lazy.force value_screens)
 
@@ -2145,7 +2336,9 @@ let values_line =
       let sc = value_screen "80x24" in
       match List.sort compare (T.Screen.find sc "train/") with
       | (y, _) :: _ ->
-          equal ~msg:"its cut texts" (list (pair int int)) []
+          equal ~msg:"its cut texts"
+            (list (pair int int))
+            []
             (List.filter (fun (y', _) -> y' = y) (T.Screen.find sc "…"))
       | [] -> fail "no line of values")
 
@@ -2157,14 +2350,16 @@ let help_whole =
         | (y, _) :: _ -> y
         | [] -> fail "no help"
       in
-      equal (list (pair int int)) []
+      equal
+        (list (pair int int))
+        []
         (List.filter (fun (y, _) -> y >= top) (T.Screen.find sc "…")))
 
 (* The status bar's hints *)
 
 (* [hints screen] is the status bar's hints, each its keys, in bold, and its
-   word; hints are three spaces or more apart, and the crumbs, which hold
-   [›], are no hint. *)
+   word; hints are three spaces or more apart, and the crumbs, which hold [›],
+   are no hint. *)
 let hints screen =
   let row = T.Screen.rows screen - 1 in
   let cells =
@@ -2177,19 +2372,22 @@ let hints screen =
     | [] -> List.rev (if field = [] then acc else List.rev field :: acc)
     | ((" " | ""), _) :: rest when blanks >= 2 ->
         fields (if field = [] then acc else List.rev field :: acc) [] 0 rest
-    | ((" " | ""), _) as c :: rest -> fields acc (c :: field) (blanks + 1) rest
+    | (((" " | ""), _) as c) :: rest ->
+        fields acc (c :: field) (blanks + 1) rest
     | c :: rest -> fields acc (c :: field) 0 rest
   in
   let text cs = String.trim (String.concat "" (List.map fst cs)) in
   List.filter_map
     (fun field ->
-      let label = List.filter snd field and word = List.filter (fun c -> not (snd c)) field in
+      let label = List.filter snd field
+      and word = List.filter (fun c -> not (snd c)) field in
       let all = text field in
-      if all = "" || before all "›" <> None then None else Some (text label, text word))
+      if all = "" || before all "›" <> None then None
+      else Some (text label, text word))
     (fields [] [] 0 cells)
 
-(* The keys that press a hint's label: both ways for a pair of arrows, since
-   one way may be at its end. *)
+(* The keys that press a hint's label: both ways for a pair of arrows, since one
+   way may be at its end. *)
 let presses = function
   | "↑↓" -> [ Key Down; Key Up ]
   | "←→" -> [ Key Right; Key Left ]
@@ -2200,8 +2398,8 @@ let presses = function
   | "space" -> [ Text " " ]
   | l -> [ Text l ]
 
-(* What a hint's word says its key does, from where the screen is: the screen
-   it leads to, or a change of what the screen shows. *)
+(* What a hint's word says its key does, from where the screen is: the screen it
+   leads to, or a change of what the screen shows. *)
 let meaning ~from word =
   match word with
   | ("charts" | "strips" | "zoom") when word <> from -> word
@@ -2212,13 +2410,11 @@ let meaning ~from word =
   | _ -> "changed"
 
 let hint_test =
-  (* Two runs, so that the keys that move the cursor change the screen. A
-     key's outcome is a session replayed from the start, one or two a hint:
-     about a hundred sessions, the test's time. *)
+  (* Two runs, so that the keys that move the cursor change the screen. A key's
+     outcome is a session replayed from the start, one or two a hint: about a
+     hundred sessions, the test's time. *)
   let store =
-    lazy
-      (shared_store "hints"
-         [ Fixture.short_running; Fixture.short_amber ])
+    lazy (shared_store "hints" [ Fixture.short_running; Fixture.short_amber ])
   in
   (* [session keys] is the screen after [keys], and whether the dashboard
      quit. *)
@@ -2240,7 +2436,8 @@ let hint_test =
   let holds sub s = before s sub <> None in
   (* A filter of [q] keeps no run. *)
   let none = [ char '/'; char 'q'; Key Enter ] in
-  cases "each hint on the status bar does what help says" ~id:(fun (name, _, _) -> name)
+  cases "each hint on the status bar does what help says"
+    ~id:(fun (name, _, _) -> name)
     [
       ("charts", "charts", []);
       ("strips", "strips", [ Key Enter ]);
@@ -2284,17 +2481,19 @@ let hint_test =
         (pairs (fun (_, w) -> meaning ~from w))
         (pairs does))
 
-(* The status bar at any width: the hints that fit, leaving from the last,
-   and [? keys] always. *)
+(* The status bar at any width: the hints that fit, leaving from the last, and
+   [? keys] always. *)
 let hints_fit =
   let store =
     lazy (shared_store "hints-fit" Fixture.[ short_running; short_amber ])
   in
-  let bar cols = hints (show ~cols ~rows:24 (Lazy.force store) Munin_tui.Runs []) in
+  let bar cols =
+    hints (show ~cols ~rows:24 (Lazy.force store) Munin_tui.Runs [])
+  in
   let all = lazy (bar 200) in
-  cases ~id:string_of_int "the status bar keeps ? keys and drops hints from the last"
-    [ 60; 70; 80; 90; 100; 120; 160 ]
-    (fun cols ->
+  cases ~id:string_of_int
+    "the status bar keeps ? keys and drops hints from the last"
+    [ 60; 70; 80; 90; 100; 120; 160 ] (fun cols ->
       let shown = bar cols in
       let all = Lazy.force all in
       let keys = ("?", "keys") in
@@ -2305,7 +2504,9 @@ let hints_fit =
         | x :: a, y :: b -> x = y && prefix (a, b)
         | _ :: _, [] -> false
       in
-      equal ~msg:"the last hint" (option (pair string string)) (Some keys)
+      equal ~msg:"the last hint"
+        (option (pair string string))
+        (Some keys)
         (List.nth_opt shown (List.length shown - 1));
       let rest = List.filter (( <> ) keys) shown in
       if not (prefix (rest, others)) then
@@ -2313,9 +2514,9 @@ let hints_fit =
           (String.concat ", " (List.map fst rest))
           (String.concat ", " (List.map fst others)))
 
-(* A hint shows once the bar has room for it whole: at the width that holds
-   the first three hints and [? keys] exactly, all four show, and one column
-   less drops the third. *)
+(* A hint shows once the bar has room for it whole: at the width that holds the
+   first three hints and [? keys] exactly, all four show, and one column less
+   drops the third. *)
 let hints_exact =
   let store =
     lazy (shared_store "hints-exact" Fixture.[ short_running; short_amber ])
@@ -2329,47 +2530,68 @@ let hints_exact =
       let row = String.trim (T.Screen.row wide (T.Screen.rows wide - 1)) in
       let dropped = List.filteri (fun i _ -> i >= 3) others in
       let exact =
-        Munin_tui.Numbers.width row - List.fold_left (fun n h -> n + 3 + w h) 0 dropped
+        Munin_tui.Numbers.width row
+        - List.fold_left (fun n h -> n + 3 + w h) 0 dropped
       in
       (* The bar's padding, a column each side. *)
       let cols = exact + 2 in
-      let first n = List.filteri (fun i _ -> i < n) others @ [ ("?", "keys") ] in
-      equal ~msg:(Printf.sprintf "at %d columns" cols) (list (pair string string)) (first 3)
+      let first n =
+        List.filteri (fun i _ -> i < n) others @ [ ("?", "keys") ]
+      in
+      equal
+        ~msg:(Printf.sprintf "at %d columns" cols)
+        (list (pair string string))
+        (first 3)
         (hints (screen cols));
-      equal ~msg:(Printf.sprintf "at %d columns" (cols - 1)) (list (pair string string)) (first 2)
+      equal
+        ~msg:(Printf.sprintf "at %d columns" (cols - 1))
+        (list (pair string string))
+        (first 2)
         (hints (screen (cols - 1))))
 
-(* Below 100 columns, a run without another metric with a goal has no line
-   of values: its tabs follow the line that names it, a blank row apart. *)
+(* Below 100 columns, a run without another metric with a goal has no line of
+   values: its tabs follow the line that names it, a blank row apart. *)
 let no_values_line =
   test "a run without values has no line of them" (fun () ->
       with_store ~name:"no-values" [] @@ fun store ->
       ignore
-        (Fixture.write_log store ~declare:[ Fixture.declare "score" ]
-           (List.init 20 (fun i -> Fixture.values i [ ("score", Float.of_int i) ])));
+        (Fixture.write_log store
+           ~declare:[ Fixture.declare "score" ]
+           (List.init 20 (fun i ->
+                Fixture.values i [ ("score", Float.of_int i) ])));
       let screen = show ~cols:80 ~rows:24 store Munin_tui.Runs [] in
-      let row text = match T.Screen.find screen text with (y, _) :: _ -> Some y | [] -> None in
+      let row text =
+        match T.Screen.find screen text with
+        | (y, _) :: _ -> Some y
+        | [] -> None
+      in
       equal (option int) (Option.map (( + ) 2) (row "‹ ")) (row "score"))
 
-(* A strip's key takes the longest key's width, up to a share of the
-   centre that leaves the plot its room. *)
+(* A strip's key takes the longest key's width, up to a share of the centre that
+   leaves the plot its room. *)
 let strip_keys =
   test "a strip's key is whole when the centre has room for it" (fun () ->
       with_store ~name:"strip-keys" [] @@ fun store ->
       let keys = [ "train/samples_per_s"; "m" ] in
       ignore
-        (Fixture.write_log store ~declare:(List.map (fun k -> Fixture.declare k) keys)
-           (List.init 20 (fun i -> Fixture.values i (List.map (fun k -> (k, Float.of_int i)) keys))));
+        (Fixture.write_log store
+           ~declare:(List.map (fun k -> Fixture.declare k) keys)
+           (List.init 20 (fun i ->
+                Fixture.values i (List.map (fun k -> (k, Float.of_int i)) keys))));
       let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Key Enter ] in
       equal ~msg:"whole" int 1
         (List.length (T.Screen.find screen "train/samples_per_s "));
-      equal ~msg:"cut" (list (pair int int)) []
+      equal ~msg:"cut"
+        (list (pair int int))
+        []
         (T.Screen.find screen "train/samples_…"))
 
-(* Zoom on a reading of the machine gives its values in the reading's unit,
-   as its strip does: RAM in GiB, a busy share in percent. *)
+(* Zoom on a reading of the machine gives its values in the reading's unit, as
+   its strip does: RAM in GiB, a busy share in percent. *)
 let zoom_units =
-  cases ~id:(fun (name, _, _) -> name) "zoom gives a reading in its unit"
+  cases
+    ~id:(fun (name, _, _) -> name)
+    "zoom gives a reading in its unit"
     [ ("mem_used_bytes", [], " GiB"); ("cpu_busy_pct", [ Key Up ], "%") ]
     (fun (key, up, unit) ->
       with_store [ Fixture.short_running ] @@ fun store ->
@@ -2384,51 +2606,75 @@ let zoom_units =
       at_least ~msg:"rows of values in its unit" int ~than:2
         (List.length (with_text unit)))
 
-(* The banner of a run whose metrics went non-finite names what each
-   metric's first such sample was: [a] goes first, at step 5, [b] at 7. *)
+(* The banner of a run whose metrics went non-finite names what each metric's
+   first such sample was: [a] goes first, at step 5, [b] at 7. *)
 let banner_names =
-  cases ~id:(fun (name, _, _) -> name) "the banner names what the metrics went"
+  cases
+    ~id:(fun (name, _, _) -> name)
+    "the banner names what the metrics went"
     [
       ("NaN", (Float.nan, Float.nan), "× a NaN from step 5; 2 metrics went NaN");
-      ("inf", (Float.infinity, Float.infinity), "× a inf from step 5; 2 metrics went inf");
-      ("-inf", (Float.neg_infinity, Float.neg_infinity), "× a -inf from step 5; 2 metrics went -inf");
-      ("inf, then NaN", (Float.infinity, Float.nan), "× a inf from step 5; 2 metrics went NaN or inf");
+      ( "inf",
+        (Float.infinity, Float.infinity),
+        "× a inf from step 5; 2 metrics went inf" );
+      ( "-inf",
+        (Float.neg_infinity, Float.neg_infinity),
+        "× a -inf from step 5; 2 metrics went -inf" );
+      ( "inf, then NaN",
+        (Float.infinity, Float.nan),
+        "× a inf from step 5; 2 metrics went NaN or inf" );
     ]
     (fun (_, (a, b), says) ->
       with_store ~name:"banner" [] @@ fun store ->
-      let value k i = if k = "a" && i >= 5 then a else if k = "b" && i >= 7 then b else Float.of_int i in
+      let value k i =
+        if k = "a" && i >= 5 then a
+        else if k = "b" && i >= 7 then b
+        else Float.of_int i
+      in
       ignore
-        (Fixture.write_log store ~declare:[ Fixture.declare "a"; Fixture.declare "b" ]
-           (List.init 10 (fun i -> Fixture.values i [ ("a", value "a" i); ("b", value "b" i) ])));
+        (Fixture.write_log store
+           ~declare:[ Fixture.declare "a"; Fixture.declare "b" ]
+           (List.init 10 (fun i ->
+                Fixture.values i [ ("a", value "a" i); ("b", value "b" i) ])));
       let screen = show ~cols:160 ~rows:48 store Munin_tui.Runs [] in
       if T.Screen.find screen says = [] then
         failf "no %S in:\n%s" says
-          (String.concat "\n" (List.init (T.Screen.rows screen) (T.Screen.row screen))))
+          (String.concat "\n"
+             (List.init (T.Screen.rows screen) (T.Screen.row screen))))
 
-(* Zoom's window is numbers, so its line wraps rather than cut one: after
-   one [+] on a run of two million steps it reads from 1,000,000. *)
+(* Zoom's window is numbers, so its line wraps rather than cut one: after one
+   [+] on a run of two million steps it reads from 1,000,000. *)
 let zoom_window_whole =
   test "zoom's window gives its steps whole" (fun () ->
       with_store ~name:"window" [] @@ fun store ->
       ignore
         (Fixture.write_log store
-           (List.init 41 (fun i -> Fixture.sample (i * 50_000, Float.of_int i)))
-        );
-      let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Key Enter; Key Enter; char '+' ] in
-      let y, x = match T.Screen.find screen "showing" with p :: _ -> p | [] -> fail "no window" in
+           (List.init 41 (fun i -> Fixture.sample (i * 50_000, Float.of_int i))));
+      let screen =
+        show ~cols:120 ~rows:40 store Munin_tui.Runs
+          [ Key Enter; Key Enter; char '+' ]
+      in
+      let y, x =
+        match T.Screen.find screen "showing" with
+        | p :: _ -> p
+        | [] -> fail "no window"
+      in
       (* The panel's lines from [showing] down to the status bar. *)
       let lines =
-        List.init (T.Screen.rows screen - 1 - y) (fun k -> String.trim (from x (T.Screen.row screen (y + k))))
+        List.init
+          (T.Screen.rows screen - 1 - y)
+          (fun k -> String.trim (from x (T.Screen.row screen (y + k))))
       in
       equal string "showing 1,000,000 – 2,000,000"
         (String.concat " " (List.filter (( <> ) "") lines)))
 
 (* [y] asks for the other scale of the metric shown, and of no other: zoom's
    title says [log] while the metric is drawn on one. [m] rises over three
-   decades and [w] within one, so [m] starts on a log scale and [w] on a
-   linear one. *)
+   decades and [w] within one, so [m] starts on a log scale and [w] on a linear
+   one. *)
 let y_per_metric =
-  let zoom_m = [ Key Enter; Key Enter ] and zoom_w = [ Key Enter; Key Down; Key Enter ] in
+  let zoom_m = [ Key Enter; Key Enter ]
+  and zoom_w = [ Key Enter; Key Down; Key Enter ] in
   cases
     ~id:(fun (name, _, _, _) -> name)
     "y switches the scale of the metric shown alone"
@@ -2437,8 +2683,14 @@ let y_per_metric =
       ("w", zoom_w, "w", false);
       ("y on m", zoom_m @ [ char 'y' ], "m", false);
       ("y on w", zoom_w @ [ char 'y' ], "w", true);
-      ("y on m, then w", zoom_m @ [ char 'y'; Key Escape; Key Down; Key Enter ], "w", false);
-      ("y on w, then m", zoom_w @ [ char 'y'; Key Escape; Key Up; Key Enter ], "m", true);
+      ( "y on m, then w",
+        zoom_m @ [ char 'y'; Key Escape; Key Down; Key Enter ],
+        "w",
+        false );
+      ( "y on w, then m",
+        zoom_w @ [ char 'y'; Key Escape; Key Up; Key Enter ],
+        "m",
+        true );
     ]
     (fun (_, keys, key, log) ->
       with_store ~name:"scales" [] @@ fun store ->
@@ -2452,7 +2704,10 @@ let y_per_metric =
       (* Zoom's title: the metric, then its notes. *)
       let notes =
         match T.Screen.find screen (key ^ "   ") with
-        | (y, x) :: _ -> Some (String.trim (from (x + String.length key) (T.Screen.row screen y)))
+        | (y, x) :: _ ->
+            Some
+              (String.trim
+                 (from (x + String.length key) (T.Screen.row screen y)))
         | [] -> None
       in
       let rec parts n =
@@ -2462,7 +2717,8 @@ let y_per_metric =
             String.trim a :: parts (String.sub n k (String.length n - k))
         | None -> [ String.trim n ]
       in
-      equal (option bool) (Some log) (Option.map (fun n -> List.mem "log" (parts n)) notes))
+      equal (option bool) (Some log)
+        (Option.map (fun n -> List.mem "log" (parts n)) notes))
 
 let () =
   exit

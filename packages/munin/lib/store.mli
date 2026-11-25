@@ -48,18 +48,18 @@ val runs : ?prev:Run.t list -> t -> Run.t list
     {!check} names it. So is a run whose log cannot be opened or read, such as a
     live run on an SMB mount ({!Store_format.section-network}).
 
-    [prev] is a listing of [s] made earlier. With it, [runs] reads the
-    first record only of the runs [prev] lacks, and the last record and
-    the lock only of those [prev] saw without an end. For every run [prev]
-    saw, it stats the run's [tags/] directory and [notes] file and reads
-    them again only when their modification time, size or inode differs
-    from what [prev] read, or when the modification time is not a second
-    older than [prev]'s read, since a file system that keeps whole seconds
-    gives a change within that second the time it had. A file system whose
-    times are coarser than a second, such as FAT's two seconds, can still
-    hide a change, until the next one. A poll of a store that has not changed then
-    costs a read of [runs/], two [stat]s per run, and for each run without
-    an end an open, a probe and a read of its last record. *)
+    [prev] is a listing of [s] made earlier. With it, [runs] reads the first
+    record only of the runs [prev] lacks, and the last record and the lock only
+    of those [prev] saw without an end. For every run [prev] saw, it stats the
+    run's [tags/] directory and [notes] file and reads them again only when
+    their modification time, size or inode differs from what [prev] read, or
+    when the modification time is not a second older than [prev]'s read, since a
+    file system that keeps whole seconds gives a change within that second the
+    time it had. A file system whose times are coarser than a second, such as
+    FAT's two seconds, can still hide a change, until the next one. A poll of a
+    store that has not changed then costs a read of [runs/], two [stat]s per
+    run, and for each run without an end an open, a probe and a read of its last
+    record. *)
 
 val run : t -> string -> Run.t option
 (** [run s id] is the run [id] of [s], read as {!val-runs} reads it, or [None]
@@ -177,12 +177,12 @@ val gc : t -> int
     creates nothing. *)
 
 val check : t -> (string * string) list
-(** [check s] is each path of [s] that breaks the format, with what is
-    wrong, sorted by path:
-    - a run directory that is not a readable run, or whose log cannot be
-      opened or read;
-    - a damaged line in a log, and a line that is not whole in the log of
-      a run that has crashed or ended ({!Store_format.section-reading});
+(** [check s] is each path of [s] that breaks the format, with what is wrong,
+    sorted by path:
+    - a run directory that is not a readable run, or whose log cannot be opened
+      or read;
+    - a damaged line in a log, and a line that is not whole in the log of a run
+      that has crashed or ended ({!Store_format.section-reading});
     - a damaged tag file;
     - a statistics hint that does not parse or is of another format, and
       one whose [rules] and [length] match its log but whose statistics

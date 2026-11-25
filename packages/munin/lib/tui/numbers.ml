@@ -99,8 +99,8 @@ let signed x = if x > 0. then "+" ^ value x else value x
 (* [plus s] is the printed number [s] with its sign, as C's [%+] gives it. *)
 let plus s = if String.starts_with ~prefix:"-" s then s else "+" ^ s
 
-(* The largest relative difference printed as one: four digits before the
-   point, so that a difference fits a strip's column. *)
+(* The largest relative difference printed as one: four digits before the point,
+   so that a difference fits a strip's column. *)
 let relative_most = 9999.5
 
 let difference key ~value:v ~other:o =
@@ -109,9 +109,8 @@ let difference key ~value:v ~other:o =
     let s = plus (Float_print.f 2 ((v -. o) *. 100.)) ^ " pt" in
     if s = "+0.00 pt" || s = "-0.00 pt" then None else Some s
   else
-    (* Against a zero, or a value so small that the ratio passes four
-       digits, the ratio says nothing a reader can use: the difference
-       itself does. *)
+    (* Against a zero, or a value so small that the ratio passes four digits,
+       the ratio says nothing a reader can use: the difference itself does. *)
     let r = 100. *. (v -. o) /. Float.abs o in
     if not (Float.abs r < relative_most) then
       if v = o then None else Some (signed (v -. o))

@@ -54,13 +54,12 @@ val given : float -> string
     a program gave, such as a param. *)
 
 val difference : string -> value:float -> other:float -> string option
-(** [difference key ~value ~other] is [value] against [other]: in points for
-    two accuracies in [[0;1]], as [+0.14 pt]; else relative, as [+60%], while
-    that takes at most four digits before the point; else, as against a zero,
-    [value - other] as {!value} prints it, signed, as [+0.9000], and [+inf]
-    or [-inf] past the largest float. It takes at most eleven cells. It is
-    [None] when they are the same in the digits shown, or one is not
-    finite. *)
+(** [difference key ~value ~other] is [value] against [other]: in points for two
+    accuracies in [[0;1]], as [+0.14 pt]; else relative, as [+60%], while that
+    takes at most four digits before the point; else, as against a zero,
+    [value - other] as {!value} prints it, signed, as [+0.9000], and [+inf] or
+    [-inf] past the largest float. It takes at most eleven cells. It is [None]
+    when they are the same in the digits shown, or one is not finite. *)
 
 val count : int -> string
 (** [count n] is [n] with separators, as [12,400]. *)
@@ -90,8 +89,8 @@ val gib : float -> string
 (** [gib b] is [b] bytes in GiB with one decimal, without the unit. *)
 
 val span : float -> string
-(** [span s] is [s] seconds in two units, as [4m 10s], or in seconds alone
-    below a minute, as [45s]. A negative [s] is [0s]. *)
+(** [span s] is [s] seconds in two units, as [4m 10s], or in seconds alone below
+    a minute, as [45s]. A negative [s] is [0s]. *)
 
 val clock : now:float -> float -> string
 (** [clock ~now t] is [t]'s local time of day, as [14:22], with its date

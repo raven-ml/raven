@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The modules behind the dashboard's stop, whose laws the dashboard's
-   interface leaves to them: the reduction, the drawing of a chart, the
-   numbers, the facts of a run and the watch of its arrivals. *)
+(* The modules behind the dashboard's stop, whose laws the dashboard's interface
+   leaves to them: the reduction, the drawing of a chart, the numbers, the facts
+   of a run and the watch of its arrivals. *)
 
 open Windtrap
 open Munin
@@ -22,15 +22,15 @@ let rec remove path =
   | _ -> Sys.remove path
   | exception Unix.Unix_error (Unix.ENOENT, _, _) -> ()
 
-(* The reference for round numbers: munin's own reading of the decimal [m]
-   e [k], correctly rounded, which its own suite states. The C library's is
-   not correctly rounded on every system. *)
+(* The reference for round numbers: munin's own reading of the decimal [m] e
+   [k], correctly rounded, which its own suite states. The C library's is not
+   correctly rounded on every system. *)
 let decimal_text m k =
   Option.get
     (Munin_float_text.Float_read.of_string (Printf.sprintf "%de%d" m k))
 
-(* The store of the runs the laws write, one or two a case, which the
-   process removes as it ends. *)
+(* The store of the runs the laws write, one or two a case, which the process
+   removes as it ends. *)
 let laws =
   lazy
     (let dir = Filename.temp_dir "munin_tui" "" in
@@ -79,8 +79,7 @@ let gen_big_value =
 
 (* Values above 0, so that every mean has a logarithm. *)
 let gen_positive_value =
-  Gen.frequency
-    [ (8, Gen.float_range 1e-3 1e3); (1, Gen.constant Float.nan) ]
+  Gen.frequency [ (8, Gen.float_range 1e-3 1e3); (1, Gen.constant Float.nan) ]
 
 let gen_samples ?(value = gen_value) () =
   let open Gen in
@@ -101,10 +100,16 @@ let gen_samples ?(value = gen_value) () =
   in
   constant (List.combine steps values)
 
-(* A grid over samples: the whole of their steps or a window of them, some
-   dot columns, whether every fifth sample, from the third, has a NaN x, and
+(* A grid over samples: the whole of their steps or a window of them, some dot
+   columns, whether every fifth sample, from the third, has a NaN x, and
    smoothing's time constant. *)
-type grid_case = { lo : float; hi : float; dots : int; holes : bool; tau : float }
+type grid_case = {
+  lo : float;
+  hi : float;
+  dots : int;
+  holes : bool;
+  tau : float;
+}
 
 let gen_grid samples =
   let open Gen in
@@ -149,7 +154,8 @@ let points g samples =
 
 let column g x =
   min (g.dots - 1)
-    (Float.to_int ((x -. g.lo) *. (1. /. (g.hi -. g.lo)) *. Float.of_int g.dots))
+    (Float.to_int
+       ((x -. g.lo) *. (1. /. (g.hi -. g.lo)) *. Float.of_int g.dots))
 
 let in_domain g x = x >= g.lo && x <= g.hi
 
@@ -166,8 +172,8 @@ let event_name = function
   | Some `Neg_inf -> "-inf"
   | None -> "-"
 
-(* [half_mean l] is half the mean of [l], each value divided by the count and
-   by 2 first, so that no partial sum's rounding passes the largest float. *)
+(* [half_mean l] is half the mean of [l], each value divided by the count and by
+   2 first, so that no partial sum's rounding passes the largest float. *)
 let half_mean l =
   let n = Float.of_int (List.length l) in
   List.fold_left (fun a v -> a +. (v /. n /. 2.)) 0. l
@@ -191,11 +197,10 @@ let by_column g pts =
 
 (* The smoothing of the module's doc, from its definition: the finite samples
    pooled into steps of one x, started again where x decreases, each step's
-   value the mean of the steps up to it, the step [x_i] weighted by
-   [(1 - exp (-(x_i - x_(i-1)) / tau)) exp (-(x - x_i) / tau)], the step
-   before the first [x_1 - (x_2 - x_1)]. Each step is its x, its smoothed
-   value quartered, so that no sum passes the largest float, and the indices
-   of its samples. *)
+   value the mean of the steps up to it, the step [x_i] weighted by [(1 - exp
+   (-(x_i - x_(i-1)) / tau)) exp (-(x - x_i) / tau)], the step before the first
+   [x_1 - (x_2 - x_1)]. Each step is its x, its smoothed value quartered, so
+   that no sum passes the largest float, and the indices of its samples. *)
 let smoothed_steps ~tau pts =
   let groups =
     List.rev
@@ -215,21 +220,27 @@ let smoothed_steps ~tau pts =
       (List.fold_left
          (fun acc ((x, _, _) as step) ->
            match acc with
-           | ((px, _, _) :: _ as seg) :: rest when x >= px -> (step :: seg) :: rest
+           | ((px, _, _) :: _ as seg) :: rest when x >= px ->
+               (step :: seg) :: rest
            | _ -> [ step ] :: acc)
          [] groups)
     |> List.map List.rev
   in
   let smooth seg =
     let xs = Array.of_list (List.map (fun (x, _, _) -> x) seg) in
-    let ys = Array.of_list (List.map (fun (_, vs, _) -> half_mean vs /. 2.) seg) in
-    let x0 = if Array.length xs > 1 then xs.(0) -. (xs.(1) -. xs.(0)) else xs.(0) -. 1. in
+    let ys =
+      Array.of_list (List.map (fun (_, vs, _) -> half_mean vs /. 2.) seg)
+    in
+    let x0 =
+      if Array.length xs > 1 then xs.(0) -. (xs.(1) -. xs.(0)) else xs.(0) -. 1.
+    in
     List.mapi
       (fun k (x, _, is) ->
         let w =
           Array.init (k + 1) (fun i ->
               let prev = if i = 0 then x0 else xs.(i - 1) in
-              -.Float.expm1 (-.(xs.(i) -. prev) /. tau) *. exp (-.(x -. xs.(i)) /. tau))
+              -.Float.expm1 (-.(xs.(i) -. prev) /. tau)
+              *. exp (-.(x -. xs.(i)) /. tau))
         in
         let den = Array.fold_left ( +. ) 0. w in
         let s = ref 0. in
@@ -252,9 +263,7 @@ let defined v = if Float.is_nan v then None else Some v
 
 let cover_shapes samples g =
   cover "a window cuts the samples"
-    (List.exists
-       (fun (st, _) -> not (in_domain g (Float.of_int st)))
-       samples);
+    (List.exists (fun (st, _) -> not (in_domain g (Float.of_int st))) samples);
   cover "steps decrease"
     (List.exists (fun ((a, _), (b, _)) -> b < a) (pairs samples));
   cover "samples share a step"
@@ -263,8 +272,8 @@ let cover_shapes samples g =
   cover "a sample's x is NaN" (g.holes && List.length samples > 2)
 
 let means =
-  prop "a column's mean is the mean of its finite samples" (gen_case ~value:gen_big_value ())
-    (fun (samples, g) ->
+  prop "a column's mean is the mean of its finite samples"
+    (gen_case ~value:gen_big_value ()) (fun (samples, g) ->
       cover_shapes samples g;
       let s = series_of samples in
       let r = reduce g s in
@@ -274,19 +283,22 @@ let means =
       cover "a column holds a value at or below 0 and one above"
         (Array.exists
            (fun vs ->
-             List.exists (fun v -> v <= 0.) vs && List.exists (fun v -> v > 0.) vs)
+             List.exists (fun v -> v <= 0.) vs
+             && List.exists (fun v -> v > 0.) vs)
            columns);
       equal int (List.length samples) (Reduce.length r);
       Array.iteri
         (fun k vs ->
           let msg = Printf.sprintf "column %d" k in
           let scale = scale_of (List.map (fun v -> (0, v)) vs) in
-          equal ~msg (option (close scale))
+          equal ~msg
+            (option (close scale))
             (if vs = [] then None else Some (half_mean vs))
             (Option.map
                (fun m -> m /. 2.)
                (defined (Reduce.mean r ~smooth:false ~log:false k)));
-          equal ~msg (option (float_rel ~rel:1e-9 ~abs:0.))
+          equal ~msg
+            (option (float_rel ~rel:1e-9 ~abs:0.))
             (if vs = [] then None else geometric vs)
             (defined (Reduce.mean r ~smooth:false ~log:true k));
           equal ~msg
@@ -312,8 +324,7 @@ let smoothed_columns g pts =
 
 let smoothed_means =
   prop "a column's smoothed mean is the mean of its steps' smoothed values"
-    (gen_case ~value:gen_big_value ())
-    (fun (samples, g) ->
+    (gen_case ~value:gen_big_value ()) (fun (samples, g) ->
       cover_shapes samples g;
       let s = series_of samples in
       let r = reduce g s in
@@ -336,28 +347,31 @@ let smoothed_means =
         columns)
 
 let geometric_means =
-  prop "a column's geometric mean is that of its finite samples, smoothed or not"
-    (gen_case ~value:gen_positive_value ())
-    (fun (samples, g) ->
+  prop
+    "a column's geometric mean is that of its finite samples, smoothed or not"
+    (gen_case ~value:gen_positive_value ()) (fun (samples, g) ->
       cover_shapes samples g;
       let s = series_of samples in
       let r = reduce g s in
       let pts = points g samples in
-      let quartered = Array.map (List.map (fun v -> v *. 4.)) (smoothed_columns g pts) in
+      let quartered =
+        Array.map (List.map (fun v -> v *. 4.)) (smoothed_columns g pts)
+      in
       Array.iteri
         (fun k vs ->
           let msg = Printf.sprintf "column %d" k in
-          equal ~msg (option (float_rel ~rel:1e-9 ~abs:0.))
+          equal ~msg
+            (option (float_rel ~rel:1e-9 ~abs:0.))
             (if vs = [] then None else geometric vs)
             (defined (Reduce.mean r ~smooth:false ~log:true k));
-          equal ~msg (option (float_rel ~rel:1e-9 ~abs:0.))
+          equal ~msg
+            (option (float_rel ~rel:1e-9 ~abs:0.))
             (if quartered.(k) = [] then None else geometric quartered.(k))
             (defined (Reduce.mean r ~smooth:true ~log:true k)))
         (by_column g pts))
 
 let unsmoothed =
-  prop "a reduction without a smoothed form reads its raw means"
-    (gen_case ())
+  prop "a reduction without a smoothed form reads its raw means" (gen_case ())
     (fun (samples, g) ->
       let s = series_of samples in
       let r = reduce ~smooth:false g s in
@@ -404,8 +418,7 @@ let events =
             let k = column g x in
             if Float.is_nan v then nan.(k) <- true else inf.(k) <- true)
         (points g samples);
-      cover "a column holds NaN and an infinity"
-        (Array.exists2 ( && ) nan inf);
+      cover "a column holds NaN and an infinity" (Array.exists2 ( && ) nan inf);
       equal (array string)
         (Array.map event_name expected)
         (Array.init g.dots (fun k -> event_name (Reduce.event r k))))
@@ -423,13 +436,14 @@ let nearest ~left l =
 
 let edges =
   prop "the edges are the finite samples nearest the domain on each side"
-    (gen_case ~value:gen_big_value ())
-    (fun (samples, g) ->
+    (gen_case ~value:gen_big_value ()) (fun (samples, g) ->
       let s = series_of samples in
       let r = reduce g s in
       let pts = points g samples in
       let finite =
-        List.filter (fun (x, v) -> (not (Float.is_nan x)) && Float.is_finite v) pts
+        List.filter
+          (fun (x, v) -> (not (Float.is_nan x)) && Float.is_finite v)
+          pts
       in
       let left = List.filter (fun (x, _) -> x < g.lo) finite in
       let right = List.filter (fun (x, _) -> x > g.hi) finite in
@@ -439,7 +453,9 @@ let edges =
       let raw_left, raw_right = Reduce.edges r ~smooth:false in
       equal ~msg:"raw left" side (nearest ~left:true left) raw_left;
       equal ~msg:"raw right" side (nearest ~left:false right) raw_right;
-      let steps = List.map (fun (x, s, _) -> (x, s)) (smoothed_steps ~tau:g.tau pts) in
+      let steps =
+        List.map (fun (x, s, _) -> (x, s)) (smoothed_steps ~tau:g.tau pts)
+      in
       let quarter = Option.map (fun (x, y) -> (x, y /. 4.)) in
       let side = option (pair float_exact (close (scale_of samples /. 4.))) in
       let smooth_left, smooth_right = Reduce.edges r ~smooth:true in
@@ -455,12 +471,20 @@ let edges =
 let gen_at_case =
   Gen.(
     with_pp
-      (fun ppf ((samples, g), v) -> Format.fprintf ppf "%a@ at %g" pp_case (samples, g) v)
+      (fun ppf ((samples, g), v) ->
+        Format.fprintf ppf "%a@ at %g" pp_case (samples, g) v)
       (let* samples, g = gen_case ~value:gen_big_value () in
        let last = List.fold_left (fun m (s, _) -> max m s) 0 samples in
        let* ends = frequency [ (2, constant false); (1, constant true) ] in
        if ends then
-         let* y = one_of [ constant Float.nan; constant Float.infinity; constant Float.neg_infinity ] in
+         let* y =
+           one_of
+             [
+               constant Float.nan;
+               constant Float.infinity;
+               constant Float.neg_infinity;
+             ]
+         in
          let+ v = int_range last (last + 1) in
          ((samples @ [ (last, y) ], g), Float.of_int v)
        else
@@ -469,8 +493,7 @@ let gen_at_case =
 
 let at =
   prop "a value at an x is that of the latest sample at or before it"
-    gen_at_case
-    (fun ((samples, g), v) ->
+    gen_at_case (fun ((samples, g), v) ->
       let s = series_of samples in
       let x = x_of g s in
       let pts = points g samples in
@@ -483,20 +506,26 @@ let at =
       let value = Option.map (fun i -> snd (List.nth pts i)) latest in
       cover "a sample before it in the log lies past the x"
         (match latest with
-        | Some i -> List.exists (fun (xi, _) -> xi > v) (List.filteri (fun j _ -> j < i) pts)
+        | Some i ->
+            List.exists
+              (fun (xi, _) -> xi > v)
+              (List.filteri (fun j _ -> j < i) pts)
         | None -> false);
       cover "the latest sample is not finite"
         (match value with Some y -> not (Float.is_finite y) | None -> false);
       equal ~msg:"raw" (option float_exact) value (Reduce.at ~x s v);
       match value with
       | Some y when not (Float.is_finite y) ->
-          equal ~msg:"smoothed" (option float_exact) value (Reduce.at ~tau:g.tau ~x s v)
+          equal ~msg:"smoothed" (option float_exact) value
+            (Reduce.at ~tau:g.tau ~x s v)
       | _ ->
           let step =
             Option.map
               (fun i ->
                 let _, s, _ =
-                  List.find (fun (_, _, is) -> List.mem i is) (smoothed_steps ~tau:g.tau pts)
+                  List.find
+                    (fun (_, _, is) -> List.mem i is)
+                    (smoothed_steps ~tau:g.tau pts)
                 in
                 s)
               latest
@@ -506,29 +535,39 @@ let at =
             step
             (Option.map (fun y -> y /. 4.) (Reduce.at ~tau:g.tau ~x s v)))
 
-(* Two series' latest common step: their samples, each sorted by step half
-   the time, so that pairs of ordered series and series out of order are both
-   drawn often. *)
+(* Two series' latest common step: their samples, each sorted by step half the
+   time, so that pairs of ordered series and series out of order are both drawn
+   often. *)
 let gen_sorted_samples =
   Gen.(
     let* samples = gen_samples () in
     let+ sorted = bool in
-    if sorted then List.stable_sort (fun (a, _) (b, _) -> Int.compare a b) samples else samples)
+    if sorted then
+      List.stable_sort (fun (a, _) (b, _) -> Int.compare a b) samples
+    else samples)
 
 let ordered_steps samples =
-  let rec go = function a :: (b :: _ as rest) -> a <= b && go rest | _ -> true in
+  let rec go = function
+    | a :: (b :: _ as rest) -> a <= b && go rest
+    | _ -> true
+  in
   go (List.map fst samples)
 
 let common =
   prop "the latest common step is the largest step both have a finite sample at"
     Gen.(
       with_pp
-        (fun ppf (a, b) -> Format.fprintf ppf "@[%a@ and %a@]" pp_samples a pp_samples b)
+        (fun ppf (a, b) ->
+          Format.fprintf ppf "@[%a@ and %a@]" pp_samples a pp_samples b)
         (pair gen_sorted_samples gen_sorted_samples))
     (fun (a, b) ->
       let finite l = List.filter (fun (_, v) -> Float.is_finite v) l in
-      let last_at l s = snd (List.find (fun (t, _) -> t = s) (List.rev (finite l))) in
-      let both = List.filter (fun (s, _) -> List.mem_assoc s (finite b)) (finite a) in
+      let last_at l s =
+        snd (List.find (fun (t, _) -> t = s) (List.rev (finite l)))
+      in
+      let both =
+        List.filter (fun (s, _) -> List.mem_assoc s (finite b)) (finite a)
+      in
       let expected =
         match List.map fst both with
         | [] -> None
@@ -537,31 +576,38 @@ let common =
             Some (s, (last_at a s, last_at b s))
       in
       let ordered = ordered_steps a && ordered_steps b in
-      cover "both series are ordered, with a common step" (ordered && expected <> None);
-      cover "a series is out of order, with a common step" ((not ordered) && expected <> None);
+      cover "both series are ordered, with a common step"
+        (ordered && expected <> None);
+      cover "a series is out of order, with a common step"
+        ((not ordered) && expected <> None);
       let sa = series_of a and sb = series_of b in
-      equal ~msg:"ordered" (pair bool bool) (ordered_steps a, ordered_steps b)
+      equal ~msg:"ordered" (pair bool bool)
+        (ordered_steps a, ordered_steps b)
         (Metric.ordered sa, Metric.ordered sb);
-      equal (option (pair int (pair float_exact float_exact))) expected
+      equal
+        (option (pair int (pair float_exact float_exact)))
+        expected
         (Option.map (fun (s, va, vb) -> (s, (va, vb))) (Reduce.common sa sb)))
 
-(* A read of a sample boxes its x, from [x], and its value, from
-   [Metric.value]: 4 words. Smoothing boxes the x of the step it closes for
-   the grid's [dot], and a readout reads a sample twice. A build that inlines
-   across modules reads the value unboxed; the dev profile, which compiles
-   with [-opaque], does not, so the bound is the dev profile's. *)
+(* A read of a sample boxes its x, from [x], and its value, from [Metric.value]:
+   4 words. Smoothing boxes the x of the step it closes for the grid's [dot],
+   and a readout reads a sample twice. A build that inlines across modules reads
+   the value unboxed; the dev profile, which compiles with [-opaque], does not,
+   so the bound is the dev profile's. *)
 let words_per_sample = 8.
 
-(* A reduction is made at every resize and extended at every poll, and a
-   readout is read at every poll, from series of millions of samples: each
-   costs its dot columns and a few words a sample, never per-sample records.
-   The words a sample are the difference between two lengths, so that the
-   columns and the series' own cost cancel. *)
+(* A reduction is made at every resize and extended at every poll, and a readout
+   is read at every poll, from series of millions of samples: each costs its dot
+   columns and a few words a sample, never per-sample records. The words a
+   sample are the difference between two lengths, so that the columns and the
+   series' own cost cancel. *)
 let words_a_sample =
   test "a reduction and a readout allocate a few words a sample" (fun () ->
       let n = 4000 in
       let case len =
-        let s = series_of (List.init len (fun i -> (i, Float.of_int (i mod 7) -. 3.))) in
+        let s =
+          series_of (List.init len (fun i -> (i, Float.of_int (i mod 7) -. 3.)))
+        in
         let hi = Float.of_int (2 * n) in
         let dot x = min 99 (Float.to_int (x /. hi *. 100.)) in
         let grid = { Reduce.lo = 0.; hi; dots = 100; dot } in
@@ -590,7 +636,8 @@ let extend =
   prop "extending a reduction equals reducing the longer series"
     Gen.(
       with_pp
-        (fun ppf (c, cut) -> Format.fprintf ppf "@[%a@ cut at %d@]" pp_case c cut)
+        (fun ppf (c, cut) ->
+          Format.fprintf ppf "@[%a@ cut at %d@]" pp_case c cut)
         (let* samples, g = gen_case ~value:gen_big_value () in
          let+ cut = int_range 0 (List.length samples) in
          ((samples, g), cut)))
@@ -638,7 +685,6 @@ let theme depth =
   Munin_tui.Theme.make { scheme = `Dark; depth; background = None }
 
 let truecolor = theme `Truecolor
-
 let fg (s : Matrix.Ansi.Style.t) = Option.get s.fg
 
 let chart ?(smooth = false) ?(log = false) ?(guides = `Both) x =
@@ -654,10 +700,10 @@ let chart ?(smooth = false) ?(log = false) ?(guides = `Both) x =
     lines = [];
   }
 
-(* [drawn th c ~width ~height runs] is the grid [c] draws at [width] by
-   [height] cells, each of [runs] a role, a colour and a series reduced on
-   [c]'s dot columns at [reduced], the drawing's own size by default, each
-   sample at its step. *)
+(* [drawn th c ~width ~height runs] is the grid [c] draws at [width] by [height]
+   cells, each of [runs] a role, a colour and a series reduced on [c]'s dot
+   columns at [reduced], the drawing's own size by default, each sample at its
+   step. *)
 let drawn ?reduced th (c : Plot.t) ~width ~height runs =
   let rw, rh = Option.value reduced ~default:(width, height) in
   let lines =
@@ -678,11 +724,19 @@ let drawn ?reduced th (c : Plot.t) ~width ~height runs =
   g
 
 let braille_dots =
-  [ (0x01, 0, 0); (0x02, 0, 1); (0x04, 0, 2); (0x40, 0, 3);
-    (0x08, 1, 0); (0x10, 1, 1); (0x20, 1, 2); (0x80, 1, 3) ]
+  [
+    (0x01, 0, 0);
+    (0x02, 0, 1);
+    (0x04, 0, 2);
+    (0x40, 0, 3);
+    (0x08, 1, 0);
+    (0x10, 1, 1);
+    (0x20, 1, 2);
+    (0x80, 1, 3);
+  ]
 
-(* [ink ?colour g] is the braille dots of [g]'s cells, of those in [colour]
-   when given, each as its column and row of dots in [g]. *)
+(* [ink ?colour g] is the braille dots of [g]'s cells, of those in [colour] when
+   given, each as its column and row of dots in [g]. *)
 let ink ?colour g =
   let acc = ref [] in
   for y = 0 to Matrix.Grid.height g - 1 do
@@ -704,16 +758,17 @@ let ink ?colour g =
   done;
   !acc
 
-(* [braille g i] is the dots of [g]'s cell [i] as their bits, [0] for a
-   cell of another glyph. *)
+(* [braille g i] is the dots of [g]'s cell [i] as their bits, [0] for a cell of
+   another glyph. *)
 let braille g i =
   let cp = Matrix.Grid.get_codepoint g i in
   if cp >= 0x2800 && cp <= 0x28FF then cp - 0x2800 else 0
 
-let colour = Windtrap.Testable.make ~pp:Matrix.Ansi.Color.pp ~equal:Matrix.Ansi.Color.equal
+let colour =
+  Windtrap.Testable.make ~pp:Matrix.Ansi.Color.pp ~equal:Matrix.Ansi.Color.equal
 
-(* [rows ink] is, for each dot column inked, its least and greatest row,
-   by column. *)
+(* [rows ink] is, for each dot column inked, its least and greatest row, by
+   column. *)
 let rows ink =
   let t = Hashtbl.create 64 in
   List.iter
@@ -729,7 +784,8 @@ let cells g p =
   let acc = ref [] in
   for y = 0 to Matrix.Grid.height g - 1 do
     for x = 0 to Matrix.Grid.width g - 1 do
-      if p (Matrix.Grid.get_text g (Matrix.Grid.idx g ~x ~y)) then acc := x :: !acc
+      if p (Matrix.Grid.get_text g (Matrix.Grid.idx g ~x ~y)) then
+        acc := x :: !acc
     done
   done;
   !acc
@@ -743,14 +799,19 @@ let text g =
 
 let holds sub s =
   let n = String.length sub in
-  let rec go i = i + n <= String.length s && (String.sub s i n = sub || go (i + 1)) in
+  let rec go i =
+    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+  in
   go 0
 
 let gen_guides = Gen.of_list [ `Both; `Y; `None ]
 
 let pp_guides ppf g =
   Format.pp_print_string ppf
-    (match g with `Both -> "both axes" | `Y -> "the y axis" | `None -> "no axis")
+    (match g with
+    | `Both -> "both axes"
+    | `Y -> "the y axis"
+    | `None -> "no axis")
 
 (* Finite values, the extremes and -0. among them. *)
 let gen_finite =
@@ -785,7 +846,10 @@ let gen_draw_case ?(value = gen_finite) ?(min_height = 1) () =
      let* values = list ~size:(constant (List.length deltas)) value in
      let steps =
        List.rev
-         (snd (List.fold_left (fun (s, acc) d -> (s + d, (s + d) :: acc)) (0, []) deltas))
+         (snd
+            (List.fold_left
+               (fun (s, acc) d -> (s + d, (s + d) :: acc))
+               (0, []) deltas))
      in
      constant { width; height; guides; samples = List.combine steps values })
 
@@ -794,15 +858,17 @@ let domain samples = (0., Float.of_int (last_step samples + 1))
 let me = Munin_tui.Plot.Cursor
 let mine = fg (Munin_tui.Theme.run truecolor 0)
 
-(* A run drawn in the cursor's colour without its spikes: an overlay. A
-   spike's dot takes the cursor's line's colour in a cell it shares with
-   the line, so a law of the line alone reads it from this run. *)
+(* A run drawn in the cursor's colour without its spikes: an overlay. A spike's
+   dot takes the cursor's line's colour in a cell it shares with the line, so a
+   law of the line alone reads it from this run. *)
 let plain = Munin_tui.Plot.Overlay 'a'
 
 (* The value a y label names, with its suffix. *)
 let label_value s =
   let n = String.length s in
-  let scaled d = Option.map (fun v -> v *. d) (float_of_string_opt (String.sub s 0 (n - 1))) in
+  let scaled d =
+    Option.map (fun v -> v *. d) (float_of_string_opt (String.sub s 0 (n - 1)))
+  in
   if n = 0 then None
   else
     match s.[n - 1] with
@@ -818,8 +884,9 @@ let y_labels g =
       let label =
         String.trim
           (String.concat ""
-             (List.init (min 6 (Matrix.Grid.width g)) (fun x ->
-                  Matrix.Grid.get_text g (Matrix.Grid.idx g ~x ~y))))
+             (List.init
+                (min 6 (Matrix.Grid.width g))
+                (fun x -> Matrix.Grid.get_text g (Matrix.Grid.idx g ~x ~y))))
       in
       if label = "" then None else Some label)
     (List.init (Matrix.Grid.height g) Fun.id)
@@ -840,7 +907,12 @@ let gen_shape =
         | `Any -> Format.pp_print_string ppf "any"
         | `Low h -> Format.fprintf ppf "flat, %d rows" h
         | `One_step -> Format.pp_print_string ppf "one step")
-      (one_of [ constant `Any; map (fun h -> `Low h) (int_range 1 2); constant `One_step ]))
+      (one_of
+         [
+           constant `Any;
+           map (fun h -> `Low h) (int_range 1 2);
+           constant `One_step;
+         ]))
 
 let binned =
   prop "a line covers the dot columns from its first sample's to its last's"
@@ -863,7 +935,9 @@ let binned =
       let x = domain c.samples in
       let ch = chart ~guides:c.guides x in
       let s = series_of c.samples in
-      let g = drawn truecolor ch ~width:c.width ~height:c.height [ (me, 0, s) ] in
+      let g =
+        drawn truecolor ch ~width:c.width ~height:c.height [ (me, 0, s) ]
+      in
       let expected =
         match Plot.dots truecolor ch ~width:c.width ~height:c.height with
         | None -> []
@@ -877,11 +951,13 @@ let binned =
       cover "both axes, no y label" (c.guides = `Both && y_labels g = []);
       let shown = List.map fst (rows (ink ~colour:mine g)) in
       (* A plot's left edge is the axis's: shift the ink to the plot. *)
-      let shift = match (shown, expected) with a :: _, b :: _ -> a - b | _ -> 0 in
+      let shift =
+        match (shown, expected) with a :: _, b :: _ -> a - b | _ -> 0
+      in
       equal (list int) expected (List.map (fun k -> k - shift) shown))
 
-(* Law 2: a column's value is its samples' mean, and the y scale keeps
-   order, so a rising series draws a line that never falls. *)
+(* Law 2: a column's value is its samples' mean, and the y scale keeps order, so
+   a rising series draws a line that never falls. *)
 let rising =
   prop "a series that rises draws a line that never falls"
     (Gen.pair (gen_draw_case ~value:(Gen.float_range 1e-3 1e3) ()) Gen.bool)
@@ -903,19 +979,21 @@ let rising =
       in
       check (rows (ink ~colour:mine g)))
 
-(* Law 3: a lone spike is drawn in its column, faint, smoothed or not. The
-   spike follows a quarter of the samples. Under smoothing the line has
-   settled on them and takes at most 1 - exp (-1 / tau) of it, a seventh at
-   the least tau, 200 steps over 30; without it the line is the column's
-   mean, which takes at most a quarter of it, since every dot column holds
-   four samples or more. A plot of six rows then holds it more than three
-   dot rows from the line. *)
+(* Law 3: a lone spike is drawn in its column, faint, smoothed or not. The spike
+   follows a quarter of the samples. Under smoothing the line has settled on
+   them and takes at most 1 - exp (-1 / tau) of it, a seventh at the least tau,
+   200 steps over 30; without it the line is the column's mean, which takes at
+   most a quarter of it, since every dot column holds four samples or more. A
+   plot of six rows then holds it more than three dot rows from the line. *)
 let spike =
   let open Gen in
   let gen =
     let* smooth = bool in
     let* width = int_range 30 140 in
-    let* n = if smooth then int_range 200 400 else int_range (8 * width) ((8 * width) + 200) in
+    let* n =
+      if smooth then int_range 200 400
+      else int_range (8 * width) ((8 * width) + 200)
+    in
     let* base = float_range (-10.) 10. in
     let* jump = float_range 10. 1000. in
     let* up = bool in
@@ -934,9 +1012,13 @@ let spike =
     (fun (smooth, n, base, jump, at, width, height, guides) ->
       cover "smoothed" smooth;
       cover "not smoothed" (not smooth);
-      let samples = List.init n (fun i -> (i, if i = at then base +. jump else base)) in
+      let samples =
+        List.init n (fun i -> (i, if i = at then base +. jump else base))
+      in
       let ch = chart ~smooth ~guides (domain samples) in
-      let g = drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ] in
+      let g =
+        drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ]
+      in
       let faint = fg (Munin_tui.Theme.faint_run truecolor 0) in
       match Plot.dots truecolor ch ~width ~height with
       | None -> fail "no plot"
@@ -945,7 +1027,8 @@ let spike =
           let shift = match line with (k, _) :: _ -> k - dot 0. | [] -> 0 in
           let column = dot (Float.of_int at) + shift in
           Windtrap.not_equal ~msg:"the faint dots in the spike's column"
-            (Windtrap.list Windtrap.int) []
+            (Windtrap.list Windtrap.int)
+            []
             (List.filter_map
                (fun (k, r) -> if k = column then Some r else None)
                (ink ~colour:faint g)))
@@ -960,8 +1043,8 @@ let non_finite =
     let* guides = of_list [ `Both; `Y ] in
     let* after = int_range 1 20 in
     let+ e = of_list [ Float.nan; Float.infinity; Float.neg_infinity ] in
-    (* The tail spans the steps before it again, so that the hatch is
-       wide enough to show its pattern beside its label. *)
+    (* The tail spans the steps before it again, so that the hatch is wide
+       enough to show its pattern beside its label. *)
     let last = last_step c.samples in
     let gap = max 1 ((last + 1) / after) in
     let tail = List.init after (fun i -> (last + 1 + (i * gap), e)) in
@@ -969,38 +1052,47 @@ let non_finite =
     { c with width; guides; samples = c.samples @ tail }
   in
   prop "from the first sample that is not finite, a labelled hatch and no line"
-    (with_pp pp_draw_case gen)
-    (fun c ->
+    (with_pp pp_draw_case gen) (fun c ->
       let ch = chart ~guides:c.guides (domain c.samples) in
-      let g = drawn truecolor ch ~width:c.width ~height:c.height [ (me, 0, series_of c.samples) ] in
+      let g =
+        drawn truecolor ch ~width:c.width ~height:c.height
+          [ (me, 0, series_of c.samples) ]
+      in
       let hatch = cells g (( = ) "╱") in
       let line = List.map (fun (k, _) -> k / 2) (ink ~colour:mine g) in
       if hatch = [] then fail "no hatch";
       let shown = text g in
       let e = snd (List.nth c.samples (List.length c.samples - 1)) in
-      equal ~msg:"the labels shown" Windtrap.(list string)
+      equal ~msg:"the labels shown"
+        Windtrap.(list string)
         [ "× " ^ Munin_tui.Numbers.non_finite e ]
         (List.filter (fun s -> holds s shown) [ "× NaN"; "× inf"; "× -inf" ]);
       at_most ~msg:"the line's last cell, the hatch's first" Windtrap.int
         ~than:(List.fold_left min max_int hatch)
         (List.fold_left max 0 line))
 
-(* Law 7: the cursor's run is drawn last, its spikes included: a cell it
-   shares with another run's line shows the dots of both, in the cursor's
-   run's colour. The other run logs the cursor's values in reverse, so the
-   two share a y domain and each draws alone as it draws with the other. *)
+(* Law 7: the cursor's run is drawn last, its spikes included: a cell it shares
+   with another run's line shows the dots of both, in the cursor's run's colour.
+   The other run logs the cursor's values in reverse, so the two share a y
+   domain and each draws alone as it draws with the other. *)
 let cursor_wins =
   prop "the cursor's run colours a cell it shares"
     (Gen.with_pp
        (fun ppf (c, other) ->
          Format.fprintf ppf "%a, %s" pp_draw_case c
-           (match other with `Context -> "a grey run" | `Overlay -> "an overlay"))
+           (match other with
+           | `Context -> "a grey run"
+           | `Overlay -> "an overlay"))
        (Gen.pair (gen_draw_case ()) (Gen.of_list [ `Context; `Overlay ])))
     (fun (c, other) ->
       let steps, values = List.split c.samples in
       let s = series_of c.samples
       and r = series_of (List.combine steps (List.rev values)) in
-      let role = match other with `Context -> Munin_tui.Plot.Context | `Overlay -> Overlay 'a' in
+      let role =
+        match other with
+        | `Context -> Munin_tui.Plot.Context
+        | `Overlay -> Overlay 'a'
+      in
       let ch = chart ~guides:c.guides (domain c.samples) in
       let draw runs = drawn truecolor ch ~width:c.width ~height:c.height runs in
       let g = draw [ (role, 1, r); (me, 0, s) ]
@@ -1015,10 +1107,15 @@ let cursor_wins =
           if a lor b <> 0 then begin
             if a <> 0 && b <> 0 then begin
               incr shared;
-              if Matrix.Ansi.Color.equal (Matrix.Grid.get_fg ours i) spike then incr spiked
+              if Matrix.Ansi.Color.equal (Matrix.Grid.get_fg ours i) spike then
+                incr spiked
             end;
-            let expected = Matrix.Grid.get_fg (if b <> 0 then ours else theirs) i in
-            equal ~msg:(Printf.sprintf "cell %d,%d: dots, colour" x y) (pair int colour)
+            let expected =
+              Matrix.Grid.get_fg (if b <> 0 then ours else theirs) i
+            in
+            equal
+              ~msg:(Printf.sprintf "cell %d,%d: dots, colour" x y)
+              (pair int colour)
               (a lor b, expected)
               (braille g i, Matrix.Grid.get_fg g i)
           end
@@ -1032,16 +1129,17 @@ let cursor_wins =
 (* Law 8: without colour, each overlay ends in its letter. *)
 let letters =
   prop "without colour an overlay ends in its letter, with colour it does not"
-    (gen_draw_case ~min_height:3 ())
-    (fun c ->
+    (gen_draw_case ~min_height:3 ()) (fun c ->
       let s = series_of c.samples in
       let ch = chart ~guides:c.guides (domain c.samples) in
       let runs = [ (Munin_tui.Plot.Overlay 'd', 1, s); (me, 0, s) ] in
       let width = c.width + 10 in
-      let letter th = cells (drawn th ch ~width ~height:c.height runs) (( = ) "d") in
+      let letter th =
+        cells (drawn th ch ~width ~height:c.height runs) (( = ) "d")
+      in
       equal ~msg:"in colour" (list int) [] (letter truecolor);
-      (* The line's last cell, and the cell right of it within the plot,
-         whose place in the grid the line's first dot column gives. *)
+      (* The line's last cell, and the cell right of it within the plot, whose
+         place in the grid the line's first dot column gives. *)
       let mono = theme `Mono in
       let line = rows (ink (drawn mono ch ~width ~height:c.height runs)) in
       cover "a line" (line <> []);
@@ -1054,9 +1152,9 @@ let letters =
             (letter mono)
       | _ -> not_equal ~msg:"without colour" (list int) [] (letter mono))
 
-(* Rule 1: a y label is a number, never one cut short. A near-constant
-   series about a round value, with a step far below the labels' digits,
-   is labelled with values that read exactly in six cells, or not at all. *)
+(* Rule 1: a y label is a number, never one cut short. A near-constant series
+   about a round value, with a step far below the labels' digits, is labelled
+   with values that read exactly in six cells, or not at all. *)
 let exact_labels =
   let open Gen in
   let gen =
@@ -1079,9 +1177,13 @@ let exact_labels =
            (if log then ", log" else ""))
        gen)
     (fun (base, step, n, width, height, log) ->
-      let samples = List.init n (fun i -> (i, base +. (Float.of_int i *. step))) in
+      let samples =
+        List.init n (fun i -> (i, base +. (Float.of_int i *. step)))
+      in
       let ch = chart ~log ~guides:`Y (domain samples) in
-      let g = drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ] in
+      let g =
+        drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ]
+      in
       let labels = y_labels g in
       cover "labelled" (labels <> []);
       let values =
@@ -1092,8 +1194,13 @@ let exact_labels =
             | None -> fail (Printf.sprintf "the label %S is not a number" l))
           labels
       in
-      let lo = List.fold_left (fun m (_, v) -> Float.min m v) Float.infinity samples
-      and hi = List.fold_left (fun m (_, v) -> Float.max m v) Float.neg_infinity samples in
+      let lo =
+        List.fold_left (fun m (_, v) -> Float.min m v) Float.infinity samples
+      and hi =
+        List.fold_left
+          (fun m (_, v) -> Float.max m v)
+          Float.neg_infinity samples
+      in
       let below, above =
         if log then (lo /. 10., hi *. 1.25)
         else
@@ -1103,24 +1210,29 @@ let exact_labels =
       List.iter
         (fun v ->
           if v < below || v > above then
-            fail (Printf.sprintf "the label %g is outside [%g, %g]" v below above))
+            fail
+              (Printf.sprintf "the label %g is outside [%g, %g]" v below above))
         values;
-      equal ~msg:"the labels, top to bottom" Windtrap.(list float_exact)
+      equal ~msg:"the labels, top to bottom"
+        Windtrap.(list float_exact)
         (List.sort_uniq (fun a b -> Float.compare b a) values)
         values)
 
-(* Law 1's x domain of a chart: from 0 to the greatest end of the runs
-   drawn that have samples of the chart's metric. A run that may still log
-   ends at its latest step rounded up to 1, 2 or 5 times a power of ten,
-   capped at its [steps]; any other at its largest step. These runs have no
-   writer a reader can probe: one is writing when a sample arrived, silent
-   when none did, or ended. *)
+(* Law 1's x domain of a chart: from 0 to the greatest end of the runs drawn
+   that have samples of the chart's metric. A run that may still log ends at its
+   latest step rounded up to 1, 2 or 5 times a power of ten, capped at its
+   [steps]; any other at its largest step. These runs have no writer a reader
+   can probe: one is writing when a sample arrived, silent when none did, or
+   ended. *)
 type life = Writing | Ended | Silent
 
-let life_name = function Writing -> "writing" | Ended -> "ended" | Silent -> "silent"
+let life_name = function
+  | Writing -> "writing"
+  | Ended -> "ended"
+  | Silent -> "silent"
 
-(* A run that logged samples at step 0 and [last], of the metric [m] when
-   [has], else of another. *)
+(* A run that logged samples at step 0 and [last], of the metric [m] when [has],
+   else of another. *)
 type law_run = { life : life; steps : int option; last : int; has : bool }
 
 let law_run ?steps ?(has = true) life last = { life; steps; last; has }
@@ -1142,16 +1254,20 @@ let facts r =
     match r.life with Ended -> [ Fixture.finished ] | Writing | Silent -> []
   in
   let declare = [ Fixture.declare "m"; Fixture.declare "n" ] in
-  let id, _ = Fixture.write_log store ?steps:r.steps ~declare (samples @ ended) in
+  let id, _ =
+    Fixture.write_log store ?steps:r.steps ~declare (samples @ ended)
+  in
   let run = Option.get (Store.run store id) in
   (* An arrival at the poll's time: the run reads [writing]. *)
   let watch =
     match r.life with
-    | Writing -> Some (Watch.observe (Watch.start ~samples:0) ~now:0. ~samples:2)
+    | Writing ->
+        Some (Watch.observe (Watch.start ~samples:0) ~now:0. ~samples:2)
     | Ended | Silent -> None
   in
-  Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read run)) ~hint:None ~watch
-    ~pauses:[] run
+  Munin_tui.Facts.of_run ~now:0.
+    ~history:(Some (History.read run))
+    ~hint:None ~watch ~pauses:[] run
 
 let x_domain =
   cases
@@ -1164,7 +1280,9 @@ let x_domain =
       ("ended at step 0", [ law_run Ended 0 ], 1.);
       ("silent short of its steps", [ law_run Silent ~steps:3000 80 ], 80.);
       ("writing short of its steps", [ law_run Writing ~steps:3000 80 ], 100.);
-      ("writing, capped at its steps", [ law_run Writing ~steps:3000 2900 ], 3000.);
+      ( "writing, capped at its steps",
+        [ law_run Writing ~steps:3000 2900 ],
+        3000. );
       ("writing at its steps", [ law_run Writing ~steps:100 100 ], 100.);
       ("writing past its steps", [ law_run Writing ~steps:100 150 ], 200.);
       ("writing, a power of ten", [ law_run Writing 10_000 ], 10_000.);
@@ -1173,17 +1291,25 @@ let x_domain =
       ("writing, to a two", [ law_run Writing 1_500 ], 2_000.);
       ("writing, one step", [ law_run Writing 1 ], 1.);
       ("writing at step 0", [ law_run Writing ~steps:3000 0 ], 1.);
-      ("the greatest of two", [ law_run Writing ~steps:300 10; law_run Ended 400 ], 400.);
-      ("an overlay without the metric", [ law_run Ended 10; law_run Ended ~has:false 150 ], 10.);
+      ( "the greatest of two",
+        [ law_run Writing ~steps:300 10; law_run Ended 400 ],
+        400. );
+      ( "an overlay without the metric",
+        [ law_run Ended 10; law_run Ended ~has:false 150 ],
+        10. );
       ("no run with the metric", [ law_run Ended ~has:false 150 ], 1.);
     ]
     (fun (_, runs, expected) ->
-      equal (pair float_exact float_exact) (0., expected) (Plot.domain ~key:"m" (List.map facts runs)))
+      equal
+        (pair float_exact float_exact)
+        (0., expected)
+        (Plot.domain ~key:"m" (List.map facts runs)))
 
-(* Zoom's step cursor: its rule shows on every row of the plot that no
-   dots take, the raw extent's included, and its step label on the x axis is a chip of the step padded by a blank
-   each side, which the tick labels keep a blank cell from. The cursor stays
-   left of the axis's end, where [step] is the chip's neighbour. *)
+(* Zoom's step cursor: its rule shows on every row of the plot that no dots
+   take, the raw extent's included, and its step label on the x axis is a chip
+   of the step padded by a blank each side, which the tick labels keep a blank
+   cell from. The cursor stays left of the axis's end, where [step] is the
+   chip's neighbour. *)
 let zoom_cursor =
   (* Many noisy samples a dot column, so that the raw extent is tall. *)
   let gen =
@@ -1198,29 +1324,38 @@ let zoom_cursor =
   in
   let gen =
     Gen.with_pp
-      (fun ppf (c, at) -> Format.fprintf ppf "%dx%d, %d samples, cursor at %g" c.width c.height
-         (List.length c.samples) at)
+      (fun ppf (c, at) ->
+        Format.fprintf ppf "%dx%d, %d samples, cursor at %g" c.width c.height
+          (List.length c.samples) at)
       gen
   in
-  prop "zoom's cursor rule shows where no dots are, its label clear of the ticks" gen
-    (fun (c, at) ->
+  prop
+    "zoom's cursor rule shows where no dots are, its label clear of the ticks"
+    gen (fun (c, at) ->
       let lo, hi = domain c.samples in
       let v = Float.floor (lo +. (at *. (hi -. lo))) in
       let ch = { (chart (lo, hi)) with cursor = Some v; extents = true } in
-      let g = drawn truecolor ch ~width:c.width ~height:c.height [ (me, 0, series_of c.samples) ] in
+      let g =
+        drawn truecolor ch ~width:c.width ~height:c.height
+          [ (me, 0, series_of c.samples) ]
+      in
       let at x y = Matrix.Grid.idx g ~x ~y in
       let rule = fg (Munin_tui.Theme.fg truecolor Mid) in
       let axis_row =
         match
           List.find_opt
-            (fun y -> List.exists (fun x -> Matrix.Grid.get_text g (at x y) = "└") (List.init c.width Fun.id))
+            (fun y ->
+              List.exists
+                (fun x -> Matrix.Grid.get_text g (at x y) = "└")
+                (List.init c.width Fun.id))
             (List.init c.height Fun.id)
         with
         | Some y -> y
         | None -> fail "no x axis"
       in
       let ruled x y =
-        Matrix.Grid.get_text g (at x y) = "│" && Matrix.Ansi.Color.equal (Matrix.Grid.get_fg g (at x y)) rule
+        Matrix.Grid.get_text g (at x y) = "│"
+        && Matrix.Ansi.Color.equal (Matrix.Grid.get_fg g (at x y)) rule
       in
       (* The rule's column, from the chart drawn without a line. *)
       let alone = drawn truecolor ch ~width:c.width ~height:c.height [] in
@@ -1235,30 +1370,55 @@ let zoom_cursor =
               (List.init axis_row Fun.id))
           (List.init c.width Fun.id)
       in
-      let x = match columns with [ x ] -> x | _ -> failf "the rule's columns: %d" (List.length columns) in
-      let bare = drawn truecolor { ch with cursor = None } ~width:c.width ~height:c.height
-          [ (me, 0, series_of c.samples) ] in
+      let x =
+        match columns with
+        | [ x ] -> x
+        | _ -> failf "the rule's columns: %d" (List.length columns)
+      in
+      let bare =
+        drawn truecolor { ch with cursor = None } ~width:c.width
+          ~height:c.height
+          [ (me, 0, series_of c.samples) ]
+      in
       let band = fg (Munin_tui.Theme.faint_run truecolor 0) in
       cover "the raw extent on the rule's column"
         (List.exists
-           (fun y -> Matrix.Ansi.Color.equal (Matrix.Grid.get_fg bare (Matrix.Grid.idx bare ~x ~y)) band)
+           (fun y ->
+             Matrix.Ansi.Color.equal
+               (Matrix.Grid.get_fg bare (Matrix.Grid.idx bare ~x ~y))
+               band)
            (List.init axis_row Fun.id));
       List.iter
         (fun y ->
           if not (ruled x y || braille g (at x y) <> 0) then
-            failf "row %d of the rule's column shows %S" y (Matrix.Grid.get_text g (at x y)))
+            failf "row %d of the rule's column shows %S" y
+              (Matrix.Grid.get_text g (at x y)))
         (List.init axis_row Fun.id);
       (* The chip: the cells of the label row on the cursor's background. *)
       let row = axis_row + 1 in
       let chip = Option.get (Munin_tui.Theme.bg truecolor Raise) in
-      let on x = Matrix.Ansi.Color.equal (Matrix.Grid.get_bg g (at x row)) chip in
+      let on x =
+        Matrix.Ansi.Color.equal (Matrix.Grid.get_bg g (at x row)) chip
+      in
       let xs = List.filter on (List.init c.width Fun.id) in
-      let first = List.fold_left min c.width xs and last = List.fold_left max (-1) xs in
+      let first = List.fold_left min c.width xs
+      and last = List.fold_left max (-1) xs in
       if xs = [] then fail "no step label";
-      let text a b = String.concat "" (List.init (b - a + 1) (fun x -> Matrix.Grid.get_text g (at (a + x) row))) in
-      equal ~msg:"the chip" string (" " ^ Munin_tui.Numbers.count (Float.to_int v) ^ " ") (text first last);
-      let blank x = x < 0 || x >= c.width || String.trim (Matrix.Grid.get_text g (at x row)) = "" in
-      equal ~msg:"the cells beside the chip are blank" (list bool) [ true; true ]
+      let text a b =
+        String.concat ""
+          (List.init
+             (b - a + 1)
+             (fun x -> Matrix.Grid.get_text g (at (a + x) row)))
+      in
+      equal ~msg:"the chip" string
+        (" " ^ Munin_tui.Numbers.count (Float.to_int v) ^ " ")
+        (text first last);
+      let blank x =
+        x < 0 || x >= c.width
+        || String.trim (Matrix.Grid.get_text g (at x row)) = ""
+      in
+      equal ~msg:"the cells beside the chip are blank" (list bool)
+        [ true; true ]
         [ blank (first - 1); blank (last + 1) ])
 
 (* [x_end r] is the end law 1 gives one run. *)
@@ -1266,7 +1426,8 @@ let x_end r =
   let l = Float.of_int r.last in
   match (r.life, r.steps) with
   | (Ended | Silent), _ -> Float.max 1. l
-  | Writing, Some n when r.last <= n -> Float.min (Float.of_int n) (Munin_tui.Facts.bound l)
+  | Writing, Some n when r.last <= n ->
+      Float.min (Float.of_int n) (Munin_tui.Facts.bound l)
   | Writing, _ -> Munin_tui.Facts.bound l
 
 (* A run's steps and last step: short of them, at them, or past them. *)
@@ -1278,7 +1439,9 @@ let gen_law_run =
   let+ last =
     match steps with
     | None -> int_range 0 5000
-    | Some n -> frequency [ (3, int_range 0 n); (1, constant n); (1, int_range n (2 * n)) ]
+    | Some n ->
+        frequency
+          [ (3, int_range 0 n); (1, constant n); (1, int_range n (2 * n)) ]
   in
   { life; steps; last; has }
 
@@ -1296,36 +1459,52 @@ let x_domain_law =
         [ law_run Writing 2500 ];
         [ law_run Writing ~steps:3000 2900 ];
       ]
-    gen_law_runs (fun runs ->
+    gen_law_runs
+    (fun runs ->
       let short r = match r.steps with Some n -> r.last < n | None -> false in
       let past r = match r.steps with Some n -> r.last > n | None -> false in
       let rounds_past r =
         match r.steps with
-        | Some n -> r.last <= n && Munin_tui.Facts.bound (Float.of_int r.last) > Float.of_int n
+        | Some n ->
+            r.last <= n
+            && Munin_tui.Facts.bound (Float.of_int r.last) > Float.of_int n
         | None -> false
       in
       let some p = List.exists p runs in
-      cover "a writing run short of its steps" (some (fun r -> r.life = Writing && short r));
-      cover "a writing run's rounding passes its steps" (some (fun r -> r.life = Writing && rounds_past r));
-      cover "a writing run without steps" (some (fun r -> r.life = Writing && r.steps = None));
-      cover "an ended run short of its steps" (some (fun r -> r.life = Ended && short r));
+      cover "a writing run short of its steps"
+        (some (fun r -> r.life = Writing && short r));
+      cover "a writing run's rounding passes its steps"
+        (some (fun r -> r.life = Writing && rounds_past r));
+      cover "a writing run without steps"
+        (some (fun r -> r.life = Writing && r.steps = None));
+      cover "an ended run short of its steps"
+        (some (fun r -> r.life = Ended && short r));
       cover "a run past its steps" (some past);
       cover "a silent run" (some (fun r -> r.life = Silent));
       cover "a run without the metric beside one with it"
         (some (fun r -> r.has) && some (fun r -> not r.has));
       cover "no run with the metric" (not (some (fun r -> r.has)));
       let ends = List.map x_end (List.filter (fun r -> r.has) runs) in
-      let expected = match ends with [] -> 1. | _ -> List.fold_left Float.max 0. ends in
-      equal (pair float_exact float_exact) (0., expected) (Plot.domain ~key:"m" (List.map facts runs)))
+      let expected =
+        match ends with [] -> 1. | _ -> List.fold_left Float.max 0. ends
+      in
+      equal
+        (pair float_exact float_exact)
+        (0., expected)
+        (Plot.domain ~key:"m" (List.map facts runs)))
 
-(* Zoom's window: [n] halvings of the domain [(0, hi)], the part that holds
-   the cursor, or the nearer end for a cursor outside. It lies inside the
-   domain, so zooming on an ended run's last step shows its last samples. *)
+(* Zoom's window: [n] halvings of the domain [(0, hi)], the part that holds the
+   cursor, or the nearer end for a cursor outside. It lies inside the domain, so
+   zooming on an ended run's last step shows its last samples. *)
 let zoom_window =
   let gen =
     Gen.(
       let* hi =
-        frequency [ (3, map Float.of_int (int_range 1 100_000)); (1, float_range 1e-3 1e9) ]
+        frequency
+          [
+            (3, map Float.of_int (int_range 1 100_000));
+            (1, float_range 1e-3 1e9);
+          ]
       in
       let* narrow = int_range 0 30 in
       let+ at =
@@ -1340,11 +1519,12 @@ let zoom_window =
       in
       (hi, narrow, at))
     |> Gen.with_pp (fun ppf (hi, narrow, at) ->
-           Format.fprintf ppf "(0, %h), %d halvings, at %h" hi narrow at)
+        Format.fprintf ppf "(0, %h), %d halvings, at %h" hi narrow at)
   in
   prop "zoom's window lies in the domain and holds the cursor"
     ~examples:[ (100., 2, 100.); (100., 2, -5.); (100., 2, 150.) ]
-    gen (fun (hi, narrow, at) ->
+    gen
+    (fun (hi, narrow, at) ->
       cover "the cursor at the domain's end" (at = hi);
       cover "the cursor outside the domain" (at < 0. || at > hi);
       cover "narrowed more than once" (narrow > 1);
@@ -1352,22 +1532,27 @@ let zoom_window =
       at_least ~msg:"its start" float_exact ~than:0. lo';
       at_most ~msg:"its end" float_exact ~than:hi hi';
       let w = Float.ldexp hi (-narrow) in
-      equal ~msg:"its width" (float_rel ~rel:1e-9 ~abs:(1e-12 *. hi)) w (hi' -. lo');
+      equal ~msg:"its width"
+        (float_rel ~rel:1e-9 ~abs:(1e-12 *. hi))
+        w (hi' -. lo');
       let at = Float.min hi (Float.max 0. at) in
       at_least ~msg:"the cursor, from its start" float_exact ~than:lo' at;
       at_most ~msg:"the cursor, to its end" float_exact ~than:hi' at)
 
-(* Law 9: a live run's latest step has its [now] rule wherever it is in the
-   x domain, which is closed: a run whose latest step is the domain's end,
-   as one past 1,000 steps without [steps] reaches at step 1,000, has it. *)
+(* Law 9: a live run's latest step has its [now] rule wherever it is in the x
+   domain, which is closed: a run whose latest step is the domain's end, as one
+   past 1,000 steps without [steps] reaches at step 1,000, has it. *)
 let now_rule =
-  cases ~id:(fun v -> Printf.sprintf "now at %g" v) "the now rule marks the latest step"
-    [ 0.; 500.; 1000. ]
+  cases
+    ~id:(fun v -> Printf.sprintf "now at %g" v)
+    "the now rule marks the latest step" [ 0.; 500.; 1000. ]
     (fun v ->
       let samples = List.init 11 (fun i -> (i * 100, Float.of_int i)) in
       let ch = { (chart (0., 1000.)) with now = Some v } in
       let width = 60 and height = 10 in
-      let g = drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ] in
+      let g =
+        drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ]
+      in
       let dot =
         match Plot.dots truecolor ch ~width ~height with
         | Some (_, dot) -> dot
@@ -1389,31 +1574,37 @@ let now_rule =
       in
       equal ~msg:"the now labels" int 1 (count (text g) 0))
 
-(* A rule is context and dots are data: on the [now] rule's or zoom's
-   cursor rule's column, a cell that dots take, a line's, a spike's or the
-   raw extent's, shows them as it shows without the rule, and a cell no
-   dots take shows the rule. With two runs at zoom, the cursor's raw extent
-   shares the rule's column with the other run's line, and the cursor's run,
-   drawn last, colours the cells they share. *)
+(* A rule is context and dots are data: on the [now] rule's or zoom's cursor
+   rule's column, a cell that dots take, a line's, a spike's or the raw
+   extent's, shows them as it shows without the rule, and a cell no dots take
+   shows the rule. With two runs at zoom, the cursor's raw extent shares the
+   rule's column with the other run's line, and the cursor's run, drawn last,
+   colours the cells they share. *)
 let lines_over_rules =
   let gen =
     let open Gen in
     let* role =
       one_of
         (List.map constant
-           [ `Context; `Overlay; `Cursor; `Band_and `Context; `Band_and `Overlay ])
+           [
+             `Context; `Overlay; `Cursor; `Band_and `Context; `Band_and `Overlay;
+           ])
     in
     let band = match role with `Band_and _ -> true | _ -> false in
     (* Many samples a dot column and a gentle slope make a tall extent. *)
     let* n = if band then int_range 400 1000 else int_range 20 400 in
-    let* slope = if band then float_range (-0.01) 0.01 else float_range (-5.) 5. in
+    let* slope =
+      if band then float_range (-0.01) 0.01 else float_range (-5.) 5.
+    in
     let* noise = list ~size:(constant n) (float_range (-1.) 1.) in
     let* width = if band then int_range 30 60 else int_range 30 120 in
     let* height = int_range 6 24 in
     let* at = float_range 0.05 0.95 in
     let* zoom = if band then constant true else bool in
     let+ off = float_range (-8.) 8. in
-    let samples = List.mapi (fun i e -> (i, (slope *. Float.of_int i) +. (10. *. e))) noise in
+    let samples =
+      List.mapi (fun i e -> (i, (slope *. Float.of_int i) +. (10. *. e))) noise
+    in
     (samples, width, height, at, zoom, role, off)
   in
   let name = function
@@ -1424,19 +1615,26 @@ let lines_over_rules =
     | `Band_and `Overlay -> "cursor's run and an overlay"
   in
   let pp ppf (s, w, h, at, zoom, role, off) =
-    Format.fprintf ppf "%dx%d, %d samples, %s rule at %g, %s, the other %+g" w h (List.length s)
-      (if zoom then "cursor" else "now") at (name role) off
+    Format.fprintf ppf "%dx%d, %d samples, %s rule at %g, %s, the other %+g" w h
+      (List.length s)
+      (if zoom then "cursor" else "now")
+      at (name role) off
   in
   prop "dots win the cells they share with a rule" (Gen.with_pp pp gen)
     (fun (samples, width, height, at, zoom, role, off) ->
       let lo, hi = domain samples in
       let v = Float.floor (lo +. (at *. (hi -. lo))) in
       let base = { (chart (lo, hi)) with extents = zoom } in
-      let ch = if zoom then { base with cursor = Some v } else { base with now = Some v } in
+      let ch =
+        if zoom then { base with cursor = Some v }
+        else { base with now = Some v }
+      in
       let other r =
         match r with
-        | `Context -> (Munin_tui.Plot.Context, 0, fg (Munin_tui.Theme.faint truecolor Dim))
-        | `Overlay -> (Munin_tui.Plot.Overlay 'a', 1, fg (Munin_tui.Theme.run truecolor 1))
+        | `Context ->
+            (Munin_tui.Plot.Context, 0, fg (Munin_tui.Theme.faint truecolor Dim))
+        | `Overlay ->
+            (Munin_tui.Plot.Overlay 'a', 1, fg (Munin_tui.Theme.run truecolor 1))
       in
       let shifted = List.map (fun (i, y) -> (i, y +. off)) samples in
       let runs, theirs =
@@ -1447,12 +1645,15 @@ let lines_over_rules =
         | `Cursor -> ([ (me, 0, series_of samples) ], None)
         | `Band_and r ->
             let role, colour, line = other r in
-            ([ (role, colour, series_of shifted); (me, 0, series_of samples) ], Some line)
+            ( [ (role, colour, series_of shifted); (me, 0, series_of samples) ],
+              Some line )
       in
       let g = drawn truecolor ch ~width ~height runs
       and bare = drawn truecolor base ~width ~height runs
       and alone = drawn truecolor ch ~width ~height []
-      and no_band = drawn truecolor { base with extents = false } ~width ~height runs in
+      and no_band =
+        drawn truecolor { base with extents = false } ~width ~height runs
+      in
       let band = fg (Munin_tui.Theme.faint_run truecolor 0) in
       let rule_glyph s = s = "│" || s = "┊" in
       let cell = pair string colour in
@@ -1467,12 +1668,13 @@ let lines_over_rules =
               incr shared;
               (* The band takes a cell the other run's line crosses. *)
               (match theirs with
-               | Some line
-                 when Matrix.Ansi.Color.equal (Matrix.Grid.get_fg no_band i) line
-                      && braille no_band i <> 0
-                      && Matrix.Ansi.Color.equal (Matrix.Grid.get_fg bare i) band ->
-                   incr taken
-               | _ -> ());
+              | Some line
+                when Matrix.Ansi.Color.equal (Matrix.Grid.get_fg no_band i) line
+                     && braille no_band i <> 0
+                     && Matrix.Ansi.Color.equal (Matrix.Grid.get_fg bare i) band
+                ->
+                  incr taken
+              | _ -> ());
               equal ~msg cell (shown bare) (shown g)
             end
             else if String.trim (Matrix.Grid.get_text bare i) = "" then begin
@@ -1486,14 +1688,14 @@ let lines_over_rules =
       cover "a grey run's line" (role = `Context);
       cover "an overlay's line" (role = `Overlay);
       cover "zoom's cursor rule" zoom;
-      (* About a quarter of the cases: a demand of a share would need 400
-         cases to decide it; presence is reached on every run. *)
+      (* About a quarter of the cases: a demand of a share would need 400 cases
+         to decide it; presence is reached on every run. *)
       cover "the band takes a cell another run's line crosses, on the rule"
         (!taken > 0))
 
-(* The x axis's program labels, the [step] title and zoom's cursor, keep
-   clear of each other: the row reads [step] whole or not at all, wherever
-   the cursor is, and whole while the cursor is far from it. *)
+(* The x axis's program labels, the [step] title and zoom's cursor, keep clear
+   of each other: the row reads [step] whole or not at all, wherever the cursor
+   is, and whole while the cursor is far from it. *)
 let x_labels_clear =
   let gen =
     let open Gen in
@@ -1511,21 +1713,35 @@ let x_labels_clear =
     in
     (last, width, height, at)
   in
-  let pp ppf (last, w, h, at) = Format.fprintf ppf "%d steps, %dx%d, cursor at %g" last w h at in
-  prop "the step title and the cursor's chip keep clear of each other" (Gen.with_pp pp gen)
-    (fun (last, width, height, at) ->
-      let samples = List.init (last + 1) (fun i -> (i, Float.of_int (i mod 7))) in
+  let pp ppf (last, w, h, at) =
+    Format.fprintf ppf "%d steps, %dx%d, cursor at %g" last w h at
+  in
+  prop "the step title and the cursor's chip keep clear of each other"
+    (Gen.with_pp pp gen) (fun (last, width, height, at) ->
+      let samples =
+        List.init (last + 1) (fun i -> (i, Float.of_int (i mod 7)))
+      in
       let lo, hi = (0., Float.of_int last) in
       let v = Float.round (at *. hi) in
       let ch = { (chart (lo, hi)) with cursor = Some v; extents = true } in
-      let g = drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ] in
-      let row y = String.concat "" (List.init width (fun x -> Matrix.Grid.get_text g (Matrix.Grid.idx g ~x ~y))) in
+      let g =
+        drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ]
+      in
+      let row y =
+        String.concat ""
+          (List.init width (fun x ->
+               Matrix.Grid.get_text g (Matrix.Grid.idx g ~x ~y)))
+      in
       let axis_row =
-        match List.find_opt (fun y -> holds "└" (row y)) (List.init height Fun.id) with
+        match
+          List.find_opt (fun y -> holds "└" (row y)) (List.init height Fun.id)
+        with
         | Some y -> y
         | None -> fail "no x axis"
       in
-      let words = List.filter (( <> ) "") (String.split_on_char ' ' (row (axis_row + 1))) in
+      let words =
+        List.filter (( <> ) "") (String.split_on_char ' ' (row (axis_row + 1)))
+      in
       let lettered w = String.exists (fun c -> String.contains "step" c) w in
       let far = at <= 0.5 && width >= 60 in
       cover "the cursor near the title" (at >= 0.95);
@@ -1533,12 +1749,15 @@ let x_labels_clear =
       match List.filter lettered words with
       | [ "step" ] -> ()
       | [] when not far -> ()
-      | ws -> failf "the label row %S reads %s" (row (axis_row + 1)) (String.concat ", " ws))
+      | ws ->
+          failf "the label row %S reads %s"
+            (row (axis_row + 1))
+            (String.concat ", " ws))
 
-(* Round numbers are the floats nearest their decimal values, on every
-   system: law 1's end is the least of 1, 2 or 5 times a power of ten at or
-   above the largest step, tried at powers of ten and the floats beside
-   them, up to 1e22, the last power of ten a float holds exactly. *)
+(* Round numbers are the floats nearest their decimal values, on every system:
+   law 1's end is the least of 1, 2 or 5 times a power of ten at or above the
+   largest step, tried at powers of ten and the floats beside them, up to 1e22,
+   the last power of ten a float holds exactly. *)
 let bounds =
   cases
     ~id:(fun (x, _) -> Printf.sprintf "%.17g" x)
@@ -1570,8 +1789,12 @@ let bounds =
 
 let smoothables =
   cases ~id:fst "a key is smoothed by default when it starts with train/"
-    [ ("train/loss", true); ("val/loss", false); ("train", false);
-      ("val/train/loss", false) ]
+    [
+      ("train/loss", true);
+      ("val/loss", false);
+      ("train", false);
+      ("val/train/loss", false);
+    ]
     (fun (key, expected) -> equal bool expected (Plot.smoothable key))
 
 let taus =
@@ -1582,11 +1805,11 @@ let taus =
     (fun (domain, expected) ->
       equal (float_rel ~rel:1e-15 ~abs:0.) expected (Plot.tau domain))
 
-(* A linear axis's ticks, by their sentence: the multiples in the domain
-   of the finest step of 1, 2 or 5 times a power of ten that gives at most
-   [most] ticks which [Numbers.tick] labels, each the float nearest its
-   decimal value. The steps are tried from one finer than the domain's
-   width over [most], coarser and coarser. *)
+(* A linear axis's ticks, by their sentence: the multiples in the domain of the
+   finest step of 1, 2 or 5 times a power of ten that gives at most [most] ticks
+   which [Numbers.tick] labels, each the float nearest its decimal value. The
+   steps are tried from one finer than the domain's width over [most], coarser
+   and coarser. *)
 let linear_ticks ~most (lo, hi) =
   let multiples (m, k) =
     let unit = decimal_text m k in
@@ -1626,40 +1849,52 @@ let tick_steps =
       cover "no tick" (ticks = []);
       equal (list float_exact) (linear_ticks ~most (lo, hi)) ticks)
 
-(* A y axis's ticks are round numbers: the powers of ten of a log domain,
-   the multiples of a 1-2-5 step of a linear one. *)
+(* A y axis's ticks are round numbers: the powers of ten of a log domain, the
+   multiples of a 1-2-5 step of a linear one. *)
 let ticks_of =
   cases
     ~id:(fun (log, most, (lo, hi), _) ->
-      Printf.sprintf "%s %d over [%.17g, %.17g]" (if log then "log" else "linear") most lo hi)
+      Printf.sprintf "%s %d over [%.17g, %.17g]"
+        (if log then "log" else "linear")
+        most lo hi)
     "the ticks are the domain's round numbers"
     [
       (true, 10, (1e-3, 1e5), [ 1e-3; 1e-2; 0.1; 1.; 10.; 100.; 1e3; 1e4; 1e5 ]);
-      (true, 10, (Float.succ 1e-3, Float.pred 1e5), [ 1e-2; 0.1; 1.; 10.; 100.; 1e3; 1e4 ]);
+      ( true,
+        10,
+        (Float.succ 1e-3, Float.pred 1e5),
+        [ 1e-2; 0.1; 1.; 10.; 100.; 1e3; 1e4 ] );
       (true, 3, (1e-3, 1e5), [ 1e-3; 1.; 1e3 ]);
       (false, 4, (0., 0.3), [ 0.; 0.1; 0.2; 0.3 ]);
       (false, 5, (0., 1.), [ 0.; 0.5; 1. ]);
       (false, 5, (0., 2.1e6), [ 0.; 5e5; 1e6; 1.5e6; 2e6 ]);
       (false, 5, (-0.003, 0.003), [ -0.002; 0.; 0.002 ]);
-      (* The float below 1 and 1, where a step's quotients pass 2^52 and
-         several of its multiples round to 1. *)
+      (* The float below 1 and 1, where a step's quotients pass 2^52 and several
+         of its multiples round to 1. *)
       (false, 3, (Float.pred 1., 1.), [ 1. ]);
-      (* Both quotients by the step 1e-113 round outward, while its
-         multiples in the domain are three. *)
-      (false, 3, (Float.succ 5e-113, Float.pred 9e-113), [ 6e-113; 7e-113; 8e-113 ]);
+      (* Both quotients by the step 1e-113 round outward, while its multiples in
+         the domain are three. *)
+      ( false,
+        3,
+        (Float.succ 5e-113, Float.pred 9e-113),
+        [ 6e-113; 7e-113; 8e-113 ] );
     ]
     (fun (log, most, domain, expected) ->
       equal (list float_exact) expected (Plot.y_ticks ~log ~most domain))
 
-(* Law 5's choice: y is on a log scale when every finite sample drawn is
-   above 0 and the greatest is a hundred times the least or more. [logged
-   values] is what a poll knows of a run that logged [values] under [m]. *)
+(* Law 5's choice: y is on a log scale when every finite sample drawn is above 0
+   and the greatest is a hundred times the least or more. [logged values] is
+   what a poll knows of a run that logged [values] under [m]. *)
 let logged values =
   let store = Lazy.force laws in
-  let id, _ = Fixture.write_log store (List.mapi (fun st v -> Fixture.sample (st, v)) values) in
+  let id, _ =
+    Fixture.write_log store
+      (List.mapi (fun st v -> Fixture.sample (st, v)) values)
+  in
   let r = Option.get (Store.run store id) in
-  Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r)) ~hint:None ~watch:None
-    ~pauses:[] r
+  Munin_tui.Facts.of_run ~now:0.
+    ~history:(Some (History.read r))
+    ~hint:None ~watch:None ~pauses:[] r
 
 let log_choice =
   cases
@@ -1679,19 +1914,22 @@ let log_choice =
     (fun (_, runs, expected) ->
       equal bool expected (Plot.log (List.map logged runs) "m"))
 
-(* [cut w s] is [s] when it fits, else a prefix of [s] and […] in at most
-   [w] cells, and [""] for [w <= 0]: over wide glyphs, combining marks and
-   tabs. *)
+(* [cut w s] is [s] when it fits, else a prefix of [s] and […] in at most [w]
+   cells, and [""] for [w <= 0]: over wide glyphs, combining marks and tabs. *)
 let cut_law =
   let gen =
     let open Gen in
-    let piece = one_of (List.map constant [ "a"; "b"; "漢"; "字"; "é"; "\t"; "é"; " " ]) in
+    let piece =
+      one_of (List.map constant [ "a"; "b"; "漢"; "字"; "é"; "\t"; "é"; " " ])
+    in
     let* pieces = list ~size:(int_range 0 12) piece in
     let s = String.concat "" pieces in
     let+ w = int_range (-1) (Munin_tui.Numbers.width s + 1) in
     (w, s)
   in
-  let gen = Gen.with_pp (fun ppf (w, s) -> Format.fprintf ppf "%d, %S" w s) gen in
+  let gen =
+    Gen.with_pp (fun ppf (w, s) -> Format.fprintf ppf "%d, %S" w s) gen
+  in
   (* [a漢b] at 3 cells: [a] and […] take 2, the wide glyph would pass. *)
   prop "a cut text fits, and ends in … when it is cut"
     ~examples:[ (3, "a漢b") ]
@@ -1719,9 +1957,9 @@ let cut_law =
           failf "%S is not a prefix of %S" p s
       end)
 
-(* A value prints in four significant digits, counted after rounding: a
-   value that rounds up to the next power of ten keeps four, and its notation
-   is that of the rounded value. *)
+(* A value prints in four significant digits, counted after rounding: a value
+   that rounds up to the next power of ten keeps four, and its notation is that
+   of the rounded value. *)
 let values_printed =
   cases ~id:fst "a value prints in four significant digits"
     [
@@ -1749,12 +1987,12 @@ let values_printed =
       ("1234567", (1234567., "1.235e+06"));
       ("0.0015", (0.0015, "0.001500"));
     ]
-    (fun (_, (x, expected)) -> equal string expected (Munin_tui.Numbers.value x))
+    (fun (_, (x, expected)) ->
+      equal string expected (Munin_tui.Numbers.value x))
 
 (* A printed value reads back to the value, or shows that it is rounded: by a
-   decimal point, a suffix or an exponent. A whole value of six digits or
-   fewer reads back, NaN and the infinities as their words, and [-0.] as
-   [0]. *)
+   decimal point, a suffix or an exponent. A whole value of six digits or fewer
+   reads back, NaN and the infinities as their words, and [-0.] as [0]. *)
 let rounding_shown =
   let whole n = Gen.map Float.of_int (Gen.int_range (-n) n) in
   let gen =
@@ -1764,7 +2002,10 @@ let rounding_shown =
         (4, whole 1_000_000_000);
         (4, Gen.float_range (-1e6) 1e6);
         (2, Gen.any_float);
-        (2, Gen.one_of (List.map Gen.constant [ Float.nan; Float.infinity; Float.neg_infinity ]));
+        ( 2,
+          Gen.one_of
+            (List.map Gen.constant
+               [ Float.nan; Float.infinity; Float.neg_infinity ]) );
         (2, Gen.one_of (List.map Gen.constant [ 0.; -0. ]));
       ]
   in
@@ -1777,24 +2018,24 @@ let rounding_shown =
   prop "a printed value reads back or shows it is rounded" gen (fun x ->
       let s = Munin_tui.Numbers.value x in
       let exact =
-        match read s with
-        | Some y -> Float.equal y x
-        | None -> false
+        match read s with Some y -> Float.equal y x | None -> false
       in
       let marked = String.exists (fun c -> String.contains ".kMGe" c) s in
       let six = Float.is_integer x && Float.abs x < 1e6 in
       cover "whole, six digits or fewer" six;
       cover "whole, past six digits" (Float.is_integer x && not six);
-      cover "rounded, from a thousand" ((not exact) && Float.abs x >= 1000. && Float.abs x < 1e6);
+      cover "rounded, from a thousand"
+        ((not exact) && Float.abs x >= 1000. && Float.abs x < 1e6);
       cover ~share:0.05 "not finite" (not (Float.is_finite x));
       cover ~share:0.1 "negative" (x < 0.);
       cover ~share:0.03 "-0." (Float.sign_bit x && x = 0.);
       if (six || not (Float.is_finite x)) && not exact then
         failf "%h prints %s, which does not read back" x s;
-      if not (exact || marked) then failf "%h prints %s, rounded without a mark" x s)
+      if not (exact || marked) then
+        failf "%h prints %s, rounded without a mark" x s)
 
-(* A difference fills a strip's column of twelve cells: its widest forms are
-   a signed value, as [-4.941e-324] with its sign, and [+100.00 pt]. *)
+(* A difference fills a strip's column of twelve cells: its widest forms are a
+   signed value, as [-4.941e-324] with its sign, and [+100.00 pt]. *)
 let difference_cells = 11
 
 let difference_fits =
@@ -1827,7 +2068,9 @@ let difference_fits =
        gen)
     (fun (key, value, other) ->
       let d = Munin_tui.Numbers.difference key ~value ~other in
-      let ends suffix = Option.fold ~none:false ~some:(String.ends_with ~suffix) d in
+      let ends suffix =
+        Option.fold ~none:false ~some:(String.ends_with ~suffix) d
+      in
       cover "relative" (ends "%");
       cover "absolute" (d <> None && not (ends "%" || ends "pt"));
       match d with
@@ -1881,8 +2124,7 @@ let decimal_rows =
       (3, -324, 0x0.0000000000001p-1022);
       (2, -324, 0.);
     ]
-    (fun (m, k, expected) ->
-      equal float_exact expected (Numbers.decimal m k))
+    (fun (m, k, expected) -> equal float_exact expected (Numbers.decimal m k))
 
 let decades =
   prop "decade x is the k with 10^k <= |x| < 10^(k+1)"
@@ -1892,11 +2134,12 @@ let decades =
       assume (x <> 0.);
       let k = Numbers.decade x in
       at_most ~msg:"10^k" float_exact ~than:(Float.abs x) (Numbers.decimal 1 k);
-      less ~msg:"10^(k+1)" float_exact ~than:(Numbers.decimal 1 (k + 1))
+      less ~msg:"10^(k+1)" float_exact
+        ~than:(Numbers.decimal 1 (k + 1))
         (Float.abs x))
 
-(* [bound]'s candidates are 1, 2 and 5 times the powers of ten: the least at
-   or above [x] is among those of its decade and the next. *)
+(* [bound]'s candidates are 1, 2 and 5 times the powers of ten: the least at or
+   above [x] is among those of its decade and the next. *)
 let rounds =
   prop "bound x is the least 1, 2 or 5 times a power of ten at or above x"
     Gen.(frequency [ (3, float_range 0. 1e6); (1, float) ])
@@ -1920,9 +2163,7 @@ let rounds =
 
 let counts =
   prop "a count prints with a separator every three digits"
-    ~examples:[ 0; 999; 1000; -1000; max_int; min_int ]
-    Gen.int
-    (fun n ->
+    ~examples:[ 0; 999; 1000; -1000; max_int; min_int ] Gen.int (fun n ->
       let s = Numbers.count n in
       let digits = String.concat "" (String.split_on_char ',' s) in
       equal ~msg:"without separators" string (string_of_int n) digits;
@@ -1941,7 +2182,9 @@ let counts =
 let elisions =
   let gen =
     Gen.(
-      let segment = string_of ~size:(int_range 1 8) (of_list [ 'a'; 'b'; '_' ]) in
+      let segment =
+        string_of ~size:(int_range 1 8) (of_list [ 'a'; 'b'; '_' ])
+      in
       let* key = map (String.concat "/") (list ~size:(int_range 1 4) segment) in
       let+ w = int_range 0 (String.length key + 2) in
       (w, key))
@@ -1956,8 +2199,8 @@ let elisions =
         | Some i -> String.sub key i (String.length key - i)
         | None -> key
       in
-      (* The last segment, its [/] included, fits with a cell of the start
-         and the […]. *)
+      (* The last segment, its [/] included, fits with a cell of the start and
+         the […]. *)
       let keeps = String.length key > w && String.length last + 2 <= w in
       cover "the last segment kept" (keeps && String.contains key '/');
       cover "cut" (String.length key > w && not keeps);
@@ -1968,8 +2211,8 @@ let elisions =
           (String.ends_with ~suffix:("…" ^ last))
           e)
 
-(* Ticks at the multiples of a 1, 2 or 5 step: those [tick] labels read
-   back exactly in six cells, in one notation. *)
+(* Ticks at the multiples of a 1, 2 or 5 step: those [tick] labels read back
+   exactly in six cells, in one notation. *)
 let tick_law =
   let gen =
     Gen.(
@@ -2001,15 +2244,19 @@ let tick_law =
 
 (* The rest of the module's sentences, by their examples. *)
 let metrics =
-  cases ~id:(fun (k, x, _) -> Printf.sprintf "%s %g" k x)
+  cases
+    ~id:(fun (k, x, _) -> Printf.sprintf "%s %g" k x)
     "an accuracy in [0;1] prints as a percentage, any other metric as a value"
-    [ ("val/acc", 0.954, "95.40%"); ("loss", 0.5, "0.5000"); ("acc", 1.5, "1.500") ]
+    [
+      ("val/acc", 0.954, "95.40%");
+      ("loss", 0.5, "0.5000");
+      ("acc", 1.5, "1.500");
+    ]
     (fun (key, x, expected) -> equal string expected (Numbers.metric key x))
 
 let givens =
   cases ~id:Fun.id "a given value prints in the fewest digits that read back"
-    [ "0.1"; "0.0004213752718364"; "5e-324"; "NaN"; "-inf" ]
-    (fun text ->
+    [ "0.1"; "0.0004213752718364"; "5e-324"; "NaN"; "-inf" ] (fun text ->
       equal string text (Numbers.given (float_of_string text)))
 
 let compacts =
@@ -2021,8 +2268,12 @@ let percents_of =
   cases
     ~id:(fun (s, t, _) -> Printf.sprintf "%d of %d" s t)
     "progress is rounded down, 100% once the steps are reached"
-    [ (19950, 20000, "99%"); (20000, 20000, "100%"); (20001, 20000, "100%");
-      (5, 0, "") ]
+    [
+      (19950, 20000, "99%");
+      (20000, 20000, "100%");
+      (20001, 20000, "100%");
+      (5, 0, "");
+    ]
     (fun (s, t, expected) -> equal string expected (Numbers.percent_of s t))
 
 let percents =
@@ -2069,13 +2320,14 @@ let spans =
       ("a minute", (60., "1m 00s"));
       ("negative", (-5., "0s"));
     ]
-    (fun (_, (x, expected)) ->
-      equal string expected (Munin_tui.Numbers.span x))
+    (fun (_, (x, expected)) -> equal string expected (Munin_tui.Numbers.span x))
 
-(* An axis's labels, in one notation: plain while every tick fits six
-   cells, else the suffix, else the exponent. *)
+(* An axis's labels, in one notation: plain while every tick fits six cells,
+   else the suffix, else the exponent. *)
 let tick_labels =
-  let labels xs = Option.map (fun l -> List.map l xs) (Munin_tui.Numbers.tick xs) in
+  let labels xs =
+    Option.map (fun l -> List.map l xs) (Munin_tui.Numbers.tick xs)
+  in
   cases
     ~id:(fun (xs, _) -> String.concat " " (List.map (Printf.sprintf "%g") xs))
     "an axis's labels are exact, in one notation"
@@ -2084,7 +2336,8 @@ let tick_labels =
       ([ 1e6 ], Some [ "1M" ]);
       ([ 1.5e6 ], Some [ "1.5M" ]);
       ([ 2e6 ], Some [ "2M" ]);
-      ([ 0.; 500000.; 1e6; 1.5e6; 2e6 ], Some [ "0"; "500k"; "1M"; "1.5M"; "2M" ]);
+      ( [ 0.; 500000.; 1e6; 1.5e6; 2e6 ],
+        Some [ "0"; "500k"; "1M"; "1.5M"; "2M" ] );
       ([ 0.; 0.0125; 0.025 ], Some [ "0"; "0.0125"; "0.025" ]);
       ([ -250.; 0.; 250. ], Some [ "-250"; "0"; "250" ]);
       ([ 0.; 1e-5; 2e-5 ], Some [ "0"; "1e-05"; "2e-05" ]);
@@ -2094,21 +2347,29 @@ let tick_labels =
     ]
     (fun (xs, expected) -> equal (option (list string)) expected (labels xs))
 
-(* A filled chart, as a machine's strip, inks each of its line's dot
-   columns from the line down to the plot's floor, without a gap. *)
+(* A filled chart, as a machine's strip, inks each of its line's dot columns
+   from the line down to the plot's floor, without a gap. *)
 let filled =
   prop "a filled line inks each of its columns down to the floor"
     (gen_draw_case ~value:(Gen.float_range (-50.) 50.) ())
     (fun c ->
       let ch = { (chart ~guides:`None (domain c.samples)) with fill = true } in
-      let g = drawn truecolor ch ~width:c.width ~height:c.height [ (plain, 0, series_of c.samples) ] in
+      let g =
+        drawn truecolor ch ~width:c.width ~height:c.height
+          [ (plain, 0, series_of c.samples) ]
+      in
       let ink = ink ~colour:mine g in
       let floor = (4 * c.height) - 1 in
       cover "several columns" (List.length (rows ink) > 1);
       List.iter
         (fun (k, (top, bottom)) ->
-          equal ~msg:(Printf.sprintf "dot column %d's lowest row" k) int floor bottom;
-          equal ~msg:(Printf.sprintf "dot column %d's dots" k) int (bottom - top + 1)
+          equal
+            ~msg:(Printf.sprintf "dot column %d's lowest row" k)
+            int floor bottom;
+          equal
+            ~msg:(Printf.sprintf "dot column %d's dots" k)
+            int
+            (bottom - top + 1)
             (List.length (List.filter (fun (k', _) -> k' = k) ink)))
         (rows ink))
 
@@ -2125,16 +2386,18 @@ let matching =
       let n w = Option.map fst (Plot.dots truecolor ch ~width:w ~height) in
       (* A wider region may keep the plot's width, giving up a guide. *)
       assume (n width <> n (width + more));
-      let other = drawn ~reduced:(width + more, height) truecolor ch ~width ~height runs in
+      let other =
+        drawn ~reduced:(width + more, height) truecolor ch ~width ~height runs
+      in
       equal (list (pair int int)) [] (ink ~colour:mine other))
 
-(* Law 4: smoothing weighs steps, not samples, so a curve logged every step
-   and every 50 steps smooths to the same line. Logged every 50 steps, a
-   sample stands for the 50 steps before it, which moves the line by at most
-   25 steps' change: for a decay of rate at least 2,500 steps over at most
-   that many steps, 1.6% of its range, under a dot row of a 12-row chart.
-   With a row each for the means of different samples in a column and for
-   rounding, the lines agree within 2 dot rows in every column. *)
+(* Law 4: smoothing weighs steps, not samples, so a curve logged every step and
+   every 50 steps smooths to the same line. Logged every 50 steps, a sample
+   stands for the 50 steps before it, which moves the line by at most 25 steps'
+   change: for a decay of rate at least 2,500 steps over at most that many
+   steps, 1.6% of its range, under a dot row of a 12-row chart. With a row each
+   for the means of different samples in a column and for rounding, the lines
+   agree within 2 dot rows in every column. *)
 let cadence_rows = 2
 
 let cadence =
@@ -2147,19 +2410,27 @@ let cadence =
     let+ width = int_range 60 140 in
     (n, rate, scale, offset, width)
   in
-  prop ~count:20 "a curve logged every step or every 50 smooths to the same line"
+  prop ~count:20
+    "a curve logged every step or every 50 smooths to the same line"
     (with_pp
        (fun ppf (n, rate, scale, offset, width) ->
-         Format.fprintf ppf "%g + %g exp (-s / %g) to %d, %d columns" offset scale rate
-           n width)
+         Format.fprintf ppf "%g + %g exp (-s / %g) to %d, %d columns" offset
+           scale rate n width)
        gen)
     (fun (n, rate, scale, offset, width) ->
       let f s = offset +. (scale *. exp (-.Float.of_int s /. rate)) in
       let every k = List.init ((n / k) + 1) (fun i -> (i * k, f (i * k))) in
       let ch = chart ~smooth:true ~guides:`Both (0., Float.of_int n) in
-      let line k = rows (ink ~colour:mine (drawn truecolor ch ~width ~height:12 [ (plain, 0, series_of (every k)) ])) in
+      let line k =
+        rows
+          (ink ~colour:mine
+             (drawn truecolor ch ~width ~height:12
+                [ (plain, 0, series_of (every k)) ]))
+      in
       let a = line 1 and b = line 50 in
-      equal ~msg:"dot columns" Windtrap.(list int) (List.map fst a) (List.map fst b);
+      equal ~msg:"dot columns"
+        Windtrap.(list int)
+        (List.map fst a) (List.map fst b);
       List.iter2
         (fun (k, (top, bottom)) (_, (top', bottom')) ->
           let msg = Printf.sprintf "dot column %d" k in
@@ -2200,12 +2471,12 @@ let token_name : Theme.token -> string = function
   | Fail -> "Fail"
   | Warn -> "Warn"
 
-let tokens = Theme.[ Raise; Sel; Line; Line2; Dim; Mid; Fg; Hi; Live; Fail; Warn ]
+let tokens =
+  Theme.[ Raise; Sel; Line; Line2; Dim; Mid; Fg; Hi; Live; Fail; Warn ]
 
 let coloured_depths =
   cases ~id:depth_name
-    "without colour a look has no colour and reverses the cursor's row"
-    depths
+    "without colour a look has no colour and reverses the cursor's row" depths
     (fun depth ->
       let t = theme depth in
       equal ~msg:"coloured" bool (not (colourless depth)) (Theme.coloured t);
@@ -2225,8 +2496,7 @@ let coloured_depths =
    default. *)
 let sixteen_entries =
   cases ~id:depth_name "with 16 or 8 colours a token is one of the 16"
-    [ `Ansi16; `Ansi8 ]
-    (fun depth ->
+    [ `Ansi16; `Ansi8 ] (fun depth ->
       let t = theme depth in
       let entry (c : Matrix.Ansi.Color.t option) =
         match Option.map Matrix.Ansi.Color.intent c with
@@ -2259,8 +2529,8 @@ let schemes =
         (Option.map Matrix.Ansi.Color.to_hex (Theme.fg (look `Dark) Fg).fg)
         (Option.map Matrix.Ansi.Color.to_hex (Theme.fg (look `Light) Fg).fg))
 
-(* What a poll knows of a run of [experiment] that declared [declared],
-   each with a sample at step 0, and gave [params]. *)
+(* What a poll knows of a run of [experiment] that declared [declared], each
+   with a sample at step 0, and gave [params]. *)
 let known ?(experiment = "law") ?(params = []) declared =
   let store = Lazy.force laws in
   let id, _ =
@@ -2270,8 +2540,9 @@ let known ?(experiment = "law") ?(params = []) declared =
       [ Fixture.values 0 (List.map (fun (k, _) -> (k, 1.)) declared) ]
   in
   let r = Option.get (Store.run store id) in
-  Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r)) ~hint:None
-    ~watch:None ~pauses:[] r
+  Munin_tui.Facts.of_run ~now:0.
+    ~history:(Some (History.read r))
+    ~hint:None ~watch:None ~pauses:[] r
 
 let key_metrics =
   cases
@@ -2280,8 +2551,11 @@ let key_metrics =
      else the first goal outside it, else the first goal, else the first"
     [
       ( "a loss outside train/",
-        [ ("train/loss", Some `Minimize); ("val/acc", Some `Maximize);
-          ("val/loss", Some `Minimize) ],
+        [
+          ("train/loss", Some `Minimize);
+          ("val/acc", Some `Maximize);
+          ("val/loss", Some `Minimize);
+        ],
         Some "val/loss" );
       ( "a goal outside train/",
         [ ("train/loss", Some `Minimize); ("val/acc", Some `Maximize) ],
@@ -2293,14 +2567,17 @@ let key_metrics =
       ("no metric", [], None);
     ]
     (fun (_, declared, expected) ->
-      equal (list (option string)) [ expected ]
+      equal
+        (list (option string))
+        [ expected ]
         (List.map
            (fun (e : Munin_tui.Facts.experiment) -> e.key)
            (Munin_tui.Facts.experiments [ known declared ])))
 
 let varying =
-  test "an experiment's varying params differ between its runs, a missing one \
-        counting" (fun () ->
+  test
+    "an experiment's varying params differ between its runs, a missing one \
+     counting" (fun () ->
       let run params = known ~params [ ("m", None) ] in
       let runs =
         [
@@ -2308,7 +2585,9 @@ let varying =
           run [ ("lr", `Float 0.2); ("batch", `Int 64) ];
         ]
       in
-      equal (list (list string)) [ [ "lr"; "opt" ] ]
+      equal
+        (list (list string))
+        [ [ "lr"; "opt" ] ]
         (List.map
            (fun (e : Munin_tui.Facts.experiment) ->
              List.sort String.compare e.varying)
@@ -2322,17 +2601,19 @@ let experiment_order =
            (fun (e : Munin_tui.Facts.experiment) -> e.name)
            (Munin_tui.Facts.experiments [ run "a"; run "b"; run "a" ])))
 
-(* A run's glyph, for each state with and without a sample that is not
-   finite: the facts of a run that logged a NaN, and of one that did not,
-   in each state. *)
+(* A run's glyph, for each state with and without a sample that is not finite:
+   the facts of a run that logged a NaN, and of one that did not, in each
+   state. *)
 let glyphs =
   let facts values =
     let store = Lazy.force laws in
     let id, _ =
-      Fixture.write_log store (List.mapi (fun st v -> Fixture.sample (st, v)) values)
+      Fixture.write_log store
+        (List.mapi (fun st v -> Fixture.sample (st, v)) values)
     in
     let r = Option.get (Store.run store id) in
-    Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r))
+    Munin_tui.Facts.of_run ~now:0.
+      ~history:(Some (History.read r))
       ~hint:None ~watch:None ~pauses:[] r
   in
   let row (state, glyph) =
@@ -2404,28 +2685,35 @@ let model_word (status : Run.status) a =
   | `Failed _ -> "failed"
   | `Killed -> "killed"
 
-(* [poll a ~dt ~d] is the model after a poll [dt] seconds later whose
-   count is [d] more. *)
+(* [poll a ~dt ~d] is the model after a poll [dt] seconds later whose count is
+   [d] more. *)
 let poll a ~dt ~d =
   let now = a.now +. dt in
   let samples = max 0 (a.samples + d) in
   let times =
-    if samples > a.samples then
-      List.filteri (fun i _ -> i < 32) (now :: a.times)
+    if samples > a.samples then List.filteri (fun i _ -> i < 32) (now :: a.times)
     else a.times
   in
   { now; samples; times }
 
-(* A watch is a value: a poll makes a new one and leaves the one it read,
-   which later calls may read again, as a dashboard keeps them across
-   polls. *)
+(* A watch is a value: a poll makes a new one and leaves the one it read, which
+   later calls may read again, as a dashboard keeps them across polls. *)
 let watch_test =
   let w = abstract "w" in
   let status =
     Gen.of_list
       ~pp:(fun ppf s -> Format.pp_print_string ppf (Fixture.status_name s))
       (* Running thrice, since three of the five words are a running run's. *)
-      [ `Running; `Running; `Running; `Silent; `Crashed; `Finished; `Failed "e"; `Killed ]
+      [
+        `Running;
+        `Running;
+        `Running;
+        `Silent;
+        `Crashed;
+        `Finished;
+        `Failed "e";
+        `Killed;
+      ]
   in
   let pp_step ppf (dt, n) = Format.fprintf ppf "+%gs %+d" dt n in
   let observe =
@@ -2443,8 +2731,8 @@ let watch_test =
         let now = now +. dt and samples = max 0 (samples + d) in
         (Watch.observe w ~now ~samples, now, samples))
   in
-  (* A poll long after the last that finds no new sample, as a stalled
-     run's do. *)
+  (* A poll long after the last that finds no new sample, as a stalled run's
+     do. *)
   let quiet =
     command "quiet"
       (Gen.with_pp
@@ -2495,11 +2783,20 @@ let watch_test =
 
 (* Which states a writer may still log in, and which ended badly. *)
 let live_broken =
-  cases ~id:Watch.word "a state is live while a writer may log, broken when it failed"
+  cases ~id:Watch.word
+    "a state is live while a writer may log, broken when it failed"
     Watch.
       [
-        Starting; Running; Live; Stalled; Writing; Silent; Crashed; Finished;
-        Failed; Killed;
+        Starting;
+        Running;
+        Live;
+        Stalled;
+        Writing;
+        Silent;
+        Crashed;
+        Finished;
+        Failed;
+        Killed;
       ]
     (fun st ->
       let live = List.mem st Watch.[ Starting; Running; Live; Writing ] in
@@ -2589,25 +2886,8 @@ let () =
              dates;
            ];
          group "Facts"
-           [
-             glyphs;
-             bounds;
-             rounds;
-             key_metrics;
-             varying;
-             experiment_order;
-           ];
+           [ glyphs; bounds; rounds; key_metrics; varying; experiment_order ];
          group "Theme"
-           [
-             coloured_depths;
-             sixteen_entries;
-             run_colours;
-             schemes;
-           ];
-         group "Watch"
-           [
-             watch_test;
-             unwatched;
-             live_broken;
-           ];
+           [ coloured_depths; sixteen_entries; run_colours; schemes ];
+         group "Watch" [ watch_test; unwatched; live_broken ];
        ])

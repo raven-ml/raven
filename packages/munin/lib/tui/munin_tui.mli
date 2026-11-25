@@ -17,11 +17,11 @@
 
     The status bar names the depth and the keys that act at it
     ({!section-keys}); where they do not fit, they leave from the last, and
-    [? keys], which lists the rest, stays. Colour repeats what a glyph or a
-    word says, so a terminal without colour, or [NO_COLOR], shows every fact:
-    bold and faint remain, the cursor's row is reverse video, and each
-    overlay's line ends in its letter.
-    The colours follow the terminal's background, dark or light.
+    [? keys], which lists the rest, stays. Colour repeats what a glyph or a word
+    says, so a terminal without colour, or [NO_COLOR], shows every fact: bold
+    and faint remain, the cursor's row is reverse video, and each overlay's line
+    ends in its letter. The colours follow the terminal's background, dark or
+    light.
 
     A text cut to its column ends in […] and keeps a blank before the next
     column, and a number is never cut: a run's name, a param's key or a
@@ -43,14 +43,14 @@
     [failed] or [crashed], and those with a metric sample that is not finite,
     and names the host when every run shares one.
 
-    The panes take their widths from the terminal's: at 150 columns or more
-    the runs pane has 42 and the run pane 34; at 100 or more, 34 and 28, the
-    run pane hidden at the strips and zoom depths; below 100, neither, and a
-    line under the top bar names the cursor's run and counts it among the
-    runs kept, as [12 of 33]. [1] and [3] show or hide either pane at any
-    width, and [/] shows a hidden runs pane while the filter is typed. Below
-    60 columns or 16 lines the screen is one line per live run and asks for a
-    larger terminal. A store without runs shows how a program starts one.
+    The panes take their widths from the terminal's: at 150 columns or more the
+    runs pane has 42 and the run pane 34; at 100 or more, 34 and 28, the run
+    pane hidden at the strips and zoom depths; below 100, neither, and a line
+    under the top bar names the cursor's run and counts it among the runs kept,
+    as [12 of 33]. [1] and [3] show or hide either pane at any width, and [/]
+    shows a hidden runs pane while the filter is typed. Below 60 columns or 16
+    lines the screen is one line per live run and asks for a larger terminal. A
+    store without runs shows how a program starts one.
 
     {b The runs pane} has a header per experiment, open or folded to one line
     that counts its runs and its failed or live ones, and a line per run of an
@@ -68,8 +68,8 @@
     the name, the id, the experiment, a tag, the state word or a param written
     [key=value], ignoring case, or, for a word [key<v] or [key>v] with [v] a
     decimal such as [0.002] or [2e-3], whose param [key] is a number below or
-    above [v]. A kept filter that keeps no run stays in the runs pane, and
-    the centre says [no run matches the filter].
+    above [v]. A kept filter that keeps no run stays in the runs pane, and the
+    centre says [no run matches the filter].
 
     The {e key metric} of an experiment is, among its runs' metrics by key, the
     first with a goal outside [train/] whose key ends in [loss], else the first
@@ -78,34 +78,32 @@
     {b The centre} starts with a {e banner} when the cursor's run failed,
     crashed or logged a sample that is not finite, which names the first such
     sample's metric, value and step, and how many metrics went NaN or an
-    infinity, as [× val/loss NaN from step 5; 2 metrics went NaN or inf];
-    then the {e hero}: the key metric's latest value in large digits, its
-    best, and the latest values of up to three other metrics with a goal,
-    four from 150 columns, smoothed where their charts smooth them. Below
-    100 columns or 30 lines one line of those values takes the hero's place.
+    infinity, as [× val/loss NaN from step 5; 2 metrics went NaN or inf]; then
+    the {e hero}: the key metric's latest value in large digits, its best, and
+    the latest values of up to three other metrics with a goal, four from 150
+    columns, smoothed where their charts smooth them. Below 100 columns or 30
+    lines one line of those values takes the hero's place.
 
     At the {e charts} depth the centre has the metric tabs, which [left] and
     [right] move, a legend that gives each drawn run's value at the cursor's
     run's latest step, ending in [r others] until [r] draws the experiment's
-    other runs, one large chart and, from 100 columns and 30 lines, two
-    small charts of the other metrics with a goal, three from 150 columns and
-    44 lines. A run without a metric sample shows, in their place and on
-    the row of the panes' headings, [no metric sample yet], or, once it
-    ended, [the run logged no metric]. At
-    the {e strips} depth each metric of the run is a strip two
-    lines high on the same steps, with its latest value and, with an overlay,
-    the difference to the first overlay at the latest step at which both
-    logged a finite value; for a run that recorded readings of its machine,
+    other runs, one large chart and, from 100 columns and 30 lines, two small
+    charts of the other metrics with a goal, three from 150 columns and 44
+    lines. A run without a metric sample shows, in their place and on the row of
+    the panes' headings, [no metric sample yet], or, once it ended,
+    [the run logged no metric]. At the {e strips} depth each metric of the run
+    is a strip two lines high on the same steps, with its latest value and, with
+    an overlay, the difference to the first overlay at the latest step at which
+    both logged a finite value; for a run that recorded readings of its machine,
     live or ended, strips of those the run pane gives end the list, over the
-    same steps, each reading in its unit: bytes in GiB, a busy share in
-    percent. The list shows whole strips, as many as fit from its first,
-    and moves by whole strips, the least that shows the cursor's strip; a
-    line under them, such as [+6 more], counts the strips that follow. At
-    the {e zoom} depth one metric fills the centre with each column's raw
-    extent faint behind the smoothed line, a step cursor and a readout of
-    each drawn run at the cursor, under a title that names the metric and
-    says [log] while it is drawn on a log scale. Enter goes one depth deeper
-    and Esc one back.
+    same steps, each reading in its unit: bytes in GiB, a busy share in percent.
+    The list shows whole strips, as many as fit from its first, and moves by
+    whole strips, the least that shows the cursor's strip; a line under them,
+    such as [+6 more], counts the strips that follow. At the {e zoom} depth one
+    metric fills the centre with each column's raw extent faint behind the
+    smoothed line, a step cursor and a readout of each drawn run at the cursor,
+    under a title that names the metric and says [log] while it is drawn on a
+    log scale. Enter goes one depth deeper and Esc one back.
 
     [i] shows everything about the run over the centre: its params, notes,
     tags, source, every metric's latest and best values, the artifact versions
@@ -179,8 +177,8 @@
     ({!Munin.Run.val-status}) and from when its samples arrived:
     - [starting]: a process holds the run's lock and the run has no metric
       sample;
-    - [running]: a process holds the lock and no metric sample has arrived
-      since the dashboard began watching the run;
+    - [running]: a process holds the lock and no metric sample has arrived since
+      the dashboard began watching the run;
     - [live]: a process holds the lock and a metric sample has arrived, within
       three usual gaps once they are known;
     - [stalled]: a process holds the lock and no metric sample has arrived for
@@ -191,17 +189,17 @@
       watching began, or for longer than three usual gaps;
     - [crashed], [finished], [failed] and [killed]: the run's status.
 
-    Its glyph is [●] for [live] and [writing], [○] for [running] and
-    [starting], [◌] for [stalled] and [silent], [✓] [finished], [■] [killed],
-    [✗] [failed] and [crashed], and [×] for a run that has not failed, crashed
-    or been killed, with a metric sample that is not finite.
+    Its glyph is [●] for [live] and [writing], [○] for [running] and [starting],
+    [◌] for [stalled] and [silent], [✓] [finished], [■] [killed], [✗] [failed]
+    and [crashed], and [×] for a run that has not failed, crashed or been
+    killed, with a metric sample that is not finite.
 
     The dashboard times each arrival on its own clock. A poll that finds new
     metric samples of a run is an arrival at that poll's time, and a run's
-    samples that the first read finds are none. The {e usual gap} is the
-    median of the gaps between the run's last 32 arrivals, known once two
-    arrivals have been timed, and three of them are never less than 10 s. No
-    time the run recorded judges its state. *)
+    samples that the first read finds are none. The {e usual gap} is the median
+    of the gaps between the run's last 32 arrivals, known once two arrivals have
+    been timed, and three of them are never less than 10 s. No time the run
+    recorded judges its state. *)
 
 (** {1:numbers Numbers}
 
@@ -210,15 +208,15 @@
       kept, as [0.4077] or [6.200], with the suffix [k] from a thousand up, as
       [2.196k], and in scientific notation below [1e-4] and from [1e6] in
       magnitude: a value that does not read back as logged shows a decimal
-      point, a [k] or an exponent. An accuracy, a metric with [acc] in its
-      key and a value in [[0;1]], prints as a percentage with two decimals.
-      NaN prints [NaN], and the infinities [inf] and [-inf].
-    - A step or a count prints with separators, as [12,400], and compactly on
-      an axis, as [12k].
-    - A difference prints relative, as [-6.0%], in points for an accuracy,
-      as [+0.15 pt], and [same] within the digits shown. Against a zero, or
-      where the relative difference passes four digits, it prints the
-      difference itself as a value prints, signed, as [+0.9000].
+      point, a [k] or an exponent. An accuracy, a metric with [acc] in its key
+      and a value in [[0;1]], prints as a percentage with two decimals. NaN
+      prints [NaN], and the infinities [inf] and [-inf].
+    - A step or a count prints with separators, as [12,400], and compactly on an
+      axis, as [12k].
+    - A difference prints relative, as [-6.0%], in points for an accuracy, as
+      [+0.15 pt], and [same] within the digits shown. Against a zero, or where
+      the relative difference passes four digits, it prints the difference
+      itself as a value prints, signed, as [+0.9000].
     - A duration prints in two units, as [4m 10s]; a time of day as [14:22].
     - Progress is the latest step over the run's [steps], rounded down, so it
       reads [100%] only once the steps are reached. The rate is the steps per
