@@ -981,6 +981,88 @@ let images =
           in
           equal color (255, 255, 255, 255)
             (rgba (render 1. 1. (Picture.image (Box2.v 0. 0. 1. 1.) px)) 0 0));
+      cases "a centre on a line between pixels takes the later on any page"
+        ~id:fst
+        [
+          ( "1.3e8 from the image's origin",
+            ( Picture.transform
+                (Affine.translate 134217727.83333333 0.)
+                (image
+                   ~box:(Box2.v (-134217728.) 0. 2. 1.)
+                   [| 1; 6; 1 |]
+                   [| 0; 40; 80; 120; 160; 200 |]),
+              0 ) );
+          ( "8.4e6 out and back",
+            ( Picture.transform
+                (Affine.translate 8388605.2102011601 0.)
+                (Picture.transform
+                   (Affine.translate (-8388603.3768678261) 0.)
+                   (image ~box:(Box2.v (-1.) 0. 2. 1.) [| 1; 6; 1 |]
+                      [| 0; 40; 80; 120; 160; 200 |])),
+              1 ) );
+        ]
+        (fun (_, (p, x)) ->
+          (* Six columns over 2 pixels take 3 samples a pixel, at sixths of it,
+             and the lines between columns lie on the three samples of pixel
+             [x], to within the rounding of their position. Each sample takes
+             the later column, so the pixel averages columns 1, 2 and 3, 80; the
+             earlier ones would give 40. Moved by 8 pixels the lines round
+             apart, and land alike. *)
+          let moved =
+            render 36. 36. (Picture.transform (Affine.translate 8. 8.) p)
+          in
+          equal (pair color color)
+            ((80, 80, 80, 255), (80, 80, 80, 255))
+            (rgba (render 20. 20. p) 0 x, rgba moved 8 (x + 8)));
+      cases "a centre just off a line between pixels falls on its own side"
+        ~id:fst
+        [
+          ( "of a boundary between two image pixels",
+            ( image
+                ~box:(Box2.v (-0.5 +. 1e-12) 0. 2. 1.)
+                [| 1; 2; 1 |] [| 10; 200 |],
+              (10, 10, 10, 255) ) );
+          ( "of the edge of the image",
+            ( image ~box:(Box2.v (0.5 +. 1e-12) 0. 1. 1.) [| 1; 1; 1 |] [| 10 |],
+              (0, 0, 0, 0) ) );
+        ]
+        (fun (_, (p, expected)) ->
+          (* The centre 0.5 lies 1e-12 before the line, twenty times the
+             rounding [2^-46 r] that the interface allows: [r] is about 3.5 on a
+             page 1 pixel wide. *)
+          equal color expected (rgba (render 1. 1. p) 0 0));
+      test "an image wider than the floats shows each pixel over its share"
+        (fun () ->
+          (* A box 2e308 wide, mapped onto the 20 pixels of the page: each of
+             its 4 pixels covers 5 of them. *)
+          let px = Nx.init Nx.uint8 [| 1; 4; 1 |] (fun i -> 60 * i.(1)) in
+          let box = Box2.of_pts (P2.v (-1e308) 0.) (P2.v 1e308 1.) in
+          let img =
+            render 20. 1.
+              (Picture.transform
+                 Affine.(translate 10. 0. * scale 1e-307 1.)
+                 (Picture.image box px))
+          in
+          equal (array int)
+            (Array.init 20 (fun j -> 60 * (j / 5)))
+            (Array.init 20 (fun j ->
+                 let r, _, _, _ = rgba img 0 j in
+                 r)));
+      test "a turned image wider than the floats paints its band" (fun () ->
+          (* The band of y in [0, 1], 10 pixels wide, through (50, 50) at 45
+             degrees. Pixel (58, 55) has its centre at (0.99, 0.21) in the
+             image, under the middle of its 3 columns, in row 0; the corners of
+             the page are off the band. *)
+          let box = Box2.of_pts (P2.v (-1e308) 0.) (P2.v 1e308 1.) in
+          let img =
+            render 100. 100.
+              (Picture.transform
+                 Affine.(
+                   translate 50. 50. * rotate (Float.pi /. 4.) * scale 10. 10.)
+                 (Picture.image box Vg_corpus.tensor))
+          in
+          equal color (40, 60, 80, 100) (rgba img 58 55);
+          equal (pair int int) (0, 0) (alpha img 0 99, alpha img 99 0));
       test "a view of a tensor is read as its elements" (fun () ->
           let px =
             Nx.init Nx.uint8 [| 3; 2; 3 |] (fun i ->
@@ -1034,6 +1116,246 @@ let instances (s : Picture.t) =
                (restyle ?fill:(at fills i) ?stroke:(at strokes i) k picture)))
   | Empty -> Picture.empty
   | p -> failf "not a stamp: %a" Picture.pp p
+
+(* Lines between image pixels *)
+
+(* A pixel centre off a line between two of an image's pixels by less than the
+   interface's bound may fall on either side of it, which side changing with the
+   picture's place on the page (Hugin_vg_raster's accuracy). [near_lines] finds
+   such centres, and those near an image's edge, by mapping each back through
+   its image's inverse in floats, within [line_slack r], [2^6] times that
+   bound. *)
+let line_slack = 0x1p-40
+
+(* [near_lines ~w ~h p] is the pixels of a page [w] by [h] pixels at density 1,
+   by row, with a centre near a line of an image of [p], and for each image's
+   tensor met, its lines that a centre is near: [cols.(j)] and [rows.(i)] for
+   the line before column [j] and row [i]. Instances of stamps are placed as the
+   interface says, at their positions rounded to a quarter pixel. *)
+let near_lines ~w ~h p =
+  let exempt = Array.make (w * h) false in
+  let found = ref [] in
+  let lines pixels =
+    match List.find_opt (fun (q, _, _) -> q == pixels) !found with
+    | Some (_, cols, rows) -> (cols, rows)
+    | None ->
+        let s = Nx.shape pixels in
+        let cols = Array.make (s.(1) + 1) false
+        and rows = Array.make (s.(0) + 1) false in
+        found := (pixels, cols, rows) :: !found;
+        (cols, rows)
+  in
+  let reach a b = Float.max (Float.abs a) (Float.abs b) in
+  (* The interface's [T]: the terms the translation of [m * m'] sums. *)
+  let terms (m : Affine.t) (m' : Affine.t) =
+    Float.max
+      (Float.abs (m.xx *. m'.x0) +. Float.abs (m.xy *. m'.y0) +. Float.abs m.x0)
+      (Float.abs (m.yx *. m'.x0) +. Float.abs (m.yy *. m'.y0) +. Float.abs m.y0)
+  in
+  let image (m : Affine.t) ~far ~wide box pixels =
+    match Affine.invert m with
+    | None -> ()
+    | Some n ->
+        let s = Nx.shape pixels in
+        let rows = s.(0) and cols = s.(1) in
+        let near_cols, near_rows = lines pixels in
+        let k = Float.max (reach m.xx m.yx) (reach m.xy m.yy) in
+        let ad = m.xx /. k *. (m.yy /. k) and bc = m.xy /. k *. (m.yx /. k) in
+        let c = (Float.abs ad +. Float.abs bc) /. Float.abs (ad -. bc) in
+        let x0 = Box2.minx box and x1 = Box2.maxx box in
+        let y0 = Box2.miny box and y1 = Box2.maxy box in
+        let bx =
+          line_slack
+          *. (((Float.abs n.xx +. Float.abs n.xy) *. (wide +. far))
+             +. (c *. reach x0 x1))
+        and by =
+          line_slack
+          *. (((Float.abs n.yx +. Float.abs n.yy) *. (wide +. far))
+             +. (c *. reach y0 y1))
+        in
+        let corners =
+          List.map
+            (fun (x, y) -> P2.transform m (P2.v x y))
+            [ (x0, y0); (x1, y0); (x1, y1); (x0, y1) ]
+        in
+        let lo f =
+          List.fold_left (fun a q -> Float.min a (f q)) infinity corners
+        and hi f =
+          List.fold_left (fun a q -> Float.max a (f q)) neg_infinity corners
+        in
+        let clamp n v =
+          Float.to_int (Float.max 0. (Float.min (Float.of_int n) v))
+        in
+        let px0 = clamp w (Float.floor (lo P2.x) -. 1.)
+        and px1 = clamp w (Float.ceil (hi P2.x) +. 1.) in
+        let py0 = clamp h (Float.floor (lo P2.y) -. 1.)
+        and py1 = clamp h (Float.ceil (hi P2.y) +. 1.) in
+        (* The samples per axis, as the interface says. *)
+        let bw = x1 -. x0 and bh = y1 -. y0 in
+        let ratio =
+          Float.max
+            (Float.of_int cols
+            /. Float.max 1. (Float.hypot (m.xx *. bw) (m.yx *. bw)))
+            (Float.of_int rows
+            /. Float.max 1. (Float.hypot (m.xy *. bh) (m.yy *. bh)))
+        in
+        let ks =
+          Int.max 1
+            (Int.min Hugin_vg_raster.image_samples
+               (Float.to_int (Float.ceil ratio)))
+        in
+        (* [mark marks u lo side n b] marks the lines of [n] cells over [side]
+           from [lo] within [b] of [u], and is [true] iff there is one. *)
+        let mark marks u lo side n b =
+          let per = side /. Float.of_int n in
+          let first = Float.ceil ((u -. b -. lo) /. per)
+          and last = Float.floor ((u +. b -. lo) /. per) in
+          (* Ends past the floats are kept: a pixel thinner than the floats can
+             measure has every line within [b]. *)
+          let first = Float.max 0. first
+          and last = Float.min (Float.of_int n) last in
+          if Float.is_nan first || Float.is_nan last || first > last then false
+          else begin
+            for l = Float.to_int first to Float.to_int last do
+              marks.(l) <- true
+            done;
+            true
+          end
+        in
+        for py = py0 to py1 - 1 do
+          for px = px0 to px1 - 1 do
+            for j = 0 to ks - 1 do
+              for i = 0 to ks - 1 do
+                let dx =
+                  Float.of_int px +. ((Float.of_int i +. 0.5) /. Float.of_int ks)
+                in
+                let dy =
+                  Float.of_int py +. ((Float.of_int j +. 0.5) /. Float.of_int ks)
+                in
+                let ux = (n.xx *. dx) +. (n.xy *. dy) +. n.x0 in
+                let uy = (n.yx *. dx) +. (n.yy *. dy) +. n.y0 in
+                let on_x = ux >= x0 -. bx && ux <= x1 +. bx in
+                let on_y = uy >= y0 -. by && uy <= y1 +. by in
+                let near_x = on_y && mark near_cols ux x0 bw cols bx in
+                let near_y = on_x && mark near_rows uy y0 bh rows by in
+                if near_x || near_y then exempt.((py * w) + px) <- true
+              done
+            done
+          done
+        done
+  in
+  let rec go m ~far ~wide (p : Picture.t) =
+    match p with
+    | Empty | Fill _ | Stroke _ | Glyphs _ -> ()
+    | Image { box; pixels } -> image m ~far ~wide box pixels
+    | Group ps -> List.iter (go m ~far ~wide) ps
+    | Clip { picture; _ } | Opacity { picture; _ } | Tag { picture; _ } ->
+        go m ~far ~wide picture
+    | Transform { m = m'; picture } ->
+        go Affine.(m * m') ~far:(Float.max far (terms m m')) ~wide picture
+    | Stamp { picture; xs; ys; scales; _ } ->
+        let lin = Affine.linear m in
+        let q v = Float.round (v *. 4.) /. 4. in
+        Array.iteri
+          (fun i x ->
+            let y = ys.(i) in
+            let s = match scales with None -> 1. | Some a -> a.(i) in
+            let dx = (m.xx *. x) +. (m.xy *. y) +. m.x0 in
+            let dy = (m.yx *. x) +. (m.yy *. y) +. m.y0 in
+            if
+              s > 0. && Float.is_finite s
+              && Float.abs dx < 1e15
+              && Float.abs dy < 1e15
+            then
+              let at = Affine.translate (q dx) (q dy) in
+              let inner = Affine.(lin * scale s s) in
+              let extent =
+                match Picture.bounds (Picture.transform inner picture) with
+                | None -> 0.
+                | Some b ->
+                    Float.max
+                      (reach (Box2.minx b) (Box2.maxx b))
+                      (reach (Box2.miny b) (Box2.maxy b))
+              in
+              go
+                Affine.(at * inner)
+                ~far:(Float.max far (terms at inner))
+                ~wide:(wide +. 0x1p18 +. (2. *. extent))
+                picture)
+          xs
+  in
+  go Affine.id ~far:0. ~wide:(2. *. Float.of_int (Int.max w h)) p;
+  (exempt, !found)
+
+(* [joined found p] is [p] with the pixels on either side of each line that
+   [near_lines] found given one colour, the first's: which of them a centre near
+   the line takes then does not show. *)
+let joined found p =
+  let first marks n =
+    let r = Array.make n 0 in
+    for i = 1 to n - 1 do
+      r.(i) <- (if marks.(i) then r.(i - 1) else i)
+    done;
+    r
+  in
+  let join pixels cols rows =
+    let s = Nx.shape pixels in
+    let c = first cols s.(1) and r = first rows s.(0) in
+    Nx.init Nx.uint8 s (fun i -> Nx.item [ r.(i.(0)); c.(i.(1)); i.(2) ] pixels)
+  in
+  let rec go (p : Picture.t) =
+    match p with
+    | Empty | Fill _ | Stroke _ | Glyphs _ -> p
+    | Image { box; pixels } -> (
+        match List.find_opt (fun (q, _, _) -> q == pixels) found with
+        | Some (_, cols, rows) -> Picture.image box (join pixels cols rows)
+        | None -> p)
+    | Group ps -> Picture.group (List.map go ps)
+    | Clip { rule; path; picture } -> Picture.clip ~rule path (go picture)
+    | Transform { m; picture } -> Picture.transform m (go picture)
+    | Opacity { opacity; picture } -> Picture.opacity opacity (go picture)
+    | Stamp { picture; xs; ys; scales; fills; strokes } ->
+        Picture.stamp ?fills ?strokes ?scales xs ys (go picture)
+    | Tag { tag; picture } -> Picture.tag tag (go picture)
+  in
+  go p
+
+(* [differing keep a b] is the pixels that [keep] selects, by row and column,
+   where [a] and [b] differ by more than a level, with their colours. *)
+let differing keep a b =
+  let s = Nx.shape a in
+  let pa = Nx.to_array a and pb = Nx.to_array b in
+  let color p o = (p.(o), p.(o + 1), p.(o + 2), p.(o + 3)) in
+  let out = ref [] in
+  for y = s.(0) - 1 downto 0 do
+    for x = s.(1) - 1 downto 0 do
+      let o = ((y * s.(1)) + x) * 4 in
+      let d = ref 0 in
+      for c = 0 to 3 do
+        d := Int.max !d (abs (pa.(o + c) - pb.(o + c)))
+      done;
+      if !d > 1 && keep y x then
+        out := ((y, x), (color pa o, color pb o)) :: !out
+    done
+  done;
+  !out
+
+let pixel_diffs = list (pair (pair int int) (pair color color))
+
+(* [agree_off_lines ~w ~h p draw] checks that the two images [draw q] gives
+   agree within a level for [q] being [p], at every pixel without a centre near
+   a line between an image's pixels, and for [q] being [p] with the pixels on
+   either side of such lines joined, at the others. *)
+let agree_off_lines ~w ~h p draw =
+  let exempt, found = near_lines ~w ~h p in
+  cover "a centre near a line of an image" (Array.exists Fun.id exempt);
+  let a, b = draw p in
+  equal (array int) (Nx.shape a) (Nx.shape b);
+  equal pixel_diffs [] (differing (fun y x -> not exempt.((y * w) + x)) a b);
+  if Array.exists Fun.id exempt then begin
+    let a, b = draw (joined found p) in
+    equal pixel_diffs [] (differing (fun y x -> exempt.((y * w) + x)) a b)
+  end
 
 (* Stamps of up to four instances of a generated picture on the quarter-pixel
    grid, where [instances] places them as the stamp does. A stamp nested in the
@@ -1191,7 +1513,10 @@ let stamps =
           :: rounded_onto_page :: clipped_opacity :: opacity_pen_meets_clip
           :: dash_points_survive :: thin_image :: touching_clip
           :: shrunk_opacities) gen_stamp (fun s ->
-          same_image ~within:1 (render 60. 60. (instances s)) (render 60. 60. s));
+          (* Instances and the group map their images through maps that round
+             apart. *)
+          agree_off_lines ~w:60 ~h:60 s (fun s ->
+              (render 60. 60. (instances s), render 60. 60. s)));
       test "a stamp under a clip draws the group of its instances under it"
         (fun () ->
           (* The second fill of the instance at (5, 5) misses the clip's box,
@@ -1366,21 +1691,25 @@ let tags =
 
 (* [windowed (side, p)] checks that the page shows what it cuts from a larger
    one: [p] moved by [margin] points on a page [2 margin] points larger shows
-   the pixels of the page [side] points wide, [margin] pixels in. *)
+   the pixels of the page [side] points wide, [margin] pixels in, but that a
+   centre near a line between an image's pixels may take either. A centre on an
+   image's edge, to within the rounding of its position, is under the image on
+   both pages; one off it by more than that but less than the interface's bound
+   may fall either way, which pictures drawn at random reach with no measurable
+   chance. *)
 let margin = 8
 
 let windowed (side, p) =
   let n = Float.to_int side and m = Float.of_int margin in
-  let big =
-    render
-      (side +. (2. *. m))
-      (side +. (2. *. m))
-      (Picture.transform (Affine.translate m m) p)
-  in
-  let cut =
-    Nx.slice [ R (margin, margin + n); R (margin, margin + n); A ] big
-  in
-  same_image ~within:1 cut (render side side p)
+  agree_off_lines ~w:n ~h:n p (fun p ->
+      let big =
+        render
+          (side +. (2. *. m))
+          (side +. (2. *. m))
+          (Picture.transform (Affine.translate m m) p)
+      in
+      ( Nx.slice [ R (margin, margin + n); R (margin, margin + n); A ] big,
+        render side side p ))
 
 (* Pictures whose ink the edges of a page of 20 cut. *)
 let cut_by_the_page =
@@ -1409,6 +1738,64 @@ let cut_by_the_page =
       Picture.transform
         { Affine.xx = 1.; yx = 4.; xy = 0.; yy = 1.; x0 = 0.; y0 = 0. }
         (stroke (butt ~w:4. [ 2.; 2. ]) (segment (-10.) 34. 30. (-126.)));
+      (* An image 6e-320 high whose edge lies on the row of sample points 5/6
+         down pixel row 1, to within rounding that differs between pages. *)
+      Picture.transform
+        (Affine.translate 0. (11. /. 6.))
+        (Picture.image (Box2.v 0. 0. 1. 6e-320) Vg_corpus.tensor);
+      (* An image whose edge lies on that row 1.3e8 points from its own origin,
+         where rounding moves it by about 1e-8 pixels. *)
+      Picture.transform
+        (Affine.translate 0. 134217727.83333333)
+        (Picture.image (Box2.v 0. (-134217727.) 1. 1.) Vg_corpus.tensor);
+      (* An image under a sheared map of determinant 1e-5, whose inverse
+         magnifies rounding, with a corner on a sample point. *)
+      Picture.transform
+        {
+          Affine.xx = 1.2345402806933874;
+          yx = 0.5652309355347911;
+          xy = 0.5443624459503607;
+          yy = 0.24923521986662164;
+          x0 = 5.833333333333333;
+          y0 = 5.833333333333333;
+        }
+        (Picture.image (Box2.v 0. 0. 1. 1.) Vg_corpus.tensor);
+      (* An image whose rows, 1.5e-13 high, are thinner than the rounding of its
+         coordinates, which differs between the pages. *)
+      Picture.transform
+        (Affine.translate 0. (11. /. 6.))
+        (Picture.image (Box2.v 0. 0. 1. 3e-13) Vg_corpus.tensor);
+      (* A near-singular map, whose inverse magnifies rounding, with a corner on
+         a sample point. *)
+      Picture.transform
+        {
+          Affine.xx = 0.5351640293326584;
+          yx = 0.6011998805255969;
+          xy = 0.6728346193719151;
+          yy = 0.7558581492958403;
+          x0 = 5.166666666666667;
+          y0 = 5.5;
+        }
+        (Picture.image (Box2.v 0. 0. 1. 1.) Vg_corpus.tensor);
+      (* A translation 8.4e6 out and back, which rounds the image's edge at the
+         far point, 6e-10 pixels off a sample point. *)
+      Picture.transform
+        (Affine.translate 8388605.2102011601 5.)
+        (Picture.transform
+           (Affine.translate (-8388603.3768678261) 0.)
+           (Picture.image (Box2.v 0. 0. 1. 1.) Vg_corpus.tensor));
+    ]
+  @ [
+      (* An opacity's layer 1018 pixels in, whose own corner is near the image:
+         the image's edge, 6e-16 pixels off a sample point, was rounded on the
+         page. *)
+      ( 1030.,
+        Picture.transform
+          (Affine.translate 1018.1832332711416 5.)
+          (Picture.opacity 0.5
+             (Picture.transform
+                (Affine.translate 1.9834333955250643 0.)
+                (Picture.image (Box2.v 0. 0. 1. 1.) Vg_corpus.tensor))) );
     ]
 
 (* [ink_outside p] is the pixels of [p] drawn on a page of 100 whose alpha is

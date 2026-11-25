@@ -57,8 +57,26 @@
       drawn over one another reach the colour they composite to: up to a
       thousand fills at any opacity from [0.02] land within a level of it.
     - An image paints a pixel with the image pixel under the pixel's centre, so
-      its edges are not antialiased; a centre on the edge of the image, to
-      within rounding, is under it. Where an image is shown smaller than its
+      its edges are not antialiased. A centre on an edge of the image, to within
+      the rounding of its position, is under the image, and one on the boundary
+      between two of its pixels takes the right or lower one. A centre off such
+      a line by less than about [2{^-46} r] along the image's axis, in the
+      image's units, may fall on either side of it, and which side may change
+      with the picture's place on the page and the page's size: an image pixel
+      shown thinner than that may show the colour of another within that
+      distance. For the map [m] from the image's coordinates to device pixels
+      and its inverse [n], [r] is [(|n.xx| + |n.xy|) (W + T) + c X] along x and
+      [(|n.yx| + |n.yy|) (W + T) + c Y] along y. [W] is twice the page's larger
+      side in pixels, plus, for each stamp the image is in, [2{^18}] and twice
+      the farthest the stamp's picture reaches from an instance's position along
+      either axis, in pixels, since a stamp draws its instances on tiles of up
+      to [2{^16}] pixels around them. [T] is the largest magnitude, in pixels,
+      of the terms that the translations of [m] and of the maps it is composed
+      from sum, from the density down through the transforms and stamps above
+      the image: a map that moves far and back rounds at the far point. [X] and
+      [Y] are the largest magnitudes of the box's coordinates along each axis,
+      and [c = (|m.xx m.yy| + |m.xy m.yx|) / |m.xx m.yy - m.xy m.yx|] grows as
+      [m] nears having no inverse. Where an image is shown smaller than its
       pixels, a pixel averages the image pixels under [k] by [k] points spread
       evenly over its square, [k] being the ratio of image pixels to device
       pixels rounded up, at most {!image_samples}.

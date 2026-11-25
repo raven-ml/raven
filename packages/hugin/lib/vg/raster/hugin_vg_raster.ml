@@ -82,30 +82,35 @@ let glyph_map m at run i =
 
 let image_samples = 4
 
-(* How far past an edge of an image, or of one of its pixels, in device pixels,
-   a sample counts as on that edge: rounding in a composed map moves a centre on
-   an edge by much less, and must not decide which pixel paints it. *)
-let edge_slack = 1e-9
-
-(* [slack shown] is [edge_slack] as a fraction of a side [shown] device pixels
-   long, or [0.] if the side is too short or too long to have one. *)
-let slack shown =
-  let d = edge_slack /. shown in
-  if Float.is_finite d then d else 0.
+(* How far a computed coordinate of a sample may lie from its exact value, as a
+   multiple of its terms: 64 units in the last place, which holds the few
+   roundings of the composed map, its inverse and their evaluation. *)
+let sample_rounding = 0x1p-46
 
 (* [cell v n] is the index in [n] cells of the fraction [v], at least [0.]: the
-   last cell for a [v] past them, as a large slack on a thin image gives. *)
+   last cell for a [v] past them, as a large slack on a thin image gives, or not
+   a number, as a slack beyond the floats gives. *)
 let[@inline] cell v n =
   let c = v *. float n in
-  if c >= float n then n - 1 else int_of_float c
+  if c < float n then int_of_float c else n - 1
 
-(* [samples clip m box pixels] is the window [(x0, y0, w, h)] of the device
+(* [compose far m m'] is [m * m'] and [far] grown to the magnitudes of the terms
+   its translation sums. Rounding there moves what the map places by a share of
+   them, which no later map takes back: a map that moves far and back rounds at
+   the far point. *)
+let compose far (m : Affine.t) (m' : Affine.t) =
+  let x = Float.abs (m.xx *. m'.x0) +. Float.abs (m.xy *. m'.y0) in
+  let y = Float.abs (m.yx *. m'.x0) +. Float.abs (m.yy *. m'.y0) in
+  let terms = Float.max (x +. Float.abs m.x0) (y +. Float.abs m.y0) in
+  (Affine.(m * m'), Float.max far terms)
+
+(* [samples clip m ~far box pixels] is the window [(x0, y0, w, h)] of the device
    pixels within [clip] that the image [pixels] over [box], mapped through [m],
    reaches, and the premultiplied colour of each, four floats in \[0;255\] per
    pixel, row by row. A pixel takes the image pixel under its centre, or, where
    the image is shown smaller than its pixels, the average of up to
    [image_samples] by [image_samples] samples. *)
-let samples (clip : Surface.clip) m box pixels =
+let samples (clip : Surface.clip) m ~far box pixels =
   let shape = Nx.shape pixels in
   let rows = shape.(0) and cols = shape.(1) and chans = shape.(2) in
   let corners =
@@ -143,9 +148,15 @@ let samples (clip : Surface.clip) m box pixels =
           (Nx.to_bigarray Bigarray.int8_unsigned pixels)
           (rows * cols * chans)
       in
-      let bw = Box2.w box and bh = Box2.h box in
-      let shown_w = Float.hypot (m.xx *. bw) (m.yx *. bw) in
-      let shown_h = Float.hypot (m.xy *. bh) (m.yy *. bh) in
+      (* Samples, offsets and sides are halved, so that a box wider than the
+         floats keeps them finite. *)
+      let half v = 0.5 *. v in
+      let inv = Affine.(scale 0.5 0.5 * inv) in
+      let hx0 = half (Box2.minx box) and hy0 = half (Box2.miny box) in
+      let hw = half (Box2.maxx box) -. hx0
+      and hh = half (Box2.maxy box) -. hy0 in
+      let shown_w = 2. *. Float.hypot (m.xx *. hw) (m.yx *. hw) in
+      let shown_h = 2. *. Float.hypot (m.xy *. hh) (m.yy *. hh) in
       let ratio =
         Float.max
           (float cols /. Float.max 1. shown_w)
@@ -155,7 +166,37 @@ let samples (clip : Surface.clip) m box pixels =
         Int.max 1 (Int.min image_samples (int_of_float (Float.ceil ratio)))
       in
       let n = float (k * k) in
-      let du = slack shown_w and dv = slack shown_h in
+      (* A sample counts as on an edge of the image, or on the boundary between
+         two of its pixels, when it lies within the rounding of its coordinate,
+         and so rounding does not decide which pixel paints it. That rounding is
+         [sample_rounding] times the terms of the coordinate's evaluation
+         through [inv], [tx] or [ty], plus the error of [inv] itself times the
+         coordinate of the line [e]: [inv] is off by [kappa] units in the last
+         place, the relative error of the determinant that [Affine.invert]
+         divides by, in which [ad] and [bc] cancel. [far], at least the
+         magnitude of [m]'s translation, holds those of the maps it was composed
+         from. It stays within the bound the interface states: [f] and [far] are
+         measured from the corner of the page, of an opacity's layer, which
+         moves them by at most the page's side, or of a stamp's tile, which
+         counts from its own corner. *)
+      let reach a b = Float.max (Float.abs a) (Float.abs b) in
+      let s = Float.max (reach m.xx m.yx) (reach m.xy m.yy) in
+      let ad = m.xx /. s *. (m.yy /. s) and bc = m.xy /. s *. (m.yx /. s) in
+      let kappa = (Float.abs ad +. Float.abs bc) /. Float.abs (ad -. bc) in
+      let f = float (Int.max x1 y1) in
+      (* The coefficients are scaled before the product, which would pass the
+         floats. A row of [inv] is never all zero, so a [far] past the floats
+         gives an infinite slack, never a NaN. *)
+      let terms xx xy =
+        sample_rounding *. (Float.abs xx +. Float.abs xy) *. (f +. far)
+      in
+      let tx = terms inv.xx inv.xy and ty = terms inv.yx inv.yy in
+      let slack t e = t +. (sample_rounding *. kappa *. Float.abs e) in
+      let hx1 = half (Box2.maxx box) and hy1 = half (Box2.maxy box) in
+      let du0 = slack tx hx0 and du1 = slack tx hx1 in
+      let dv0 = slack ty hy0 and dv1 = slack ty hy1 in
+      (* Ties between pixels take the larger. *)
+      let du = Float.max du0 du1 and dv = Float.max dv0 dv1 in
       let buf = Array.make (w * h * 4) 0. in
       let get i = float (Bigarray.Array1.unsafe_get data i) in
       for py = y0 to y1 - 1 do
@@ -167,12 +208,11 @@ let samples (clip : Surface.clip) m box pixels =
               let dy = float py +. ((float j +. 0.5) /. float k) in
               let ux = (inv.xx *. dx) +. (inv.xy *. dy) +. inv.x0 in
               let uy = (inv.yx *. dx) +. (inv.yy *. dy) +. inv.y0 in
-              let u = (ux -. Box2.minx box) /. bw
-              and v = (uy -. Box2.miny box) /. bh in
-              if
-                u >= -.du && u <= 1. +. du && v >= -.dv && v <= 1. +. dv
+              let u = ux -. hx0 and v = uy -. hy0 in
+              if u >= -.du0 && u <= hw +. du1 && v >= -.dv0 && v <= hh +. dv1
               then begin
-                let col = cell (u +. du) cols and row = cell (v +. dv) rows in
+                let col = cell ((u +. du) /. hw) cols
+                and row = cell ((v +. dv) /. hh) rows in
                 let at = ((row * cols) + col) * chans in
                 match chans with
                 | 1 ->
@@ -374,10 +414,11 @@ let rec nesting (p : Picture.t) =
       nesting picture
   | Empty | Fill _ | Stroke _ | Glyphs _ | Image _ -> 0
 
-(* [planes ctx ~w ~h clip m ~fills ~strokes style p acc] adds to [acc], in
-   reverse order, the planes of [p] on a tile of [w] by [h] pixels. Fills and
-   strokes take the instance's colours if [fills] and [strokes]. *)
-let rec planes ctx ~w ~h clip m ~fills ~strokes style p acc =
+(* [planes ctx ~w ~h clip m ~far ~fills ~strokes style p acc] adds to [acc], in
+   reverse order, the planes of [p] on a tile of [w] by [h] pixels, [far] being
+   as {!compose} grows it. Fills and strokes take the instance's colours if
+   [fills] and [strokes]. *)
+let rec planes ctx ~w ~h clip m ~far ~fills ~strokes style p acc =
   let coverage paint rule acc deposit =
     Cover.start ctx.cover ~w ~h clip;
     deposit ();
@@ -413,7 +454,7 @@ let rec planes ctx ~w ~h clip m ~fills ~strokes style p acc =
         done;
         !acc
     | Image { box; pixels } ->
-        let x0, y0, iw, ih, buf = samples clip m box pixels in
+        let x0, y0, iw, ih, buf = samples clip m ~far box pixels in
         let px = Array.make (w * h * 4) 0. in
         for y = 0 to ih - 1 do
           for x = 0 to iw - 1 do
@@ -427,24 +468,26 @@ let rec planes ctx ~w ~h clip m ~fills ~strokes style p acc =
         Pixels px :: acc
     | Group ps ->
         List.fold_left
-          (fun acc p -> planes ctx ~w ~h clip m ~fills ~strokes style p acc)
+          (fun acc p ->
+            planes ctx ~w ~h clip m ~far ~fills ~strokes style p acc)
           acc ps
     | Clip { rule; path; picture } ->
         let clip = clip_by ctx ~w ~h clip m rule path in
-        planes ctx ~w ~h clip m ~fills ~strokes style picture acc
+        planes ctx ~w ~h clip m ~far ~fills ~strokes style picture acc
     | Transform { m = m'; picture } -> (
         (* As [Picture.transform], a map with no inverse paints nothing, and so
            does one that overflows the range of floats. *)
-        let m = Affine.(m * m') in
+        let m, far = compose far m m' in
         match Affine.invert m with
         | None -> acc
-        | Some _ -> planes ctx ~w ~h clip m ~fills ~strokes style picture acc)
+        | Some _ ->
+            planes ctx ~w ~h clip m ~far ~fills ~strokes style picture acc)
     | Opacity { opacity = 0.; _ } -> acc
     | Opacity { opacity; picture } ->
         (* As [draw]: what the layer holds is clipped once, as a whole. *)
         let open_clip = { clip with mask = None } in
         let inner =
-          planes ctx ~w ~h open_clip m ~fills ~strokes style picture []
+          planes ctx ~w ~h open_clip m ~far ~fills ~strokes style picture []
         in
         Layer
           {
@@ -455,7 +498,7 @@ let rec planes ctx ~w ~h clip m ~fills ~strokes style p acc =
           }
         :: acc
     | Tag { picture; _ } ->
-        planes ctx ~w ~h clip m ~fills ~strokes style picture acc
+        planes ctx ~w ~h clip m ~far ~fills ~strokes style picture acc
     | Stamp _ -> assert false
 
 (* [composite t clip ox oy ~tw ~th planes fill stroke] composites [planes], a
@@ -512,7 +555,7 @@ let rounding = 0.125
 (* Tiles larger than this are not worth drawing in sixteen phases. *)
 let max_tile = 1 lsl 16
 
-let rec draw ctx (t : Surface.t) clip m style (p : Picture.t) =
+let rec draw ctx (t : Surface.t) clip m ~far style (p : Picture.t) =
   if not (Surface.is_shut clip || misses clip m style.pen p) then
     match p with
     | Empty -> ()
@@ -533,7 +576,7 @@ let rec draw ctx (t : Surface.t) clip m style (p : Picture.t) =
           paint ctx t clip `Nonzero color
         done
     | Image { box; pixels } ->
-        let x0, y0, iw, ih, buf = samples clip m box pixels in
+        let x0, y0, iw, ih, buf = samples clip m ~far box pixels in
         for y = 0 to ih - 1 do
           for x = 0 to iw - 1 do
             let i = ((y * iw) + x) * 4 in
@@ -549,14 +592,16 @@ let rec draw ctx (t : Surface.t) clip m style (p : Picture.t) =
                   sa k
           done
         done
-    | Group ps -> List.iter (draw ctx t clip m style) ps
+    | Group ps -> List.iter (draw ctx t clip m ~far style) ps
     | Clip { rule; path; picture } ->
-        draw ctx t (clip_by ctx ~w:t.w ~h:t.h clip m rule path) m style picture
+        draw ctx t
+          (clip_by ctx ~w:t.w ~h:t.h clip m rule path)
+          m ~far style picture
     | Transform { m = m'; picture } -> (
-        let m = Affine.(m * m') in
+        let m, far = compose far m m' in
         match Affine.invert m with
         | None -> ()
-        | Some _ -> draw ctx t clip m style picture)
+        | Some _ -> draw ctx t clip m ~far style picture)
     | Opacity { opacity = 0.; _ } -> ()
     | Opacity { opacity; picture } -> (
         match extent clip m ~pen:style.pen picture with
@@ -565,18 +610,20 @@ let rec draw ctx (t : Surface.t) clip m style (p : Picture.t) =
             let layer = Surface.create (x1 - x0) (y1 - y0) in
             let to_layer = Affine.translate (float (-x0)) (float (-y0)) in
             let box = Option.map (Box2.transform to_layer) clip.box in
-            let m = Affine.(to_layer * m) in
-            draw ctx layer { (Surface.whole layer) with box } m style picture;
+            let m, far = compose far to_layer m in
+            draw ctx layer
+              { (Surface.whole layer) with box }
+              m ~far style picture;
             Surface.composite t clip layer x0 y0 opacity)
     | Stamp { picture; xs; ys; scales; fills; strokes } ->
-        stamp ctx t clip m style picture xs ys scales fills strokes
-    | Tag { picture; _ } -> draw ctx t clip m style picture
+        stamp ctx t clip m ~far style picture xs ys scales fills strokes
+    | Tag { picture; _ } -> draw ctx t clip m ~far style picture
 
 and paint ctx t clip rule color =
   let sr, sg, sb, sa = premultiplied color in
   Cover.paint ctx.cover t clip rule sr sg sb sa
 
-and stamp ctx t clip m style picture xs ys scales fills strokes =
+and stamp ctx t clip m ~far style picture xs ys scales fills strokes =
   let lin = Affine.linear m in
   (* Instances that a tile can hold differ by a translation, under which the
      picture's clips cut each alike. The others may differ in scale or pen, so
@@ -622,12 +669,12 @@ and stamp ctx t clip m style picture xs ys scales fills strokes =
          [s]. *)
       let full i qx qy s =
         let at = Affine.translate (float qx /. 4.) (float qy /. 4.) in
-        let m = Affine.(at * lin * scale s s) in
+        let m, far = compose far at Affine.(lin * scale s s) in
         (* As [Picture.transform], a map with no inverse paints nothing: that of
            a scale that is not finite or is 0 among them. *)
         match Affine.invert m with
         | None -> ()
-        | Some _ -> draw ctx t clip m (instance i s) picture
+        | Some _ -> draw ctx t clip m ~far (instance i s) picture
       in
       let in_full () =
         for i = 0 to Array.length xs - 1 do
@@ -674,16 +721,18 @@ and stamp ctx t clip m style picture xs ys scales fills strokes =
                     box = None;
                   }
                 in
-                let m =
-                  Affine.(
-                    translate
-                      ((float fx /. 4.) -. float bx0)
-                      ((float fy /. 4.) -. float by0)
-                    * lin)
+                (* A tile is drawn alike wherever its instances are, so its
+                   rounding counts from its own corner. *)
+                let m, far =
+                  compose 0.
+                    (Affine.translate
+                       ((float fx /. 4.) -. float bx0)
+                       ((float fy /. 4.) -. float by0))
+                    lin
                 in
                 let planes =
                   List.rev
-                    (planes ctx ~w:tw ~h:th tile m ~fills:(fills <> None)
+                    (planes ctx ~w:tw ~h:th tile m ~far ~fills:(fills <> None)
                        ~strokes:(strokes <> None) style picture [])
                 in
                 phases.(k) <- Some planes;
@@ -749,7 +798,7 @@ let render ~density r =
   let ctx = { cover = Cover.create (); outlines = [] } in
   draw ctx s (Surface.whole s)
     (Affine.scale density density)
-    plain (Renderable.picture r);
+    ~far:0. plain (Renderable.picture r);
   Surface.to_straight s
 
 let png ~density r =

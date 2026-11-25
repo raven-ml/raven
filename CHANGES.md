@@ -319,6 +319,11 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster` draws an image moved on its page alike, but for centres
+  within the rounding of an edge or a line between its pixels, which its
+  interface now bounds. A fixed allowance of 1e-9 pixels let rounding decide.
+- `Hugin_vg_raster` shows each pixel of an image whose box is wider than the
+  floats over its share, where most of the image showed one column.
 - `Path.flatten ~within` flattens a cubic to the tolerance wherever it meets the
   box, however large, and the raster fills and solid strokes with it: a filled
   circle of radius 2^66 was cut into 65536 chords a quarter, 5e9 pixels inside.
