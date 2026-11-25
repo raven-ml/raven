@@ -1372,7 +1372,8 @@ module Expr : sig
 
   val min : ('a, row) t -> ('a, agg) t
   (** [min a] is the least of [a]'s values in talon's total order, of [a]'s
-      type. An extension type needs an ordered declaration. *)
+      type. Of values equal in that order, as [-0.] and [0.], it is the first in
+      frame order. An extension type needs an ordered declaration. *)
 
   val max : ('a, row) t -> ('a, agg) t
   (** [max a] is the greatest of [a]'s values, like {!min}. *)
@@ -2795,8 +2796,11 @@ module Query : sig
   (** [aggregate ~by os q] is one row per group of [q]'s rows that have the same
       keys in the columns [by], by key identity (null is one key, and NaN is
       one), in order of first appearance. Each row holds the columns [by], then
-      the outputs [os] reduced over the group's rows in [q]'s order. [~by:[]]
-      makes one group of every row, so one row, even when [q] has none.
+      the outputs [os] reduced over the group's rows in [q]'s order. A group's
+      key columns hold its first row's values, so a group of [-0.] and [0.]
+      holds the first to appear. [~by:[]] makes one group of every row, so one
+      row, even when [q] has none. A value computed once per group, a reduction
+      or an expression of reductions, fails at the group's first row.
 
       It takes O(n) expected time. A stream of several batches holds O(groups
       + largest batch) rows, a state of one row per group, where each output
@@ -2893,11 +2897,14 @@ module Query : sig
       such as a cast that loses a value, [only] with two values or a join
       assertion. A run fails as evaluating its optimized plan one row at a time
       would, at the first row, in that order, where a step fails, whether an
-      error or an exception. Which failure is reported depends on the plan and
-      its inputs' values in order, never on batches or cores. [e] names the
-      step, as {!pp} prints it, and the row of the step's input. Over traced
-      columns ({!section-compiled}) a step that can fail on a value, such as a
-      cast that may lose one, raises at the trace.
+      error or an exception. At a row, a step evaluates its outputs in order and
+      the operands of an operation from left to right, each before the
+      operation, and the first failure it meets is the run's. Which failure is
+      reported depends on the plan and its inputs' values in order, never on
+      batches or cores. [e] names the step, as {!pp} prints it, and the row of
+      the step's input. Over traced columns ({!section-compiled}) a step that
+      can fail on a value, such as a cast that may lose one, raises at the
+      trace.
 
       A function of [q]'s expressions may be called on rows past a limit of
       [q] as written: the optimized plan may read them, as a filter it moves
