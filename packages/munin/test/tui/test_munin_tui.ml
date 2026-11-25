@@ -372,7 +372,9 @@ type grid_case = { lo : float; hi : float; dots : int; holes : bool; tau : float
 let gen_grid samples =
   let open Gen in
   let last = List.fold_left (fun m (s, _) -> max m s) 0 samples in
-  let* dots = int_range 1 320 in
+  (* A third of the grids have few columns, so that a column holds many
+     samples. *)
+  let* dots = frequency [ (1, int_range 1 32); (2, int_range 1 320) ] in
   let* holes = frequency [ (3, constant false); (1, constant true) ] in
   let* tau = float_range 0.5 500. in
   let* window = bool in
@@ -633,7 +635,13 @@ let unsmoothed =
       done)
 
 let events =
+  let one = { lo = 0.; hi = 2.; dots = 1; holes = false; tau = 1. } in
   prop "each dot column with a sample that is not finite is marked, NaN first"
+    ~examples:
+      [
+        ([ (0, Float.infinity); (0, Float.nan); (1, 1.) ], one);
+        ([ (0, Float.nan); (1, Float.neg_infinity) ], one);
+      ]
     (gen_case ())
     (fun (samples, g) ->
       let s = series_of samples in
@@ -652,11 +660,15 @@ let events =
             | Some `Nan -> ()
             | _ -> expected.(k) <- Some e)
         (points g samples);
+      let nan = Array.make g.dots false and inf = Array.make g.dots false in
+      List.iter
+        (fun (x, v) ->
+          if in_domain g x && not (Float.is_finite v) then
+            let k = column g x in
+            if Float.is_nan v then nan.(k) <- true else inf.(k) <- true)
+        (points g samples);
       cover "a column holds NaN and an infinity"
-        (List.exists (fun (_, v) -> Float.is_nan v) samples
-        && List.exists
-             (fun (_, v) -> Float.is_finite v = false && not (Float.is_nan v))
-             samples);
+        (Array.exists2 ( && ) nan inf);
       equal (array string)
         (Array.map event_name expected)
         (Array.init g.dots (fun k -> event_name (Reduce.event r k))))
@@ -1228,7 +1240,9 @@ let non_finite =
       let line = List.map (fun (k, _) -> k / 2) (ink ~colour:mine g) in
       if hatch = [] then fail "no hatch";
       let shown = text g in
-      Windtrap.not_equal ~msg:"the labels shown" (Windtrap.list Windtrap.string) []
+      let e = snd (List.nth c.samples (List.length c.samples - 1)) in
+      equal ~msg:"the labels shown" Windtrap.(list string)
+        [ "× " ^ Munin_tui.Numbers.non_finite e ]
         (List.filter (fun s -> holds s shown) [ "× NaN"; "× inf"; "× -inf" ]);
       at_most ~msg:"the line's last cell, the hatch's first" Windtrap.int
         ~than:(List.fold_left min max_int hatch)
@@ -1526,7 +1540,14 @@ let gen_law_runs =
       (list ~size:(int_range 1 3) gen_law_run))
 
 let x_domain_law =
-  prop "the x domain is the furthest end of the runs with the metric" gen_law_runs (fun runs ->
+  prop "the x domain is the furthest end of the runs with the metric"
+    ~examples:
+      [
+        [ law_run Ended ~has:false 150 ];
+        [ law_run Writing 2500 ];
+        [ law_run Writing ~steps:3000 2900 ];
+      ]
+    gen_law_runs (fun runs ->
       let short r = match r.steps with Some n -> r.last < n | None -> false in
       let past r = match r.steps with Some n -> r.last > n | None -> false in
       let rounds_past r =
@@ -1562,7 +1583,7 @@ let zoom_window =
         frequency
           [
             (5, float_range 0. hi);
-            (1, constant hi);
+            (3, constant hi);
             (1, constant 0.);
             (1, float_range (-.hi) 0.);
             (1, float_range hi (2. *. hi));
@@ -1717,7 +1738,13 @@ let x_labels_clear =
     let* width = int_range 30 140 in
     let* height = int_range 6 20 in
     let+ at =
-      frequency [ (1, float_range 0. 1.); (1, float_range 0. 0.5); (2, float_range 0.85 1.) ]
+      frequency
+        [
+          (1, float_range 0. 1.);
+          (1, float_range 0. 0.5);
+          (2, float_range 0.85 1.);
+          (1, float_range 0.95 1.);
+        ]
     in
     (last, width, height, at)
   in
@@ -1923,8 +1950,8 @@ let rounding_shown =
     Gen.frequency
       [
         (4, whole 999_999);
-        (2, whole 1_000_000_000);
-        (2, Gen.float_range (-1e6) 1e6);
+        (4, whole 1_000_000_000);
+        (4, Gen.float_range (-1e6) 1e6);
         (2, Gen.any_float);
         (2, Gen.one_of (List.map Gen.constant [ Float.nan; Float.infinity; Float.neg_infinity ]));
         (2, Gen.one_of (List.map Gen.constant [ 0.; -0. ]));
@@ -2752,8 +2779,11 @@ let depth_test =
      depths need one. *)
   let store =
     lazy
-      (Fixture.make ~child (Filename.concat home "depths")
-         [ Fixture.tidy_otter ])
+      (let store = Store.open_ ~root:(Filename.concat home "depths") () in
+       let id, _ =
+         write_log store (List.init 20 (fun i -> sample_record (i, 1.)))
+       in
+       (store, id))
   in
   let dash = abstract "d" in
   let key_gen =
@@ -2770,62 +2800,127 @@ let depth_test =
       ]
   in
   let start =
-    { depth = 0; help = false; typing = false; info = false; filter = false; typed = false }
+    {
+      depth = 0;
+      help = false;
+      typing = false;
+      info = false;
+      filter = false;
+      typed = false;
+    }
   in
   let word = Gen.(string_of ~size:(int_range 1 3) (of_list no_run)) in
   let typed k =
-    List.mem k (Key Enter :: Key Escape :: List.map (fun c -> Text (String.make 1 c)) no_run)
+    List.mem k
+      (Key Enter :: Key Escape
+      :: List.map (fun c -> Text (String.make 1 c)) no_run)
   in
-  stateful ~count:60 ~steps:12
+  (* A dashboard is the keys sent so far, newest first, replayed on a fresh
+     session at each look, and its model the state they lead to. Both are
+     cells that the keys change, so that a look reads the latest. *)
+  let key =
+    command "key"
+      ~pre:(fun k st -> if !st.typing then typed k else k <> Text "q")
+      (key_gen @-> dash ^-> returns unit)
+      (fun k st -> st := model_key !st k)
+      (fun k keys -> keys := `Key k :: !keys)
+  in
+  let look keys =
+    let store, id = Lazy.force store in
+    let start, keys =
+      match List.rev !keys with
+      | `Start_run :: rest -> (Munin_tui.Run (Some id), rest)
+      | l -> (Munin_tui.Runs, l)
+    in
+    let keys =
+      List.filter_map (function `Key k -> Some k | `Start_run -> None) keys
+    in
+    let term = T.Terminal.create ~cols:120 ~rows:40 () in
+    (elapsed := fun () -> 0);
+    let app = Munin_tui.app ~clock store start in
+    Mosaic_test.run term app @@ fun s ->
+    (elapsed := fun () -> T.now s);
+    T.advance s second;
+    List.iter (send term s) keys;
+    T.settle s;
+    observed (T.Terminal.screen term)
+  in
+  let screen =
+    command "screen" (dash ^-> returns string)
+      (fun st -> model_name !st)
+      look
+  in
+  stateful ~count:40 ~steps:10
     "Enter goes deeper, Esc back, q is typed in the filter"
     [
-      command "runs" (Gen.unit @-> makes dash) (fun () -> start) (fun () -> []);
+      command "runs"
+        (Gen.unit @-> makes dash)
+        (fun () -> ref start)
+        (fun () -> ref []);
       command "run"
         (Gen.unit @-> makes dash)
-        (fun () -> start)
-        (fun () -> [ `Start_run ]);
-      command "key"
-        ~pre:(fun k st -> if st.typing then typed k else k <> Text "q")
-        (key_gen @-> dash ^-> makes dash)
-        (fun k st -> model_key st k)
-        (fun k keys -> `Key k :: keys);
+        (fun () -> ref start)
+        (fun () -> ref [ `Start_run ]);
+      (* Listed four and two times, so that a look follows several keys. *)
+      key;
+      key;
+      key;
+      key;
       (* A filter kept with text, which keeps no run. *)
       command "filter"
-        ~pre:(fun _ st -> not (st.typing || st.help || st.info))
-        (word @-> dash ^-> makes dash)
-        (fun _ st -> { st with filter = true })
+        ~pre:(fun _ st -> not (!st.typing || !st.help || !st.info))
+        (word @-> dash ^-> returns unit)
+        (fun _ st -> st := { !st with filter = true })
         (fun w keys ->
           let chars = List.of_seq (String.to_seq w) in
-          (`Key (Key Enter) :: List.rev_map (fun c -> `Key (Text (String.make 1 c))) chars)
-          @ (`Key (Text "/") :: keys));
-      command "screen"
-        (dash ^-> returns string)
-        (fun st ->
-          cover "a kept filter keeps no run" (st.filter && not st.typing);
-          model_name st)
-        (fun keys ->
-          let keys = List.rev keys in
-          let start, keys =
-            match keys with
-            | `Start_run :: rest ->
-                (Munin_tui.Run (Some (id_of Fixture.tidy_otter)), rest)
-            | l -> (Munin_tui.Runs, l)
-          in
-          let keys =
-            List.filter_map
-              (function `Key k -> Some k | `Start_run -> None)
-              keys
-          in
-          let term = T.Terminal.create ~cols:120 ~rows:40 () in
-          (elapsed := fun () -> 0);
-          let app = Munin_tui.app ~clock (Lazy.force store) start in
-          Mosaic_test.run term app @@ fun s ->
-          (elapsed := fun () -> T.now s);
-          T.advance s second;
-          List.iter (send term s) keys;
-          T.settle s;
-          observed (T.Terminal.screen term));
+          keys :=
+            (`Key (Key Enter)
+            :: List.rev_map (fun c -> `Key (Text (String.make 1 c))) chars)
+            @ (`Key (Text "/") :: !keys));
+      screen;
+      screen;
     ]
+
+(* [after_keys keys] is what the dashboard of one run shows after [keys],
+   from its status bar. *)
+let after_keys keys =
+  with_store ~name:"after-keys" [] @@ fun store ->
+  ignore (write_log store (List.init 20 (fun i -> sample_record (i, 1.))));
+  observed (show ~cols:120 ~rows:40 store Munin_tui.Runs keys)
+
+(* The depths in a fixed order: each Enter one deeper, to zoom, and each Esc
+   one back. *)
+let depth_keys =
+  cases ~id:fst "Enter goes one depth deeper and Esc one back"
+    [
+      ("Enter", ([ Key Enter ], "strips"));
+      ("Enter twice", ([ Key Enter; Key Enter ], "zoom"));
+      ("Enter at zoom", ([ Key Enter; Key Enter; Key Enter ], "zoom"));
+      ("Esc at zoom", ([ Key Enter; Key Enter; Key Escape ], "strips"));
+      ("Esc at strips", ([ Key Enter; Key Escape ], "charts"));
+    ]
+    (fun (_, (keys, depth)) -> equal string depth (after_keys keys))
+
+let shown_over =
+  cases ~id:fst "? and i show over the depth, and close as they opened"
+    [
+      ("?", ([ char '?' ], "help"));
+      ("? ?", ([ char '?'; char '?' ], "charts"));
+      ("? Esc", ([ char '?'; Key Escape ], "charts"));
+      ("Enter ? Esc", ([ Key Enter; char '?'; Key Escape ], "strips"));
+      ("i", ([ char 'i' ], "info"));
+      ("i i", ([ char 'i'; char 'i' ], "charts"));
+      ("Enter i Esc", ([ Key Enter; char 'i'; Key Escape ], "strips"));
+    ]
+    (fun (_, (keys, shown)) -> equal string shown (after_keys keys))
+
+let typed_q =
+  cases ~id:fst "q is typed in the filter"
+    [
+      ("/ q", ([ char '/'; char 'q' ], "typing"));
+      ("/ q Enter", ([ char '/'; char 'q'; Key Enter ], "charts"));
+    ]
+    (fun (_, (keys, shown)) -> equal string shown (after_keys keys))
 
 (* Where the runs pane is hidden, the filter shows it while it is typed:
    the text typed is in its line, and Enter keeps it. *)
@@ -3102,7 +3197,10 @@ let strips_whole =
         (fun ppf (rows, downs) -> Format.fprintf ppf "%d rows, %d down" rows downs)
         (pair (int_range 16 40) (int_range 0 24)))
   in
-  prop ~count:20 "the strips shown are whole, as many as fit, and say how many follow" gen
+  prop ~count:20
+    "the strips shown are whole, as many as fit, and say how many follow"
+    ~examples:[ (16, 0); (16, 24) ]
+    gen
     (fun (rows, downs) ->
       let every = Lazy.force every in
       let n = List.length every in
@@ -3898,6 +3996,9 @@ let () =
              unwatched;
            ];
          depth_test;
+         depth_keys;
+         shown_over;
+         typed_q;
          hidden_filter;
          strips_scroll;
          shared_axis;
