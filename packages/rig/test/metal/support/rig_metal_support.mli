@@ -51,6 +51,10 @@ val split : fill -> Rig_metal.t -> int -> times:int -> unit
 val execute : Rig_metal_abi.icb -> fill
 (** [execute b] runs every command of [b]. *)
 
+val hold : Rig_metal.gate -> fill
+(** [hold g] is {!Rig_metal.hold} at [g]: the work after it waits until
+    {!Rig_metal.open_gate}[ g]. *)
+
 val watching : unit -> fill * nativeint
 (** [watching ()] is [(f, w)] with [f] a fill that encodes nothing and makes [w]
     a weak reference to its command buffer, read with {!alive}. *)

@@ -593,11 +593,6 @@ val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 (** [shares ba] is how many holders share [ba]'s storage, as the runtime counts
     them on the proxy its arrays share: [0] if they share none. *)
 
-val half_limit_ns : unit -> int
-(** [half_limit_ns ()] is half the test's limit of [WINDTRAP_TIMEOUT] seconds
-    (300 s where that is unset), in nanoseconds: the bound of {!park} and
-    {!waiting}. *)
-
 val park : unit -> unit
 (** [park ()] blocks the calling thread outside OCaml, holding no runtime lock,
     until {!unpark}, or for at most half the test's limit of [WINDTRAP_TIMEOUT]

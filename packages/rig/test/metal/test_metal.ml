@@ -604,134 +604,38 @@ let bumps_across (mine, theirs) =
   done;
   List.iter (Rig_metal.free t.g) [ out; args ]
 
-(* A device of the GPU beside the test's, under a name of its own, whose queue
-   runs beside the test device's. *)
-let beside () =
-  let g = ref None in
-  let make ~word =
-    let r = (Rig_metal.gpu 0).make ~word in
-    Result.iter (fun x -> g := Some x) r;
-    r
-  in
-  let opener = { (Rig_metal.gpu 0) with name = "METAL:beside"; make } in
-  let d = require_ok (Rig.open_ opener) in
-  dev_of { S.d; g = Option.get !g }
+(* Runs [f g] with [g] a closed gate of [t] ({!Rig_metal.hold}), which opens as
+   [f] returns or raises, so no work stays held. *)
+let gated t f =
+  let g = Rig_metal.gate t.g in
+  Fun.protect (fun () -> f g) ~finally:(fun () -> Rig_metal.open_gate g)
 
-(* Gates
-
-   [fill.metal]'s [gate] holds the work behind it on a device's queue, running,
-   until [unlock], a kernel of a device beside, opens it. A running kernel sees
-   no store of the host, and Metal promises no kernel of another queue running
-   beside it. An M1 Max mostly runs [unlock] within milliseconds, but after a
-   gate ran to its end unopened, it ran none beside the process's later gates
-   for 30 s; an M1 of macOS 15 ran none within 2.3 s. A gate's rounds bound it
-   at about half the test's limit, as [Rig_support.park] is bound: a gate that
-   never sees its opening ends before the limit, and the test fails naming
-   it. *)
-
-type gates = {
-  t : dev;
-  o : dev;
-  page : int;
-  flag : Rig_metal.region;
-  args : Rig_metal.region;
-  flag' : Rig_metal.region;
-  args' : Rig_metal.region;
-  unlocks : S.fill array;
-  opened : bool array;
-}
-
-(* The largest count of rounds [gate] takes, its argument [c]. *)
-let max_rounds = 0xFFFF_FFFF
-
-(* [gate]'s rounds a second: about 5 M on an M1 Max, 7 M on an M1. *)
-let gate_rate = 5_000_000
-
-(* Rounds of [gate] that last about half the test's limit on an M1 Max, and less
-   on a faster GPU. *)
-let gate_rounds =
-  min max_rounds (gate_rate * Rig_support.half_limit_ns () / 1_000_000_000)
-
-(* [n] gates on [t] of [gate_rounds] rounds, and a device beside that opens
-   them. Gate [k] waits on the 32-bit word at [page + 8k + 4], then writes at
-   [page + 8k] [1] if it saw it set, [2] if its rounds ran out. *)
-let gates t n =
-  let o = beside () in
-  let page = H.pages H.page in
-  let flag = require_some (maps (Rig_metal.map_host t.g page H.page)) in
-  let flag' = require_some (maps (Rig_metal.map_host o.g page H.page)) in
-  let args = alloc t (n * args_bytes) and args' = alloc o (n * args_bytes) in
-  for k = 0 to n - 1 do
-    let at = k * args_bytes in
-    set_args args ~at ~out:(gpu flag + (8 * k)) ~c:gate_rounds;
-    set_args args' ~at ~out:(gpu flag' + (8 * k)) ~c:1
-  done;
-  let unlocks =
-    Array.init n (fun k ->
-        S.dispatch ~pipeline:(pipeline o "unlock") ~offset:(k * args_bytes)
-          args' ~groups:1 ~threads:1)
-  in
-  { t; o; page; flag; args; flag'; args'; unlocks; opened = Array.make n false }
-
-(* Gate [k] of [g], as work on its device. *)
-let gate g k =
-  S.dispatch ~pipeline:(pipeline g.t "gate") ~offset:(k * args_bytes) g.args
-    ~groups:1 ~threads:1
-
-(* Opens gate [k] of [g], once: runs [unlock] on the device beside. *)
-let open_gate g k =
-  if not g.opened.(k) then begin
-    g.opened.(k) <- true;
-    wait g.o (submit g.o [| g.unlocks.(k) |])
-  end
-
-(* Opens every gate of [g] and closes the device beside. *)
-let close_gates g =
-  Array.iteri (fun k _ -> open_gate g k) g.opened;
-  List.iter (Rig_metal.free g.o.g) [ g.flag'; g.args' ];
-  Rig.close g.o.d
-
-(* Frees what [g] holds on its device, once the work behind it completed. *)
-let free_gates g = List.iter (Rig_metal.free g.t.g) [ g.flag; g.args ]
-
-(* Fails the test naming gate [k] of [g], whose work has completed, unless it
-   saw its opening. *)
-let opened g k =
-  match H.get32 (g.page + (8 * k)) with
-  | 1 -> ()
-  | 2 -> failf "gate %d ran out, at about half the test's limit, unopened" k
-  | w -> failf "gate %d wrote %d, neither 1 (opened) nor 2 (ran out)" k w
-
-(* Runs [f ()], then opens the gates of [g] and closes the device beside, also
-   when [f] raises. *)
-let opening g f = Fun.protect f ~finally:(fun () -> close_gates g)
-
-(* A command buffer in flight when a loss stops the device completes and
-   writes its memory, and the word reaches the last value: the buffer keeps
-   the device's run state, with the command queue the stop releases, until
-   it ends. The buffer runs [gate], which a kernel of a device beside opens
-   once the close returned, so it is in flight at the stop. [S.with_] closed
-   the other devices. *)
+(* A command buffer in flight when a loss stops the device completes and writes
+   its memory, and the word reaches the last value: the buffer keeps the
+   device's run state, with the command queue the stop releases, until it ends.
+   The buffer holds its fill behind a gate, which opens once the close returned,
+   so it is in flight at the stop. [S.with_] closed the other devices. *)
 let stop_in_flight () =
   S.with_ @@ fun s ->
   let t = dev_of s in
-  let g = gates t 1 in
-  await_runs 2;
-  opening g @@ fun () ->
-  let gated = Rig.Point.value (submit t [| gate g 0 |]) in
+  await_runs 1;
+  let page = H.pages H.page in
+  let out = require_some (maps (Rig_metal.map_host t.g page H.page)) in
+  let args = alloc t args_bytes in
+  let fill = fill_dispatch t ~args ~at:0 ~out:(gpu out) ~c:7 1 in
+  gated t @@ fun g ->
+  let held = Rig.Point.value (submit t [| S.hold g; fill |]) in
   raises_match
     (function Rig.Lost _ -> true | _ -> false)
     (fun () -> submit t [| S.failing 7 |]);
   S.close s;
-  let reached = Rig.signaled t.d >= gated in
-  if reached then opened g 0;
-  equal ~msg:"the gated work, at the stop" bool false reached;
-  equal ~msg:"run states, the gated work in flight" int 2 (Rig_metal.runs ());
-  open_gate g 0;
+  equal ~msg:"the held work, at the stop" bool false (Rig.signaled t.d >= held);
+  equal ~msg:"run states, the held work in flight" int 1 (Rig_metal.runs ());
+  Rig_metal.open_gate g;
   await_word t.d (Rig.submitted t.d);
-  await_runs 1;
-  opened g 0;
-  free_gates g
+  await_runs 0;
+  equal ~msg:"the held fill's write" int 7 (H.get32 page);
+  List.iter (Rig_metal.free t.g) [ out; args ]
 
 (* A loss that finds work waiting in the open command buffer drops it, and the
    stop brings the word to the last value. *)
@@ -1428,23 +1332,22 @@ let arena () =
     (Array.init (2 * n) (fun w -> if w mod 2 = 0 then w / 2 else 1000 + (w / 2)))
     (words out)
 
-(* A launch crosses the arena's end while the work before it is in flight,
-   and every launch reads its own parameters. On a fresh device, launches of
-   12 KiB of parameters, which do not divide the 1 MiB arena, run in three
-   submissions: [a] behind one gate, then [b] behind a second, both held on
-   the GPU and filling the arena to 16 KiB short of its end. Once the first
-   gate opens and [a] completes, [c] takes the arena's last 12 KiB, then
-   crosses its end into the bytes [a] gave back, while [b] waits behind the
-   second gate. A device beside opens each gate. Even launches run [where],
-   which stores its parameters' address; odd ones [wide], which stores two
-   words of its own. *)
+(* A launch crosses the arena's end while the work before it is in flight, and
+   every launch reads its own parameters. On a fresh device, launches of 12 KiB
+   of parameters, which do not divide the 1 MiB arena, run in three submissions:
+   [a] behind one gate, then [b] behind a second, both held on the GPU and
+   filling the arena to 16 KiB short of its end. Once the first gate opens and
+   [a] completes, [c] takes the arena's last 12 KiB, then crosses its end into
+   the bytes [a] gave back, while [b] waits behind the second gate. Even
+   launches run [where], which stores its parameters' address; odd ones [wide],
+   which stores two words of its own. *)
 let arena_crossing () =
   S.with_ @@ fun s ->
   let t = dev_of s in
   let image = launch_image t.d in
   let params = 12 * 1024 and a = 40 and b = 44 and c = 20 in
-  let g = gates t 2 in
-  opening g @@ fun () ->
+  gated t @@ fun g0 ->
+  gated t @@ fun g1 ->
   let n = a + b + c in
   let out = zeroed t.d (8 * n) in
   let kernel i = if i mod 2 = 0 then "where" else "wide" in
@@ -1465,17 +1368,15 @@ let arena_crossing () =
     in
     Rig.submit s ~buffers:[| out |] ~args:vs
   in
-  ignore (submit t [| gate g 0 |]);
+  ignore (submit t [| S.hold g0 |]);
   let first = launches 0 a in
-  ignore (submit t [| gate g 1 |]);
+  ignore (submit t [| S.hold g1 |]);
   ignore (launches a b);
-  open_gate g 0;
+  Rig_metal.open_gate g0;
   Rig.Point.wait first;
   ignore (launches (a + b) c);
-  open_gate g 1;
+  Rig_metal.open_gate g1;
   B.wait out Read;
-  opened g 0;
-  opened g 1;
   let w = words out in
   let word i = w.(2 * i) lor (w.((2 * i) + 1) lsl 32) in
   (* A [wide] launch's two words; a [where] launch's address modulo 256,
@@ -1489,8 +1390,7 @@ let arena_crossing () =
     (word (a + b + 2) < word (a + b));
   equal ~msg:"each launch's own words, or its address modulo 256"
     (array (pair int int))
-    (Array.init n own) (Array.init n read);
-  free_gates g
+    (Array.init n own) (Array.init n read)
 
 (* Two growths of the parameter arena beside each other keep the larger,
    whichever is made last: the rooms of a launch of 1 MiB and, on another
@@ -1584,15 +1484,13 @@ let arena_freed () =
    leaves the arena to them: the device holds none after it, the launches'
    command buffers keep the buffer alive, and each launch reads its own
    parameters once the gate opens. A submission between the free_cache and the
-   gate's opening grows a new arena and writes its own parameters there. A
-   device beside opens the gate. *)
+   gate's opening grows a new arena and writes its own parameters there. *)
 let arena_freed_queued () =
   S.with_ @@ fun s ->
   let t = dev_of s in
   let image = launch_image t.d in
   let n = widest_run in
-  let g = gates t 1 in
-  opening g @@ fun () ->
+  gated t @@ fun g ->
   let out = zeroed t.d (8 * 2 * n) in
   let wide = launch image "wide" ~params:8192 [ Sub.write 0 ~at:0 ] in
   let s = Sub.make t.d (Array.make n wide) in
@@ -1600,23 +1498,20 @@ let arena_freed_queued () =
     let vs = Array.init n (fun j -> wide_args ~at:(first + j) (first + j)) in
     Rig.submit s ~buffers:[| out |] ~args:vs
   in
-  ignore (submit t [| gate g 0 |]);
+  ignore (submit t [| S.hold g |]);
   let queued = launches 0 in
   let w = S.weak (Rig_metal.arena t.g) in
   Rig.free_cache t.d;
   equal nativeint ~msg:"the arena after free_cache" 0n (Rig_metal.arena t.g);
-  let reached = Rig.Point.reached queued in
-  if reached then opened g 0;
-  equal bool ~msg:"the launches, still behind the gate" false reached;
+  equal bool ~msg:"the launches, still behind the gate" false
+    (Rig.Point.reached queued);
   equal bool ~msg:"the queued launches' arena, alive" true (S.alive w);
   ignore (launches n);
-  open_gate g 0;
+  Rig_metal.open_gate g;
   B.wait out Read;
-  opened g 0;
   let all = wide_words 0 (2 * n) in
   equal (array int) ~msg:"each launch's own words" all (words out);
-  await_release t.d w;
-  free_gates g
+  await_release t.d w
 
 (* Geometry beyond a function's limits is refused at submit, before any
    hand-over, and the device runs on: an empty axis of groups or threads,

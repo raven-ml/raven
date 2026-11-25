@@ -93,6 +93,13 @@ let execute (b : Rig_metal_abi.icb) =
     keep = Kept b;
   }
 
+let hold g =
+  let b = Bytes.create 8 in
+  Bytes.set_int64_ne b 0 (Int64.of_nativeint (Rig_metal.gate_handle g));
+  let arg = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 8 in
+  Bytes.iteri (fun i c -> arg.{i} <- c) b;
+  { fn = Rig_metal.hold; arg; keep = Kept g }
+
 external watching_arg : unit -> arg * nativeint = "rig_metal_test_watching"
 external watching_fill : unit -> nativeint = "rig_metal_test_watching_fill"
 

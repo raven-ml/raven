@@ -1435,11 +1435,6 @@ static uint64_t half_limit_ns(void) {
   return ns;
 }
 
-value rig_test_half_limit_ns(value unit) {
-  (void)unit;
-  return Val_long((intnat)half_limit_ns());
-}
-
 /* A fill that sets the second of the two 64-bit words at the address its
    argument holds, then returns once the first is not zero, or after
    [half_limit_ns ()]. */

@@ -785,6 +785,16 @@ external arena_of : int -> nativeint = "caml_rig_metal_arena"
 
 let arena d = arena_of d.self
 
+type gate
+
+external gate_of : int -> gate = "caml_rig_metal_gate"
+external gate_handle : gate -> nativeint = "caml_rig_metal_gate_handle"
+external open_gate : gate -> unit = "caml_rig_metal_open_gate"
+external hold_fill : unit -> nativeint = "caml_rig_metal_hold_fill"
+
+let gate d = gate_of d.self
+let hold = hold_fill ()
+
 external shader_cache : unit -> string = "caml_rig_metal_shader_cache"
 
 module Ring = struct

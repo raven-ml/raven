@@ -115,6 +115,9 @@ void rig_metal_release(struct rig_metal_run *r);
 /* The [split] of the device's capability record. */
 int rig_metal_split(void *queue, uint64_t *start, uint64_t *end);
 
+/* The fill Rig_metal.hold, for rig's tests (rig_metal_queue.c). */
+int rig_metal_hold_fill(void *queue, void *arg, uint64_t v);
+
 /* Drops the open command buffer uncommitted, for a stop. */
 void rig_metal_drop(struct rig_metal_run *r);
 

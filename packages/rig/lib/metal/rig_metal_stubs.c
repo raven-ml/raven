@@ -23,6 +23,7 @@
 
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
+#include <caml/custom.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
@@ -1019,6 +1020,7 @@ value caml_rig_metal_stop(value v_d) {
 }
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = rig_metal_split;
+static int (*const hold_fill)(void *, void *, uint64_t) = rig_metal_hold_fill;
 
 /* The pipelines and the buffers the process's devices hold, and their run
    states, for rig's tests. */
@@ -1042,6 +1044,38 @@ value caml_rig_metal_runs(value unit) {
 value caml_rig_metal_arena(value v_d) {
   struct rig_metal_run *r = Run_val(v_d);
   return object(r == NULL ? nil : r->arena);
+}
+
+/* A gate, for rig's tests: a shared event of a device's GPU, nil until
+   made, which the custom block holds and its finalizer releases. Work held
+   at the gate keeps the event too (rig_metal_hold_fill). */
+#define Gate_val(v) (*(id<MTLSharedEvent> *)Data_custom_val(v))
+
+static void gate_finalize(value v) { [Gate_val(v) release]; }
+
+static struct custom_operations gate_ops = {
+    "rig.metal.gate",           gate_finalize,
+    custom_compare_default,     custom_hash_default,
+    custom_serialize_default,   custom_deserialize_default,
+    custom_compare_ext_default, custom_fixed_length_default};
+
+value caml_rig_metal_gate(value v_d) {
+  CAMLparam1(v_d);
+  CAMLlocal1(v);
+  v = caml_alloc_custom(&gate_ops, sizeof(id), 0, 1);
+  Gate_val(v) = nil;
+  struct rig_metal_run *r = Run_val(v_d);
+  if (r == NULL) caml_invalid_argument("Rig_metal.gate: the device stopped");
+  Gate_val(v) = [r->device newSharedEvent];
+  if (Gate_val(v) == nil) caml_failwith("Rig_metal.gate: Metal made no event");
+  CAMLreturn(v);
+}
+
+value caml_rig_metal_gate_handle(value v_g) { return object(Gate_val(v_g)); }
+
+value caml_rig_metal_open_gate(value v_g) {
+  Gate_val(v_g).signaledValue = 1;
+  return Val_unit;
 }
 
 #else
@@ -1093,6 +1127,9 @@ NO_METAL1(caml_rig_metal_failure)
 NO_METAL1(caml_rig_metal_stop)
 NO_METAL1(caml_rig_metal_grow)
 NO_METAL1(caml_rig_metal_arena)
+NO_METAL1(caml_rig_metal_gate)
+NO_METAL1(caml_rig_metal_gate_handle)
+NO_METAL1(caml_rig_metal_open_gate)
 
 value caml_rig_metal_icb(value a, value b, value c, value d) {
   (void)a, (void)b, (void)c, (void)d, no_metal();
@@ -1101,6 +1138,7 @@ value caml_rig_metal_icb(value a, value b, value c, value d) {
 intnat caml_rig_metal_signaled(intnat a) { (void)a, no_metal(); }
 
 static int (*const split)(void *, uint64_t *, uint64_t *) = NULL;
+static int (*const hold_fill)(void *, void *, uint64_t) = NULL;
 
 /* No device opens, so none holds a pipeline, a buffer or a run state. */
 value caml_rig_metal_pipelines(value unit) {
@@ -1128,4 +1166,10 @@ value caml_rig_metal_signaled_byte(value v_d) {
 value caml_rig_metal_split(value unit) {
   (void)unit;
   return caml_copy_nativeint((intnat)split);
+}
+
+/* The C entry rig_metal_hold_fill, for rig's tests. */
+value caml_rig_metal_hold_fill(value unit) {
+  (void)unit;
+  return caml_copy_nativeint((intnat)hold_fill);
 }

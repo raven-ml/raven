@@ -203,6 +203,25 @@ int rig_metal_split(void *queue, uint64_t *start, uint64_t *end) {
   return begin(q) || open_encoder(q) ? 1 : 0;
 }
 
+/* For rig's tests: the fill Rig_metal.hold, whose argument holds a shared
+   event of the device's GPU. The command buffer waits between two of its
+   encoders until the event's value reaches 1. The next encoder waits for
+   the device's fence, as every encoder does. The completion handler's
+   block names the event, so Metal's copy of the block keeps it until Metal
+   releases the handler, as begin's hold is kept. */
+int rig_metal_hold_fill(void *queue, void *arg, uint64_t v) {
+  (void)v;
+  struct rig_metal_queue *q = queue;
+  id<MTLSharedEvent> e;
+  memcpy(&e, arg, sizeof e);
+  close_encoder(q);
+  [q->buffer encodeWaitForEvent:e value:1];
+  [q->buffer addCompletedHandler:^(id<MTLCommandBuffer> b) {
+    (void)b, (void)e;
+  }];
+  return open_encoder(q) ? 1 : 0;
+}
+
 /* A threadgroup's memory length, which Metal takes in multiples of 16
    bytes. */
 static uint64_t shared_length(uint32_t shared) {

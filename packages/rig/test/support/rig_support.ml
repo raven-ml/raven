@@ -89,7 +89,6 @@ external interrupt : unit -> unit = "rig_test_interrupt" [@@noalloc]
 
 external interrupt_after_ms : int -> unit = "rig_test_interrupt_after"
 external interrupt_join : unit -> unit = "rig_test_interrupt_join"
-external half_limit_ns : unit -> int = "rig_test_half_limit_ns"
 external park : unit -> unit = "rig_test_park"
 external parked : unit -> bool = "rig_test_parked"
 external unpark : unit -> unit = "rig_test_unpark"

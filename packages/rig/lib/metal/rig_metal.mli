@@ -590,6 +590,34 @@ val runs : unit -> int
    [0n] while [d] holds none. It reads the arena while no submit runs on [d]. *)
 val arena : t -> nativeint
 
+(* A gate: a shared event of a device's GPU, closed until {!open_gate}. *)
+type gate
+
+(* [gate d] is a closed gate of the open device [d].
+
+   Raises [Invalid_argument] if [d] stopped, and [Failure] if Metal makes no
+   event. *)
+val gate : t -> gate
+
+(* [hold] is the address of a fill ({!Rig_metal_abi}) whose argument is the 8
+   bytes of [gate_handle g], for a gate [g] of the fill's device. It ends the
+   open encoder, makes the command buffer wait there until [open_gate g], and
+   opens a new encoder for the work after it. That command buffer does not
+   complete before [open_gate g], so a wait for its work, such as a close's,
+   lasts until then. Committed before its device stopped, it still completes
+   after [open_gate g] and holds the device's run state ({!runs}) until it does,
+   for as long as the process runs if [g] never opens; a stop or a failure that
+   drops it uncommitted runs none of it. The command buffer keeps the gate's
+   event. *)
+val hold : nativeint
+
+(* [gate_handle g] is the address of [g]'s event, while [g] is reachable. *)
+val gate_handle : gate -> nativeint
+
+(* [open_gate g] opens [g]: the work held at it runs. Opening an open gate does
+   nothing. *)
+val open_gate : gate -> unit
+
 (* [shader_cache ()] is the directory in which Metal keeps the code it compiles
    for the process ({!section-code}), as Metal answers it, or [""] where macOS
    lacks the call that answers. Metal's first answer fixes the directory, so
