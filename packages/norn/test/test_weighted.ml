@@ -102,19 +102,21 @@ let resample =
             if Nx.item [ 0 ] x = 0. then incr firsts
           done;
           less float_exact ~than:87. (Float.abs (float_of_int !firsts -. 300.)));
-      test "never copies a draw of no weight, in float32 too" (fun () ->
-          (* At key 199 the last of 100000 float32 points rounds to 1, past the
-             cumulative weights. *)
+      prop "never copies a draw of no weight, in float32 too" ~count:5 Gen.int
+        (fun seed ->
+          (* 3000 equal float32 weights sum, in float32, to about 0.99997, below
+             the last points of 100000 at every key: those points fall past the
+             cumulative weights, beside a last draw of no weight. *)
+          let lw = Array.append (Array.make 3000 0.) [| Float.neg_infinity |] in
           let w =
             W.
               {
-                values = Nx.create Nx.float32 [| 2 |] [| 0.; 1. |];
-                log_weights =
-                  Nx.create Nx.float32 [| 2 |] [| 0.; Float.neg_infinity |];
+                values = Nx.arange_f Nx.float32 0. 3001. 1.;
+                log_weights = Nx.create Nx.float32 [| 3001 |] lw;
               }
           in
-          let x = W.resample t (Nx.Rng.key 199) ~n:100_000 w in
-          equal (float 0.5) 0. (Nx.item [] (Nx.sum x)));
+          let x = W.resample t (Nx.Rng.key seed) ~n:100_000 w in
+          equal (float 0.5) 2999. (Nx.item [] (Nx.max x)));
       test "raises when no weight is positive" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Weighted.resample")
             (fun () ->

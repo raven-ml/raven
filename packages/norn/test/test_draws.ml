@@ -23,7 +23,6 @@ let pos : (Nx.host Nx.float64_t pos, Nx.host) Nx.Ptree.t =
 
 let t = Nx.Ptree.tensor
 let floats x = Nx.to_array x
-let ( !! ) (type u) (d : u D.t) : u = (d :> u)
 
 let paths s x =
   List.filter_map
@@ -95,7 +94,8 @@ let map =
     [
       test "applies f to every draw" (fun () ->
           let d =
-            !!(D.map pos t (fun p -> Nx.add p.a (Nx.sum p.b)) (draws ()))
+            (D.map pos t (fun p -> Nx.add p.a (Nx.sum p.b)) (draws ())
+              :> Nx.host Nx.float64_t)
           in
           (* Draw [k], chain-major, has [a] of [10 (k / 3) + k mod 3] and [b]
              summing to [4 k + 1]. *)
@@ -119,7 +119,10 @@ let simulate =
   test "simulate gives draw j of chain i the key fold_in k (i n + j)" (fun () ->
       let k = Nx.Rng.key 7 in
       let uniform k = Nx.Rng.uniform ~key:k Nx.float64 [||] in
-      let d = !!(D.simulate pos t (fun k _ -> uniform k) k (draws ())) in
+      let d =
+        (D.simulate pos t (fun k _ -> uniform k) k (draws ())
+          :> Nx.host Nx.float64_t)
+      in
       let expected =
         Array.init 6 (fun ij -> Nx.item [] (uniform (Nx.Rng.fold_in k ij)))
       in
@@ -133,12 +136,13 @@ let simulate_nothing =
 
 let append =
   let l = Nx.Ptree.list t in
-  let x = Nx.zeros Nx.float64 [| 2; 3 |] in
+  let x () = Nx.zeros Nx.float64 [| 2; 3 |] in
   group "append"
     [
       test "puts the second draws after the first in every chain" (fun () ->
           let d =
-            !!(D.append pos (draws ()) (D.thin pos ~every:2 (draws ())))
+            (D.append pos (draws ()) (D.thin pos ~every:2 (draws ()))
+              :> Nx.host Nx.float64_t pos)
           in
           equal (array float_exact)
             [| 0.; 1.; 2.; 0.; 2.; 10.; 11.; 12.; 10.; 12. |]
@@ -147,10 +151,10 @@ let append =
       test "raises for another number of chains" (fun () ->
           let y = Nx.zeros Nx.float64 [| 3; 3 |] in
           raises_match (Exn.invalid_arg ~sub:"Norn.Draws.append") (fun () ->
-              D.append l (D.v l [ x ]) (D.v l [ y ])));
+              D.append l (D.v l [ x () ]) (D.v l [ y ])));
       test "raises for other visits" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Draws.append") (fun () ->
-              D.append l (D.v l [ x ]) (D.v l [ x; x ])));
+              D.append l (D.v l [ x () ]) (D.v l [ x (); x () ])));
       test "raises for a tensor of another element shape" (fun () ->
           let d = D.v t (Nx.zeros Nx.float64 [| 2; 3; 2 |]) in
           let d' = D.v t (Nx.zeros Nx.float64 [| 2; 3; 3 |]) in
@@ -170,7 +174,9 @@ let thin =
           in
           equal (list float_exact)
             (List.map float_of_int kept)
-            (Array.to_list (floats !!(D.thin pos ~every (draws ())).a)));
+            (Array.to_list
+               (floats
+                  (D.thin pos ~every (draws ()) :> Nx.host Nx.float64_t pos).a)));
       test "raises for every below 1" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Draws.thin") (fun () ->
               D.thin pos ~every:0 (draws ())));

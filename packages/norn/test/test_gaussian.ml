@@ -35,8 +35,8 @@ let of_rows m =
 
 let to_vec p = Nx.concatenate ~axis:0 [ p.a; p.b ]
 let rows p = Nx.concatenate ~axis:1 [ p.a; p.b ]
-let mean = of_vec (vec [| 0.5; -1.; 2.; 0.25 |])
-let scale = of_vec (vec [| 2.; 0.5; 1.; 3. |])
+let mean () = of_vec (vec [| 0.5; -1.; 2.; 0.25 |])
+let scale () = of_vec (vec [| 2.; 0.5; 1.; 3. |])
 
 (* Orthonormal directions in 4 elements, with variances along them. *)
 let directions =
@@ -51,15 +51,15 @@ let directions =
    directions, and [dense k] its covariance [S (I + Σ (v - 1) u uᵀ) S]. *)
 let gaussian k =
   let us = List.filteri (fun i _ -> i < k) directions in
-  if k = 0 then G.diagonal pos Nx.float64 ~mean ~scale
+  if k = 0 then G.diagonal pos Nx.float64 ~mean:(mean ()) ~scale:(scale ())
   else
-    G.low_rank pos ~mean ~scale
+    G.low_rank pos ~mean:(mean ()) ~scale:(scale ())
       ~directions:
         (of_rows (Nx.stack ~axis:0 (List.map (fun (u, _) -> vec u) us)))
       ~variances:(vec (Array.of_list (List.map snd us)))
 
 let dense k =
-  let s = Nx.diag (to_vec scale) in
+  let s = Nx.diag (to_vec (scale ())) in
   let inner =
     List.fold_left
       (fun acc (u, v) ->
@@ -78,7 +78,7 @@ let dense k =
 (* [normal_log_density ~precision x] is the log density at [x] of the normal of
    mean [mean] and precision matrix [precision]. *)
 let normal_log_density ~precision x =
-  let d = Nx.sub x (to_vec mean) in
+  let d = Nx.sub x (to_vec (mean ())) in
   let _, logdet = Nx.slogdet Nx.float64 precision in
   let q = Nx.item [] (Nx.vdot d (Nx.matmul precision d)) in
   (-0.5 *. q) +. (0.5 *. Nx.item [] logdet) -. (2. *. Float.log (2. *. Float.pi))
@@ -102,20 +102,20 @@ let check_rows lp g xs =
   equal (array close) expected (floats (G.log_density pos g (of_rows m)))
 
 (* A precision of diagonal [1, 4, 0.5, 2] plus 3 w wᵀ, w = [1, 0, 1, 0]. *)
-let p = of_vec (vec [| 1.; 4.; 0.5; 2. |])
-let w = vec [| 1.; 0.; 1.; 0. |]
+let p () = of_vec (vec [| 1.; 4.; 0.5; 2. |])
+let w () = vec [| 1.; 0.; 1.; 0. |]
 
-let precision =
+let precision () =
   Nx.add
-    (Nx.diag (to_vec p))
+    (Nx.diag (to_vec (p ())))
     (Nx.mul_s
-       (Nx.matmul (Nx.reshape [| 4; 1 |] w) (Nx.reshape [| 1; 4 |] w))
+       (Nx.matmul (Nx.reshape [| 4; 1 |] (w ())) (Nx.reshape [| 1; 4 |] (w ())))
        3.)
 
 let of_precision () =
   G.of_precision pos Nx.float64
-    ~low_rank:(of_rows (Nx.reshape [| 1; 4 |] w), vec [| 3. |])
-    ~mean p
+    ~low_rank:(of_rows (Nx.reshape [| 1; 4 |] (w ())), vec [| 3. |])
+    ~mean:(mean ()) (p ())
 
 let covariance =
   group "covariance"
@@ -130,12 +130,14 @@ let covariance =
           check_rows (normal_log_density ~precision) (gaussian k) xs);
       prop "gives of_precision's Gaussian the log density of its precision"
         points (fun xs ->
-          check_rows (normal_log_density ~precision) (of_precision ()) xs);
+          check_rows
+            (normal_log_density ~precision:(precision ()))
+            (of_precision ()) xs);
       cases "has variance the dense covariance's diagonal" ~id:fst
         [ ("diagonal", 0); ("rank 2", 2); ("rank 4", 4); ("of_precision", -1) ]
         (fun (_, k) ->
           let g, cov =
-            if k < 0 then (of_precision (), Nx.inv precision)
+            if k < 0 then (of_precision (), Nx.inv (precision ()))
             else (gaussian k, dense k)
           in
           equal (array close)
@@ -150,7 +152,8 @@ let diagonal =
 
 let low_rank =
   let low_rank directions variances =
-    G.low_rank pos ~mean ~scale ~directions:(of_rows directions) ~variances
+    G.low_rank pos ~mean:(mean ()) ~scale:(scale ())
+      ~directions:(of_rows directions) ~variances
   in
   let two =
     Nx.stack ~axis:0
@@ -182,8 +185,8 @@ let low_rank =
 let of_precision_refusals =
   let refuse p l =
     G.of_precision pos Nx.float64
-      ~low_rank:(of_rows (Nx.reshape [| 1; 4 |] w), vec [| l |])
-      ~mean
+      ~low_rank:(of_rows (Nx.reshape [| 1; 4 |] (w ())), vec [| l |])
+      ~mean:(mean ())
       (of_vec (vec p))
   in
   group "of_precision"
@@ -246,38 +249,21 @@ let stacked g g' =
   Nx.Ptree.map2 (G.ptree pos) (fun _ x y -> Nx.stack ~axis:0 [ x; y ]) g g'
 
 let narrow () =
-  G.diagonal pos Nx.float64 ~mean ~scale:(of_vec (vec [| 1.; 1.; 1.; 1. |]))
+  G.diagonal pos Nx.float64 ~mean:(mean ())
+    ~scale:(of_vec (vec [| 1.; 1.; 1.; 1. |]))
 
 let wide () =
-  G.diagonal pos Nx.float64 ~mean ~scale:(of_vec (vec [| 4.; 2.; 3.; 6. |]))
+  G.diagonal pos Nx.float64 ~mean:(mean ())
+    ~scale:(of_vec (vec [| 4.; 2.; 3.; 6. |]))
 
-let structure =
-  group "structure"
+let stacked_gaussians =
+  group "stacked Gaussians"
     [
       test "mean of stacked Gaussians is their means stacked" (fun () ->
           let m = G.mean pos (stacked (narrow ()) (wide ())) in
           equal (array float_exact)
-            (floats (Nx.stack ~axis:0 [ to_vec mean; to_vec mean ]))
+            (floats (Nx.stack ~axis:0 [ to_vec (mean ()); to_vec (mean ()) ]))
             (floats (rows m)));
-      test "ptree walks mean, scale, directions, then variances" (fun () ->
-          let paths =
-            List.filter_map
-              (function
-                | Nx.Ptree.Leaf p -> Some (Nx.Ptree.Path.to_string p)
-                | Report _ -> None)
-              (Nx.Ptree.visits (G.ptree pos) (gaussian 2))
-          in
-          equal (list string)
-            [
-              "mean.a";
-              "mean.b";
-              "scale.a";
-              "scale.b";
-              "directions.a";
-              "directions.b";
-              "variances";
-            ]
-            paths);
       cases "sample, log_density, variance and pp raise for stacked Gaussians"
         ~id:fst
         [
@@ -294,13 +280,6 @@ let structure =
           raises_match
             (Exn.invalid_arg ~sub:("Norn.Gaussian." ^ name))
             (fun () -> f (stacked (narrow ()) (wide ()))));
-      cases "pp gives the dimension and rank" ~id:fst
-        [
-          ("diagonal", (0, "gaussian(dimension 4, rank 0)"));
-          ("rank 2", (2, "gaussian(dimension 4, rank 2)"));
-        ]
-        (fun (_, (k, text)) ->
-          equal string text (Format.asprintf "%a" (G.pp pos) (gaussian k)));
     ]
 
 let std_normal x =
@@ -381,7 +360,7 @@ let importance =
           Array.iteri
             (fun i exact ->
               less float_exact ~than:(6. *. se.(i)) (Float.abs (m.(i) -. exact)))
-            (floats (to_vec mean)));
+            (floats (to_vec (mean ()))));
       test "gives a proposal narrower than the target k̂ above 0.7" (fun () ->
           (* N(0, 0.3²) for N(0, 1): the ratios' tail has shape [k = 1 - 0.3²] =
              0.91. Over 1000 sets of 4000 draws, 20% of the k̂ fall below 0.7;
@@ -428,15 +407,48 @@ let importance =
                 (Nx.Rng.key 1) ~n:3 g));
     ]
 
+let ptree =
+  test "ptree walks mean, scale, directions, then variances" (fun () ->
+      let paths =
+        List.filter_map
+          (function
+            | Nx.Ptree.Leaf p -> Some (Nx.Ptree.Path.to_string p)
+            | Report _ -> None)
+          (Nx.Ptree.visits (G.ptree pos) (gaussian 2))
+      in
+      equal (list string)
+        [
+          "mean.a";
+          "mean.b";
+          "scale.a";
+          "scale.b";
+          "directions.a";
+          "directions.b";
+          "variances";
+        ]
+        paths)
+
+let pp =
+  test "pp gives the dimension and rank" (fun () ->
+      let text k = Format.asprintf "%a" (G.pp pos) (gaussian k) in
+      expect (text 0 ^ "\n" ^ text 2)
+      @@ __POS_OF__
+           {|
+             gaussian(dimension 4, rank 0)
+             gaussian(dimension 4, rank 2)
+             |})
+
 let () =
   exit
     (run "Norn.Gaussian"
        [
          covariance;
+         stacked_gaussians;
          diagonal;
          low_rank;
          of_precision_refusals;
          sample;
-         structure;
          importance;
+         ptree;
+         pp;
        ])

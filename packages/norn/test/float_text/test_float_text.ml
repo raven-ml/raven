@@ -273,30 +273,21 @@ let short_decimal ~digits:p ~low ~high =
   done;
   (String.sub s 0 !k, j + String.length s - !k)
 
-(* [rounds_to ~grid x (d, e)] checks that the decimal [d 10^e], a multiple of
-   [10^grid], is the multiple nearest [|x|], ties to the even multiple: [|x|]
-   lies between the midpoints to the neighbouring multiples. Below a power of
-   ten that [significant] rounded up to, the lower neighbour is on the grid one
-   digit finer. *)
-let rounds_to ~grid ~finer_below x (d, e) =
+(* [nearest x de ~down ~up ~even] checks that [|x|] lies between [down] and
+   [up], the midpoints from the decimal [de] to the multiples beside it on its
+   grid (no [down] below zero), and on a midpoint only if [de] is the even
+   multiple: [de] is the multiple nearest [|x|], ties to even. *)
+let nearest x de ~down ~up ~even =
   let c, q, _ = decode F.binary64 x in
-  let m =
-    if d = "0" then 0 else int_of_string (d ^ String.make (e - grid) '0')
-  in
-  let up = (string_of_int ((10 * m) + 5), grid - 1) in
-  let down =
-    if finer_below then (string_of_int ((100 * m) - 5), grid - 2)
-    else (string_of_int ((10 * m) - 5), grid - 1)
-  in
-  let even = m land 1 = 0 || finer_below in
-  let o_up = compare_dec up c q and o_down = compare_dec down c q in
-  cover "a tie" (o_up = 0 || (m > 0 && o_down = 0));
-  let claim = Printf.sprintf "the multiple of 10^%d nearest %h" grid x in
-  satisfies ~claim digits
+  let o_up = compare_dec up c q in
+  let o_down = match down with None -> -1 | Some d -> compare_dec d c q in
+  cover "a tie" (o_up = 0 || o_down = 0);
+  satisfies
+    ~claim:(Printf.sprintf "the multiple nearest %h, ties to even" x)
+    digits
     (fun _ ->
-      (o_up > 0 || (o_up = 0 && even))
-      && (m = 0 || o_down < 0 || (o_down = 0 && even)))
-    (d, e)
+      (o_up > 0 || (o_up = 0 && even)) && (o_down < 0 || (o_down = 0 && even)))
+    de
 
 let shortest =
   group "shortest"
@@ -382,9 +373,19 @@ let significant =
         (fun (x, n) ->
           let d, e = F.significant n x in
           if x <> 0. then begin
-            let lead = String.length d - 1 + e in
             at_most int ~than:n (String.length d);
-            rounds_to ~grid:(lead - n + 1) ~finer_below:(d = "1") x (d, e)
+            (* [d 10^e] is [m] multiples of [10^k], [k] its [n]-th digit's
+               place. Below a power of ten, [d] = 1, the multiple next down is
+               on the grid one digit finer, where it is even. *)
+            let k = String.length d - n + e in
+            let m = int_of_string (d ^ String.make (e - k) '0') in
+            let down =
+              if d = "1" then (string_of_int ((100 * m) - 5), k - 2)
+              else (string_of_int ((10 * m) - 5), k - 1)
+            in
+            nearest x (d, e) ~down:(Some down)
+              ~up:(string_of_int ((10 * m) + 5), k - 1)
+              ~even:(d = "1" || m land 1 = 0)
           end);
       cases "gives the stated digits"
         ~id:(fun (n, x, _) -> Printf.sprintf "%d %h" n x)
@@ -424,7 +425,16 @@ let decimals =
                ])
             (int_range (-3) 10))
         (fun (x, n) ->
-          rounds_to ~grid:(-n) ~finer_below:false x (F.decimals n x));
+          (* [d 10^e] is [m] multiples of [10^-n]. *)
+          let d, e = F.decimals n x in
+          let m =
+            if d = "0" then 0 else int_of_string (d ^ String.make (e + n) '0')
+          in
+          let down = (string_of_int ((10 * m) - 5), -n - 1) in
+          nearest x (d, e)
+            ~down:(if m = 0 then None else Some down)
+            ~up:(string_of_int ((10 * m) + 5), -n - 1)
+            ~even:(m land 1 = 0));
       cases "gives the stated digits"
         ~id:(fun (n, x, _) -> Printf.sprintf "%d %h" n x)
         [

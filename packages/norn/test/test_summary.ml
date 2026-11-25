@@ -657,4 +657,4 @@ let pp =
     ]
 
 let () =
-  exit (run "Norn.Summary" [ labels; v; findings; of_weighted; concat; pp ])
+  exit (run "Norn.Summary" [ v; of_weighted; concat; findings; labels; pp ])

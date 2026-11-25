@@ -257,7 +257,7 @@ let ebfmi =
     ]
 
 let divergent_shift =
-  let x = chains 1 4 [| 0.; 1.; 2.; 5. |] in
+  let x () = chains 1 4 [| 0.; 1.; 2.; 5. |] in
   let at diverging =
     transitions
       ~energy:(Nx.zeros Nx.float64 [| 1; 4 |])
@@ -271,11 +271,11 @@ let divergent_shift =
           let s = at [| false; false; true; true |] in
           equal close
             (1.5 /. Float.sqrt (14. /. 3.))
-            (item (Diag.divergent_shift t s x)));
+            (item (Diag.divergent_shift t s (x ()))));
       test "is NaN with no divergence" (fun () ->
           let s = at [| false; false; false; false |] in
           satisfies ~claim:"nan" float_exact Float.is_nan
-            (item (Diag.divergent_shift t s x)));
+            (item (Diag.divergent_shift t s (x ()))));
       test "raises for other chains or draws" (fun () ->
           let s = at [| false; false; true; true |] in
           raises_match (Exn.invalid_arg ~sub:"Norn.Diag.divergent_shift")
