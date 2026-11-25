@@ -120,12 +120,7 @@ let sum_rows r =
   else
     let rec pow2 m = if m >= n then m else pow2 (2 * m) in
     let m = pow2 1 in
-    let r =
-      if m = n then r
-      else
-        Nx.concatenate ~axis:1
-          [ r; Nx.zeros_at (Nx.beside r) (Nx.dtype r) [| k; m - n |] ]
-    in
+    let r = if m = n then r else Nx.pad [| (0, 0); (0, m - n) |] 0. r in
     (* Neighbours added by sums over axes of two: a sum of two terms has one
        association, so each level rounds alike eagerly and compiled, and each
        level is a reduction, which a compiled program computes once rather than
