@@ -197,6 +197,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Path.crop` of a path with a gap gives only finite points. A path whose
+  drawn part lay within the box, or that drew nothing, came back whole with its
+  non-finite points, which `Path.equal` and `Path.pp` see.
 - `Scheme.puor` runs from orange to purple, Brewer's order, as its
   documentation says. Its tables were reversed, so its readings ran from
   purple to orange.

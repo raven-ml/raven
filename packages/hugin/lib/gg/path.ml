@@ -187,9 +187,10 @@ let fold_built ~move ~line ~cubic ~close acc p =
   List.fold_left step acc (List.rev p)
 
 (* [fold_drawn m] is [fold] over [transform m p] without building it: every
-   built point is mapped through [m], then the gap rule applies. [started] is
-   whether a subpath is current and [drawn] whether it has a segment. *)
-let fold_drawn (m : Affine.t) ~move ~line ~cubic ~close acc p =
+   built point is mapped through [m], then the gap rule applies, and [gap acc]
+   is called at each gap. [started] is whether a subpath is current and [drawn]
+   whether it has a segment. *)
+let fold_drawn (m : Affine.t) ~move ~line ~cubic ~close ~gap acc p =
   let started = ref false and drawn = ref false in
   let[@inline] tx x y = (m.xx *. x) +. (m.xy *. y) +. m.x0 in
   let[@inline] ty x y = (m.yx *. x) +. (m.yy *. y) +. m.y0 in
@@ -201,7 +202,7 @@ let fold_drawn (m : Affine.t) ~move ~line ~cubic ~close acc p =
   in
   let gap acc =
     started := false;
-    acc
+    gap acc
   in
   (* The built point [(x, y)] starts a subpath if [starts] or none is current,
      and otherwise ends a line. Inlined, a polyline's points are boxed only for
@@ -249,7 +250,7 @@ let fold_drawn (m : Affine.t) ~move ~line ~cubic ~close acc p =
   List.fold_left step acc (List.rev p)
 
 let fold ~move ~line ~cubic ~close acc p =
-  fold_drawn Affine.id ~move ~line ~cubic ~close acc p
+  fold_drawn Affine.id ~move ~line ~cubic ~close ~gap:Fun.id acc p
 
 let bezier t a b c d =
   let u = 1. -. t in
@@ -296,7 +297,7 @@ let flatten ?(tolerance = 0.1) m ~move ~line ~close acc p =
         acc := line !acc (bezier t x0 x1 x2 x3) (bezier t y0 y1 y2 y3)
       done;
       at !acc x3 y3 line)
-    ~close acc p
+    ~close ~gap:Fun.id acc p
 
 (* [widen bounds k a b c d] widens the interval of [bounds] at [k] and [k + 2]
    by the extremes of the cubic Bézier coordinate with control values [a], [b],
@@ -322,7 +323,8 @@ let widen bounds k a b c d =
   extreme (q /. qa);
   extreme (qc /. q)
 
-let bounds p =
+(* [extent p] is [bounds p] and whether [p] has a gap, from one traversal. *)
+let extent p =
   (* [minx; miny; maxx; maxy; current x; current y] *)
   let b = [| infinity; infinity; neg_infinity; neg_infinity; 0.; 0. |] in
   let add () x y =
@@ -333,15 +335,23 @@ let bounds p =
     b.(4) <- x;
     b.(5) <- y
   in
-  fold ~move:add ~line:add
+  let gaps = ref false in
+  fold_drawn Affine.id ~move:add ~line:add
     ~cubic:(fun () c1x c1y c2x c2y x y ->
       widen b 0 b.(4) c1x c2x x;
       widen b 1 b.(5) c1y c2y y;
       add () x y)
-    ~close:Fun.id () p;
-  if b.(0) <= b.(2) then
-    Some (Box2.of_pts (P2.v b.(0) b.(1)) (P2.v b.(2) b.(3)))
-  else None
+    ~close:Fun.id
+    ~gap:(fun () -> gaps := true)
+    () p;
+  let box =
+    if b.(0) <= b.(2) then
+      Some (Box2.of_pts (P2.v b.(0) b.(1)) (P2.v b.(2) b.(3)))
+    else None
+  in
+  (box, !gaps)
+
+let bounds p = fst (extent p)
 
 (* Cropping
 
@@ -617,16 +627,18 @@ let cut h ~region s acc =
     finish ~closed:region;
     !out
 
+(* A path with a gap is cut even when it lies within [b], so that the result
+   holds only the finite points [fold] visits. *)
 let crop b p =
-  match bounds p with
-  | None -> p
-  | Some pb
+  match extent p with
+  | None, false -> p
+  | Some pb, false
     when Box2.minx b <= Box2.minx pb
          && Box2.maxx pb <= Box2.maxx b
          && Box2.miny b <= Box2.miny pb
          && Box2.maxy pb <= Box2.maxy b ->
       p
-  | Some _ ->
+  | _ ->
       let halves =
         [
           { axis = `X; c = Box2.minx b; lower = true };

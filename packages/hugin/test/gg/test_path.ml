@@ -952,9 +952,41 @@ let crop_adds_nothing_degenerate shapes =
   cover "a shape cut" (cropped <> segs p);
   equal (list (Testable.make ~pp:pp_seg ~equal:( = ))) [] (degenerate cropped)
 
+let printed p = Format.asprintf "%a" Path.pp p
+
+let lies_within b pb =
+  Box2.minx b <= Box2.minx pb
+  && Box2.maxx pb <= Box2.maxx b
+  && Box2.miny b <= Box2.miny pb
+  && Box2.maxy pb <= Box2.maxy b
+
+(* [Path.pp] prints every point a path was built with, non-finite ones as [nan],
+   [inf] and [-inf], the only words it prints that hold an [n]. The large box
+   holds all a gappy program draws. *)
+let crop_is_finite (large, prog) =
+  let p = build prog in
+  let b = if large then Box2.v (-200.) (-200.) 400. 400. else crop_box in
+  let has_gap = String.contains (printed p) 'n' in
+  cover "a path with a gap" has_gap;
+  cover "a gap, and what fold visits within the box"
+    (has_gap
+    && match Path.bounds p with Some pb -> lies_within b pb | None -> false);
+  cover "a path of gaps only" (Path.bounds p = None && not (Path.is_empty p));
+  let s = printed (Path.crop b p) in
+  not_contains ~sub:"nan" s;
+  not_contains ~sub:"inf" s
+
 let cropping =
   group "crop"
     [
+      prop "crop gives only finite points"
+        ~examples:
+          [
+            (false, [ Poly (false, [ (nan, 0.); (nan, 0.) ]) ]);
+            (true, [ Poly (false, [ (1., 1.); (nan, 1.); (2., 1.); (3., 1.) ]) ]);
+          ]
+        (Gen.pair Gen.bool gen_gappy_program)
+        crop_is_finite;
       prop "crop is the path itself when it lies within the box" gen_program
         (fun prog ->
           let p = build prog in

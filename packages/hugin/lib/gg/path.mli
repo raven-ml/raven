@@ -93,8 +93,8 @@ val crop : Box2.t -> t -> t
     stroking keeps the pen's ink whole where the path lies within [b]. A point
     that a cut puts on an edge of [b] has that edge's coordinate exactly.
     {{!section-gaps}Gaps} are applied first, so every point of [crop b p] is
-    finite; if everything {!fold} visits in [p] is within [b], [crop b p] is
-    [p]. *)
+    finite. If [p] has no gap and everything {!fold} visits in [p] is within
+    [b], [crop b p] is [p]. *)
 
 (** {1:shapes Shapes} *)
 
