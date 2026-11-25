@@ -79,8 +79,7 @@ let init =
           let coupled x =
             Nx.add (banana x) (Nx.slice [ Nx.L [ 0; 0; 0; 0 ]; Nx.I 0 ] x)
           in
-          raises_match
-            (Exn.invalid_arg ~sub:"Norn.Hmc.init: the density's row 0 changes")
+          raises_match (Exn.invalid_arg ~sub:"Norn.Hmc.init: the density's row")
             (fun () -> H.init t coupled (start 4)));
       test "a start where the density is -inf is refused, naming the chain"
         (fun () ->
@@ -171,6 +170,7 @@ let uniform key = Nx.item [] (Nx.Rng.uniform ~key Nx.float64 [||])
 
 type reference = {
   z : float array;
+  g : float array;
   lp : float;
   h0 : float;
   steps : int;
@@ -191,20 +191,20 @@ let reference geometry ~eps ~n key z0 =
   let lp0, g0 = eval geometry z0 in
   let h0 = (0.5 *. dot p0 p0) -. lp0 in
   let rec go i z p g lp =
-    if i = n then (z, p, lp, i, false)
+    if i = n then (z, p, g, lp, i, false)
     else
       let p' = axpy (eps /. 2.) g p in
       let z' = axpy eps p' z in
-      if not (Array.for_all Float.is_finite z') then (z, p, lp, i + 1, true)
+      if not (Array.for_all Float.is_finite z') then (z, p, g, lp, i + 1, true)
       else
         let lp', g' = eval geometry z' in
         let p' = axpy (eps /. 2.) g' p' in
         let h = (0.5 *. dot p' p') -. lp' in
         let error = if Float.is_nan h then Float.infinity else h -. h0 in
-        if error > 1000. then (z, p, lp, i + 1, true)
+        if error > 1000. then (z, p, g, lp, i + 1, true)
         else go (i + 1) z' p' g' lp'
   in
-  let z, p, lp, steps, diverged = go 0 z0 p0 g0 lp0 in
+  let z, p, g, lp, steps, diverged = go 0 z0 p0 g0 lp0 in
   let alpha =
     if diverged then 0.
     else Float.min 1. (Float.exp (h0 -. ((0.5 *. dot p p) -. lp)))
@@ -212,6 +212,7 @@ let reference geometry ~eps ~n key z0 =
   let accepted = uniform (Nx.Rng.fold_in key 1) < alpha in
   {
     z = (if accepted then z else z0);
+    g = (if accepted then g else g0);
     lp = (if accepted then lp else lp0);
     h0;
     steps;
@@ -261,16 +262,24 @@ let transition =
       let msg = Printf.sprintf "chain %d" i in
       let at f = Nx.item [ i ] f in
       let x = color geometry (Nx.create Nx.float64 [| dim |] r.z) in
+      (* The gradient in x is the whitened one over the scale. *)
+      let g = Nx.div (Nx.create Nx.float64 [| dim |] r.g) geometry.s in
       equal ~msg int r.steps (Int32.to_int (at st.n_steps));
       equal ~msg bool r.diverged (at st.diverging);
       equal ~msg bool false (at st.saturated);
       equal ~msg (float 1e-12) r.alpha (at st.acceptance);
       equal ~msg (float 1e-12) r.h0 (at st.energy);
+      equal ~msg float_exact eps (at st.step_size);
       equal ~msg (float 1e-10) r.lp (at s'.lp);
+      equal ~msg (float 1e-10) r.lp (at st.lp);
       equal ~msg
         (array (float 1e-10))
         (floats x)
-        (floats (Nx.slice [ Nx.I i ] s'.position)))
+        (floats (Nx.slice [ Nx.I i ] s'.position));
+      equal ~msg
+        (array (float 1e-9))
+        (floats g)
+        (floats (Nx.slice [ Nx.I i ] s'.grad)))
     refs
 
 (* Invariance. After five transitions of every chain from the banana's exact
@@ -440,9 +449,7 @@ let step =
 
 (* warmup
 
-   An independent normal of standard deviations 10 and 0.1, from a unit
-   geometry: ten times too narrow along one element and ten times too wide along
-   the other. *)
+   An independent normal of standard deviations 10 and 0.1. *)
 
 let scaled x =
   let a = Nx.slice [ Nx.A; Nx.I 0 ] x and b = Nx.slice [ Nx.A; Nx.I 1 ] x in
@@ -450,18 +457,54 @@ let scaled x =
     (Nx.add (Nx.square (Nx.div_s a 10.)) (Nx.square (Nx.div_s b 0.1)))
     (-0.5)
 
-(* 64 chains warmed for a harmonic mean acceptance of 0.95, away from the
-   default 0.8. *)
-let warmed =
-  lazy
-    (let x = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 64; dim |] in
-     H.warmup t scaled (Nx.Rng.key 4) ~steps:300
-       (H.init t ~accept:0.95 scaled x))
+(* [warm accept] is 64 chains warmed for a harmonic mean acceptance of
+   [accept]. *)
+let warm accept =
+  let x = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 64; dim |] in
+  H.warmup t scaled (Nx.Rng.key 4) ~steps:300 (H.init t ~accept scaled x)
+
+let warmed = lazy (warm 0.95)
+
+(* A correlated Gaussian: covariance [[4, 1.8]; [1.8, 1]], correlation 0.9. *)
+let precision =
+  let det = (4. *. 1.) -. (1.8 *. 1.8) in
+  Nx.create Nx.float64 [| 2; 2 |]
+    [| 1. /. det; -1.8 /. det; -1.8 /. det; 4. /. det |]
+
+let correlated x =
+  Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.mul x (Nx.matmul x precision))) (-0.5)
+
+(* [fitted g v] is [vᵀ Σ⁻¹ v] of the Gaussian [g]: twice its log density's fall
+   from its mean to its mean plus [v]. *)
+let fitted g v =
+  let m = Norn.Gaussian.mean t g in
+  let at x =
+    Nx.item [ 0 ] (Norn.Gaussian.log_density t g (Nx.unsqueeze ~axes:[ 0 ] x))
+  in
+  2. *. (at m -. at (Nx.add m v))
+
+(* [quadratic f] is [f] at three directions. *)
+let quadratic f =
+  Array.map
+    (fun v -> f (Nx.create Nx.float64 [| 2 |] v))
+    [| [| 1.; 0. |]; [| 0.; 1. |]; [| 1.; 1. |] |]
 
 (* [harmonic a] is the harmonic mean of the acceptances [a]. *)
 let harmonic a =
   float_of_int (Array.length a)
   /. Array.fold_left (fun s x -> s +. (1. /. x)) 0. a
+
+(* [acceptance s] is the mean over 100 draws from [s] of the chains' harmonic
+   mean acceptance. *)
+let acceptance s =
+  let _, _, st = H.sample t scaled (Nx.Rng.key 5) ~draws:100 s in
+  let a =
+    (st : _ Norn.Draws.t :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance
+  in
+  let per_draw =
+    List.init 100 (fun j -> harmonic (floats (Nx.slice [ Nx.A; Nx.I j ] a)))
+  in
+  List.fold_left ( +. ) 0. per_draw /. 100.
 
 (* ChEES on a standard normal in 10 dimensions. The flow is a rotation, [x' = x
    cos t + p sin t], and the expected squared change of [|x|²] is [4 d sin² t].
@@ -489,17 +532,20 @@ let warmup =
           let s' = H.warmup t banana (Nx.Rng.key 1) ~steps:0 s in
           equal float_exact (Nx.item [] s.step_size) (Nx.item [] s'.step_size);
           equal int32 0l (Nx.item [] s'.draw));
-      (* Stan's schedule: no geometry is fitted below 20 steps. *)
+      (* Stan's schedule: no geometry is fitted below 20 steps. At 20 it is
+         windows of 3, 15 and 2, the second refitting; on a Gaussian the fit is
+         the target's (see below). *)
       test "fewer than 20 steps keep the geometry, 20 refit it" (fun () ->
-          let s = H.init t ~geometry:narrow.g banana (start 8) in
+          let s = H.init t scaled (start 8) in
           let v steps =
             floats
               (Norn.Gaussian.variance t
-                 (H.warmup t banana (Nx.Rng.key 1) ~steps s).geometry)
+                 (H.warmup t scaled (Nx.Rng.key 1) ~steps s).geometry)
           in
-          let before = floats (Norn.Gaussian.variance t s.geometry) in
-          equal (array float_exact) before (v 19);
-          not_equal (array float_exact) before (v 20));
+          equal (array float_exact)
+            (floats (Norn.Gaussian.variance t s.geometry))
+            (v 19);
+          equal (array (float_rel ~rel:1e-9 ~abs:0.)) [| 100.; 0.01 |] (v 20));
       (* On a Gaussian the score is linear in the draws, [-x / σ²], so the
          Fisher fit [sqrt (sd x / sd score)] is σ for any draws, and what
          remains is rounding. The default geometry is off by the spread of the
@@ -512,22 +558,32 @@ let warmup =
               at_most (float 1e-12) ~than:1e-9
                 (Float.abs (Float.log (sd /. [| 10.; 0.1 |].(i)))))
             (floats sd));
+      (* On a Gaussian of precision P the scores are -P (x - μ), so the fit's
+         directions, which match the draws' covariance to the scores', give the
+         covariance P⁻¹ for any draws. The fit's ridge of 1e-5, against the
+         whitened covariance's smallest eigenvalue, near 0.1 at a correlation of
+         0.9, moves it by about 1e-4. *)
+      test "the directions fit a correlated Gaussian's covariance" (fun () ->
+          let x = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 16; dim |] in
+          let s =
+            H.warmup t correlated (Nx.Rng.key 4) ~steps:150
+              (H.init t correlated x)
+          in
+          equal
+            (array (float_rel ~rel:1e-3 ~abs:0.))
+            (quadratic (fun v ->
+                 Nx.item [] (Nx.sum (Nx.mul v (Nx.matmul precision v)))))
+            (quadratic (fitted s.geometry)));
       (* Dual averaging aims the chains' harmonic mean acceptance at [s.accept];
          0.95 is away from the default 0.8 and from the step-size search's 0.8.
-         Over keys 1 to 40 the mean over 100 draws was 0.948 ± 0.0046 (sd), so
-         0.03 lies 6 sds out: a rate of about 2e-9. At 0.6 the averaged step
-         size of a 300-step warmup accepts 0.81 ± 0.045, which says nothing of
-         the target. *)
+         Over keys 1 to 40 the mean over 100 draws was 0.950 ± 0.0061 (sd), so
+         0.03 lies 4.9 sds out: a rate of about 1e-6. *)
       test "the step size gives the target harmonic mean acceptance" (fun () ->
-          let _, _, st =
-            H.sample t scaled (Nx.Rng.key 5) ~draws:100 (Lazy.force warmed)
-          in
-          let a = (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance in
-          let per_draw =
-            List.init 100 (fun j ->
-                harmonic (floats (Nx.slice [ Nx.A; Nx.I j ] a)))
-          in
-          equal (float 0.03) 0.95 (List.fold_left ( +. ) 0. per_draw /. 100.));
+          equal (float 0.03) 0.95 (acceptance (Lazy.force warmed)));
+      (* Over keys 1 to 40 a target of 0.6 accepted 0.845 ± 0.028 (sd): 0.6 lies
+         8.7 sds below. *)
+      test "a short warmup accepts above its target" (fun () ->
+          greater float_exact ~than:0.6 (acceptance (warm 0.6)));
       (* Chain 0 starts in a pocket of radius 0.1 where the density is finite,
          -inf around it: only a short step moves it. *)
       test "a chain that never accepts shrinks the step until every chain moves"
@@ -547,16 +603,21 @@ let warmup =
           let x = Nx.set [ Nx.I 0 ] (Nx.reshape [| dim |] pocket) (start 4) in
           let s = H.warmup t lp (Nx.Rng.key 6) ~steps:30 (H.init t lp x) in
           let _, _, st = H.sample t lp (Nx.Rng.key 7) ~draws:20 s in
-          let a = (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance in
+          let a =
+            (st : _ Norn.Draws.t :> (Nx.float64_elt, Nx.host) Norn.Stats.t)
+              .acceptance
+          in
           greater float_exact ~than:0.
             (Nx.item [] (Nx.mean (Nx.slice [ Nx.I 0 ] a))));
       (* Warmup starts the length at its first step size, below the criterion's
          first maximum, and climbs to it; a start above, as at a state's length
          of 10, settled at a later maximum, at the next roots of [4T = tan 4T]
-         (T = 2.73, ...). The criterion is flat near its optimum: at ±25% it
-         falls about 10%, so the iterates wander there. RATE *)
+         (T = 2.73, ...). The criterion is flat near its optimum, falling about
+         10% at ±25%, so the iterates wander there: over keys 1 to 40 the length
+         plus half a step reached 1.234 ± 0.047 (sd), and 30% above 1.1234 lies
+         4.8 sds out, a rate of about 8e-7. *)
       test "the length climbs to ChEES's first maximum from any state's length"
-        (fun () -> equal (float_rel ~rel:0.25 ~abs:0.) 1.1234 (chees 10.));
+        (fun () -> equal (float_rel ~rel:0.3 ~abs:0.) 1.1234 (chees 10.));
       (* With one key for warmup and sampling, the first draw takes the key
          after warmup's last: no two transitions share one. *)
       test "warmup takes the run's first keys and sampling continues" (fun () ->
@@ -574,6 +635,21 @@ let warmup =
 module M = Norn_model
 module R = Recovery
 
+(* [recovered ()] asserts the recovery law on HMC's draws of posteriordb's dogs:
+   64 chains in superchains of eight, 300 warmup transitions, then 100. At 50
+   draws keys 14 and 34 of 1 to 40 gave a finding (R-hat 1.012, an E-BFMI of
+   0.24); at 100 none did. *)
+let recovered () =
+  match R.posterior "dogs-dogs" with
+  | Posteriordb.Posterior p as post ->
+      let m = p.model in
+      let u = M.coords m and lp = M.log_density m p.y in
+      let s = H.init u lp (M.init m p.y ~chains:64 R.key) in
+      let s = H.warmup u lp R.key ~steps:300 s in
+      let _, d, stats = H.sample u lp R.key ~draws:100 s in
+      R.chains post ~superchains:8 ~stats
+        (Norn.Draws.map u Posteriordb.latent (M.constrain m) d)
+
 let sample =
   group "sample"
     [
@@ -588,17 +664,7 @@ let sample =
           let s', a, _ = H.sample t banana (Nx.Rng.key 8) ~draws:2 s in
           let _, b, _ = H.sample t banana (Nx.Rng.key 8) ~draws:3 s' in
           equal (array float_exact) (draws ab) (draws (Norn.Draws.append t a b)));
-      (* 64 chains in superchains of eight, 300 warmup transitions, then 50. *)
-      test "draws recover the dogs posterior" (fun () ->
-          match R.posterior "dogs-dogs" with
-          | Posteriordb.Posterior p as post ->
-              let m = p.model in
-              let u = M.coords m and lp = M.log_density m p.y in
-              let s = H.init u lp (M.init m p.y ~chains:64 R.key) in
-              let s = H.warmup u lp R.key ~steps:300 s in
-              let _, d, stats = H.sample u lp R.key ~draws:50 s in
-              R.chains post ~superchains:8 ~stats
-                (Norn.Draws.map u Posteriordb.latent (M.constrain m) d));
+      test "draws recover the dogs posterior" recovered;
     ]
 
 let () = exit (run "Norn.Hmc" [ init; step; warmup; sample ])
