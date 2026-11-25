@@ -2441,8 +2441,14 @@ let artifact_tests =
 
 (* Runs that two domains delete and annotate at once. A run's reference is
    whether it exists; its system side is its id. A call the store refuses
-   answers false. *)
-let race_store = lazy (new_store ())
+   answers false. The race tests of one process share the store, so its
+   directory lasts the run: a [temp_dir] goes when its test ends. [start] forces
+   the store on the test's domain, the only one that may call the fixture, and
+   the branches read it. *)
+let race_root =
+  fixture ~teardown:rm_rf (fun () -> Filename.temp_dir "munin-race" "")
+
+let race_store = lazy (Store.open_ ~root:(race_root ()) ())
 
 (* Once the calls end, a run's directory holds its log, or the mark of a
    deletion that gc finishes, or is gone. A directory with neither is one that
@@ -2479,7 +2485,6 @@ let ended_run =
   let next = Atomic.make 0 in
   fun () ->
     let runs = Filename.concat (Store.root (Lazy.force race_store)) "runs" in
-    mkdir_p (Store.root (Lazy.force race_store));
     mkdir_p runs;
     let id = Printf.sprintf "race-%d" (Atomic.fetch_and_add next 1) in
     let dir = Filename.concat runs id in
