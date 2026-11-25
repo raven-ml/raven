@@ -105,6 +105,32 @@ let value (D.Any dt) r =
   | _, D.Float64 -> float 52
   | _ -> pick grid
 
+(* A finite value of [dt] from [r], of mixed magnitudes: for float32 and float64
+   and each part of complex64 and complex128, on the grid one time in four, else
+   one of 24 or 53 significant bits in (-4, 4) times [2^e], [e] in [-20, 20], so
+   that sums of them round otherwise in another order; any other dtype's as
+   {!value} draws it, finite there. An output of such terms is finite, where
+   {!value}'s infinity or NaN, one element in 40, leaves no output of a few
+   hundred products finite. *)
+let finite_value (D.Any dt) r =
+  let pick a = a.(Random.State.int r (Array.length a)) in
+  let full p =
+    let m = Random.State.int64 r (Int64.shift_left 1L (p + 1)) in
+    Float.ldexp (Int64.to_float (Int64.sub m (Int64.shift_left 1L p))) (2 - p)
+  in
+  let float p =
+    if Random.State.int r 4 = 0 then pick grid
+    else Float.ldexp (full p) (Random.State.int r 41 - 20)
+  in
+  match (D.kind dt, dt) with
+  | D.Boolean, _ -> float_of_int (Random.State.int r 2)
+  | _, (D.Complex64 | D.Float32) -> float 23
+  | _, D.Complex128 -> float 52
+  | D.Unsigned, _ -> float_of_int (Random.State.int r 16)
+  | D.Signed, _ -> float_of_int (Random.State.int r 16 - 8)
+  | _, D.Float64 -> float 52
+  | _ -> pick grid
+
 (* Cases *)
 
 (* A contraction: its pairs, accumulator, operands and result dtype, and
@@ -166,13 +192,13 @@ let wide r =
         [| Int64.min_int; Int64.max_int; 0x7FL; 0x80L; 0xFFL; 0x7FFFL; 0x8000L;
            0xFFFFL; 0x7FFFFFFFL; 0x80000000L; 0xFFFFFFFFL; -1L |]
 
-(* An array of [dt] whose made shape is [s], axis [v.perm.(i)] of the
-   made array being axis [i] of the result, through the view [v], its
-   values, or each part of them, drawn from [seed]; under [wide] an
+(* An array of [dt] whose made shape is [s], axis [v.perm.(i)] of the made array
+   being axis [i] of the result, through the view [v], its values, or each part
+   of them, drawn from [seed] by [draw], {!value} by default; under [wide] an
    integer's or a bool's from {!wide}, narrowed modulo its width. *)
-let operand ?(wide_ints = false) dt s v seed =
+let operand ?(wide_ints = false) ?(draw = value) dt s v seed =
   let r = Random.State.make [| seed |] in
-  let draw () = value dt r in
+  let draw () = draw dt r in
   let make made =
     let ms = Iarray.of_array made in
     let xs =
@@ -235,7 +261,7 @@ let ranks (batch, rows, cols, con) =
 (* The case of the extents [e] in [acc] into [out]: [a] and [b]
    of the dtypes and through the views given, an init of [out] through the
    view [init] gives, values drawn from [seed]. *)
-let make ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
+let make ?draw ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
   let nb = Array.length batch and fa = Array.length rows in
   let sa = Array.concat [ batch; rows; con ] in
   let sb = Array.concat [ batch; con; cols ] in
@@ -245,8 +271,8 @@ let make ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
     Array.init (Array.length con) (fun k -> (ia.(nb + fa + k), ib.(nb + k)))
   in
   let wide_ints = is_integer acc in
-  let a = operand ~wide_ints da sa va seed in
-  let b = operand ~wide_ints db sb vb (seed + 1) in
+  let a = operand ~wide_ints ?draw da sa va seed in
+  let b = operand ~wide_ints ?draw db sb vb (seed + 1) in
   let y =
     match
       Nx_kernel.Shape.contract ~batch:(Iarray.of_array pairs)
@@ -257,8 +283,9 @@ let make ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
     | Error e -> invalid_arg ("make: " ^ e)
   in
   let made vi =
-    operand ~wide_ints out (Array.map (fun i -> y.(i)) (E.inverse vi.perm)) vi
-      (seed + 2)
+    operand ~wide_ints ?draw out
+      (Array.map (fun i -> y.(i)) (E.inverse vi.perm))
+      vi (seed + 2)
   in
   let names = E.view_names in
   let views = names va @ names vb @ Option.fold ~none:[] ~some:names init in
@@ -267,7 +294,7 @@ let make ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
 
 (* A case in [acc] into [out], each operand of [acc] or of [dts], with an init
    where [init] says, drawn where it says nothing. *)
-let case_of ?same ?init ~acc ~out ~dts () =
+let case_of ?same ?init ?draw ~acc ~out ~dts () =
   let open Gen in
   let* ((batch, _, _, _) as e) = extents in
   let nb = Array.length batch in
@@ -280,16 +307,16 @@ let case_of ?same ?init ~acc ~out ~dts () =
   let* vi = view ry 0 in
   let* with_init = match init with Some i -> constant i | None -> bool in
   let+ seed = int in
-  make ~acc ~out e (da, va) (db, vb)
+  make ?draw ~acc ~out e (da, va) (db, vb)
     (if with_init then Some vi else None)
     seed
 
 (* The case of the extents [e] in [acc], C-contiguous, with an init where
    [init]. *)
-let case_in acc (init, e) =
+let case_in ?draw acc (init, e) =
   let ra, rb, ry = ranks e in
   let ti = if init then Some (E.plain ry) else None in
-  make ~acc ~out:acc e (acc, E.plain ra) (acc, E.plain rb) ti 1
+  make ?draw ~acc ~out:acc e (acc, E.plain ra) (acc, E.plain rb) ti 1
 
 (* The view that swaps the last two axes. *)
 let swap r =
@@ -297,26 +324,26 @@ let swap r =
     perm = Array.init r (fun i -> if i >= r - 2 then (2 * r) - 3 - i else i) }
 
 (* {!case_in} with a and b stored transposed. *)
-let apart acc (init, e) =
+let apart ?draw acc (init, e) =
   let copy (A.Any x) = A.Any (A.copy x) in
   let ra, rb, ry = ranks e in
   let ti = if init then Some (E.plain ry) else None in
-  let c = make ~acc ~out:acc e (acc, swap ra) (acc, swap rb) ti 1 in
+  let c = make ?draw ~acc ~out:acc e (acc, swap ra) (acc, swap rb) ti 1 in
   { c with a = copy c.a; b = copy c.b }
 
 (* {!case_in} with a and b stored in the orders of their made axes [sa] and [sb]
    name. *)
-let stored acc (init, e, sa, sb) =
+let stored ?draw acc (init, e, sa, sb) =
   let _, _, ry = ranks e in
   let ti = if init then Some (E.plain ry) else None in
   let at s = { (E.plain (Array.length s)) with stored = s } in
-  make ~acc ~out:acc e (acc, at sa) (acc, at sb) ti 1
+  make ?draw ~acc ~out:acc e (acc, at sa) (acc, at sb) ti 1
 
 (* Attention's scores, q and k of [b; s; h; d] read as [b; h; s; d]: a batch of
    two runs, the outer of 16 positions, over 768 KiB of operands, which the
    threads take a position at a time. *)
-let heads acc =
-  stored acc
+let heads ?draw acc =
+  stored ?draw acc
     ( false,
       ([| 16; 4 |], [| 32 |], [| 32 |], [| 32 |]),
       [| 0; 2; 1; 3 |],
@@ -324,7 +351,7 @@ let heads acc =
 
 (* a of a dtype acc does not hold, cast into it: float64 into float32 or an
    integer, complex128 into complex64, int64 into float64 and complex128. *)
-let unheld acc =
+let unheld ?draw acc =
   let wide =
     match acc with
     | D.Any D.Float32 -> D.Any D.Float64
@@ -333,7 +360,7 @@ let unheld acc =
     | _ -> D.Any D.Float64
   in
   let e = ([||], [| 3 |], [| 4 |], [| 5 |]) in
-  make ~acc ~out:acc e (wide, E.plain 2) (acc, E.plain 2) None 1
+  make ?draw ~acc ~out:acc e (wide, E.plain 2) (acc, E.plain 2) None 1
 
 (* Sizes in [acc] the drawn cases reach a few times in a hundred or never:
    no output, one, no product; either side of 4 rows and of 4 columns, of
@@ -344,20 +371,21 @@ let unheld acc =
    lanes; convolutions, a's windows of an image; each operand stored
    transposed, their axes stored apart, attention's heads; and an a of a
    dtype [acc] does not hold. *)
-let regime_cases acc =
+let regime_cases ?draw acc =
   let plain = E.plain in
-  let case x = lazy (case_in acc x) and apart x = lazy (apart acc x) in
+  let case x = lazy (case_in ?draw acc x)
+  and apart x = lazy (apart ?draw acc x) in
   let copy (A.Any x) = A.Any (A.copy x) in
   (* [case] with a alone stored transposed: few rows pack it, and blocks of
      its rows read the pack from their first row. *)
   let a_apart (init, e) =
     let ra, rb, ry = ranks e in
     let ti = if init then Some (plain ry) else None in
-    let c = make ~acc ~out:acc e (acc, swap ra) (acc, plain rb) ti 1 in
+    let c = make ?draw ~acc ~out:acc e (acc, swap ra) (acc, plain rb) ti 1 in
     { c with a = copy c.a }
   in
   let a_apart x = lazy (a_apart x) in
-  let stored x = lazy (stored acc x) in
+  let stored x = lazy (stored ?draw acc x) in
   (* Contracted axes stored in another order in a than in b, with init and
      without. *)
   let split =
@@ -380,7 +408,7 @@ let regime_cases acc =
          [| 0; 2; 1 |]);
       ]
   in
-  let heads = lazy (heads acc) and unheld = lazy (unheld acc) in
+  let heads = lazy (heads ?draw acc) and unheld = lazy (unheld ?draw acc) in
   (* A convolution's product: a the windows of an image [n; h; w; c] by
      [kh × kw] taps at [stride] and [dilation], [n; oh; ow; c; kh; kw],
      contracted with b, [kh; kw; c; o], over the taps and channels, in the
@@ -390,17 +418,17 @@ let regime_cases acc =
       (kh, kw) (stride, dilation) =
     let extent t k = ((t - 1) * stride) + (dilation * (k - 1)) + 1 in
     let (A.Any x) =
-      operand da [| n; extent oh kh; extent ow kw; c |] (plain 4) 3
+      operand ?draw da [| n; extent oh kh; extent ow kw; c |] (plain 4) 3
     in
     let win axis size : M.window = { axis; size; step = stride; dilation } in
     let a = A.Any (Option.get (A.move (M.Window [| win 1 kh; win 2 kw |]) x)) in
-    let b = operand acc [| kh; kw; c; o |] (plain 4) 4 in
+    let b = operand ?draw acc [| kh; kw; c; o |] (plain 4) 4 in
     let contracting =
       if taps_first then [| (4, 0); (5, 1); (3, 2) |]
       else [| (3, 2); (4, 0); (5, 1) |]
     in
     let init =
-      if init then Some (operand acc [| n; oh; ow; o |] (plain 4) 5)
+      if init then Some (operand ?draw acc [| n; oh; ow; o |] (plain 4) 5)
       else None
     in
     { batch = [||]; contracting; acc; a; b; init; out = acc;
@@ -504,7 +532,7 @@ let regime_cases acc =
           ])
 
 (* {!regime_cases}' cases, made. *)
-let regimes acc = List.map Lazy.force (regime_cases acc)
+let regimes ?draw acc = List.map Lazy.force (regime_cases ?draw acc)
 
 (* The dtypes each accumulator holds, as nx_cpu.mli lists them: a complex
    one its parts' and the complex numbers of at most its width. *)
@@ -546,9 +574,9 @@ let integers =
 (* The dtypes of [D.all] not in [dts]. *)
 let others dts = List.filter (fun d -> not (List.mem d dts)) D.all
 
-(* Cases of each float and complex acc, of operands it holds, or at times
-   of dtypes it does not. *)
-let computed =
+(* Cases of each float and complex acc, of operands it holds, or at times of
+   dtypes it does not, their values drawn by [draw]. *)
+let computed_by draw =
   Gen.with_pp pp_case
     (Gen.bind (Gen.of_list ~pp:pp_dtype accs) (fun acc ->
          Gen.bind
@@ -557,7 +585,13 @@ let computed =
                 (2, Gen.constant (held acc));
                 (1, Gen.constant (others (held acc)));
               ])
-           (fun dts -> case_of ~acc ~out:acc ~dts ())))
+           (fun dts -> case_of ~draw ~acc ~out:acc ~dts ())))
+
+let computed = computed_by value
+
+(* {!computed}'s cases of {!finite_value}'s operands and inits, every output
+   finite: the cases of a law of order or of a bound. *)
+let finite_computed = computed_by finite_value
 
 (* The regimes of every float and complex accumulator, made when first forced,
    so that a process that runs no law of them never makes them. *)
@@ -579,7 +613,7 @@ let large_examples =
    products with init, a and b stored transposed; an a of a dtype [acc] does not
    hold; and in a real [acc] attention's heads, in a complex one a real a with
    init. Each is made when first forced. *)
-let edges acc =
+let edges ?draw acc =
   let least =
     [
       ([||], [| 0 |], [| 3 |], [| 2 |]);
@@ -590,16 +624,16 @@ let edges acc =
   let two_rows (n, k) = (n mod 2 = 0, ([||], [| 2 |], [| n |], [| k |])) in
   let real_a =
     lazy
-      (make ~acc ~out:acc
+      (make ?draw ~acc ~out:acc
          ([||], [| 3 |], [| 4 |], [| 5 |])
          (part_of acc, E.plain 2)
          (acc, E.plain 2)
          (Some (E.plain 2))
          1)
   in
-  List.map (fun e -> lazy (case_in acc (true, e))) least
+  List.map (fun e -> lazy (case_in ?draw acc (true, e))) least
   @ List.map
-      (fun d -> lazy (case_in acc (two_rows d)))
+      (fun d -> lazy (case_in ?draw acc (two_rows d)))
       [
         (1, 17);
         (2, 3);
@@ -617,9 +651,9 @@ let edges acc =
         (64, 255);
       ]
   @ [
-      lazy (apart acc (true, ([||], [| 256 |], [| 259 |], [| 3 |])));
-      lazy (unheld acc);
-      (if is_complex acc then real_a else lazy (heads acc));
+      lazy (apart ?draw acc (true, ([||], [| 256 |], [| 259 |], [| 3 |])));
+      lazy (unheld ?draw acc);
+      (if is_complex acc then real_a else lazy (heads ?draw acc));
     ]
 
 (* Unscaled cases of accumulators every kernel library computes in, into
