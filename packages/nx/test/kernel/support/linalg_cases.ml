@@ -149,7 +149,8 @@ let pp_case ppf c =
     (if c.unit_diagonal then " unit" else "")
     c.seed pp_how c.how pp_scale c.scale
 
-let case =
+(* Cases of matrices of the orders [orders]. *)
+let case_over orders =
   Gen.with_pp pp_case
     (let open Gen in
      let* dt = of_list ~pp:pp_dtype dtypes in
@@ -169,8 +170,8 @@ let case =
      let+ scale = of_list ~pp:pp_scale [ Plain; Graded; Subnormal ] in
      { dt; batch; n; r; triangle; adjoint; unit_diagonal; seed; how; scale })
 
+let case = case_over orders
 let count c = Array.fold_left ( * ) 1 c.batch
-
 let square c = Array.append c.batch [| c.n; c.n |]
 
 (* Under [Graded], the scale of element [k] of matrices of [rows] × [cols],
