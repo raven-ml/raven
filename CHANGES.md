@@ -1281,6 +1281,13 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Solution.evaluations` of `Ode.solve`, `sample`, `path`, `event` and
+  `delay` counts the answer's pass, one evaluation at the start and each
+  accepted step's again, as well as the search: a budget-3 `tsit5` solve
+  reported 20 evaluations and made 39. kvaerno5's answer counts its stages'
+  Newton iterations. The solves' Cost sentence states the counts: two to
+  choose the first step and the method's evaluations per step per attempt,
+  where it said one fewer.
 - `Piecewise.cubic` with `` `Clamped (s0, s1) `` through two knots takes the
   slopes `s0` and `s1` at its ends, as `jera.mli` states. It drew the line
   through the two samples and ignored them.

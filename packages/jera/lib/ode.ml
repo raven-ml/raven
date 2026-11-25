@@ -540,8 +540,10 @@ let implicit_step (type t) ~tol ~stated fn y m imp f (t : (float, t, 'd) Nx.t)
           count := Nx.add !count k;
           unravel z
       | Stated ->
+          let z, (_, (k, _)) = newton () in
+          count := Nx.add !count k;
           Rune.root y ~linear_solve:(Linear.derivative fn y imp.linear)
-            ~residual (fun () -> unravel (fst (newton ())))
+            ~residual (fun () -> unravel z)
     in
     zs.(i) <- z;
     ks.(i) <-
@@ -1101,7 +1103,8 @@ let reached ~at s =
     (Nx.add a (Nx.mul (Nx.sub b a) s.sigma))
 
 (* The answer's report, from the search's carry. *)
-let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error =
+let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error
+    ~answered =
   let n = Nx.dim 0 at in
   let dtype = Nx.dtype at in
   let at0 = Rune.detach at in
@@ -1112,7 +1115,8 @@ let report ?(facts = []) fn m ~tol ~budget ~at (s, disorder) ~value ~error =
   let count c = Nx.cast dtype c in
   Solution.v ~fn ~settings
     ~spent:{ used = s.attempts; unit = "attempted steps"; budget }
-    ~fix:(fix tol) ~value ~error ~status:s.status ~evaluations:s.evals
+    ~fix:(fix tol) ~value ~error ~status:s.status
+    ~evaluations:(Nx.add s.evals answered)
     ~facts:
       ([
          Solution.Fact ("t", reached ~at s);
@@ -1135,9 +1139,10 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
   let stages = Array.length m.tableau.b in
   let ok = Nx.equal_s s.status (Solution.code Converged) in
   let offsets = Nx.sub (Nx.cumsum ~axis:0 s.counts) s.counts in
-  let replay (v, (k, mm)) (a, (b, (offset, count))) =
+  let refreshed = if Option.is_some mem.first then 1l else 0l in
+  let replay (v, (k, (mm, evals))) (a, (b, (offset, count))) =
     let span = Nx.sub b a in
-    let inner ((v, (k, mm)), i) =
+    let inner ((v, (k, (mm, evals))), i) =
       let idx = Nx.add offset i in
       let sigma0 =
         Nx.where (Nx.equal_s i 0l)
@@ -1153,24 +1158,25 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
       let k =
         match mem.first with None -> k | Some g -> eval fn y (g mm) t v
       in
-      let { next = v'; stages = ks; _ } =
+      let { next = v'; stages = ks; evaluations; _ } =
         step ~stages:(tol, Stated) fn y m (mem.field mm) t t_end h v (Some k)
       in
       let mm, _ = mem.accept mm ~t ~t_end ~h ~v ~ks v' in
-      ((v', (ks.(stages - 1), mm)), Nx.add_s i 1l)
+      let evals = Nx.add evals (Nx.add_s evaluations refreshed) in
+      ((v', (ks.(stages - 1), (mm, evals))), Nx.add_s i 1l)
     in
-    let c = Nx.Ptree.(pair y (pair y mem.tree)) in
+    let c = Nx.Ptree.(pair y (pair y (pair mem.tree tensor))) in
     let carry, _ =
       Rune.iterate
         Nx.Ptree.(pair c tensor)
         ~max:budget
         ~until:(fun (_, i) -> Nx.greater_equal i count)
         inner
-        ((v, (k, mm)), Nx.scalar_at (Nx.beside at) Nx.int32 0l)
+        ((v, (k, (mm, evals))), Nx.scalar_at (Nx.beside at) Nx.int32 0l)
     in
     (carry, fst carry)
   in
-  let c = Nx.Ptree.(pair y (pair y mem.tree)) in
+  let c = Nx.Ptree.(pair y (pair y (pair mem.tree tensor))) in
   let replay =
     if n_int = 1 then replay
     else
@@ -1186,11 +1192,13 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
   in
   let m0, _ = mem.start (Nx.get [ 0 ] at) y0 in
   let k_start = eval fn y (mem.field m0) (Nx.get [ 0 ] at) y0 in
-  let _, ys =
+  (* The answer evaluates the field once at the start, then each accepted step
+     again. *)
+  let (_, (_, (_, evals))), ys =
     Rune.scan c
       Nx.Ptree.(pair tensor (pair tensor (pair tensor tensor)))
       y replay
-      ~init:(y0, (k_start, m0))
+      ~init:(y0, (k_start, (m0, Nx.scalar_at (Nx.beside at) Nx.int32 1l)))
       ( Nx.slice [ Nx.R (0, n_int) ] at,
         (Nx.slice [ Nx.R (1, n) ] at, (offsets, s.counts)) )
   in
@@ -1205,7 +1213,7 @@ let samples fn y m mem ~tol ~budget ~at y0 s =
       (fun _ a b -> Nx.where (Nx.broadcast_to (Nx.shape a) ok) a b)
       answer s.ys
   in
-  value
+  (value, evals)
 
 let sample y m ~tol ~budget f ~at y0 =
   let fn = "Jera.Ode.sample" in
@@ -1221,9 +1229,8 @@ let sample y m ~tol ~budget f ~at y0 =
     let ((s, _) as found) =
       search fn `Refused y m ~tol ~budget (plain f) ~at y0
     in
-    report fn m ~tol ~budget ~at found
-      ~value:(samples fn y m (plain f) ~tol ~budget ~at y0 s)
-      ~error:s.errs
+    let value, answered = samples fn y m (plain f) ~tol ~budget ~at y0 s in
+    report fn m ~tol ~budget ~at found ~value ~error:s.errs ~answered
 
 let solve y m ~tol ~budget f ~t0 ~t1 y0 =
   let fn = "Jera.Ode.solve" in
@@ -1233,9 +1240,9 @@ let solve y m ~tol ~budget f ~t0 ~t1 y0 =
     search fn `Allowed y m ~tol ~budget (plain f) ~at y0
   in
   let last v = Nx.Ptree.map y (fun _ x -> Nx.get [ 1 ] x) v in
-  report fn m ~tol ~budget ~at found
-    ~value:(last (samples fn y m (plain f) ~tol ~budget ~at y0 s))
-    ~error:(last s.errs)
+  let value, answered = samples fn y m (plain f) ~tol ~budget ~at y0 s in
+  report fn m ~tol ~budget ~at found ~value:(last value) ~error:(last s.errs)
+    ~answered
 
 (* Paths *)
 
@@ -1364,7 +1371,7 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
   (* Each accepted step taken again with the tracked field: its continuous
      extension at the Chebyshev points and the accumulated magnitudes of the
      local estimates, written into row [i] of the pieces. *)
-  let piece (v, (k, (acc, (sigma0, (i, (nodes, accs)))))) =
+  let piece (v, (k, (acc, (sigma0, ((i, evals), (nodes, accs)))))) =
     let sigma1 = scalar_at s.ends i in
     let t = Nx.add t0 (Nx.mul span sigma0)
     and t_end = time_at t0 t1 span sigma1
@@ -1383,25 +1390,33 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
       Nx.Ptree.map2 y (fun _ a e -> Nx.add a (Rune.detach (Nx.abs e))) acc e
     in
     let write rows x = Nx.Ptree.map2 y (fun _ r x -> put i x r) rows x in
+    let evals = Nx.add evals stepped.evaluations in
     ( v',
       ( ks.(stages - 1),
-        (acc, (sigma1, (Nx.add_s i 1l, (write nodes node, write accs acc)))) )
-    )
+        ( acc,
+          (sigma1, ((Nx.add_s i 1l, evals), (write nodes node, write accs acc)))
+        ) ) )
   in
   let c =
-    Nx.Ptree.(pair y (pair y (pair y (pair tensor (pair tensor (pair y y))))))
+    Nx.Ptree.(
+      pair y
+        (pair y (pair y (pair tensor (pair (pair tensor tensor) (pair y y))))))
   in
   let init =
     ( y0,
       ( eval fn y f t0 y0,
         ( zeros,
           ( Nx.zeros_at (Nx.beside t0) dtype [||],
-            ( Nx.scalar_at (Nx.beside t0) Nx.int32 0l,
+            ( ( Nx.scalar_at (Nx.beside t0) Nx.int32 0l,
+                Nx.scalar_at (Nx.beside t0) Nx.int32 1l ),
               (rows [| Array.length thetas |], rows [||]) ) ) ) ) )
   in
-  let v, (_, (acc, (_, (_, (nodes, accs))))) =
+  (* The answer evaluates the field once at [t0], then each accepted step
+     again. *)
+  let v, (_, (acc, (_, ((_, answered), (nodes, accs))))) =
     Rune.iterate c ~max:budget
-      ~until:(fun (_, (_, (_, (_, (i, _))))) -> Nx.greater_equal i s.accepted)
+      ~until:(fun (_, (_, (_, (_, ((i, _), _))))) ->
+        Nx.greater_equal i s.accepted)
       piece init
   in
   (* The pieces past the accepted steps are empty at the last one's end: the
@@ -1470,7 +1485,7 @@ let path y m ~tol ~budget f ~t0 ~t1 y0 =
          (fun _ x -> Nx.unsqueeze ~axes:[ 1 ] (orient [ 0 ] x))
          accs)
   in
-  report fn m ~tol ~budget ~at (s, disorder) ~value ~error
+  report fn m ~tol ~budget ~at (s, disorder) ~value ~error ~answered
     ~facts:
       [ Fact ("no time", Nx.cast dtype (Nx.equal_s (Rune.detach span) 0.)) ]
 
@@ -1552,7 +1567,7 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let span = Nx.sub t1 t0 in
   let fraction i = scalar_at s.ends (Nx.maximum i (int32 0l)) in
   (* The accepted steps but the last, taken again with the tracked field. *)
-  let replay (v, (k, i)) =
+  let replay (v, (k, (i, evals))) =
     let sigma0 =
       Nx.where (Nx.equal_s i 0l)
         (Nx.zeros_at (Nx.beside t0) dtype [||])
@@ -1562,19 +1577,19 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
     let t = Nx.add t0 (Nx.mul span sigma0)
     and t_end = time_at t0 t1 span sigma1
     and h = Nx.mul span (Nx.sub sigma1 sigma0) in
-    let { next = v; stages = ks; _ } =
+    let { next = v; stages = ks; evaluations; _ } =
       step ~stages:(tol, Stated) fn y m f t t_end h v (Some k)
     in
-    (v, (ks.(stages - 1), Nx.add_s i 1l))
+    (v, (ks.(stages - 1), (Nx.add_s i 1l, Nx.add evals evaluations)))
   in
   let last = Nx.sub_s s.accepted 1l in
-  let v_a, (k_a, _) =
+  let v_a, (k_a, (_, replayed)) =
     Rune.iterate
-      Nx.Ptree.(pair y (pair y tensor))
+      Nx.Ptree.(pair y (pair y (pair tensor tensor)))
       ~max:budget
-      ~until:(fun (_, (_, i)) -> Nx.greater_equal i last)
+      ~until:(fun (_, (_, (i, _))) -> Nx.greater_equal i last)
       replay
-      (y0, (eval fn y f t0 y0, int32 0l))
+      (y0, (eval fn y f t0 y0, (int32 0l, int32 1l)))
   in
   (* The last accepted step, of zero length when there is none: the step that
      holds a crossing. *)
@@ -1592,9 +1607,12 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
   let t_a = Nx.add t0 (Nx.mul span sigma0)
   and t_b = time_at t0 t1 span sigma1
   and h = Nx.mul span (Nx.sub sigma1 sigma0) in
-  let { next = v_b; stages = ks; values = zs; _ } =
+  let { next = v_b; stages = ks; values = zs; evaluations; _ } =
     step ~stages:(tol, Stated) fn y m f t_a t_b h v_a (Some k_a)
   in
+  (* The answer evaluates the field once at [t0], then each accepted step
+     again. *)
+  let answered = Nx.add replayed evaluations in
   let ext = extension_of fn m in
   let h_safe = Nx.where (Nx.equal_s h 0.) (Nx.ones_like h) h in
   let at_time t =
@@ -1697,7 +1715,7 @@ let event y m ~tol ~budget f ~event ~t0 ~t1 y0 =
       s.acc,
       int32 0l )
   in
-  report fn m ~tol ~budget ~at (s, disorder) ~value ~error
+  report fn m ~tol ~budget ~at (s, disorder) ~value ~error ~answered
     ~facts:
       [
         Fact ("crossing lost", Nx.cast dtype lost);
@@ -1943,7 +1961,8 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
     let s, _ = search fn `Allowed y m ~tol ~budget memory ~at:sorted y0 in
     let pick v = Nx.Ptree.map y (fun _ x -> Nx.take ~axis:0 rows x) v in
     let t = reached ~at:sorted s in
-    report fn m ~tol ~budget ~at:sorted (s, disorder)
+    let value, answered = samples fn y m memory ~tol ~budget ~at:sorted y0 s in
+    report fn m ~tol ~budget ~at:sorted (s, disorder) ~answered
       ~facts:
         [
           Fact ("lags not positive", Nx.cast dtype (Nx.less_equal_s smallest 0.));
@@ -1952,5 +1971,4 @@ let delay y m ~tol ~budget ~pieces f ~lags ~history ~at y0 =
           Fact ("pieces", Nx.full_at (Nx.beside at) dtype [||] (float pieces));
           Fact ("pieces needed", needed ~t s.memory);
         ]
-      ~value:(pick (samples fn y m memory ~tol ~budget ~at:sorted y0 s))
-      ~error:(pick s.errs)
+      ~value:(pick value) ~error:(pick s.errs)

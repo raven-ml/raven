@@ -130,7 +130,8 @@ let intervals =
     ([| 1.; 1. +. Float.epsilon |], 4);
   ]
 
-let interval_id (at, steps) = Printf.sprintf "[%h; %h] in %d" at.(0) at.(1) steps
+let interval_id (at, steps) =
+  Printf.sprintf "[%h; %h] in %d" at.(0) at.(1) steps
 
 let march_tests =
   [
@@ -439,6 +440,28 @@ let solve_tests =
             ~t0:(scalar t0) ~t1:(scalar t1) (scalar 1.)
         in
         less float_exact ~than:(Nx.item [] (Solution.error s)) 0.);
+    cases
+      "evaluations count the first step's two, each attempt's and the answer's"
+      ~id:(fun (n, _, _) -> n)
+      [
+        ("bs3", embedded Ode.bs3, 3);
+        ("tsit5", embedded Ode.tsit5, 6);
+        ("dopri5", embedded Ode.dopri5, 6);
+      ]
+      (fun (_, m, per_step) ->
+        (* y' = 1 is exact for every method, so each attempt is accepted and the
+           three spend the budget short of t1. *)
+        let s =
+          Ode.solve one m
+            ~tol:(Tol.v ~rel:1e-6 ~abs:1e-9)
+            ~budget:3
+            (fun _ y -> Nx.ones_like y)
+            ~t0:(scalar 0.) ~t1:(scalar 10.) (scalar 0.)
+        in
+        equal Oracle.status_t Budget_spent (Oracle.status s);
+        equal int32
+          (Int32.of_int (2 + (3 * per_step) + 1 + (3 * per_step)))
+          (Nx.item [] (Solution.evaluations s)));
     test "the budget ends a solve and the report says where" (fun () ->
         let s = solve ~budget:3 forced2 ~t0:0. ~t1:10. (scalar 1.) in
         equal Oracle.status_t Budget_spent (Oracle.status s);

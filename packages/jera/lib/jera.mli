@@ -1678,14 +1678,16 @@ module Ode : sig
       [budget] attempted steps [Budget_spent]. The last step of an interval
       lands on its end exactly. {b Stability.} An explicit method's controller
       keeps [h] inside its stability region, so on a stiff field its steps fall
-      to that limit and the budget runs out first. {b Cost.} Each attempt costs
-      the method's evaluations less one, and the answer evaluates the accepted
-      steps again. Reverse mode keeps one state per time of [at] and, while it
-      reverses an interval, its carries: compiled, [budget] of them; eagerly,
-      the steps taken. {b Derivative.} The accepted steps', each a fraction [s]
-      of its interval, [h = (b − a) s]: through the initial state, the times and
-      every tracked value the field reads. A lane that did not converge returns
-      its detached estimate, with a zero derivative. *)
+      to that limit and the budget runs out first. {b Cost.} Choosing the first
+      step costs two evaluations, and each attempt the method's evaluations per
+      step. The answer evaluates the field once at the start and each accepted
+      step again; {!Solution.evaluations} counts them all. Reverse mode keeps
+      one state per time of [at] and, while it reverses an interval, its
+      carries: compiled, [budget] of them; eagerly, the steps taken.
+      {b Derivative.} The accepted steps', each a fraction [s] of its interval,
+      [h = (b − a) s]: through the initial state, the times and every tracked
+      value the field reads. A lane that did not converge returns its detached
+      estimate, with a zero derivative. *)
 
   val solve :
     ('y, 'd) Nx.Ptree.t ->
@@ -1879,8 +1881,8 @@ module Ode : sig
       past the last [pieces] accepted steps, ends the lane [Stalled], and its
       report names the count that would hold it. Times of [at] that do not
       increase end the lane [Stalled] too. {b Stability.} As {!solve}'s.
-      {b Cost.} Each attempt costs the method's evaluations, its first stage
-      among them, since the field may jump where one step ends and the next
+      {b Cost.} Each attempt costs one evaluation more than a solve's, its
+      first stage, since the field may jump where one step ends and the next
       starts. Each stage reads [lags] delayed states, each a binary search of
       the [pieces] pieces and a series of the extension's degree; the carry
       holds [pieces] pieces, so a compiled reverse keeps [budget × pieces].
