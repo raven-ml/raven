@@ -19,6 +19,7 @@ end
 
 let pos : (Nx.host Nx.float64_t pos, Nx.host) Nx.Ptree.t =
   Nx.Ptree.instantiate (module Pos)
+
 let floats x = Nx.to_array x
 
 (* Three chains: [a] of shape [3], [b] of shape [3; 2]. *)
@@ -39,8 +40,8 @@ let gradient x = { a = Nx.mul_s x.a 2.; b = x.b }
 let stated x = { a = Nx.mul_s x.a 3.; b = Nx.neg x.b }
 let density = Norn.with_gradient pos (fun x -> (value x, stated x))
 
-(* A density whose function reads its argument: [value x] plus the first
-   chain's [a], [0.5] at [x0], and the true gradient. *)
+(* A density whose function reads its argument: [value x] plus the first chain's
+   [a], [0.5] at [x0], and the true gradient. *)
 let reads =
   Norn.with_gradient pos (fun x ->
       let first = Nx.item [ 0 ] x.a in
@@ -50,13 +51,13 @@ let with_gradient =
   group "with_gradient"
     [
       test "the density's value is the function's" (fun () ->
-          equal (array (float 1e-15)) (floats (value x0)) (floats (density x0)));
+          equal (array float_exact) (floats (value x0)) (floats (density x0)));
       test "the gradient of the summed density is the stated gradient"
         (fun () ->
           let g = Rune.grad pos (fun x -> Nx.sum (density x)) x0 in
           let s = stated x0 in
-          equal (array (float 1e-15)) (floats s.a) (floats g.a);
-          equal (array (float 1e-15)) (floats s.b) (floats g.b));
+          equal (array float_exact) (floats s.a) (floats g.a);
+          equal (array float_exact) (floats s.b) (floats g.b));
       test "a tangent moves each chain by its rows' inner product" (fun () ->
           let dx =
             {
@@ -72,25 +73,46 @@ let with_gradient =
                 +. Nx.item [ i; 0 ] s.b
                 +. Nx.item [ i; 1 ] s.b)
           in
-          equal (array (float 1e-15)) expected (floats dy));
+          (* three products summed: within [2 ε] of their magnitudes *)
+          let scale =
+            Array.init 3 (fun i ->
+                Float.abs (Nx.item [ i ] s.a *. Nx.item [ i ] dx.a)
+                +. Float.abs (Nx.item [ i; 0 ] s.b)
+                +. Float.abs (Nx.item [ i; 1 ] s.b))
+          in
+          Array.iteri
+            (fun i e ->
+              equal
+                (float
+                   (Float.max
+                      (2. *. epsilon_float *. scale.(i))
+                      Float.min_float))
+                e
+                (floats dy).(i))
+            expected);
       test "a compiled gradient is the eager one" (fun () ->
           Compiled.here ();
           let grad x = Rune.grad pos (fun x -> Nx.sum (density x)) x in
           let compiled = Rune.jit Nx.Ptree.(pos @-> returns pos) grad x0 in
           let eager = grad x0 in
-          equal (array (float 1e-15)) (floats eager.a) (floats compiled.a);
-          equal (array (float 1e-15)) (floats eager.b) (floats compiled.b));
+          equal (array float_exact) (floats eager.a) (floats compiled.a);
+          equal (array float_exact) (floats eager.b) (floats compiled.b));
       test "the function reads its argument's values eagerly" (fun () ->
-          equal (array (float 1e-15))
+          equal (array float_exact)
             (floats (Nx.add_s (value x0) 0.5))
             (floats (reads x0)));
       test "the function reads its argument's values under grad" (fun () ->
           let g = Rune.grad pos (fun x -> Nx.sum (reads x)) x0 in
-          equal (array (float 1e-15)) (floats (gradient x0).a) (floats g.a));
+          equal (array float_exact) (floats (gradient x0).a) (floats g.a));
       test "the function reads its argument's values under jvp" (fun () ->
-          let dx = { a = Nx.ones Nx.float64 [| 3 |]; b = Nx.zeros Nx.float64 [| 3; 2 |] } in
+          let dx =
+            {
+              a = Nx.ones Nx.float64 [| 3 |];
+              b = Nx.zeros Nx.float64 [| 3; 2 |];
+            }
+          in
           let _, dy = Rune.jvp pos Nx.Ptree.tensor reads x0 dx in
-          equal (array (float 1e-15)) (floats (gradient x0).a) (floats dy));
+          equal (array float_exact) (floats (gradient x0).a) (floats dy));
       test "a read under jit raises" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"traced") (fun () ->
               Rune.jit Nx.Ptree.(pos @-> returns tensor) reads x0));
