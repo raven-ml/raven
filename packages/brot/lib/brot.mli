@@ -1024,7 +1024,9 @@ type padding = {
   pad_type_id : int option;
   pad_token : string option;
 }
-(** The type for padding configurations.
+(** The type for padding configurations. An encoding's windows in
+    {!Encoding.overflowing} are padded to the length it is padded to, even when
+    it has that length already.
 
     [pad_token] defaults to the tokenizer's padding token and [pad_type_id] to
     [0]. Raises [Invalid_argument] at padding time if [pad_token] is [None] and

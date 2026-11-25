@@ -507,6 +507,24 @@ let test_padding_without_token =
       raises_match Exn.invalid_arg (fun () ->
           encode (plain_words ()) ~padding "a"))
 
+(* An encoding truncated to its padding length is at its target, and its window
+   is padded all the same. HuggingFace, with [pad_id] 1: ids [2, 3], windows
+   [[3, 1]]. *)
+let test_padding_windows () =
+  let t =
+    wordpiece
+      ~vocab:[ ("[UNK]", 0); ("[PAD]", 1); ("a", 2); ("##a", 3) ]
+      ~unk_token:"[UNK]" ~pad_token:"[PAD]" ~pre:Pre_tokenizer.whitespace_split
+      ()
+  in
+  let enc =
+    encode t ~truncation:(truncation 2)
+      ~padding:(padding ~pad_id:1 ~pad_token:"[PAD]" (`Fixed 2))
+      "aaa"
+  in
+  equal ~msg:"ids" (array int) [| 2; 3 |] (Encoding.ids enc);
+  equal ~msg:"windows" (list (array int)) [ [| 3; 1 |] ] (windows enc)
+
 (* truncation *)
 
 let test_truncation_defaults () =
@@ -2308,6 +2326,8 @@ let () =
              test "gives padding the pad_id, pad_type_id and pad_token it names"
                test_padding_named;
              test_padding_without_token;
+             test "pads the windows of an encoding already at its length"
+               test_padding_windows;
            ];
          group "truncation"
            [

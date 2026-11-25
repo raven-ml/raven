@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.encode` pads the overflowing windows of an encoding already at its
+  padding length, as Hugging Face does. With truncation and padding to the same
+  length, the usual sliding-window setup, the windows came out ragged.
 - Every encoder checks a `truncation`'s stride as `encode` does, and a stride
   over the room a single text leaves for content raises whatever the text.
   The room counts only the special tokens the call adds.

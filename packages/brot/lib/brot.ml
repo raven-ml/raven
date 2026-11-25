@@ -1247,10 +1247,8 @@ let apply_padding t encodings = function
       let pad_token, pad_id, pad_type_id = resolve_pad t cfg in
       let direction = cfg.direction in
       let pad enc target =
-        if Encoding.length enc >= target then enc
-        else
-          Encoding.pad enc ~target_length:target ~pad_id ~pad_type_id ~pad_token
-            ~direction
+        Encoding.pad enc ~target_length:target ~pad_id ~pad_type_id ~pad_token
+          ~direction
       in
       let longest =
         List.fold_left

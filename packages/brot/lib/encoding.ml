@@ -259,7 +259,8 @@ let rec pad t ~target_length ~pad_id ~pad_type_id ~pad_token ~direction =
       t.overflowing
   in
   let current_len = length t in
-  if current_len >= target_length then { t with overflowing }
+  if current_len >= target_length then
+    if overflowing = [] then t else { t with overflowing }
   else
     let n = target_length - current_len in
     let pad_a arr fill = pad_array arr n fill direction in
