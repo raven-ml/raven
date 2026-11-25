@@ -59,10 +59,22 @@ let rec pp_layout ppf c =
         (Format.pp_print_list field)
         fields
 
+let bits_equal a b = Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
+
+(* [same_elements x y] compares floats by their bits, so that -0. differs from
+   0. and NaNs differ by their payloads. *)
+let same_elements (type a b) (x : (a, b, Nx.host) Nx.t)
+    (y : (a, b, Nx.host) Nx.t) =
+  let xs = Nx.to_array x and ys = Nx.to_array y in
+  match Nx.dtype x with
+  | Float16 -> Array.for_all2 bits_equal xs ys
+  | Float32 -> Array.for_all2 bits_equal xs ys
+  | Float64 -> Array.for_all2 bits_equal xs ys
+  | _ -> compare xs ys = 0
+
 let same_values (Nx.P x) (Nx.P y) =
   match Nx.Dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
-  | Some Equal ->
-      Nx.shape x = Nx.shape y && compare (Nx.to_array x) (Nx.to_array y) = 0
+  | Some Equal -> Nx.shape x = Nx.shape y && same_elements x y
   | None -> false
 
 (* Columns are the same when their types, validities and buffers' values are, at
@@ -322,6 +334,15 @@ let counts =
         | _ -> None);
   ]
 
+(* [set_past_rows ()] is a column of 13 rows, row 2 null, whose validity is two
+   bytes of ones but row 2's, the second byte's bits past row 13 set too. *)
+let set_past_rows () =
+  let bytes = Nx.create Nx.uint8 [| 2 |] [| 0xfb; 0xff |] in
+  let validity =
+    Nx.slice [ Nx.R (0, 13) ] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit bytes))
+  in
+  Column.of_tensor ~validity (int64s 13)
+
 let null_count =
   [
     stateful "is the number of null rows, read once" counts;
@@ -330,20 +351,7 @@ let null_count =
     test "is 0 for a validity with every row set" (fun () ->
         equal int 0 (Column.null_count (column_of [| true; true; true |])));
     test "counts a validity's rows only, whatever its bits past them" (fun () ->
-        (* Two bytes of ones, the second's bits past row 13 set too, and row 2
-           cleared. *)
-        let bytes = Nx.create Nx.uint8 [| 2 |] [| 0xfb; 0xff |] in
-        let validity =
-          Nx.slice
-            [ Nx.R (0, 13) ]
-            (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit bytes))
-        in
-        let c = Column.of_tensor ~validity (int64s 13) in
-        equal int 1 (Column.null_count c);
-        let b = Option.get (Column.validity (column (v [ ("x", c) ]) "x")) in
-        Nx.Repr.read ~by:"test" b @@ fun a ->
-        Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
-            equal int 0 (raw.{1} lsr 5)));
+        equal int 1 (Column.null_count (set_past_rows ())));
   ]
 
 (* v, of_options, values and options *)
@@ -614,8 +622,6 @@ type ragged =
       * ('a, 'b, Nx.host) Nx_ragged.t
       -> ragged
 
-let bits_equal a b = Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
-
 let dtypes =
   let int lo hi = Gen.int_range lo hi in
   [
@@ -687,7 +693,9 @@ let ragged_w (type a b) (eq : a -> a -> bool) :
         Nx.pp (Nx_ragged.lengths r) Nx.pp_shape (cell r))
     ~equal:(fun a b ->
       let ra = rows a and rb = rows b in
+      let lengths r = Nx.to_array (Nx_ragged.lengths r) in
       cell a = cell b
+      && lengths a = lengths b
       && Array.length ra = Array.length rb
       && Array.for_all2
            (fun x y -> Array.length x = Array.length y && Array.for_all2 eq x y)
@@ -1792,6 +1800,12 @@ let () =
            ];
          group "column"
            [
+             test "clears a validity's bits past its rows" (fun () ->
+                 let c = column (v [ ("x", set_past_rows ()) ]) "x" in
+                 let b = Option.get (Column.validity c) in
+                 Nx.Repr.read ~by:"test" b @@ fun a ->
+                 Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned
+                   (fun raw -> equal int 0 (raw.{1} lsr 5)));
              test "drops a validity with no null" (fun () ->
                  let c = column (v [ ("x", column_of [| true; true |]) ]) "x" in
                  is_none ~pp:Nx.pp (Column.validity c));
