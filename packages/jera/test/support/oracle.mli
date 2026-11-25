@@ -33,6 +33,17 @@ val ulps : k:float -> y:(float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t -> float
     [e_i / (k ε |y_i|)], a component with [e_i = 0] counting [0], and [0] for
     no components. A solve meets the tolerance where it is at most [1]. *)
 
+val scaled :
+  rel:float ->
+  abs:float ->
+  y:(float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  float
+(** [scaled ~rel ~abs ~y e] is the measure [Tol.v ~rel ~abs] takes of an error
+    [e] at [y], in OCaml floats: the root mean square of
+    [e_i / (abs + rel |y_i|)], a component with [e_i = 0] counting [0], and [0]
+    for no components. A solve meets the tolerance where it is at most [1]. *)
+
 (** {1:differences Finite differences} *)
 
 val central :
