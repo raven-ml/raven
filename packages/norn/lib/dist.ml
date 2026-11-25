@@ -1484,8 +1484,10 @@ let lkj_power n eta =
   (power, lkj_normaliser n eta)
 
 let lkj_density (power, normaliser) l =
-  let diag = Nx.log (Nx.diagonal l) in
-  Nx.sub (Nx.sum ~axes:[ Nx.ndim diag - 1 ] (Nx.mul power diag)) normaliser
+  (* A matrix [l] of fewer batch axes than [η] broadcasts against it: the
+     sum runs along the rows of the product. *)
+  let terms = Nx.mul power (Nx.log (Nx.diagonal l)) in
+  Nx.sub (Nx.sum ~axes:[ Nx.ndim terms - 1 ] terms) normaliser
 
 let lkj_cholesky n ~concentration =
   let family = "lkj_cholesky" in

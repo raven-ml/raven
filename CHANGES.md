@@ -85,6 +85,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.lkj_cholesky` of a vector of concentrations reads one matrix as each
+  concentration's: its factors summed the matrix's terms across the
+  concentrations, or raised for `n` other than their number.
 - `Hmc.warmup` starts the trajectory length at its first step size, as ChEES
   does (Hoffman, Radul and Sountsov 2021, Algorithm 1). It started from the
   state's length, and ChEES's criterion has several maxima on a Gaussian, so a

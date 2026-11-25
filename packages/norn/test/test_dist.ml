@@ -2762,6 +2762,16 @@ let lkj =
             (fun xs ->
               equal float_exact Float.neg_infinity (item (D.factors d (matrix 2 xs))))
             [ [| 1.; 0.; 0.6; -0.8 |]; [| 1.; 0.1; 0.6; 0.8 |]; [| 1.; 0.; 0.6; 0.9 |] ]);
+      (* A matrix broadcasts against a vector of concentrations, one factor
+         per concentration: each the scalar concentration's. *)
+      test "a vector of concentrations is batch axes" (fun () ->
+          let one n eta l = item (D.factors (D.lkj_cholesky n ~concentration:(f64 eta)) l) in
+          let batch n l =
+            Nx.to_array (D.factors (D.lkj_cholesky n ~concentration:(vec [| 0.5; 3. |])) l)
+          in
+          let l2 = matrix 2 [| 1.; 0.; 0.6; 0.8 |] and l3 = Nx.eye Nx.float64 3 in
+          equal (array float_exact) [| one 2 0.5 l2; one 2 3. l2 |] (batch 2 l2);
+          equal (array float_exact) [| one 3 0.5 l3; one 3 3. l3 |] (batch 3 l3));
       test "it needs two dimensions" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"fewer than two") (fun () ->
               D.lkj_cholesky 1 ~concentration:(f64 1.)));
