@@ -426,10 +426,6 @@ let noisy =
 let noisy_data p (noise, amp) =
   Nx.add (model p) (Nx.mul_s (Nx.sin (Nx.mul_s times noise)) amp)
 
-(* The ulps of [p]'s smaller parameter that the fit of [a e^(b t)] at [p] is
-   fixed to: [κ |p|∞ / |p|min], [κ] the condition of the Jacobian, whose columns
-   are [e^(b t)] and [a t e^(b t)], from the eigenvalues of its 2 × 2 Gram
-   matrix. *)
 (* The condition of the Jacobian of [a e^(b t)] at [p], whose columns are
    [e^(b t)] and [a t e^(b t)], from the eigenvalues of its 2 × 2 Gram matrix. *)
 let jacobian_condition p =
@@ -444,6 +440,8 @@ let jacobian_condition p =
   let gap = sqrt ((((s11 -. s22) /. 2.) ** 2.) +. (s12 *. s12)) in
   sqrt ((mean +. gap) /. (mean -. gap))
 
+(* The ulps of [p]'s smaller parameter that the fit of [a e^(b t)] at [p] is
+   fixed to: [κ |p|∞ / |p|min], [κ] its {!jacobian_condition}. *)
 let resolution_ulps p =
   let a = Nx.item [ 0 ] p and b = Nx.item [ 1 ] p in
   jacobian_condition p
