@@ -700,6 +700,30 @@ let refusals =
               "Compression (259) 5: strip 0 at byte 8: malformed at byte 1: \
                invalid code"
             (fun () -> load_one path));
+      cases
+        "a compressed strip is refused by its count past its codec's ratio, \
+         and decoded at it"
+        ~id:(fun (codec, ratio, over) ->
+          Printf.sprintf "Compression %d, %s %d times its bytes" codec
+            (if over then "past" else "at")
+            ratio)
+        [ (5, 2560, true); (5, 2560, false); (8, 1032, true); (8, 1032, false) ]
+        (fun (codec, ratio, over) ->
+          (* One strip of 4 bytes, one row of [ratio * 4] samples, or one more:
+             the most its stream could decode to, or a byte past. *)
+          let count = 4 in
+          let w = (ratio * count) + if over then 1 else 0 in
+          let x = Nx.P (Nx.zeros Nx.uint8 [| 1; w; 1 |]) in
+          let l = { plain with chunks = Strips 1; codec } in
+          let fields at = by_tag (fields l (raster x) ~at ~counts:[ count ]) in
+          let path =
+            file (build f [ ([ String.make count '\000' ], fields) ])
+          in
+          let naming =
+            if over then "StripByteCounts (279)"
+            else Printf.sprintf "Compression (259) %d" codec
+          in
+          fails ~path ~naming (fun () -> load_one path));
       test "a Deflate strip that decodes to fewer bytes than its rows"
         (fun () ->
           let z n = Lz.Zlib.encode_string (String.make n 'a') in

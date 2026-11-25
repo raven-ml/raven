@@ -3914,6 +3914,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.Tiff.samples` and `Tiff.window` refuse a compressed chunk whose
+  rows take more than 2560 (LZW) or 1032 (Deflate) times its bytes before
+  allocating its raster, where up to the ratio's bytes more passed the check.
 - `Nx_ragged.concat` refuses parts whose rows hold more than `max_int` cells,
   naming itself, where the count wrapped and `Nx.concatenate` refused a
   negative extent.

@@ -560,11 +560,12 @@ let check_chunks p length =
       if off > length - count then
         Fail.failf "%s %d at byte %d ends past the file's %d bytes" (unit p) k
           off length;
+      (* A stream of [count] bytes decodes to at most [ratio * count]. *)
       let need = decoded p k in
       let ratio =
         match p.codec with 1 -> 1 | 5 -> lzw_ratio | _ -> deflate_ratio
       in
-      if need / ratio > count || (p.codec = 1 && count < need) then
+      if ceil_div need ratio > count then
         Fail.failf "%s: %s %d holds %d bytes, too few for its %d"
           (field (counts_tag p)) (unit p) k count need)
     p.offsets;
