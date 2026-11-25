@@ -1059,11 +1059,12 @@ module Quad : sig
       with its own status. Its search runs on detached values; the answer of a
       converged element is its rule over its final decisions, tracked, so its
       derivative is that rule's, and an element that did not converge returns
-      its detached best estimate. A point the answer drops (an element that did
-      not converge, an unused piece, box or chunk, a padding node) is evaluated
-      where the element's search began and adds zero, so an element that did not
-      converge has a zero derivative wherever the integrand and its derivative
-      are finite at the first points its search evaluated. *)
+      its detached best estimate: its last finite one, or 0 if it had none. A
+      point the answer drops (an element that did not converge, an unused piece,
+      box or chunk, a padding node) is evaluated where the element's search
+      began and adds zero, so an element that did not converge has a zero
+      derivative wherever the integrand and its derivative are finite at the
+      first points its search evaluated. *)
 
   val adaptive :
     [> `Embedded ] Rule.t ->
@@ -1344,16 +1345,17 @@ module Piecewise : sig
       tail against its size. [budget] bounds the pieces, so the answer always
       holds [budget] pieces, the unused ones empty at [b] after the domain. A
       lane whose worst piece is at level 62, or holds no float strictly inside,
-      ends [Stalled]; a non-finite coefficient ends it [Not_finite]; [budget]
-      pieces end it [Budget_spent]. The error is a series of degree 0 on the
-      answer's breaks, each piece's tail. {b Cost.} [degree + 1] evaluations of
-      [f] per piece, [2k − 1] pieces for [k] in use, and the answer evaluates
-      [f] again at the points of all [budget] pieces, an unused piece's inside
-      the range. {b Derivative.} The final partition's interpolant's: its breaks
-      are [a + (b − a) index / 2^level], so it reaches the ends. A piece the
-      answer drops is evaluated at the first points the search evaluated, those
-      of [[a, b]], so a fit that did not converge has a zero derivative wherever
-      [f] and its derivative are finite there.
+      ends [Stalled]; a non-finite coefficient ends it [Not_finite], with its
+      last finite partition as its best, or the zero series on [[a, b]] if it
+      had none; [budget] pieces end it [Budget_spent]. The error is a series of
+      degree 0 on the answer's breaks, each piece's tail. {b Cost.} [degree + 1]
+      evaluations of [f] per piece, [2k − 1] pieces for [k] in use, and the
+      answer evaluates [f] again at the points of all [budget] pieces, an unused
+      piece's inside the range. {b Derivative.} The final partition's
+      interpolant's: its breaks are [a + (b − a) index / 2^level], so it reaches
+      the ends. A piece the answer drops is evaluated at the first points the
+      search evaluated, those of [[a, b]], so a fit that did not converge has a
+      zero derivative wherever [f] and its derivative are finite there.
 
       Raises [Invalid_argument] if [degree < 2], [budget < 1], if [a] or [b] is
       not a scalar, or if [f]'s leaves do not start with the points' shape. *)
