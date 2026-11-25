@@ -612,16 +612,24 @@ let opcode_cases =
           | v -> failf "%a" pp_value v);
           refused ~naming:"4300"
             (checkpoint (pickle ("L" ^ digits 4301 ^ "L\n")) []));
-      test "a key nested 10^6 tuples deep loads, under an 8 MiB stack"
+      (* A recursion of frames of 16 bytes or more, the least on arm64, fills
+         the 8 MiB stack the dune rule sets at 524 288 levels, so 600 000
+         overflow any walk on arm64 that recurses once a level, and on x86_64
+         any whose frames take 16 bytes or more: one of 8 bytes, which holds
+         nothing across its call, passes at 600 000 as at 10^6. The test takes
+         about 0.55 s, nx.io's own cost: the decoder's keys pass interns each
+         tuple node's key, about 175 words a level in all. *)
+      test "a key nested 600 000 tuples deep loads, under an 8 MiB stack"
         (fun () ->
-          let p = pickle ("})" ^ String.make 1_000_000 '\x85' ^ "Ns") in
+          let n = 600_000 in
+          let p = pickle ("})" ^ String.make n '\x85' ^ "Ns") in
           let rec depth n = function
             | Pt.Tuple [ t ] -> depth (n + 1) t
             | Tuple [] -> n
             | _ -> -1
           in
           match load_pickle p with
-          | Dict [ (k, Null) ] -> equal int 1_000_000 (depth 0 k)
+          | Dict [ (k, Null) ] -> equal int n (depth 0 k)
           | _ -> failf "not a dict of one key");
     ]
 
