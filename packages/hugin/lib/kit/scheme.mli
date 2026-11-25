@@ -115,8 +115,8 @@ val colors : int -> t -> Color.t array
 
     The first five are perceptually uniform, their lightness rising from [0] to
     [1]. Their tables are their published tables of [256] colours, each
-    component rounded to the nearest multiple of [1/255], which can swap the
-    lightness of neighbouring entries. *)
+    component rounded to the nearest multiple of [1/255], which can put entries
+    of nearly equal lightness out of order. *)
 
 val viridis : t
 (** [viridis] runs from dark purple through blue and green to yellow (van der
