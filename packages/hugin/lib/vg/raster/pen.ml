@@ -31,7 +31,7 @@ type t = {
           coordinates. *)
   step : float;  (** The largest angle of an arc's chord within [tol]. *)
   reach : float;  (** How far the pen paints from the path, in pixels. *)
-  pt : float array;  (** A point [crossing] finds. *)
+  pt : float array;  (** A point [crossing] or [far_arc] finds. *)
   wx0 : float;
       (** The window grown by the reach of the pen: what lies outside it paints
           nothing visible. *)
@@ -43,6 +43,12 @@ type t = {
           to show. *)
   cur : float array;  (** The outline's first and last device points. *)
 }
+
+(* [chord_angle r] is the largest angle whose chord on a circle of radius [r]
+   pixels stays within a tenth of a pixel of its arc, [2 acos (1 - 0.1 / r)],
+   computed as [4 asin (sqrt (0.05 / r))], equal in real arithmetic: the first
+   form loses [0.1 / r] against 1 and is 0 past a radius of about 1e15. *)
+let chord_angle r = 4. *. Float.asin (Float.sqrt (0.05 /. r))
 
 let create cover (clip : Surface.clip) m k s =
   let hw = 0.5 *. Stroke.width s *. k in
@@ -58,8 +64,7 @@ let create cover (clip : Surface.clip) m k s =
     join = Stroke.join s;
     miter_limit = Stroke.miter_limit s;
     tol = 0.1 /. scale;
-    step =
-      (if r <= 0.1 then Float.pi /. 2. else 2. *. Float.acos (1. -. (0.1 /. r)));
+    step = (if r <= 0.1 then Float.pi /. 2. else chord_angle r);
     reach;
     pt = Array.make 2 0.;
     wx0 = float clip.x0 -. reach;
@@ -90,19 +95,79 @@ let[@inline] line_to p x y =
 
 let close p = Cover.line p.cover p.cur.(2) p.cur.(3) p.cur.(0) p.cur.(1)
 
+(* [far_arc p x y nx ny sweep n] continues the outline along the arc of [arc],
+   cut into [n] chords of equal angle, of which a run whose circular segment,
+   the region between the arc and the run's one chord, misses the page is drawn
+   as that chord, since what it leaves out shows nothing: an arc far wider than
+   the page takes chords only where it crosses the page, a number of them
+   bisections deep. *)
+let far_arc p x y nx ny sweep n =
+  let da = sweep /. n and page = p.page in
+  let at t =
+    let c = Float.cos t and s = Float.sin t in
+    p.pt.(0) <- x +. ((nx *. c) -. (ny *. s));
+    p.pt.(1) <- y +. ((nx *. s) +. (ny *. c))
+  in
+  (* [misses a b] is [true] iff the circular segment from angle [a] to [b], at
+     most a quarter turn, lies off the page: the triangle of its chord and the
+     tangents at its ends holds it. *)
+  let misses a b =
+    at a;
+    let ax = dev_x p p.pt.(0) p.pt.(1) and ay = dev_y p p.pt.(0) p.pt.(1) in
+    at b;
+    let bx = dev_x p p.pt.(0) p.pt.(1) and by = dev_y p p.pt.(0) p.pt.(1) in
+    (* The tangents meet on the bisector, at the radius over the cosine of half
+       the angle. *)
+    let h = 0.5 *. (b -. a) in
+    at (a +. h);
+    let k = 1. /. Float.cos h in
+    let tx = x +. (k *. (p.pt.(0) -. x)) and ty = y +. (k *. (p.pt.(1) -. y)) in
+    let cx = dev_x p tx ty and cy = dev_y p tx ty in
+    Float.max ax (Float.max bx cx) < page.(0)
+    || Float.min ax (Float.min bx cx) > page.(2)
+    || Float.max ay (Float.max by cy) < page.(1)
+    || Float.min ay (Float.min by cy) > page.(3)
+  in
+  (* Indices past 2{^53} are whole floats further apart than 1: a span with no
+     index between its ends is one chord. *)
+  let rec go i0 i1 =
+    let mid = Float.floor ((i0 +. i1) /. 2.) in
+    if
+      mid <= i0 || mid >= i1
+      || Float.abs ((i1 -. i0) *. da) <= Float.pi /. 2.
+         && misses (i0 *. da) (i1 *. da)
+    then begin
+      at (i1 *. da);
+      line_to p p.pt.(0) p.pt.(1)
+    end
+    else begin
+      go i0 mid;
+      go mid i1
+    end
+  in
+  go 0. n
+
+(* How many chords an arc takes before [arc] leaves out those off the page. *)
+let many_chords = 1024.
+
 (* [arc p x y nx ny sweep] continues the outline along the arc about [(x, y)]
-   from [(x + nx, y + ny)], turning by [sweep] radians. *)
+   from [(x + nx, y + ny)], turning by [sweep] radians, cut into chords of equal
+   angle, at most [p.step]. *)
 let[@inline] arc p x y nx ny sweep =
-  let n = Int.max 1 (int_of_float (Float.ceil (Float.abs sweep /. p.step))) in
-  let da = sweep /. float n in
-  let c = Float.cos da and s = Float.sin da in
-  let nx = ref nx and ny = ref ny in
-  for _ = 1 to n do
-    let rx = (!nx *. c) -. (!ny *. s) and ry = (!nx *. s) +. (!ny *. c) in
-    nx := rx;
-    ny := ry;
-    line_to p (x +. rx) (y +. ry)
-  done
+  let n = Float.ceil (Float.abs sweep /. p.step) in
+  if n > many_chords then far_arc p x y nx ny sweep n
+  else begin
+    let n = Int.max 1 (int_of_float n) in
+    let da = sweep /. float n in
+    let c = Float.cos da and s = Float.sin da in
+    let nx = ref nx and ny = ref ny in
+    for _ = 1 to n do
+      let rx = (!nx *. c) -. (!ny *. s) and ry = (!nx *. s) +. (!ny *. c) in
+      nx := rx;
+      ny := ry;
+      line_to p (x +. rx) (y +. ry)
+    done
+  end
 
 (* [join p x y ax ay bx by] continues the outline, on the left of a line
    arriving at [(x, y)] along the unit vector [(ax, ay)], to the left of one

@@ -59,8 +59,10 @@
       precision, so that an edge lies within about [2{^-50} d] pixels of where
       it should, [d] being the largest magnitude, in pixels, of the terms that
       map the nearer of its ends to the device (each coordinate times its
-      factor, and the translation) and, for an edge of a dash, of the dash's
-      distance from the start of its subpath. A segment is drawn along its own
+      factor, and the translation), for an edge of a stroke's outline, of its
+      pen's half width and of the point of its path it is drawn about, and,
+      for an edge of a dash, of the dash's distance from the start of its
+      subpath. A segment is drawn along its own
       line however far the transforms and the density map its points, beyond
       the range of floats included: it is cut in the coordinates of its path,
       about [2{^1000}] pixels beyond the page. An open subpath that comes back

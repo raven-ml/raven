@@ -319,6 +319,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster` flattens round caps and joins wider than about 1e15 pixels.
+  Their chord angle rounded to 0, so such a round dot was one chord and drew
+  nothing; chords off the page are now merged, so any width takes few.
 - `Hugin_vg_raster.render` returns on a dashed stroke whose pen is far wider
   than its pattern, or whose pattern a map shrinks below a pixel along one axis:
   every dash within the pen's reach of the page was walked, about 1e16 of them.

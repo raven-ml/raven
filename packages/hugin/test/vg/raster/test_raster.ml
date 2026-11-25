@@ -1651,6 +1651,29 @@ let render_group =
                  red (segment 0.5 5. 1e6 5.))
           in
           same_image ~within:1 (stroked 200.) (stroked 1e17));
+      cases "a round dot far wider than the page covers it"
+        ~id:(Printf.sprintf "radius %g") [ 1e20; 1e31; 1e100 ] (fun r ->
+          (* A disc about the page's middle, or, past 2^53 chords a turn, with
+             its left edge on the page's. *)
+          let at = if r > 1e30 then r else 20. in
+          let dot =
+            Picture.stroke
+              (Stroke.v ~cap:`Round (2. *. r))
+              red (segment at 5. at 5.)
+          in
+          equal float_exact 400. (coverage (render 40. 10. dot)));
+      test "a round dot far wider than the page has its edge where it should"
+        (fun () ->
+          (* About (2^66, 5), radius 2^66 - 2^14, both exact: its left edge
+             crosses the page at x = 16384, straight to within 1e-16 of a pixel
+             over its 10 pixels, so it covers the 16 columns past it. *)
+          let c = Float.ldexp 1. 66 in
+          let dot =
+            Picture.stroke
+              (Stroke.v ~cap:`Round (2. *. (c -. 16384.)))
+              red (segment c 5. c 5.)
+          in
+          area ~box:(1., 10.) 160. (coverage (render 16400. 10. dot)));
       test "a line to near max_float is drawn up to the page's edge" (fun () ->
           (* Its far end, at density 2, is beyond [max_float], held at 1e15
              along x: a band 2 pixels high across the 20 of the page. *)
