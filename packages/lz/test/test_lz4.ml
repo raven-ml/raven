@@ -622,6 +622,17 @@ let block_refusals =
           equal string (malformed_at 4)
             (decode_seen block
                (sequence "a" ~offset:1 ~length:18 ^ last "bcde")));
+      (* No destination lets the decode go on past last literals that break
+         the end-of-block rules, so they are Malformed also when they pass
+         the destination. *)
+      test "last literals past the destination that break the rules are \
+            Malformed at their token" (fun () ->
+          equal string (malformed_at 4)
+            (decode_seen block ~cap:8
+               (sequence "a" ~offset:1 ~length:6 ^ last "bcdef"));
+          equal string (malformed_at 4)
+            (decode_seen block ~cap:20
+               (sequence "a" ~offset:1 ~length:18 ^ last "bcde")));
       test "literals past the destination are Too_long at their token"
         (fun () ->
           equal string "too long at 0"

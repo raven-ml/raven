@@ -202,6 +202,15 @@ let table =
           let coded = widths (literals k) in
           fails ~at:(byte_of coded k) (Lz.Malformed "the table is full")
             (lzw_pack coded));
+      (* No destination lets the decode go on past a full table, so a code
+         that would store entry 4096 is refused as such also when its byte
+         has no room. *)
+      test "a code past dst's end that would store entry 4096 is refused"
+        (fun () ->
+          let k = 4096 - 256 in
+          let coded = widths (literals k) in
+          fails ~cap:(k - 1) ~at:(byte_of coded k)
+            (Lz.Malformed "the table is full") (lzw_pack coded));
       test "ClearCode after a full table starts again at 9 bits" (fun () ->
           let k = 4095 - 256 in
           let codes =

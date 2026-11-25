@@ -345,6 +345,14 @@ static const uint8_t *last_token(const uint8_t *p, const uint8_t *end) {
   return token;
 }
 
+/* Whether last literals of [lit] bytes break the end-of-block rules after
+   a match of [last_match] bytes, 0 for none: at least 5 literals end a
+   block, and its last match starts at least 12 bytes before its end. */
+static inline bool breaks_end(uint64_t lit, uint64_t last_match) {
+  return last_match != 0 &&
+         (lit < LAST_LITERALS || lit + last_match < MATCH_MARGIN);
+}
+
 static enum outcome block_decode(struct block *b) {
   /* The fast loop in spans of LZ_WORK_SPAN of output, each reported. A
      span it leaves short has a sequence for the exact loop. */
@@ -388,7 +396,14 @@ static enum outcome block_decode(struct block *b) {
         lit += s;
       } while (s == 255 && lit <= (uint64_t)(oend - op));
     }
-    if (lit > (uint64_t)(oend - op)) return fail(b, OVERFLOWS, seq, NULL);
+    if (lit > (uint64_t)(oend - op)) {
+      /* Last literals that break the end-of-block rules are malformed
+         whatever the room: a larger destination would refuse them too. */
+      if (!b->cut && lit == (uint64_t)(iend - ip) &&
+          breaks_end(lit, last_match))
+        return fail(b, MALFORMED, seq, "invalid end of block");
+      return fail(b, OVERFLOWS, seq, NULL);
+    }
     if (lit > (uint64_t)(iend - ip)) return fail(b, ENDS_EARLY, seq, NULL);
     if (lit >= LZ_WORK_SPAN) tell_ahead(b->told, ip, op, 2 * lit);
     memcpy(op, ip, lit);
@@ -397,11 +412,8 @@ static enum outcome block_decode(struct block *b) {
 
     if (ip == iend) {
       if (b->cut) return fail(b, ENDS_EARLY, seq, NULL);
-      /* The last sequence. If a match came before, the block's end rules
-         hold: at least 5 literals end it, and the last match starts at
-         least 12 bytes before its end. */
-      if (last_match != 0 &&
-          (lit < LAST_LITERALS || lit + last_match < MATCH_MARGIN))
+      /* The last sequence, which keeps the end-of-block rules. */
+      if (breaks_end(lit, last_match))
         return fail(b, MALFORMED, seq, "invalid end of block");
       b->op = op;
       return DECODED;

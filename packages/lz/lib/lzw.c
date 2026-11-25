@@ -73,6 +73,17 @@ static enum lz_status malformed(struct lz_error *err, size_t at,
   return lz_fail(err, LZ_MALFORMED, (int64_t)at, msg);
 }
 
+/* A code whose string would pass [dst]'s end is Too_long, unless it would
+   also add an entry past the table's last, which no larger [dst] lets the
+   decode go on past. Checked only once the output does not fit, off the
+   loop's path. */
+static enum lz_status too_long(struct lz_error *err, size_t at, size_t prev,
+                               unsigned next) {
+  if (prev > 0 && next == ENTRIES)
+    return malformed(err, at, "the table is full");
+  return lz_fail(err, LZ_TOO_LONG, (int64_t)at, NULL);
+}
+
 enum lz_status lz_lzw_decode(struct lz_io *io, struct lz_error *err) {
   const uint8_t *src = io->src;
   size_t len = io->src_len, cap = io->dst_cap;
@@ -128,18 +139,18 @@ enum lz_status lz_lzw_decode(struct lz_io *io, struct lz_error *err) {
     size_t n;
     if (code < CLEAR) {
       n = 1;
-      if (op == cap) return lz_fail(err, LZ_TOO_LONG, (int64_t)at, NULL);
+      if (op == cap) return too_long(err, at, prev, next);
       dst[op] = (uint8_t)code;
     } else if (code < next) {
       /* The entry ends before [op], so source and destination share no
          byte; a 16-byte copy reads and writes inside [dst]. */
       n = lens[code];
-      if (n > cap - op) return lz_fail(err, LZ_TOO_LONG, (int64_t)at, NULL);
+      if (n > cap - op) return too_long(err, at, prev, next);
       if (n <= 16 && cap - op >= 16) copy16(dst + op, dst + off[code]);
       else memcpy(dst + op, dst + off[code], n);
     } else if (code == next && prev > 0) {
       n = prev + 1;
-      if (n > cap - op) return lz_fail(err, LZ_TOO_LONG, (int64_t)at, NULL);
+      if (n > cap - op) return too_long(err, at, prev, next);
       memcpy(dst + op, dst + prev_off, prev);
       dst[op + prev] = dst[prev_off];
     } else

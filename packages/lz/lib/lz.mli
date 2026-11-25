@@ -149,7 +149,9 @@ type why =
   | Too_long
       (** The output would pass the destination's end. It is at the first
           byte of the code or field that asks for the output. Only a
-          whole-buffer decode returns it. *)
+          whole-buffer decode returns it. A code that the decode has read
+          whole and that breaks the format is [Malformed], even when it
+          also asks for output past the destination's end. *)
   | Unsupported of string
       (** The stream is well formed and uses a feature that lz
           {e declines}: a dictionary, a Zstandard window size above a
