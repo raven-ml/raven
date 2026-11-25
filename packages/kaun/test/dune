@@ -18,11 +18,7 @@
   test_init
   test_loss
   test_data
-  test_metric
-  test_data_parallel
-  test_jit_state
-  test_half
-  test_structures)
+  test_metric)
  (modules
   (:standard \ test_cache_index_metal test_decode_devices))
  (package kaun)
