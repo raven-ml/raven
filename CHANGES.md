@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Normalizers keep a byte that opens no character as a character of one byte,
+  as `encode` promises: `lowercase`, `strip_accents` and `bert` dropped it, and
+  `nfc`, `nfd`, `nfkc`, `nfkd` and `bert ~strip_accents` turned it into U+FFFD.
 - `Pre_tokenizer.byte_level` gives a byte that opens no character a pretoken
   of its own, as GPT-2's pattern does: it joined the punctuation run before
   it, so `"$\xc3"` was one pretoken.

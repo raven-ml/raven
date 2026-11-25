@@ -57,10 +57,10 @@ and pattern =
 
 (* UTF-8 helpers *)
 
-(* Returns (codepoint lsl 3) lor byte_length — zero allocation. *)
-let[@inline] utf8_next s i =
-  let d = String.get_utf_8_uchar s i in
-  (Uchar.to_int (Uchar.utf_decode_uchar d) lsl 3) lor Uchar.utf_decode_length d
+(* The character at [i] as [(code lsl 3) lor byte_length], or [-1] for a byte
+   that opens none: a character of one byte, which every normalizer but
+   [precompiled] and [byte_level] keeps as it is. *)
+let[@inline] utf8_next s i = Char_class.decode s i ~stop:(String.length s)
 
 let[@inline] is_continuation s i =
   Char.code (String.unsafe_get s i) land 0xC0 = 0x80
@@ -896,15 +896,20 @@ let normalize_text form s o =
         incr i
       end
     end
-    else begin
-      let d = String.get_utf_8_uchar s !i in
-      let n = Uchar.utf_decode_length d in
-      push_char nf
-        (Uchar.to_int (Uchar.utf_decode_uchar d))
-        ~first:!i
-        ~last:(!i + n - 1);
-      i := !i + n
-    end
+    else
+      let p = utf8_next s !i in
+      if p < 0 then begin
+        (* Nothing composes with a byte that opens no character. *)
+        if pending nf then flush nf;
+        add_sub o !i s !i 1;
+        nf.last <- !i;
+        incr i
+      end
+      else begin
+        let n = p land 7 in
+        push_char nf (p lsr 3) ~first:!i ~last:(!i + n - 1);
+        i := !i + n
+      end
   done;
   flush nf;
   text o
@@ -922,10 +927,11 @@ let lowercase_text s o =
   while !i < len do
     if is_ascii s !i then i := ascii_run o s !i ~lookahead:false ascii_lower
     else begin
-      let d = String.get_utf_8_uchar s !i in
-      let n = Uchar.utf_decode_length d in
-      (if Uchar.utf_decode_is_valid d then
-         match Uucp.Case.Map.to_lower (Uchar.utf_decode_uchar d) with
+      let p = utf8_next s !i in
+      let n = if p < 0 then 1 else p land 7 in
+      (if p < 0 then add_sub o !i s !i 1
+       else
+         match Uucp.Case.Map.to_lower (Uchar.unsafe_of_int (p lsr 3)) with
          | `Self -> add_sub o !i s !i n
          | `Uchars us -> add_codes o !i us);
       i := !i + n
@@ -941,10 +947,11 @@ let drop_marks s o =
   while !i < len do
     if is_ascii s !i then i := ascii_run o s !i ~lookahead:false ascii_identity
     else begin
-      let d = String.get_utf_8_uchar s !i in
-      let n = Uchar.utf_decode_length d in
-      (if Uchar.utf_decode_is_valid d then
-         match Uucp.Gc.general_category (Uchar.utf_decode_uchar d) with
+      let p = utf8_next s !i in
+      let n = if p < 0 then 1 else p land 7 in
+      (if p < 0 then add_sub o !i s !i 1
+       else
+         match Uucp.Gc.general_category (Uchar.unsafe_of_int (p lsr 3)) with
          | `Mn | `Mc | `Me -> ()
          | _ -> add_sub o !i s !i n);
       i := !i + n
@@ -1068,27 +1075,30 @@ let bert_text ~clean_text ~handle_chinese_chars ~strip_accents ~lowercase s o =
         i := ascii_run o s start ~lookahead:false table
       end
       end
-    else begin
-      let d = String.get_utf_8_uchar s !i in
-      let n = Uchar.utf_decode_length d in
-      let code = Uchar.to_int (Uchar.utf_decode_uchar d) in
-      if clean_text && (code = 0xFFFD || is_control code) then ()
-      else if clean_text && is_whitespace code then space !i
+    else
+      let p = utf8_next s !i in
+      if p < 0 then begin
+        if pending nf then flush nf;
+        add_sub o !i s !i 1;
+        incr i
+      end
       else begin
-        let ideograph = handle_chinese_chars && is_chinese_char code in
-        if ideograph then space !i;
-        if strip_accents then push_char nf code ~first:!i ~last:!i
-        else if lowercase then
-          begin if Uchar.utf_decode_is_valid d then
+        let n = p land 7 and code = p lsr 3 in
+        if clean_text && (code = 0xFFFD || is_control code) then ()
+        else if clean_text && is_whitespace code then space !i
+        else begin
+          let ideograph = handle_chinese_chars && is_chinese_char code in
+          if ideograph then space !i;
+          if strip_accents then push_char nf code ~first:!i ~last:!i
+          else if lowercase then
             match Uucp.Case.Map.to_lower (Uchar.unsafe_of_int code) with
             | `Self -> add_sub o !i s !i n
             | `Uchars us -> add_codes o !i us
-          end
-        else add_sub o !i s !i n;
-        if ideograph then space !i
-      end;
-      i := !i + n
-    end
+          else add_sub o !i s !i n;
+          if ideograph then space !i
+        end;
+        i := !i + n
+      end
   done;
   flush nf;
   text o
@@ -1109,8 +1119,8 @@ let strip_bounds s ~left ~right =
           if b < 0x80 then if is_ascii_space b then loop (i + 1) else i
           else
             let p = utf8_next s i in
-            let code = p lsr 3 and clen = p land 7 in
-            if is_whitespace code then loop (i + clen) else i
+            if p >= 0 && is_whitespace (p lsr 3) then loop (i + (p land 7))
+            else i
       in
       loop 0
     else 0
@@ -1125,9 +1135,10 @@ let strip_bounds s ~left ~right =
             loop (i + 1) (if is_ascii_space b then last else i + 1)
           else
             let p = utf8_next s i in
-            let code = p lsr 3 and clen = p land 7 in
-            let next = i + clen in
-            if is_whitespace code then loop next last else loop next next
+            if p < 0 then loop (i + 1) (i + 1)
+            else
+              let next = i + (p land 7) in
+              if is_whitespace (p lsr 3) then loop next last else loop next next
       in
       loop start start
     else len
@@ -1162,10 +1173,7 @@ let count_literal ~pattern s =
       if at < 0 then count
       else if plen > 0 then loop (at + plen) (count + 1)
       else if at = len then count + 1
-      else
-        loop
-          (at + Uchar.utf_decode_length (String.get_utf_8_uchar s at))
-          (count + 1)
+      else loop (at + Char_class.length s at ~stop:len) (count + 1)
     in
     loop 0 0
 
@@ -1186,7 +1194,7 @@ let replace_literal ~pattern ~replacement s ~matches o =
       else begin
         add_string o (at - 1) replacement;
         if at < len then begin
-          let n = Uchar.utf_decode_length (String.get_utf_8_uchar s at) in
+          let n = Char_class.length s at ~stop:len in
           copy o s at n;
           loop (at + n) (at + n) (left - 1)
         end
@@ -1290,8 +1298,7 @@ let replace_matches compiled ~replacement s o =
           end
           else
             let next =
-              if stop < len then
-                stop + Uchar.utf_decode_length (String.get_utf_8_uchar s stop)
+              if stop < len then stop + Char_class.length s stop ~stop:len
               else stop + 1
             in
             if stop = last_match then search next last last_match matched
@@ -1355,12 +1362,11 @@ let nmt_text s o =
   while !i < len do
     if is_ascii s !i then i := ascii_run o s !i ~lookahead:false ascii_nmt
     else begin
-      let d = String.get_utf_8_uchar s !i in
-      let clen = Uchar.utf_decode_length d in
-      let code = Uchar.to_int (Uchar.utf_decode_uchar d) in
-      if not (Uchar.utf_decode_is_valid d) then add_sub o !i s !i clen
-      else if nmt_spaces code then add_char o !i ' '
-      else if not (nmt_removes code) then add_sub o !i s !i clen;
+      let p = utf8_next s !i in
+      let clen = if p < 0 then 1 else p land 7 in
+      if p < 0 then add_sub o !i s !i 1
+      else if nmt_spaces (p lsr 3) then add_char o !i ' '
+      else if not (nmt_removes (p lsr 3)) then add_sub o !i s !i clen;
       i := !i + clen
     end
   done;

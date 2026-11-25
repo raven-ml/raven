@@ -228,7 +228,12 @@ module Normalizer : sig
 
       The normalizers read the case mappings, general categories and White_Space
       property of Unicode 18.0.0. Decompositions and combining classes are those
-      of the Unicode version of the uunf library brot is built with. *)
+      of the Unicode version of the uunf library brot is built with.
+
+      A byte that opens no whole character, a lead byte without the continuation
+      bytes it asks for, a continuation byte with no lead or a byte of a
+      sequence RFC 3629 forbids, is kept as it is, a character of one byte, by
+      every normalizer but {!val-precompiled} and {!val-byte_level}. *)
 
   type t
   (** The type for normalizers. *)

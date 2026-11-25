@@ -1578,6 +1578,66 @@ let parity_corpora () =
     Fixture.read "support/parity/sample.txt";
   ]
 
+(* apply *)
+
+(* Bytes that open no whole character: a stray lead, a stray continuation, a
+   sequence cut short, an overlong encoding, a surrogate and a value above
+   U+10FFFF (RFC 3629). *)
+let stray_bytes =
+  [ "\xFF"; "\x80"; "\xC3"; "\xE2\x82"; "\xC0\xAF"; "\xED\xA0\x80";
+    "\xF4\x90\x80\x80" ]
+[@@ocamlformat "disable"]
+
+(* The normalizers of [every_normalizer] that leave ["a"] and ["b"] alone and
+   insert nothing. *)
+let leaves_ascii_letters (label, _) =
+  List.mem label
+    [ "nfc"; "nfd"; "nfkc"; "nfkd"; "lowercase"; "strip_accents"; "strip";
+      "strip ~left:false"; "replace"; "replace_regex"; "nmt";
+      "nfkc strip_accents lowercase"; "clip" ]
+  || String.starts_with ~prefix:"bert" label
+[@@ocamlformat "disable"]
+
+(* Source: brot.mli, encode: a byte that opens no whole character is read by
+   every stage as a character of one byte. *)
+let test_stray_bytes_kept stray =
+  let text = "a" ^ stray ^ "b" in
+  List.iter
+    (fun (label, n) ->
+      let normalized, a = Normalizer.apply_aligned n text in
+      equal ~msg:label string text normalized;
+      String.iteri
+        (fun i _ ->
+          equal
+            ~msg:(Printf.sprintf "%s, byte %d" label (i + 1))
+            (pair int int)
+            (i + 1, i + 2)
+            (Normalizer.original_span a ~start:(i + 1) ~stop:(i + 2)))
+        stray)
+    (List.filter leaves_ascii_letters (every_normalizer ()))
+
+let apply_tests =
+  [
+    cases ~id:text_id
+      "keeps a byte that opens no whole character as a character of its own"
+      stray_bytes test_stray_bytes_kept;
+    cases
+      ~id:(fun (label, _, text, _) -> Printf.sprintf "%s %S" label text)
+      "normalizes the characters around a byte that opens none"
+      [
+        ("lowercase", Normalizer.lowercase, "A\xFFB", "a\xFFb");
+        ("bert", Normalizer.bert (), "A\xFFB", "a\xFFb");
+        ("strip_accents", Normalizer.strip_accents, "A\xFFB", "A\xFFB");
+        ("nfc", Normalizer.nfc, "e\u{301}\xE2\x82", "\u{E9}\xE2\x82");
+        ( "replace empty",
+          Normalizer.replace ~pattern:"" ~replacement:"_",
+          "a\xE2\x82b",
+          "_a_\xE2_\x82_b_" );
+      ]
+      (fun (_, n, text, expected) ->
+        equal string expected (Normalizer.apply n text));
+  ]
+
 let apply_aligned_tests =
   [
     prop ~count:200 "gives the text apply gives" (text_of aligned_alphabet)
@@ -1920,6 +1980,7 @@ let () =
          group "precompiled" precompiled_tests;
          group "bert" bert_tests;
          group "sequence" sequence_tests;
+         group "apply" apply_tests;
          group "identity" identity_tests;
          group "apply_aligned" apply_aligned_tests;
          group "original_span" original_span_tests;
