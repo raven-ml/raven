@@ -22,22 +22,52 @@ let features =
     ("YMM state", Xcr0, 2);
   ]
 
-let holds fs =
+(* A processor's words: CPUID.01H:ECX, CPUID.07H.00H:EBX and XCR0. *)
+type words = { ecx1 : int; ebx7 : int; xcr0 : int }
+
+let words =
+  Testable.structural ~pp:(fun ppf w ->
+      Format.fprintf ppf "{ ecx1 = 0x%08x; ebx7 = 0x%08x; xcr0 = 0x%08x }"
+        w.ecx1 w.ebx7 w.xcr0)
+
+(* The words of a processor of [fs] alone, every other bit clear. *)
+let only fs =
   let bits w =
     List.fold_left
       (fun acc (_, w', b) -> if w = w' then acc lor (1 lsl b) else acc)
       0 fs
   in
-  Nx_cpu.floor_holds ~ecx1:(bits Ecx1) ~ebx7:(bits Ebx7) ~xcr0:(bits Xcr0)
+  { ecx1 = bits Ecx1; ebx7 = bits Ebx7; xcr0 = bits Xcr0 }
+
+(* Every bit of the three 32-bit words set: a floor that demanded a bit clear
+   would refuse it. *)
+let every = { ecx1 = 0xFFFF_FFFF; ebx7 = 0xFFFF_FFFF; xcr0 = 0xFFFF_FFFF }
+
+(* [w] with feature [f]'s bit clear. *)
+let lacking (_, word, bit) w =
+  let clear x = x land lnot (1 lsl bit) in
+  match word with
+  | Ecx1 -> { w with ecx1 = clear w.ecx1 }
+  | Ebx7 -> { w with ebx7 = clear w.ebx7 }
+  | Xcr0 -> { w with xcr0 = clear w.xcr0 }
+
+let runs w = Nx_cpu.floor_holds ~ecx1:w.ecx1 ~ebx7:w.ebx7 ~xcr0:w.xcr0
 
 let () =
   exit
-    (run "Nx_cpu floor"
+    (run "nx_cpu.floor"
        [
-         test "a processor of every feature runs nx.cpu" (fun () ->
-             equal bool true (holds features));
-         cases ~id:(fun (n, _, _) -> n)
-           "a processor without one feature does not run nx.cpu:" features
-           (fun f ->
-             equal bool false (holds (List.filter (( != ) f) features)));
+         group "floor_holds"
+           [
+             cases ~id:fst "a processor of every feature runs nx.cpu"
+               [ ("those features alone", only features); ("every bit", every) ]
+               (fun (_, w) -> satisfies ~claim:"runs nx.cpu" words runs w);
+             cases
+               ~id:(fun (name, _, _) -> name)
+               "a processor lacking one feature does not run nx.cpu" features
+               (fun f ->
+                 satisfies ~claim:"does not run nx.cpu" words
+                   (fun w -> not (runs w))
+                   (lacking f every));
+           ];
        ])
