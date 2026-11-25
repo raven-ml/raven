@@ -45,6 +45,6 @@
  (name test_map_failure)
  (modules test_map_failure)
  (package talon)
- (libraries windtrap talon talon.parquet unix)
+ (libraries windtrap talon talon.parquet rig rig.disk unix)
  (enabled_if
   (= %{system} linux)))

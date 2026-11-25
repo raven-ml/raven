@@ -42,7 +42,24 @@ let names_the_file_once () =
       in
       equal ~msg:("the path appears once in: " ^ msg) int 1 (count 0)
 
+let sniff_fails () =
+  with_sparse_file @@ fun path ->
+  match Rig_disk.of_file path with
+  | Error why -> failf "the file did not open: %s" why
+  | Ok f -> (
+      match Talon_parquet.sniff (Rig_disk.buffer f) with
+      | Ok _ -> fail "a file beyond the address space must not map"
+      (* The zeros of the sparse file are not Parquet, so an error that says
+         so read them. *)
+      | Error e ->
+          not_contains ~sub:"not a Parquet file" (Format.asprintf "%a" Error.pp e))
+
 let () =
   exit
     (run "parquet map failure"
-       [ test "a file that cannot be mapped names the path once" names_the_file_once ])
+       [
+         test "a file that cannot be mapped names the path once"
+           names_the_file_once;
+         test "sniff of a disk buffer the host cannot map is an Error"
+           sniff_fails;
+       ])
