@@ -2241,6 +2241,53 @@ let artifact_tests =
           equal (option int)
             (Some (Artifact.version v3))
             (Option.map Artifact.version (Store.artifact store "x" `Latest)));
+      test "the latest is a version published while the scan read the last"
+        (fun () ->
+          if Sys.win32 then skip ~reason:"Windows has no mkfifo" ();
+          (* A FIFO in place of version 3 holds the reader inside its scan: it
+             has listed 1, 2 and 3, and its read of 3 waits for this test to
+             write it. Meanwhile version 4 is published and 3 is written
+             deleted, as when a writer publishes a version and prunes the one
+             before it. *)
+          let store = new_store () in
+          let s = start store in
+          let v1 = Session.log_artifact s ~name:"x" (source "1") in
+          let v2 = Session.log_artifact s ~name:"x" (source "2") in
+          Store.delete_artifact store v1;
+          Store.delete_artifact store v2;
+          let third = Filename.concat (Store.root store) "artifacts/x/3.json" in
+          Unix.mkfifo third 0o644;
+          let latest = ref None in
+          let reader =
+            Thread.create
+              (fun () -> latest := Store.artifact store "x" `Latest)
+              ()
+          in
+          (* A child writes the FIFO: its open returns once the reader has
+             opened it, and a reader that never opens it ends the child at its
+             alarm instead of holding the run. *)
+          let pid, stdin, out = spawn [ "fifo"; Store.root store; third ] in
+          let opened = In_channel.input_line out in
+          if opened <> Some "opened" then (
+            (* A reader blocked in the open is let go by an open for writing. *)
+            (try
+               Unix.close
+                 (Unix.openfile third [ Unix.O_WRONLY; Unix.O_NONBLOCK ] 0)
+             with Unix.Unix_error _ -> ());
+            Thread.join reader;
+            ignore (Unix.waitpid [] pid);
+            fail "the reader never opened version 3's file");
+          let v4 = Session.log_artifact s ~name:"x" (source "4") in
+          (* The child writes 3's tombstone once this line reaches it. *)
+          ignore (Unix.write_substring stdin "go\n" 0 3);
+          Unix.close stdin;
+          Thread.join reader;
+          wait pid;
+          close_in out;
+          Session.finish s;
+          equal (option int)
+            (Some (Artifact.version v4))
+            (Option.map Artifact.version !latest));
       test "a deleted latest number is never reused" (fun () ->
           let store = new_store () in
           let s = start store in
