@@ -1416,15 +1416,20 @@ let test_truncated_borrow kind =
   equal string "Sys_error naming the file"
     (child [ "truncated-borrow"; "copy"; kind_arg kind; path ])
 
-(* A read of a host borrow's page that a truncation cut off ends the process
-   on Linux, and on macOS for a created file; on macOS, an opened file's page
-   keeps the bytes it held. *)
+(* A read of a host borrow's page that a truncation cut off ends the process on
+   Linux, and on macOS for a created file; on macOS's APFS and HFS+, an opened
+   file's page keeps the bytes it held. *)
 let test_truncated_pages kind =
   if Sys.win32 then skip ~reason:"no truncation of a mapped file" ();
   let expected =
     match (os (), kind) with
     | "Linux", _ | "Darwin", Created -> "killed by SIGBUS"
-    | "Darwin", Opened -> "read the bytes it held"
+    | "Darwin", Opened when Lazy.force identified -> "read the bytes it held"
+    | "Darwin", Opened ->
+        skip
+          ~reason:
+            "a file system other than APFS and HFS+ leaves the read unspecified"
+          ()
     | name, _ -> skip ~reason:(name ^ " leaves the read unspecified") ()
   in
   let path = new_path () in
