@@ -154,8 +154,9 @@ let count p =
   in
   go 0
 
-(* A property name is read loosely: case, spaces, [_] and [-] do not count
-   (UAX44-LM3, without its optional prefix "is"). *)
+(* A property name or value is read loosely (UAX44-LM3): case, spaces, [_], [-]
+   and an initial "is" do not count, so [IsGreek] is [greek] and [isc] is
+   [c]. *)
 let loose s =
   let b = Buffer.create (String.length s) in
   String.iter
@@ -164,7 +165,9 @@ let loose s =
       | ' ' | '_' | '-' -> ()
       | c -> Buffer.add_char b c)
     s;
-  Buffer.contents b
+  let k = Buffer.contents b in
+  if String.starts_with ~prefix:"is" k then String.sub k 2 (String.length k - 2)
+  else k
 
 let property p at name =
   let lookup table key =
@@ -179,17 +182,19 @@ let property p at name =
     List.map (fun (names, _, scx) -> (names, scx)) Unicode_tables.script
   and categories = Unicode_tables.general_category
   and binaries = Unicode_tables.binary in
-  let key = loose name in
   let found =
-    match String.index_opt key '=' with
+    match String.index_opt name '=' with
     | Some i -> (
-        let value = String.sub key (i + 1) (String.length key - i - 1) in
-        match String.sub key 0 i with
+        let value =
+          loose (String.sub name (i + 1) (String.length name - i - 1))
+        in
+        match loose (String.sub name 0 i) with
         | "gc" | "generalcategory" -> lookup categories value
         | "sc" | "script" -> lookup scripts value
         | "scx" | "scriptextensions" -> lookup extensions value
         | _ -> None)
     | None -> (
+        let key = loose name in
         match lookup categories key with
         | Some d -> Some d
         | None -> (

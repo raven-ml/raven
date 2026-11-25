@@ -358,6 +358,9 @@ let language =
           ("\\p{Lu}\\p{Ll}+", "Hello", Some "Hello");
           ("\\p{Script=Greek}+", "x αβγ", Some "αβγ");
           ("\\p{greek}+", "αβ", Some "αβ");
+          ("\\p{IsGreek}+", "x αβ", Some "αβ");
+          ("\\p{gc=isLu}", "aB", Some "B");
+          ("\\p{isc}", "a\x01", Some "\x01");
           ("\\p{gc=Lu}", "aB", Some "B");
           ("\\p{General_Category=Decimal_Number}", "a5", Some "5");
           ("\\pL", "1a", Some "a");

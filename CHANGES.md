@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.Str.regex` reads a property name or value without an initial `is`,
+  as UAX #44's loose matching says: `\p{IsGreek}` is `\p{Greek}`, and
+  `\p{isc}` is `\p{C}`. Such names were refused.
 - A failure to decode a flat Parquet column chunk names the column, as a
   nested leaf's names its path: `row group 0: bytes 4-48: column "x": the page
   fails its CRC-32 checksum`. In a file of several columns it named only the
