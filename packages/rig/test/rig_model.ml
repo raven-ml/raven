@@ -994,25 +994,27 @@ let within_sys at a b =
 (* Sizes at the edges rig.mli names: none, a page, a host buffer that starts on
    a page from [Rig.Buffer.paged_from] bytes; a megabyte now and then, whose
    bytes cost every call that touches them. A copy larger than a staging slot is
-   test_buffer.ml's. *)
-let size =
+   test_buffer.ml's. Two domains' programs make no megabyte: each runs 50 times
+   and the judge replays its prefix, and the bytes of megabytes made that often
+   pace collections that stop every domain. *)
+let size ~two =
   let pp = Format.pp_print_int in
   Gen.frequency
-    [
-      ( 8,
-        Gen.of_list ~pp
-          [
-            0;
-            1;
-            8;
-            24;
-            4096;
-            B.paged_from - 1;
-            B.paged_from;
-            B.paged_from + 4096;
-          ] );
-      (1, Gen.of_list ~pp [ 1 lsl 20 ]);
-    ]
+    ([
+       ( 8,
+         Gen.of_list ~pp
+           [
+             0;
+             1;
+             8;
+             24;
+             4096;
+             B.paged_from - 1;
+             B.paged_from;
+             B.paged_from + 4096;
+           ] );
+     ]
+    @ if two then [] else [ (1, Gen.of_list ~pp [ 1 lsl 20 ]) ])
 
 let seed = Gen.int_range 0 255
 
@@ -2743,6 +2745,7 @@ let commands ~two ~fork =
       ~reaches:[ buffer_of a; buffer_of b ]
       ~memories:true ~changes:(emptied last [ a ]) [ a.cl; b.cl ] f
   in
+  let size = size ~two in
   let start =
     command "start"
       (Gen.unit @-> makes world)
@@ -3099,19 +3102,18 @@ let commands ~two ~fork =
             Atomic.set c.used true;
             Atomic.set c.sk None))
   in
-  (* A major collection marks the whole heap: it costs most of a program's
-     time, so one draw in four collects. It collects every value dropped
-     before it, and the drain after it releases the holds of the submissions
-     among them: on one domain, memory such a submission held is taken again.
-     On two domains it stops both, and on a loaded machine each of its stops
-     waits for a domain the system has descheduled. Its [pre] keeps it to
-     the prefix, which runs on one domain: a command with a [pre] is drawn
-     only there (Windtrap.stateful). *)
+  (* A major collection marks the whole heap: it costs most of a program's time,
+     so one draw in four collects. It collects every value dropped before it,
+     and the drain after it releases the holds of the submissions among them:
+     memory such a submission held is taken again. Two domains' programs make
+     none. Each runs 50 times, and a full collection stops every domain, the
+     idle ones included: on a loaded machine each stop waits for a domain the
+     system has descheduled while the others spin. *)
   let collects = Gen.int_range 0 3 in
   let collect =
-    command "collect" ~pre:(fun _ _ -> true)
+    command "collect"
       (collects @-> world ^-> returns unit)
-      (fun k w -> if k = 0 && not w.two then undrop w)
+      (fun k w -> if k = 0 then undrop w)
       (fun k _ ->
         if k = 0 then begin
           Gc.full_major ();
@@ -3167,7 +3169,7 @@ let commands ~two ~fork =
       times 3 drop;
       times 2 drop_sub;
       times 2 drop_kept;
-      times 2 collect;
+      (if two then [] else times 2 collect);
       (if fork then
          times 2
            (command "fork"
