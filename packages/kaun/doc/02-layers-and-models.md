@@ -238,7 +238,7 @@ let () =
 
 The loss never depends on `stats'`: training mode normalizes with the batch's statistics, so the running statistics are a side output, and `Rune.value_and_grad_aux` returns them as plain values. Statistics have their own `walk` (`Batch_norm.Stats` satisfies `Nx.Ptree.S` itself), so they are saved like parameters under their own field; see [Saving](04-saving-and-pretrained.md).
 
-`Batch_norm.init` builds float32 parameters (cast with `Nx.Ptree.cast (module Batch_norm) dt` for other precisions); `apply` is generic over float dtypes, like the other layers' `make`, computing half- and quarter-precision normalization at float32 and rounding once.
+`Batch_norm.init` builds float32 parameters and statistics. Cast the parameters with `Nx.Ptree.cast (module Batch_norm) dt` for other precisions and keep the statistics at float32. A half-precision moving average stalls up to 5% short of its target (see `Batch_norm.Stats`). `apply` is generic over float dtypes, and the statistics' dtype is independent of the parameters'. Half- and quarter-precision normalization computes at float32 and rounds once.
 
 ## Initializers
 

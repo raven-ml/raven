@@ -22,6 +22,24 @@ let narrow =
 let each_dtype dtypes f =
   List.iter (function Dtype dt -> f (Nx.Dtype.name dt) (Dtype dt)) dtypes
 
+(* Statistics' dtypes: wider and narrower than each x's. *)
+let stats_dtypes =
+  [ Dtype Nx.float64; Dtype Nx.float32; Dtype Nx.float16; Dtype Nx.bfloat16 ]
+
+(* [f msg x_dtype stats_dtype] for each x dtype of [xs] and each statistics'
+   dtype. *)
+let each_pair xs f =
+  List.iter
+    (fun (Dtype dt) ->
+      List.iter
+        (fun (Dtype sdt) ->
+          f
+            (Printf.sprintf "x %s, stats %s" (Nx.Dtype.name dt)
+               (Nx.Dtype.name sdt))
+            (Dtype dt) (Dtype sdt))
+        stats_dtypes)
+    xs
+
 let values x = Nx.to_array (Nx.cast Nx.float64 x)
 let vec dt xs = Nx.create dt [| Array.length xs |] xs
 let f32 shape xs = Nx.create Nx.float32 shape xs
@@ -107,9 +125,12 @@ let pp_case ppf c =
 let features c = c.shape.(Array.length c.shape - 1)
 let rows c = count c.shape / features c
 
+let stats_at dt c =
+  { Batch_norm.Stats.mean = vec dt c.mean; var = vec dt c.var }
+
 let layer dt c =
   ( { Batch_norm.gamma = vec dt c.gamma; beta = Option.map (vec dt) c.beta },
-    { Batch_norm.Stats.mean = vec dt c.mean; var = vec dt c.var } )
+    stats_at dt c )
 
 let input dt c = Nx.cast dt (Nx.create Nx.float64 c.shape c.xs)
 
@@ -315,32 +336,83 @@ let blend dt ~momentum s b =
 
 let training_stats =
   prop
-    "with training = true, stats' is momentum * stats + (1 - momentum) * \
-     batch, the batch's Nx.mean and Nx.var at x's dtype"
+    "with training = true, stats' is momentum * stats + (1 - momentum) * batch \
+     at the statistics' dtype, the batch's Nx.mean and Nx.var at x's dtype \
+     cast to it"
     ~examples
     (case ~element:(Gen.float_range (-4.) 4.))
     (fun c ->
       cover_case c;
       cover "momentum 0" (c.momentum = 0.);
       cover "momentum 1" (c.momentum = 1.);
-      each_dtype (wide @ narrow) (fun msg (Dtype dt) ->
-          let p, s = layer dt c in
+      each_pair (wide @ narrow) (fun msg (Dtype dt) (Dtype sdt) ->
+          let p, _ = layer dt c in
+          let s = stats_at sdt c in
           let x = input dt c in
           let _, s' =
             Batch_norm.apply ~momentum:c.momentum ~eps:c.eps p s ~training:true
               x
           in
           let axes = other_axes c in
+          let batch v = values (Nx.cast sdt v) in
           let expected =
-            ( blend dt ~momentum:c.momentum (values s.mean)
-                (values (Nx.mean ~axes x)),
-              blend dt ~momentum:c.momentum (values s.var)
-                (values (Nx.var ~axes x)) )
+            ( blend sdt ~momentum:c.momentum (values s.mean)
+                (batch (Nx.mean ~axes x)),
+              blend sdt ~momentum:c.momentum (values s.var)
+                (batch (Nx.var ~axes x)) )
           in
           equal ~msg
             (pair (array within) (array within))
             expected
             (exactly (values s'.mean), exactly (values s'.var))))
+
+(* The running statistics after [k] steps [s(k)] against the float64 moving
+   average [r(k)] of the same batch statistics [b(k)]: [s(k + 1) = momentum *
+   s(k) + (1 - momentum) * b(k) + d(k)], [|d(k)|] at most [blend]'s per-step
+   bound [e(k)] at float32, and [r(k + 1)] the same with an error of its own of
+   at most [3 u64] of its two terms' magnitudes [t(k)]. So [|s(k) - r(k)|] is at
+   most [E(k)], with [E(0) = 0] and [E(k + 1) = momentum * E(k) + e(k) + 3 u64
+   t(k)]: a geometric sum of the steps' bounds, below their largest over [1 -
+   momentum]. *)
+let long_run () =
+  let momentum = 0.99 and features = 3 in
+  let p, s = Batch_norm.init ~features Nx.Host.on in
+  let p = Nx.Ptree.cast (module Batch_norm) Nx.float16 p in
+  let scale = vec Nx.float32 [| 1.; 2.; 0.5 |]
+  and offset = vec Nx.float32 [| 3.; -1.; 10. |] in
+  let mean = (Array.make features 0., Array.make features 0.)
+  and var = (Array.make features 1., Array.make features 0.) in
+  let step (r, e) s b =
+    let next = blend Nx.float32 ~momentum s b in
+    Array.iteri
+      (fun j (_, d) ->
+        let m = momentum *. r.(j) and n = (1. -. momentum) *. b.(j) in
+        let own = 3. *. u64 *. (Float.abs m +. Float.abs n) in
+        r.(j) <- m +. n;
+        e.(j) <- (momentum *. e.(j)) +. d +. own)
+      next
+  in
+  let s =
+    Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
+    let s = ref s in
+    for _ = 1 to 300 do
+      let x =
+        Nx.cast Nx.float16
+          (Nx.add
+             (Nx.mul (Nx.Rng.normal Nx.float32 [| 16; features |]) scale)
+             offset)
+      in
+      step mean (values !s.mean) (values (Nx.mean ~axes:[ 0 ] x));
+      step var (values !s.var) (values (Nx.var ~axes:[ 0 ] x));
+      s := snd (Batch_norm.apply ~momentum p !s ~training:true x)
+    done;
+    !s
+  in
+  let expected (r, e) = Array.map2 (fun r e -> (r, e)) r e in
+  equal
+    (pair (array within) (array within))
+    (expected mean, expected var)
+    (exactly (values s.mean), exactly (values s.var))
 
 (* 777f1e4f61: a float32 batch mean of 1000.1 is not exact, and the feature
    still maps to beta. *)
@@ -454,38 +526,76 @@ let same_stats () =
    is within 2 ulps ([4u]); the two products round once each ([2u]). So the term
    before [beta] is within [8u] of its value to first order, [9u] with the
    second-order terms, and the sum adds [u] of [y]. The float64 reference,
-   multiplying by [gamma] last, adds [6 u64] and [u64]. Near zero the two
-   products and the sum each lose up to half a subnormal more, on both sides. *)
-let eval_reference dt c ~xs ~gamma ~beta ~mean ~var =
+   multiplying by [gamma] last, adds [6 u64] and [u64]. Statistics wider than
+   the dtype are rounded to it first, by [u_cast]: to first order that moves the
+   term by [u_cast |mean gamma| / sqrt (var + eps)] through the mean and [u_cast
+   var |t| / (2 (var + eps))] through the variance. Near zero the two products,
+   the sum and the cast each lose up to half a subnormal more, on both sides. *)
+let eval_reference dt c ~u_cast ~xs ~gamma ~beta ~mean ~var =
   let f = features c and u = u dt in
   let near_zero = 2. *. (tiny dt +. tiny Nx.float64) in
   Array.mapi
     (fun i x ->
       let j = i mod f in
-      let t = (x -. mean.(j)) /. sqrt (var.(j) +. c.eps) *. gamma.(j) in
+      let root = sqrt (var.(j) +. c.eps) in
+      let t = (x -. mean.(j)) /. root *. gamma.(j) in
       let y = match beta with None -> t | Some b -> t +. b.(j) in
+      (* The later roundings act on the cast's error too, hence [1 + 9u]. *)
+      let cast =
+        ((u_cast *. Float.abs (mean.(j) *. gamma.(j)) /. root)
+        +. (u_cast *. var.(j) *. Float.abs t /. (2. *. (var.(j) +. c.eps))))
+        *. (1. +. (9. *. u))
+      in
       ( y,
         (((9. *. u) +. (6. *. u64)) *. Float.abs t)
         +. ((u +. u64) *. Float.abs y)
-        +. near_zero ))
+        +. cast +. near_zero ))
     xs
+
+(* The unit roundoff of a cast from [sdt] to [dt]: zero where [dt] holds every
+   value of [sdt]. *)
+let u_cast sdt dt =
+  let bits d = (Nx.Dtype.float_format d).fraction_bits in
+  if bits sdt > bits dt then u dt else 0.
+
+(* Cases, half of them with x within 1e-6 of the mean, where the statistics'
+   rounding to x's dtype is most of the error. *)
+let near_mean =
+  let open Gen in
+  with_pp pp_case
+  @@ let* c = case ~element:(float_range (-4.) 4.) in
+     let* near = bool in
+     if not near then constant c
+     else
+       let+ d =
+         array ~size:(constant (Array.length c.xs)) (float_range (-1e-6) 1e-6)
+       in
+       { c with xs = Array.mapi (fun i d -> c.mean.(i mod features c) +. d) d }
+
+let is_near_mean c =
+  Array.length c.xs > 0
+  && Array.for_all
+       (fun ok -> ok)
+       (Array.mapi
+          (fun i x -> Float.abs (x -. c.mean.(i mod features c)) <= 1e-6)
+          c.xs)
 
 let eval_affine =
   prop
     "with training = false, y is gamma * (x - mean) / sqrt (var + eps) + beta \
-     from stats, and stats' == stats"
-    ~examples
-    (case ~element:(Gen.float_range (-4.) 4.))
-    (fun c ->
+     from stats cast to x's dtype, and stats' == stats"
+    ~examples near_mean (fun c ->
       cover_case c;
-      each_dtype wide (fun msg (Dtype dt) ->
-          let p, s = layer dt c in
+      cover "x within 1e-6 of the mean" (is_near_mean c);
+      each_pair wide (fun msg (Dtype dt) (Dtype sdt) ->
+          let p, _ = layer dt c in
+          let s = stats_at sdt c in
           let x = input dt c in
           let y, s' = Batch_norm.apply ~eps:c.eps p s ~training:false x in
           let expected =
-            eval_reference dt c ~xs:(values x) ~gamma:(values p.gamma)
-              ~beta:(Option.map values p.beta) ~mean:(values s.mean)
-              ~var:(values s.var)
+            eval_reference dt c ~u_cast:(u_cast sdt dt) ~xs:(values x)
+              ~gamma:(values p.gamma) ~beta:(Option.map values p.beta)
+              ~mean:(values s.mean) ~var:(values s.var)
           in
           equal ~msg:(msg ^ ": y") (array within) expected (exactly (values y));
           satisfies ~msg:(msg ^ ": stats'") ~claim:"stats itself"
@@ -497,12 +607,15 @@ let up x = Nx.cast Nx.float32 x
 
 let eval_island =
   prop
-    "with training = false, a narrow x is normalized in a float32 island and \
-     rounded once"
+    "with training = false, a narrow x is normalized in a float32 island, the \
+     statistics cast to float32 once, and rounded once"
     ~examples (case ~element) (fun c ->
       cover_case c;
-      each_dtype narrow (fun msg (Dtype dt) ->
-          let p, s = layer dt c in
+      cover "a mean float16 cannot hold"
+        (Array.exists (fun m -> Nx.Dtype.of_float Nx.float16 m <> m) c.mean);
+      each_pair narrow (fun msg (Dtype dt) (Dtype sdt) ->
+          let p, _ = layer dt c in
+          let s = stats_at sdt c in
           let x = input dt c in
           let y, _ = Batch_norm.apply ~eps:c.eps p s ~training:false x in
           let y32, _ =
@@ -624,6 +737,10 @@ let () =
            [
              training_standardizes;
              training_stats;
+             test
+               "float32 statistics of float16 parameters and x follow the \
+                moving average of the batch statistics over 300 steps"
+               long_run;
              test "a constant feature maps to beta" constant_feature;
              step_returns_stats;
              gradients;

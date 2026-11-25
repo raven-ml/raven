@@ -78,9 +78,15 @@ val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
 module Stats : sig
   type ('a, _) t = { mean : 'a; var : 'a }
   (** The type for running statistics over payload ['a], at tensor payloads each
-      of shape [[| features |]]. The exponential moving average accumulates
-      small increments, so keep statistics at float32 even when the parameters
-      are half precision. *)
+      of shape [[| features |]], at a float dtype of their own, independent of
+      the parameters' and the input's.
+
+      A training step changes a statistic by [(1 - momentum) * (batch - stats)]
+      and up to about an ulp of rounding, so statistics of unit roundoff [u]
+      stop following their target within about [u / (1 - momentum)] of it,
+      relative: up to 5% at float16 and 39% at bfloat16 with the default
+      momentum. {!init} makes them float32; keep them so when the parameters are
+      cast to half precision. *)
 
   val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
   (** [walk c s] walks [s]'s statistics, [mean] then [var], at those paths: the
@@ -112,10 +118,10 @@ val apply :
   ?momentum:float ->
   ?eps:float ->
   ((float, 'b, 'd) Nx.t, 'd) t ->
-  ((float, 'b, 'd) Nx.t, 'd) Stats.t ->
+  ((float, 's, 'd) Nx.t, 'd) Stats.t ->
   training:bool ->
   (float, 'b, 'd) Nx.t ->
-  (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Stats.t
+  (float, 'b, 'd) Nx.t * ((float, 's, 'd) Nx.t, 'd) Stats.t
 (** [apply p stats ~training x] is [(y, stats')] where [y] normalizes [x] per
     feature and applies the affine transform:
     [y = gamma * (x - mean) / sqrt (var + eps) + beta], without [+ beta] when
@@ -136,12 +142,15 @@ val apply :
 
     In training, [y] is [Nx.standardize] over the other axes with [gamma] and
     [beta] as its scale and shift, whose doc states its algorithm and error
-    bound, and the batch statistics are [Nx.mean] and [Nx.var] at [x]'s dtype.
-    In eval mode, a narrow [x] (float16, bfloat16, float8, float4) is
-    normalized and rescaled in a float32 island, [x], [stats], [gamma] and
-    [beta] upcast, and rounded once to [x]'s dtype; float32 and float64 inputs
-    use their own dtype throughout. So at every dtype the affine transform is
-    applied before the one rounding.
+    bound. The batch statistics are [Nx.mean] and [Nx.var] at [x]'s dtype, cast
+    to the statistics' dtype, and [stats'] is computed at the statistics' dtype,
+    [momentum] and [1 - momentum] stored at it and each product and the sum
+    rounded to it. In eval mode, a narrow [x] (float16, bfloat16, float8,
+    float4) is normalized and rescaled in a float32 island, [x], [gamma] and
+    [beta] upcast and [stats] cast once to float32, and rounded once to [x]'s
+    dtype; for float32 and float64 [x] the statistics are cast once to [x]'s
+    dtype and the rest uses it throughout. So at every dtype the affine
+    transform is applied before the one rounding.
 
     [momentum] defaults to [0.99] (per training step; unused in eval mode) and
     [eps] to [1e-5].

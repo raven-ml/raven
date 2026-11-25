@@ -4703,6 +4703,13 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Batch_norm.apply` takes running statistics of their own float
+  dtype, independent of the parameters' and the input's, so a
+  half-precision model can keep float32 statistics, as `Batch_norm.Stats`
+  advised and the type forbade: a half-precision moving average stalls up to
+  5% (float16) or 39% (bfloat16) short of its target. Training casts the
+  batch statistics to the statistics' dtype; eval casts the statistics once
+  to the dtype it computes in.
 - `Kaun_hf` runs curl with `-q` first, so it reads no `~/.curlrc`: an
   option there, such as `--location-trusted`, sent the token on to the
   hosts the Hub redirects to.

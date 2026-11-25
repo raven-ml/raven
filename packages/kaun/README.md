@@ -207,9 +207,11 @@ A mixture-of-experts model, OpenAI's gpt-oss, is an app:
   covers grouped queries, rotary positions and cached decoding, and no
   sliding windows or cross-attention layer (write those from the
   `scaled_dot_product_attention` core).
-- `Batch_norm.init` builds float32 parameters (cast with
-  `Nx.Ptree.cast (module Batch_norm) dt` for other precisions); `apply` is
-  generic over float dtypes, like the other layers.
+- `Batch_norm.init` builds float32 parameters and statistics; cast the
+  parameters with `Nx.Ptree.cast (module Batch_norm) dt` for other
+  precisions and keep the statistics at float32, where a moving average
+  stalls within about 6e-6 of its target (`Batch_norm.Stats`). `apply` is
+  generic over float dtypes.
 - `Metric.auc_roc` and macro-averaged scores do not decompose over
   batches — compute them on the full evaluation set (see the `Metric`
   docs).

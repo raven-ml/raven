@@ -39,8 +39,9 @@ let low_precision : type b. (float, b) Nx.dtype -> bool = function
   | Float16 | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn -> true
   | Float32 | Float64 -> false
 
-let apply ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
-    ~training x =
+let apply (type b s d) ?(momentum = 0.99) ?(eps = 1e-5)
+    (p : ((float, b, d) Nx.t, d) t) (stats : ((float, s, d) Nx.t, d) Stats.t)
+    ~training (x : (float, b, d) Nx.t) =
   if not (momentum >= 0.0 && momentum <= 1.0) then
     Format.kasprintf invalid_arg
       "Batch_norm.apply: momentum must be in [0, 1], got %a"
@@ -74,8 +75,10 @@ let apply ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
   let gamma = broadcast p.gamma and beta = Option.map broadcast p.beta in
   if training then
     let y = Nx.standardize ~axes ~eps ~scale:gamma ?shift:beta x in
+    (* The batch statistics at x's dtype, cast to the statistics', where the
+       moving average is computed. *)
     let update old batch =
-      let batch = Nx.reshape [| features |] batch in
+      let batch = Nx.cast (Nx.dtype old) (Nx.reshape [| features |] batch) in
       Nx.add (Nx.mul_s old momentum) (Nx.mul_s batch (1.0 -. momentum))
     in
     ( y,
@@ -91,11 +94,14 @@ let apply ?(momentum = 0.99) ?(eps = 1e-5) p (stats : _ Stats.t)
       let y = Nx.mul n gamma in
       match beta with None -> y | Some beta -> Nx.add y beta
     in
-    let mean = broadcast stats.Stats.mean and var = broadcast stats.var in
+    (* The statistics are cast once, to the dtype the affine computes in. *)
+    let mean = Nx.reshape pshape stats.Stats.mean
+    and var = Nx.reshape pshape stats.var in
     let dt = Nx.dtype x in
-    if not (low_precision dt) then (affine x mean var gamma beta, stats)
+    if not (low_precision dt) then
+      (affine x (Nx.cast dt mean) (Nx.cast dt var) gamma beta, stats)
     else
-      let up = Nx.cast Nx.float32 in
+      let up v = Nx.cast Nx.float32 v in
       ( Nx.cast dt
           (affine (up x) (up mean) (up var) (up gamma) (Option.map up beta)),
         stats )
