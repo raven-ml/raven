@@ -300,21 +300,26 @@ let test_symbolic_jit =
 
 let cases = test_jit @ test_jit_cases @ test_jit_footguns @ test_symbolic_jit
 
-let per_case name tests =
-  group name (List.map (fun case -> group case (tests case)) cases)
+(* [claim] of each case, a test named after it. *)
+let per_case claim f =
+  group claim (List.map (fun case -> test case (fun () -> f case)) cases)
 
 (* A capture binds the variables its calls read. *)
 let captures =
-  Golden.cases "captures.golden" (fun cell ->
-      let names =
-        if cell "vars" = "-" then []
-        else
-          List.map
-            (fun w -> List.hd (String.split_on_char '=' w))
-            (String.split_on_char ' ' (cell "vars"))
-      in
-      equal (list string) names
-        (List.map fst (variables (captured (cell "case")))))
+  group
+    "captures › bind the variables their calls read, as their golden states"
+    [
+      Golden.cases "captures.golden" (fun cell ->
+          let names =
+            if cell "vars" = "-" then []
+            else
+              List.map
+                (fun w -> List.hd (String.split_on_char '=' w))
+                (String.split_on_char ' ' (cell "vars"))
+          in
+          equal (list string) names
+            (List.map fst (variables (captured (cell "case")))));
+    ]
 
 let lowers_as_recorded case =
   let file = case ^ "_lowered.golden" in
@@ -323,18 +328,23 @@ let lowers_as_recorded case =
       |> Uops.numbered_like (Golden.sink file))
 
 let recorded =
-  per_case "jit_lower › recorded" (fun case ->
-      [
-        lowers_as_recorded case;
-        test "makes each input the parameter of its slot" (fun () ->
-            binds_inputs ~inputs:(inputs case) (captured case) (lower case));
-        test "places no held buffer or input in an arena" (fun () ->
-            ignore
-              (plans_around ~held:(held case) ~inputs:(inputs case)
-                 (captured case) (lower case)));
-        test "lowers the same twice" (fun () ->
-            lowers_the_same (fun () -> lower case));
-      ])
+  group "jit_lower"
+    [
+      group "lowers each recorded capture as its golden states"
+        (List.map lowers_as_recorded cases);
+      per_case
+        "makes each input of a recorded capture the parameter of its slot"
+        (fun case ->
+          binds_inputs ~inputs:(inputs case) (captured case) (lower case));
+      per_case
+        "places no held buffer or input of a recorded capture in an arena"
+        (fun case ->
+          ignore
+            (plans_around ~held:(held case) ~inputs:(inputs case)
+               (captured case) (lower case)));
+      per_case "lowers a recorded capture the same twice" (fun case ->
+          lowers_the_same (fun () -> lower case));
+    ]
 
 (* Replays of recorded captures
 
@@ -375,9 +385,7 @@ let replays_what_its_capture_leaves case =
        ( unplanned ~devices:on_memory ~held ~inputs c,
          replayed ~devices:on_memory ~held ~inputs c lowered ))
   in
-  prop ~count:10
-    ~examples:[ [ (0, capture_binding case) ] ]
-    "replays what its capture leaves, run unplanned"
+  prop ~count:10 ~examples:[ [ (0, capture_binding case) ] ] case
     (Gen.with_pp pp_runs
        (Gen.list ~size:(Gen.int_range 1 3) (Gen.pair Gen.nat (bindings case))))
     (fun runs ->
@@ -385,8 +393,10 @@ let replays_what_its_capture_leaves case =
       equal contents (unplanned runs) (replayed runs))
 
 let replays =
-  per_case "replay › recorded" (fun case ->
-      [ replays_what_its_capture_leaves case ])
+  group
+    "jit_lower › a lowering of a recorded capture replays what the capture \
+     leaves, run unplanned"
+    (List.map replays_what_its_capture_leaves cases)
 
 (* Drawn captures
 
@@ -829,16 +839,19 @@ let replays_drawn d =
     (replayed ~devices ~held ~inputs linear lowered runs)
 
 let drawn_laws =
-  group "jit_lower › drawn"
+  group "jit_lower"
     [
-      prop "replays what its capture leaves, run unplanned" drawn replays_drawn;
-      prop "places no held buffer or input in an arena" drawn (fun d ->
+      prop "a lowering replays what a drawn capture leaves, run unplanned"
+        drawn replays_drawn;
+      prop "places no held buffer or input of a drawn capture in an arena"
+        drawn (fun d ->
           let ((linear, held, inputs) as c) = capture_of d in
           ignore (plans_around ~held ~inputs linear (lower_drawn c)));
-      prop "makes each input the parameter of its slot" drawn (fun d ->
+      prop "makes each input of a drawn capture the parameter of its slot"
+        drawn (fun d ->
           let ((linear, _, inputs) as c) = capture_of d in
           binds_inputs ~inputs linear (lower_drawn c));
-      prop "lowers the same twice" drawn (fun d ->
+      prop "lowers a drawn capture the same twice" drawn (fun d ->
           let c = capture_of d in
           lowers_the_same (fun () -> lower_drawn c));
     ]

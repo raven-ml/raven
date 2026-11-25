@@ -1814,26 +1814,27 @@ on the host and on CPU:1 to CPU:3. A case's goldens are its captured schedule, t
 holds, its inputs in slot order, and what `jit_lower` makes of them; each case
 records its variables with their bound values (`captures.golden`).
 
-For each case, `J › jit_lower › recorded` compares the lowering with
+For each case, `J › jit_lower › lowers each recorded capture as its golden
+states` compares the lowering with
 tinygrad's, and checks that each input the schedule reaches is the parameter
 of its slot, of its type, device and size, and that no other parameter is
 bound; that the storage the lowering reaches is
 the held storage of the capture that is no input, plus arenas the capture does
 not reach; and that lowering twice gives the same schedule up to the numbers
-of the storage and placeholders it makes. `J › replay › recorded` links the
+of the storage and placeholders it makes (`J › jit_lower › makes each input of a
+recorded capture …`, `› places no held buffer …`, `› lowers a recorded capture the same
+twice`). `J › jit_lower › a lowering of a recorded capture replays …` links the
 lowering on the host and software devices and replays it as a jitted function
 is called: one to three runs, the first from contents drawn from a seed for
 each held buffer and input, each later one keeping what the runs before it
 left, with new inputs; each variable takes the values tinygrad's tests replay
 it with. After the last run, the held buffers and inputs hold what the captured
 schedule leaves when it runs the same runs unplanned, compiled as it is with
-its held buffers and inputs bound. `J › jit_lower › drawn` states the same
+its held buffers and inputs bound. `J › jit_lower › … a drawn capture …` states the same
 laws over drawn captures: calls of compiled kernels and copies over buffers of
 four or seventy floats on the host and CPU:1, whose inputs and constants no
-call writes, holding the last buffer written and those the draw keeps. Six
-cases run by default (a kernel on the host, an input a kernel writes, held
-buffers without inputs, copies to a device with queues, a held constant of
-Python's data, a variable); the other 60 are slow.
+call writes, holding the last buffer written and those the draw keeps. Every
+case runs by default.
 
 The parts of `engine/jit.py` that are not ported:
 
@@ -1842,8 +1843,8 @@ The parts of `engine/jit.py` that are not ported:
 | tinygrad: `engine/jit.py` `prune_linear` | with `prune=True`, a capture runs once the calls that none of its inputs feeds, and replays the rest | dropped: rune never runs a capture's kernels once; the values they compute are captures, which the compiled function holds (RFC 0012) |
 | tinygrad: `engine/jit.py` `CapturedJit.__call__`'s staging | a replay first copies each input that is a buffer of the captured schedule into fresh storage, through one linked schedule per set of such inputs | dropped: rune copies consumed storage that cannot lend before the run, and a program writes no other input (RFC 0012, Replaying) |
 | tinygrad: `engine/jit.py` `JitError` | the jit's exception | dropped: its raisers are `CapturedJit.__call__`, for a written disk input, and the `Tensor` surface (arguments that differ from the capture's, nothing captured, a result that is no `Tensor`); rune's compiled call raises its own `Jit_error` (RFC 0012) |
-| tinygrad: `engine/jit.py` `CapturedJit._linear`, `CapturedJit._linears` | a captured schedule is linked once per set of inputs it aliases, outside the link cache | `Tolk_engine.link`: the engine keeps no link cache; `J › replay › recorded` links each lowering once and replays it |
-| tinygrad: `engine/jit.py` `CapturedJit.__call__` | a replay runs the linked schedule on the call's inputs and variables, and at `DEBUG=1` says how many calls it runs | `Tolk_engine.run`; `J › replay › recorded` (66 cases); `EN › runs › at DEBUG=1, a run of ten calls says how many it runs`, `… of nine calls says nothing` |
+| tinygrad: `engine/jit.py` `CapturedJit._linear`, `CapturedJit._linears` | a captured schedule is linked once per set of inputs it aliases, outside the link cache | `Tolk_engine.link`: the engine keeps no link cache; `J › jit_lower › a lowering of a recorded capture replays …` links each lowering once and replays it |
+| tinygrad: `engine/jit.py` `CapturedJit.__call__` | a replay runs the linked schedule on the call's inputs and variables, and at `DEBUG=1` says how many calls it runs | `Tolk_engine.run`; `J › jit_lower › a lowering of a recorded capture replays …` (one per case); `EN › runs › at DEBUG=1, a run of ten calls says how many it runs`, `… of nine calls says nothing` |
 | tinygrad: `engine/jit.py` `CapturedJit._symbolic_ret` | results of symbolic shape are rebound to the call's variables | dropped: `Tensor` surface; rune wraps each result (RFC 0012) |
 | tinygrad: `engine/jit.py` `CapturedJit.free_intermediates` | the linked schedules, and the buffers they plan, are freed on demand | dropped: a linked schedule holds its arenas while it is reachable (`EN › runs › a linked schedule holds its storage while it is reachable`) |
 | tinygrad: `engine/jit.py` `CapturedJit.__reduce__`, `_TinyJit.__reduce__` | a captured jit pickles | dropped: no persistent cache (RFC 0012) |
@@ -1851,12 +1852,12 @@ The parts of `engine/jit.py` that are not ported:
 
 ### tinygrad
 
-A case name `c` stands for its four tests in `J › jit_lower › recorded › c`
-and its replay in `J › replay › recorded › c`.
+A case name `c` stands for its row `c` in each of the five groups of
+recorded captures of `J › jit_lower`.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `engine/jit.py` `jit_lower` | inputs become parameters of their slots, held buffers stay out of the plan, the schedule compiles with `JITBEAM`'s width | every case; `J › jit_lower › drawn` (four laws); `JB`, `Jit.width` among them |
+| tinygrad: `engine/jit.py` `jit_lower` | inputs become parameters of their slots, held buffers stay out of the plan, the schedule compiles with `JITBEAM`'s width | every case; `J › jit_lower` over drawn captures (four laws); `JB`, `Jit.width` among them |
 | tinygrad: runtime/test_jit.py::TestJit::test_jit_input_view | an input read through a view | `input_view` |
 | tinygrad: runtime/test_jit.py::TestJit::test_global_counters_jit | three chained kernels, and the counters a replay adds to | `chain_of_three`; the counters dropped: `GlobalCounters` is not ported, a run's work is its `DEBUG=2` lines (`EN`) |
 | tinygrad: runtime/test_jit.py::TestJit::test_jit_assign, test_jit_assign_int8; runtime/test_jit_footguns.py::TestJitCorrectBehavior::test_input_mutation_consistent | a kernel adds one to its input on every call | `assign`, `assign_int8` (each replay's later runs accumulate) |
@@ -1895,8 +1896,7 @@ and its replay in `J › replay › recorded › c`.
 
 ### Measures
 
-The default run of `J` takes 1.0 s on an idle machine, `JB` 0.1 s; the slow
-cases take 8 s. Coverage of `jit.ml` is 100% (12 of 12 points) from the
+A run of `J` takes 5.8 s cold on fudge, `JB` 0.5 s. Coverage of `jit.ml` is 100% (12 of 12 points) from the
 default run. ppx_windtrap finds no mutation site in `jit.ml`, so its
 mutants were made by hand, each built and run against `J` and `JB`: the
 inputs left as buffers (killed by the compiler: `param` unused), the slots

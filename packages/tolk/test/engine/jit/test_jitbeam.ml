@@ -85,7 +85,7 @@ let alike (beam, width) (beam', width') =
   equal (list (pair string string)) ~msg:"settings" s s';
   equal (list int) ~msg:"widths" w w'
 
-(* [Jit.width ?beam ()] with BEAM at [width]. *)
+(* [Jit.width ?beam ()] with BEAM at [beam_setting]. *)
 let width ?beam beam_setting =
   Setting.context [ B (Setting.beam, beam_setting) ] (fun () ->
       Jit.width ?beam ())
