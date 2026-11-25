@@ -188,11 +188,18 @@ let annotations ?prev dir =
       (tags, notes, tags_stamp, notes_stamp)
   | None -> (tags dir, notes dir, tags_stamp, notes_stamp)
 
-(* [read_log ?prev fd] is what a listing reads of the log [fd]: its start, the
-   start's time, whether the probe found the lock held, the log's [stat] and its
-   last record's end, if it is one. *)
-let read_log ?prev fd =
+(* [read_log ?prev ~path fd] is what a listing reads of the log [fd] at [path]:
+   its start, the start's time, whether the probe found the lock held, the log's
+   [stat] and its last record's end, if it is one. A log that opens may still
+   refuse its reads, as a directory does, or a log another machine holds locked
+   on SMB: that is [`Unread]. A probe the file system refuses, as an NFS mount
+   without its lock daemon does, leaves the run unprobed. *)
+let read_log ?prev ~path fd =
+  let reading f =
+    try f () with Sys_error e -> Error (`Unread (path ^ ": " ^ e))
+  in
   let* start, started_at =
+    reading @@ fun () ->
     match prev with
     | Some p -> Ok (p.start, p.started_at)
     | None -> (
@@ -201,15 +208,21 @@ let read_log ?prev fd =
         | Some line -> (decode_start line :> (_, error) result))
   in
   (* The probe comes before the read of the last record. *)
-  let held = File.probe fd in
-  let st = File.fstat fd in
-  let last =
-    match last_line fd ~size:st.Unix.st_size with
-    | None -> None
-    | Some line -> (
-        match Record.decode line with
-        | Some (t, Record.End s) -> Some (t, s)
-        | _ -> None)
+  let held =
+    match File.probe fd with h -> Some h | exception Sys_error _ -> None
+  in
+  let* st, last =
+    reading @@ fun () ->
+    let st = File.fstat fd in
+    let last =
+      match last_line fd ~size:st.Unix.st_size with
+      | None -> None
+      | Some line -> (
+          match Record.decode line with
+          | Some (t, Record.End s) -> Some (t, s)
+          | _ -> None)
+    in
+    Ok (st, last)
   in
   Ok (start, started_at, held, st, last)
 
@@ -233,14 +246,10 @@ let read ?prev ~id dir =
       | Some fd ->
           let* start, started_at, held, st, last =
             Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-            (* A log that opens may still refuse its reads, as a directory does,
-               or a log another machine holds locked on SMB. *)
-            try read_log ?prev fd
-            with Sys_error e -> Error (`Unread (path ^ ": " ^ e))
+            read_log ?prev ~path fd
           in
           let status, ended_at =
-            status ~held:(Some held) ~writer:(writer dir)
-              ~log_mtime:st.Unix.st_mtime last
+            status ~held ~writer:(writer dir) ~log_mtime:st.Unix.st_mtime last
           in
           let tags, notes, tags_stamp, notes_stamp = annotations ?prev dir in
           Ok
