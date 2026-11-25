@@ -3,12 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx.cpu's reductions and scans, as nx_cpu.mli states them: their order,
-   bit for bit, against a reference built here, and the same bits on one
-   thread and under every layout; Arg, Logsumexp and Moments within their
-   bounds, their two passes' bits and their network's bits; programs'
-   outputs, over plain and padded loads; chunks' carries; refusals; and
-   guard pages. *)
+(* nx.cpu's reductions and scans, as nx_cpu.mli states them, in its sections'
+   order: results that no thread count or layout changes; padded loads'
+   refusals; reductions and scans of narrow terms, bools and programs' outputs;
+   sums and products in lane order, bit for bit, against a reference built here,
+   and chunks' carries; Logsumexp and Moments, their two passes' bits and their
+   bounds; and their scans, within their bounds and with their network's
+   bits. *)
 
 open Windtrap
 open Nx_array_gen
@@ -17,6 +18,37 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 module Support = Nx_kernels_support
+
+(* nx.cpu under the table it runs from the start. *)
+let cpu = Support.cpu
+
+(* One long axis at a block's or a chunk's edge or past a chunk, between up to
+   two short ones. *)
+let long_axis =
+  let open Gen in
+  let edge =
+    of_list ~pp:Format.pp_print_int
+      [ 15; 16; 17; 1023; 1024; 1025; 4095; 4096; 4097 ]
+  in
+  let* n = frequency [ (2, edge); (1, int_range 5000 9000) ] in
+  let* before = array ~size:(int_range 0 1) (int_range 1 3) in
+  let+ after = array ~size:(int_range 0 1) (int_range 1 3) in
+  Array.concat [ before; [| n |]; after ]
+
+(* Reduce_cases' shapes with [long_axis] for its long axes, of up to 70 000
+   terms, which the examples hold where a law needs them: small extents of any
+   rank, a long axis, rows of a few to a few hundred terms, an empty axis beside
+   others. *)
+let shapes =
+  let open Gen in
+  let small = array ~size:(int_range 0 4) (int_range 0 5) in
+  let rows =
+    let* r = int_range 1 300 in
+    let+ k = of_list ~pp:Format.pp_print_int [ 2; 4; 9; 64; 300 ] in
+    [| r; k |]
+  in
+  let empty = of_list [ [| 0 |]; [| 3; 0 |]; [| 0; 4 |]; [| 2; 0; 3 |] ] in
+  frequency [ (5, small); (3, long_axis); (2, rows); (4, empty) ]
 
 (* Views *)
 
@@ -60,9 +92,9 @@ let computed_examples =
       Sum f64 [| 3; 4; 5 |] [| 1 |];
   ]
 
-(* NaNs made from numbers, before a NaN term and with none: opposite
-   infinities summed, zero times an infinity, along one block, past one,
-   past a chunk, in a few-term reduction's rows and through a stepped view. *)
+(* NaNs made from numbers, before a NaN term and with none: opposite infinities
+   summed, zero times an infinity, along one block, past one, past a chunk, in a
+   few-term reduction's rows and through a stepped view. *)
 let made_examples =
   let inf = Float.infinity and ninf = Float.neg_infinity in
   let nan = Int64.float_of_bits 0x7FF0_0000_0000_0042L in
@@ -82,8 +114,7 @@ let made_examples =
     case true Sum (f32 [| inf; ninf; 1. |]);
     case ~views:stepped false Sum
       (f64 ~stepped:true [| 1.; inf; 2.; ninf; 3. |]);
-    case ~views:stepped true Prod
-      (f64 ~stepped:true [| 2.; 0.; inf; 1.; nan |]);
+    case ~views:stepped true Prod (f64 ~stepped:true [| 2.; 0.; inf; 1.; nan |]);
     case false Sum (f32 (at 1025 [ (0, inf); (1024, ninf) ]));
     case true Sum (f32 (at 4097 [ (3, inf); (4096, ninf) ]));
     case ~axes:[| 1 |] false Sum rows;
@@ -95,16 +126,16 @@ let large_examples =
     example Sum f32 [| 400_000 |] [| 0 |];
     example Sum f32 [| 4000; 13; 2 |] [| 2 |];
     example ~scan:true Sum (D.Any D.Bfloat16) [| 400_000 |] [| 0 |];
-    (* Rows of more than 512 bytes of outputs and more than a chunk of
-       terms, which one thread totals in pieces. *)
+    (* Rows of more than 512 bytes of outputs and more than a chunk of terms,
+       which one thread totals in pieces. *)
     example ~scan:true Sum f32 [| 4100; 300 |] [| 0 |];
     example ~scan:true Sum (D.Any D.Bfloat16) [| 4100; 300 |] [| 0 |];
   ]
 
-(* A sum and a maximum, a running sum and product, of 9000 float32 terms
-   with opposite infinities at 100 and 101 and NaNs at 5000 and 6000, past
-   the first block and chunk: a NaN made from numbers before the NaN terms,
-   a NaN where one reaches. *)
+(* A sum and a maximum, a running sum and product, of 9000 float32 terms with
+   opposite infinities at 100 and 101 and NaNs at 5000 and 6000, past the first
+   block and chunk: a NaN made from numbers before the NaN terms, a NaN where
+   one reaches. *)
 let far_nan_examples =
   let n = 9000 in
   let r = Random.State.make [| 7 |] in
@@ -124,8 +155,8 @@ let far_nan_examples =
     (fun (scan, monoid) -> { scan; monoid; axes = [| 0 |]; x; views = [] })
     [ (false, Sum); (false, Max); (true, Sum); (true, Prod) ]
 
-(* Products and sums of 8- and 16-bit integers at their extremes, which
-   wrap in their width: 0xFFFF times 0xFFFF times 3 is 3 at uint16. *)
+(* Products and sums of 8- and 16-bit integers at their extremes, which wrap in
+   their width: 0xFFFF times 0xFFFF times 3 is 3 at uint16. *)
 let wrap_examples =
   let vector (type s) (dt : (int, s) D.t) monoid xs =
     {
@@ -158,11 +189,11 @@ let zero_example =
 
 (* The reference *)
 
-(* [ts] reduced in nx.cpu's order: blocks of 1024 terms in 16 lanes from
-   the identity, or from their first term where [first], term t into lane
-   t mod 16, the lanes' tree, in which a lane holding no term takes no
-   part, then the blocks' tree whose left part holds the largest power of
-   two of blocks below their count. *)
+(* [ts] reduced in nx.cpu's order: blocks of 1024 terms in 16 lanes from the
+   identity, or from their first term where [first], term t into lane t mod 16,
+   the lanes' tree, in which a lane holding no term takes no part, then the
+   blocks' tree whose left part holds the largest power of two of blocks below
+   their count. *)
 let ordered ?(first = false) (f, id) ts =
   let k = Array.length ts in
   let block x =
@@ -194,9 +225,9 @@ let ordered ?(first = false) (f, id) ts =
   if n = 0 then id else tree (Array.init n block) n
 
 (* [ts] scanned in nx.cpu's order: chunks of 4096 terms from the start, each
-   result the carry combined with the chunk's terms up to it, left to right,
-   the carry into a chunk the carry into the one before combined with that
-   chunk's total in [ordered]'s order. *)
+   result the carry combined with the chunk's terms up to it, left to right, the
+   carry into a chunk the carry into the one before combined with that chunk's
+   total in [ordered]'s order. *)
 let scanned ((f, id) as m) ts =
   let n = Array.length ts in
   let out = Array.make n id in
@@ -212,8 +243,8 @@ let scanned ((f, id) as m) ts =
   done;
   Array.map want_of out
 
-(* The carry into each chunk of [ts] scanned as [scanned] does: the
-   identity into the first. *)
+(* The carry into each chunk of [ts] scanned as [scanned] does: the identity
+   into the first. *)
 let carries ((f, id) as m) ts =
   let n = Array.length ts in
   let k = (n + 4095) / 4096 in
@@ -233,9 +264,9 @@ let expected (c : case) =
 
 (* Complex numbers *)
 
-(* A complex term: its parts' values, which a double holds exactly, and
-   their bits as stored, a float32's sign-extended. A number with a NaN part
-   is a NaN. *)
+(* A complex term: its parts' values, which a double holds exactly, and their
+   bits as stored, a float32's sign-extended. A number with a NaN part is a
+   NaN. *)
 type z = { re : float; im : float; bits : int64 * int64 }
 
 let znan z = Float.is_nan z.re || Float.is_nan z.im
@@ -281,10 +312,10 @@ let step32 x y =
     Int32.float_of_bits
       (if y > x = (x > 0.) then Int32.succ b else Int32.pred b)
 
-(* [a b + c] of float32s rounded once to float32. The exact product is a
-   double; their sum [s] rounds as the exact value does, since every
-   float32 midpoint is a double, but at a midpoint, where the sum's error
-   [e] (Knuth's TwoSum) decides. *)
+(* [a b + c] of float32s rounded once to float32. The exact product is a double;
+   their sum [s] rounds as the exact value does, since every float32 midpoint is
+   a double, but at a midpoint, where the sum's error [e] (Knuth's TwoSum)
+   decides. *)
 let fma32 a b c =
   let p = Sys.opaque_identity (a *. b) in
   let s = p +. c in
@@ -292,7 +323,7 @@ let fma32 a b c =
   if r = s || not (Float.is_finite s) then r
   else
     let t = s -. p in
-    let e = (p -. (s -. t)) +. (c -. t) in
+    let e = p -. (s -. t) +. (c -. t) in
     let o = step32 r s in
     if (r +. o) /. 2. <> s || e = 0. then r
     else if e > 0. = (o > r) then o
@@ -314,8 +345,8 @@ let zorder a b =
   let c = part a.re b.re in
   if c <> 0 then c else part a.im b.im
 
-(* [m] at the complex dtype, float32's where [narrow], and its identity: a
-   NaN operand of an extreme gives a NaN. *)
+(* [m] at the complex dtype, float32's where [narrow], and its identity: a NaN
+   operand of an extreme gives a NaN. *)
 let zop narrow m =
   let extreme keep a b =
     if znan a then a
@@ -329,15 +360,15 @@ let zop narrow m =
   | Min -> (extreme (fun c -> c <= 0), zof narrow infinity infinity)
   | Sum -> invalid_arg "zop: Sum"
 
-(* An expected complex result: each part's want, or [Z_nan], any number
-   with a NaN part, as every reduction but a sum gives a NaN. *)
+(* An expected complex result: each part's want, or [Z_nan], any number with a
+   NaN part, as every reduction but a sum gives a NaN. *)
 type zwant = Z of want * want | Z_nan
 
 let zwant_of z =
   if znan z then Z_nan else Z (Bits (fst z.bits), Bits (snd z.bits))
 
-(* [ts] scanned as [scanned] does, but from the first term where [first]:
-   the first chunk then has no carry. *)
+(* [ts] scanned as [scanned] does, but from the first term where [first]: the
+   first chunk then has no carry. *)
 let zscanned ~first ((f, id) as m) ts =
   let n = Array.length ts in
   let out = Array.make n id in
@@ -369,8 +400,8 @@ let zsums (c : case) ts =
     (sums (fun t -> F (t.re, fst t.bits)))
     (sums (fun t -> F (t.im, snd t.bits)))
 
-(* A product starts from its first term: 1 + 0i times a term would change
-   its signed zeros and make NaN parts from its infinite ones. *)
+(* A product starts from its first term: 1 + 0i times a term would change its
+   signed zeros and make NaN parts from its infinite ones. *)
 let zexpected (c : case) =
   let narrow = narrow c.x and first = c.monoid = Prod in
   let ts = zterms c.x in
@@ -381,10 +412,12 @@ let zexpected (c : case) =
       ~reduce:(fun o -> zwant_of (ordered ~first m o))
       ~scan:(zscanned ~first m)
 
-(* The first complex results [got] that differ from [want]: a NaN part
-   wanted matches any NaN, [Z_nan] any number with a NaN part. *)
+(* The first complex results [got] that differ from [want]: a NaN part wanted
+   matches any NaN, [Z_nan] any number with a NaN part. *)
 let zdiffer want got =
-  let part w x b = match w with Some_nan -> Float.is_nan x | Bits w -> w = b in
+  let part w x b =
+    match w with Some_nan -> Float.is_nan x | Bits w -> w = b
+  in
   let bad = ref [] in
   Array.iteri
     (fun i w ->
@@ -399,14 +432,15 @@ let zdiffer want got =
         match w with Z_nan -> "nan" | Z (wr, wi) -> show wr ^ " " ^ show wi
       in
       if (not ok) && List.length !bad < 8 then
-        bad := Printf.sprintf "result %d: %Lx %Lx, expected %s" i gr gi shown :: !bad)
+        bad :=
+          Printf.sprintf "result %d: %Lx %Lx, expected %s" i gr gi shown :: !bad)
     want;
   List.rev !bad
 
-(* Complex sums, products and extremes, reduced and scanned, in nx.cpu's
-   order, bit for bit, a NaN as any NaN: a sum's NaN part, else a number
-   with a NaN part. *)
-let law_complex (b : Support.backend) (c : case) =
+(* Complex sums, products and extremes, reduced and scanned, in nx.cpu's order,
+   bit for bit, a NaN as any NaN: a sum's NaN part, else a number with a NaN
+   part. *)
+let law_complex (c : case) =
   let s = shape_of c.x in
   let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
   cover "no term" (per = 0 && total (result_shape c) > 0);
@@ -417,10 +451,12 @@ let law_complex (b : Support.backend) (c : case) =
      leaves out, of a zero part, whose sign 1 + 0i times would change. *)
   let zero t = t.re = 0. || t.im = 0. in
   cover "a product of a lane of no term and a zero part"
-    (c.monoid = Prod && per mod 1024 > 0 && per mod 1024 < 16
+    (c.monoid = Prod
+    && per mod 1024 > 0
+    && per mod 1024 < 16
     && Array.exists zero ts);
-  (* Extremes of a lane or fewer terms an output take their lanes side by
-     side, a window's maximum among them. *)
+  (* Extremes of a lane or fewer terms an output take their lanes side by side,
+     a window's maximum among them. *)
   cover "an extreme of 2 to 16 terms an output"
     ((c.monoid = Max || c.monoid = Min)
     && (not c.scan) && per >= 2 && per <= 16
@@ -428,24 +464,23 @@ let law_complex (b : Support.backend) (c : case) =
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
-  equal (list string) [] (zdiffer (zexpected c) (zterms (run b c)))
+  equal (list string) [] (zdiffer (zexpected c) (zterms (run cpu c)))
 
 let complex_case =
-  Gen.with_pp pp_case
-    (case_of D.[ Any Complex64; Any Complex128 ])
+  Gen.with_pp pp_case (case_of ~shapes D.[ Any Complex64; Any Complex128 ])
 
-(* [n] terms, -0 - i then 1 - 0i, whose products in every order are
-   -0 - i; 1 + 0i times that would be +0 - i. *)
+(* [n] terms, -0 - i then 1 - 0i, whose products in every order are -0 - i; 1 +
+   0i times that would be +0 - i. *)
 let units n =
   let z re im = { Complex.re; im } in
   A.Any
     (A.of_array D.Complex64 [| n |]
        (Array.init n (fun i -> if i = 0 then z (-0.) (-1.) else z 1. (-0.))))
 
-(* Products of one term, which are that term: -0 - 0i, which 1 + 0i times
-   would make (+0, -0), 3 - 0i, (3, +0), and inf + 0i, (inf, NaN); the
-   scans of two, whose first results are so; and scans past a chunk, of
-   one slice, of slices side by side and of rows. *)
+(* Products of one term, which are that term: -0 - 0i, which 1 + 0i times would
+   make (+0, -0), 3 - 0i, (3, +0), and inf + 0i, (inf, NaN); the scans of two,
+   whose first results are so; and scans past a chunk, of one slice, of slices
+   side by side and of rows. *)
 let complex_examples =
   let one ~scan dt ts =
     {
@@ -468,6 +503,16 @@ let complex_examples =
     (* Extremes of 2x2 windows' terms, side by side. *)
     example ~specials:3 Max (D.Any D.Complex64) [| 5; 2; 2 |] [| 1; 2 |];
     example Min (D.Any D.Complex128) [| 7; 4 |] [| 1 |];
+    (* Terms broadcast along the reduced axis. *)
+    example
+      ~view:
+        {
+          perm = [| 0; 1 |];
+          stepped = false;
+          reversed = None;
+          broadcast = true;
+        }
+      Sum (D.Any D.Complex64) [| 4; 9 |] [| 1 |];
   ]
   @ List.map
       (fun (s, axis) ->
@@ -514,8 +559,8 @@ let covers (c : case) =
 
 (* nx.cpu's cases and order *)
 
-(* Whether a float result of [c] is a NaN made from numbers: one whose terms,
-   a scan's up to it, hold no NaN. *)
+(* Whether a float result of [c] is a NaN made from numbers: one whose terms, a
+   scan's up to it, hold no NaN. *)
 let makes_nan (c : case) =
   let (A.Any x) = c.x in
   let dt = D.Any (A.dtype x) in
@@ -533,25 +578,13 @@ let makes_nan (c : case) =
 
 let staged d = not (same (Nx_kernel.carrier d) d)
 
-(* As many rows as nx.cpu aims its calls at, each a few more full blocks
-   than a call of float32 terms holds. *)
-let wide_rows =
-  let open Gen in
-  let* r = int_range 64 66 in
-  let+ k = int_range 9217 9300 in
-  [| r; k |]
-
 let plain2 =
   { perm = [| 0; 1 |]; stepped = false; reversed = None; broadcast = false }
 
-let law_order (b : Support.backend) c =
+let law_order c =
   covers c;
   cover "a NaN made from numbers" (makes_nan c);
-  equal (list string) [] (differ (expected c) (run b c))
-
-let law_computes b (c : case) =
-  cover "narrow" (staged (dtype_of c.x));
-  ignore (run b c)
+  equal (list string) [] (differ (expected c) (run cpu c))
 
 (* Narrow dtypes and destinations of another dtype *)
 
@@ -565,8 +598,12 @@ let cast_into (D.Any d) (A.Any x) =
 (* [c] by [k] into a fresh destination of [d]. *)
 let run_into k (D.Any d) c x =
   let dst = A.Any (A.create Rig.host d (Iarray.of_array (result_shape c))) in
-  match compute k ~scan:c.scan (identity (dtype_of x)) c.monoid c.axes dst
-          [| plain_of x |] with
+  match
+    compute k ~scan:c.scan
+      (identity (dtype_of x))
+      c.monoid c.axes dst
+      [| plain_of x |]
+  with
   | A.Done -> dst
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
@@ -583,50 +620,34 @@ let narrow_dtypes =
       Any Bit;
     ]
 
-(* A case of a narrow dtype, or of a byte-wide one, and a destination's
-   dtype: mostly the operand's, else another. A vector past a scan's chunk
-   is drawn often, so that a scan runs its chunks side by side, and so are
-   [wide_rows], so that every run reaches their calls. *)
+(* A case of a narrow dtype, or of a byte-wide one, and a destination's dtype:
+   mostly the operand's, else another. A vector past a scan's chunk is drawn
+   often, so that a scan runs its chunks side by side; a narrow float's rows of
+   64 × 9217 are the examples'. *)
 let into_case =
   let open Gen in
-  let any =
-    let shapes =
-      frequency
-        [ (3, shape_gen); (1, map (fun n -> [| n |]) (int_range 4097 20000)) ]
-    in
-    let* c =
-      case_of ~shapes (narrow_dtypes @ narrow_dtypes @ floats @ D.[ Any Int32 ])
-    in
-    let+ d =
-      frequency
-        [
-          (3, constant (dtype_of c.x));
-          ( 1,
-            of_list ~pp:pp_dtype
-              D.[ Any Float32; Any Float64; Any Float16; Any Int64; Any Int8 ] );
-        ]
-    in
-    (c, d)
-  in
-  (* A narrow float's reduction along [wide_rows], into its own dtype:
-     some of each row's calls stage several blocks, and some reach the
-     cap. *)
-  let rows =
-    let* d =
-      of_list ~pp:pp_dtype D.[ Any Float16; Any Bfloat16; Any Float8_e5m2 ]
-    in
-    let* monoid = of_list (List.filter (fun m -> accepts m d) monoids) in
-    let* s = wide_rows in
-    let+ seed = int in
-    let x = operand d s plain2 ~specials:20 seed in
-    ({ scan = false; monoid; axes = [| 1 |]; x; views = [] }, d)
+  let shapes =
+    frequency [ (3, shapes); (1, map (fun n -> [| n |]) (int_range 4097 9000)) ]
   in
   with_pp
     (fun ppf (c, d) -> Format.fprintf ppf "%a into %a" pp_case c pp_dtype d)
-    (frequency [ (5, any); (1, rows) ])
+    (let* c =
+       case_of ~shapes (narrow_dtypes @ narrow_dtypes @ floats @ D.[ Any Int32 ])
+     in
+     let+ d =
+       frequency
+         [
+           (3, constant (dtype_of c.x));
+           ( 1,
+             of_list ~pp:pp_dtype
+               D.[ Any Float32; Any Float64; Any Float16; Any Int64; Any Int8 ]
+           );
+         ]
+     in
+     (c, d))
 
-(* For each result of [c] in C order, whether a NaN term reaches it, a
-   scan's up to it. *)
+(* For each result of [c] in C order, whether a NaN term reaches it, a scan's up
+   to it. *)
 let reached (c : case) =
   let nan = Array.map is_nan (terms (cast_into f32 c.x)) in
   let scan o =
@@ -640,8 +661,8 @@ let reached (c : case) =
   let all = Array.init (Array.length nan) Fun.id in
   results c all ~reduce:(Array.exists (Array.get nan)) ~scan ~fill:false
 
-(* NaNs made from numbers at narrow floats, reduced and scanned, into their
-   own dtype and float32. *)
+(* NaNs made from numbers at narrow floats, reduced and scanned, into their own
+   dtype and float32. *)
 let into_examples =
   let inf = Float.infinity and ninf = Float.neg_infinity in
   let case scan monoid x = { scan; monoid; axes = [| 0 |]; x; views = [] } in
@@ -659,7 +680,27 @@ let into_examples =
         views = [];
       },
       D.Any D.Bfloat16 );
+    (* Terms broadcast along the reduced axis. *)
+    ( example
+        ~view:
+          {
+            perm = [| 0; 1 |];
+            stepped = false;
+            reversed = None;
+            broadcast = true;
+          }
+        Sum (D.Any D.Float16) [| 4; 9 |] [| 1 |],
+      D.Any D.Float16 );
   ]
+  (* A narrow float's reductions along 64 rows, as many as nx.cpu aims its calls
+     at, of a few more full blocks than a call of float32 terms holds, into its
+     own dtype: some of each row's calls stage several blocks, and some reach
+     the cap. *)
+  @ List.map
+      (fun (d, monoid) ->
+        let x = operand d [| 64; 9217 |] plain2 ~specials:20 5 in
+        ({ scan = false; monoid; axes = [| 1 |]; x; views = [] }, d))
+      D.[ (Any Float16, Sum); (Any Bfloat16, Max); (Any Float8_e5m2, Prod) ]
 
 (* Narrow floats' NaNs, one signalling, by their codes. *)
 let nan_codes =
@@ -681,9 +722,9 @@ let nan_vector (D.Any dt as d) first other (n, i, j) =
     (Array.init n (fun k ->
          code (if k = i then first else if k = j then other else 0)))
 
-(* Two NaNs of a narrow float among zeros, in few terms and past a block
-   and a chunk, by each monoid, reduced and scanned into their own dtype:
-   a NaN from the first NaN on, signalling or quiet. *)
+(* Two NaNs of a narrow float among zeros, in few terms and past a block and a
+   chunk, by each monoid, reduced and scanned into their own dtype: a NaN from
+   the first NaN on, signalling or quiet. *)
 let nan_code_examples =
   List.concat_map
     (fun (d, first, other) ->
@@ -693,17 +734,18 @@ let nan_code_examples =
           List.concat_map
             (fun monoid ->
               List.map
-                (fun scan -> ({ scan; monoid; axes = [| 0 |]; x; views = [] }, d))
+                (fun scan ->
+                  ({ scan; monoid; axes = [| 0 |]; x; views = [] }, d))
                 [ false; true ])
             monoids)
         [ (4, 1, 2); (5000, 4500, 4700) ])
     nan_codes
 
-(* A narrow operand's terms reduce in its carrier, and each result rounds
-   once into its destination: the bits of the carrier's reduction of the
-   operand cast into it, cast into the destination, a NaN as any NaN. A
-   float result a NaN term reaches is a NaN. *)
-let law_into (b : Support.backend) ((c : case), d) =
+(* A narrow operand's terms reduce in its carrier, and each result rounds once
+   into its destination: the bits of the carrier's reduction of the operand cast
+   into it, cast into the destination, a NaN as any NaN. A float result a NaN
+   term reaches is a NaN. *)
+let law_into ((c : case), d) =
   let x = dtype_of c.x in
   cover "narrow" (staged x);
   cover "into another dtype" (not (same d x));
@@ -715,8 +757,11 @@ let law_into (b : Support.backend) ((c : case), d) =
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
-  let got = run_into b.kernels d c c.x in
-  let wide = run_into b.kernels (Nx_kernel.carrier x) c (cast_into (Nx_kernel.carrier x) c.x) in
+  let got = run_into cpu.kernels d c c.x in
+  let wide =
+    run_into cpu.kernels (Nx_kernel.carrier x) c
+      (cast_into (Nx_kernel.carrier x) c.x)
+  in
   let reached = reached c in
   let made =
     Array.exists2 (fun t f -> is_nan t && not f) (terms wide) reached
@@ -729,45 +774,42 @@ let law_into (b : Support.backend) ((c : case), d) =
     equal ~msg:"a NaN where a NaN term reaches" (array bool) reached
       (Array.map2 (fun r e -> r && Elements.nan_of d e) reached got)
 
-(* nx.cpu with its reductions and scans on one thread. *)
-module One = struct
-  include Nx_cpu
-
-  let reduce p ~shape ~axes rs ~dsts loads =
-    Nx_cpu.one_thread (fun () -> Nx_cpu.reduce p ~shape ~axes rs ~dsts loads)
-
-  let scan ?carry p ~axis rk ~dsts loads =
-    Nx_cpu.one_thread (fun () -> Nx_cpu.scan ?carry p ~axis rk ~dsts loads)
-end
-
 (* Padded loads *)
 
-(* The fills a law draws: zero, one, the extremes, a NaN and -0 of floats,
-   the least integer; a sub-byte dtype's codes 0, 7 and 8 in both halves
-   of their byte. *)
+(* The fills a law draws: zero, one, the extremes, a NaN and -0 of floats, the
+   least integer; a sub-byte dtype's codes 0, 7 and 8 in both halves of their
+   byte. *)
 let fills (D.Any dt) =
   let le w v =
     String.init w (fun i ->
-        Char.chr (Int64.to_int (Int64.logand (Int64.shift_right_logical v (8 * i)) 0xFFL)))
+        Char.chr
+          (Int64.to_int
+             (Int64.logand (Int64.shift_right_logical v (8 * i)) 0xFFL)))
   in
   let w = D.bits dt / 8 in
   match dt with
   | D.Float32 ->
-      List.map (fun v -> le 4 (Int64.of_int32 v))
+      List.map
+        (fun v -> le 4 (Int64.of_int32 v))
         [ 0l; 0x3F800000l; 0xFF800000l; 0x7FC01234l; 0x80000000l ]
   | D.Float64 ->
       List.map (le 8)
-        [ 0L; Int64.bits_of_float 1.; Int64.bits_of_float neg_infinity;
-          0x7FF8000000000123L; Int64.min_int ]
+        [
+          0L;
+          Int64.bits_of_float 1.;
+          Int64.bits_of_float neg_infinity;
+          0x7FF8000000000123L;
+          Int64.min_int;
+        ]
   | D.Bool -> [ "\000"; "\001" ]
   | D.Bit -> [ "\000"; "\255" ]
   | _ when w = 0 -> [ "\000"; "\119"; "\136" ]
   | _ -> [ le w 0L; le w 7L; le w (Int64.shift_left 1L ((8 * w) - 1)) ]
 
 (* A padding of an operand of shape [s]: low and high padding from -2 to 3
-   (negative crops), interior padding up to 2 and at most one window of size
-   up to 3, as drawn, so that some crop an axis below zero or hold a window
-   wider than its axis; one in eight is of rank one more than [s]'s. *)
+   (negative crops), interior padding up to 2 and at most one window of size up
+   to 3, as drawn, so that some crop an axis below zero or hold a window wider
+   than its axis; one in eight is of rank one more than [s]'s. *)
 let pad_of s =
   let open Gen in
   let* extra = frequency [ (7, constant 0); (1, constant 1) ] in
@@ -789,9 +831,9 @@ let pad_of s =
   let interior = Iarray.of_array interior in
   { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
 
-(* A padding [Nx_kernel.Shape.padded] refuses for an operand of shape [s]:
-   one of a rank above [s]'s, or [pad_of s] with one axis cropped one below
-   zero at either end, or with a negative interior padding. *)
+(* A padding [Nx_kernel.Shape.padded] refuses for an operand of shape [s]: one
+   of a rank above [s]'s, or [pad_of s] with one axis cropped one below zero at
+   either end, or with a negative interior padding. *)
 let misfit_pad_of s =
   let open Gen in
   let r = Array.length s in
@@ -814,14 +856,16 @@ let misfit_pad_of s =
 (* [x] loaded padded with the element of bits [fill] as [pad] says. *)
 let padded_load (A.Any x) fill pad =
   let dt = A.dtype x in
-  let fill = A.get (A.v dt (L.contiguous [||]) (Rig.Buffer.of_string fill)) [||] in
+  let fill =
+    A.get (A.v dt (L.contiguous [||]) (Rig.Buffer.of_string fill)) [||]
+  in
   Nx_kernel.Padded { x; fill; pad }
 
 (* Refusals *)
 
-(* A reduction or scan by [rs] along [axes] of a float32 loop over [x],
-   padded by [pad] where given, into destinations of shapes [dsts]: near a
-   fit, missed by one change at a time. *)
+(* A reduction or scan by [rs] along [axes] of a float32 loop over [x], padded
+   by [pad] where given, into destinations of shapes [dsts]: near a fit, missed
+   by one change at a time. *)
 type misfit = {
   scan : bool;
   x : int array;
@@ -857,8 +901,8 @@ let misfits =
   Gen.with_pp pp_misfit
     (let open Gen in
      let* x = Nx_array_gen.shape in
-     (* A refused padding in at least a quarter of the cases, so that every
-        run of 100 reaches one. *)
+     (* A refused padding in at least a quarter of the cases, so that every run
+        of 100 reaches one. *)
      let* pad =
        frequency
          [
@@ -887,24 +931,27 @@ let misfits =
            ]
      in
      let* rs =
-       array ~size:(int_range 1 (if scan then 1 else 2))
-         (of_list Nx_kernel.[ Monoid Sum; Monoid Max; Arg Max; Logsumexp; Moments ])
+       array
+         ~size:(int_range 1 (if scan then 1 else 2))
+         (of_list
+            Nx_kernel.[ Monoid Sum; Monoid Max; Arg Max; Logsumexp; Moments ])
      in
      let m = { scan; x; pad; axes; rs; dsts = [||] } in
      let y = Result.value (fit_of m) ~default:loop in
      let n = Array.fold_left (fun n r -> n + width r) 0 rs in
      let* count =
-       frequency [ (8, constant n); (1, constant (n - 1)); (1, constant (n + 1)) ]
+       frequency
+         [ (8, constant n); (1, constant (n - 1)); (1, constant (n + 1)) ]
      in
      let+ dsts = array ~size:(constant (max 0 count)) (Elements.near y) in
      { m with dsts })
 
-(* nx.cpu computes what Nx_kernel.Shape fits; the rest does not fit, and
-   is not Done and writes nothing outside its destinations: a padding
-   Shape refuses, an axis past the rank or out of order, an extreme of no
-   term, a destination of another shape, one too few or one too many. *)
-let law_refusals (b : Support.backend) m =
-  let module K = (val b.kernels) in
+(* nx.cpu computes what Nx_kernel.Shape fits; the rest does not fit, and is not
+   Done and writes nothing outside its destinations: a padding Shape refuses, an
+   axis past the rank or out of order, an extreme of no term, a destination of
+   another shape, one too few or one too many. *)
+let law_refusals m =
+  let module K = (val cpu.kernels) in
   let fit =
     match fit_of m with
     | Ok z ->
@@ -915,12 +962,18 @@ let law_refusals (b : Support.backend) m =
   cover "fits" fit;
   cover "misfits" (not fit);
   cover "a padding that misfits"
-    (match m.pad with Some p -> Result.is_error (Nx_kernel.Shape.padded p m.x) | None -> false);
+    (match m.pad with
+    | Some p -> Result.is_error (Nx_kernel.Shape.padded p m.x)
+    | None -> false);
   cover "a scan" m.scan;
   cover "two reductions" (Array.length m.rs = 2);
-  let x = A.of_array D.Float32 (Iarray.of_array m.x) (Array.make (total m.x) 1.) in
+  let x =
+    A.of_array D.Float32 (Iarray.of_array m.x) (Array.make (total m.x) 1.)
+  in
   let load : Nx_kernel.load =
-    match m.pad with None -> Plain x | Some pad -> Padded { x; fill = 0.; pad }
+    match m.pad with
+    | None -> Plain x
+    | Some pad -> Padded { x; fill = 0.; pad }
   in
   (* Destination [i]'s dtype: an Arg's second its positions'. *)
   let kinds =
@@ -939,7 +992,7 @@ let law_refusals (b : Support.backend) m =
       m.dsts
   in
   let p = identity f32 in
-  Misfit.law ~msg:"a loop" ~what:"a shape" b ~fit dsts (fun g dsts ->
+  Misfit.law ~msg:"a loop" ~what:"a shape" cpu ~fit dsts (fun g dsts ->
       let dsts = Iarray.of_array dsts and load = Misfit.load g load in
       if m.scan then K.scan p ~axis:m.axes.(0) (m.rs.(0), 0) ~dsts [| load |]
       else
@@ -949,18 +1002,19 @@ let law_refusals (b : Support.backend) m =
           (Iarray.map (fun r -> (r, 0)) (Iarray.of_array m.rs))
           ~dsts [| load |])
 
-(* Calls that do not fit, by a dtype a reduction does not take, positions
-   other than int64, a carry of another dtype, or a load of another shape
-   than the loop's: each with its misfit's class, its destinations' dtypes
-   and shapes, and the call into them. *)
-let answered (b : Support.backend) =
-  let module K = (val b.kernels) in
+(* Calls that do not fit, by a dtype a reduction does not take or a load of
+   another shape than the loop's: each with its misfit's class, its
+   destinations' dtypes and shapes, and the call into them. *)
+let answered =
+  let module K = (val cpu.kernels) in
   let x dt = Nx_kernel.Plain (A.create Rig.host dt [| 2; 3 |]) in
   let reduce (D.Any dt) r dsts =
     ( dsts,
       fun g ds ->
         K.reduce (identity (D.Any dt)) ~shape:[| 2; 3 |] ~axes:[| 1 |]
-          [| (r, 0) |] ~dsts:(Iarray.of_array ds) [| Misfit.load g (x dt) |] )
+          [| (r, 0) |]
+          ~dsts:(Iarray.of_array ds)
+          [| Misfit.load g (x dt) |] )
   in
   let scan (D.Any dt) r dsts =
     ( dsts,
@@ -973,63 +1027,70 @@ let answered (b : Support.backend) =
   [
     ("a Sum of bool", "a dtype", reduce bool (Monoid Sum) [| (bool, [| 2 |]) |]);
     ("a Prod of bit", "a dtype", reduce bit (Monoid Prod) [| (bit, [| 2 |]) |]);
-    ( "a Moments scan of int32", "a dtype",
+    ( "a Moments scan of int32",
+      "a dtype",
       scan i32 Moments [| (i32, [| 2; 3 |]); (i32, [| 2; 3 |]) |] );
-    ( "a Logsumexp of complex64", "a dtype",
+    ( "a Logsumexp of complex64",
+      "a dtype",
       reduce c64 Logsumexp [| (c64, [| 2 |]) |] );
-    ( "an Arg's positions in int32", "a dtype",
-      reduce f32 (Arg Max) [| (f32, [| 2 |]); (i32, [| 2 |]) |] );
-    ( "a carry of another dtype", "a dtype",
-      ( [| (f32, [| 2; 3 |]) |],
-        fun g ds ->
-          K.scan
-            ~carry:(A.Any (g.Misfit.g (A.create Rig.host D.Float64 [| 2; 1 |])))
-            (identity f32) ~axis:1 (Monoid Sum, 0) ~dsts:(Iarray.of_array ds)
-            [| Misfit.load g (x D.Float32) |] ) );
-    ( "a load of another shape than the loop's", "a shape",
+    ( "a load of another shape than the loop's",
+      "a shape",
       ( [| (f32, [| 2 |]) |],
         fun g ds ->
           K.reduce (identity f32) ~shape:[| 2; 4 |] ~axes:[| 1 |]
-            [| (Monoid Sum, 0) |] ~dsts:(Iarray.of_array ds) [| Misfit.load g (x D.Float32) |]
-      ) );
+            [| (Monoid Sum, 0) |]
+            ~dsts:(Iarray.of_array ds)
+            [| Misfit.load g (x D.Float32) |] ) );
   ]
 
 (* A padded load of 2^50 elements, more than any host's memory, or past
-   max_numel, whose loop does not fit its destinations, is refused before
-   the kernel copies it: not Done, and nothing written outside the
-   destinations. *)
-let test_huge_padding (b : Support.backend) () =
-  let module K = (val b.kernels) in
+   max_numel, whose loop does not fit its destinations, is refused before the
+   kernel copies it: not Done, and nothing written outside the destinations. *)
+let test_huge_padding () =
+  let module K = (val cpu.kernels) in
   let x = A.of_array D.Float32 [| 2 |] [| 1.; 2. |] in
   let padded lo : Nx_kernel.load =
     Padded
-      { x; fill = 0.; pad = { lo = [| lo |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] } }
+      {
+        x;
+        fill = 0.;
+        pad =
+          { lo = [| lo |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] };
+      }
   in
   let big = 1 lsl 50 in
   let huge = padded big and past = padded (L.max_numel - 1) in
-  let twice = P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |] in
+  let twice =
+    P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |]
+  in
   let refused msg call dsts =
-    Misfit.check ~msg ~what:"a shape" b
+    Misfit.check ~msg ~what:"a shape" cpu
       (Array.map (fun s -> (f32, s)) dsts)
       (fun g ds -> call g (Iarray.of_array ds))
   in
   let sum : _ iarray = [| (Nx_kernel.Monoid Sum, 0) |] in
   List.iter
     (fun (name, p) ->
-      refused (name ^ ": a reduction into another shape")
+      refused
+        (name ^ ": a reduction into another shape")
         (fun g dsts ->
-          K.reduce p ~shape:[| big + 2 |] ~axes:[| 0 |] sum ~dsts
+          K.reduce p
+            ~shape:[| big + 2 |]
+            ~axes:[| 0 |] sum ~dsts
             [| Misfit.load g huge |])
         [| [| 2 |] |];
-      refused (name ^ ": a scan into another shape")
+      refused
+        (name ^ ": a scan into another shape")
         (fun g dsts ->
           K.scan p ~axis:0 (Monoid Sum, 0) ~dsts [| Misfit.load g huge |])
         [| [| 3 |] |];
-      refused (name ^ ": a scan past max_numel")
+      refused
+        (name ^ ": a scan past max_numel")
         (fun g dsts ->
           K.scan p ~axis:0 (Monoid Sum, 0) ~dsts [| Misfit.load g past |])
         [| [| 3 |] |];
-      refused (name ^ ": a Moments scan into another shape")
+      refused
+        (name ^ ": a Moments scan into another shape")
         (fun g dsts ->
           K.scan p ~axis:0 (Moments, 0) ~dsts [| Misfit.load g huge |])
         [| [| 3 |]; [| 3 |] |])
@@ -1037,8 +1098,8 @@ let test_huge_padding (b : Support.backend) () =
 
 (* Carries *)
 
-(* A scan of a monoid along rows past a chunk, and a chunk after the
-   first: of a float, an integer, a complex number or a narrow float. *)
+(* A scan of a monoid along rows past a chunk, and a chunk after the first: of a
+   float, an integer, a complex number or a narrow float. *)
 type chunked = { c : case; chunk : int }
 
 let chunk_case =
@@ -1046,19 +1107,42 @@ let chunk_case =
     (fun ppf k -> Format.fprintf ppf "%a from chunk %d" pp_case k.c k.chunk)
     (let open Gen in
      let* k = int_range 1 3 in
-     let* n = frequency [ (3, int_range 4097 9000); (1, int_range 12289 13000) ] in
+     let* n =
+       frequency [ (3, int_range 4097 9000); (1, int_range 12289 13000) ]
+     in
      let* c =
-       case_of ~scan:(constant true) ~shapes:(constant [| k; n |])
+       case_of ~scan:(constant true)
+         ~shapes:(constant [| k; n |])
          (floats @ floats
-         @ D.[ Any Int32; Any Int64; Any Int16; Any Uint8; Any Complex64;
-               Any Complex128; Any Float16; Any Bfloat16; Any Float8_e5m2 ])
+         @ D.
+             [
+               Any Int32;
+               Any Int64;
+               Any Int16;
+               Any Uint8;
+               Any Complex64;
+               Any Complex128;
+               Any Float16;
+               Any Bfloat16;
+               Any Float8_e5m2;
+             ])
      in
      let+ chunk = int_range 1 ((n - 1) / 4096) in
      { c = { c with axes = [| 1 |] }; chunk })
 
-(* The carry into each chunk of [ts] scanned as [zscanned ~first] does,
-   from chunk 1: the chunk before's total, from its first term where
-   [first], combined with the carry into it. *)
+(* A complex product's rows past two chunks, which the draws reach in one case
+   of six or seven. *)
+let chunk_examples =
+  [
+    {
+      c = example ~scan:true Prod (D.Any D.Complex64) [| 2; 9000 |] [| 1 |];
+      chunk = 1;
+    };
+  ]
+
+(* The carry into each chunk of [ts] scanned as [zscanned ~first] does, from
+   chunk 1: the chunk before's total, from its first term where [first],
+   combined with the carry into it. *)
 let zcarries ~first ((f, _) as m) ts =
   let n = Array.length ts in
   let k = (n + 4095) / 4096 in
@@ -1069,12 +1153,12 @@ let zcarries ~first ((f, _) as m) ts =
   done;
   out
 
-(* The scan of each row from a chunk's start, with the carry into that
-   chunk in the carrier, has the bits of the scan of the whole row from
-   that chunk on. A complex sum carries each part's sum; a narrow float
-   scans in its carrier, from which each result rounds once. *)
-let law_chunk_carry (b : Support.backend) { c; chunk } =
-  let module K = (val b.kernels) in
+(* The scan of each row from a chunk's start, with the carry into that chunk in
+   the carrier, has the bits of the scan of the whole row from that chunk on. A
+   complex sum carries each part's sum; a narrow float scans in its carrier,
+   from which each result rounds once. *)
+let law_chunk_carry { c; chunk } =
+  let module K = (val cpu.kernels) in
   let (A.Any x) = c.x in
   let (D.Any dt as d) = dtype_of c.x in
   let s = shape_of c.x in
@@ -1095,7 +1179,8 @@ let law_chunk_carry (b : Support.backend) { c; chunk } =
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
   let whole = { M.start = 0; count = k; step = 1 } in
   let tail =
-    Option.get (A.move (M.Slice [| whole; { M.start = p; count = n - p; step = 1 } |]) x)
+    Option.get
+      (A.move (M.Slice [| whole; { M.start = p; count = n - p; step = 1 } |]) x)
   in
   let dst = A.Any (A.create Rig.host dt [| k; n - p |]) in
   let scan carry =
@@ -1121,7 +1206,8 @@ let law_chunk_carry (b : Support.backend) { c; chunk } =
           (fun row ->
             let cr, wr = one (fun z -> F (z.re, fst z.bits)) row in
             let ci, wi = one (fun z -> F (z.im, snd z.bits)) row in
-            (part (bits_of cr) ^ part (bits_of ci), Array.map2 (fun r i -> Z (r, i)) wr wi))
+            ( part (bits_of cr) ^ part (bits_of ci),
+              Array.map2 (fun r i -> Z (r, i)) wr wi ))
           rows
       else
         let first = c.monoid = Prod in
@@ -1129,43 +1215,59 @@ let law_chunk_carry (b : Support.backend) { c; chunk } =
         Array.map
           (fun row ->
             let z = (zcarries ~first m row).(chunk) in
-            (part (fst z.bits) ^ part (snd z.bits), Array.sub (zscanned ~first m row) p (n - p)))
+            ( part (fst z.bits) ^ part (snd z.bits),
+              Array.sub (zscanned ~first m row) p (n - p) ))
           rows
     in
     scan (carry_of (Array.map fst each));
-    equal (list string) [] (zdiffer (Array.concat (Array.to_list (tails each))) (zterms dst))
+    equal (list string) []
+      (zdiffer (Array.concat (Array.to_list (tails each))) (zterms dst))
   end
   else begin
     let wide = if staged d then cast_into carrier c.x else c.x in
     let m = op carrier c.monoid in
     let rows = rows_of (terms wide) in
     let le b = Elements.int_bits carrier w b in
-    scan (carry_of (Array.map (fun row -> le (bits_of (carries m row).(chunk))) rows));
+    scan
+      (carry_of
+         (Array.map (fun row -> le (bits_of (carries m row).(chunk))) rows));
     let want =
-      Array.concat (Array.to_list (Array.map (fun row -> Array.sub (scanned m row) p (n - p)) rows))
+      Array.concat
+        (Array.to_list
+           (Array.map (fun row -> Array.sub (scanned m row) p (n - p)) rows))
     in
     if not (staged d) then equal (list string) [] (differ want dst)
     else
-      let quiet = if same carrier f32 then 0x7FC00000L else 0x7FF8000000000000L in
-      let bits = Array.map (function Bits b -> le b | Some_nan -> le quiet) want in
+      let quiet =
+        if same carrier f32 then 0x7FC00000L else 0x7FF8000000000000L
+      in
+      let bits =
+        Array.map (function Bits b -> le b | Some_nan -> le quiet) want
+      in
       equal
         (array (Elements.same d))
-        (Elements.elements (cast_into d (Elements.of_elements carrier [| k; n - p |] bits)))
+        (Elements.elements
+           (cast_into d (Elements.of_elements carrier [| k; n - p |] bits)))
         (Elements.elements dst)
   end
 
-(* A boolean carry is true wherever its byte is not 0: a carry byte of 2
-   scanned with a true term by [Min] or [Max] gives true, byte 1. *)
+(* A boolean carry is true wherever its byte is not 0: a carry byte of 2 scanned
+   with a true term by [Min] or [Max] gives true, byte 1. *)
 let carry_cases =
   List.concat_map
-    (fun d -> List.map (fun m -> (d, m)) [ ("Min", (Min : Nx_kernel.monoid)); ("Max", Max) ])
+    (fun d ->
+      List.map
+        (fun m -> (d, m))
+        [ ("Min", (Min : Nx_kernel.monoid)); ("Max", Max) ])
     D.[ Any Bool; Any Bit ]
 
-let test_byte_carry (b : Support.backend) (d, (_, m)) =
-  let module K = (val b.kernels) in
+let test_byte_carry (d, (_, m)) =
+  let module K = (val cpu.kernels) in
   let (D.Any dt) = d in
   let (A.Any x) = Elements.of_elements d [| 1; 1 |] [| "\001" |] in
-  let carry = Elements.of_elements (Nx_kernel.carrier d) [| 1; 1 |] [| "\002" |] in
+  let carry =
+    Elements.of_elements (Nx_kernel.carrier d) [| 1; 1 |] [| "\002" |]
+  in
   let dst = A.Any (A.create Rig.host dt [| 1; 1 |]) in
   equal ~msg:"answer" Elements.answer A.Done
     (K.scan ~carry (identity d) ~axis:1 (Monoid m, 0) ~dsts:[| dst |]
@@ -1199,9 +1301,9 @@ let misses want got =
 
 (* Stateful reductions *)
 
-(* Values that break Arg, Logsumexp and Moments: about [center] within
-   [scale]; on [ties], multiples of half [scale], so that extremes repeat
-   and -0 meets +0. *)
+(* Values that break Arg, Logsumexp and Moments: about [center] within [scale];
+   on [ties], multiples of half [scale], so that extremes repeat and -0 meets
+   +0. *)
 type values = { name : string; center : float; scale : float; ties : bool }
 
 let value_kinds =
@@ -1214,11 +1316,10 @@ let value_kinds =
     { name = "ties"; center = 0.; scale = 1.; ties = true };
   ]
 
-(* [n] elements of the float [dt] of the kind [v]: one in [outliers] (none
-   for 0) is a power of two up to 2^20 times larger, one in [specials] a
-   NaN, an infinity or -0, as [elements] draws them. *)
-let float_elements (type a b) (dt : (a, b) D.t) n v ~outliers ~specials seed
-    =
+(* [n] elements of the float [dt] of the kind [v]: one in [outliers] (none for
+   0) is a power of two up to 2^20 times larger, one in [specials] a NaN, an
+   infinity or -0, as [elements] draws them. *)
+let float_elements (type a b) (dt : (a, b) D.t) n v ~outliers ~specials seed =
   let r = Random.State.make [| seed |] in
   let one_in k = k > 0 && Random.State.int r k = 0 in
   let pick a = a.(Random.State.int r (Array.length a)) in
@@ -1229,8 +1330,7 @@ let float_elements (type a b) (dt : (a, b) D.t) n v ~outliers ~specials seed
       if v.ties then Float.round (2. *. x /. v.scale) *. v.scale /. 2. else x
     in
     let x =
-      if one_in outliers then x *. Float.ldexp 1. (Random.State.int r 21)
-      else x
+      if one_in outliers then x *. Float.ldexp 1. (Random.State.int r 21) else x
     in
     let special = one_in specials in
     match dt with
@@ -1238,8 +1338,7 @@ let float_elements (type a b) (dt : (a, b) D.t) n v ~outliers ~specials seed
         Bytes.set_int32_le b (4 * i)
           (if special then
              pick
-               (Array.append nans32
-                  [| 0x80000000l; 0x7F800000l; 0xFF800000l |])
+               (Array.append nans32 [| 0x80000000l; 0x7F800000l; 0xFF800000l |])
            else Int32.bits_of_float x)
     | D.Float64 ->
         Bytes.set_int64_le b (8 * i)
@@ -1254,21 +1353,16 @@ let float_elements (type a b) (dt : (a, b) D.t) n v ~outliers ~specials seed
            else Int64.bits_of_float x)
     | _ -> invalid_arg "float_elements: not float32 or float64"
   done;
-  A.Any (A.v dt (L.contiguous [| n |]) (Rig.Buffer.of_string (Bytes.to_string b)))
-
-(* Many outputs of several blocks each, beside a short axis or none. *)
-let many_long =
-  let open Gen in
-  let* outer = int_range 64 66 in
-  let* n = int_range 1025 1100 in
-  let+ inner = array ~size:(int_range 0 1) (int_range 2 3) in
-  Array.append [| outer; n |] inner
+  A.Any
+    (A.v dt (L.contiguous [| n |]) (Rig.Buffer.of_string (Bytes.to_string b)))
 
 let stat_case =
   Gen.with_pp pp_stat
     (let open Gen in
      let ints =
-       List.filter (fun (D.Any dt) -> not (D.is D.Float dt || D.equal dt D.Bool)) base
+       List.filter
+         (fun (D.Any dt) -> not (D.is D.Float dt || D.equal dt D.Bool))
+         base
      in
      let* d = of_list ~pp:pp_dtype (floats @ floats @ ints) in
      let* r =
@@ -1276,7 +1370,7 @@ let stat_case =
          (if is_float d then Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ]
           else Nx_kernel.[ Arg Max; Arg Min ])
      in
-     let* s = frequency [ (6, shape_gen); (1, many_long) ] in
+     let* s = shapes in
      let rank = Array.length s in
      let* keep = array ~size:(constant rank) bool in
      let axes =
@@ -1296,8 +1390,8 @@ let stat_case =
      in
      stat_of r s axes v values.name make)
 
-(* The destinations of [c]: the extreme and its int64 position for Arg, the
-   mean and the variance for Moments, one for Logsumexp. *)
+(* The destinations of [c]: the extreme and its int64 position for Arg, the mean
+   and the variance for Moments, one for Logsumexp. *)
 let stat_dsts (c : stat) =
   let (A.Any x) = c.x in
   let s = Iarray.of_array (stat_shape c) in
@@ -1312,29 +1406,33 @@ let run_stat k c =
   let module K = (val k : Nx_kernel.S) in
   let dsts = stat_dsts c in
   match
-    K.reduce (identity (dtype_of c.x))
+    K.reduce
+      (identity (dtype_of c.x))
       ~shape:(Iarray.of_array (shape_of c.x))
-      ~axes:(Iarray.of_array c.axes) [| (c.r, 0) |]
-      ~dsts:(Iarray.of_array dsts) [| plain_of c.x |]
+      ~axes:(Iarray.of_array c.axes)
+      [| (c.r, 0) |]
+      ~dsts:(Iarray.of_array dsts)
+      [| plain_of c.x |]
   with
   | A.Done -> Some (Array.map terms dsts)
   | A.Declined -> None
   | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
 
-(* [xs] summed by Neumaier's compensated sum, within 2 ε |Σ| of the exact
-   sum, ε the unit roundoff of float64, barring terms of n² ε. *)
+(* [xs] summed by Neumaier's compensated sum, within 2 ε |Σ| of the exact sum, ε
+   the unit roundoff of float64, barring terms of n² ε. *)
 let neumaier xs =
   let s = ref 0. and c = ref 0. in
   Array.iter
     (fun x ->
       let t = !s +. x in
-      (c := !c +. if Float.abs !s >= Float.abs x then !s -. t +. x else x -. t +. !s);
+      c :=
+        !c +. if Float.abs !s >= Float.abs x then !s -. t +. x else x -. t +. !s;
       s := t)
     xs;
   !s +. !c
 
-(* nx_cpu.mli's terms of the bounds for [n] terms: [l] the most roundings
-   of a block's sum in lane order and [d] the depth of the blocks' tree. *)
+(* nx_cpu.mli's terms of the bounds for [n] terms: [l] the most roundings of a
+   block's sum in lane order and [d] the depth of the blocks' tree. *)
 let depths n =
   let blocks = (n + 1023) / 1024 in
   let rec log2 k p = if p >= k then 0 else 1 + log2 k (2 * p) in
@@ -1342,8 +1440,8 @@ let depths n =
 
 let eps = 0x1p-53
 
-(* Logsumexp of [ts] within nx_cpu.mli's bound at the unit roundoff [u],
-   from a float64 reference within ε (ln n + 4 + |r|). *)
+(* Logsumexp of [ts] within nx_cpu.mli's bound at the unit roundoff [u], from a
+   float64 reference within ε (ln n + 4 + |r|). *)
 let lse_expect u ts =
   if Array.exists is_nan ts then [| Is Some_nan |]
   else
@@ -1357,13 +1455,13 @@ let lse_expect u ts =
       let bound = ((l +. d +. 5. +. (6. *. ln)) *. u) +. (u *. Float.abs r) in
       [| Near (r, bound +. (eps *. (ln +. 4. +. Float.abs r))) |]
 
-(* Moments of [ts] within nx_cpu.mli's bounds, [u] the dtype's roundoff,
-   from float64 references of the terms less the first, by compensated
-   sums: within ε (4 R + 2 |μ|) and ε (5 V + 8 R √V). *)
+(* Moments of [ts] within nx_cpu.mli's bounds, [u] the dtype's roundoff, from
+   float64 references of the terms less the first, by compensated sums: within ε
+   (4 R + 2 |μ|) and ε (5 V + 8 R √V). *)
 let moments_expect u ts =
   let nan = Is Some_nan in
   if ts = [||] || Array.exists is_nan ts then [| nan; nan |]
-  else (
+  else
     let xs = Array.map value ts in
     let pos = Array.mem infinity xs and neg = Array.mem neg_infinity xs in
     match (pos, neg) with
@@ -1376,7 +1474,9 @@ let moments_expect u ts =
         let ys = Array.map (fun x -> x -. c) xs in
         let my = neumaier ys /. nf in
         let mean = c +. my in
-        let v = neumaier (Array.map (fun y -> (y -. my) *. (y -. my)) ys) /. nf in
+        let v =
+          neumaier (Array.map (fun y -> (y -. my) *. (y -. my)) ys) /. nf
+        in
         let hi = Array.fold_left Float.max neg_infinity xs in
         let r = hi -. Array.fold_left Float.min infinity xs in
         let l, d = depths n and sv = Float.sqrt v in
@@ -1391,7 +1491,7 @@ let moments_expect u ts =
         [|
           Near (mean, tm +. (eps *. ((4. *. r) +. (2. *. Float.abs mean))));
           Near (v, tv +. (eps *. ((5. *. v) +. (8. *. r *. sv))));
-        |])
+        |]
 
 (* The expected results of each destination of [c], in C order. *)
 let stat_expected (c : stat) =
@@ -1407,14 +1507,14 @@ let stat_expected (c : stat) =
     | Monoid _ -> invalid_arg "stat_expected: a monoid"
   in
   let all = List.map one per in
-  Array.init (Array.length (stat_dsts c)) (fun k ->
-      Array.of_list (List.map (fun e -> e.(k)) all))
+  Array.init
+    (Array.length (stat_dsts c))
+    (fun k -> Array.of_list (List.map (fun e -> e.(k)) all))
 
-(* Each result exact (Arg) or within nx_cpu.mli's bound of the exact one,
-   NaNs and infinities as Nx_kernel.reduction states them, and the same
-   bits on one thread and from a C-contiguous copy of the operand, a NaN as
-   any NaN. *)
-let law_stateful (b : Support.backend) (c : stat) =
+(* Each result exact (Arg) or within nx_cpu.mli's bound of the exact one, NaNs
+   and infinities as Nx_kernel.reduction states them, and the same bits on one
+   thread and from a C-contiguous copy of the operand, a NaN as any NaN. *)
+let law_stateful (c : stat) =
   let s = shape_of c.x in
   let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
   let outs = total (stat_shape c) in
@@ -1430,16 +1530,22 @@ let law_stateful (b : Support.backend) (c : stat) =
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
-  match run_stat b.kernels c with
+  match run_stat cpu.kernels c with
   | None -> failf "nx.cpu declined %s" (reduction_name c.r)
   | Some got ->
       let want = stat_expected c in
       let wanted p = Array.exists (Array.exists p) want in
       cover "a NaN" (wanted (function Is Some_nan -> true | _ -> false));
       cover "an infinity"
-        (wanted (function Near (v, _) -> not (Float.is_finite v) | Is _ -> false));
+        (wanted (function
+          | Near (v, _) -> not (Float.is_finite v)
+          | Is _ -> false));
       Array.iteri
-        (fun k w -> equal ~msg:(Printf.sprintf "destination %d" k) (list string) [] (misses w got.(k)))
+        (fun k w ->
+          equal
+            ~msg:(Printf.sprintf "destination %d" k)
+            (list string) []
+            (misses w got.(k)))
         want
 
 (* A Logsumexp's terms: shifts from the maximum about the least integers whose
@@ -1461,8 +1567,24 @@ let pp_lse ppf (Lse (dt, shape, axes, xs, _)) =
 
 let lse_terms =
   [
-    0.; -0.; 1.; 50.; -37.; -86.5; -87.; -87.25; -88.; -100.; -660.; -707.5;
-    -708.; -708.25; -750.; Float.infinity; Float.neg_infinity; Float.nan;
+    0.;
+    -0.;
+    1.;
+    50.;
+    -37.;
+    -86.5;
+    -87.;
+    -87.25;
+    -88.;
+    -100.;
+    -660.;
+    -707.5;
+    -708.;
+    -708.25;
+    -750.;
+    Float.infinity;
+    Float.neg_infinity;
+    Float.nan;
     Int64.float_of_bits 0x7ff8_0000_2000_0000L;
     Int64.float_of_bits 0xfff8_0000_0000_0001L;
   ]
@@ -1524,8 +1646,8 @@ let lse_rounds n =
   let l, d = depths n in
   l +. d +. 5. +. (6. *. Float.log (Float.of_int n))
 
-(* [m + log Σ exp (t - m)] of [ts] in float64, [m] their maximum: a NaN
-   where a term is, [m] where it is infinite. *)
+(* [m + log Σ exp (t - m)] of [ts] in float64, [m] their maximum: a NaN where a
+   term is, [m] where it is infinite. *)
 let lse_ref ts =
   if List.exists Float.is_nan ts then Float.nan
   else
@@ -1537,10 +1659,10 @@ let lse_ref ts =
 
 (* nx.cpu's Logsumexp is [m + log Σ exp (x - m)] within the bound nx_cpu.mli
    states, in the float32 carrier for a narrow float, which adds its own
-   rounding: a NaN where a term is, [-∞] for no term or terms all [-∞], [+∞]
-   for a [+∞] term. *)
-let law_logsumexp (b : Support.backend) (Lse (dt, shape, axes, xs, sn)) =
-  let module K = (val b.kernels : Nx_kernel.S) in
+   rounding: a NaN where a term is, [-∞] for no term or terms all [-∞], [+∞] for
+   a [+∞] term. *)
+let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
+  let module K = (val cpu.kernels : Nx_kernel.S) in
   let cut = match dt with D.Float64 -> -708. | _ -> -87. in
   let x = signalling dt shape xs sn in
   cover "no term" (Array.exists (fun a -> shape.(a) = 0) axes);
@@ -1575,8 +1697,7 @@ let law_logsumexp (b : Support.backend) (Lse (dt, shape, axes, xs, sn)) =
   in
   cover "a term past the cutoff below a finite maximum" below;
   let dst =
-    A.create Rig.host dt
-      (Iarray.of_list (List.map (fun a -> shape.(a)) kept))
+    A.create Rig.host dt (Iarray.of_list (List.map (fun a -> shape.(a)) kept))
   in
   (match
      K.reduce (identity (D.Any dt)) ~shape:(Iarray.of_array shape)
@@ -1591,7 +1712,6 @@ let law_logsumexp (b : Support.backend) (Lse (dt, shape, axes, xs, sn)) =
   let narrow =
     match dt with D.Float16 -> 0x1p-11 | D.Bfloat16 -> 0x1p-8 | _ -> 0.
   in
-  equal ~msg:"one result per output" int outs (Array.length got);
   Array.iteri
     (fun o row ->
       let want = lse_ref row and y = got.(o) in
@@ -1616,48 +1736,45 @@ let law_logsumexp (b : Support.backend) (Lse (dt, shape, axes, xs, sn)) =
 
 (* Arg, Logsumexp and Moments scans *)
 
-(* Lengths around a multiple of nx.cpu's network tiles of 256 terms, from
-   [lo] to [hi] tiles. *)
+(* Lengths around a multiple of nx.cpu's network tiles of 256 terms, from [lo]
+   to [hi] tiles. *)
 let tiled lo hi =
   let open Gen in
   let* k = int_range lo hi in
   let+ d = int_range (-2) 2 in
   (k * 256) + d
 
-(* A scan by Arg of a float, an integer or a boolean, or by Logsumexp or
-   Moments of a float, along one axis. Now and then: a vector of 1 to 40
-   network tiles, past an Arg scan's chunk of 4096 from 16; 65 to 72
-   slices of 1 to 8 tiles, in units of 16 slices, the last partial; two or
-   three slices of 12 to 24 tiles of finite terms, which a few threads run
-   as one unit; slices of one term; and rows of 32-term tiles, 2 to 130
-   slices of 32, 33 or more terms, scanned along the last axis or along
-   the first through a transposed operand. *)
-let stat_scan_case =
+(* A scan by Arg of a float, an integer or a boolean, or by Logsumexp or Moments
+   of a float, along one axis. Now and then: a vector of 1 to 40 network tiles,
+   past an Arg scan's chunk of 4096 from 16; 65 to 72 slices of 257 to 300
+   terms, in units of 16 slices, the last partial; two or three slices of 12 to
+   16 tiles of finite terms, which a few threads run as one unit; slices of one
+   term; and rows of 32-term tiles, 2 to 70 slices of 32, 33 or more terms,
+   scanned along the last axis or along the first through a transposed
+   operand. *)
+let stat_scans dtypes reductions =
   Gen.with_pp pp_stat
     (let open Gen in
-     let ints = List.filter (fun (D.Any dt) -> not (D.is D.Float dt)) base in
-     let* d = of_list ~pp:pp_dtype (floats @ floats @ ints) in
-     let* r =
-       of_list
-         (if is_float d then Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ]
-          else Nx_kernel.[ Arg Max; Arg Min ])
-     in
+     let* d = of_list ~pp:pp_dtype dtypes in
+     let* r = of_list (reductions d) in
      let any =
-       let+ s = shape_gen in
+       let+ s = shapes in
        (s, None, false, false)
      in
      let long = map (fun n -> ([| n |], Some 0, false, false)) (tiled 1 40) in
      let wide =
-       let* n = tiled 1 8 in
+       let* n = int_range 257 300 in
        let+ k = int_range 65 72 in
        ([| n; k |], Some 0, false, false)
      in
      let few =
-       let* n = tiled 12 24 in
+       let* n = tiled 12 16 in
        let+ k = int_range 2 3 in
        ([| n; k |], Some 0, false, true)
      in
-     let one = map (fun n -> ([| n; 1 |], Some 1, false, false)) (int_range 1 40) in
+     let one =
+       map (fun n -> ([| n; 1 |], Some 1, false, false)) (int_range 1 40)
+     in
      let tiles =
        let* len =
          frequency
@@ -1670,7 +1787,7 @@ let stat_scan_case =
                (32 * k) + r );
            ]
        in
-       let* slices = int_range 2 130 in
+       let* slices = int_range 2 70 in
        let+ last = bool in
        if last then ([| slices; len |], Some 1, false, false)
        else ([| len; slices |], Some 0, true, false)
@@ -1700,8 +1817,19 @@ let stat_scan_case =
      in
      stat_of r s [| a |] v values.name make)
 
-(* [c]'s scan by [k] into fresh destinations of [c.x]'s shape, their
-   terms; [None] if declined. *)
+let stat_scan_case =
+  let ints = List.filter (fun (D.Any dt) -> not (D.is D.Float dt)) base in
+  stat_scans
+    (floats @ floats @ ints)
+    (fun d ->
+      if is_float d then Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ]
+      else Nx_kernel.[ Arg Max; Arg Min ])
+
+(* A Logsumexp or Moments scan, whose network the replay states. *)
+let network_case = stat_scans floats (fun _ -> Nx_kernel.[ Logsumexp; Moments ])
+
+(* [c]'s scan by [k] into fresh destinations of [c.x]'s shape, their terms;
+   [None] if declined. *)
 let run_stat_scan k (c : stat) =
   let module K = (val k : Nx_kernel.S) in
   let (A.Any x) = c.x in
@@ -1713,29 +1841,31 @@ let run_stat_scan k (c : stat) =
     | Monoid _ | Logsumexp -> [| like (A.dtype x) |]
   in
   match
-    K.scan (identity (dtype_of c.x)) ~axis:c.axes.(0) (c.r, 0)
-      ~dsts:(Iarray.of_array dsts) [| plain_of c.x |]
+    K.scan
+      (identity (dtype_of c.x))
+      ~axis:c.axes.(0) (c.r, 0) ~dsts:(Iarray.of_array dsts)
+      [| plain_of c.x |]
   with
   | A.Done -> Some (Array.map terms dsts)
   | A.Declined -> None
   | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
 
-(* The most combinations a network scan's result [i] passes through:
-   [max 0 (2 ⌈log₂ (i + 1)⌉ - 1)]. *)
+(* The most combinations a network scan's result [i] passes through: [max 0 (2
+   ⌈log₂ (i + 1)⌉ - 1)]. *)
 let depth i =
   let rec log2 k p = if p >= k then 0 else 1 + log2 k (2 * p) in
   Float.of_int (max 0 ((2 * log2 (i + 1) 1) - 1))
 
-(* nx_cpu.mli's bound of a Logsumexp scan's result [r] after [n] terms,
-   at the unit roundoff [u]. *)
+(* nx_cpu.mli's bound of a Logsumexp scan's result [r] after [n] terms, at the
+   unit roundoff [u]. *)
 let lse_scan_bound ~n u r =
   (((7. *. depth (n - 1)) +. (6. *. log (Float.of_int n))) *. u)
   +. (u *. Float.abs r)
 
-(* The running Logsumexp of a slice [ts] within nx_cpu.mli's bound at
-   [u]: past a NaN, a NaN; past +∞, +∞; -∞ while every term is; else
-   from a float64 running maximum and a compensated sum rescaled as it
-   rises, within the bound at float64's roundoff besides. *)
+(* The running Logsumexp of a slice [ts] within nx_cpu.mli's bound at [u]: past
+   a NaN, a NaN; past +∞, +∞; -∞ while every term is; else from a float64
+   running maximum and a compensated sum rescaled as it rises, within the bound
+   at float64's roundoff besides. *)
 let lse_scan u ts =
   let nan = ref false and m = ref Float.neg_infinity in
   let s = ref 0. and comp = ref 0. in
@@ -1749,16 +1879,16 @@ let lse_scan u ts =
   in
   Array.mapi
     (fun i t ->
-      (if is_nan t then nan := true
-       else if not !nan then
-         let x = value t in
-         if x > !m then begin
-           let f = if Float.is_finite !m then exp (!m -. x) else 0. in
-           s := !s *. f;
-           comp := !comp *. f;
-           m := x
-         end;
-         if Float.is_finite !m then add (exp (x -. !m)));
+      if is_nan t then nan := true
+      else if not !nan then (
+        let x = value t in
+        if x > !m then begin
+          let f = if Float.is_finite !m then exp (!m -. x) else 0. in
+          s := !s *. f;
+          comp := !comp *. f;
+          m := x
+        end;
+        if Float.is_finite !m then add (exp (x -. !m)));
       if !nan then [| Is Some_nan |]
       else if not (Float.is_finite !m) then [| Near (!m, 0.) |]
       else
@@ -1767,8 +1897,8 @@ let lse_scan u ts =
         [| Near (r, b u +. b eps) |])
     ts
 
-(* nx_kinds.h's kind [name] over the vector [xs], float32 where [f32]
-   else float64, in one call. *)
+(* nx_kinds.h's kind [name] over the vector [xs], float32 where [f32] else
+   float64, in one call. *)
 let kinded ~f32 name xs =
   let n = Array.length xs in
   if f32 then begin
@@ -1787,14 +1917,13 @@ let kinded ~f32 name xs =
   end
 
 (* The bits of a Logsumexp scan of a slice [ts], float32 where [f32] else
-   float64, by nx_cpu.mli's network replayed term by term as a stream,
-   as replayed_moments does, each operation as stated: a term [x] is the
-   state [(x, e (x - c))], and states [a] then [b] join into
-   [m = Maximum (ma, mb)] and [sa e (ma - c) + sb e (mb - c)], [c] being [m]
-   where finite and [0] elsewhere and [e] nx_kinds.h's exp, [0] below
-   nx_cpu.mli's cut; the result is [m + log s], or [m] where [m] is not
-   finite. Each operation rounds to the dtype. From the first NaN term on,
-   the result is a NaN. *)
+   float64, by nx_cpu.mli's network replayed term by term as a stream, as
+   replayed_moments does, each operation as stated: a term [x] is the state [(x,
+   e (x - c))], and states [a] then [b] join into [m = Maximum (ma, mb)] and [sa
+   e (ma - c) + sb e (mb - c)], [c] being [m] where finite and [0] elsewhere and
+   [e] nx_kinds.h's exp, [0] below nx_cpu.mli's cut; the result is [m + log s],
+   or [m] where [m] is not finite. Each operation rounds to the dtype. From the
+   first NaN term on, the result is a NaN. *)
 let lse_replay ~f32 ts =
   let rnd x = if f32 then round32 x else x in
   let kind = kinded ~f32 in
@@ -1802,8 +1931,8 @@ let lse_replay ~f32 ts =
   let first = Array.find_index is_nan ts in
   let k = Option.value first ~default:(Array.length ts) in
   (* The network, its exps from [ex] in the order it takes them: no exp's
-     argument depends on a sum, so a first run records the arguments,
-     which run through exp at once, and a second takes them. *)
+     argument depends on a sum, so a first run records the arguments, which run
+     through exp at once, and a second takes them. *)
   let replay ex =
     let shift m = if Float.is_finite m then m else 0. in
     let e z = if z < cut then 0. else ex z in
@@ -1831,7 +1960,10 @@ let lse_replay ~f32 ts =
         res)
   in
   let args = ref [] in
-  ignore (replay (fun y -> args := y :: !args; 0.));
+  ignore
+    (replay (fun y ->
+         args := y :: !args;
+         0.));
   let es = kind "exp" (Array.of_list (List.rev !args)) in
   let next = ref 0 in
   let states =
@@ -1842,7 +1974,8 @@ let lse_replay ~f32 ts =
   in
   let logs = kind "log" (Array.map snd states) in
   let bits r =
-    if f32 then Int64.of_int32 (Int32.bits_of_float r) else Int64.bits_of_float r
+    if f32 then Int64.of_int32 (Int32.bits_of_float r)
+    else Int64.bits_of_float r
   in
   Array.init (Array.length ts) (fun i ->
       if i >= k then Is Some_nan
@@ -1851,13 +1984,12 @@ let lse_replay ~f32 ts =
         let r = if Float.is_finite m then rnd (m +. logs.(i)) else m in
         Is (Bits (bits r)))
 
-(* The running mean and variance of a slice [ts] within nx.cpu's bound at
-   the unit roundoff [u]: past a NaN term, NaNs; past an infinity, the
-   infinities' sum and a NaN, the mean a NaN too past infinities of both
-   signs; else from float64 sums of the terms less the first and of their
-   squares, within the bound at the depth [D] of the index and the range
-   [R] and variance [V] of the terms so far, plus the sums' own bound in
-   float64. *)
+(* The running mean and variance of a slice [ts] within nx.cpu's bound at the
+   unit roundoff [u]: past a NaN term, NaNs; past an infinity, the infinities'
+   sum and a NaN, the mean a NaN too past infinities of both signs; else from
+   float64 sums of the terms less the first and of their squares, within the
+   bound at the depth [D] of the index and the range [R] and variance [V] of the
+   terms so far, plus the sums' own bound in float64. *)
 let moments_scan u ts =
   let gamma k = Float.of_int k *. eps /. (1. -. (Float.of_int k *. eps)) in
   let nan = ref false and pos = ref false and neg = ref false in
@@ -1902,30 +2034,33 @@ let moments_scan u ts =
         [| Near (c +. m, tm); Near (v, tv) |])
     ts
 
-(* The bits of a slice's running mean and variance by nx_cpu.mli's
-   network, replayed term by term as a stream: term t's state joins its
-   level's waiting state while t's low bits are 1, and the result at the
-   level it reaches is that state, or the next level's last result joined
-   with it. Each operation rounds to the dtype, float32 where [f32]. A
-   slice with a term not finite takes nx_kinds.h's NaN rules, which this
-   does not replay: [None]. *)
+(* The bits of a slice's running mean and variance by nx_cpu.mli's network,
+   replayed term by term as a stream: term t's state joins its level's waiting
+   state while t's low bits are 1, and the result at the level it reaches is
+   that state, or the next level's last result joined with it. Each operation
+   rounds to the dtype, float32 where [f32]. A slice with a term not finite
+   takes nx_kinds.h's NaN rules, which this does not replay: [None]. *)
 let moments_replay ~f32 ts =
   let rnd v = if f32 then round32 v else v in
   let bits v =
-    if f32 then Int64.of_int32 (Int32.bits_of_float v) else Int64.bits_of_float v
+    if f32 then Int64.of_int32 (Int32.bits_of_float v)
+    else Int64.bits_of_float v
   in
   (* A state: its mean less the slice's first term, S and count. *)
   let join (ma, sa, na) (mb, sb, nb) =
     let k = rnd (na +. nb) in
     let f = rnd (nb /. k) in
     let g = rnd (na *. f) and d = rnd (mb -. ma) in
-    (rnd (ma +. rnd (d *. f)), rnd (rnd (sa +. sb) +. rnd (rnd (d *. d) *. g)), k)
+    ( rnd (ma +. rnd (d *. f)),
+      rnd (rnd (sa +. sb) +. rnd (rnd (d *. d) *. g)),
+      k )
   in
   let xs = Array.map value ts in
   if xs = [||] || not (Array.for_all Float.is_finite xs) then None
   else
     let c = xs.(0) in
-    let held = Array.make 64 (0., 0., 0.) and got = Array.make 65 (0., 0., 0.) in
+    let held = Array.make 64 (0., 0., 0.)
+    and got = Array.make 65 (0., 0., 0.) in
     Some
       (Array.mapi
          (fun t v ->
@@ -1942,7 +2077,9 @@ let moments_replay ~f32 ts =
            done;
            let mu, sv, _ = res in
            let n = Float.of_int (t + 1) in
-           [| Is (Bits (bits (rnd (c +. mu)))); Is (Bits (bits (rnd (sv /. n)))) |])
+           [|
+             Is (Bits (bits (rnd (c +. mu)))); Is (Bits (bits (rnd (sv /. n))));
+           |])
          xs)
 
 (* The expected results of [c]'s scan in C order, by destination. *)
@@ -1962,20 +2099,17 @@ let stat_scan_expected (c : stat) =
         ~reduce:(fun _ -> assert false)
         ~scan:(fun ts -> Array.map (fun e -> e.(j)) (slice ts)))
 
-(* Arg scans are exact, Logsumexp and Moments scans within nx_cpu.mli's
-   bounds and the bits of its network replayed, NaNs and infinities as
-   Nx_kernel.reduction states them. *)
-let law_stat_scan (b : Support.backend) (c : stat) =
+(* Arg scans are exact, Logsumexp and Moments scans within nx_cpu.mli's bounds,
+   NaNs and infinities as Nx_kernel.reduction states them. *)
+let law_scan_bounds (c : stat) =
   let s = shape_of c.x in
   let a = c.axes.(0) in
   let n = s.(a) in
-  cover "an Arg scan's several chunks" (n > 4096);
+  cover "an Arg scan's several chunks"
+    ((match c.r with Arg _ -> true | _ -> false) && n > 4096);
   cover "no result" (total s = 0);
   cover "one term" (n = 1);
   cover "more than 64 slices" (n > 0 && total s / n > 64);
-  cover "one slice past 256 terms" (n > 256 && total s = n);
-  cover "more than 64 slices side by side, past 256 terms"
-    (n > 256 && total s / n > 64);
   let last = Array.length s - 1 in
   cover "slices side by side" (a < last && s.(last) > 1);
   cover "a Moments scan" (c.r = Moments);
@@ -1983,60 +2117,76 @@ let law_stat_scan (b : Support.backend) (c : stat) =
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
-  let replayed = ref false in
-  (match run_stat_scan b.kernels c with
+  match run_stat_scan cpu.kernels c with
   | None -> failf "nx.cpu declined %s" (reduction_name c.r)
   | Some got ->
       let want = stat_scan_expected c in
       let wanted p = Array.exists (Array.exists p) want in
       let stated = c.r = Logsumexp || c.r = Moments in
-      cover "a NaN" (stated && wanted (function Is Some_nan -> true | _ -> false));
+      cover "a NaN"
+        (stated && wanted (function Is Some_nan -> true | _ -> false));
       cover "a -∞ term"
         (c.r = Logsumexp
         && Array.exists
              (fun t -> (not (is_nan t)) && value t = Float.neg_infinity)
              (terms c.x));
       cover "an infinity"
-        (wanted (function Near (v, _) -> not (Float.is_finite v) | Is _ -> false));
+        (wanted (function
+          | Near (v, _) -> not (Float.is_finite v)
+          | Is _ -> false));
       Array.iteri
         (fun k w ->
-          equal ~msg:(Printf.sprintf "destination %d" k) (list string) []
+          equal
+            ~msg:(Printf.sprintf "destination %d" k)
+            (list string) []
             (misses w got.(k)))
-        want;
+        want
+
+(* A Logsumexp or Moments scan has the bits of nx_cpu.mli's odd/even network
+   replayed, each state's operations in the carrier, a NaN as any NaN. *)
+let law_scan_network (c : stat) =
+  let s = shape_of c.x in
+  let n = s.(c.axes.(0)) in
+  cover "a Moments scan" (c.r = Moments);
+  cover "a Logsumexp scan" (c.r = Logsumexp);
+  cover "one slice past 256 terms" (n > 256 && total s = n);
+  cover "more than 64 slices side by side, past 256 terms"
+    (n > 256 && total s / n > 64);
+  let replayed = ref false in
+  (match run_stat_scan cpu.kernels c with
+  | None -> failf "nx.cpu declined %s" (reduction_name c.r)
+  | Some got ->
       let (D.Any dt) = dtype_of c.x in
       let f32 = D.bits dt = 32 in
-      let replay =
+      let replay ts =
         match c.r with
-        | Logsumexp ->
-            Some (fun ts -> Some (Array.map (fun e -> [| e |]) (lse_replay ~f32 ts)))
-        | Moments -> Some (moments_replay ~f32)
-        | Arg _ | Monoid _ -> None
+        | Logsumexp -> Some (Array.map (fun e -> [| e |]) (lse_replay ~f32 ts))
+        | _ -> moments_replay ~f32 ts
       in
-      Option.iter
-        (fun replay ->
-          let net j =
-            results { (as_case c) with scan = true } (terms c.x) ~fill:None
-              ~reduce:(fun _ -> assert false)
-              ~scan:(fun ts ->
-                match replay ts with
-                | None -> Array.map (fun _ -> None) ts
-                | Some es -> Array.map (fun e -> Some e.(j)) es)
+      let net j =
+        results
+          { (as_case c) with scan = true }
+          (terms c.x) ~fill:None
+          ~reduce:(fun _ -> assert false)
+          ~scan:(fun ts ->
+            match replay ts with
+            | None -> Array.map (fun _ -> None) ts
+            | Some es -> Array.map (fun e -> Some e.(j)) es)
+      in
+      Array.iteri
+        (fun j g ->
+          let w =
+            Array.mapi
+              (fun i w ->
+                match w with
+                | Some w ->
+                    replayed := true;
+                    w
+                | None -> Is (Bits (bits_of g.(i))))
+              (net j)
           in
-          Array.iteri
-            (fun j g ->
-              let w =
-                Array.mapi
-                  (fun i w ->
-                    match w with
-                    | Some w ->
-                        replayed := true;
-                        w
-                    | None -> Is (Bits (bits_of g.(i))))
-                  (net j)
-              in
-              equal ~msg:"the replayed network" (list string) [] (misses w g))
-            got)
-        replay);
+          equal ~msg:"the replayed network" (list string) [] (misses w g))
+        got);
   cover "replayed" !replayed
 
 let stat_example r d s axes ?view ?(outliers = 0) ?(specials = 0) values =
@@ -2044,7 +2194,12 @@ let stat_example r d s axes ?view ?(outliers = 0) ?(specials = 0) values =
   let view =
     Option.value view
       ~default:
-        { perm = Array.init rank Fun.id; stepped = false; reversed = None; broadcast = false }
+        {
+          perm = Array.init rank Fun.id;
+          stepped = false;
+          reversed = None;
+          broadcast = false;
+        }
   in
   let v = List.find (fun v -> v.name = values) value_kinds in
   let (D.Any dt) = d in
@@ -2086,12 +2241,12 @@ let ramp_examples =
             views = [];
             values = "ramp";
           })
-        [ 0; 1; 2; 3 ])
+        [ 0 ])
     floats
 
-(* Moments scans of slices of 15 to 25 tiles, one alone or three side by
-   side, about 2^-20 to 2^20 in magnitude, of both signs, whose joins of
-   the tiles' states round differently in each order. *)
+(* Moments scans of slices of 15 to 25 tiles, one alone or three side by side,
+   about 2^-20 to 2^20 in magnitude, of both signs, whose joins of the tiles'
+   states round differently in each order. *)
 let mixed_examples =
   let mixed (D.Any dt) s seed =
     let n = Array.fold_left ( * ) 1 s in
@@ -2105,7 +2260,13 @@ let mixed_examples =
   in
   List.map
     (fun (d, s, seed) ->
-      { r = Nx_kernel.Moments; axes = [| 0 |]; x = mixed d s seed; views = []; values = "mixed" })
+      {
+        r = Nx_kernel.Moments;
+        axes = [| 0 |];
+        x = mixed d s seed;
+        views = [];
+        values = "mixed";
+      })
     [ (f32, [| 6400 |], 1); (f64, [| 5000 |], 2); (f32, [| 4000; 3 |], 3) ]
 
 let stat_examples =
@@ -2116,9 +2277,21 @@ let stat_examples =
       (* Many outputs of several blocks: along stepped rows with NaNs and
          infinities, and strided down a reversed axis. *)
       stat_example Moments f64 [| 65; 1100 |] [| 1 |] ~specials:2000 "small"
-        ~view:{ perm = [| 0; 1 |]; stepped = true; reversed = None; broadcast = false };
+        ~view:
+          {
+            perm = [| 0; 1 |];
+            stepped = true;
+            reversed = None;
+            broadcast = false;
+          };
       stat_example Moments f32 [| 64; 1025; 2 |] [| 1 |] "offset"
-        ~view:{ perm = [| 0; 1; 2 |]; stepped = false; reversed = Some 1; broadcast = false };
+        ~view:
+          {
+            perm = [| 0; 1; 2 |];
+            stepped = false;
+            reversed = Some 1;
+            broadcast = false;
+          };
       stat_example Logsumexp f32 [| 64; 1030 |] [| 1 |] ~specials:2000 "wide";
       stat_example Logsumexp f32 [| 3000 |] [| 0 |] ~specials:20 "wide";
       stat_example Logsumexp f64 [| 300; 9 |] [| 1 |] ~specials:20 "small";
@@ -2126,10 +2299,17 @@ let stat_examples =
       stat_example (Arg Max) f32 [| 46; 13; 2 |] [| 2 |] ~specials:300 "ties";
       stat_example (Arg Min) (D.Any D.Int64) [| 5; 2000 |] [| 0 |] "small";
       stat_example (Arg Max) f64 [| 3; 4; 5 |] [| 1 |] "ties"
-        ~view:{ perm = [| 2; 0; 1 |]; stepped = true; reversed = Some 0; broadcast = true };
+        ~view:
+          {
+            perm = [| 2; 0; 1 |];
+            stepped = true;
+            reversed = Some 0;
+            broadcast = true;
+          };
       stat_example (Arg Min) f32 [| 3 |] [||] "small";
       stat_example Moments f32 [| 3; 0 |] [| 1 |] "small";
       stat_example Moments f32 [| 0; 3 |] [| 0 |] "small";
+      stat_example Moments f32 [| 0; 3 |] [| 1 |] "small";
       stat_example Logsumexp f64 [| 2; 0 |] [| 1 |] "small";
       stat_example (Arg Max) (D.Any D.Uint8) [| 200; 64 |] [| 1 |] "small";
       (* Every block's extreme ties with the others'. *)
@@ -2139,9 +2319,9 @@ let stat_examples =
 
 (* The two passes' arithmetic *)
 
-(* A Logsumexp or Moments of a float, of finite terms: now and then a
-   vector at a block's or a chunk's edge or of 70,000 terms, or many
-   outputs of several blocks. *)
+(* A Logsumexp or Moments of a float, of finite terms: now and then a vector at
+   a block's or a chunk's edge. Groups of blocks and many outputs of several
+   blocks are the examples'. *)
 let two_pass_case =
   Gen.with_pp pp_stat
     (let open Gen in
@@ -2150,16 +2330,19 @@ let two_pass_case =
      let* s =
        frequency
          [
-           (4, shape_gen);
-           (1, many_long);
+           (4, shapes);
            ( 1,
-             map (fun n -> [| n |])
-               (of_list ~pp:Format.pp_print_int [ 1; 2; 17; 1023; 1025; 4097; 70_000 ]) );
+             map
+               (fun n -> [| n |])
+               (of_list ~pp:Format.pp_print_int [ 1; 2; 17; 1023; 1025; 4097 ])
+           );
          ]
      in
      let rank = Array.length s in
      let* keep = array ~size:(constant rank) bool in
-     let axes = Array.of_list (List.filter (fun i -> keep.(i)) (List.init rank Fun.id)) in
+     let axes =
+       Array.of_list (List.filter (fun i -> keep.(i)) (List.init rank Fun.id))
+     in
      let* v = view_of rank in
      let* values = of_list value_kinds in
      let* outliers = frequency [ (3, constant 0); (1, constant 50) ] in
@@ -2168,32 +2351,54 @@ let two_pass_case =
      stat_of r s axes v values.name (fun n ->
          float_elements dt n values ~outliers ~specials:0 seed))
 
-(* Many outputs of several blocks, along rows, side by side and with their
-   terms two apart beside no output's. *)
+(* Many outputs of several blocks, along rows, side by side and with their terms
+   two apart beside no output's. *)
 let two_pass_examples =
-  let stepped = { perm = [| 0; 1 |]; stepped = true; reversed = None; broadcast = false } in
+  let stepped =
+    { perm = [| 0; 1 |]; stepped = true; reversed = None; broadcast = false }
+  in
+  let broadcast = { stepped with stepped = false; broadcast = true } in
   List.concat_map
     (fun r ->
       [
         stat_example r f32 [| 64; 1025 |] [| 1 |] "offset";
         stat_example r f32 [| 64; 1025; 2 |] [| 1 |] "offset";
         stat_example r f32 [| 64; 1025 |] [| 1 |] ~view:stepped "offset";
+        stat_example r f32 [| 4; 9 |] [| 1 |] ~view:broadcast "small";
       ])
     Nx_kernel.[ Logsumexp; Moments ]
 
+(* Moments whose variance takes M:240's branch for squares past the largest
+   float32: [3e19; -3e19], whose squared deviations overflow, and [3e38; 3e38],
+   whose sum overflows, so that the mean is +∞, each deviation -∞ and the
+   variance [Σ d²], +∞, where the formula alone would give ∞ - ∞. *)
+let overflow_examples =
+  List.map
+    (fun xs ->
+      {
+        r = Nx_kernel.Moments;
+        axes = [| 0 |];
+        x = array_bits D.Float32 32 [| 2 |] xs;
+        views = [];
+        values = "overflow";
+      })
+    [ [| 3e19; -3e19 |]; [| 3e38; 3e38 |] ]
+
 (* The float [v] as a term of [d]. *)
 let fterm d v =
-  F (v, if same d f32 then Int64.of_int32 (Int32.bits_of_float v) else Int64.bits_of_float v)
+  F
+    ( v,
+      if same d f32 then Int64.of_int32 (Int32.bits_of_float v)
+      else Int64.bits_of_float v )
 
-(* Logsumexp: the maximum [m] in lane order, [c] where it is finite or
-   else [0], then [c + log] of the sum in lane order of [exp (x - c)], an
-   exp of an argument below the cut taken as [0]. Moments: the sum over
-   the count, the mean, then the sums [s1] of the deviations [d] from it
-   and [s2] of their squares, and [(s2 - s1 (s1 / n)) / n], +0 where that
-   is negative, or [s2] where that is +inf. Each operation rounds to the
-   dtype, each sum is in lane order from +0 and each exp and log is
-   nx_kinds.h's. *)
-let law_two_passes (b : Support.backend) (c : stat) =
+(* Logsumexp: the maximum [m] in lane order, [c] where it is finite or else [0],
+   then [c + log] of the sum in lane order of [exp (x - c)], an exp of an
+   argument below the cut taken as [0]. Moments: the sum over the count, the
+   mean, then the sums [s1] of the deviations [d] from it and [s2] of their
+   squares, and [(s2 - s1 (s1 / n)) / n], +0 where that is negative, or [s2]
+   where that is +inf. Each operation rounds to the dtype, each sum is in lane
+   order from +0 and each exp and log is nx_kinds.h's. *)
+let law_two_passes (c : stat) =
   let d = dtype_of c.x in
   let f32 = same d f32 in
   let round x = if f32 then round32 x else x in
@@ -2203,18 +2408,24 @@ let law_two_passes (b : Support.backend) (c : stat) =
   let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
   cover "several blocks" (per > 1024);
   cover "groups of blocks" (per >= 70_000);
-  cover "many outputs of several blocks" (per > 1024 && total (stat_shape c) >= 64);
+  cover "many outputs of several blocks"
+    (per > 1024 && total (stat_shape c) >= 64);
   cover "no term" (per = 0 && total (stat_shape c) > 0);
   List.iter (fun (k : values) -> cover k.name (c.values = k.name)) value_kinds;
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
-  let outs = Array.of_list (List.map (Array.map value) (outputs (as_case c) (terms c.x))) in
-  let expect v = if Float.is_nan v then Is Some_nan else Is (Bits (bits_of (fterm d v))) in
-  match run_stat b.kernels c with
+  let outs =
+    Array.of_list (List.map (Array.map value) (outputs (as_case c) (terms c.x)))
+  in
+  let squares_past = ref false in
+  let expect v =
+    if Float.is_nan v then Is Some_nan else Is (Bits (bits_of (fterm d v)))
+  in
+  match run_stat cpu.kernels c with
   | None -> failf "nx.cpu declined %s" (reduction_name c.r)
-  | Some got -> (
-      match c.r with
+  | Some got ->
+      (match c.r with
       | Logsumexp ->
           let cut = if f32 then -87. else -708. in
           let one xs =
@@ -2222,49 +2433,67 @@ let law_two_passes (b : Support.backend) (c : stat) =
             let c0 = if Float.is_finite m then m else 0. in
             let ys = Array.map (fun x -> round (x -. c0)) xs in
             let es = kind "exp" (Array.map (Float.max cut) ys) in
-            let es = Array.mapi (fun i e -> if ys.(i) < cut then 0. else e) es in
+            let es =
+              Array.mapi (fun i e -> if ys.(i) < cut then 0. else e) es
+            in
             expect (round (c0 +. (kind "log" [| fold Sum es |]).(0)))
           in
-          equal ~msg:"logsumexp" (list string) [] (misses (Array.map one outs) got.(0))
+          equal ~msg:"logsumexp" (list string) []
+            (misses (Array.map one outs) got.(0))
       | _ ->
           let one xs =
             let n = round (Float.of_int (Array.length xs)) in
             let mean = round (fold Sum xs /. n) in
             let dev x = round (x -. mean) in
             let s1 = fold Sum (Array.map dev xs) in
-            let s2 = fold Sum (Array.map (fun x -> round (dev x *. dev x)) xs) in
+            let s2 =
+              fold Sum (Array.map (fun x -> round (dev x *. dev x)) xs)
+            in
             let q = round (round (s2 -. round (s1 *. round (s1 /. n))) /. n) in
-            (expect mean, expect (if s2 = infinity then s2 else if q < 0. then 0. else q))
+            if s2 = infinity then squares_past := true;
+            ( expect mean,
+              expect (if s2 = infinity then s2 else if q < 0. then 0. else q) )
           in
           let want = Array.map one outs in
-          equal ~msg:"mean" (list string) [] (misses (Array.map fst want) got.(0));
-          equal ~msg:"variance" (list string) [] (misses (Array.map snd want) got.(1)))
+          equal ~msg:"mean" (list string) []
+            (misses (Array.map fst want) got.(0));
+          equal ~msg:"variance" (list string) []
+            (misses (Array.map snd want) got.(1)));
+      cover "a variance of squares past the largest float" !squares_past
 
-(* A reduction or a scan into its own operand gives the bits of one into
-   fresh destinations, as nx_cpu.mli states, though it overwrites the terms
-   it reads: a Moments scan whose terms take its exact pass, its mean or its
-   variance in place; running sums, Logsumexps and Arg's extremes of slices
-   past a chunk, more units than a job splits into chunks; and a float16
-   sum along no axis of signalling NaNs, which stay NaNs. A NaN result is
-   any NaN. *)
-let test_in_place (b : Support.backend) () =
-  let module K = (val b.kernels) in
+(* A reduction or a scan into its own operand gives the bits of one into fresh
+   destinations, as nx_cpu.mli states, though it overwrites the terms it reads:
+   a Moments scan whose terms take its exact pass, its mean or its variance in
+   place; running sums, Logsumexps and Arg's extremes of slices past a chunk,
+   more units than a job splits into chunks; and a float16 sum along no axis of
+   signalling NaNs, which stay NaNs. A NaN result is any NaN. *)
+let test_in_place () =
+  let module K = (val cpu.kernels) in
+  (* A float32 result's bits, any NaN as one, or an Arg's int64 positions:
+     integers, which compare without a string an element. *)
+  let classed (A.Any d) =
+    match A.dtype d with
+    | D.Float32 ->
+        Array.map
+          (fun x ->
+            if Float.is_nan x then 0x7FC00000
+            else Int32.to_int (Int32.bits_of_float x))
+          (A.to_array d)
+    | D.Int64 -> Array.map Int64.to_int (A.to_array d)
+    | _ -> invalid_arg "classed"
+  in
   let copy (A.Any x) = A.Any (A.copy x) in
   let fresh (A.Any x) =
     A.Any (A.create Rig.host (A.dtype x) (L.shape (A.layout x)))
   in
   let scan r axis x dsts =
     match
-      K.scan (identity (dtype_of x)) ~axis (r, 0)
-        ~dsts:(Iarray.of_array dsts) [| plain_of x |]
+      K.scan
+        (identity (dtype_of x))
+        ~axis (r, 0) ~dsts:(Iarray.of_array dsts)
+        [| plain_of x |]
     with
-    | A.Done ->
-        Array.map
-          (fun d ->
-            Array.map
-              (fun e -> if Elements.nan_of (dtype_of d) e then "nan" else e)
-              (Elements.elements d))
-          dsts
+    | A.Done -> Array.map classed dsts
     | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
   in
   (* Destination [k] the operand; an Arg's positions int64. *)
@@ -2279,9 +2508,11 @@ let test_in_place (b : Support.backend) () =
     let want = scan r axis x (Array.init n dst) in
     let x' = copy x in
     let dsts = Array.init n (fun j -> if j = k then x' else dst j) in
-    equal ~msg:what (array (array string)) want (scan r axis x' dsts)
+    equal ~msg:what (array (array int)) want (scan r axis x' dsts)
   in
-  let terms = A.Any (A.of_array D.Float32 [| 5 |] [| 1.; 2.; infinity; 4.; 5. |]) in
+  let terms =
+    A.Any (A.of_array D.Float32 [| 5 |] [| 1.; 2.; infinity; 4.; 5. |])
+  in
   let long =
     let l = elements D.Float32 (300 * 4100) ~specials:0 7 in
     A.Any (Option.get (A.move (M.Reshape [| 300; 4100 |]) l))
@@ -2295,28 +2526,30 @@ let test_in_place (b : Support.backend) () =
   let x = Elements.of_elements (D.Any D.Float16) [| 3 |] codes in
   let x' = copy x in
   let answer =
-    K.reduce (identity (D.Any D.Float16)) ~shape:[| 3 |] ~axes:[||]
-      [| (Monoid Sum, 0) |] ~dsts:[| x' |] [| plain_of x' |]
+    K.reduce
+      (identity (D.Any D.Float16))
+      ~shape:[| 3 |] ~axes:[||]
+      [| (Monoid Sum, 0) |]
+      ~dsts:[| x' |]
+      [| plain_of x' |]
   in
-  equal ~msg:"its answer" bool true (answer = A.Done);
+  equal ~msg:"its answer" Elements.answer A.Done answer;
   equal ~msg:"a float16 sum along no axis in place"
     (array (Elements.same (D.Any D.Float16)))
     codes (Elements.elements x')
 
-(* A scan by Arg, Logsumexp or Moments along the rows of [k; n] terms: a
-   few rows of up to a chunk's terms, past one now and then. *)
+(* A scan by Arg, Logsumexp or Moments along the rows of [k; n] terms: a few
+   rows of up to 600 terms; rows past a chunk are the examples'. *)
 let lanes_case =
   Gen.with_pp pp_stat
     (let open Gen in
-     let* r =
-       of_list Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ]
-     in
+     let* r = of_list Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ] in
      let* d =
        of_list ~pp:pp_dtype
          (match r with Arg _ -> D.Any D.Int32 :: floats | _ -> floats)
      in
      let* k = int_range 1 20 in
-     let* n = frequency [ (4, int_range 1 600); (1, int_range 4097 9000) ] in
+     let* n = int_range 1 600 in
      let* values = of_list value_kinds in
      let* specials = frequency [ (2, constant 0); (1, constant 100) ] in
      let+ seed = int in
@@ -2325,15 +2558,22 @@ let lanes_case =
        if is_float d then float_elements dt m values ~outliers:0 ~specials seed
        else A.Any (elements dt m ~specials seed)
      in
-     let plain = { perm = [| 0; 1 |]; stepped = false; reversed = None; broadcast = false } in
+     let plain =
+       {
+         perm = [| 0; 1 |];
+         stepped = false;
+         reversed = None;
+         broadcast = false;
+       }
+     in
      stat_of r [| k; n |] [| 1 |] plain values.name make)
 
 (* Each row of a scan by Arg, Logsumexp or Moments has the bits of the row
-   scanned alone, a NaN as any NaN, whichever way its lanes run: the rows
-   side by side, staged into lanes; their transpose scanned down its
-   columns, whose lanes lie side by side; and one row alone, whose chunks
-   run as lanes past a chunk, or a Logsumexp or Moments scan's tiles. *)
-let law_lanes (b : Support.backend) (c : stat) =
+   scanned alone, a NaN as any NaN, whichever way its lanes run: the rows side
+   by side, staged into lanes; their transpose scanned down its columns, whose
+   lanes lie side by side; and one row alone, whose chunks run as lanes past a
+   chunk, or a Logsumexp or Moments scan's tiles. *)
+let law_lanes (c : stat) =
   let s = shape_of c.x in
   let k = s.(0) and n = s.(1) in
   cover "past a chunk" (n > 4096);
@@ -2342,22 +2582,26 @@ let law_lanes (b : Support.backend) (c : stat) =
   let move m a = Option.get (A.move m a) in
   let scan a axis =
     let c = { c with x = A.Any a; axes = [| axis |] } in
-    match run_stat_scan b.kernels c with
-    | Some g -> Array.map (Array.map (fun t -> show (want_of t))) g
+    match run_stat_scan cpu.kernels c with
+    | Some g ->
+        (* A NaN as -1, itself a NaN's bits, so no number takes it. *)
+        Array.map (Array.map (fun t -> if is_nan t then -1L else bits_of t)) g
     | None -> failf "nx.cpu declined %s" (reduction_name c.r)
   in
   let rows = scan x 1 in
   let cols = scan (A.copy (move (M.Permute [| 1; 0 |]) x)) 0 in
   for i = 0 to k - 1 do
     let whole = { M.start = 0; count = n; step = 1 } in
-    let row = move (M.Slice [| { M.start = i; count = 1; step = 1 }; whole |]) x in
+    let row =
+      move (M.Slice [| { M.start = i; count = 1; step = 1 }; whole |]) x
+    in
     let alone = scan (move (M.Reshape [| n |]) (A.copy row)) 0 in
     Array.iteri
       (fun d a ->
         let msg = Printf.sprintf "row %d, destination %d" i d in
-        equal ~msg:(msg ^ ", side by side") (array string) a
+        equal ~msg:(msg ^ ", side by side") (array int64) a
           (Array.sub rows.(d) (i * n) n);
-        equal ~msg:(msg ^ ", transposed") (array string) a
+        equal ~msg:(msg ^ ", transposed") (array int64) a
           (Array.init n (fun j -> cols.(d).((j * k) + i))))
       alone
   done
@@ -2371,9 +2615,9 @@ let lanes_examples =
       stat_example Moments f64 [| 3; 1000 |] [| 1 |] ~specials:100 "small";
     ]
 
-(* Scans past several tiles and an Arg's chunks, one slice's several at a
-   time and slices side by side, and a NaN, an infinity and -∞ among finite
-   terms in a Logsumexp's terms. *)
+(* Scans past several tiles and an Arg's chunks, one slice's several at a time
+   and slices side by side, and a NaN, an infinity and -∞ among finite terms in
+   a Logsumexp's terms. *)
 let stat_scan_examples =
   let vector xs =
     {
@@ -2386,14 +2630,11 @@ let stat_scan_examples =
   in
   Nx_kernel.
     [
-      stat_example Logsumexp f32 [| 20_000 |] [| 0 |] ~specials:3000
-        "wide";
+      stat_example Logsumexp f32 [| 20_000 |] [| 0 |] ~specials:3000 "wide";
       stat_example Logsumexp f64 [| 5000; 3 |] [| 0 |] "small";
-      (* One slice of 274 tiles, the last partial; 40 slices of two tiles,
-         the last partial, contiguous and staged; and 70 slices, past a
-         unit's. *)
-      stat_example Logsumexp f32 [| 70_000 |] [| 0 |] ~specials:3000
-        "small";
+      (* One slice of 274 tiles, the last partial; 40 slices of two tiles, the
+         last partial, contiguous and staged; and 70 slices, past a unit's. *)
+      stat_example Logsumexp f32 [| 70_000 |] [| 0 |] ~specials:3000 "small";
       stat_example Logsumexp f32 [| 300; 40 |] [| 0 |] "wide";
       stat_example Logsumexp f64 [| 40; 300 |] [| 1 |] "offset";
       stat_example Logsumexp f32 [| 514; 70 |] [| 0 |] ~specials:300 "wide";
@@ -2404,16 +2645,33 @@ let stat_scan_examples =
          transpose. *)
       stat_example Moments f32 [| 40; 45 |] [| 1 |] "small";
       stat_example Moments f32 [| 45; 40 |] [| 0 |] "small"
-        ~view:{ perm = [| 1; 0 |]; stepped = false; reversed = None; broadcast = false };
+        ~view:
+          {
+            perm = [| 1; 0 |];
+            stepped = false;
+            reversed = None;
+            broadcast = false;
+          };
       vector [| 1.; Float.infinity; 2. |];
       vector [| 1.; Float.nan; 2. |];
       vector [| Float.neg_infinity; 1.; Float.neg_infinity; 3. |];
+      (* Slices of one term. *)
+      stat_example Logsumexp f32 [| 5; 1 |] [| 1 |] "small";
+      (* A first term not finite: c is 0 (M:271-272), so each mean is +∞ and
+         each variance μ - μ, a NaN. *)
+      {
+        r = Moments;
+        axes = [| 0 |];
+        x = A.Any (A.of_array D.Float32 [| 3 |] [| Float.infinity; 1.; 2. |]);
+        views = [];
+        values = "small";
+      };
     ]
 
-(* A complex Arg scan orders real parts, then imaginary ones; a number with
-   a NaN part holds from there on. *)
-let test_complex_arg_scan (b : Support.backend) () =
-  let module K = (val b.kernels) in
+(* A complex Arg scan orders real parts, then imaginary ones; a number with a
+   NaN part holds from there on. *)
+let test_complex_arg_scan () =
+  let module K = (val cpu.kernels) in
   let z re im = { Complex.re; im } in
   let xs = [| z 1. 0.; z 1. 1.; z 0. 5.; z Float.nan 0.; z 3. 0. |] in
   let x = A.of_array D.Complex64 [| 5 |] xs in
@@ -2421,10 +2679,11 @@ let test_complex_arg_scan (b : Support.backend) () =
     let v = A.create Rig.host D.Complex64 [| 5 |]
     and at = A.create Rig.host D.Int64 [| 5 |] in
     let answer =
-      K.scan (identity (D.Any D.Complex64)) ~axis:0 (Arg e, 0)
-        ~dsts:[| A.Any v; A.Any at |] [| Nx_kernel.Plain x |]
+      K.scan
+        (identity (D.Any D.Complex64))
+        ~axis:0 (Arg e, 0) ~dsts:[| A.Any v; A.Any at |] [| Nx_kernel.Plain x |]
     in
-    equal ~msg:"its answer" bool true (answer = A.Done);
+    equal ~msg:"its answer" Elements.answer A.Done answer;
     (Elements.elements (A.Any v), A.to_array at)
   in
   let pick ks = Array.map (fun k -> (Elements.elements (A.Any x)).(k)) ks in
@@ -2438,8 +2697,8 @@ let test_complex_arg_scan (b : Support.backend) () =
 
 (* Guard pages *)
 
-(* A reduction by [r] along [axes], or a scan along [axes.(0)], of [x]
-   through the views [views]: each that nx.cpu computes. *)
+(* A reduction by [r] along [axes], or a scan along [axes.(0)], of [x] through
+   the views [views]: each that nx.cpu computes. *)
 type guard = {
   scan : bool;
   r : Nx_kernel.reduction;
@@ -2455,9 +2714,8 @@ let pp_guard ppf (g : guard) =
     (reduction_name g.r) pp_ints g.axes D.pp (A.dtype x) L.pp (A.layout x)
     (String.concat ", " g.views)
 
-(* Innermost extents of one element to a few vectors of the widest dtype
-   past the widest vector, and at the edges of lane blocks and scan
-   chunks. *)
+(* Innermost extents of one element to a few vectors of the widest dtype past
+   the widest vector, and at the edges of lane blocks and scan chunks. *)
 let inner =
   let open Gen in
   frequency
@@ -2477,16 +2735,14 @@ let guard_case =
      let* scan = bool in
      let float = is_float d
      and boolean = same d (D.Any D.Bool) || same d (D.Any D.Bit) in
-     (* Moments and Logsumexp, which floats alone take, come twice as
-        often. *)
+     (* Moments and Logsumexp, which floats alone take, come twice as often. *)
      let* r =
        of_list
          (Nx_kernel.[ Monoid Max; Monoid Min ]
          @ (if boolean then [] else Nx_kernel.[ Monoid Sum; Monoid Prod ])
          @ (if float then Nx_kernel.[ Moments; Moments ] else [])
          @ Nx_kernel.[ Arg Max; Arg Min ]
-         @ if float then Nx_kernel.[ Logsumexp; Logsumexp ]
-           else [])
+         @ if float then Nx_kernel.[ Logsumexp; Logsumexp ] else [])
      in
      let* n = inner in
      let* outer = array ~size:(int_range 0 2) (int_range 1 5) in
@@ -2503,9 +2759,8 @@ let guard_case =
      let+ seed = int in
      { scan; r; axes; x = operand d s v ~specials seed; views = view_names v })
 
-(* A running sum of bfloat16 [+inf; -inf] at the page after: its last
-   result is a NaN made from numbers, and no term is a NaN for the results
-   to take. *)
+(* A running sum of bfloat16 [+inf; -inf] at the page after: its last result is
+   a NaN made from numbers, and no term is a NaN for the results to take. *)
 let guard_examples =
   let x = A.Any (A.of_array D.Bfloat16 [| 2 |] [| infinity; neg_infinity |]) in
   [
@@ -2515,12 +2770,14 @@ let guard_examples =
 
 (* The same bits with the operand, through its view, and each destination
    against an inaccessible page. *)
-let law_guards (b : Support.backend) ((g : guard), side) =
-  let (module K : Nx_kernel.S) = b.kernels in
+let law_guards ((g : guard), side) =
+  let (module K : Nx_kernel.S) = cpu.kernels in
   let after = side = Support.After in
   let rank = Array.length (shape_of g.x) in
   let n = (shape_of g.x).(rank - 1) in
-  collect (Printf.sprintf "%s %s" (if g.scan then "scan" else "reduce")
+  collect
+    (Printf.sprintf "%s %s"
+       (if g.scan then "scan" else "reduce")
        (reduction_name g.r));
   let is r = g.r = r in
   cover "a monoid reduced" ((not g.scan) && is (Monoid Sum));
@@ -2563,23 +2820,24 @@ let law_guards (b : Support.backend) ((g : guard), side) =
     else
       K.reduce p
         ~shape:(Iarray.of_array (loop_shape (Iarray.to_array loads)))
-        ~axes:(Iarray.of_array g.axes) [| (g.r, 0) |] ~dsts:ds loads
+        ~axes:(Iarray.of_array g.axes)
+        [| (g.r, 0) |]
+        ~dsts:ds loads
   in
   equal Elements.answer A.Done
     (Elements.same_guarded ~any_nan:true side ~call [| g.x |] dsts)
 
 (* Fused programs *)
 
-(* How a program's second load spreads over the loop: an operand of the
-   loop's shape, a row of lanes broadcast along the reduced axes, or a
-   kernel broadcast along the kept ones, as a convolution's is. *)
+(* How a program's second load spreads over the loop: an operand of the loop's
+   shape, a row of lanes broadcast along the reduced axes, or a kernel broadcast
+   along the kept ones, as a convolution's is. *)
 type spread = Full | Lanes | Kernel
 
-(* A reduction of output [k] of [prog], a program over loads of one loop
-   shape, by [red] along [axes], or with [scan] its scan along [axes.(0)].
-   Load [i] reads [operands.(i)], padded with the fill and padding of
-   [pads.(i)] where given; [guard] puts each operand against an
-   inaccessible page on its side. *)
+(* A reduction of output [k] of [prog], a program over loads of one loop shape,
+   by [red] along [axes], or with [scan] its scan along [axes.(0)]. Load [i]
+   reads [operands.(i)], padded with the fill and padding of [pads.(i)] where
+   given; [guard] puts each operand against an inaccessible page on its side. *)
 type fused = {
   name : string;
   shape : int array;
@@ -2626,8 +2884,8 @@ let reads_of c =
       | None -> x)
     c.operands
 
-(* The product of two factors of [fdt] at [d], or of one by itself, cast
-   where they differ: the nodes and the output. *)
+(* The product of two factors of [fdt] at [d], or of one by itself, cast where
+   they differ: the nodes and the output. *)
 let factors ~same (D.Any l) (D.Any p as d) =
   let nodes =
     match (same, D.equal_witness l p) with
@@ -2635,14 +2893,21 @@ let factors ~same (D.Any l) (D.Any p as d) =
     | true, None -> P.[| In 0; Op1 (Cast, d, 0); Op2 (Binary Mul, 1, 1) |]
     | false, Some _ -> P.[| In 0; In 1; Op2 (Binary Mul, 0, 1) |]
     | false, None ->
-        P.[| In 0; In 1; Op1 (Cast, d, 0); Op1 (Cast, d, 1); Op2 (Binary Mul, 2, 3) |]
+        P.
+          [|
+            In 0;
+            In 1;
+            Op1 (Cast, d, 0);
+            Op1 (Cast, d, 1);
+            Op2 (Binary Mul, 2, 3);
+          |]
   in
   (nodes, [| Array.length nodes - 1 |])
 
-(* The programs over a loop of the float or complex dtype [d], with
-   factors of [fdt]: each one's name, its loads' dtypes, whether its second
-   load is a row of lanes, its nodes, its outputs, and the output the
-   reduction reads. [rank] bounds its coordinates. *)
+(* The programs over a loop of the float or complex dtype [d], with factors of
+   [fdt]: each one's name, its loads' dtypes, whether its second load is a row
+   of lanes, its nodes, its outputs, and the output the reduction reads. [rank]
+   bounds its coordinates. *)
 let templates (D.Any dt as d) fdt rank =
   let num x =
     match dt with
@@ -2658,55 +2923,123 @@ let templates (D.Any dt as d) fdt rank =
   let one, out1 = factors ~same:true fdt d in
   if D.is D.Complex dt then
     [
-      ("a difference with lanes", [| d; d |], true,
-       P.[| In 0; In 1; Op2 (Binary Sub, 0, 1) |], [| 2 |], 0);
-      ("a scaled operand", [| d |], false,
-       P.[| In 0; num 0.5; Op2 (Binary Mul, 0, 1) |], [| 2 |], 0);
-      ("a product of two operands", [| d; d |], false,
-       P.[| In 0; In 1; Op2 (Binary Mul, 0, 1) |], [| 2 |], 0);
+      ( "a difference with lanes",
+        [| d; d |],
+        true,
+        P.[| In 0; In 1; Op2 (Binary Sub, 0, 1) |],
+        [| 2 |],
+        0 );
+      ( "a scaled operand",
+        [| d |],
+        false,
+        P.[| In 0; num 0.5; Op2 (Binary Mul, 0, 1) |],
+        [| 2 |],
+        0 );
+      ( "a product of two operands",
+        [| d; d |],
+        false,
+        P.[| In 0; In 1; Op2 (Binary Mul, 0, 1) |],
+        [| 2 |],
+        0 );
     ]
-  else
-  [
-    ("exp of a difference with lanes", [| d; d |], true,
-     P.[| In 0; In 1; Op2 (Binary Sub, 0, 1); Op1 (Unary Exp, d, 2) |],
-     [| 3 |], 0);
-    ("a scaled operand", [| d |], false,
-     P.[| In 0; num 0.5; Op2 (Binary Mul, 0, 1) |], [| 2 |], 0);
-    ("a product of two operands", [| d; d |], false,
-     P.[| In 0; In 1; Op2 (Binary Mul, 0, 1) |], [| 2 |], 0);
-    ("a product of two factors", [| fdt; fdt |], false, two, out2, 0);
-    ("a squared factor", [| fdt |], false, one, out1, 0);
-    ("a log, NaN below 0", [| d |], false,
-     P.[| In 0; Op1 (Unary Log, d, 0) |], [| 1 |], 0);
-    ("the second of two outputs", [| d |], false,
-     P.[| In 0; Op1 (Unary Neg, d, 0); Op1 (Unary Abs, d, 0) |], [| 1; 2 |], 1);
-    ("a non-zero test", [| d |], false,
-     P.[| In 0; num 0.; Op2 (Compare Not_equal, 0, 1) |], [| 2 |], 0);
-    ("a count of positives", [| d |], false,
-     P.[| In 0; num 0.; Op2 (Compare Less, 1, 0); Op1 (Cast, i64, 2) |],
-     [| 3 |], 0);
-    ("a constant alone, of no load", [||], false, [| num 0.5 |], [| 0 |], 0);
-    ("an operand, beside its negation", [| d |], false,
-     P.[| In 0; Op1 (Unary Neg, d, 0) |], [| 0; 1 |], 0);
-    ("an operand cast into bfloat16", [| d |], false,
-     P.[| In 0; Op1 (Cast, D.Any D.Bfloat16, 0) |], [| 1 |], 0);
-    ("an operand cast into int4", [| d |], false,
-     P.[| In 0; Op1 (Cast, D.Any D.Int4, 0) |], [| 1 |], 0);
-    ("an int4 operand cast up", [| D.Any D.Int4 |], false,
-     P.[| In 0; Op1 (Cast, d, 0) |], [| 1 |], 0);
-    ("a bit operand cast up", [| D.Any D.Bit |], false,
-     P.[| In 0; Op1 (Cast, d, 0) |], [| 1 |], 0);
-  ]
-  @
-  if rank = 0 then []
   else
     [
-      ("an operand plus its last coordinate", [| d |], false,
-       P.[| In 0; Coord (rank - 1); Op1 (Cast, d, 1); Op2 (Binary Add, 0, 2) |],
-       [| 3 |], 0);
-      ("its last coordinate alone, of no load", [||], false,
-       P.[| Coord (rank - 1); Op1 (Cast, d, 0) |], [| 1 |], 0);
+      ( "exp of a difference with lanes",
+        [| d; d |],
+        true,
+        P.[| In 0; In 1; Op2 (Binary Sub, 0, 1); Op1 (Unary Exp, d, 2) |],
+        [| 3 |],
+        0 );
+      ( "a scaled operand",
+        [| d |],
+        false,
+        P.[| In 0; num 0.5; Op2 (Binary Mul, 0, 1) |],
+        [| 2 |],
+        0 );
+      ( "a product of two operands",
+        [| d; d |],
+        false,
+        P.[| In 0; In 1; Op2 (Binary Mul, 0, 1) |],
+        [| 2 |],
+        0 );
+      ("a product of two factors", [| fdt; fdt |], false, two, out2, 0);
+      ("a squared factor", [| fdt |], false, one, out1, 0);
+      ( "a log, NaN below 0",
+        [| d |],
+        false,
+        P.[| In 0; Op1 (Unary Log, d, 0) |],
+        [| 1 |],
+        0 );
+      ( "the second of two outputs",
+        [| d |],
+        false,
+        P.[| In 0; Op1 (Unary Neg, d, 0); Op1 (Unary Abs, d, 0) |],
+        [| 1; 2 |],
+        1 );
+      ( "a non-zero test",
+        [| d |],
+        false,
+        P.[| In 0; num 0.; Op2 (Compare Not_equal, 0, 1) |],
+        [| 2 |],
+        0 );
+      ( "a count of positives",
+        [| d |],
+        false,
+        P.[| In 0; num 0.; Op2 (Compare Less, 1, 0); Op1 (Cast, i64, 2) |],
+        [| 3 |],
+        0 );
+      ("a constant alone, of no load", [||], false, [| num 0.5 |], [| 0 |], 0);
+      ( "an operand, beside its negation",
+        [| d |],
+        false,
+        P.[| In 0; Op1 (Unary Neg, d, 0) |],
+        [| 0; 1 |],
+        0 );
+      ( "an operand cast into bfloat16",
+        [| d |],
+        false,
+        P.[| In 0; Op1 (Cast, D.Any D.Bfloat16, 0) |],
+        [| 1 |],
+        0 );
+      ( "an operand cast into int4",
+        [| d |],
+        false,
+        P.[| In 0; Op1 (Cast, D.Any D.Int4, 0) |],
+        [| 1 |],
+        0 );
+      ( "an int4 operand cast up",
+        [| D.Any D.Int4 |],
+        false,
+        P.[| In 0; Op1 (Cast, d, 0) |],
+        [| 1 |],
+        0 );
+      ( "a bit operand cast up",
+        [| D.Any D.Bit |],
+        false,
+        P.[| In 0; Op1 (Cast, d, 0) |],
+        [| 1 |],
+        0 );
     ]
+    @
+    if rank = 0 then []
+    else
+      [
+        ( "an operand plus its last coordinate",
+          [| d |],
+          false,
+          P.
+            [|
+              In 0; Coord (rank - 1); Op1 (Cast, d, 1); Op2 (Binary Add, 0, 2);
+            |],
+          [| 3 |],
+          0 );
+        ( "its last coordinate alone, of no load",
+          [||],
+          false,
+          P.[| Coord (rank - 1); Op1 (Cast, d, 0) |],
+          [| 1 |],
+          0 );
+      ]
 
 let template d fdt rank name =
   List.find (fun (n, _, _, _, _, _) -> n = name) (templates d fdt rank)
@@ -2715,17 +3048,24 @@ let template d fdt rank name =
 let reductions_of ~scan (D.Any dt) : Nx_kernel.reduction list =
   match D.kind dt with
   | D.Float ->
-      [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Logsumexp;
-        Arg Max; Arg Min; Moments ]
+      [
+        Monoid Sum;
+        Monoid Prod;
+        Monoid Max;
+        Monoid Min;
+        Logsumexp;
+        Arg Max;
+        Arg Min;
+        Moments;
+      ]
   | D.Complex ->
       [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Arg Max; Arg Min ]
   | D.Boolean -> [ Monoid Max; Monoid Min ]
-  | _ when scan ->
-      [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Arg Max ]
+  | _ when scan -> [ Monoid Sum; Monoid Prod; Monoid Max; Monoid Min; Arg Max ]
   | _ -> [ Monoid Sum; Monoid Max; Monoid Min; Arg Max ]
 
-(* The factors' dtypes a loop of [d] takes: [d] mostly, the narrow floats
-   and float64 for float32, float32 for float64. *)
+(* The factors' dtypes a loop of [d] takes: [d] mostly, the narrow floats and
+   float64 for float32, float32 for float64. *)
 let factor_dtypes d =
   let open Gen in
   if same d f32 then
@@ -2734,18 +3074,25 @@ let factor_dtypes d =
         (4, constant f32);
         ( 4,
           of_list ~pp:pp_dtype
-            D.[ Any Bfloat16; Any Float16; Any Float8_e4m3fn; Any Float8_e5m2;
-                Any Float4_e2m1fn; Any Float64 ] );
+            D.
+              [
+                Any Bfloat16;
+                Any Float16;
+                Any Float8_e4m3fn;
+                Any Float8_e5m2;
+                Any Float4_e2m1fn;
+                Any Float64;
+              ] );
       ]
   else if same d f64 then frequency [ (3, constant f64); (1, constant f32) ]
   else constant d
 
-(* [n] elements of [d]: float32's values and specials cast into a narrow
-   float, else [elements]. *)
+(* [n] elements of [d]: float32's values and specials cast into a narrow float,
+   else [elements]. *)
 let product_elements (D.Any dt as d) n ~specials seed =
   match dt with
-  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2
-  | D.Float4_e2m1fn ->
+  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2 | D.Float4_e2m1fn
+    ->
       cast_into d (A.Any (elements D.Float32 n ~specials seed))
   | _ -> A.Any (elements dt n ~specials seed)
 
@@ -2753,16 +3100,23 @@ let product_operand d s v ~specials seed =
   operand_with (fun n -> product_elements d n ~specials seed) s v
 
 let plain_view r =
-  { perm = Array.init r Fun.id; stepped = false; reversed = None; broadcast = false }
+  {
+    perm = Array.init r Fun.id;
+    stepped = false;
+    reversed = None;
+    broadcast = false;
+  }
 
-(* A load of [d] over the loop [s] reduced along [axes], spread as
-   [second] says, its elements through the view [v]. *)
+(* A load of [d] over the loop [s] reduced along [axes], spread as [second]
+   says, its elements through the view [v]. *)
 let spread_operand d s axes second v ~specials seed =
   match second with
   | Full -> product_operand d s v ~specials seed
   | Lanes | Kernel ->
       let row =
-        Array.mapi (fun i e -> if Array.mem i axes = (second = Lanes) then 1 else e) s
+        Array.mapi
+          (fun i e -> if Array.mem i axes = (second = Lanes) then 1 else e)
+          s
       in
       let (A.Any x) = product_operand d row v ~specials seed in
       A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array s)) x))
@@ -2772,13 +3126,21 @@ let fused_shapes =
   let small = array ~size:(int_range 1 3) (int_range 1 5) in
   let rows =
     let* r = int_range 1 40 in
-    let+ k = of_list ~pp:Format.pp_print_int [ 9; 17; 64; 1100; 5000 ] in
+    let+ k = of_list ~pp:Format.pp_print_int [ 9; 17; 64; 1100; 2100 ] in
     [| r; k |]
   in
+
   (* Rows of few terms, which units take in bands of rows. *)
   let few =
-    let* r = frequency [ (3, int_range 1 20); (1, of_list ~pp:Format.pp_print_int [ 64; 130 ]) ] in
-    let+ n = frequency [ (8, int_range 1 16); (1, constant 17); (1, int_range 18 40) ] in
+    let* r =
+      frequency
+        [
+          (3, int_range 1 20); (1, of_list ~pp:Format.pp_print_int [ 64; 130 ]);
+        ]
+    in
+    let+ n =
+      frequency [ (8, int_range 1 16); (1, constant 17); (1, int_range 18 40) ]
+    in
     [| r; n |]
   in
   let columns =
@@ -2796,17 +3158,23 @@ let fused_shapes =
   let empty =
     of_list ~pp:pp_ints [ [| 0 |]; [| 0; 5 |]; [| 3; 0 |]; [| 2; 0; 4 |] ]
   in
-  (* Rank 0, no element and two reduced axes split by a kept one are each
-     drawn often enough that every run of 100 cases reaches them. *)
+  (* Rank 0, no element and two reduced axes split by a kept one are each drawn
+     often enough that every run of 100 cases reaches them. *)
   frequency
-    [ (3, small); (3, rows); (3, few); (2, columns); (1, long); (5, apart);
-      (4, constant ~pp:pp_ints [||]); (4, empty) ]
+    [
+      (3, small);
+      (3, rows);
+      (3, few);
+      (2, columns);
+      (1, long_axis);
+      (5, apart);
+      (4, constant ~pp:pp_ints [||]);
+      (4, empty);
+    ]
 
 (* The padding of an operand of shape [s] that Nx_kernel.Shape takes. *)
 let fitting_pad s =
-  Gen.such_that
-    (fun p -> Result.is_ok (Nx_kernel.Shape.padded p s))
-    (pad_of s)
+  Gen.such_that (fun p -> Result.is_ok (Nx_kernel.Shape.padded p s)) (pad_of s)
 
 let fused_any =
   let open Gen in
@@ -2819,82 +3187,100 @@ let fused_any =
            (1, of_list ~pp:pp_dtype D.[ Any Complex64; Any Complex128 ]);
          ]
      in
-  let* fdt = factor_dtypes d in
-  let* s = fused_shapes in
-  (* One float loop in four reads its first load padded. *)
-  let* pad =
-    if not (is_float d) then constant None
-    else frequency [ (3, constant None); (1, map Option.some (fitting_pad s)) ]
-  in
-  let loop =
-    match pad with
-    | None -> s
-    | Some p -> Result.get_ok (Nx_kernel.Shape.padded p s)
-  in
-  let r = Array.length loop in
-  (* A scan runs along an axis: a shape of rank 0 has none. *)
-  let* scan =
-    if r = 0 then constant false
-    else frequency [ (2, constant false); (1, constant true) ]
-  in
-  (* Any subset of the axes, or for a shape of four, the first and third
-     at times: two reduced axes split by a kept one, the last kept. *)
-  let* axes =
-    let any =
-      let+ keep = array ~size:(constant r) bool in
-      let axes = List.filter (fun i -> keep.(i)) (List.init r Fun.id) in
-      Array.of_list (if axes = [] && r > 0 then [ r - 1 ] else axes)
-    in
-    if scan then map (fun a -> [| a |]) (int_range 0 (r - 1))
-    else if r = 4 then frequency [ (1, any); (9, constant [| 0; 2 |]) ]
-    else any
-  in
-  let ts =
-    List.filter
-      (fun (_, ins, _, _, _, _) -> pad = None || ins <> [||])
-      (templates d fdt r)
-  in
-  let* t = int_range 0 (List.length ts - 1) in
-  let name, ins, lanes, nodes, outs, k = List.nth ts t in
-  let prog = P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
-      ~outs:(Iarray.of_array outs) in
-  let o = P.dtype prog outs.(k) in
-  let* red = of_list (reductions_of ~scan o) in
-  let* second =
-    if lanes then constant Lanes
-    else if Array.length ins = 2 then frequency [ (2, constant Full); (1, constant Kernel) ]
-    else constant Full
-  in
-  let* v = view_of (Array.length s) in
-  let* lv = view_of r in
-  let* specials = frequency [ (3, constant 0); (1, constant 20) ] in
-  let* guard =
-    frequency
-      [ (3, constant None); (1, constant (Some Support.Before));
-        (1, constant (Some Support.After)) ]
-  in
-  let* fill =
-    match pad with
-    | Some _ -> of_list (fills ins.(0))
-    | None -> constant ""
-  in
-  let+ seed = int in
-  let n = Array.length ins in
-  let operand i =
-    if i = 0 then
-      product_operand ins.(0) (if pad = None then loop else s) v ~specials seed
-    else if i = 1 then spread_operand ins.(1) loop axes second lv ~specials (seed + 1)
-    else product_operand ins.(i) loop lv ~specials (seed + i)
-  in
-  {
-    name; shape = loop; scan; prog; k; red; axes; second; guard;
-    operands = Array.init n operand;
-    pads = Array.init n (fun i -> if i = 0 then Option.map (fun p -> (fill, p)) pad else None);
-    fviews = view_names v;
-  }
+     let* fdt = factor_dtypes d in
+     let* s = fused_shapes in
+     (* One float loop in four reads its first load padded. *)
+     let* pad =
+       if not (is_float d) then constant None
+       else
+         frequency [ (3, constant None); (1, map Option.some (fitting_pad s)) ]
+     in
+     let loop =
+       match pad with
+       | None -> s
+       | Some p -> Result.get_ok (Nx_kernel.Shape.padded p s)
+     in
+     let r = Array.length loop in
+     (* A scan runs along an axis: a shape of rank 0 has none. *)
+     let* scan =
+       if r = 0 then constant false
+       else frequency [ (2, constant false); (1, constant true) ]
+     in
+     (* Any subset of the axes, or for a shape of four, the first and third at
+        times: two reduced axes split by a kept one, the last kept. *)
+     let* axes =
+       let any =
+         let+ keep = array ~size:(constant r) bool in
+         let axes = List.filter (fun i -> keep.(i)) (List.init r Fun.id) in
+         Array.of_list (if axes = [] && r > 0 then [ r - 1 ] else axes)
+       in
+       if scan then map (fun a -> [| a |]) (int_range 0 (r - 1))
+       else if r = 4 then frequency [ (1, any); (9, constant [| 0; 2 |]) ]
+       else any
+     in
+     let ts =
+       List.filter
+         (fun (_, ins, _, _, _, _) -> pad = None || ins <> [||])
+         (templates d fdt r)
+     in
+     let* t = int_range 0 (List.length ts - 1) in
+     let name, ins, lanes, nodes, outs, k = List.nth ts t in
+     let prog =
+       P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
+         ~outs:(Iarray.of_array outs)
+     in
+     let o = P.dtype prog outs.(k) in
+     let* red = of_list (reductions_of ~scan o) in
+     let* second =
+       if lanes then constant Lanes
+       else if Array.length ins = 2 then
+         frequency [ (2, constant Full); (1, constant Kernel) ]
+       else constant Full
+     in
+     let* v = view_of (Array.length s) in
+     let* lv = view_of r in
+     let* specials = frequency [ (3, constant 0); (1, constant 20) ] in
+     let* guard =
+       frequency
+         [
+           (3, constant None);
+           (1, constant (Some Support.Before));
+           (1, constant (Some Support.After));
+         ]
+     in
+     let* fill =
+       match pad with Some _ -> of_list (fills ins.(0)) | None -> constant ""
+     in
+     let+ seed = int in
+     let n = Array.length ins in
+     let operand i =
+       if i = 0 then
+         product_operand ins.(0)
+           (if pad = None then loop else s)
+           v ~specials seed
+       else if i = 1 then
+         spread_operand ins.(1) loop axes second lv ~specials (seed + 1)
+       else product_operand ins.(i) loop lv ~specials (seed + i)
+     in
+     {
+       name;
+       shape = loop;
+       scan;
+       prog;
+       k;
+       red;
+       axes;
+       second;
+       guard;
+       operands = Array.init n operand;
+       pads =
+         Array.init n (fun i ->
+             if i = 0 then Option.map (fun p -> (fill, p)) pad else None);
+       fviews = view_names v;
+     }
 
-(* The case of the template [name] over [d] with factors of [fdt] of the
-   loop [loop], reduced by [red] along [axes], or with [scan] scanned, over
+(* The case of the template [name] over [d] with factors of [fdt] of the loop
+   [loop], reduced by [red] along [axes], or with [scan] scanned, over
    [operands] padded as [pads] say. *)
 let fused_of ?(d = f32) ?fdt ?(scan = false) ?(second = Full) ?pads
     ?(fviews = []) name red loop axes operands =
@@ -2902,15 +3288,24 @@ let fused_of ?(d = f32) ?fdt ?(scan = false) ?(second = Full) ?pads
   let _, ins, lanes, nodes, outs, k = template d fdt (Array.length loop) name in
   let pads = Option.value pads ~default:(Array.map (fun _ -> None) operands) in
   {
-    name; shape = loop; scan; k; red; axes; guard = None; fviews; operands; pads;
+    name;
+    shape = loop;
+    scan;
+    k;
+    red;
+    axes;
+    guard = None;
+    fviews;
+    operands;
+    pads;
     second = (if lanes then Lanes else second);
     prog =
       P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
         ~outs:(Iarray.of_array outs);
   }
 
-(* The case of the template [name] over [d] of shape [s], its first load
-   through [view], by [red] along [axes], or with [scan] scanned. *)
+(* The case of the template [name] over [d] of shape [s], its first load through
+   [view], by [red] along [axes], or with [scan] scanned. *)
 let fused_example ?(d = D.Any D.Float32) ?fdt ?scan ?(second = Full) ?view
     ?(specials = 0) name red s axes =
   let r = Array.length s in
@@ -2920,9 +3315,15 @@ let fused_example ?(d = D.Any D.Float32) ?fdt ?scan ?(second = Full) ?view
   let second = if lanes then Lanes else second in
   let load j =
     if j = 1 then spread_operand ins.(1) s axes second plain ~specials (7 + j)
-    else product_operand ins.(j) s (if j = 0 then Option.value view ~default:plain else plain) ~specials (7 + j)
+    else
+      product_operand ins.(j) s
+        (if j = 0 then Option.value view ~default:plain else plain)
+        ~specials (7 + j)
   in
-  let c = fused_of ~d ~fdt ?scan ~second name red s axes (Array.init (Array.length ins) load) in
+  let c =
+    fused_of ~d ~fdt ?scan ~second name red s axes
+      (Array.init (Array.length ins) load)
+  in
   { c with fviews = (match view with Some v -> view_names v | None -> []) }
 
 (* A padding of [lo] and [hi] along each axis, with [windows]. *)
@@ -2931,22 +3332,29 @@ let pad_v ?(windows = [||]) lo hi =
   let interior = Iarray.map (fun _ -> 0) lo in
   { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
 
-let window ?(step = 1) ?(dilation = 1) axis size = { M.axis; size; step; dilation }
+let window ?(step = 1) ?(dilation = 1) axis size =
+  { M.axis; size; step; dilation }
 
-(* A sum of the template [name] over [operands] of float32, each padded
-   with one as its padding says, where given. *)
+(* A sum of the template [name] over [operands] of float32, each padded with one
+   as its padding says, where given. *)
 let padded_sum ?(fill = "\000\000\128\063") ?(scan = false) name axes operands =
-  let pads = Array.map (fun (_, p) -> Option.map (fun p -> (fill, p)) p) operands in
+  let pads =
+    Array.map (fun (_, p) -> Option.map (fun p -> (fill, p)) p) operands
+  in
   let operands = Array.map fst operands in
-  fused_of ~scan ~pads name (Monoid Sum) (loop_shape (loads_with pads operands)) axes operands
+  fused_of ~scan ~pads name (Monoid Sum)
+    (loop_shape (loads_with pads operands))
+    axes operands
 
-(* A depthwise convolution's loop: an operand [[2; 5; 6; c]] of [fdt],
-   padded by [lo] and [hi] along its spatial axes with [fill], windows of
-   [k1] by [k2] taps appending the taps, times a kernel broadcast over the
-   batch and the windows, summed over the taps at float32. *)
+(* A depthwise convolution's loop: an operand [[2; 5; 6; c]] of [fdt], padded by
+   [lo] and [hi] along its spatial axes with [fill], windows of [k1] by [k2]
+   taps appending the taps, times a kernel broadcast over the batch and the
+   windows, summed over the taps at float32. *)
 let depthwise ?(fdt = f32) ?(c = 64) ?(lo = 1) ?(hi = 1) ?fill k1 k2 =
   let (D.Any ft) = fdt in
-  let fill = Option.value fill ~default:(String.make (max 1 (D.bits ft / 8)) '\000') in
+  let fill =
+    Option.value fill ~default:(String.make (max 1 (D.bits ft / 8)) '\000')
+  in
   let s = [| 2; 5; 6; c |] in
   let x = product_operand fdt s (plain_view 4) ~specials:0 13 in
   let sp v = [| 0; v; v; 0 |] in
@@ -2954,19 +3362,21 @@ let depthwise ?(fdt = f32) ?(c = 64) ?(lo = 1) ?(hi = 1) ?fill k1 k2 =
   let loop = Result.get_ok (Nx_kernel.Shape.padded pad s) in
   let axes = [| 4; 5 |] in
   let y = spread_operand fdt loop axes Kernel (plain_view 6) ~specials:0 14 in
-  fused_of ~fdt ~second:Kernel ~pads:[| Some (fill, pad); None |]
+  fused_of ~fdt ~second:Kernel
+    ~pads:[| Some (fill, pad); None |]
     "a product of two factors" (Monoid Sum) loop axes [| x; y |]
 
-(* A depthwise convolution's kernel gradient: an operand of shape [s],
-   [[n; h; w; c]] of [fdt], padded and windowed as [depthwise]'s, times a
-   cotangent over the windows through [view], broadcast along the taps,
-   summed over the batch and the windows, which lead the loop. A padded
-   load is read as a copy, so the cotangent's view is the one the loop
-   reads. *)
+(* A depthwise convolution's kernel gradient: an operand of shape [s], [[n; h;
+   w; c]] of [fdt], padded and windowed as [depthwise]'s, times a cotangent over
+   the windows through [view], broadcast along the taps, summed over the batch
+   and the windows, which lead the loop. A padded load is read as a copy, so the
+   cotangent's view is the one the loop reads. *)
 let kernel_gradient ?(fdt = f32) ?(s = [| 2; 5; 6; 64 |]) ?view ?(lo = 1)
     ?(hi = 1) ?fill k1 k2 =
   let (D.Any ft) = fdt in
-  let fill = Option.value fill ~default:(String.make (max 1 (D.bits ft / 8)) '\000') in
+  let fill =
+    Option.value fill ~default:(String.make (max 1 (D.bits ft / 8)) '\000')
+  in
   let view = Option.value view ~default:(plain_view 6) in
   let x = product_operand fdt s (plain_view 4) ~specials:3 15 in
   let sp v = [| 0; v; v; 0 |] in
@@ -2974,17 +3384,20 @@ let kernel_gradient ?(fdt = f32) ?(s = [| 2; 5; 6; 64 |]) ?view ?(lo = 1)
   let loop = Result.get_ok (Nx_kernel.Shape.padded pad s) in
   let windows = Array.mapi (fun i e -> if i >= 4 then 1 else e) loop in
   let (A.Any ct) = product_operand fdt windows view ~specials:3 16 in
-  let ct = A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array loop)) ct)) in
+  let ct =
+    A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array loop)) ct))
+  in
   let c =
-    fused_of ~fdt ~pads:[| Some (fill, pad); None |] "a product of two factors"
-      (Monoid Sum) loop [| 0; 1; 2 |] [| x; ct |]
+    fused_of ~fdt
+      ~pads:[| Some (fill, pad); None |]
+      "a product of two factors" (Monoid Sum) loop [| 0; 1; 2 |] [| x; ct |]
   in
   { c with fviews = view_names view }
 
-(* Sums along axis 1 of [160; 2; 64], more outputs than a thread's unit
-   of a sum of products, of a kernel by a factor with a NaN at [0; 0; 5]:
-   the NaN's output is a NaN while the units after it on the thread read
-   the kernel's terms. *)
+(* Sums along axis 1 of [160; 2; 64], more outputs than a thread's unit of a sum
+   of products, of a kernel by a factor with a NaN at [0; 0; 5]: the NaN's
+   output is a NaN while the units after it on the thread read the kernel's
+   terms. *)
 let nan_before_units =
   let s = [| 160; 2; 64 |] in
   let n = total s in
@@ -2996,64 +3409,83 @@ let nan_before_units =
   Bytes.set_int32_le bits (4 * 5) (Int32.bits_of_float Float.nan);
   let b =
     A.Any
-      (A.v D.Float32 (L.contiguous (Iarray.of_array s))
+      (A.v D.Float32
+         (L.contiguous (Iarray.of_array s))
          (Rig.Buffer.of_string (Bytes.to_string bits)))
   in
   let a = spread_operand f32 s [| 1 |] Kernel (plain_view 3) ~specials:0 19 in
-  fused_of ~second:Kernel "a product of two factors" (Monoid Sum) s [| 1 |] [| a; b |]
+  fused_of ~second:Kernel "a product of two factors" (Monoid Sum) s [| 1 |]
+    [| a; b |]
 
-(* A constant's sum over a long axis and a broadcast load's own sum, whose
-   terms map.c holds once for a whole row; complex products, whose lanes
-   and scans start from their first terms: one output's block, rows of
-   outputs side by side, two reduced axes split by a kept one, several
-   blocks, and scans past a chunk; float32 scans past a chunk: of one
-   slice, in quads of chunks, as Moments, and of a row of slices side by
-   side; a reduction of several blocks; Logsumexp down columns, several
-   outputs' blocks computed at once; outputs narrower than their carrier:
-   bfloat16's Arg, Moments scan and scan in quads of chunks, and int4's
-   scan so; Logsumexp scans by tiles, of one slice and of three side by
-   side, an Arg scan past a chunk, and bfloat16's Arg scan, its extreme
-   the program's term; Moments of many outputs of several blocks, each
+(* A constant's sum over a long axis and a broadcast load's own sum, whose terms
+   map.c holds once for a whole row; complex products, whose lanes and scans
+   start from their first terms: one output's block, rows of outputs side by
+   side, two reduced axes split by a kept one, several blocks, and scans past a
+   chunk; float32 scans past a chunk: of one slice, in quads of chunks, as
+   Moments, and of a row of slices side by side; a reduction of several blocks;
+   Logsumexp down columns, several outputs' blocks computed at once; outputs
+   narrower than their carrier: bfloat16's Arg, Moments scan and scan in quads
+   of chunks, and int4's scan so; Logsumexp scans by tiles, of one slice and of
+   three side by side, an Arg scan past a chunk, and bfloat16's Arg scan, its
+   extreme the program's term; Moments of many outputs of several blocks, each
    staged once for both passes, plain and stepped. *)
 let fused_examples =
   let c = D.Any D.Complex64 in
   let stepped = { (plain_view 2) with stepped = true } in
   [
-    fused_example ~d:c "a product of two operands" (Monoid Prod) [| 3; 40 |] [| 1 |];
-    fused_example ~d:c "a product of two operands" (Monoid Prod) [| 40; 3 |] [| 0 |];
-    fused_example ~d:c "a product of two operands" (Monoid Prod) [| 3; 4; 5 |] [| 0; 2 |];
-    fused_example ~d:c "a difference with lanes" (Monoid Prod) [| 2; 2000 |] [| 1 |];
-    fused_example ~d:c ~scan:true "a product of two operands" (Monoid Prod) [| 9000 |] [| 0 |];
-    fused_example ~d:c ~scan:true "a product of two operands" (Monoid Prod) [| 3; 5000 |] [| 1 |];
-    fused_example ~d:c ~scan:true "a product of two operands" (Monoid Prod) [| 5000; 3 |] [| 0 |];
-    fused_example "a constant alone, of no load" (Monoid Sum) [| 100000 |] [| 0 |];
-    fused_example ~view:{ (plain_view 1) with broadcast = true }
+    fused_example ~d:c "a product of two operands" (Monoid Prod) [| 3; 40 |]
+      [| 1 |];
+    fused_example ~d:c "a product of two operands" (Monoid Prod) [| 40; 3 |]
+      [| 0 |];
+    fused_example ~d:c "a product of two operands" (Monoid Prod) [| 3; 4; 5 |]
+      [| 0; 2 |];
+    fused_example ~d:c "a difference with lanes" (Monoid Prod) [| 2; 2000 |]
+      [| 1 |];
+    fused_example ~d:c ~scan:true "a product of two operands" (Monoid Prod)
+      [| 9000 |] [| 0 |];
+    fused_example ~d:c ~scan:true "a product of two operands" (Monoid Prod)
+      [| 3; 5000 |] [| 1 |];
+    fused_example ~d:c ~scan:true "a product of two operands" (Monoid Prod)
+      [| 5000; 3 |] [| 0 |];
+    fused_example "a constant alone, of no load" (Monoid Sum) [| 100000 |]
+      [| 0 |];
+    fused_example
+      ~view:{ (plain_view 1) with broadcast = true }
       "an operand, beside its negation" (Monoid Sum) [| 100000 |] [| 0 |];
-    fused_example ~scan:true "exp of a difference with lanes" (Monoid Sum) [| 9000 |] [| 0 |];
+    fused_example ~scan:true "exp of a difference with lanes" (Monoid Sum)
+      [| 9000 |] [| 0 |];
     fused_example ~scan:true "a scaled operand" Moments [| 3; 9000 |] [| 1 |];
     fused_example ~scan:true "a scaled operand" Moments [| 9000 |] [| 0 |];
-    fused_example ~scan:true "a log, NaN below 0" (Monoid Max) [| 9000; 3 |] [| 0 |];
-    fused_example ~scan:true "a product of two operands" (Monoid Prod) [| 20000 |] [| 0 |];
+    fused_example ~scan:true "a log, NaN below 0" (Monoid Max) [| 9000; 3 |]
+      [| 0 |];
+    fused_example ~scan:true "a product of two operands" (Monoid Prod)
+      [| 20000 |] [| 0 |];
     fused_example "a product of two operands" (Monoid Sum) [| 5000 |] [| 0 |];
-    fused_example "exp of a difference with lanes" Logsumexp [| 300; 20 |] [| 0 |];
+    fused_example "exp of a difference with lanes" Logsumexp [| 300; 20 |]
+      [| 0 |];
     fused_example "an operand cast into bfloat16" (Arg Max) [| 3; 40 |] [| 1 |];
-    fused_example ~scan:true "an operand cast into bfloat16" Moments [| 3; 100 |] [| 1 |];
-    fused_example ~scan:true "an operand cast into bfloat16" (Monoid Sum) [| 20000 |] [| 0 |];
-    fused_example ~scan:true "an operand cast into int4" (Monoid Max) [| 20000 |] [| 0 |];
-    fused_example ~scan:true "exp of a difference with lanes" Logsumexp [| 20000 |] [| 0 |];
+    fused_example ~scan:true "an operand cast into bfloat16" Moments
+      [| 3; 100 |] [| 1 |];
+    fused_example ~scan:true "an operand cast into bfloat16" (Monoid Sum)
+      [| 20000 |] [| 0 |];
+    fused_example ~scan:true "an operand cast into int4" (Monoid Max)
+      [| 20000 |] [| 0 |];
+    fused_example ~scan:true "exp of a difference with lanes" Logsumexp
+      [| 20000 |] [| 0 |];
     fused_example ~scan:true "a scaled operand" Logsumexp [| 9000; 3 |] [| 0 |];
     fused_example ~scan:true "a log, NaN below 0" (Arg Min) [| 20000 |] [| 0 |];
-    fused_example ~scan:true "an operand cast into bfloat16" (Arg Max) [| 3; 40 |] [| 1 |];
+    fused_example ~scan:true "an operand cast into bfloat16" (Arg Max)
+      [| 3; 40 |] [| 1 |];
     fused_example "a scaled operand" Moments [| 64; 1100 |] [| 1 |];
-    fused_example ~view:stepped "a scaled operand" Moments [| 64; 1100 |] [| 1 |];
+    fused_example ~view:stepped "a scaled operand" Moments [| 64; 1100 |]
+      [| 1 |];
   ]
 
-(* Depthwise kernel gradients, their reduced axes leading: of float32,
-   float64, bfloat16, float16 and float4_e2m1fn, of one and five channels,
-   past a block of terms, through each view of the cotangent, with a NaN
-   fill, a -0 fill padded on one side alone, cropped, and of no term or no
-   output: an empty batch, no channel, windows wider than the padded
-   image. *)
+(* Depthwise kernel gradients, their reduced axes leading: of float32, float64,
+   bfloat16, float16 and float4_e2m1fn, of one and five channels, past a block
+   of terms, through each view of the cotangent, with a NaN fill, a -0 fill
+   padded on one side alone, cropped, and of no term or no output: an empty
+   batch, no channel, windows wider than the padded image. *)
 let gradient_examples =
   let view f = f (plain_view 6) in
   [
@@ -3067,7 +3499,9 @@ let gradient_examples =
     kernel_gradient ~s:[| 3; 9; 7; 5 |] 3 2;
     kernel_gradient ~view:(view (fun v -> { v with stepped = true })) 3 3;
     kernel_gradient ~view:(view (fun v -> { v with reversed = Some 3 })) 3 3;
-    kernel_gradient ~view:(view (fun v -> { v with perm = [| 3; 0; 1; 2; 4; 5 |] })) 3 3;
+    kernel_gradient
+      ~view:(view (fun v -> { v with perm = [| 3; 0; 1; 2; 4; 5 |] }))
+      3 3;
     kernel_gradient ~view:(view (fun v -> { v with broadcast = true })) 3 3;
     kernel_gradient ~fill:"\052\018\192\127" 4 4;
     kernel_gradient ~fill:"\000\000\000\128" ~lo:2 ~hi:0 3 3;
@@ -3077,28 +3511,45 @@ let gradient_examples =
     kernel_gradient ~lo:0 ~hi:0 7 3;
   ]
 
-(* Sums of products: each count of terms from 1 to 17, rows of 64 outputs
-   with the second factor a kernel and of 3, factors of each narrow float,
-   of float64 at float32 and float32 at float64, a squared factor, two
-   reduced axes, each view, a NaN before a thread's units, and depthwise
-   convolutions: of float64, bfloat16 and float4_e2m1fn factors, with a
-   NaN fill, a -0 fill, padded unevenly and on one side alone. *)
+(* Sums of products: each count of terms from 1 to 17, rows of 64 outputs with
+   the second factor a kernel and of 3, factors of each narrow float, of float64
+   at float32 and float32 at float64, a squared factor, two reduced axes, each
+   view, a NaN before a thread's units, and depthwise convolutions: of float64,
+   bfloat16 and float4_e2m1fn factors, with a NaN fill, a -0 fill, padded
+   unevenly and on one side alone. *)
 let product_examples =
   let flat ?fdt ?(second = Full) ?view ?(specials = 0) s axes =
-    fused_example ?fdt ~second ?view ~specials "a product of two factors" (Monoid Sum) s axes
+    fused_example ?fdt ~second ?view ~specials "a product of two factors"
+      (Monoid Sum) s axes
   in
-  let narrow = D.[ Any Bfloat16; Any Float16; Any Float8_e4m3fn; Any Float8_e5m2; Any Float4_e2m1fn; Any Float64 ] in
+  let narrow =
+    D.
+      [
+        Any Bfloat16;
+        Any Float16;
+        Any Float8_e4m3fn;
+        Any Float8_e5m2;
+        Any Float4_e2m1fn;
+        Any Float64;
+      ]
+  in
   List.init 17 (fun i -> flat ~second:Kernel [| 64; i + 1 |] [| 1 |])
   @ List.init 17 (fun i -> flat [| 3; i + 1 |] [| 1 |])
   @ List.map (fun fdt -> flat ~fdt ~specials:3 [| 70; 5 |] [| 1 |]) narrow
   @ List.map
       (fun view -> flat ~view [| 33; 6 |] [| 1 |])
-      [ { (plain_view 2) with stepped = true }; { (plain_view 2) with reversed = Some 0 };
-        { (plain_view 2) with perm = [| 1; 0 |] }; { (plain_view 2) with broadcast = true } ]
+      [
+        { (plain_view 2) with stepped = true };
+        { (plain_view 2) with reversed = Some 0 };
+        { (plain_view 2) with perm = [| 1; 0 |] };
+        { (plain_view 2) with broadcast = true };
+      ]
   @ [
       nan_before_units;
-      fused_example ~d:f64 ~fdt:f32 "a product of two factors" (Monoid Sum) [| 9; 3 |] [| 1 |];
-      fused_example ~d:f64 ~fdt:f32 "a product of two factors" (Monoid Sum) [| 64; 9 |] [| 1 |];
+      fused_example ~d:f64 ~fdt:f32 "a product of two factors" (Monoid Sum)
+        [| 9; 3 |] [| 1 |];
+      fused_example ~d:f64 ~fdt:f32 "a product of two factors" (Monoid Sum)
+        [| 64; 9 |] [| 1 |];
       fused_example "a squared factor" (Monoid Sum) [| 20; 7 |] [| 1 |];
       flat [| 3; 4; 5 |] [| 0; 2 |];
       flat ~specials:3 [| 64; 9 |] [| 1 |];
@@ -3118,22 +3569,27 @@ let product_examples =
         let s = [| 64; 9 |] in
         let x = array_bits dt (D.bits dt) s (Array.make (total s) (-0.)) in
         let (A.Any row) =
-          array_bits dt (D.bits dt) [| 1; 9 |] (Array.init 9 (fun i -> 0.5 +. Float.of_int i))
+          array_bits dt (D.bits dt) [| 1; 9 |]
+            (Array.init 9 (fun i -> 0.5 +. Float.of_int i))
         in
-        let y = A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array s)) row)) in
-        fused_of ~d ~second:Kernel "a product of two factors" (Monoid Sum) s [| 1 |] [| x; y |])
+        let y =
+          A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array s)) row))
+        in
+        fused_of ~d ~second:Kernel "a product of two factors" (Monoid Sum) s
+          [| 1 |] [| x; y |])
       floats
 
-(* Sums over padded loads: a coordinate read, two loads padded at
-   different ends, a windowed load whose taps lie along an axis another
-   load fills along, and an empty loop, of a window of 5 over 3 elements,
-   whose sum along its taps has no output and along its windows five of no
-   term; then one padded load of each regime: cropped, interior, a window
-   wider than its axis, a fill along a kept and along a reduced axis, a
-   padding and a NaN or -0 fill through views, an int4 and a bit operand,
-   and a scan over a padded load. *)
+(* Sums over padded loads: a coordinate read, two loads padded at different
+   ends, a windowed load whose taps lie along an axis another load fills along,
+   and an empty loop, of a window of 5 over 3 elements, whose sum along its taps
+   has no output and along its windows five of no term; then one padded load of
+   each regime: cropped, interior, a window wider than its axis, a fill along a
+   kept and along a reduced axis, a padding and a NaN or -0 fill through views,
+   an int4 and a bit operand, and a scan over a padded load. *)
 let padded_examples =
-  let operand ?(d = f32) s seed = product_operand d s (plain_view (Array.length s)) ~specials:20 seed in
+  let operand ?(d = f32) s seed =
+    product_operand d s (plain_view (Array.length s)) ~specials:20 seed
+  in
   let one ?fill ?scan ?(d = f32) name axes s pad =
     padded_sum ?fill ?scan name axes [| (operand ~d s 7, Some pad) |]
   in
@@ -3141,61 +3597,79 @@ let padded_examples =
     padded_sum "an operand plus its last coordinate" [| 0 |]
       [| (operand [| 5; 2 |] 2, Some (pad_v [| 1; 0 |] [| 1; 0 |])) |];
     padded_sum "a product of two factors" [| 1; 2 |]
-      [| (operand [| 5; 3 |] 5, Some (pad_v [| 1; 0 |] [| 0; 0 |] ~windows:[| window 0 2 |]));
-         (operand [| 3; 3 |] 6, Some (pad_v [| 0; 0 |] [| 3; 0 |] ~windows:[| window 0 2 |])) |];
+      [|
+        ( operand [| 5; 3 |] 5,
+          Some (pad_v [| 1; 0 |] [| 0; 0 |] ~windows:[| window 0 2 |]) );
+        ( operand [| 3; 3 |] 6,
+          Some (pad_v [| 0; 0 |] [| 3; 0 |] ~windows:[| window 0 2 |]) );
+      |];
     padded_sum "a product of two factors" [| 0 |]
-      [| (operand [| 5 |] 3, Some (pad_v [| 0 |] [| 0 |] ~windows:[| window 0 3 |]));
-         (operand [| 3; 2 |] 4, Some (pad_v [| 0; 0 |] [| 0; 1 |])) |];
-    one "an operand, beside its negation" [| 1 |] [| 3 |] (pad_v [| 0 |] [| 0 |] ~windows:[| window 0 5 |]);
-    one "an operand, beside its negation" [| 0 |] [| 3 |] (pad_v [| 0 |] [| 0 |] ~windows:[| window 0 5 |]);
+      [|
+        ( operand [| 5 |] 3,
+          Some (pad_v [| 0 |] [| 0 |] ~windows:[| window 0 3 |]) );
+        (operand [| 3; 2 |] 4, Some (pad_v [| 0; 0 |] [| 0; 1 |]));
+      |];
+    one "an operand, beside its negation" [| 1 |] [| 3 |]
+      (pad_v [| 0 |] [| 0 |] ~windows:[| window 0 5 |]);
+    one "an operand, beside its negation" [| 0 |] [| 3 |]
+      (pad_v [| 0 |] [| 0 |] ~windows:[| window 0 5 |]);
     one "a scaled operand" [| 1 |] [| 4 |]
-      { (pad_v [| -1 |] [| 2 |] ~windows:[| window 0 2 |]) with interior = [| 1 |] };
-    one "a scaled operand" [| 1 |] [| 3 |] (pad_v [| 0 |] [| 0 |] ~windows:[| window 0 4 ~step:2 |]);
+      {
+        (pad_v [| -1 |] [| 2 |] ~windows:[| window 0 2 |]) with
+        interior = [| 1 |];
+      };
+    one "a scaled operand" [| 1 |] [| 3 |]
+      (pad_v [| 0 |] [| 0 |] ~windows:[| window 0 4 ~step:2 |]);
     one "a scaled operand" [| 0 |] [| 4 |] (pad_v [| 1 |] [| 1 |]);
-    one "a scaled operand" [| 2 |] [| 5; 6 |] (pad_v [| 1; -1 |] [| 0; 2 |] ~windows:[| window 1 3 ~step:2 |]);
-    one "a scaled operand" [| 1 |] [| 4 |] (pad_v [| 3 |] [| 0 |] ~windows:[| window 0 1 ~step:2 |]);
-    one "a scaled operand" [| 1 |] [| 2 |] (pad_v [| 1 |] [| 1 |] ~windows:[| window 0 3 |]);
-    one ~fill:"\052\018\192\127" "a scaled operand" [||] [| 3; 5 |] (pad_v [| 1; 0 |] [| 1; 0 |]);
-    one ~fill:"\000\000\000\128" "a scaled operand" [| 1 |] [| 6 |] (pad_v [| 2 |] [| 1 |] ~windows:[| window 0 2 |]);
-    one ~d:(D.Any D.Int4) ~fill:"\136" "an int4 operand cast up" [| 2 |] [| 3; 5 |]
+    one "a scaled operand" [| 2 |] [| 5; 6 |]
+      (pad_v [| 1; -1 |] [| 0; 2 |] ~windows:[| window 1 3 ~step:2 |]);
+    one "a scaled operand" [| 1 |] [| 4 |]
+      (pad_v [| 3 |] [| 0 |] ~windows:[| window 0 1 ~step:2 |]);
+    one "a scaled operand" [| 1 |] [| 2 |]
+      (pad_v [| 1 |] [| 1 |] ~windows:[| window 0 3 |]);
+    one ~fill:"\052\018\192\127" "a scaled operand" [||] [| 3; 5 |]
+      (pad_v [| 1; 0 |] [| 1; 0 |]);
+    one ~fill:"\000\000\000\128" "a scaled operand" [| 1 |] [| 6 |]
+      (pad_v [| 2 |] [| 1 |] ~windows:[| window 0 2 |]);
+    one ~d:(D.Any D.Int4) ~fill:"\136" "an int4 operand cast up" [| 2 |]
+      [| 3; 5 |]
       (pad_v [| 0; 2 |] [| 0; 1 |] ~windows:[| window 1 2 |]);
-    one ~d:(D.Any D.Bit) ~fill:"\001" "a bit operand cast up" [| 0 |] [| 9 |] (pad_v [| 3 |] [| 2 |]);
-    one ~scan:true "a scaled operand" [| 1 |] [| 4; 5 |] (pad_v [| 1; 0 |] [| 2; 0 |]);
+    one ~d:(D.Any D.Bit) ~fill:"\001" "a bit operand cast up" [| 0 |] [| 9 |]
+      (pad_v [| 3 |] [| 2 |]);
+    one ~scan:true "a scaled operand" [| 1 |] [| 4; 5 |]
+      (pad_v [| 1; 0 |] [| 2; 0 |]);
     padded_sum "a scaled operand" [| 1 |]
-      [| (product_operand f32 [| 4; 5 |] { (plain_view 2) with reversed = Some 1 } ~specials:20 7,
-          Some (pad_v [| 1; 0 |] [| 2; 0 |])) |];
+      [|
+        ( product_operand f32 [| 4; 5 |]
+            { (plain_view 2) with reversed = Some 1 }
+            ~specials:20 7,
+          Some (pad_v [| 1; 0 |] [| 2; 0 |]) );
+      |];
     padded_sum "a scaled operand" [| 1 |]
-      [| (product_operand f32 [| 4; 5 |] { (plain_view 2) with stepped = true } ~specials:20 7,
-          Some (pad_v [| 1; 0 |] [| 2; 0 |])) |];
+      [|
+        ( product_operand f32 [| 4; 5 |]
+            { (plain_view 2) with stepped = true }
+            ~specials:20 7,
+          Some (pad_v [| 1; 0 |] [| 2; 0 |]) );
+      |];
   ]
 
-(* A case of [fused_any], or a float32 program's monoid along
-   [wide_rows] often enough that every run reaches their calls. *)
-let fused_case =
-  let open Gen in
-  let rows =
-    let* name, ins, _, nodes, outs, k =
-      of_list
-        ~pp:(fun ppf (n, _, _, _, _, _) -> Format.pp_print_string ppf n)
-        (templates f32 f32 2)
-    in
-    let prog =
-      P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
-        ~outs:(Iarray.of_array outs)
-    in
-    let monoids =
-      List.filter
-        (function Nx_kernel.Monoid _ -> true | _ -> false)
-        (reductions_of ~scan:false (P.dtype prog outs.(k)))
-    in
-    let* red = of_list monoids in
-    let+ s = wide_rows in
-    fused_example name red s [| 1 |]
-  in
-  with_pp pp_fused (frequency [ (6, fused_any); (1, rows) ])
+let fused_case = Gen.with_pp pp_fused fused_any
+
+(* Float32 programs' monoids along 64 rows of 9217 terms, some of each row's
+   calls past several blocks. *)
+let row_examples =
+  List.map
+    (fun (name, red) -> fused_example name red [| 64; 9217 |] [| 1 |])
+    Nx_kernel.
+      [
+        ("a product of two operands", Monoid Sum);
+        ("exp of a difference with lanes", Monoid Sum);
+        ("a squared factor", Monoid Max);
+      ]
 
 (* The destinations of [c]'s reduction, fresh, of output [c.k]'s dtype. *)
-let fused_dsts (b : Support.backend) c =
+let fused_dsts c =
   let s = c.shape in
   let y =
     if c.scan then Iarray.of_array s
@@ -3204,17 +3678,18 @@ let fused_dsts (b : Support.backend) c =
         (List.filteri (fun i _ -> not (Array.mem i c.axes)) (Array.to_list s))
   in
   let (D.Any dt) = P.dtype c.prog (Iarray.get c.prog.outs c.k) in
-  let make () = A.Any (A.create b.device dt y) in
+  let make () = A.Any (A.create cpu.device dt y) in
   match c.red with
   | Monoid _ | Logsumexp -> [| make () |]
   | Moments -> [| make (); make () |]
-  | Arg _ -> [| make (); A.Any (A.create b.device D.Int64 y) |]
+  | Arg _ -> [| make (); A.Any (A.create cpu.device D.Int64 y) |]
 
 (* Whether Nx_kernel.Shape fits [c]: an extreme of no term is refused. *)
 let fused_fits c =
   Result.is_ok
     (if c.scan then Nx_kernel.Shape.scan ~axis:c.axes.(0) c.shape
-     else Nx_kernel.Shape.reduce ~axes:(Iarray.of_array c.axes) [| c.red |] c.shape)
+     else
+       Nx_kernel.Shape.reduce ~axes:(Iarray.of_array c.axes) [| c.red |] c.shape)
 
 (* [c] by [M] into [dsts] over [loads]. *)
 let fused_compute (module M : Nx_kernel.S) c ~dsts loads =
@@ -3222,13 +3697,15 @@ let fused_compute (module M : Nx_kernel.S) c ~dsts loads =
   if c.scan then M.scan c.prog ~axis:c.axes.(0) (c.red, c.k) ~dsts loads
   else
     M.reduce c.prog ~shape:(Iarray.of_array c.shape)
-      ~axes:(Iarray.of_array c.axes) [| (c.red, c.k) |] ~dsts loads
+      ~axes:(Iarray.of_array c.axes)
+      [| (c.red, c.k) |]
+      ~dsts loads
 
-(* [c] fused, its loads guarded where it says, against [c]'s program mapped
-   over the arrays its loads read into fresh arrays and reduced as their
-   outputs' identity, a NaN as any NaN. *)
-let law_fused (b : Support.backend) c =
-  let module K = (val b.kernels) in
+(* [c] fused, its loads guarded where it says, against [c]'s program mapped over
+   the arrays its loads read into fresh arrays and reduced as their outputs'
+   identity, a NaN as any NaN. *)
+let law_fused c =
+  let module K = (val cpu.kernels) in
   let s = c.shape in
   let terms = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
   classify c.name true;
@@ -3257,8 +3734,10 @@ let law_fused (b : Support.backend) c =
   cover "several blocks of terms" (terms > 1024);
   let padded = Array.exists Option.is_some c.pads in
   cover "a padded load" padded;
-  cover "a padded load of few products" (padded && terms <= 16 && Array.length c.operands = 2);
-  cover "a padded float4_e2m1fn load" (padded && same fdt (D.Any D.Float4_e2m1fn));
+  cover "a padded load of few products"
+    (padded && terms <= 16 && Array.length c.operands = 2);
+  cover "a padded float4_e2m1fn load"
+    (padded && same fdt (D.Any D.Float4_e2m1fn));
   let (D.Any fd) = fdt in
   cover "a padded sub-byte load" (padded && D.bits fd < 8);
   (* The first operand's pad. *)
@@ -3274,15 +3753,22 @@ let law_fused (b : Support.backend) c =
   cover "a NaN fill" (first (fun fill _ -> Elements.nan_of fdt fill));
   cover "a -0 fill"
     (first (fun fill _ ->
-         is_float fdt && String.length fill >= 4
-         && String.for_all (fun ch -> ch = '\000') (String.sub fill 0 (String.length fill - 1))
+         is_float fdt
+         && String.length fill >= 4
+         && String.for_all
+              (fun ch -> ch = '\000')
+              (String.sub fill 0 (String.length fill - 1))
          && fill.[String.length fill - 1] = '\128'));
   cover "a scan over a padded load" (first (fun _ _ -> c.scan));
   let r = Array.length s in
   let side = r > 1 && not (Array.mem (r - 1) c.axes) in
   let split =
-    Array.exists (fun a -> a + 1 < r && not (Array.mem (a + 1) c.axes)
-                           && Array.exists (fun b -> b > a + 1) c.axes) c.axes
+    Array.exists
+      (fun a ->
+        a + 1 < r
+        && (not (Array.mem (a + 1) c.axes))
+        && Array.exists (fun b -> b > a + 1) c.axes)
+      c.axes
   in
   cover "outputs side by side" side;
   cover "reduced axes split by a kept one" split;
@@ -3297,7 +3783,7 @@ let law_fused (b : Support.backend) c =
     Array.map
       (fun o ->
         let (D.Any dt) = P.dtype c.prog o in
-        A.Any (A.create b.device dt (Iarray.of_array s)))
+        A.Any (A.create cpu.device dt (Iarray.of_array s)))
       (Iarray.to_array c.prog.outs)
   in
   (match
@@ -3307,10 +3793,11 @@ let law_fused (b : Support.backend) c =
   | A.Done -> ()
   | r -> failf "the map answered %a" Nx_array_support.pp_answer r);
   let (A.Any y) = outs.(c.k) in
-  let want = fused_dsts b c in
+  let want = fused_dsts c in
   (* An extreme of no term refuses alike. *)
   let expected =
-    fused_compute b.kernels { c with prog = identity (D.Any (A.dtype y)); k = 0 }
+    fused_compute cpu.kernels
+      { c with prog = identity (D.Any (A.dtype y)); k = 0 }
       ~dsts:want [| Nx_kernel.Plain y |]
   in
   let guarded =
@@ -3329,8 +3816,12 @@ let law_fused (b : Support.backend) c =
                    (M.Slice
                       (Iarray.mapi
                          (fun i e ->
-                           { M.start = 0; count = (if Iarray.get st i = 0 then min e 1 else e);
-                             step = 1 })
+                           {
+                             M.start = 0;
+                             count =
+                               (if Iarray.get st i = 0 then min e 1 else e);
+                             step = 1;
+                           })
                          (L.shape l)))
                    y)
             in
@@ -3338,32 +3829,33 @@ let law_fused (b : Support.backend) c =
             (A.Any g, free))
       c.operands
   in
-  let got = fused_dsts b c in
+  let got = fused_dsts c in
   Fun.protect
     ~finally:(fun () -> Array.iter (fun (_, free) -> free ()) guarded)
     (fun () ->
       let answer =
-        fused_compute b.kernels c ~dsts:got (loads_with c.pads (Array.map fst guarded))
+        fused_compute cpu.kernels c ~dsts:got
+          (loads_with c.pads (Array.map fst guarded))
       in
       equal ~msg:"answer" Elements.answer expected answer;
       if answer = A.Done then
         Array.iteri
           (fun i w ->
-            equal ~msg:(Printf.sprintf "destination %d" i)
+            equal
+              ~msg:(Printf.sprintf "destination %d" i)
               (array (Elements.same (dtype_of w)))
               (Elements.elements (host w))
               (Elements.elements (host got.(i))))
           want)
 
-(* A program computed into its own load gives the bits of one computed
-   into fresh destinations, as nx_cpu.mli states, a NaN as any NaN: a
-   float16 negation of signalling NaNs summed along no axis; scanned;
-   summed beside its maximum, each written after the other reads; and its
-   Arg, reduced along no axis and scanned over numbers, each extreme
-   computed from the load at its position after earlier results are
-   written. *)
-let test_program_in_place (b : Support.backend) () =
-  let module K = (val b.kernels) in
+(* A program computed into its own load gives the bits of one computed into
+   fresh destinations, as nx_cpu.mli states, a NaN as any NaN: a float16
+   negation of signalling NaNs summed along no axis; scanned; summed beside its
+   maximum, each written after the other reads; and its Arg, reduced along no
+   axis and scanned over numbers, each extreme computed from the load at its
+   position after earlier results are written. *)
+let test_program_in_place () =
+  let module K = (val cpu.kernels) in
   let h = D.Any D.Float16 in
   let p =
     P.v ~ins:(Iarray.of_array [| h |])
@@ -3380,20 +3872,24 @@ let test_program_in_place (b : Support.backend) () =
       A.Any (A.create Rig.host dt [| 3 |])
     in
     let want = Array.init (Array.length dts) fresh in
-    equal ~msg:(what ^ ", fresh") Elements.answer A.Done
-      (call (load ()) want);
+    equal ~msg:(what ^ ", fresh") Elements.answer A.Done (call (load ()) want);
     let x = load () in
-    let got = Array.init (Array.length dts) (fun j -> if j = 0 then x else fresh j) in
+    let got =
+      Array.init (Array.length dts) (fun j -> if j = 0 then x else fresh j)
+    in
     equal ~msg:(what ^ ", into its load") Elements.answer A.Done (call x got);
     Array.iteri
       (fun j w ->
-        equal ~msg:what (array (Elements.same dts.(j)))
-          (Elements.elements w) (Elements.elements got.(j)))
+        equal ~msg:what
+          (array (Elements.same dts.(j)))
+          (Elements.elements w)
+          (Elements.elements got.(j)))
       want
   in
   let reduce rs x dsts =
     K.reduce p ~shape:[| 3 |] ~axes:[||] (Iarray.of_array rs)
-      ~dsts:(Iarray.of_array dsts) [| plain_of x |]
+      ~dsts:(Iarray.of_array dsts)
+      [| plain_of x |]
   in
   let scan r x dsts =
     K.scan p ~axis:0 (r, 0) ~dsts:(Iarray.of_array dsts) [| plain_of x |]
@@ -3403,97 +3899,32 @@ let test_program_in_place (b : Support.backend) () =
   check "a running sum" nans [| h |] (scan (Monoid Sum));
   check "a sum and a maximum" nans [| h; h |]
     (reduce [| (Monoid Sum, 0); (Monoid Max, 0) |]);
-  check "an Arg along no axis" numbers [| h; i64 |]
-    (reduce [| (Arg Max, 0) |]);
+  check "an Arg along no axis" numbers [| h; i64 |] (reduce [| (Arg Max, 0) |]);
   check "an Arg scan" numbers [| h; i64 |] (scan (Arg Max));
-  (* A padded load, read from a copy: windows of 3 over the load padded by
-     one, whose sums along the taps have the load's shape. *)
+  (* A padded load, read from a copy: windows of 3 over the load padded by one,
+     whose sums along the taps have the load's shape. *)
   let pad = pad_v [| 1 |] [| 1 |] ~windows:[| window 0 3 |] in
   let one = "\000\060" in
   check "a sum of a padded load" numbers [| h |] (fun x dsts ->
-      K.reduce p ~shape:[| 3; 3 |] ~axes:[| 1 |] [| (Monoid Sum, 0) |]
-        ~dsts:(Iarray.of_array dsts) [| padded_load x one pad |])
+      K.reduce p ~shape:[| 3; 3 |] ~axes:[| 1 |]
+        [| (Monoid Sum, 0) |]
+        ~dsts:(Iarray.of_array dsts)
+        [| padded_load x one pad |])
 
-(* Several reductions of one loop: [c]'s and [red] of output [k], with
-   [c]'s axes, one call. *)
-type several = { first : fused; red2 : Nx_kernel.reduction; k2 : int }
-
-let pp_several ppf s =
-  Format.fprintf ppf "%a, then %s of output %d" pp_fused s.first
-    (reduction_name s.red2) s.k2
-
-let several_case =
-  let open Gen in
-  with_pp pp_several
-  @@ let* c = fused_case in
-     let c = { c with scan = false; guard = None } in
-     let outs = Iarray.length c.prog.outs in
-     (* The other output where there are two, mostly. *)
-     let* k2 =
-       if outs = 1 then constant 0
-       else frequency [ (3, constant (1 - c.k)); (1, constant c.k) ]
-     in
-     let o = P.dtype c.prog (Iarray.get c.prog.outs k2) in
-     let+ red2 = of_list (reductions_of ~scan:false o) in
-     { first = c; red2; k2 }
-
-(* The destinations of [red] of output [k] of [c], fresh. *)
-let dsts_of (b : Support.backend) c red k =
-  fused_dsts b { c with red; k }
-
-(* Several reductions in one call give each one's bits alone, a NaN as any
-   NaN. *)
-let law_several (b : Support.backend) s =
-  let module K = (val b.kernels) in
-  let c = s.first in
-  cover "two outputs" (s.k2 <> c.k);
-  cover "a state and a monoid"
-    ((match c.red with Monoid _ -> false | _ -> true)
-    <> (match s.red2 with Monoid _ -> false | _ -> true));
-  let loads = Iarray.of_array (loads_of c) in
-  let shape = Iarray.of_array c.shape in
-  let alone red k =
-    let d = dsts_of b c red k in
-    let axes = Iarray.of_array c.axes in
-    ( K.reduce c.prog ~shape ~axes [| (red, k) |] ~dsts:(Iarray.of_array d)
-        loads,
-      d )
+(* A plain sum and scan whose program is Prog.of_node's [In 0], which keeps its
+   operand as two nodes, compute as [In 0]'s. *)
+let test_of_node () =
+  let x =
+    A.Any (A.of_array D.Float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |])
   in
-  let a1, w1 = alone c.red c.k and a2, w2 = alone s.red2 s.k2 in
-  let d1 = dsts_of b c c.red c.k and d2 = dsts_of b c s.red2 s.k2 in
-  let answer =
-    K.reduce c.prog ~shape ~axes:(Iarray.of_array c.axes)
-      [| (c.red, c.k); (s.red2, s.k2) |]
-      ~dsts:(Iarray.of_array (Array.append d1 d2))
-      loads
-  in
-  (* The pair refuses as the first of them that refuses alone. *)
-  let expected = if a1 <> A.Done then a1 else a2 in
-  equal ~msg:"answer" Elements.answer expected answer;
-  if answer = A.Done then begin
-    let same w g =
-      Array.iteri
-        (fun i x ->
-          equal (array (Elements.same (dtype_of x)))
-            (Elements.elements (host x)) (Elements.elements (host g.(i))))
-        w
-    in
-    same w1 d1;
-    same w2 d2
-  end
-
-(* The suite *)
-
-(* A plain sum and scan whose program is Prog.of_node's [In 0], which keeps
-   its operand as two nodes, compute as [In 0]'s. *)
-let test_of_node (b : Support.backend) () =
-  let x = A.Any (A.of_array D.Float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]) in
   let dt = D.Any D.Float32 in
   let of_node = P.of_node ~ins:[| dt |] (P.In 0) in
   let run scan prog shape =
-    let dst = A.Any (A.create b.device D.Float32 shape) in
-    let answer = compute b.kernels ~scan prog Sum [| 1 |] dst [| plain_of (on b x) |] in
-    equal ~msg:"its answer" bool true (answer = A.Done);
+    let dst = A.Any (A.create cpu.device D.Float32 shape) in
+    let answer =
+      compute cpu.kernels ~scan prog Sum [| 1 |] dst [| plain_of (on cpu x) |]
+    in
+    equal ~msg:"its answer" Elements.answer A.Done answer;
     let (A.Any h) = host dst in
     Array.map Int32.bits_of_float (A.to_array (A.expect D.Float32 (A.Any h)))
   in
@@ -3504,29 +3935,29 @@ let test_of_node (b : Support.backend) () =
     (run true (identity dt) [| 2; 3 |])
     (run true of_node [| 2; 3 |])
 
-(* Bools stored as bytes other than 0 and 1, through a Uint8 bitcast: a
-   bool is true where its byte is not 0 (dtype.mli), so a Max or a Min of
-   them, or an Arg's extreme, stores 0 or 1, and nx.cpu computes each. Rows
-   of [0; 2], [255; 0], [3; 7] and [0; 0]. *)
-let test_bool_bytes (b : Support.backend) () =
+(* Bools stored as bytes other than 0 and 1, through a Uint8 bitcast: a bool is
+   true where its byte is not 0 (dtype.mli), so a Max or a Min of them, or an
+   Arg's extreme, stores 0 or 1, and nx.cpu computes each. Rows of [0; 2], [255;
+   0], [3; 7] and [0; 0]. *)
+let test_bool_bytes () =
   let bytes = [| 0; 2; 255; 0; 3; 7; 0; 0 |] in
   let x =
-    A.Any
-      (Option.get (A.bitcast D.Bool (A.of_array D.Uint8 [| 4; 2 |] bytes)))
+    A.Any (Option.get (A.bitcast D.Bool (A.of_array D.Uint8 [| 4; 2 |] bytes)))
   in
   let p = identity (D.Any D.Bool) in
   let answered what = function
     | A.Done -> ()
-    | a -> failf "%s: %s answered %a" what b.name Nx_array_support.pp_answer a
+    | a -> failf "%s: %s answered %a" what cpu.name Nx_array_support.pp_answer a
   in
   let bits d =
     let (A.Any h) = host d in
     A.to_array (Option.get (A.bitcast D.Uint8 (A.expect D.Bool (A.Any h))))
   in
   let check what scan m shape want =
-    let dst = A.create b.device D.Bool shape in
+    let dst = A.create cpu.device D.Bool shape in
     let answer =
-      compute b.kernels ~scan p m [| 1 |] (A.Any dst) [| plain_of (on b x) |]
+      compute cpu.kernels ~scan p m [| 1 |] (A.Any dst)
+        [| plain_of (on cpu x) |]
     in
     answered what answer;
     equal ~msg:what (array int) want (bits (A.Any dst))
@@ -3535,16 +3966,19 @@ let test_bool_bytes (b : Support.backend) () =
   check "min" false Min [| 4 |] [| 0; 0; 1; 0 |];
   check "max scan" true Max [| 4; 2 |] [| 0; 1; 1; 1; 1; 1; 0; 0 |];
   let arg what e want =
-    let v = A.create b.device D.Bool [| 4 |]
-    and i = A.create b.device D.Int64 [| 4 |] in
-    let module K = (val b.kernels) in
+    let v = A.create cpu.device D.Bool [| 4 |]
+    and i = A.create cpu.device D.Int64 [| 4 |] in
+    let module K = (val cpu.kernels) in
     let answer =
-      K.reduce p ~shape:[| 4; 2 |] ~axes:[| 1 |] [| (Arg e, 0) |]
+      K.reduce p ~shape:[| 4; 2 |] ~axes:[| 1 |]
+        [| (Arg e, 0) |]
         ~dsts:[| A.Any v; A.Any i |]
-        [| plain_of (on b x) |]
+        [| plain_of (on cpu x) |]
     in
     answered what answer;
-    equal ~msg:what (pair (array int) (array int64)) want
+    equal ~msg:what
+      (pair (array int) (array int64))
+      want
       (bits (A.Any v), A.to_array (A.expect D.Int64 (host (A.Any i))))
   in
   arg "arg max: the first true" Max ([| 1; 1; 1; 0 |], [| 1L; 0L; 0L; 0L |]);
@@ -3554,8 +3988,7 @@ let test_bool_bytes (b : Support.backend) () =
    destinations of other dtypes *)
 
 (* The dtype a reference reads terms of [d] through: their carrier, a byte
-   integer for booleans, which keeps their order and tells their bits
-   apart. *)
+   integer for booleans, which keeps their order and tells their bits apart. *)
 let arg_carrier = function
   | D.Any (D.Bool | D.Bit) -> D.Any D.Uint8
   | d -> Nx_kernel.carrier d
@@ -3572,19 +4005,20 @@ let pp_stat_into ppf { st; scan; into } =
 let narrow_floats =
   D.
     [
-      Any Float16; Any Bfloat16; Any Float8_e4m3fn; Any Float8_e5m2;
+      Any Float16;
+      Any Bfloat16;
+      Any Float8_e4m3fn;
+      Any Float8_e5m2;
       Any Float4_e2m1fn;
     ]
 
-(* An Arg of a narrow dtype or a boolean, or a Logsumexp or Moments of a
-   float, reduced or scanned, into its dtype or another float's. Narrow
-   floats are float32's values of [value_kinds] rounded into them. *)
+(* An Arg of a narrow dtype or a boolean, or a Logsumexp or Moments of a float,
+   reduced or scanned, into its dtype or another float's. Narrow floats are
+   float32's values of [value_kinds] rounded into them. *)
 let stat_into_case =
   Gen.with_pp pp_stat_into
     (let open Gen in
-     let* r =
-       of_list Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ]
-     in
+     let* r = of_list Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ] in
      let arg = match r with Nx_kernel.Arg _ -> true | _ -> false in
      let* (D.Any dt as d) =
        of_list ~pp:pp_dtype
@@ -3594,11 +4028,7 @@ let stat_into_case =
      let* scan = bool in
      let* s =
        frequency
-         [
-           (3, shape_gen);
-           (1, map (fun n -> [| n |]) (int_range 1025 5000));
-           (1, many_long);
-         ]
+         [ (3, shapes); (1, map (fun n -> [| n |]) (int_range 1025 5000)) ]
      in
      let s = if scan && Array.length s = 0 then [| 3 |] else s in
      let rank = Array.length s in
@@ -3606,8 +4036,7 @@ let stat_into_case =
        if scan then map (fun a -> [| a |]) (int_range 0 (rank - 1))
        else
          let+ keep = array ~size:(constant rank) bool in
-         Array.of_list
-           (List.filter (fun i -> keep.(i)) (List.init rank Fun.id))
+         Array.of_list (List.filter (fun i -> keep.(i)) (List.init rank Fun.id))
      in
      let* v = view_of rank in
      let* values = of_list value_kinds in
@@ -3616,8 +4045,7 @@ let stat_into_case =
        frequency
          [
            (2, constant d);
-           ( 1,
-             of_list ~pp:pp_dtype D.[ Any Float32; Any Float64; Any Float16 ] );
+           (1, of_list ~pp:pp_dtype D.[ Any Float32; Any Float64; Any Float16 ]);
          ]
      in
      let+ seed = int in
@@ -3631,17 +4059,21 @@ let stat_into_case =
      in
      { st = stat_of r s axes v values.name make; scan; into })
 
-(* A boolean's Arg, which the generator draws once in 18 cases, and the
-   Moments of many bfloat16 outputs of several blocks, stepped. *)
+(* A boolean's Arg, which the generator draws once in 18 cases, and the Moments
+   of many bfloat16 outputs of several blocks, stepped. *)
 let stat_into_examples =
-  let v = { perm = [| 0 |]; stepped = false; reversed = None; broadcast = false } in
+  let v =
+    { perm = [| 0 |]; stepped = false; reversed = None; broadcast = false }
+  in
   let make n = A.Any (elements D.Bool n ~specials:0 1) in
   let offset = List.find (fun (k : values) -> k.name = "offset") value_kinds in
   let narrow n =
     cast_into (D.Any D.Bfloat16)
       (float_elements D.Float32 n offset ~outliers:0 ~specials:2000 3)
   in
-  let stepped = { perm = [| 0; 1 |]; stepped = true; reversed = None; broadcast = false } in
+  let stepped =
+    { perm = [| 0; 1 |]; stepped = true; reversed = None; broadcast = false }
+  in
   [
     {
       st = stat_of (Arg Max) [| 9 |] [| 0 |] v "small" make;
@@ -3653,21 +4085,44 @@ let stat_into_examples =
       scan = false;
       into = D.Any D.Bfloat16;
     };
+    {
+      st =
+        stat_of Logsumexp [| 4; 9 |] [| 1 |]
+          {
+            perm = [| 0; 1 |];
+            stepped = false;
+            reversed = None;
+            broadcast = true;
+          }
+          "offset" narrow;
+      scan = false;
+      into = D.Any D.Bfloat16;
+    };
   ]
 
-(* Two NaNs of a narrow float among zeros, one signalling, past a block
-   and a chunk: Logsumexp, Moments and Arg, reduced and scanned, give a
-   NaN from the first NaN on, as their carrier does. *)
+(* Two NaNs of a narrow float among zeros, one signalling, past a block and a
+   chunk: Logsumexp, Moments and Arg, reduced and scanned, give a NaN from the
+   first NaN on, as their carrier does. *)
 let nan_code_stat_examples =
   List.concat_map
     (fun (d, first, other) ->
       let x = nan_vector d first other (5000, 4500, 4700) in
       List.map
         (fun (r, scan) ->
-          { st = { r; axes = [| 0 |]; x; views = []; values = "nan" }; scan; into = d })
+          {
+            st = { r; axes = [| 0 |]; x; views = []; values = "nan" };
+            scan;
+            into = d;
+          })
         Nx_kernel.
-          [ (Logsumexp, false); (Logsumexp, true); (Moments, false); (Moments, true);
-            (Arg Max, false); (Arg Min, true) ])
+          [
+            (Logsumexp, false);
+            (Logsumexp, true);
+            (Moments, false);
+            (Moments, true);
+            (Arg Max, false);
+            (Arg Min, true);
+          ])
     nan_codes
 
 (* [c]'s reduction, or its scan where [scan], of [x] by [k], into fresh
@@ -3691,7 +4146,9 @@ let stat_answer k ~scan (c : stat) (D.Any d) x =
     else
       K.reduce p
         ~shape:(Iarray.of_array (shape_of x))
-        ~axes:(Iarray.of_array c.axes) [| (c.r, 0) |] ~dsts loads
+        ~axes:(Iarray.of_array c.axes)
+        [| (c.r, 0) |]
+        ~dsts loads
   in
   (answer, dsts)
 
@@ -3700,10 +4157,10 @@ let stat_run k ~scan c d x =
   | A.Done, dsts -> dsts
   | a, _ -> failf "the kernels answered %a" Nx_array_support.pp_answer a
 
-(* A narrow operand's terms reduce in their carrier, and each result rounds
-   once into its destination: the bits of the reduction of the terms cast
-   into [arg_carrier], cast into the destination, a NaN as any NaN. *)
-let law_stat_into (b : Support.backend) { st = c; scan; into } =
+(* A narrow operand's terms reduce in their carrier, and each result rounds once
+   into its destination: the bits of the reduction of the terms cast into
+   [arg_carrier], cast into the destination, a NaN as any NaN. *)
+let law_stat_into { st = c; scan; into } =
   let x = dtype_of c.x in
   let s = shape_of c.x in
   cover "narrow" (staged x);
@@ -3718,10 +4175,10 @@ let law_stat_into (b : Support.backend) { st = c; scan; into } =
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
   let wide = arg_carrier x in
-  let got = stat_run b.kernels ~scan c into c.x in
-  let want = stat_run b.kernels ~scan c wide (cast_into wide c.x) in
-  (* Into the operand's own dtype, a staged Arg's extreme is the term at
-     its position, as the operand holds it. *)
+  let got = stat_run cpu.kernels ~scan c into c.x in
+  let want = stat_run cpu.kernels ~scan c wide (cast_into wide c.x) in
+  (* Into the operand's own dtype, a staged Arg's extreme is the term at its
+     position, as the operand holds it. *)
   let own = staged x && same into x in
   let case = { (as_case c) with scan } in
   (* Each result's terms, a scan's its slice's. *)
@@ -3741,29 +4198,32 @@ let law_stat_into (b : Support.backend) { st = c; scan; into } =
       in
       equal
         ~msg:(Printf.sprintf "destination %d" k)
-        (array (Elements.same (dtype_of got.(k)))) want
+        (array (Elements.same (dtype_of got.(k))))
+        want
         (Elements.elements got.(k)))
     want
 
 (* A reduction and a scan of a program of [nl] loads, for [nl] one below a
    block's operands to thousands past them: the sum of the loads, [x], a
-   transposed [y] and a broadcast [z] in turn, summed along the last axis
-   and run along it; a sum of the products of load 0 and the last; and a
-   reduction of the last of twenty outputs. Every value is an integer a
-   float32 holds, so each result is exact. *)
-let test_wide_loads (b : Support.backend) () =
-  let module K = (val b.kernels) in
+   transposed [y] and a broadcast [z] in turn, summed along the last axis and
+   run along it; a sum of the products of load 0 and the last; and a reduction
+   of the last of twenty outputs. Every value is an integer a float32 holds, so
+   each result is exact. *)
+let test_wide_loads () =
+  let module K = (val cpu.kernels) in
   let f32 = D.Any D.Float32 and shape : int iarray = [| 4; 3 |] in
   let x = A.of_array D.Float32 [| 4; 3 |] (Array.init 12 Float.of_int) in
   let y =
     Option.get
-      (A.move (A.Move.Permute [| 1; 0 |])
+      (A.move
+         (A.Move.Permute [| 1; 0 |])
          (A.of_array D.Float32 [| 3; 4 |]
             (Array.init 12 (fun q -> Float.of_int (100 + q)))))
   in
   let z =
     Option.get
-      (A.move (A.Move.Broadcast [| 4; 3 |])
+      (A.move
+         (A.Move.Broadcast [| 4; 3 |])
          (A.of_array D.Float32 [| 3 |] [| 10.; 20.; 30. |]))
   in
   let arrays = [| x; y; z |] in
@@ -3775,7 +4235,7 @@ let test_wide_loads (b : Support.backend) () =
       let nodes =
         List.init nl (fun k -> P.In k)
         @ List.init (nl - 1) (fun i ->
-              P.Op2 (Binary Add, (if i = 0 then 0 else nl + i - 1), i + 1))
+            P.Op2 (Binary Add, (if i = 0 then 0 else nl + i - 1), i + 1))
       in
       let last = List.length nodes - 1 in
       P.v ~ins (Iarray.of_list nodes) ~outs:(Iarray.init outs (fun _ -> last))
@@ -3799,7 +4259,8 @@ let test_wide_loads (b : Support.backend) () =
     let reduced p k want =
       let d = A.create Rig.host D.Float32 [| 4 |] in
       equal ~msg Elements.answer A.Done
-        (K.reduce p ~shape ~axes:[| 1 |] [| (Monoid Sum, k) |]
+        (K.reduce p ~shape ~axes:[| 1 |]
+           [| (Monoid Sum, k) |]
            ~dsts:[| A.Any d |] loads);
       equal ~msg (array float_exact) want (A.to_array d)
     in
@@ -3808,8 +4269,8 @@ let test_wide_loads (b : Support.backend) () =
     reduced product 0 (rows (sum_of (fun i j -> at 0 i j *. at (nl - 1) i j)));
     let running = A.create Rig.host D.Float32 [| 4; 3 |] in
     equal ~msg Elements.answer A.Done
-      (K.scan (total ~outs:1) ~axis:1 (Monoid Sum, 0)
-         ~dsts:[| A.Any running |] loads);
+      (K.scan (total ~outs:1) ~axis:1 (Monoid Sum, 0) ~dsts:[| A.Any running |]
+         loads);
     equal ~msg (array float_exact)
       (Array.init 12 (fun q ->
            let i = q / 3 and c = q mod 3 in
@@ -3822,11 +4283,11 @@ let test_wide_loads (b : Support.backend) () =
   in
   List.iter wide [ A.max_operands - 3; 16; 17; 18; 19; 32; 100; 4000 ]
 
-(* Nine Moments of one loop take 18 destinations, twenty Args 40, and many
-   sums as many tables of reductions, more than one loop holds beside its
-   load: each result has the bits of a call of few reductions. *)
-let test_many_reductions (b : Support.backend) () =
-  let module K = (val b.kernels) in
+(* Nine Moments of one loop take 18 destinations, twenty Args 40, and many sums
+   as many tables of reductions, more than one loop holds beside its load: each
+   result has the bits of a call of few reductions. *)
+let test_many_reductions () =
+  let module K = (val cpu.kernels) in
   let p = identity (D.Any D.Float32) and shape : int iarray = [| 4; 3 |] in
   let x =
     A.of_array D.Float32 shape
@@ -3839,7 +4300,8 @@ let test_many_reductions (b : Support.backend) () =
   (* An Arg's second destination is its int64 positions. *)
   let dst r i =
     match r with
-    | Nx_kernel.Arg _ when i mod 2 = 1 -> A.Any (A.create Rig.host D.Int64 [| 4 |])
+    | Nx_kernel.Arg _ when i mod 2 = 1 ->
+        A.Any (A.create Rig.host D.Int64 [| 4 |])
     | _ -> A.Any (A.create Rig.host D.Float32 [| 4 |])
   in
   let bits (A.Any d) =
@@ -3857,7 +4319,8 @@ let test_many_reductions (b : Support.backend) () =
       Elements.answer A.Done
       (K.reduce p ~shape ~axes:[| 1 |]
          (Iarray.init n (fun _ -> (r, 0)))
-         ~dsts:(Iarray.of_array dsts) [| plain_of (A.Any x) |]);
+         ~dsts:(Iarray.of_array dsts)
+         [| plain_of (A.Any x) |]);
     Array.map bits dsts
   in
   let agree r few many =
@@ -3874,16 +4337,16 @@ let test_many_reductions (b : Support.backend) () =
   agree Nx_kernel.Moments 1 9;
   agree (Nx_kernel.Arg Max) 1 20;
   (* Sums of 18, 19, 36 and 37 operands, a run of the door's reads and its
-     neighbours, and of 64 and 65 items with the program's node, past
-     which nx.cpu checks and prices them with the lock released. *)
+     neighbours, and of 64 and 65 items with the program's node, past which
+     nx.cpu checks and prices them with the lock released. *)
   List.iter (agree (Nx_kernel.Monoid Sum) 1) [ 17; 18; 35; 36; 63; 64 ]
 
 (* Nine Moments over no axis, the mean each element and the variance 0, take
    every destination and the load in one claim: a broadcast destination or two
-   identical ones are refused before any is written, and a destination
-   identical to the load reads it as it was. *)
-let test_many_claims (b : Support.backend) () =
-  let module K = (val b.kernels) in
+   identical ones are refused before any is written, and a destination identical
+   to the load reads it as it was. *)
+let test_many_claims () =
+  let module K = (val cpu.kernels) in
   let p = identity (D.Any D.Float32) in
   let x = A.of_array D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
   let fresh () = A.of_array D.Float32 [| 4 |] [| 7.; 7.; 7.; 7. |] in
@@ -3891,7 +4354,8 @@ let test_many_claims (b : Support.backend) () =
   let call dsts =
     K.reduce p ~shape:[| 4 |] ~axes:[||]
       (Iarray.init 9 (fun _ -> (Nx_kernel.Moments, 0)))
-      ~dsts:(Iarray.of_array dsts) [| plain_of (A.Any x) |]
+      ~dsts:(Iarray.of_array dsts)
+      [| plain_of (A.Any x) |]
   in
   let values (A.Any d) = A.to_array (A.expect D.Float32 (A.Any d)) in
   let untouched msg ds =
@@ -3914,18 +4378,21 @@ let test_many_claims (b : Support.backend) () =
   equal ~msg:"the first destination as the load" Elements.answer A.Done
     (K.reduce p ~shape:[| 4 |] ~axes:[||]
        (Iarray.init 9 (fun _ -> (Nx_kernel.Moments, 0)))
-       ~dsts:(Iarray.of_array ds) [| plain_of (A.Any x') |]);
+       ~dsts:(Iarray.of_array ds)
+       [| plain_of (A.Any x') |]);
   Array.iteri
     (fun i d ->
-      equal ~msg:(Printf.sprintf "destination %d" i) (array float_exact)
+      equal
+        ~msg:(Printf.sprintf "destination %d" i)
+        (array float_exact)
         (if i mod 2 = 0 then [| 1.; 2.; 3.; 4. |] else [| 0.; 0.; 0.; 0. |])
         (values d))
     ds
 
 (* One thread and every layout *)
 
-(* A reduction or scan: of a monoid; of Arg, Logsumexp or Moments, reduced
-   or with [true] scanned; or of a program's output. *)
+(* A reduction or scan: of a monoid; of Arg, Logsumexp or Moments, reduced or
+   with [true] scanned; or of a program's output. *)
 type job = Fold of case | State of bool * stat | Program of fused
 
 let pp_job ppf = function
@@ -3939,9 +4406,9 @@ let views_of = function
   | State (_, c) -> c.views
   | Program c -> c.fviews
 
-(* [j] by [k] into fresh destinations: each one's elements, a NaN as any
-   NaN; [None] where [k] declines. *)
-let run_job (b : Support.backend) k j =
+(* [j] by [k] into fresh destinations: each one's elements, a NaN as any NaN;
+   [None] where [k] declines. *)
+let run_job k j =
   let blind d =
     Array.map
       (fun e -> if Elements.nan_of (dtype_of d) e then "nan" else e)
@@ -3952,14 +4419,17 @@ let run_job (b : Support.backend) k j =
     | Fold c ->
         let (A.Any x) = c.x in
         let dst =
-          A.Any (A.create Rig.host (A.dtype x) (Iarray.of_array (result_shape c)))
+          A.Any
+            (A.create Rig.host (A.dtype x) (Iarray.of_array (result_shape c)))
         in
-        ( compute k ~scan:c.scan (identity (dtype_of c.x)) c.monoid c.axes dst
+        ( compute k ~scan:c.scan
+            (identity (dtype_of c.x))
+            c.monoid c.axes dst
             [| plain_of c.x |],
           [| dst |] )
     | State (scan, c) -> stat_answer k ~scan c (dtype_of c.x) c.x
     | Program c ->
-        let dsts = fused_dsts b c in
+        let dsts = fused_dsts c in
         (fused_compute k c ~dsts (loads_of c), dsts)
   in
   match answer with
@@ -4004,17 +4474,20 @@ let covers_job j =
     (match j with Program _ -> true | Fold _ | State _ -> false)
 
 (* One thread gives the bits of the job's threads, a NaN as any NaN. *)
-let law_threads (b : Support.backend) j =
+let law_threads j =
   covers_job j;
-  let many = run_job b b.kernels j in
-  equal (option (array (array string))) many (run_job b (module One) j)
+  let many = run_job cpu.kernels j in
+  equal
+    (option (array (array string)))
+    many
+    (Nx_cpu.one_thread (fun () -> run_job cpu.kernels j))
 
 (* The same bits with each operand as a C-contiguous copy of its view. *)
-let law_layouts (b : Support.backend) j =
+let law_layouts j =
   covers_job j;
   cover "computed from views" (views_of j <> []);
-  let viewed = run_job b b.kernels j in
-  equal (option (array (array string))) viewed (run_job b b.kernels (copied j))
+  let viewed = run_job cpu.kernels j in
+  equal (option (array (array string))) viewed (run_job cpu.kernels (copied j))
 
 let job_case =
   let open Gen in
@@ -4032,8 +4505,8 @@ let job_case =
        ])
 
 (* Operands of a few hundred thousand elements, which the job gives several
-   threads; long ramps whose blocks' maxima differ; and the stateful and
-   fused examples. *)
+   threads; long ramps whose blocks' maxima differ; and the stateful and fused
+   examples. *)
 let job_examples =
   List.map (fun c -> Fold c) (computed_examples @ large_examples)
   @ List.map (fun c -> State (false, c)) (ramp_examples @ stat_examples)
@@ -4042,154 +4515,134 @@ let job_examples =
 
 (* The suite *)
 
-let order (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("order, " ^ b.name)
+let results =
+  group "results"
+    [
+      (* Each label of [covers_job] has an example, so few draws miss none. *)
+      prop ~count:20 ~examples:job_examples
+        "no thread count changes a bit, a NaN aside" job_case law_threads;
+      prop ~count:20 ~examples:job_examples
+        "no layout changes a bit, a NaN aside" job_case law_layouts;
+      prop ~count:500 ~examples:guard_examples
+        "no call reads or writes a byte past its operand and destinations, \
+         whatever pages lie beside them"
+        (Gen.pair guard_case Elements.sides)
+        law_guards;
+      prop ~examples:lanes_examples
+        "a slice's scan by Arg, Logsumexp or Moments has the bits of the slice \
+         scanned alone, beside others or transposed"
+        lanes_case law_lanes;
+    ]
+
+let padded =
+  group "padded loads"
+    [
+      prop
+        "a call Nx_kernel.Shape does not fit, a padding among them, is refused \
+         before any write"
+        misfits law_refusals;
+      cases
+        "a call of dtypes or shapes that do not fit is not Done and writes \
+         nothing outside its destinations"
+        ~id:(fun (n, _, _) -> n)
+        answered
+        (fun (msg, what, (dsts, call)) -> Misfit.check ~msg ~what cpu dsts call);
+      test
+        "a padded load past max_numel or its destinations is refused before \
+         its copy"
+        test_huge_padding;
+    ]
+
+let reductions =
+  group "reductions and scans"
+    [
+      prop
+        ~examples:(into_examples @ nan_code_examples)
+        "narrow terms reduce in their carrier, each result rounded once"
+        into_case law_into;
+      prop
+        ~examples:(stat_into_examples @ nan_code_stat_examples)
+        "narrow Arg, Logsumexp and Moments reduce in their carrier"
+        stat_into_case law_stat_into;
+      test "a bool term is true wherever its byte is not 0" test_bool_bytes;
+      cases "a bool carry is true wherever its byte is not 0"
+        ~id:(fun (D.Any dt, (m, _)) -> D.name dt ^ " " ^ m)
+        carry_cases test_byte_carry;
+      (* Min, which no example reduces by, is drawn in one case of six. *)
+      prop ~count:150
+        ~examples:
+          (fused_examples @ product_examples @ padded_examples @ row_examples)
+        "a reduction or a scan of a program's output has the bits of the \
+         output mapped, then reduced, over plain and padded loads"
+        fused_case law_fused;
+      test
+        "a program Prog.of_node makes of In 0 reduces and scans as the identity"
+        test_of_node;
+      test "a program of any number of loads reduces and scans" test_wide_loads;
+      test "any number of reductions of one loop gives each one's bits"
+        test_many_reductions;
+      test "every destination is checked before any is written" test_many_claims;
+      test "a destination identical to the operand gives a fresh one's bits"
+        test_in_place;
+      test "a destination identical to a load gives a fresh one's bits"
+        test_program_in_place;
+    ]
+
+let sums =
+  group "sums and products"
     [
       prop
         ~examples:
           (computed_examples @ made_examples @ far_nan_examples @ wrap_examples
          @ [ zero_example ])
-        "each result folds its terms in nx.cpu's order" computed
-        (run (law_order b));
-      prop ~examples:any_examples "computes every Sum, Prod, Max and Min"
-        any_case (run (law_computes b));
+        "a float Sum or Prod adds in lane order, a scan by chunks of 4096"
+        computed law_order;
       prop ~examples:complex_examples
-        "complex sums, products and extremes fold in nx.cpu's order"
-        complex_case (run (law_complex b));
-      prop
-        ~examples:(into_examples @ nan_code_examples)
-        "narrow terms reduce in their carrier, rounded once" into_case
-        (run (law_into b));
-      prop
-        ~examples:(stat_into_examples @ nan_code_stat_examples)
-        "narrow Arg, Logsumexp and Moments reduce in their carrier"
-        stat_into_case (run (law_stat_into b));
-      test "a bool of any non-zero byte is true" (fun () ->
-          b.around (test_bool_bytes b));
-      test "a program of Prog.of_node's operand computes" (fun () ->
-          b.around (test_of_node b));
+        "a complex Sum adds part by part, a complex Prod multiplies by Mul \
+         from its first term"
+        complex_case law_complex;
+      prop ~examples:chunk_examples
+        "a scan from a chunk's carry has the whole scan's bits from that chunk \
+         on"
+        chunk_case law_chunk_carry;
     ]
 
-let values_alone (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("values alone, " ^ b.name)
+let states =
+  group "Logsumexp and Moments"
     [
-      prop ~count:40 ~examples:job_examples "one thread gives the job's bits"
-        job_case (run (law_threads b));
-      prop ~count:40 ~examples:job_examples
-        "bits do not depend on layouts, as nx_cpu.mli states" job_case
-        (run (law_layouts b));
-    ]
-
-let stateful (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("stateful, " ^ b.name)
-    [
+      prop
+        ~examples:(ramp_examples @ two_pass_examples @ overflow_examples)
+        "Logsumexp and Moments have the bits of their two passes" two_pass_case
+        law_two_passes;
       prop
         ~examples:(stat_examples @ ramp_examples)
         "Arg is exact, Logsumexp and Moments within their bounds" stat_case
-        (run (law_stateful b));
-      prop
-        ~examples:(ramp_examples @ two_pass_examples)
-        "Logsumexp and Moments give the bits of their two passes"
-        two_pass_case (run (law_two_passes b));
-      prop
-        ~examples:(stat_scan_examples @ mixed_examples)
-        "Arg scans are exact, Logsumexp and Moments scans within their \
-         bounds, with their network's bits"
-        stat_scan_case (run (law_stat_scan b));
-      prop ~examples:lanes_examples
-        "a scan by Arg, Logsumexp or Moments gives each slice its bits alone"
-        lanes_case (run (law_lanes b));
+        law_stateful;
       prop ~count:500
         "a Logsumexp of every float dtype is within its bound, NaNs and \
          infinities as stated"
-        lse_case (run (law_logsumexp b));
-      test "a complex Arg scan holds its first extreme and first NaN"
-        (fun () -> b.around (test_complex_arg_scan b));
-      test "a reduction or scan into its own operand gives fresh bits"
-        (fun () -> b.around (test_in_place b));
+        lse_case law_logsumexp;
     ]
 
-let programs (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("programs, " ^ b.name)
+let state_scans =
+  group "Logsumexp and Moments scans"
     [
-      (* Min, which no example reduces by, is drawn in one case of six. *)
-      prop ~count:150
-        ~examples:(fused_examples @ product_examples @ padded_examples)
-        "a reduction or scan of a program's output gives the bits of its \
-         map's, over plain and padded loads"
-        fused_case (run (law_fused b));
+      prop
+        ~examples:(stat_scan_examples @ mixed_examples)
+        "Arg scans are exact, Logsumexp and Moments scans within their bounds"
+        stat_scan_case law_scan_bounds;
       prop
         ~examples:
-          [
-            { first = fused_example "the second of two outputs" Moments [| 5; 40 |] [| 1 |];
-              red2 = Monoid Max; k2 = 0 };
-          ]
-        "several reductions in one call give each one's bits" several_case
-        (run (law_several b));
-      test "a destination aliasing a load computes as a fresh one" (fun () ->
-          b.around (test_program_in_place b));
-      test "reduces many reductions in one claim of their operands" (fun () ->
-          b.around (test_many_claims b));
-      test "reduces more reductions than one loop holds" (fun () ->
-          b.around (test_many_reductions b));
-      test "reduces and scans a program of any number of loads" (fun () ->
-          b.around (test_wide_loads b));
-    ]
-
-let carries (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("carries, " ^ b.name)
-    [
-      prop
-        "a scan from a chunk's carry has the whole scan's bits from that \
-         chunk on"
-        chunk_case (run (law_chunk_carry b));
-      cases
-        "a boolean scan from a carry byte of 2 and a true term gives true"
-        ~id:(fun (D.Any dt, (m, _)) -> D.name dt ^ " " ^ m)
-        carry_cases
-        (fun c -> b.around (fun () -> test_byte_carry b c));
-    ]
-
-let refusals (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("refusals, " ^ b.name)
-    [
-      prop
-        "computes what Nx_kernel.Shape fits; the rest is not Done and \
-         writes nothing outside its destinations"
-        misfits
-        (run (law_refusals b));
-      cases
-        "a call of dtypes or shapes that do not fit is not Done and writes \
-         nothing outside its destinations"
-        ~id:(fun (n, _, _) -> n)
-        (answered b)
-        (fun (msg, what, (dsts, call)) -> Misfit.check ~msg ~what b dsts call);
-      test
-        "refuses a padded load past max_numel or its destinations before \
-         copying it"
-        (fun () -> b.around (test_huge_padding b));
-    ]
-
-let guards (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("guards, " ^ b.name)
-    [
-      prop ~count:500 ~examples:guard_examples
-        "reads and writes no byte past the operand and destinations, \
-         whatever pages lie beside them"
-        (Gen.pair guard_case Elements.sides)
-        (run (law_guards b));
+          (List.filter
+             (fun (c : stat) -> c.r = Logsumexp || c.r = Moments)
+             (stat_scan_examples @ mixed_examples))
+        "Logsumexp and Moments scans have the bits of their network"
+        network_case law_scan_network;
+      test "a complex Arg scan holds its first extreme and its first NaN"
+        test_complex_arg_scan;
     ]
 
 let () =
-  let b = Support.cpu in
   exit
     (Windtrap.run "nx_cpu.reduce"
-       [ order b; values_alone b; stateful b; programs b; carries b;
-         refusals b; guards b ])
+       [ results; padded; reductions; sums; states; state_scans ])
