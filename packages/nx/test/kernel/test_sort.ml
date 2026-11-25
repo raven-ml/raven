@@ -3,11 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Sorts through every kernel library the host runs: the values are the operand
-   at the positions, in order, and keeping k gives the first k of the whole
-   sort. nx.cpu's group checks the order Nx_kernel.S.sort states against a
-   stable sort built here, at every dtype, through views, with NaN
-   payloads, -0 and ties. *)
+(* Nx_kernel.S.sort through every kernel library the host runs, against a stable
+   sort built here in the order nx_kernel.mli states, at every dtype, through
+   views, with NaN payloads, -0 and ties. nx.cpu's group sorts on the job's
+   threads and against inaccessible pages. *)
 
 open Windtrap
 open Elements
@@ -24,22 +23,25 @@ module Support = Nx_kernels_support
    elements, so that the slices of one call vary in different bytes. *)
 type draw = Tied | Narrow of int | Spread | Skewed | Special | Stripes
 
+(* A sort and the recipe of its operand: [x] of [dtype] and [shape] through
+   [view], its elements drawn from [seed] as [draw] says. *)
 type case = {
+  dtype : D.any;
+  shape : int array;
+  view : view;
+  draw : draw;
+  seed : int;
   axis : int;
   descending : bool;
   k : int option;
-  x : A.any;
-  draw : draw;
-  views : string list;
 }
 
 let pp_case ppf c =
-  let (A.Any x) = c.x in
-  Format.fprintf ppf "sort%s along %d%s of %a %a, %s (%s)"
+  Format.fprintf ppf "sort%s along %d%s of %a %a, %s (%s), seed %d"
     (if c.descending then " descending" else "")
     c.axis
     (match c.k with None -> "" | Some k -> Printf.sprintf " keeping %d" k)
-    D.pp (A.dtype x) pp_ints (shape_of c.x)
+    pp_dtype c.dtype pp_ints c.shape
     (match c.draw with
     | Tied -> "tied"
     | Narrow low -> Printf.sprintf "narrow over %d bytes" low
@@ -47,22 +49,17 @@ let pp_case ppf c =
     | Skewed -> "skewed"
     | Special -> "specials"
     | Stripes -> "striped")
-    (String.concat ", " c.views)
+    (String.concat ", " (view_names c.view))
+    c.seed
 
-(* Shapes: small ones of any rank, slices at the edges of the insertion sort's,
-   and long ones that sort by radix or keep a few. *)
-let shape_gen =
-  let open Gen in
-  let small = array ~size:(int_range 1 4) (int_range 0 6) in
-  let edge =
-    map (fun n -> [| 2; n |]) (of_list ~pp:Format.pp_print_int [ 63; 64; 65 ])
-  in
-  let long =
-    let* n = int_range 100 3000 in
-    let+ before = array ~size:(int_range 0 1) (int_range 1 3) in
-    Array.append before [| n |]
-  in
-  frequency [ (5, small); (1, edge); (2, long) ]
+let views c = view_names c.view
+
+let bits c =
+  let (D.Any d) = c.dtype in
+  D.bits d
+
+let extent c = c.shape.(c.axis)
+let kept c = match c.k with None -> extent c | Some k -> k
 
 (* A special float of [bits] bits, [eb] of them its exponent's, as its bits:
    a zero, the top exponent alone, with its least or every fraction bit, or
@@ -105,15 +102,16 @@ let special (D.Any dt as d) rs =
    slices that vary in one byte each. *)
 let stripe = 4100
 
-(* An operand of [d] drawn from [seed] as [draw] says. A narrow element keeps
-   the base's high bytes, so that integers lie within a few low bytes of each
-   other and floats within a few low bytes of their significands. *)
-let drawn draw d s v seed =
-  let rs = Random.State.make [| seed |] in
+(* The case's operand. A narrow element keeps the base's high bytes, so that
+   integers lie within a few low bytes of each other and floats within a few low
+   bytes of their significands. *)
+let operand_of c =
+  let d = c.dtype in
+  let rs = Random.State.make [| c.seed |] in
   let pool = Array.init 6 (fun _ -> element d rs) in
   let base = element d rs in
-  operand d s v (fun k ->
-      match draw with
+  operand d c.shape c.view (fun k ->
+      match c.draw with
       | Special ->
           if Random.State.int rs 4 = 0 then element d rs else special d rs
       | Stripes ->
@@ -138,57 +136,82 @@ let drawn draw d s v seed =
           String.init (String.length base) (fun _ ->
               Char.chr (Random.State.int rs 256)))
 
-let case_gen ?(dtypes = D.all) ?(shapes = shape_gen) () =
+(* Shapes: small ones of any rank, slices of 63 to 65 elements, ones of 100 to
+   3000, and one to three slices of 4097 to 40,000, along the last axis or the
+   first. *)
+let shape_gen =
   let open Gen in
-  let* d = of_list ~pp:pp_dtype dtypes in
-  let* s = shapes in
-  let r = Array.length s in
+  let small = array ~size:(int_range 1 4) (int_range 0 6) in
+  let edge =
+    map (fun n -> [| 2; n |]) (of_list ~pp:Format.pp_print_int [ 63; 64; 65 ])
+  in
+  let mid =
+    let* n = int_range 100 3000 in
+    let+ before = array ~size:(int_range 0 1) (int_range 1 3) in
+    Array.append before [| n |]
+  in
+  let long =
+    let* n =
+      frequency [ (3, int_range 4097 12_000); (1, int_range 12_001 40_000) ]
+    in
+    let* outer = int_range 1 3 in
+    let+ last = bool in
+    if outer = 1 then [| n |]
+    else if last then [| outer; n |]
+    else [| n; outer |]
+  in
+  frequency [ (5, small); (1, edge); (2, mid); (1, long) ]
+
+(* Sorts along any axis, keeping all, a few or any number, of operands through
+   any view, broadcast along an axis one time in six. *)
+let case_gen ?(shapes = shape_gen) () =
+  let open Gen in
+  let* dtype = of_list ~pp:pp_dtype D.all in
+  let* shape = shapes in
+  let r = Array.length shape in
   let* axis = int_range 0 (r - 1) in
   let* descending = bool in
   let* k =
     frequency
       [
         (2, constant None);
-        (1, map Option.some (int_range 0 (min s.(axis) 4)));
-        (1, map Option.some (int_range 0 s.(axis)));
+        (1, map Option.some (int_range 0 (min shape.(axis) 4)));
+        (1, map Option.some (int_range 0 shape.(axis)));
       ]
   in
-  let* v = view_of r in
-  let (D.Any dt) = d in
+  let* broadcast =
+    frequency
+      [ (5, constant []); (1, map (fun a -> [ a ]) (int_range 0 (r - 1))) ]
+  in
+  let* view = view_of ~broadcast r in
+  let (D.Any dt) = dtype in
   let* draw =
     frequency
       [
         (4, constant Tied);
         (1, map (fun low -> Narrow low) (int_range 1 (max 1 (D.bits dt / 8))));
         (1, constant Spread);
+        (1, constant Skewed);
         (1, constant Special);
       ]
   in
   let+ seed = int in
-  { axis; descending; k; x = drawn draw d s v seed; draw; views = view_names v }
+  { dtype; shape; view; draw; seed; axis; descending; k }
+
+let sorts = Gen.with_pp pp_case (case_gen ())
 
 (* A constructed case along the last axis, drawn from seed 1, so that every seed
    reaches its regime. *)
-let example ?k ?(descending = false) ?(draw = Tied) ?view d s =
-  let r = Array.length s in
-  let v = Option.value view ~default:(plain r) in
-  {
-    axis = r - 1;
-    descending;
-    k;
-    x = drawn draw d s v 1;
-    draw;
-    views = view_names v;
-  }
+let example ?k ?(descending = false) ?(draw = Tied) ?view dtype shape =
+  let r = Array.length shape in
+  let view = Option.value view ~default:(plain r) in
+  { dtype; shape; view; draw; seed = 1; axis = r - 1; descending; k }
 
-let kept c = match c.k with None -> (shape_of c.x).(c.axis) | Some k -> k
-
-let sort_on (b : Support.backend) c =
+(* The case's sort of [x] by [b]'s kernels: the values and the positions. *)
+let sort_on (b : Support.backend) c x =
   let module K = (val b.kernels) in
-  let (A.Any x) = c.x in
-  let y = Array.copy (shape_of c.x) in
-  y.(c.axis) <- kept c;
-  let y = Iarray.of_array y in
+  let (A.Any x) = x in
+  let y = Iarray.of_array (along c.shape c.axis (kept c)) in
   let x = Support.on b x in
   let values = A.create b.device (A.dtype x) y in
   let positions = A.create b.device D.Int64 y in
@@ -202,130 +225,111 @@ let sort_on (b : Support.backend) c =
   | A.Declined -> failf "%s declined a sort" b.name
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-(* Each slice's elements with their positions, stably sorted, the first [kept c]
-   of them: the values' bits and the positions, in C order of the results. *)
-let expected c =
-  let d = dtype_of c.x and s = shape_of c.x in
-  let es = elements c.x in
-  let n = s.(c.axis) and keep = kept c in
-  let y = Array.copy s in
-  y.(c.axis) <- keep;
-  let values = Array.make (total y) "" and ps = Array.make (total y) 0L in
-  let cmp (a, _) (b, _) =
-    let o = compare_elements d a b in
-    if c.descending then -o else o
+(* The order of nx_kernel.mli over the elements [es] of [d], by their indices,
+   each element decoded once: "-∞ < … < -0 < +0 < … < +∞ < NaN", every NaN, and
+   every complex number with a NaN part, equal; complex numbers by real part,
+   then imaginary part; integers by value; [false] first. *)
+let order_of (D.Any dt as d) es =
+  let nans na nb k =
+    match (na, nb) with
+    | true, true -> 0
+    | true, false -> 1
+    | false, true -> -1
+    | false, false -> k ()
   in
-  Array.iteri
-    (fun k _ ->
-      let i = index_of y k in
-      if i.(c.axis) = 0 then begin
-        let slice =
-          List.init n (fun j ->
-              let ij = Array.copy i in
-              ij.(c.axis) <- j;
-              (es.(flat s ij), j))
-        in
-        List.iteri
-          (fun j (e, p) ->
-            if j < keep then begin
-              let ij = Array.copy i in
-              ij.(c.axis) <- j;
-              values.(flat y ij) <- e;
-              ps.(flat y ij) <- Int64.of_int p
-            end)
-          (List.stable_sort cmp slice)
-      end)
-    values;
+  if D.is D.Complex dt then
+    let h = D.bits dt / 16 in
+    let get = if h = 4 then get32 else get64 in
+    let re = Array.map (fun e -> get e 0) es in
+    let im = Array.map (fun e -> get e h) es in
+    let nan p = Float.is_nan re.(p) || Float.is_nan im.(p) in
+    fun p q ->
+      nans (nan p) (nan q) (fun () ->
+          match compare_floats re.(p) re.(q) with
+          | 0 -> compare_floats im.(p) im.(q)
+          | c -> c)
+  else if D.is D.Float dt then
+    let get e =
+      if is_narrow d then decode d e
+      else if D.bits dt = 32 then get32 e 0
+      else get64 e 0
+    in
+    let v = Array.map get es in
+    fun p q ->
+      nans
+        (Float.is_nan v.(p))
+        (Float.is_nan v.(q))
+        (fun () -> compare_floats v.(p) v.(q))
+  else if D.is D.Boolean dt then
+    let v = Array.map (fun e -> e <> "\000") es in
+    fun p q -> Bool.compare v.(p) v.(q)
+  else
+    let v = Array.map (int_value d) es in
+    if D.is D.Signed dt then fun p q -> Int64.compare v.(p) v.(q)
+    else fun p q -> Int64.unsigned_compare v.(p) v.(q)
+
+(* The reference: each slice of [x]'s elements with their positions, stably
+   sorted in [order_of]'s order, reversed where descending with equal elements
+   kept in increasing position, the first [kept c] of them: the values' bits and
+   the positions, in C order of the results. *)
+let expected c x =
+  let es = elements x in
+  let order = order_of c.dtype es in
+  let n = extent c and keep = kept c in
+  let r = Array.length c.shape in
+  let inner = total (Array.sub c.shape (c.axis + 1) (r - c.axis - 1)) in
+  let outer = total (Array.sub c.shape 0 c.axis) in
+  let values = Array.make (outer * keep * inner) "" in
+  let ps = Array.make (outer * keep * inner) 0L in
+  let slice = Array.make n 0 in
+  for o = 0 to outer - 1 do
+    for i = 0 to inner - 1 do
+      let at j = (((o * n) + j) * inner) + i in
+      let cmp p q =
+        let r = order (at p) (at q) in
+        if c.descending then -r else r
+      in
+      for j = 0 to n - 1 do
+        slice.(j) <- j
+      done;
+      Array.stable_sort cmp slice;
+      for j = 0 to keep - 1 do
+        let y = (((o * keep) + j) * inner) + i in
+        values.(y) <- es.(at slice.(j));
+        ps.(y) <- Int64.of_int slice.(j)
+      done
+    done
+  done;
   (values, ps)
 
+let check c x (values, positions) =
+  let ev, ep = expected c x in
+  equal ~msg:"positions" (array int64) ep (Elements.positions positions);
+  equal ~msg:"values" (array string) ev (elements values)
+
 let agrees (b : Support.backend) c =
-  let v, p = sort_on b c in
-  let ev, ep = expected c in
-  equal ~msg:"positions" (array int64) ep (positions p);
-  equal ~msg:"values" (array string) ev (elements v)
+  let x = operand_of c in
+  check c x (sort_on b c x)
 
-let law_reference (b : Support.backend) c =
-  let n = (shape_of c.x).(c.axis) in
-  cover "descending" c.descending;
-  cover "keeps some" (c.k <> None && kept c < n);
-  cover "radix" (n >= 64 && c.k = None);
-  cover "complex128's two keys" (dtype_of c.x = D.Any D.Complex128 && n >= 2);
-  cover "sub-byte"
-    (let (D.Any d) = dtype_of c.x in
-     D.bits d < 8 && n >= 2);
-  cover "narrow 8-byte keys"
-    (let (D.Any d) = dtype_of c.x in
-     (match c.draw with Narrow _ -> true | _ -> false)
-     && n >= 64
-     && D.bits d = 64);
-  agrees b c
+(* Each slice's order *)
 
-(* One slice sorts on the job's threads where it is long and keeps more than a
-   few. *)
-let law_large (b : Support.backend) c =
-  let long =
-    Array.length (shape_of c.x) = 1
-    && kept c > 64
-    && dtype_of c.x <> D.Any D.Complex128
-  in
-  let wide = long && (let (D.Any d) = dtype_of c.x in D.bits d = 64) in
-  cover "one long slice" long;
-  cover "long wide keys spread" (wide && c.draw = Spread);
-  cover "long wide keys skewed" (wide && c.draw = Skewed);
-  cover "long wide keys, keeping all" (wide && c.k = None);
-  cover "sub-byte slices on the job's threads"
-    (let (D.Any d) = dtype_of c.x in
-     D.bits d < 8 && total (shape_of c.x) >= 100_000);
-  agrees b c
-
-(* Long slices: one or a few of 4097 to 40,000 elements, along the last axis
-   or the first, keeping all, at most 1024 or more. *)
-let long_gen =
-  let open Gen in
-  let* d = of_list ~pp:pp_dtype D.all in
-  let (D.Any dt) = d in
-  let* n =
-    frequency [ (3, int_range 4097 12_000); (1, int_range 12_001 40_000) ]
-  in
-  let* outer = int_range 1 3 in
-  let* last = bool in
-  let s =
-    if outer = 1 then [| n |]
-    else if last then [| outer; n |]
-    else [| n; outer |]
-  in
-  let axis = if outer > 1 && not last then 0 else Array.length s - 1 in
-  let* k =
-    frequency
-      [
-        (2, constant None);
-        (2, map Option.some (int_range 1 1024));
-        (1, map Option.some (int_range 1025 n));
-      ]
-  in
-  let* descending = bool in
-  let* v = view_of (Array.length s) in
-  let* draw =
-    frequency
-      [
-        (2, constant Tied);
-        (1, map (fun low -> Narrow low) (int_range 1 (max 1 (D.bits dt / 8))));
-        (1, constant Spread);
-        (1, constant Skewed);
-        (2, constant Special);
-      ]
-  in
-  let+ seed = int in
-  { axis; descending; k; x = drawn draw d s v seed; draw; views = view_names v }
-
-let long = Gen.with_pp pp_case long_gen
-
-(* Long slices of each width of key, those of 16 bytes past 2048 elements;
-   floats' specials; sub-byte slices that share bytes; slices of one call
-   that vary in different bytes, keeping all or some; 8-byte keys of a narrow
-   span, keeping a few; through an outer axis, reversed and stepped. *)
-let long_examples =
+(* Ties, narrow spans, specials and stripes in slices of every length and of
+   every width of key; a broadcast operand, whose slice along its broadcast axis
+   ties whole; keeping none, a few, more than 1024 or all, of slices along the
+   last axis or an outer one, reversed and stepped; operands of no element. *)
+let examples =
   [
+    example (D.Any D.Complex128) [| 2; 70 |];
+    example (D.Any D.Complex128) [| 9 |] ~descending:true;
+    example (D.Any D.Int64) [| 2; 300 |] ~draw:(Narrow 3);
+    example (D.Any D.Complex64) [| 300 |] ~draw:(Narrow 5) ~descending:true;
+    example (D.Any D.Int4) [| 3; 70 |];
+    example (D.Any D.Float4_e2m1fn) [| 9 |] ~descending:true;
+    example (D.Any D.Int64) [| 3; 9 |] ~k:0;
+    example (D.Any D.Float32) [| 3; 70 |] ~descending:true
+      ~view:{ (plain 2) with broadcast = [ 1 ] };
+    example (D.Any D.Uint8) [| 0; 5 |];
+    example (D.Any D.Float64) [| 5; 0 |];
     example (D.Any D.Float32) [| 20_000 |] ~draw:Special;
     example (D.Any D.Float64) [| 9000 |] ~draw:Special ~descending:true;
     example (D.Any D.Float16) [| 6000 |] ~draw:Special ~k:700;
@@ -343,7 +347,7 @@ let long_examples =
       ~k:2000;
     example (D.Any D.Uint16) [| 9; stripe |] ~draw:Stripes ~k:2000;
     {
-      (example (D.Any D.Int16) [| 9000; 3 |] ~draw:Tied
+      (example (D.Any D.Int16) [| 9000; 3 |]
          ~view:{ (plain 2) with reversed = Some 1; stepped = true })
       with
       axis = 0;
@@ -351,21 +355,34 @@ let long_examples =
     };
   ]
 
-let law_long (b : Support.backend) c =
-  let (D.Any d) = dtype_of c.x in
-  let s = shape_of c.x in
-  let n = s.(c.axis) in
-  cover "keeps all" (c.k = None);
-  cover "keeps at most 1024" (kept c <= 1024);
-  cover "keeps more than 1024, not all" (kept c > 1024 && kept c < n);
-  cover "16-byte keys past 2048" (D.bits d = 128 && n > 2048);
-  cover "8-byte keys" (D.bits d = 64);
-  cover "sub-byte" (D.bits d < 8);
-  cover "floats' specials" (c.draw = Special);
+let law_order (b : Support.backend) c =
+  let n = extent c in
+  let long = n > 4096 in
+  cover "descending" c.descending;
+  cover "keeps some" (c.k <> None && kept c < n);
+  cover "keeps none of a nonempty slice" (kept c = 0 && total c.shape > 0);
+  cover "slices of 64 or more kept whole" (n >= 64 && c.k = None);
+  cover "complex128's two keys" (c.dtype = D.Any D.Complex128 && n >= 2);
+  cover "sub-byte" (bits c < 8 && n >= 2);
+  cover "narrow 8-byte keys"
+    ((match c.draw with Narrow _ -> true | _ -> false)
+    && n >= 64
+    && bits c = 64);
+  cover "a broadcast operand" (List.mem "broadcast" (views c));
+  cover "an operand of no element" (total c.shape = 0);
+  cover "a slice past 4096 keeping more than 1024, not all"
+    (long && kept c > 1024 && kept c < n);
+  cover "complex128 slices past 2048" (bits c = 128 && n > 2048);
+  cover "8-byte keys in a slice past 4096" (long && bits c = 64);
+  cover "sub-byte slices past 4096" (long && bits c < 8);
+  cover "floats' specials in a slice past 4096" (long && c.draw = Special);
   cover "slices that vary in different bytes" (c.draw = Stripes);
-  cover "several slices" (total s / n > 1);
-  cover "along an outer axis" (c.axis < Array.length s - 1);
+  cover "several slices past 4096" (long && total c.shape > n);
+  cover "a slice past 4096 along an outer axis"
+    (long && c.axis < Array.length c.shape - 1);
   agrees b c
+
+(* Complex numbers at their alignment *)
 
 (* Arrays at their least alignment: a fresh array of [dt] and shape [s] on
    [b]'s device whose first byte lies [align] bytes past its buffer's, the
@@ -379,9 +396,9 @@ let shifted (b : Support.backend) dt s ~align x =
   Option.iter (fun x -> A.transfer ~src:x ~dst:y) x;
   y
 
-(* Complex numbers of both widths at a component's alignment, by each path:
-   short slices, long ones keeping all and a few, and a complex64 slice of 64Ki,
-   which nx.cpu sorts whole on the job's threads where it has more than one. *)
+(* Complex numbers of both widths, by each path: short slices, long ones keeping
+   all and a few, and a complex64 slice of 64Ki, which nx.cpu sorts whole on the
+   job's threads where it has more than one. *)
 let aligned_cases =
   List.concat_map
     (fun d ->
@@ -393,71 +410,33 @@ let aligned_cases =
     [ D.Any D.Complex64; D.Any D.Complex128 ]
   @ [ example (D.Any D.Complex64) [| 1 lsl 16 |] ~draw:Special ]
 
-(* The operand and both destinations at their least alignment give the
-   reference's values and positions. *)
-let law_aligned (b : Support.backend) c =
+(* The operand and both destinations at their least alignment. *)
+let test_aligned (b : Support.backend) c =
   let module K = (val b.kernels) in
-  let (A.Any x) = c.x in
-  let dt = A.dtype x and s = shape_of c.x in
+  let x = operand_of c in
+  let (A.Any a) = x in
+  let dt = A.dtype a in
   let align = D.bits dt / 16 in
-  let y = Array.copy s in
-  y.(c.axis) <- kept c;
-  cover "a complex64 slice of 64Ki sorted whole"
-    (D.equal dt D.Complex64
-    && Array.length s = 1
-    && s.(0) >= 1 lsl 16
-    && kept c = s.(0));
-  let x = shifted b dt s ~align (Some x) in
+  let y = along c.shape c.axis (kept c) in
+  let xs = shifted b dt c.shape ~align (Some a) in
   let values = shifted b dt y ~align None in
   let positions = A.create b.device D.Int64 (Iarray.of_array y) in
-  match K.sort ~axis:c.axis ~descending:c.descending ~values ~positions x with
-  | A.Done ->
-      let ev, ep = expected c in
-      equal ~msg:"positions" (array int64) ep
-        (Elements.positions (A.Any positions));
-      equal ~msg:"values" (array string) ev (elements (A.Any values))
+  match K.sort ~axis:c.axis ~descending:c.descending ~values ~positions xs with
+  | A.Done -> check c x (A.Any values, A.Any positions)
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-(* Laws for every library *)
-
-(* The values are the operand's elements at the positions along the axis. *)
-let law_values_at_positions (b : Support.backend) c =
-  let v, p = sort_on b c in
-  let s = shape_of c.x and es = elements c.x and ps = positions p in
-  let y = shape_of v in
-  let at =
-    Array.mapi
-      (fun k q ->
-        let i = index_of y k in
-        i.(c.axis) <- Int64.to_int q;
-        es.(flat s i))
-      ps
-  in
-  equal (array string) at (elements v)
-
-(* Keeping k gives the first k of the whole sort. *)
-let law_prefix (b : Support.backend) c =
-  let fv, fp = sort_on b { c with k = None } and v, p = sort_on b c in
-  let y = shape_of v and s = shape_of fv in
-  let prefix a =
-    Array.init (total y) (fun k ->
-        let i = index_of y k in
-        a.(flat s i))
-  in
-  equal ~msg:"positions" (array int64) (prefix (positions fp)) (positions p);
-  equal ~msg:"values" (array string) (prefix (elements fv)) (elements v)
-
-(* Refusals *)
+(* Misfits *)
 
 (* A sort's shapes, [x], [values] and [positions], along [along], each near
    a fit: [values] keeps up to one past [x]'s extent. *)
 type misfit = { along : int; shapes : int array array }
 
+let pp_misfit ppf c =
+  Format.fprintf ppf "sort along %d of %a into %a and %a" c.along pp_ints
+    c.shapes.(0) pp_ints c.shapes.(1) pp_ints c.shapes.(2)
+
 let misfits =
-  Gen.with_pp
-    (fun ppf c ->
-      Format.fprintf ppf "sort along %d of %a into %a and %a" c.along pp_ints
-        c.shapes.(0) pp_ints c.shapes.(1) pp_ints c.shapes.(2))
+  Gen.with_pp pp_misfit
     (let open Gen in
      let* x = Nx_array_gen.shape in
      let* axis = axis_near x in
@@ -467,9 +446,17 @@ let misfits =
      let+ positions = near values in
      { along = axis; shapes = [| x; values; positions |] })
 
+(* A call that fits, keeping 2 of 4, and one whose destinations keep one past
+   the axis's extent. *)
+let misfit_examples =
+  [
+    { along = 1; shapes = [| [| 3; 4 |]; [| 3; 2 |]; [| 3; 2 |] |] };
+    { along = 1; shapes = [| [| 3; 4 |]; [| 3; 5 |]; [| 3; 5 |] |] };
+  ]
+
 (* The kernel keeps [values]' extent along the axis: Nx_kernel.Shape.sort's
    [k]. *)
-let law_refuses (b : Support.backend) c =
+let law_misfit (b : Support.backend) c =
   let module K = (val b.kernels) in
   let x = c.shapes.(0) and values = c.shapes.(1) and positions = c.shapes.(2) in
   let k =
@@ -494,10 +481,51 @@ let law_refuses (b : Support.backend) c =
         ~positions:(A.expect D.Int64 ds.(1))
         (g.Misfit.g x))
 
-(* Guard pages *)
+(* nx.cpu *)
 
-(* Slices of one element to a few vectors past the widest, at the edges of
-   the insertion sort's, and long enough to sort by radix. *)
+(* Slices the job's threads share, and one slice of 64Ki, the length from which
+   nx.cpu sorts a single slice on several threads. *)
+let threaded =
+  Gen.with_pp pp_case
+    (case_gen
+       ~shapes:(Gen.of_list [ [| 1 lsl 16 |]; [| 400; 500 |]; [| 3; 40_000 |] ])
+       ())
+
+(* One slice of 4-byte keys; of 8-byte keys, keeping some or all, spread or
+   skewed; and of 8-byte keys of a narrow span. *)
+let threaded_examples =
+  let long = 1 lsl 16 in
+  [
+    example (D.Any D.Float32) [| long |];
+    example (D.Any D.Int64) [| long |] ~descending:true ~k:50_000;
+    example (D.Any D.Int64) [| long |] ~draw:Spread;
+    example (D.Any D.Float64) [| long |] ~draw:Spread ~descending:true;
+    example (D.Any D.Uint64) [| long |] ~draw:Skewed;
+    example (D.Any D.Float64) [| long |] ~draw:Skewed ~k:50_000;
+    example (D.Any D.Int64) [| long |] ~draw:(Narrow 3);
+    (* Sub-byte slices on the job's threads, of an odd length, so that
+       neighbouring slices' values share a byte, read through views. *)
+    example (D.Any D.Int4) [| 400; 501 |]
+      ~view:{ (plain 2) with stepped = true; reversed = Some 1 };
+    example (D.Any D.Uint4) [| 400; 501 |] ~descending:true ~k:301
+      ~view:{ (plain 2) with perm = [| 1; 0 |] };
+    example (D.Any D.Bit) [| 400; 501 |]
+      ~view:{ (plain 2) with reversed = Some 0 };
+  ]
+
+let law_threaded (b : Support.backend) c =
+  let one = Array.length c.shape = 1 && kept c > 64 in
+  let wide = one && bits c = 64 in
+  cover "one slice of 64Ki keeping more than 64" one;
+  cover "one slice of 64Ki of 8-byte keys, spread" (wide && c.draw = Spread);
+  cover "one slice of 64Ki of 8-byte keys, skewed" (wide && c.draw = Skewed);
+  cover "one slice of 64Ki of 8-byte keys, kept whole" (wide && c.k = None);
+  cover "sub-byte slices of 100,000 elements or more"
+    (bits c < 8 && total c.shape >= 100_000);
+  agrees b c
+
+(* Slices of one element to a few vectors past the widest, of 63 to 65 and 127
+   to 129 elements, and of 100 to 3000. *)
 let guard_shapes =
   let open Gen in
   let* n =
@@ -511,23 +539,24 @@ let guard_shapes =
   let+ outer = array ~size:(int_range 0 2) (int_range 1 4) in
   Array.append outer [| n |]
 
+let guarded =
+  Gen.pair (Gen.with_pp pp_case (case_gen ~shapes:guard_shapes ())) sides
+
 (* The same values and positions with the operand, through its view, and
    both destinations against an inaccessible page. *)
 let law_guards (b : Support.backend) (c, side) =
   let module K = (val b.kernels) in
   let after = side = Support.After in
-  let s = shape_of c.x in
-  cover "along the innermost axis" (c.axis = Array.length s - 1);
-  cover "along an outer axis" (c.axis < Array.length s - 1);
-  cover "by radix" (s.(c.axis) >= 100);
-  cover "keeping some" (kept c < s.(c.axis));
-  cover "sub-byte" (let (D.Any dt) = dtype_of c.x in D.bits dt < 8);
+  cover "along the innermost axis" (c.axis = Array.length c.shape - 1);
+  cover "along an outer axis" (c.axis < Array.length c.shape - 1);
+  cover "slices of 100 or more" (extent c >= 100);
+  cover "keeping some" (kept c < extent c);
+  cover "sub-byte" (bits c < 8);
   cover "a stepped operand at the page before"
-    ((not after) && List.mem "stepped" c.views);
+    ((not after) && List.mem "stepped" (views c));
   cover "a reversed operand at the page after"
-    (after && List.mem "reversed" c.views);
-  let y = Array.copy s in
-  y.(c.axis) <- kept c;
+    (after && List.mem "reversed" (views c));
+  let y = along c.shape c.axis (kept c) in
   let call xs ds =
     let (A.Any x) = xs.(0) in
     let values = A.expect (A.dtype x) ds.(0) in
@@ -535,88 +564,9 @@ let law_guards (b : Support.backend) (c, side) =
     K.sort ~axis:c.axis ~descending:c.descending ~values ~positions x
   in
   equal answer A.Done
-    (same_guarded side ~call [| c.x |]
-       [| (dtype_of c.x, y); (D.Any D.Int64, y) |])
-
-(* The suite *)
-
-let cases = Gen.with_pp pp_case (case_gen ())
-
-let examples =
-  [
-    example (D.Any D.Complex128) [| 2; 70 |];
-    example (D.Any D.Complex128) [| 9 |] ~descending:true;
-    example (D.Any D.Int64) [| 2; 300 |] ~draw:(Narrow 3);
-    example (D.Any D.Complex64) [| 300 |] ~draw:(Narrow 5) ~descending:true;
-    example (D.Any D.Int4) [| 3; 70 |];
-    example (D.Any D.Float4_e2m1fn) [| 9 |] ~descending:true;
-  ]
-
-(* Slices the job's threads share, and one long slice. *)
-let large =
-  Gen.with_pp pp_case
-    (case_gen
-       ~shapes:(Gen.of_list [ [| 100_000 |]; [| 400; 500 |]; [| 3; 40_000 |] ])
-       ())
-
-(* One long slice of 4-byte keys packed with positions; of 8-byte keys beside
-   them, keeping some or all, spread, so that they take their top digit first,
-   or skewed, so that they fall back to LSD passes; and of 8-byte keys of a
-   narrow span, packed. *)
-let large_examples =
-  [
-    example (D.Any D.Float32) [| 100_000 |];
-    example (D.Any D.Int64) [| 100_000 |] ~descending:true ~k:75_000;
-    example (D.Any D.Int64) [| 100_000 |] ~draw:Spread;
-    example (D.Any D.Float64) [| 100_000 |] ~draw:Spread ~descending:true;
-    example (D.Any D.Uint64) [| 100_000 |] ~draw:Skewed;
-    example (D.Any D.Float64) [| 100_000 |] ~draw:Skewed ~k:75_000;
-    example (D.Any D.Int64) [| 100_000 |] ~draw:(Narrow 3);
-    (* Sub-byte slices on the job's threads, of an odd length, so that
-       neighbouring slices' values share a byte, read through views. *)
-    example (D.Any D.Int4) [| 400; 501 |]
-      ~view:{ (plain 2) with stepped = true; reversed = Some 1 };
-    example (D.Any D.Uint4) [| 400; 501 |] ~descending:true ~k:301
-      ~view:{ (plain 2) with perm = [| 1; 0 |] };
-    example (D.Any D.Bit) [| 400; 501 |]
-      ~view:{ (plain 2) with reversed = Some 0 };
-  ]
-
-let laws (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group b.name
-    [
-      prop "values are the operand at the positions" cases
-        (run (law_values_at_positions b));
-      prop "keeping k gives the first k of the whole sort" cases
-        (run (law_prefix b));
-      prop ~examples "sorts each slice stably in the order" cases
-        (run (law_reference b));
-      prop ~count:0 ~examples:aligned_cases
-        "sorts complex numbers at a component's alignment" cases
-        (run (law_aligned b));
-      prop ~count:12 ~examples:long_examples
-        "sorts long slices stably in the order, keeping any number" long
-        (run (law_long b));
-      prop
-        "computes what Nx_kernel.Shape fits; another shape is not Done and \
-         writes nothing outside its destinations"
-        misfits (run (law_refuses b));
-    ]
-
-let cpu (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("nx.cpu " ^ b.name)
-    [
-      prop ~count:4 ~examples:large_examples "large sorts on the job's threads"
-        large
-        (run (law_large b));
-      prop ~count:300
-        "reads and writes no byte past the operand and destinations, \
-         whatever pages lie beside them"
-        (Gen.pair (case_gen ~shapes:guard_shapes ()) sides)
-        (run (law_guards b));
-    ]
+    (same_guarded side ~call
+       [| operand_of c |]
+       [| (c.dtype, y); (D.Any D.Int64, y) |])
 
 (* nx_cuda.mli: a sort takes a workspace of at most 70 bytes an element
    and a few kilobytes. One of 2^24 elements takes one past the 64 MiB the
@@ -634,51 +584,84 @@ let test_loop_workspace (b : Support.backend) () =
       equal answer A.Done (K.sort ~axis:0 ~descending:false ~values ~positions x);
       Rig.Buffer.wait (A.buffer values) Read_write)
 
-let cuda (b : Support.backend) =
-  group ("nx.cuda " ^ b.name)
+(* The suite *)
+
+let laws (d : Support.declared) =
+  let run f x =
+    let b = Support.opened d in
+    b.around (fun () -> f b x)
+  in
+  group d.label
     [
-      test "sorts in a loop hold one sort's workspace" (fun () ->
-          b.around (test_loop_workspace b));
+      prop ~examples
+        "orders each slice stably, keeping the first elements of the order"
+        sorts (run law_order);
+      cases "orders complex numbers at a component's alignment"
+        ~id:(Format.asprintf "%a" pp_case)
+        aligned_cases (run test_aligned);
+      prop ~examples:misfit_examples
+        "a call of shapes Nx_kernel.Shape.sort refuses is not Done and writes \
+         nothing outside its destinations"
+        misfits (run law_misfit);
     ]
 
-(* rig.nv *)
+let cpu (b : Support.backend) =
+  let run f x = b.around (fun () -> f b x) in
+  group ("nx.cpu " ^ b.name)
+    [
+      prop ~count:4 ~examples:threaded_examples
+        "orders each slice stably on the job's threads" threaded
+        (run law_threaded);
+      prop ~count:300
+        "reads and writes no byte past the operand and destinations, whatever \
+         pages lie beside them"
+        guarded (run law_guards);
+    ]
+
+let cuda (d : Support.declared) =
+  group ("nx.cuda " ^ d.label)
+    [
+      test "sorts in a loop hold one sort's workspace" (fun () ->
+          let b = Support.opened d in
+          b.around (test_loop_workspace b));
+    ]
 
 (* rig.nv loads the cubin CUDA loads, so a sort through it has CUDA's
    bits: what it can get wrong, its launches, memory and order, shows in
    them. Each case runs through CUDA, then through rig.nv. *)
-let nv_laws (first : Support.backend) (nv : Support.backend) =
-  let agree call = Elements.agree_bits first nv call in
-  group nv.name
+let nv_laws (first : Support.declared) (nv : Support.declared) =
+  group nv.label
     [
       group "bits are cuda's"
         [
-          prop "of sorts" cases (fun c ->
-              agree (fun b ->
-                  let v, p = sort_on b c in
-                  [| v; p |]));
-          prop ~count:12 ~examples:long_examples "of long sorts" long (fun c ->
-              let (D.Any d) = dtype_of c.x in
-              let n = (shape_of c.x).(c.axis) in
+          prop ~examples "of sorts" sorts (fun c ->
+              let n = extent c in
               cover "keeps more than 1024, not all" (kept c > 1024 && kept c < n);
-              cover "16-byte keys past 2048" (D.bits d = 128 && n > 2048);
-              agree (fun b ->
-                  let v, p = sort_on b c in
+              cover "complex128 slices past 2048" (bits c = 128 && n > 2048);
+              let x = operand_of c in
+              Elements.agree_bits (Support.opened first) (Support.opened nv)
+                (fun b ->
+                  let v, p = sort_on b c x in
                   [| v; p |]));
         ];
     ]
 
 let () =
   let nv =
-    match (Support.gpus (), Support.nv ()) with
-    | first :: _, Some nv -> [ nv_laws first nv ]
+    match (Support.declared_cuda, Support.declared_nv) with
+    | Some first, Some nv -> [ nv_laws first nv ]
     | _ -> []
   in
   exit
     (Windtrap.run "nx_kernel.sort"
        (List.map laws
-          (Support.backends ()
-          @ Option.to_list (Support.amd ())
-          @ Option.to_list (Support.metal ()))
+          (Support.declare Support.cpu
+          :: List.filter_map Fun.id
+               [
+                 Support.declared_cuda;
+                 Support.declared_amd;
+                 Support.declared_metal;
+               ])
        @ [ cpu Support.cpu ]
-       @ List.map cuda (Support.gpus ())
+       @ List.map cuda (Option.to_list Support.declared_cuda)
        @ nv))
