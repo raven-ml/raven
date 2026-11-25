@@ -1437,7 +1437,10 @@ let kerning =
       prop "kerning reads GPOS pair adjustments of format 2" gen_format_2
         (fun (_, _, _, _, _, expected, st) ->
           kerns_as (kerning_font [ ("GPOS", one_lookup st) ]) expected);
-      prop "without GPOS, kerning sums the horizontal format 0 kern subtables"
+      prop
+        "without GPOS, kerning accumulates the horizontal format 0 kern \
+         subtables"
+        ~examples:[ [ (0x1, [ (0, 0, 0); (2, 2, 1) ]); (0x9, [ (2, 2, 0) ]) ] ]
         gen_kern (fun subtables ->
           (* Horizontal (bit 0), not minimum (bit 1), not cross-stream (bit 2),
              of format 0 (bits 8 to 15). *)
@@ -1448,12 +1451,28 @@ let kerning =
           in
           cover "a subtable left out"
             (List.compare_lengths counted subtables < 0);
-          kerns_as
-            (kerning_font [ ("kern", kern_table subtables) ])
-            (fun g g' ->
-              List.fold_left
-                (fun acc (_, pairs) -> acc + pair_value pairs g g')
-                0 counted));
+          (* OpenType's kern table, coverage bit 3: "If this bit is set to 1 the
+             value in this table should replace the value currently being
+             accumulated." *)
+          let accumulated g g' =
+            List.fold_left
+              (fun acc (c, pairs) ->
+                match
+                  List.find_opt (fun (a, b, _) -> (a, b) = (g, g')) pairs
+                with
+                | None -> acc
+                | Some (_, _, v) -> if c land 8 <> 0 then v else acc + v)
+              0 counted
+          in
+          cover "an override replacing a value"
+            (List.exists
+               (fun (g, g') ->
+                 accumulated g g'
+                 <> List.fold_left
+                      (fun acc (_, pairs) -> acc + pair_value pairs g g')
+                      0 counted)
+               (List.init 64 (fun i -> (i / 8, i mod 8))));
+          kerns_as (kerning_font [ ("kern", kern_table subtables) ]) accumulated);
       cases "kerning takes"
         ~id:(fun (n, _, _, _) -> n)
         lookup_rules

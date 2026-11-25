@@ -197,6 +197,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Font.kerning` reads a `kern` subtable that sets the override bit as
+  replacing the value the subtables before it gave a pair, as OpenType
+  defines the bit. It added the value, so such a font kerned wrong.
 - `Box2.mid` is the centre rounded once. It halved each corner before adding
   them, which rounded twice among subnormals: the centre of a box of zero size
   at `succ min_float` was off its corner.

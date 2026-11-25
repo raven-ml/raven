@@ -211,12 +211,15 @@ type pairs =
       records : int;
     }
 
-(* [Kern] holds the position and the pair count of each horizontal format 0
-   subtable of a [kern] table. *)
+(* A horizontal format 0 subtable of a [kern] table: the position of its pairs,
+   their count, and whether its values replace those of the subtables before it
+   (coverage bit 3, "override"). *)
+type kern_subtable = { pairs : int; count : int; override : bool }
+
 type kerning =
   | No_kerning
   | Gpos of { gpos : table; lookups : pairs list list }
-  | Kern of { kern : table; subtables : (int * int) list }
+  | Kern of { kern : table; subtables : kern_subtable list }
 
 let value_size format =
   let n = ref 0 in
@@ -417,7 +420,8 @@ let kern t =
               if key j <= key (j - 1) then
                 malformed "'kern': pairs not in increasing order"
             done;
-            (pos + 14, n) :: acc
+            { pairs = pos + 14; count = n; override = coverage land 8 <> 0 }
+            :: acc
           end
           else acc
         in
@@ -425,11 +429,18 @@ let kern t =
     in
     Kern { kern = t; subtables = subtables (u16 t 2) 4 [] }
 
-let kern_value t (pos, n) g g' =
+(* [kern_value t st g g' acc] is [acc] with the value [st] gives the pair added,
+   or put in its place if [st] overrides. *)
+let kern_value t st g g' acc =
   let key = (g lsl 16) lor g' in
-  let entry j = (u16 t (pos + (6 * j)) lsl 16) lor u16 t (pos + 2 + (6 * j)) in
-  let j = search n (fun j -> entry j >= key) in
-  if j < n && entry j = key then i16 t (pos + 4 + (6 * j)) else 0
+  let entry j =
+    (u16 t (st.pairs + (6 * j)) lsl 16) lor u16 t (st.pairs + 2 + (6 * j))
+  in
+  let j = search st.count (fun j -> entry j >= key) in
+  if j >= st.count || entry j <> key then acc
+  else
+    let v = i16 t (st.pairs + 4 + (6 * j)) in
+    if st.override then v else acc + v
 
 (* Glyph outlines *)
 
@@ -649,7 +660,7 @@ let kerning f g g' =
         in
         List.fold_left (fun acc subtables -> acc + first subtables) 0 lookups
     | Kern { kern; subtables } ->
-        List.fold_left (fun acc st -> acc + kern_value kern st g g') 0 subtables
+        List.fold_left (fun acc st -> kern_value kern st g g' acc) 0 subtables
   in
   float units /. f.upem
 

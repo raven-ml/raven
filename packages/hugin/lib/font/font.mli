@@ -250,9 +250,11 @@ val kerning : t -> glyph -> glyph -> float
     of features or scripts referencing it, of the x advance of the first pair
     adjustment of that lookup covering the pair. Other adjustments are ignored.
     A font whose [GPOS] table has no [kern] feature, or that has no [GPOS]
-    table, uses its [kern] table instead: the sum of the values that its
-    horizontal format 0 subtables give the pair, minimum and cross-stream
-    subtables excluded. A font with neither has no kerning. *)
+    table, uses its [kern] table instead: the values that its horizontal format
+    0 subtables give the pair, minimum and cross-stream subtables excluded,
+    accumulated in table order, each added to the sum so far or, from a subtable
+    that sets the override bit (bit 3 of its coverage), replacing it. A font
+    with neither has no kerning. *)
 
 val outline : t -> glyph -> Path.t
 (** [outline f g] is the outline of [g], unhinted, to be filled under the
