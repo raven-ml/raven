@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Every encoder resolves a `padding` at the call, so `encode_ids` raises
+  without a pad token as `encode` does, and a `pad_token` named without
+  `pad_id` pads with its own id, not the tokenizer's pad token's.
 - `Brot.encode` pads the overflowing windows of an encoding already at its
   padding length, as Hugging Face does. With truncation and padding to the same
   length, the usual sliding-window setup, the windows came out ragged.

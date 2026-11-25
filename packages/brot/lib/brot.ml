@@ -118,8 +118,6 @@ type t = {
   bos_token : string option;
   eos_token : string option;
   pad_token : string option;
-  pad_id : int option;
-  pad_type_id : int;
   batch_buffers : batch_buffers;
 }
 
@@ -506,12 +504,6 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
         (match normalize with Some n -> Normalizer.apply n | None -> Fun.id)
       (added_tokens_of algorithm requested)
   in
-  let token_id token =
-    match Added_tokens.token_to_id added token with
-    | Some _ as id -> id
-    | None -> alg_token_to_id algorithm token
-  in
-  let pad_id = Option.bind pad_token token_id in
   let token_table, len_table = id_tables algorithm added in
   let cut = cut_of ~algorithm ~spaced pre in
   let fused =
@@ -537,8 +529,6 @@ let create ?normalizer ?pre ?post ?decoder ?(added_tokens = []) ?bos_token
     bos_token;
     eos_token;
     pad_token;
-    pad_id;
-    pad_type_id = 0;
     batch_buffers = { free = Atomic.make []; kept = Atomic.make 0 };
   }
 
@@ -1210,45 +1200,47 @@ let encode_single t ~add_special_tokens ~truncation seq =
 
 (* Padding *)
 
-let resolve_pad t (cfg : padding) =
-  let token =
-    match cfg.pad_token with Some _ as v -> v | None -> t.pad_token
-  in
-  let token =
-    match token with
-    | Some token -> token
-    | None -> invalid_arg err_no_pad_token
-  in
-  let id = match cfg.pad_id with Some _ as v -> v | None -> t.pad_id in
-  let id =
-    match id with
-    | Some id -> id
-    | None -> (
-        match token_to_id t token with
+(* A padding as a call resolves it, once and before it encodes, so that a
+   padding that names no pad token raises whatever the lengths of the texts: the
+   token it pads with, the token's id unless the padding names another, and the
+   type id. *)
+type pad = { padding : padding; token : string; id : int; type_id : int }
+
+let resolve_pad t = function
+  | None -> None
+  | Some (padding : padding) ->
+      let token =
+        match (padding.pad_token, t.pad_token) with
+        | Some token, _ | None, Some token -> token
+        | None, None -> invalid_arg err_no_pad_token
+      in
+      let id =
+        match padding.pad_id with
         | Some id -> id
-        | None -> invalid_arg (err_pad_not_in_vocab token))
-  in
-  let type_id = Option.value cfg.pad_type_id ~default:t.pad_type_id in
-  (token, id, type_id)
+        | None -> (
+            match token_to_id t token with
+            | Some id -> id
+            | None -> invalid_arg (err_pad_not_in_vocab token))
+      in
+      let type_id = Option.value padding.pad_type_id ~default:0 in
+      Some { padding; token; id; type_id }
 
 let round_up_to_multiple n m = if n mod m = 0 then n else (n + m - 1) / m * m
 
 (* How long a sequence of [length] tokens is padded to. Only `Batch_longest
    looks past the sequence itself, so it is the caller's to resolve. *)
-let pad_target cfg length =
+let pad_target (cfg : padding) length =
   match cfg.length with
   | `Fixed n -> n
   | `Batch_longest -> length
   | `To_multiple m -> if m <= 0 then length else round_up_to_multiple length m
 
-let apply_padding t encodings = function
+let apply_padding encodings = function
   | None -> encodings
-  | Some cfg ->
-      let pad_token, pad_id, pad_type_id = resolve_pad t cfg in
-      let direction = cfg.direction in
+  | Some { padding = cfg; token; id; type_id } ->
       let pad enc target =
-        Encoding.pad enc ~target_length:target ~pad_id ~pad_type_id ~pad_token
-          ~direction
+        Encoding.pad enc ~target_length:target ~pad_id:id ~pad_type_id:type_id
+          ~pad_token:token ~direction:cfg.direction
       in
       let longest =
         List.fold_left
@@ -1376,7 +1368,7 @@ let encode_sequences t sequences ~add_special_tokens ~padding ~truncation
             results.(i) <-
               encode_single t ~add_special_tokens ~truncation sequences.(i)
           done);
-      apply_padding t (Array.to_list results) padding
+      apply_padding (Array.to_list results) padding
 
 (* [t] with its special tokens left unmatched when the caller asks for their
    text to be encoded like any other. *)
@@ -1387,9 +1379,10 @@ let matching t ~match_special_tokens =
 let encode t ?pair ?(add_special_tokens = true) ?(match_special_tokens = true)
     ?padding ?truncation text =
   check_stride t ~add_special_tokens truncation;
+  let padding = resolve_pad t padding in
   let t = matching t ~match_special_tokens in
   match
-    apply_padding t
+    apply_padding
       [ encode_single t ~add_special_tokens ~truncation { text; pair } ]
       padding
   with
@@ -1399,6 +1392,7 @@ let encode t ?pair ?(add_special_tokens = true) ?(match_special_tokens = true)
 let encode_batch t ?(add_special_tokens = true) ?(match_special_tokens = true)
     ?padding ?truncation ?exec texts =
   check_stride t ~add_special_tokens truncation;
+  let padding = resolve_pad t padding in
   match texts with
   | [] -> []
   | texts ->
@@ -1410,6 +1404,7 @@ let encode_batch t ?(add_special_tokens = true) ?(match_special_tokens = true)
 let encode_batch_pairs t ?(add_special_tokens = true)
     ?(match_special_tokens = true) ?padding ?truncation ?exec pairs =
   check_stride t ~add_special_tokens truncation;
+  let padding = resolve_pad t padding in
   match pairs with
   | [] -> []
   | pairs ->
@@ -1432,6 +1427,7 @@ let affixes_of t ~add_special_tokens =
 let encode_ids t ?pair ?(add_special_tokens = true)
     ?(match_special_tokens = true) ?padding ?truncation text =
   check_stride t ~add_special_tokens truncation;
+  let pad = resolve_pad t padding in
   let t = matching t ~match_special_tokens in
   let affixes =
     match pair with Some _ -> None | None -> affixes_of t ~add_special_tokens
@@ -1463,14 +1459,13 @@ let encode_ids t ?pair ?(add_special_tokens = true)
         else Array.concat [ prefix; body; suffix ]
       in
       let length = Array.length ids in
-      match padding with
+      match pad with
       | None -> ids
-      | Some cfg ->
+      | Some { padding = cfg; id; _ } ->
           let target = pad_target cfg length in
           if target <= length then ids
           else begin
-            let _, pad_id, _ = resolve_pad t cfg in
-            let padded = Array.make target pad_id in
+            let padded = Array.make target id in
             let at =
               match cfg.direction with `Left -> target - length | `Right -> 0
             in
@@ -1692,6 +1687,7 @@ let end_batch b ~call ~give held =
 let encode_batch_ids t ?(add_special_tokens = true)
     ?(match_special_tokens = true) ?padding ?truncation ?exec texts =
   check_stride t ~add_special_tokens truncation;
+  let pad = resolve_pad t padding in
   let t = matching t ~match_special_tokens in
   let rows = Array.of_list texts in
   let nrows = Array.length rows in
@@ -1830,14 +1826,8 @@ let encode_batch_ids t ?(add_special_tokens = true)
     offset.(row + 1) <- offset.(row) + lengths.(row)
   done;
   let result = create_ids offset.(nrows) in
-  (* The pad token is looked up only when a row needs it, as {!encode_ids} looks
-     it up. *)
   let pad_id =
-    match padding with
-    | Some cfg when offset.(nrows) > Array.fold_left ( + ) 0 content ->
-        let _, pad_id, _ = resolve_pad t cfg in
-        Int32.of_int pad_id
-    | _ -> 0l
+    match pad with Some { id; _ } -> Int32.of_int id | None -> 0l
   in
   let pad_left =
     match padding with Some { direction = `Left; _ } -> true | _ -> false

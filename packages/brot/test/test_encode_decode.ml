@@ -116,6 +116,7 @@ let law_tokenizers =
     ("echo words", fixture echo_words);
     ("accent-free words", fixture accent_words);
     ("byte-level unigram", fixture byte_unigram);
+    ("plain words", fixture plain_words);
   ]
 
 let tokenizer name = (List.assoc name law_tokenizers) ()
@@ -493,6 +494,16 @@ let test_padding_named () =
     ([| 0; 6; 6 |], [| 0; 0; 0 |], [| "a"; "[PAD]"; "[PAD]" |])
     (padded (plain_words ()) (padding ~pad_token:"[PAD]" (`Fixed 3)))
 
+(* An encoding's tokens are its ids' tokens: [f] is 5, where the tokenizer's pad
+   token [[PAD]] is 6. *)
+let test_padding_token_id () =
+  let t = bert_words () and padding = padding ~pad_token:"f" (`Fixed 3) in
+  let e = encode t ~add_special_tokens:false ~padding "a" in
+  equal ~msg:"tokens" (array string) [| "a"; "f"; "f" |] (Encoding.tokens e);
+  equal ~msg:"ids" (array int) [| 0; 5; 5 |] (Encoding.ids e);
+  equal ~msg:"encode_ids" (array int) [| 0; 5; 5 |]
+    (encode_ids t ~add_special_tokens:false ~padding "a")
+
 let test_padding_without_token =
   cases
     "raises Invalid_argument when neither it nor the tokenizer names a pad \
@@ -506,6 +517,40 @@ let test_padding_without_token =
     (fun (_, padding) ->
       raises_match Exn.invalid_arg (fun () ->
           encode (plain_words ()) ~padding "a"))
+
+(* The letters under BERT's template, with no pad token. *)
+let unpadded_bert () =
+  word_level ~pre:Pre_tokenizer.whitespace
+    ~post:(Post_processor.bert ~cls:("[CLS]", 8) ~sep:("[SEP]", 9))
+    ~vocab:letters ~unk_token:"[UNK]" ()
+
+(* `Fixed 1 asks nothing of "a", which encodes to three tokens: the padding is
+   checked at the call, whatever the lengths of the texts. *)
+let test_padding_raises_at_call =
+  cases
+    "raises Invalid_argument without a pad token whatever the lengths of the \
+     texts"
+    ~id:Fun.id
+    [
+      "encode";
+      "encode_ids";
+      "encode_batch";
+      "encode_batch, no text";
+      "encode_batch_pairs";
+      "encode_batch_ids";
+      "encode_batch_ids, no text";
+    ] (fun entry ->
+      let t = unpadded_bert () and padding = padding (`Fixed 1) in
+      raises_match Exn.invalid_arg (fun () ->
+          match entry with
+          | "encode" -> ignore (encode t ~padding "a")
+          | "encode_ids" -> ignore (encode_ids t ~padding "a")
+          | "encode_batch" -> ignore (encode_batch t ~padding [ "a" ])
+          | "encode_batch, no text" -> ignore (encode_batch t ~padding [])
+          | "encode_batch_pairs" ->
+              ignore (encode_batch_pairs t ~padding [ ("a", "b") ])
+          | "encode_batch_ids" -> ignore (encode_batch_ids t ~padding [ "a" ])
+          | _ -> ignore (encode_batch_ids t ~padding [])))
 
 (* An encoding truncated to its padding length is at its target, and its window
    is padded all the same. HuggingFace, with [pad_id] 1: ids [2, 3], windows
@@ -2325,7 +2370,10 @@ let () =
              test_padding_tokenizer_pad;
              test "gives padding the pad_id, pad_type_id and pad_token it names"
                test_padding_named;
+             test "pads with the id of the pad_token it names"
+               test_padding_token_id;
              test_padding_without_token;
+             test_padding_raises_at_call;
              test "pads the windows of an encoding already at its length"
                test_padding_windows;
            ];

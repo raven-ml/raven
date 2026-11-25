@@ -1029,8 +1029,11 @@ type padding = {
     it has that length already.
 
     [pad_token] defaults to the tokenizer's padding token and [pad_type_id] to
-    [0]. Raises [Invalid_argument] at padding time if [pad_token] is [None] and
-    the tokenizer has no padding token, even when [pad_id] is given. *)
+    [0]. [pad_id] defaults to the identifier of the pad token in use. An encoder
+    given a padding raises [Invalid_argument] if [pad_token] is [None] and the
+    tokenizer has no padding token, even when [pad_id] is given, or if [pad_id]
+    is [None] and the pad token is not in the vocabulary. It raises at the call,
+    whatever the lengths of the texts. *)
 
 type truncation = { max_length : int; stride : int; direction : direction }
 (** The type for truncation configurations. Sequences exceeding [max_length]
