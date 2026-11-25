@@ -2020,6 +2020,24 @@ let narrow_dirichlet_draws =
 (* [coords] and [standardize] are eliminators: they run the checks. *)
 (* Each support is open (norn.mli: [Greater], [Less] and [Interval] exclude
    their bounds), and a value outside it has density [-inf]. *)
+(* At float16 [z²] overflows from [z = 256], where [-z² / 2] is still a
+   float16 until [z = 362]. The exact value at [z = 300] is
+   [-45000 - log √(2π)], within [8 ε] of its magnitude at float16. *)
+let float16_squares =
+  let h = Nx.scalar Nx.float16 in
+  let at d x = Nx.item [] (Nx.cast Nx.float64 (D.factors d (h x))) in
+  let half_log_2pi = 0.5 *. Float.log (2. *. Float.pi) in
+  let tol v = float (8. *. 0x1p-10 *. Float.abs v) in
+  Windtrap.cases "a float16 log density holds where z² overflows"
+    ~id:(fun (name, _, _) -> name)
+    [
+      ("normal", D.normal ~loc:(h 0.) ~scale:(h 1.), -45000. -. half_log_2pi);
+      ( "half_normal",
+        D.half_normal ~scale:(h 1.),
+        Float.log 2. -. 45000. -. half_log_2pi );
+    ]
+    (fun (_, d, v) -> equal (tol v) v (at d 300.))
+
 let open_bounds =
   let normal = D.normal ~loc:(f64 0.5) ~scale:(f64 2.) in
   Windtrap.cases "a value on a support's bound has density -inf"
@@ -3028,6 +3046,7 @@ let () =
          cauchy_tails;
          bijectors_check;
          open_bounds;
+         float16_squares;
          normalisation;
          bijectors;
          validation;

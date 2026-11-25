@@ -85,6 +85,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.normal`, `Dist.half_normal` and `Dist.lognormal` keep a finite log
+  density where `z²` overflows and `-z² / 2` does not: at float16, `Dist.normal`
+  gave `-inf` at `z = 300`, where the log density is `-45000.9`.
 - `Gaussian.pathfinder` and `Gaussian.vi` refuse a start whose float tensors
   have two dtypes, as `pathfinder`'s interface stated. `vi` cast them to the
   density's dtype and back, losing digits with no error; `pathfinder` raised

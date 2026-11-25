@@ -176,6 +176,11 @@ let checked context d =
 (* Arithmetic *)
 
 let half_log_2pi = 0.5 *. Float.log (2. *. Float.pi)
+
+(* [half_square z] is [-z² / 2], as [-(z / √2)²]: the square overflows only
+   where the result does, from [z = 362] at float16 rather than [256]. *)
+let half_square z = Nx.neg (Nx.square (Nx.mul_s z (Float.sqrt 0.5)))
+
 let log_pi = Float.log Float.pi
 
 let log_sigmoid x = Nx.neg (Nx.softplus (Nx.neg x))
@@ -869,7 +874,7 @@ let normal ~loc ~scale =
   location_scale "normal" ~loc ~scale
     ~density:(fun d ->
       let z = Nx.div d scale in
-      Nx.add_s (Nx.mul_s (Nx.square z) (-0.5)) (-.half_log_2pi))
+      Nx.add_s (half_square z) (-.half_log_2pi))
     ~draw:Noise.normal
     ~tails:(mirror Nx.log_ndtr Nx.ndtri)
     ()
@@ -986,7 +991,7 @@ let lognormal ~loc ~scale =
     let z = Nx.div (Nx.sub lx loc) scale in
     outside ok
       (Nx.sub
-         (Nx.add_s (Nx.mul_s (Nx.square z) (-0.5)) (-.half_log_2pi))
+         (Nx.add_s (half_square z) (-.half_log_2pi))
          (Nx.add lx (Nx.log scale)))
   in
   let z x = Nx.div (Nx.sub (Nx.log x) loc) scale in
@@ -1042,7 +1047,7 @@ let half_normal ~scale =
       let z = Nx.div x scale in
       Nx.sub
         (Nx.add_s
-           (Nx.mul_s (Nx.square z) (-0.5))
+           (half_square z)
            (Float.log 2. -. half_log_2pi))
         (Nx.log scale))
     ~draw:(fun k s -> Nx.mul scale (Nx.abs (Noise.normal k dt s)))
