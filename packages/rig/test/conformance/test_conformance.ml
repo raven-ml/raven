@@ -2026,11 +2026,13 @@ let hung (module G : Gpu) () =
       G.close t;
       G.with_ @@ fun t -> Rig.Point.wait (G.submit t [||])
 
-(* How long the law of a device given up spins: 4 s, or 400 ms on Metal,
-   under the 0.52 s or so after which macOS ends a command buffer of a GPU
-   that drives a display. *)
+(* How long the law of a device given up spins: 1 s, twice the lose, 100 ms in,
+   and the [seen_within_ns] a wait takes to see it, for a loaded machine. On
+   CUDA and NV the word reaches the work's value only as the spin ends, so the
+   law takes the spin's time. On Metal it spins 400 ms, under the 0.52 s or so
+   after which macOS ends a command buffer of a GPU that drives a display. *)
 let given_up_spin_ns class_ =
-  if class_ = "METAL" then 400_000_000 else 4_000_000_000
+  if class_ = "METAL" then 400_000_000 else 1_000_000_000
 
 (* The most a wait takes to see a loss: one still interval, 200 ms, for its
    sleep or spin to return, and as much again for a loaded machine. *)
