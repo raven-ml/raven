@@ -174,7 +174,9 @@ let reads_as_recorded cell =
        (List.map (fun s -> Shape.sym_infer s var_vals) [ e.ops; e.lds; e.mem ]))
 
 let recorded_calls =
-  group "calls of recorded schedules"
+  group
+    "calls › read each call of a recorded schedule as its golden states: its \
+     buffers, arguments, writes, reads, name and cost"
     [ Golden.cases "calls.golden" ~key:[ "program"; "call" ] reads_as_recorded ]
 
 (* Calls *)
@@ -239,8 +241,7 @@ let kernel_args =
             (Realize.get_call_kernel_args (Ops.call prg [ a ]) prg));
     ]
 
-(* A slot past a call's arguments, and a negative one, as a nameless scalar
-   parameter. *)
+(* A nameless scalar parameter of [slot]. *)
 let nameless slot = Shape.param ~addrspace:Alu slot Int32
 
 let values =
@@ -381,7 +382,8 @@ let costs =
 (* Compiling *)
 
 let recorded_compilation =
-  group "lower_and_compile of recorded schedules"
+  group
+    "lower_and_compile › compiles each recorded schedule as its golden states"
     (List.map
        (fun name ->
          Golden.graph (name ^ "_compiled.golden") (fun () ->

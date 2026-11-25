@@ -1733,8 +1733,8 @@ returns, and `calls.golden`, each call's reading by `get_call_*`,
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: engine/realize.py `get_call_arg_uops`, `get_call_kernel_args`, `get_call_outs_ins`, `get_call_name`, `estimate_uop` | what a call does | `R › calls of recorded schedules › calls.golden` (the calls of 15 programs), and `R › get_call_arg_uops`, `› get_call_kernel_args`, `› get_call_outs_ins`, `› get_call_name`, `› estimate_uop` (20 tests) |
-| tinygrad: engine/realize.py `lower_and_compile` | kernels compiled once, in parallel unless one asks for a beam | `R › lower_and_compile of recorded schedules` (14 goldens), `R › lower_and_compile` (8 tests), `R › lower_and_compile with a beam search`, `R › lower_and_compile in parallel` |
+| tinygrad: engine/realize.py `get_call_arg_uops`, `get_call_kernel_args`, `get_call_outs_ins`, `get_call_name`, `estimate_uop` | what a call does | `R › calls › read each call of a recorded schedule as its golden states: its buffers, arguments, writes, reads, name and cost › calls.golden` (the calls of 15 programs), and `R › get_call_arg_uops`, `› get_call_kernel_args`, `› get_call_outs_ins`, `› get_call_name`, `› estimate_uop` (20 tests) |
+| tinygrad: engine/realize.py `lower_and_compile` | kernels compiled once, in parallel unless one asks for a beam | `R › lower_and_compile › compiles each recorded schedule as its golden states` (14 goldens), `R › lower_and_compile` (8 tests), `R › lower_and_compile with a beam search`, `R › lower_and_compile in parallel` |
 | tinygrad: engine/realize.py `pm_beam`, `compile_linear`'s `BEAM` | a kernel asking for no beam asks for `BEAM`'s | `JB › JITBEAM unset › a kernel is searched with BEAM's width` |
 | tinygrad: engine/realize.py `get_call_kernels`, `track_stats`, `ExecContext`, `exec_*`, `runtime_cache`, `run_linear`, `time_call`, `link_linear`, `capturing` | running a linear | dropped here: the run half is `tolk.engine`'s; its execution is `EN › link and run` |
 | tinygrad: engine/realize.py `pm_validate`, `exec_validate`, `VALIDATE_WITH_CPU` | | dropped: validation against the CPU is excluded (README) |
