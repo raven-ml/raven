@@ -1192,8 +1192,9 @@ module Expr : sig
 
   val ( + ) : (int, 's) t -> (int, 's) t -> (int, 's) t
   (** [a + b] is the sum of [a] and [b], wrapping on overflow as nx's integers
-      do. Its type is the operands' common type, as for {!( - )}, {!( * )},
-      {!( / )} and {!( mod )}. *)
+      do, as {!( - )} and {!( * )} do and {!( / )} does at the least integer
+      divided by [-1]. Its type is the operands' common type, as for {!( - )},
+      {!( * )}, {!( / )} and {!( mod )}. *)
 
   val ( - ) : (int, 's) t -> (int, 's) t -> (int, 's) t
   (** [a - b] is the difference of [a] and [b]. *)
