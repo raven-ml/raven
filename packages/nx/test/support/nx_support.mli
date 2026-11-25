@@ -142,8 +142,43 @@ val bytes : ('v, 's) Nx_array.t -> int array
     element's in memory order, read on the host. [a] must lie in memory the
     host addresses. *)
 
+(** {1:ulps Distances in floats} *)
+
+val ulps : (float, 's) Nx_array.Dtype.t -> float -> float -> float
+(** [ulps dt r v] is the number of floats of [dt], float32 or float64, from [r]
+    rounded to [dt] to [v], as nx.mli counts ulps: a neighbour is one away, and
+    [-0.] and [+0.] are one apart. It is [0.] between two NaNs and [infinity]
+    between a NaN and a number.
+
+    Raises [Invalid_argument] if [dt] is another dtype. *)
+
+val ulp : (float, 's) Nx_array.Dtype.t -> float -> float
+(** [ulp dt x] is the unit in the last place of a finite [x] in [dt]'s format:
+    the distance from a float of [x]'s binade to the next, the least subnormal
+    at zero and below the least normal magnitude. *)
+
 (** {1:goldens Goldens} *)
 
 val log10_golden : string
 (** [log10_golden] is the text of log10's golden, which gen/special.py writes
     from mpmath: a table of hexadecimal floats, one row per point and dtype. *)
+
+type row = {
+  args : float array;  (** The arguments, each a float of the row's dtype. *)
+  value : float;
+      (** The exact value rounded to the dtype; an infinity where it rounds past
+          the largest float. *)
+  overflow : bool;  (** Whether [value] is such an infinity. *)
+  extra : float;
+      (** The row's last column where the golden has one, an inverse's condition
+          number or a bound's scale; NaN otherwise. *)
+}
+(** The type for a golden's rows. *)
+
+val golden : string -> (float, 's) Nx_array.Dtype.t -> row list
+(** [golden name dt] is the rows at [dt], float32 or float64, of [name]'s
+    golden, which gen/special.py writes: [log10_golden] for ["log10"], else
+    [golden/special/<name>.golden] beside the executable.
+
+    Raises [Invalid_argument] if [dt] is another dtype, and [Failure] if the
+    golden has no row at [dt]. *)

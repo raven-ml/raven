@@ -468,4 +468,98 @@ let bytes (type v s) (a : (v, s) A.t) =
   let u = Option.get (A.bitcast D.Uint8 c) in
   A.to_array u
 
+(* Distances in floats *)
+
+(* The position of a float among its format's values in increasing order: [+0]
+   at 0, [-0] at -1. *)
+let rank ~width b =
+  let sign = Int64.shift_left 1L (width - 1) in
+  if Int64.logand b sign = 0L then b
+  else Int64.(sub (neg (logand b (sub sign 1L))) 1L)
+
+let ulps (type s) (dt : (float, s) D.t) r v =
+  let rank_of =
+    match dt with
+    | D.Float32 ->
+        fun x ->
+          rank ~width:32
+            (Int64.logand (Int64.of_int32 (Int32.bits_of_float x)) 0xffff_ffffL)
+    | D.Float64 -> fun x -> rank ~width:64 (Int64.bits_of_float x)
+    | _ -> invalid_arg ("Nx_support.ulps: " ^ D.name dt)
+  in
+  if Float.is_nan r || Float.is_nan v then
+    if Float.is_nan r && Float.is_nan v then 0. else Float.infinity
+  else
+    let a = rank_of r and b = rank_of v in
+    (* Ranks of one sign subtract exactly; of two, their difference can pass
+       [max_int], and its float, exact below [2^53], is the count. *)
+    let nonnegative x = Int64.compare x 0L >= 0 in
+    if nonnegative a = nonnegative b then
+      Int64.to_float (Int64.abs (Int64.sub a b))
+    else Float.abs (Int64.to_float a -. Int64.to_float b)
+
+let ulp (type s) (dt : (float, s) D.t) x =
+  let f = D.float_format dt in
+  let emin = snd (Float.frexp f.min_normal) - 1 in
+  let _, e = Float.frexp x in
+  let e = if x = 0. then emin else Int.max (e - 1) emin in
+  Float.ldexp 1. (e - f.fraction_bits)
+
+(* Goldens *)
+
 let log10_golden = Log10_golden.text
+
+type row = { args : float array; value : float; overflow : bool; extra : float }
+
+let golden_lines name =
+  if name = "log10" then String.split_on_char '\n' log10_golden
+  else
+    let dir = Filename.concat (Filename.dirname Sys.executable_name) "golden" in
+    let path =
+      Filename.concat (Filename.concat dir "special") (name ^ ".golden")
+    in
+    In_channel.with_open_bin path In_channel.input_lines
+
+(* A golden's first line past its comments names its columns: the dtype, the
+   arguments, [f] and maybe one more. *)
+let golden (type s) name (dt : (float, s) D.t) =
+  let short =
+    match dt with
+    | D.Float32 -> "f32"
+    | D.Float64 -> "f64"
+    | _ -> invalid_arg ("Nx_support.golden: " ^ D.name dt)
+  in
+  let table l = l <> "" && not (String.starts_with ~prefix:"#" l) in
+  let header, lines =
+    match List.filter table (golden_lines name) with
+    | [] -> failwith (name ^ ".golden: no header")
+    | header :: lines -> (header, lines)
+  in
+  let columns = String.split_on_char '\t' header in
+  let extra = List.nth columns (List.length columns - 1) <> "f" in
+  let n = List.length columns - if extra then 3 else 2 in
+  let cell = function
+    | "overflow" -> Float.infinity
+    | "-overflow" -> Float.neg_infinity
+    | c -> float_of_string c
+  in
+  let row line =
+    match String.split_on_char '\t' line with
+    | d :: cells when d = short ->
+        let cells = Array.of_list cells in
+        let overflow =
+          match cells.(n) with "overflow" | "-overflow" -> true | _ -> false
+        in
+        let cells = Array.map cell cells in
+        Some
+          {
+            args = Array.sub cells 0 n;
+            value = cells.(n);
+            overflow;
+            extra = (if extra then cells.(n + 1) else Float.nan);
+          }
+    | _ -> None
+  in
+  match List.filter_map row lines with
+  | [] -> failwith (Printf.sprintf "%s.golden: no %s row" name short)
+  | rows -> rows
