@@ -428,10 +428,10 @@ module Root : sig
       {b Method.} Undamped Newton steps [δ = −f x / slope x], quadratic near a
       simple zero. {b Error.} As {!System}'s, each element a system of one
       unknown: [e = |δ| / (1 − q)] and the answer [x + δ]. A zero or non-finite
-      slope ends the element [Stalled]; a non-finite [f] ends it [Not_finite];
-      [budget] iterations end it [Budget_spent], so a budget of 1 converges
-      only on a zero step. {b Cost.} One call of [f] and one of [slope] per
-      iteration.
+      slope, or a step that overflows, ends the element [Stalled]; a non-finite
+      [f] ends it [Not_finite]; [budget] iterations end it [Budget_spent], so a
+      budget of 1 converges only on a zero step. {b Cost.} One call of [f] and
+      one of [slope] per iteration.
 
       Raises [Invalid_argument] if [budget < 1]. *)
 end
@@ -498,13 +498,13 @@ module System : sig
       place of every component, or whose line search finds no decrease, is at
       the floats' limit, where no further reading comes: its [q] is the newest
       settled reading, and it converges if [e] meets [tol] and ends [Stalled]
-      otherwise. A tolerance finer than the steps a method still takes within
-      an ulp of the answer cannot be met, and such a lane ends [Stalled] even
-      where its estimate holds the zero: up to [κ] ulps at a minimum of
-      condition [κ], where a quasi-Newton model's steps and the gradient's
-      bound both reach that far. A failed linear solve ends a lane [Stalled];
-      a non-finite [f] at the guess or at an estimate ends it [Not_finite];
-      [budget] iterations end it [Budget_spent].
+      otherwise. A tolerance finer than the steps a method still takes within an
+      ulp of the answer cannot be met, and such a lane ends [Stalled] even where
+      its estimate holds the zero: up to [κ] ulps at a minimum of condition [κ],
+      where a quasi-Newton model's steps and the gradient's bound both reach
+      that far. A failed linear solve, or a step that overflows where [f] is
+      finite, ends a lane [Stalled]; a non-finite [f] at the guess or at an
+      estimate ends it [Not_finite]; [budget] iterations end it [Budget_spent].
 
       {b Derivative.} The answer is stated as the zero of [f] through
       {!Rune.root}, so its derivative is the implicit one, [−J⁻¹ ∂f/∂θ] through
