@@ -195,12 +195,12 @@ let operand ?(wide_ints = false) dt s v seed =
   in
   E.operand_with make (Array.map (fun m -> s.(m)) v.perm) v
 
-(* Extents of the batch, row, column and contracted axes, in profiles: any
-   ranks over a few elements; one output; 64 outputs or more; a depth of
-   several blocks of lanes; several thousand columns; few rows over a deep
-   contraction; few columns; a batch of several hundred elements; two axes
-   in each group; and a batch of two axes over 512 KiB of operands or
-   more. *)
+(* Extents of the batch, row, column and contracted axes, in profiles: any ranks
+   over a few elements; one output; 64 outputs or more; a depth of several
+   blocks of lanes; several thousand columns; few rows over a deep contraction;
+   few columns; a batch of several hundred elements; two axes in each group. A
+   batch of two axes over 512 KiB of operands is {!heads}, an example: a draw of
+   one takes a fifth of a second to check. *)
 let extents =
   let open Gen in
   let one lo hi = map (fun e -> [| e |]) (int_range lo hi) in
@@ -210,7 +210,6 @@ let extents =
   in
   let axes most lo hi = array ~size:(int_range 0 most) (int_range lo hi) in
   let two lo hi = array ~size:(constant 2) (int_range lo hi) in
-  let pair x y = map (fun (x, y) -> [| x; y |]) (Gen.pair x y) in
   let ranked = shaped (axes 2 0 3) (axes 2 0 5) (axes 2 0 5) (axes 2 0 4) in
   let none = constant [||] in
   frequency
@@ -225,8 +224,6 @@ let extents =
       (1, shaped none (one 16 300) (one 1 4) (one 1 600));
       (2, shaped (one 342 420) (constant [| 8 |]) (constant [| 8 |]) (one 1 4));
       (8, shaped (two 2 3) (two 2 3) (two 2 3) (two 2 3));
-      (4, shaped (pair (int_range 16 24) (int_range 2 3)) (one 48 48)
-            (one 48 48) (one 48 56));
     ]
 
 (* The ranks of [a], [b] and the result for the extents [e]. *)
@@ -347,9 +344,9 @@ let unheld acc =
    lanes; convolutions, a's windows of an image; each operand stored
    transposed, their axes stored apart, attention's heads; and an a of a
    dtype [acc] does not hold. *)
-let regimes acc =
+let regime_cases acc =
   let plain = E.plain in
-  let case = case_in acc and apart = apart acc in
+  let case x = lazy (case_in acc x) and apart x = lazy (apart acc x) in
   let copy (A.Any x) = A.Any (A.copy x) in
   (* [case] with a alone stored transposed: few rows pack it, and blocks of
      its rows read the pack from their first row. *)
@@ -359,7 +356,8 @@ let regimes acc =
     let c = make ~acc ~out:acc e (acc, swap ra) (acc, plain rb) ti 1 in
     { c with a = copy c.a }
   in
-  let stored = stored acc in
+  let a_apart x = lazy (a_apart x) in
+  let stored x = lazy (stored acc x) in
   (* Contracted axes stored in another order in a than in b, with init and
      without. *)
   let split =
@@ -382,7 +380,7 @@ let regimes acc =
          [| 0; 2; 1 |]);
       ]
   in
-  let heads = heads acc and unheld = unheld acc in
+  let heads = lazy (heads acc) and unheld = lazy (unheld acc) in
   (* A convolution's product: a the windows of an image [n; h; w; c] by
      [kh × kw] taps at [stride] and [dilation], [n; oh; ow; c; kh; kw],
      contracted with b, [kh; kw; c; o], over the taps and channels, in the
@@ -407,6 +405,9 @@ let regimes acc =
     in
     { batch = [||]; contracting; acc; a; b; init; out = acc;
       views = [ "windowed" ] }
+  in
+  let conv ?da ?init ~taps_first d t s =
+    lazy (conv ?da ?init ~taps_first d t s)
   in
   (* Many rows by few columns, b's windows streamed; few rows by more
      columns, a's packed whole; dilated taps; the chain path over two
@@ -502,6 +503,9 @@ let regimes acc =
             (64, 255);
           ])
 
+(* {!regime_cases}' cases, made. *)
+let regimes acc = List.map Lazy.force (regime_cases acc)
+
 (* The dtypes each accumulator holds, as nx_cpu.mli lists them: a complex
    one its parts' and the complex numbers of at most its width. *)
 let rec held = function
@@ -574,7 +578,7 @@ let large_examples =
    with init at an even number of columns; 256 rows by 259 columns over 3
    products with init, a and b stored transposed; an a of a dtype [acc] does not
    hold; and in a real [acc] attention's heads, in a complex one a real a with
-   init. *)
+   init. Each is made when first forced. *)
 let edges acc =
   let least =
     [
@@ -584,17 +588,18 @@ let edges acc =
     ]
   in
   let two_rows (n, k) = (n mod 2 = 0, ([||], [| 2 |], [| n |], [| k |])) in
-  let real_a () =
-    make ~acc ~out:acc
-      ([||], [| 3 |], [| 4 |], [| 5 |])
-      (part_of acc, E.plain 2)
-      (acc, E.plain 2)
-      (Some (E.plain 2))
-      1
+  let real_a =
+    lazy
+      (make ~acc ~out:acc
+         ([||], [| 3 |], [| 4 |], [| 5 |])
+         (part_of acc, E.plain 2)
+         (acc, E.plain 2)
+         (Some (E.plain 2))
+         1)
   in
-  List.map (fun e -> case_in acc (true, e)) least
+  List.map (fun e -> lazy (case_in acc (true, e))) least
   @ List.map
-      (fun d -> case_in acc (two_rows d))
+      (fun d -> lazy (case_in acc (two_rows d)))
       [
         (1, 17);
         (2, 3);
@@ -612,9 +617,9 @@ let edges acc =
         (64, 255);
       ]
   @ [
-      apart acc (true, ([||], [| 256 |], [| 259 |], [| 3 |]));
-      unheld acc;
-      (if is_complex acc then real_a () else heads acc);
+      lazy (apart acc (true, ([||], [| 256 |], [| 259 |], [| 3 |])));
+      lazy (unheld acc);
+      (if is_complex acc then real_a else lazy (heads acc));
     ]
 
 (* Unscaled cases of accumulators every kernel library computes in, into
