@@ -626,8 +626,9 @@ module Column : sig
 
       Raises [Invalid_argument] if [dt] is not [c]'s storage dtype ({!Nx.cast}
       converts the result), if [c] is not stored one element per row, or if [c]
-      has a null; under [Rune.jit] and [Rune.vmap], for a traced validity
-      ({!Query.section-compiled}), the null raises when the call returns. *)
+      has a null; for a traced validity ({!Query.section-compiled}), the null
+      raises when the call returns under [Rune.jit], and at the call under
+      [Rune.vmap]. *)
 
   val validity : t -> Nx.host Nx.bit_t option
   (** [validity c] is true at row [i] iff row [i] of [c] holds a value. [None]
@@ -791,9 +792,9 @@ val take : Nx.host Nx.int64_t -> t -> t
     [take (Nx.Rng.permutation ~key (rows t)) t] shuffles every column.
 
     Raises [Invalid_argument] if [indices] is not 1-D or holds an index outside
-    \[[0];[rows t - 1]\]; under [Rune.jit] and [Rune.vmap], for traced [indices]
-    ({!Query.section-compiled}), the index outside raises when the call returns.
-*)
+    \[[0];[rows t - 1]\]; for traced [indices] ({!Query.section-compiled}), the
+    index outside raises when the call returns under [Rune.jit], and at the call
+    under [Rune.vmap]. *)
 
 val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
 (** [to_tensor dt names t] is the [(rows t, List.length names)] matrix whose
@@ -802,9 +803,9 @@ val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
     The columns are numeric or boolean, and have no null.
 
     Raises [Invalid_argument] if a name is not a column of [t], if a column is
-    neither numeric nor boolean, or has a null; under [Rune.jit] and
-    [Rune.vmap], for a traced validity ({!Query.section-compiled}), the null
-    raises when the call returns. *)
+    neither numeric nor boolean, or has a null; for a traced validity
+    ({!Query.section-compiled}), the null raises when the call returns under
+    [Rune.jit], and at the call under [Rune.vmap]. *)
 
 val to_dense :
   ('a, 'b) Nx.dtype ->
@@ -1067,9 +1068,9 @@ module Expr : sig
 
       Expressions are data. Building one reads nothing; a verb binds it to its
       input schema when the verb is applied, checks it and infers its type,
-      reporting every problem at once. What binding allocates does not depend on
-      the expressions that are live. Write them inside [Expr.( … )], where the
-      operators below shadow OCaml's.
+      reporting every problem at once. Binding an expression equal to a live one
+      allocates the same however many such expressions are live. Write them
+      inside [Expr.( … )], where the operators below shadow OCaml's.
 
       {b Types.} Whatever a value meets fixes its type:
       - A handle of kind [k] binds a column whose type [k] reads (see
@@ -1735,9 +1736,9 @@ module Expr : sig
   (** {1:ocaml OCaml values}
 
       These functions compute in OCaml, once per row, at native speed. They must
-      be pure; an exception they raise propagates from the run. Over traced
-      columns ({!Query.section-compiled}) they raise [Invalid_argument] at the
-      trace, since they read each value. *)
+      be pure; an exception they raise propagates from the run. One that reads a
+      traced column ({!Query.section-compiled}) raises [Invalid_argument] at the
+      trace, since it decodes each value. *)
 
   val const : 'a -> ('a, 's) t
   (** [const v] is [v] on every row. It is typed by what it meets, an
