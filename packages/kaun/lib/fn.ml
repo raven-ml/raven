@@ -95,7 +95,9 @@ let sorted_desc logits = fst (Nx.sort ~descending:true ~axis:(-1) logits)
 let keep_top_k ~k logits =
   let lead, vocab = last_axis ~fn:"keep_top_k" logits in
   let k = column ~fn:"keep_top_k" ~lead k in
-  let at = Nx.clamp ~min:0L ~max:(Int64.of_int (vocab - 1)) (Nx.sub_s k 1L) in
+  (* Clamped before the [- 1], which would wrap [Int64.min_int] to the top. *)
+  let k = Nx.clamp ~min:1L ~max:(Int64.of_int vocab) k in
+  let at = Nx.sub_s k 1L in
   let sorted = sorted_desc logits in
   keep_from ~threshold:(Nx.take_along_axis ~axis:(-1) at sorted) logits
 

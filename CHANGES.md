@@ -4703,6 +4703,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Kaun
 
+- `Kaun.Fn.keep_top_k` keeps the row's maximum at `~k:Int64.min_int`, as
+  at any `k <= 1`. It subtracted 1 from `k` before clamping, which wrapped
+  to the top and kept every entry.
 - `Kaun.Batch_norm.apply` refuses a training batch with no element. Its
   statistics were NaN, and the running statistics became NaN with no
   error.
