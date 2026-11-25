@@ -149,8 +149,9 @@ let hhea ~ascent ~descent ~gap =
 (* [face chars] is a face of 1000 units per em whose glyph 1, a square of ink
    0.1 em wide, renders each of the code points [chars]. Every glyph advances
    0.5 em, and the face reserves [ascent] above the baseline, [descent] below it
-   and [gap] between lines, in units, and has no cap height of its own, so its
-   cap height is its ascent. *)
+   and [gap] between lines, in units. It records no cap height, so its cap
+   height is the top of the square, 0.1 em, if [chars] holds U+0048, and its
+   ascent otherwise. *)
 let face ?(weight = 400) ?(slant = `Normal) ?(ascent = 800) ?(descent = 200)
     ?(gap = 100) chars =
   let groups =

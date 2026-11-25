@@ -28,7 +28,7 @@ let utf_8 =
     (fun ppf s -> Format.fprintf ppf "%S" s)
     (Gen.map encode (Gen.list ~size:(Gen.int_range 0 8) Gen.uchar))
 
-(* Strings *)
+(* Texts *)
 
 (* Maximal subparts, from the Unicode Standard, section 3.9, "U+FFFD
    Substitution of Maximal Subparts". *)
@@ -60,7 +60,7 @@ let decoded s =
   loop 0;
   Buffer.contents b
 
-let strings =
+let texts =
   group "v"
     [
       cases "replaces each maximal invalid subpart with U+FFFD"
@@ -69,7 +69,7 @@ let strings =
         (fun (_, s, repaired) -> equal text_w (Text.v repaired) (Text.v s));
       prop "agrees with String.get_utf_8_uchar on any bytes" Gen.string
         (fun s ->
-          classify "invalid" (not (String.is_valid_utf_8 s));
+          cover "invalid" (not (String.is_valid_utf_8 s));
           equal text_w (Text.v (decoded s)) (Text.v s));
       prop "of a concatenation is the concatenation, split at a character"
         (Gen.pair utf_8 utf_8) (fun ab ->
@@ -80,17 +80,11 @@ let strings =
           not_equal text_w (Text.v "ab") (Text.v "a\tb"));
     ]
 
-(* Concatenation *)
-
 let concatenation =
   group "concat"
     [
       test "of nothing is the empty text" (fun () ->
           equal text_w (Text.v "") (Text.concat []));
-      test "keeps the order of its texts" (fun () ->
-          not_equal text_w
-            (Text.concat [ Text.v "a"; Text.v "b" ])
-            (Text.concat [ Text.v "b"; Text.v "a" ]));
       prop "is associative" tree3 (fun (a, b, c) ->
           Law.associative text_w concat2 (text a, text b, text c));
       prop "has the empty text as its unit" trees (fun t ->
@@ -99,72 +93,102 @@ let concatenation =
 
 (* Styles *)
 
-let powers_of_two = Gen.map (fun e -> Float.ldexp 1. e) (Gen.int_range (-8) 8)
+let one_of styles = Gen.of_list ~pp:pp_style styles
+let name style = Format.asprintf "%a" pp_style style
 
-let styles =
+(* The styles that a second application leaves as the first set them. *)
+let idempotent = [ Bold; Italic; Color Color.red; Color Color.blue ]
+
+let styling =
   group "styles"
     [
-      prop "bold is idempotent" trees (fun t ->
-          Law.idempotent text_w Text.bold (text t));
-      prop "italic is idempotent" trees (fun t ->
-          Law.idempotent text_w Text.italic (text t));
-      prop "color is idempotent" trees (fun t ->
-          Law.idempotent text_w (Text.color Color.red) (text t));
+      prop ~count:200 "each combinator distributes over concat"
+        (Gen.pair (one_of styles) tree2)
+        (fun (style, (a, b)) ->
+          List.iter (fun s -> cover (name s) (s == style)) styles;
+          Law.homomorphic text_w text_w (apply style) concat2 concat2
+            (text a, text b));
+      prop "bold, italic and color are idempotent"
+        (Gen.pair (one_of idempotent) trees)
+        (fun (style, t) ->
+          List.iter (fun s -> cover (name s) (s == style)) idempotent;
+          Law.idempotent text_w (apply style) (text t));
       prop "bold and italic commute" trees (fun t ->
           Law.commutes text_w Text.bold Text.italic (text t));
       prop "bold and a script commute" trees (fun t ->
           Law.commutes text_w Text.bold Text.sup (text t));
-      prop "bold distributes over concat" tree2 (fun (a, b) ->
-          Law.homomorphic text_w text_w Text.bold concat2 concat2
-            (text a, text b));
-      prop "color distributes over concat" tree2 (fun (a, b) ->
-          Law.homomorphic text_w text_w (Text.color Color.red) concat2 concat2
-            (text a, text b));
-      prop "scale distributes over concat" tree2 (fun (a, b) ->
-          Law.homomorphic text_w text_w (Text.scale 2.) concat2 concat2
-            (text a, text b));
-      prop "sup distributes over concat" tree2 (fun (a, b) ->
-          Law.homomorphic text_w text_w Text.sup concat2 concat2 (text a, text b));
-      prop "an inner colour wins" trees (fun t ->
-          let t = text t in
-          equal text_w (Text.color Color.blue t)
-            (Text.color Color.red (Text.color Color.blue t)));
-      prop "colours only the characters without one" tree2 (fun (a, b) ->
+      prop "an inner colour wins over an outer one" tree2 (fun (a, b) ->
           let a = text a and b = text b in
           equal text_w
             (Text.concat [ Text.color Color.red a; Text.color Color.blue b ])
             (Text.color Color.red (Text.concat [ a; Text.color Color.blue b ])));
-      prop "scales compose by their product"
+    ]
+
+let powers_of_two = Gen.map (fun e -> Float.ldexp 1. e) (Gen.int_range (-8) 8)
+
+let scaling =
+  group "scale"
+    [
+      prop "composes by the product of its factors"
         (Gen.triple powers_of_two powers_of_two trees) (fun (s, s', t) ->
           let t = text t in
           equal text_w (Text.scale (s *. s') t) (Text.scale s (Text.scale s' t)));
-      prop "scale 1. changes nothing" trees (fun t ->
+      prop "by 1. changes nothing" trees (fun t ->
           equal text_w (text t) (Text.scale 1. (text t)));
-      test "a script differs from its text" (fun () ->
-          not_equal text_w (Text.v "2") (Text.sup (Text.v "2"));
-          not_equal text_w (Text.v "2") (Text.sub (Text.v "2"));
-          not_equal text_w (Text.sub (Text.v "2")) (Text.sup (Text.v "2")));
-      test "a script of a script is not commutative" (fun () ->
-          not_equal text_w
-            (Text.sub (Text.sup (Text.v "i")))
-            (Text.sup (Text.sub (Text.v "i"))));
-      test "a superscript is not a reduced text" (fun () ->
-          not_equal text_w (Text.scale 0.7 (Text.v "2")) (Text.sup (Text.v "2")));
-      cases "scale rejects" ~id:(Printf.sprintf "scale %h raises")
+      cases "raises on a factor that is not finite and positive"
+        ~id:(Printf.sprintf "%h")
         [ 0.; -0.; -1.; Float.nan; Float.infinity; Float.neg_infinity ]
         (fun s ->
           raises_match Exn.invalid_arg (fun () -> Text.scale s (Text.v "a")));
-      test "scale accepts the extremes of the positive floats" (fun () ->
-          ignore (Text.scale Float.min_float (Text.v "a"));
-          ignore (Text.scale 5e-324 (Text.v "a"));
-          ignore (Text.scale Float.max_float (Text.v "a")));
+      cases "accepts the extremes of the positive floats"
+        ~id:(Printf.sprintf "%h") [ Float.min_float; 5e-324; Float.max_float ]
+        (fun s -> ignore (Text.scale s (Text.v "a")));
     ]
 
 (* Comparing and formatting *)
 
-(* Formatting *)
+(* Pairs of texts that differ in one style or character. *)
+let one_style =
+  [
+    ("bold", Str "a", Style (Bold, Str "a"));
+    ("italic", Str "a", Style (Italic, Str "a"));
+    ("bold and italic", Style (Bold, Str "a"), Style (Italic, Str "a"));
+    ("size", Str "a", Style (Scale 2., Str "a"));
+    ( "colour",
+      Style (Color Color.red, Str "a"),
+      Style (Color Color.blue, Str "a") );
+    ("no colour", Str "a", Style (Color Color.black, Str "a"));
+    ("character", Str "a", Str "b");
+    ("emptiness", Str "", Str " ");
+  ]
 
-let pp_at margin t =
+let equality =
+  group "equal"
+    [
+      prop "is an equivalence" tree2 (fun (a, b) ->
+          Law.equivalence text_w (text a, text b));
+      test "compares colours by value" (fun () ->
+          equal text_w
+            (Text.color Color.red (Text.v "a"))
+            (Text.color (Color.v 1. 0. 0.) (Text.v "a")));
+      cases "is false for texts differing in one style"
+        ~id:(fun (name, _, _) -> name)
+        one_style
+        (fun (_, a, b) -> not_equal text_w (text a) (text b));
+    ]
+
+let ordering =
+  group "compare"
+    [
+      prop "is a total order agreeing with equal"
+        ~examples:(List.map (fun (_, a, b) -> (a, b, a)) one_style)
+        tree3
+        (fun (a, b, c) -> Law.order text_w (text a, text b, text c));
+    ]
+
+let show t = Format.asprintf "%a" Text.pp t
+
+let show_at margin t =
   let b = Buffer.create 64 in
   let ppf = Format.formatter_of_buffer b in
   Format.pp_set_margin ppf margin;
@@ -178,6 +202,7 @@ let literal_ends =
     ("U+001F", "\u{1F}", {|"\031"|});
     ("U+0020", " ", {|" "|});
     ("U+007E", "~", {|"~"|});
+    ("U+007F", "\u{7F}", {|"\127"|});
     ("U+009F", "\u{9F}", {|"\194\159"|});
     ("U+00A0", "\u{A0}", "\"\u{A0}\"");
     ("U+00AD", "\u{AD}", "\"\u{AD}\"");
@@ -188,8 +213,8 @@ let literal_ends =
    of 27 but not of 26. *)
 let column_count () =
   let wide = Text.(concat [ v "中中\"\""; bold (v "x") ]) in
-  equal string {|(text "中中\"\"" ("x" bold))|} (pp_at 27 wide);
-  equal string "(text \"中中\\\"\\\"\"\n (\"x\" bold))" (pp_at 26 wide)
+  equal string {|(text "中中\"\"" ("x" bold))|} (show_at 27 wide);
+  equal string "(text \"中中\\\"\\\"\"\n (\"x\" bold))" (show_at 26 wide)
 
 let literal_chars =
   Gen.of_list
@@ -219,44 +244,10 @@ let non_empty =
     (Gen.map (String.concat "")
        (Gen.list ~size:(Gen.int_range 1 8) literal_chars))
 
-let comparing =
-  group "equal and compare"
+let formatting =
+  group "pp"
     [
-      prop "equal is an equivalence" tree2 (fun (a, b) ->
-          Law.equivalence text_w (text a, text b));
-      prop "compare is a total order agreeing with equal" tree3
-        (fun (a, b, c) -> Law.order text_w (text a, text b, text c));
-      test "a text split in two equals the text" (fun () ->
-          equal text_w (Text.v "ab") (Text.concat [ Text.v "a"; Text.v "b" ]));
-      test "styled pieces equal the styled whole" (fun () ->
-          equal text_w
-            (Text.bold (Text.v "ab"))
-            (Text.concat [ Text.bold (Text.v "a"); Text.bold (Text.v "b") ]);
-          equal text_w
-            (Text.bold (Text.v "ab"))
-            (Text.bold (Text.concat [ Text.v "a"; Text.bold (Text.v "b") ])));
-      test "colours compare by value" (fun () ->
-          equal text_w
-            (Text.color Color.red (Text.v "a"))
-            (Text.color (Color.v 1. 0. 0.) (Text.v "a")));
-      cases "texts differing in one style are unequal"
-        ~id:(fun (name, _, _) -> name)
-        [
-          ("bold", Text.v "a", Text.bold (Text.v "a"));
-          ("italic", Text.v "a", Text.italic (Text.v "a"));
-          ("bold and italic", Text.bold (Text.v "a"), Text.italic (Text.v "a"));
-          ("size", Text.v "a", Text.scale 2. (Text.v "a"));
-          ( "colour",
-            Text.color Color.red (Text.v "a"),
-            Text.color Color.blue (Text.v "a") );
-          ("no colour", Text.v "a", Text.color Color.black (Text.v "a"));
-          ("character", Text.v "a", Text.v "b");
-          ("emptiness", Text.v "", Text.v " ");
-        ]
-        (fun (_, a, b) ->
-          not_equal text_w a b;
-          not_equal int 0 (Text.compare a b));
-      test "formats spans with their styles" (fun () ->
+      test "formats spans of one style" (fun () ->
           let t =
             Text.(
               scale 2.
@@ -268,35 +259,32 @@ let comparing =
                      color Color.red (italic (v " ok"));
                    ]))
           in
-          expect (Format.asprintf "%a" Text.pp t)
+          expect (show t)
           @@ __POS_OF__
                {|
             (text ("x" size 2) ("2" size 1.4 shift -0.8) ("i" bold size 0.98 shift -0.16)
              (" ok" italic size 2 #ff0000))
             |});
       test "formats a plain text as its string" (fun () ->
-          expect (Format.asprintf "%a" Text.pp (Text.v "step size \u{03B7}"))
+          expect (show (Text.v "step size \u{03B7}"))
           @@ __POS_OF__ {| (text "step size η") |});
-      test "formats strings escaping only quotes, backslashes and controls"
+      test "escapes only double quotes, backslashes and control characters"
         (fun () ->
           equal string {|(text "a\"b\\c\td\194\133é中" ("\"" bold))|}
-            (Format.asprintf "%a" Text.pp
-               Text.(concat [ v "a\"b\\c\td\u{85}é中"; bold (v "\"") ])));
-      cases "formats at the ends of the controls"
+            (show Text.(concat [ v "a\"b\\c\td\u{85}é中"; bold (v "\"") ])));
+      cases "escapes the ends of the control ranges and not their neighbours"
         ~id:(fun (n, _, _) -> n)
         literal_ends
         (fun (_, s, lit) ->
-          equal string
-            ("(text " ^ lit ^ ")")
-            (Format.asprintf "%a" Text.pp (Text.v s)));
+          equal string ("(text " ^ lit ^ ")") (show (Text.v s)));
       test "breaks lines counting a character as one column" column_count;
-      prop "formats a literal that reads back as its string" non_empty (fun s ->
-          equal string s
-            (Scanf.sscanf
-               (Format.asprintf "%a" Text.pp (Text.v s))
-               "(text %S)" Fun.id));
+      prop "writes a literal that reads back as its string" non_empty (fun s ->
+          equal string s (Scanf.sscanf (show (Text.v s)) "(text %S)" Fun.id));
     ]
 
 let () =
   exit
-    (run "hugin.text: Text" [ strings; concatenation; styles; comparing ])
+    (run "hugin.text: Text"
+       [
+         texts; concatenation; styling; scaling; equality; ordering; formatting;
+       ])

@@ -74,7 +74,10 @@ val compare : t -> t -> int
 (** [compare t t'] is a total order on texts compatible with {!equal}. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp ppf t] formats [t] for debugging, in spans of one style. *)
+(** [pp ppf t] formats [t] for debugging, in spans of one style. Its strings are
+    OCaml string literals that keep their characters, escaping only double
+    quotes, backslashes and control characters. Line breaking counts a character
+    as one column. *)
 
 (** {1:layout Layout} *)
 
