@@ -7,6 +7,9 @@ module D = Nx.Dtype
 module L = Nx_array.Layout
 module Ptree = Nx.Ptree
 
+(* Re-raised with the backtrace of its raise, which a plain [raise] would
+   restart at the handler. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 let report = Compile.report
 
 (* Keys *)
@@ -293,10 +296,11 @@ let rec lifted ~name ~adds forms f =
       | _ -> None
     in
     let out =
-      Effect.Deep.try_with
+      Effect.Deep.match_with
         (fun () ->
           Program.gathering (fun () -> converted ~name (fun () -> f vs)))
-        () { effc = catch }
+        ()
+        { retc = Fun.id; exnc = reraise; effc = catch }
     in
     let na = Array.length adds in
     let n = Array.length out - na in
@@ -327,7 +331,7 @@ and converted ~name f =
         | _ -> Some (fun k -> Effect.Deep.discontinue k Kept))
     | _ -> None
   in
-  Effect.Deep.try_with f () { effc }
+  Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc }
 
 (* A scan whose step emits: the scan of its step with its emissions as more
    outputs, then each emission of their rows. *)

@@ -5,6 +5,10 @@
 
 module D = Nx.Dtype
 
+(* Re-raised with the backtrace of its raise, which a plain [raise] would
+   restart at the handler. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 type value = V : ('v, 's, 'd) Nx.t -> value
 type form = F : ('v, 's, 'd) Nx.Prim.form -> form
 
@@ -1124,7 +1128,6 @@ let guarded f =
             else Effect.Deep.continue k false)
     | _ -> None
   in
-  let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()) in
   Nx.Rng.refusing "Rune.callback" (fun () ->
       Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc })
 
@@ -1945,9 +1948,6 @@ let gathered f =
         | None -> None)
     | _ -> None
   in
-  let reraise e =
-    Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
-  in
   let y = Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc } in
   List.iter (fun (Gathered (t, r)) -> add_to t !r) (List.rev !sums);
   y
@@ -2680,7 +2680,7 @@ let silenced f =
             Effect.Deep.continue k (perform (map_programs unobserved c)))
     | _ -> None
   in
-  Effect.Deep.try_with f () { effc }
+  Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc }
 
 (* Whether [p] or a program it carries emits to a probe a collect of which is
    open. *)

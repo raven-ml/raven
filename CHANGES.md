@@ -632,6 +632,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- An exception raised in the function of `Rune.linear_transpose`, in
+  `Rune.root`'s residual or solve, or in a custom rule's derivative, and an
+  asynchronous exception through `Rune.Probe.collect`, keep the backtrace of
+  their raise instead of one starting in the stdlib's effect handler.
 - `Rune.jit` on the CPU needs Clang 16 or later, or Apple's 15 or later: under
   an older one, the call that compiles raises
   `Tolk.Renderer.Compiler.Compile_error` naming the Clang found and Clang 16.

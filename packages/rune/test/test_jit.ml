@@ -5324,6 +5324,20 @@ let test_errors () =
   named "Rune.jit" (fun f -> Rune.jit T.(tensor @-> returns tensor) f);
   named "Rune.jit'" Rune.jit'
 
+(* An exception the function raises passes through a call with the backtrace of
+   its raise, whose first slot is the raise's line. *)
+let raised = ref 0
+
+let raising x =
+  raised := __LINE__ + 1;
+  if Sys.opaque_identity true then raise Exit;
+  x
+
+let test_backtrace () =
+  let jit = Rune.jit T.(tensor @-> returns tensor) raising in
+  let at = Compose.raised_at Exit (fun () -> jit (v [| 1. |])) in
+  equal ~msg:"the first slot" Compose.site_t (Some ("test_jit.ml", !raised)) at
+
 (* Donation, as users step state *)
 
 (* One handle at two leaves: the call reads it at both and consumes it. An
@@ -6656,6 +6670,7 @@ let () =
                test_nested;
              test "a shortcut over a capture stages" test_shortcut_captures;
              test "errors name the entry point" test_errors;
+             test "a raise keeps its backtrace" test_backtrace;
            ];
          group "Keys"
            [

@@ -323,6 +323,31 @@ let outcome_t t =
       | Raised a, Raised b -> String.equal a b
       | _ -> false)
 
+(* Raise sites *)
+
+(* The file's base name and the line of the first slot of the backtrace that
+   [e], raised by [f ()], carries, backtraces recorded while [f] runs; [None] if
+   that slot has no location. Any other outcome fails. *)
+let raised_at e f =
+  let recording = Printexc.backtrace_status () in
+  Printexc.record_backtrace true;
+  let bt =
+    Fun.protect ~finally:(fun () -> Printexc.record_backtrace recording)
+    @@ fun () ->
+    match f () with
+    | _ -> fail "the call returned"
+    | exception x when x = e -> Printexc.get_raw_backtrace ()
+  in
+  match Printexc.backtrace_slots bt with
+  | Some slots when Array.length slots > 0 ->
+      Option.map
+        (fun (l : Printexc.location) ->
+          (Filename.basename l.filename, l.line_number))
+        (Printexc.Slot.location slots.(0))
+  | _ -> None
+
+let site_t = option (pair string int)
+
 (* Every dtype *)
 
 (* [e] with the functions only floats have replaced by ones every dtype has. *)

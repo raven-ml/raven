@@ -358,6 +358,24 @@ let test_once_at_call () =
   ignore (lt at);
   equal ~msg:"applied twice" int 1 !calls
 
+(* An exception the function raises passes through with the backtrace of its
+   raise, whose first slot is the raise's line. *)
+let raised = ref 0
+
+let raising x =
+  raised := __LINE__ + 1;
+  if Sys.opaque_identity true then raise Exit;
+  x
+
+let test_backtrace () =
+  let at =
+    Compose.raised_at Exit (fun () ->
+        Rune.linear_transpose T.tensor T.tensor raising (vec [| 1. |]))
+  in
+  equal ~msg:"the first slot" Compose.site_t
+    (Some ("test_linear.ml", !raised))
+    at
+
 let test_affine () =
   let f x = Nx.add (Nx.mul_s x 3.) (Nx.ones_like x) in
   let lt = Rune.linear_transpose T.tensor T.tensor f (vec [| 0.; 0. |]) in
@@ -531,6 +549,7 @@ let () =
              test "a matrix's transpose" test_matrix;
              test "no element of the parameters is read" test_unread;
              test "the function runs once, at the call" test_once_at_call;
+             test "a raise keeps its backtrace" test_backtrace;
              test "an affine term is dropped" test_affine;
              test "an integer's cotangent is zero" test_integer;
              test "a transpose is fresh" test_transpose_fresh;

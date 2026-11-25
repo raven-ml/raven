@@ -660,10 +660,12 @@ module Probe = struct
       match f () with
       | r -> Ok r
       | exception ((Out_of_memory | Stack_overflow | Sys.Break) as x) ->
-          Printexc.raise_with_backtrace x (Printexc.get_raw_backtrace ())
+          reraise x
       | exception x -> Error (x, Printexc.get_raw_backtrace ())
     in
-    let r = Effect.Deep.try_with body () { effc } in
+    let r =
+      Effect.Deep.match_with body () { retc = Fun.id; exnc = reraise; effc }
+    in
     (r, List.filter_map (offer p) (List.rev !offers))
 end
 

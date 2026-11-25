@@ -61,7 +61,7 @@
     - misuse raises [Invalid_argument] with a message that starts with the entry
       point, at a moment {!section-errors} names;
     - an exception the function it transforms raises passes through it
-      unchanged;
+      unchanged, with the backtrace of its raise;
     - a tangent, a gradient and a pullback's result are fresh, and under another
       transformation they are that transformation's values;
     - integer and boolean arrays have no derivative, so a derivative is zero
