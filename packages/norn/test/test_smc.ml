@@ -118,9 +118,48 @@ let init_tests =
 
 (* step *)
 
+(* The next temperature from [s] keeps half the effective size of the smallest
+   step, Kish's [(Σ w)² / Σ w²] of [w = exp (db L)] over the particles whose
+   likelihood is not 0: half their count. [β'] is found to a relative 1e-3: the
+   solve's estimate is an end of a bracket around the root of half-width at most
+   1e-3 [β'] (jera.mli, Root.bracket), so the size passes half within 2e-3 [β']
+   of it. *)
+let keeps_half s s' =
+  let l =
+    List.filter Float.is_finite
+      (Array.to_list (Nx.to_array s.Norn.Smc.likelihood))
+  in
+  let beta = Nx.item [] s.beta and beta' = Nx.item [] s'.Norn.Smc.beta in
+  let ess b =
+    let w = List.map (fun l -> Float.exp ((b -. beta) *. l)) l in
+    let sum = List.fold_left ( +. ) 0. w in
+    sum *. sum /. List.fold_left (fun a w -> a +. (w *. w)) 0. w
+  in
+  let half = float_of_int (List.length l) /. 2. in
+  if beta' >= 1. then at_least float_exact ~than:half (ess 1.)
+  else begin
+    at_least float_exact ~than:half (ess (beta' *. (1. -. 2e-3)));
+    at_most float_exact ~than:half (ess (beta' *. (1. +. 2e-3)))
+  end
+
+let next_temperature =
+  cases "the next temperature keeps half the smallest step's effective size"
+    ~id:(fun m -> m.name)
+    [ conjugate; gaussian; truncated ]
+    (fun m ->
+      let step = Norn.Smc.step t ~prior:m.prior ~likelihood:m.likelihood in
+      let s0 =
+        Norn.Smc.init t ~prior:m.prior ~likelihood:m.likelihood
+          (m.draw (Nx.Rng.key 2) particles)
+      in
+      let s1 = step (Nx.Rng.key 3) s0 in
+      keeps_half s0 s1;
+      keeps_half s1 (step (Nx.Rng.key 4) s1))
+
 let step_tests =
   group "step"
     [
+      next_temperature;
       test "a step at β = 1 leaves the evidence" (fun () ->
           let s =
             Norn.Smc.init t ~resampled:10 ~prior:conjugate.prior
@@ -378,5 +417,6 @@ let () =
          step_tests;
          evidence_tests;
          run_tests;
-         group "ln Z" (List.map within_errors [ conjugate; gaussian; mixture ]);
+         group "ln Z"
+           (List.map within_errors [ conjugate; gaussian; mixture; truncated ]);
        ])

@@ -1909,9 +1909,10 @@ module Smc : sig
       product of their mean incremental weights estimates the evidence.
 
       {b Temperatures.} From [β] the next temperature is [1] if the incremental
-      weights [exp ((1 - β) L)] keep an effective sample size of half the
-      particles; otherwise it is the [β'] above [β] and below [1] where they
-      keep exactly half, found by {!Jera.Root.bracket}.
+      weights [exp ((1 - β) L)] keep half the effective sample size of the
+      smallest step, the number of particles whose likelihood is not [0];
+      otherwise it is the [β'] above [β] and below [1] where they keep exactly
+      half, found by {!Jera.Root.bracket} to a relative [10⁻³].
 
       {b Moves.} Each step is waste-free (Dau and Chopin 2022): it resamples
       [resampled] ancestors, [M], from the [N] particles systematically by their

@@ -85,6 +85,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Smc`'s next temperature keeps half the effective sample size of the
+  smallest step, the number of particles whose likelihood is not `0`. With
+  more than half the particles at likelihood `0` no temperature kept half of
+  all of them, and a step stayed at its temperature.
 - **Breaking:** `Nuts.init`, `Hmc.init` and `Ensemble.init` refuse a start
   where the density is `-inf` at a chain, naming the chain, and a position
   holding a tensor that is not of a float dtype, naming its path. From a

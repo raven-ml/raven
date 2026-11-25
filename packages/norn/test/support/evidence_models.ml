@@ -136,3 +136,24 @@ let conjugate =
     draw = (fun k n -> Nx.Rng.normal ~key:k Nx.float64 [| n; 1 |]);
     log_z;
   }
+
+(* A likelihood that is 0 outside [-1, 1]: N(0, 0.3²) inside, under the uniform
+   prior on [-5, 5]. Four in five prior draws have no likelihood. [Z] is the
+   normal's mass inside over the prior's width, 10. *)
+let truncated =
+  let prior, draw, log_volume = cube 1 in
+  let sigma = 0.3 in
+  {
+    name = "a normal likelihood cut to [-1, 1]";
+    prior;
+    likelihood =
+      (fun x ->
+        Nx.where
+          (Nx.all ~axes:[ 1 ] (Nx.less_equal (Nx.abs x) (f64 1.)))
+          (normal_at x (Nx.zeros Nx.float64 [| 1 |]) sigma)
+          (Nx.full Nx.float64 [| rows x |] Float.neg_infinity));
+    draw;
+    log_z =
+      Float.log (1. -. Float.erfc (1. /. (sigma *. Float.sqrt 2.)))
+      -. log_volume;
+  }

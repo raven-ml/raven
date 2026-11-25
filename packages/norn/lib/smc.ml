@@ -78,12 +78,16 @@ let log_ess lw =
 let beta_tol = Jera.Tol.rel 1e-3
 
 (* [next s] is the next temperature: [1] if the incremental weights to it keep
-   an ESS of half the particles, else the temperature in (beta, 1] where the ESS
-   is half the particles. *)
+   half the ESS of the smallest step, else the temperature in (beta, 1] where
+   they keep exactly half. The smallest step gives every particle of nonzero
+   likelihood weight 1, so its ESS is their count, and half of it is always
+   bracketed: a target of half the particles would have no root once more than
+   half of them have likelihood 0, where every step above [beta] keeps the same
+   tempered posterior. *)
 let next (type f) (s : (_, f, 'd) state) : (float, f, 'd) Nx.t =
-  let n = float_of_int (Nx.shape s.likelihood).(0) in
-  let half = Nx.scalar_like s.beta (Float.log (n /. 2.)) in
-  let f b = Nx.sub (log_ess (increments s.likelihood (Nx.sub b s.beta))) half in
+  let ess db = log_ess (increments s.likelihood db) in
+  let half = Nx.sub_s (ess (Nx.zeros_like s.beta)) (Float.log 2.) in
+  let f b = Nx.sub (ess (Nx.sub b s.beta)) half in
   let one = Nx.ones_like s.beta in
   let root = Jera.Root.bracket ~tol:beta_tol f ~lo:s.beta ~hi:one in
   Nx.where
