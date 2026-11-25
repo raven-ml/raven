@@ -115,8 +115,8 @@ val unconstrain : ('p, 'y, 'f, 'd) t -> 'p -> 'p coords
 (** [unconstrain m p] is the coordinates of the latent values [p].
 
     Raises [Invalid_argument] naming the site if a tensor of [p] does not have
-    its site's shape, or if a parameter of a site's distribution is outside
-    its domain. *)
+    its site's shape, or if a parameter of a site's distribution is outside its
+    domain. *)
 
 (** {1:batched Batched interpreters}
 

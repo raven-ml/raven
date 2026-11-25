@@ -170,8 +170,8 @@ let constant c =
   }
 
 (* A likelihood of 1 on [-1, 1] and 0 outside, under the uniform prior on [-5,
-   5]: every point of nonzero likelihood ties. [Z] is the prior's mass on
-   [-1, 1], 0.2, and the posterior is the prior cut to it. *)
+   5]: every point of nonzero likelihood ties. [Z] is the prior's mass on [-1,
+   1], 0.2, and the posterior is the prior cut to it. *)
 let indicator =
   let prior, draw, log_volume = cube 1 in
   {

@@ -77,9 +77,9 @@ module Support : sig
   val pp : Format.formatter -> t -> unit
   (** [pp ppf s] formats [s] as a set: [(-inf, inf)], [(0, inf)], [(-inf, 0)],
       [(0, 1)], [{0, 1, 2, ...}], [{0, 1, ..., 10}], [{false, true}], or a
-      phrase such as [simplex of 3]. An interval of at most three integers
-      lists them, as [{0, 1}], and an empty one is [{}]. A bound is the
-      shortest decimal that reads back as it ({!Nx.Dtype.pp_value}). *)
+      phrase such as [simplex of 3]. An interval of at most three integers lists
+      them, as [{0, 1}], and an empty one is [{}]. A bound is the shortest
+      decimal that reads back as it ({!Nx.Dtype.pp_value}). *)
 end
 
 module Bij : sig
@@ -106,11 +106,11 @@ module Bij : sig
       support, with a log-determinant of [-inf], so the pulled-back density
       counts no value twice: its mass is the target's mass between the
       saturation points. For a vector unit, the dtype's precision is the
-      tolerance {!Dist} reads its supports with: a simplex's [K] components
-      sum to one within [4 K ε], a sum-to-zero vector's [K] components sum to
-      zero within [4 K ε] times their largest magnitude, and each row of a
-      Cholesky factor of [n × n] has a squared norm within [4 n ε] of one,
-      [ε] the epsilon of the dtype. *)
+      tolerance {!Dist} reads its supports with: a simplex's [K] components sum
+      to one within [4 K ε], a sum-to-zero vector's [K] components sum to zero
+      within [4 K ε] times their largest magnitude, and each row of a Cholesky
+      factor of [n × n] has a squared norm within [4 n ε] of one, [ε] the
+      epsilon of the dtype. *)
 
   type ('f, 'd) t
   (** The type for bijectors over tensors of element type ['f]. *)
@@ -186,9 +186,9 @@ module Bij : sig
 
   val shape : ('f, 'd) t -> int array -> int array
   (** [shape b s] is the shape of the coordinates of a value of shape [s]: [s]
-      for the elementwise bijectors, {!affine_tril} and {!ordered}, [s] with
-      its last axis one shorter for {!simplex} and {!sum_to_zero}, and [s]
-      with its last two axes of [n] replaced by one of [n (n - 1) / 2] for
+      for the elementwise bijectors, {!affine_tril} and {!ordered}, [s] with its
+      last axis one shorter for {!simplex} and {!sum_to_zero}, and [s] with its
+      last two axes of [n] replaced by one of [n (n - 1) / 2] for
       {!cholesky_corr}. [compose b c]'s is [c]'s shape of [b]'s.
 
       Raises [Invalid_argument] if [s] has fewer axes than a unit, if a vector
@@ -588,15 +588,14 @@ module Summary : sig
   (** [of_weighted u w] summarises the weighted draws [w] of [u], their log
       weights raw: it smooths them as {!Norn.Diag.val-psis} does, and judges
       them by the raw weights' [k̂]. With [x_s] an element's draws and [w̃_s] the
-      smoothed weights normalised, its columns are the mean
-      [μ = Σ w̃_s x_s], the standard deviation [sqrt (Σ w̃_s (x_s - μ)²)], the
-      5%, 50% and 95% quantiles, the Monte Carlo standard error of the mean
-      of independent draws [sqrt (Σ w̃_s² (x_s - μ)²)], and the mean's
-      effective sample size, the variance over that error squared. A
-      quantile interpolates linearly between the draws of positive weight in
-      order, the [j]-th at the middle of its weight,
-      [w̃_1 + ... + w̃_(j-1) + w̃_j / 2]; below the first draw's middle it is
-      the first draw, above the last's the last. Its findings are each
+      smoothed weights normalised, its columns are the mean [μ = Σ w̃_s x_s], the
+      standard deviation [sqrt (Σ w̃_s (x_s - μ)²)], the 5%, 50% and 95%
+      quantiles, the Monte Carlo standard error of the mean of independent draws
+      [sqrt (Σ w̃_s² (x_s - μ)²)], and the mean's effective sample size, the
+      variance over that error squared. A quantile interpolates linearly between
+      the draws of positive weight in order, the [j]-th at the middle of its
+      weight, [w̃_1 + ... + w̃_(j-1) + w̃_j / 2]; below the first draw's middle it
+      is the first draw, above the last's the last. Its findings are each
       element's [Not_finite] and [Constant], in row order, then [Pareto_k]. The
       statistics are computed at float64.
 
@@ -716,27 +715,28 @@ module Dist : sig
 
       The other continuous families' log densities are closed forms. Each is
       within [8 ε Σ |t|] of the exact one, and the least subnormal where it
-      underflows, [ε] the epsilon of the parameters' dtype, the [t] the terms
-      of the log density as the family writes it, [z = (x - loc) / scale]:
+      underflows, [ε] the epsilon of the parameters' dtype, the [t] the terms of
+      the log density as the family writes it, [z = (x - loc) / scale]:
       - {!normal}: [z² / 2], [log scale] and [log √(2π)]; {!half_normal} the
         same and [log 2];
       - {!lognormal}: the normal's at [log x], [log x], and [z log x / scale],
         the rounding of [log x] carried through [z];
-      - {!cauchy}: [log1p z²], [log scale] and [log π]; {!half_cauchy} the
-        same and [log 2];
+      - {!cauchy}: [log1p z²], [log scale] and [log π]; {!half_cauchy} the same
+        and [log 2];
       - {!laplace}: [z], [log scale] and [log 2];
       - {!logistic}: [z], [2 log1p (exp (-z))] and [log scale];
       - {!exponential}: [log rate] and [rate x];
       - {!uniform}: [log (high - low)];
       - {!von_mises}: [2κ sin² ((x - loc) / 2)], [log (2π i0e κ)] and
-        [κ (x - loc) sin (x - loc)], the rounding of [x - loc] carried
-        through the sine;
+        [κ (x - loc) sin (x - loc)], the rounding of [x - loc] carried through
+        the sine;
       - {!mvn}: [|w|² / 2], [log L_ii] and [log √(2π)] per component, and
-        [4 κ |w|²], [w = L⁻¹ (x - loc)] and [κ = ‖ |L⁻¹| |L| ‖∞] the
-        condition number of [L] for its triangular solve.
-      {!lkj_cholesky}'s log density is within [16 ε (|f| + Σ_i |(n - i + 2η
-      - 2) log L_ii|)]. These bounds hold on a faithful device and compiled,
-      as those above. *)
+        [4 κ |w|²], [w = L⁻¹ (x - loc)] and [κ = ‖ |L⁻¹| |L| ‖∞] the condition
+        number of [L] for its triangular solve.
+
+      {!lkj_cholesky}'s log density is within
+      [16 ε (|f| + Σ_i |(n - i + 2η - 2) log L_ii|)]. These bounds hold on a
+      faithful device and compiled, as those above. *)
 
   val normal :
     loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
@@ -833,16 +833,16 @@ module Dist : sig
     loc:(float, 'f, 'd) Nx.t ->
     concentration:(float, 'f, 'd) Nx.t ->
     ((float, 'f, 'd) Nx.t, 'f, 'd) t
-  (** [von_mises ~loc ~concentration] is the distribution of angles on
-      \[[-π], [π]\] with density [exp (κ cos (x - loc)) / (2π I₀(κ))], [κ]
-      the concentration, in [\[0, inf)]: uniform at [κ = 0], near a normal of
+  (** [von_mises ~loc ~concentration] is the distribution of angles on \[[-π],
+      [π]\] with density [exp (κ cos (x - loc)) / (2π I₀(κ))], [κ] the
+      concentration, in [\[0, inf)]: uniform at [κ = 0], near a normal of
       variance [1 / κ] about [loc] for a large [κ]. The log density is
-      [-2κ sin² ((x - loc) / 2) - log (2π i0e κ)] ({!Nx.i0e}), finite at
-      every finite [κ]. [loc] is finite and may lie off \[[-π], [π]\]: the
-      density is periodic in it. Draws are {!Nx.Rng.von_mises}'s, Best and
-      Fisher's rejection, moved by [loc] and wrapped onto \[[-π], [π]\]. Its
-      density is finite on the closed interval, at [±π] rounded to the dtype
-      too, which its draws reach. *)
+      [-2κ sin² ((x - loc) / 2) - log (2π i0e κ)] ({!Nx.i0e}), finite at every
+      finite [κ]. [loc] is finite and may lie off \[[-π], [π]\]: the density is
+      periodic in it. Draws are {!Nx.Rng.von_mises}'s, Best and Fisher's
+      rejection, moved by [loc] and wrapped onto \[[-π], [π]\]. Its density is
+      finite on the closed interval, at [±π] rounded to the dtype too, which its
+      draws reach. *)
 
   val lkj_cholesky :
     int -> concentration:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
@@ -888,8 +888,8 @@ module Dist : sig
       [trials sigmoid logits] for the logits, [x / mean] and
       [(x + r) / (r + mean)] for the mean, [r] the dispersion.
 
-      {!bernoulli}'s log mass [f] is within [8 ε |f|], and the least
-      subnormal where it underflows; {!categorical}'s within
+      {!bernoulli}'s log mass [f] is within [8 ε |f|], and the least subnormal
+      where it underflows; {!categorical}'s within
       [8 ε (|logits_k| + |logsumexp logits| + log K)] at category [k] of [K]. *)
 
   val bernoulli : logits:(float, 'f, 'd) Nx.t -> ('d Nx.bool_t, 'f, 'd) t
@@ -953,25 +953,22 @@ module Dist : sig
     ((float, 'f, 'd) Nx.t, 'f, 'd) t ->
     ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [truncated ?low ?high d] is [d] conditioned on lying strictly between
-      [low] and [high], elementwise, a missing bound leaving its side as
-      [d]'s: the density of [d] over its mass [F(high) - F(low)] there, [-inf]
-      outside.
+      [low] and [high], elementwise, a missing bound leaving its side as [d]'s:
+      the density of [d] over its mass [F(high) - F(low)] there, [-inf] outside.
       The bounds are finite, broadcast against [d]'s shape, and clip to [d]'s
-      support. The mass is a difference of upper tails where [low] lies
-      above [d]'s median and of lower tails otherwise, each held as
-      logarithms, so the mass between bounds far in one tail keeps its
-      digits; where the two tails agree within a factor [e^(1/4)] it is the
-      density integrated over the window by eight-point Gauss-Legendre
-      quadrature. The mass must be positive, a check like a parameter's.
-      The log density is [d]'s less the log mass, within
-      [64 ε (1 + |log f| + |log m|)] of the exact one, [f] [d]'s density and
-      [m] the mass: at bounds a million standard deviations out at float32,
-      within that of their magnitude. Draws and the quantile invert [d] at
-      [(1 - p) F(low) + p F(high)], read from the smaller tail, within the
-      precision {!quantile} states, [F] and [f] [d]'s: a window narrower
-      than [ε min (F, 1 - F) / f] is not resolved. Its
-      coordinates map onto the interval, or the half-line, between the
-      bounds and [d]'s support.
+      support. The mass is a difference of upper tails where [low] lies above
+      [d]'s median and of lower tails otherwise, each held as logarithms, so the
+      mass between bounds far in one tail keeps its digits; where the two tails
+      agree within a factor [e^(1/4)] it is the density integrated over the
+      window by eight-point Gauss-Legendre quadrature. The mass must be
+      positive, a check like a parameter's. The log density is [d]'s less the
+      log mass, within [64 ε (1 + |log f| + |log m|)] of the exact one, [f]
+      [d]'s density and [m] the mass: at bounds a million standard deviations
+      out at float32, within that of their magnitude. Draws and the quantile
+      invert [d] at [(1 - p) F(low) + p F(high)], read from the smaller tail,
+      within the precision {!quantile} states, [F] and [f] [d]'s: a window
+      narrower than [ε min (F, 1 - F) / f] is not resolved. Its coordinates map
+      onto the interval, or the half-line, between the bounds and [d]'s support.
 
       Raises [Invalid_argument] if neither bound is given, or if [d] is not
       {!normal}, {!half_normal}, {!lognormal}, {!cauchy}, {!half_cauchy},
@@ -1036,21 +1033,21 @@ module Dist : sig
       differentiable in the parameters, wherever rune differentiates the
       {!Nx.Rng} sampler it uses. A draw of a family on an open interval lies
       inside it: one that rounds onto a finite bound, as one in a few hundred
-      does at bfloat16, is the float next to the bound, and one that
-      overflows is the largest finite float. *)
+      does at bfloat16, is the float next to the bound, and one that overflows
+      is the largest finite float. *)
 
   val quantile :
     ((float, 'f, 'd) Nx.t, 'f, 'd) t -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t
-  (** [quantile d p] is the value whose CDF is [p], elementwise, read from
-      the smaller tail: above [1/2] it inverts the survival at [1 - p], which
-      is exact there. It is within [64 ε (|x| + (1 + |log m|) m / f)] of the
-      exact quantile [x], [m = min (p, 1 - p)] the tail it reads and [f] the
-      density at [x]: [m / f] is the inverse's conditioning, and
-      [1 + |log m|] the error of a tail held as its logarithm. For {!gamma}
-      and {!inverse_gamma} it is [0.] at [p = 0.] and [inf] at [p = 1.]; for
-      {!beta}, {!Nx.betaincinv}, [0.] at [p = 0.] and [1.] at [p = 1.]; for
-      {!truncated}, its lower bound at [p = 0.] and its upper at [p = 1.], or
-      the edge of [d]'s support on a side without one.
+  (** [quantile d p] is the value whose CDF is [p], elementwise, read from the
+      smaller tail: above [1/2] it inverts the survival at [1 - p], which is
+      exact there. It is within [64 ε (|x| + (1 + |log m|) m / f)] of the exact
+      quantile [x], [m = min (p, 1 - p)] the tail it reads and [f] the density
+      at [x]: [m / f] is the inverse's conditioning, and [1 + |log m|] the error
+      of a tail held as its logarithm. For {!gamma} and {!inverse_gamma} it is
+      [0.] at [p = 0.] and [inf] at [p = 1.]; for {!beta}, {!Nx.betaincinv},
+      [0.] at [p = 0.] and [1.] at [p = 1.]; for {!truncated}, its lower bound
+      at [p = 0.] and its upper at [p = 1.], or the edge of [d]'s support on a
+      side without one.
 
       {!Rune} differentiates it in [p] and in [d]'s parameters. For {!gamma},
       {!inverse_gamma} and {!beta} the first derivatives are finite wherever

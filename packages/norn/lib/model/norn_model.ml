@@ -151,14 +151,13 @@ type seen = {
   s_support : unit -> Norn.Support.t;
 }
 
-(* A site's coordinates map through its distribution with the checks its
-   caller settled, once per evaluation, so [Dist.coords] and a reparam's
-   bijector run none of their own. [waived d] waives them, for a run at
-   coordinates no caller chose: learning a model, naming a reparam's
-   bijector, and a log likelihood, which reads no latent site's density.
-   There zero coordinates may give a parameter outside its domain, as a
-   scale of [0], and nothing reads it. [named context site d] runs them
-   now, its refusal naming the site. *)
+(* A site's coordinates map through its distribution with the checks its caller
+   settled, once per evaluation, so [Dist.coords] and a reparam's bijector run
+   none of their own. [waived d] waives them, for a run at coordinates no caller
+   chose: learning a model, naming a reparam's bijector, and a log likelihood,
+   which reads no latent site's density. There zero coordinates may give a
+   parameter outside its domain, as a scale of [0], and nothing reads it. [named
+   context site d] runs them now, its refusal naming the site. *)
 let waived d = D.check ~unless:(Nx.scalar_at (D.placement d) Nx.bool true) "" d
 let named context site d = D.check (Printf.sprintf "%s: site %s" context site) d
 
@@ -423,9 +422,8 @@ let run (type d) (m : (_, _, _, d) t) context (a : d answer) ~(factor : d factor
 let reparam_of m i = List.assoc_opt i m.reparams
 let fixed_of m i = List.assoc_opt i m.fixed
 
-(* [bijector m i d] is the coordinates' bijector of the continuous site [i],
-   [d] settled by its caller ([waived], [named] or the interpreter's
-   checks). *)
+(* [bijector m i d] is the coordinates' bijector of the continuous site [i], [d]
+   settled by its caller ([waived], [named] or the interpreter's checks). *)
 let bijector (type f g) (m : (_, _, f, 'd) t) i
     (d : ((float, g, 'd) Nx.t, g, 'd) D.t) : (g, 'd) Bij.t =
   match reparam_of m i with

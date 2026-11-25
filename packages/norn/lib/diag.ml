@@ -92,9 +92,9 @@ let divergent_shift (type u f) (u : (u, 'd) Nx.Ptree.t) (s : (f, 'd) Stats.t Dra
 
 (* Calibration *)
 
-(* [exact_integers dt] is the count up to which the float dtype [dt] holds
-   every integer, 2 to the bits of its significand. Every dtype is named, so a
-   new float dtype is a compile error here. *)
+(* [exact_integers dt] is the count up to which the float dtype [dt] holds every
+   integer, 2 to the bits of its significand. Every dtype is named, so a new
+   float dtype is a compile error here. *)
 let exact_integers (type a b) (dt : (a, b) Nx.dtype) =
   match dt with
   | Nx.Dtype.Float64 -> Some (1 lsl 53)

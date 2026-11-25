@@ -180,7 +180,6 @@ let half_log_2pi = 0.5 *. Float.log (2. *. Float.pi)
 (* [half_square z] is [-z² / 2], as [-(z / √2)²]: the square overflows only
    where the result does, from [z = 362] at float16 rather than [256]. *)
 let half_square z = Nx.neg (Nx.square (Nx.mul_s z (Float.sqrt 0.5)))
-
 let log_pi = Float.log Float.pi
 
 let log_sigmoid x = Nx.neg (Nx.softplus (Nx.neg x))
@@ -882,9 +881,9 @@ let mirror lc lower =
     above = false;
   }
 
-(* [density d] is a location-scale family's log density, less [log scale],
-   at the distance [d = x - loc]: a family whose tail is algebraic reads [d]
-   and [scale] apart where [d / scale] overflows. *)
+(* [density d] is a location-scale family's log density, less [log scale], at
+   the distance [d = x - loc]: a family whose tail is algebraic reads [d] and
+   [scale] apart where [d / scale] overflows. *)
 let location_scale family ~loc ~scale ~density ~draw ~tails () =
   let dt = Nx.dtype loc in
   let z x = Nx.div (Nx.sub x loc) scale in
@@ -1079,9 +1078,7 @@ let half_normal ~scale =
     ~density:(fun x ->
       let z = Nx.div x scale in
       Nx.sub
-        (Nx.add_s
-           (half_square z)
-           (Float.log 2. -. half_log_2pi))
+        (Nx.add_s (half_square z) (Float.log 2. -. half_log_2pi))
         (Nx.log scale))
     ~draw:(fun k s -> Nx.mul scale (Nx.abs (Noise.normal k dt s)))
     ~tails:
@@ -2034,14 +2031,14 @@ let truncated ?low ?high d =
     let x = match lo with Some l -> Nx.maximum x l | None -> x in
     match hi with Some h -> Nx.minimum x h | None -> x
   in
-  (* Where the tail at the point underflows the dtype, the base's inverse
-     cannot read it: the point is found from the bound on that side by
-     Newton's steps on the tail's logarithm, whose slope is [± f / F], the
-     density over the tail. Each step is clamped to the bounds. Toward an
-     edge of the base's support, as a gamma's [0], a step is taken in the
-     logarithm of the gap to it, [x = e ± g] with [g] moved by
-     [g exp (-step / g)]: a step past the edge, as Newton's from [1e-130]
-     toward a gamma's tail at [1e-135], lands short of it. *)
+  (* Where the tail at the point underflows the dtype, the base's inverse cannot
+     read it: the point is found from the bound on that side by Newton's steps
+     on the tail's logarithm, whose slope is [± f / F], the density over the
+     tail. Each step is clamped to the bounds. Toward an edge of the base's
+     support, as a gamma's [0], a step is taken in the logarithm of the gap to
+     it, [x = e ± g] with [g] moved by [g exp (-step / g)]: a step past the
+     edge, as Newton's from [1e-130] toward a gamma's tail at [1e-135], lands
+     short of it. *)
   let tiny = Float.log (Prec.tiny d.dtype) in
   let newton ~upper target start =
     let edge = if upper then base_hi else base_lo in
@@ -2051,11 +2048,10 @@ let truncated ?low ?high d =
       let tail = if upper then t.log_sf !x else t.log_cdf !x in
       let slope = Nx.exp (Nx.sub (d.factors !x) tail) in
       let step = Nx.div (Nx.sub tail target) slope in
-      (* An infinite edge enters as one away from [x], so that neither arm
-         nor its derivative is NaN. *)
+      (* An infinite edge enters as one away from [x], so that neither arm nor
+         its derivative is NaN. *)
       let e =
-        Nx.where finite_edge edge
-          ((if upper then Nx.add_s else Nx.sub_s) !x 1.)
+        Nx.where finite_edge edge ((if upper then Nx.add_s else Nx.sub_s) !x 1.)
       in
       let gap = Nx.abs (Nx.sub !x e) in
       let shrunk = Nx.mul gap (Nx.exp (Nx.neg (Nx.div step gap))) in
