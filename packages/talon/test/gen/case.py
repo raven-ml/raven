@@ -415,6 +415,14 @@ def ocaml_string_list(names: list[str]) -> str:
 
 
 def ocaml_unicode(white, gc_aliases, gcs, sc_aliases, sc, scx, binary, orbits) -> str:
+    # Str.regex drops an initial "is" from a name it reads (UAX44-LM3), so a
+    # table name that starts with "is" could never be read.
+    for aliases in (gc_aliases, sc_aliases):
+        for names in aliases.values():
+            for alias in names:
+                assert not alias.startswith("is"), alias
+    for name in binary:
+        assert not name.startswith("is"), name
     tables: dict[bytes, str] = {}
     names = []
     def named(members: set[int]) -> str:
