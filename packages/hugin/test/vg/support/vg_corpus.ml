@@ -149,31 +149,6 @@ let pages = [ ("shapes", shapes); ("strokes", strokes); ("marks", marks) ]
 
 (* Reading outputs *)
 
-let of_base64 s =
-  let value c =
-    match c with
-    | 'A' .. 'Z' -> Char.code c - 65
-    | 'a' .. 'z' -> Char.code c - 71
-    | '0' .. '9' -> Char.code c + 4
-    | '+' -> 62
-    | '/' -> 63
-    | _ -> invalid_arg "of_base64"
-  in
-  let b = Buffer.create (String.length s * 3 / 4) in
-  let acc = ref 0 and bits = ref 0 in
-  String.iter
-    (fun c ->
-      if c <> '=' then begin
-        acc := (!acc lsl 6) lor value c;
-        bits := !bits + 6;
-        if !bits >= 8 then begin
-          bits := !bits - 8;
-          Buffer.add_char b (Char.chr ((!acc lsr !bits) land 0xff))
-        end
-      end)
-    s;
-  Buffer.contents b
-
 (* [load_png png] is the pixels of the PNG file [png], with its channels. *)
 let load_png png =
   let path = Filename.temp_file "hugin" ".png" in
@@ -182,49 +157,6 @@ let load_png png =
     (fun () ->
       Out_channel.with_open_bin path (fun oc -> output_string oc png);
       Nx_io.load_image path)
-
-(* [path_of_data d] is the path of the SVG path data [d] of absolute moves,
-   lines, cubics and closes. *)
-let path_of_data d =
-  let tokens = ref [] and b = Buffer.create 16 in
-  let flush () =
-    if Buffer.length b > 0 then begin
-      tokens := `Num (float_of_string (Buffer.contents b)) :: !tokens;
-      Buffer.clear b
-    end
-  in
-  String.iter
-    (fun c ->
-      match c with
-      | '0' .. '9' | '.' | 'e' -> Buffer.add_char b c
-      | '-' ->
-          flush ();
-          Buffer.add_char b c
-      | 'M' | 'L' | 'C' | 'Z' ->
-          flush ();
-          tokens := `Cmd c :: !tokens
-      | _ -> flush ())
-    d;
-  flush ();
-  let rec go q = function
-    | `Cmd 'M' :: `Num x :: `Num y :: rest ->
-        go (Path.move_to (P2.v x y) q) rest
-    | `Cmd 'L' :: `Num x :: `Num y :: rest ->
-        go (Path.line_to (P2.v x y) q) rest
-    | `Cmd 'C'
-      :: `Num a
-      :: `Num b
-      :: `Num c
-      :: `Num d
-      :: `Num x
-      :: `Num y
-      :: rest ->
-        go (Path.cubic_to (P2.v a b) (P2.v c d) (P2.v x y) q) rest
-    | `Cmd 'Z' :: rest -> go (Path.close q) rest
-    | [] -> q
-    | _ -> invalid_arg ("path_of_data: " ^ d)
-  in
-  go Path.empty (List.rev !tokens)
 
 (* Generated pictures *)
 
