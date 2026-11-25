@@ -1430,6 +1430,48 @@ let ink_outside p =
   done;
   !outside
 
+(* Wedges and rays: a corner [p] on a page 10 points wide, drawn at density 2,
+   and the directions of two sides, apart by at least 0.3 radians and at most pi
+   - 0.3. *)
+let gen_wedge =
+  let open Gen in
+  let pp ppf ((x, y), (a, b), k) =
+    Format.fprintf ppf "corner (%g, %g), angles %g and %g, %s" x y a b
+      (match k with
+      | `Fill -> "filled"
+      | `Solid -> "stroked"
+      | `Dashed -> "dashed")
+  in
+  with_pp pp
+    (triple
+       (pair (gen_in 1. 9.) (gen_in 1. 9.))
+       (map
+          (fun (a, d) -> (a, a +. d))
+          (pair (gen_in 0. (2. *. Float.pi)) (gen_in 0.3 (Float.pi -. 0.3))))
+       (of_list [ `Fill; `Solid; `Dashed ]))
+
+(* [wedge_alike w] states that the wedge or ray [w] draws the same image, within
+   a level, with its far points 1e4 out, where they map within the floats, and
+   1e308 out, where the density maps them beyond. *)
+let wedge_alike ((x, y), (a, b), kind) =
+  cover "filled" (kind = `Fill);
+  cover "dashed" (kind = `Dashed);
+  let drawn l =
+    let ux = x +. (l *. Float.cos a) and uy = y +. (l *. Float.sin a) in
+    let vx = x +. (l *. Float.cos b) and vy = y +. (l *. Float.sin b) in
+    let p =
+      match kind with
+      | `Fill -> Picture.fill red (Path.polygon [| x; ux; vx |] [| y; uy; vy |])
+      | `Solid -> Picture.stroke (Stroke.v 0.5) red (segment x y ux uy)
+      | `Dashed ->
+          Picture.stroke
+            (Stroke.v ~dash:[ 1.; 0.7 ] 0.5)
+            red (segment x y ux uy)
+    in
+    render ~density:2. 10. 10. p
+  in
+  same_image ~within:1 (drawn 1e4) (drawn 1e308)
+
 let render_group =
   group "render"
     [
@@ -1490,14 +1532,18 @@ let render_group =
           in
           equal float_exact 40. (coverage (render ~density:2. 10. 10. p)));
       cases "a fill with a vertex far beyond the page covers its area on it"
-        ~id:(Printf.sprintf "%g") [ 1e16; 1e300 ] (fun k ->
-          (* On the page, the triangle is the band between x = y / 3 and x = 20.
-             The edges have an end on the page, so they lie where they should to
-             within rounding. *)
-          let far = Path.polygon [| 0.; 20.; k |] [| 0.; 0.; 3. *. k |] in
+        ~id:(fun (k, d) -> Printf.sprintf "%g at density %g" k d)
+        [ (1e16, 1.); (1e300, 1.); (5e307, 2.) ]
+        (fun (k, density) ->
+          (* On the page, 20 pixels a side, the triangle is the band between x =
+             y / 3 and x = 20. The edges have an end on the page, so they lie
+             where they should to within rounding, also where the density maps
+             the far vertex beyond the floats. *)
+          let side = 20. /. density in
+          let far = Path.polygon [| 0.; side; k |] [| 0.; 0.; 3. *. k |] in
           area ~box:(20., 20.)
             (400. -. (200. /. 3.))
-            (coverage (render 20. 20. (Picture.fill red far))));
+            (coverage (render ~density side side (Picture.fill red far))));
       cases "a turned line far beyond the page crosses it within the precision"
         ~id:(Printf.sprintf "%g") [ 1e12; 1e14 ] (fun e ->
           (* The line through the page's centre leans 0.3 from a diagonal, so
@@ -1531,19 +1577,10 @@ let render_group =
             ~drift:(2. *. 20. *. off)
             (11. *. 20.)
             (coverage (render 20. 20. p)));
-      test
-        "a fill's end that the density maps beyond the range of floats is a gap"
-        (fun () ->
-          (* At density 2 the far vertex maps beyond max_float, so the triangle
-             loses it and draws no area. *)
-          let p =
-            Picture.fill red
-              (Path.polygon [| 0.; 10.; 1e308 |] [| 0.; 0.; 3e307 |])
-          in
-          equal float_exact 0. (coverage (render ~density:2. 10. 10. p)));
-      test "a slanted stroke to near max_float draws without failing" (fun () ->
-          (* Both ends map beyond max_float at density 2 and are held at 1e15,
-             which may bend its sides: only the drawing is stated. *)
+      test "a slanted stroke between ends beyond the floats draws" (fun () ->
+          (* Both ends map beyond max_float at density 2. Where both ends of a
+             segment lie that far, the precision promised is no bound: only the
+             drawing is stated. *)
           let far = segment (-1e308) (-1e308) 1e308 1e308 in
           let p =
             Picture.transform
@@ -1552,6 +1589,53 @@ let render_group =
           in
           equal (array int) [| 20; 20; 4 |]
             (Nx.shape (render ~density:2. 10. 10. p)));
+      test "a closed dashed subpath keeps its start's phase past the floats"
+        (fun () ->
+          (* A rectangle open far above the page, from (5, 5) right along y = 5:
+             its dashes there are measured from its start, 10 points at most,
+             whether its far side lies 1e4 or 1e305 out. *)
+          let open_box l =
+            Picture.stroke
+              (Stroke.v ~cap:`Butt ~dash:[ 2.; 2. ] 1.)
+              red
+              (Path.polygon [| 5.; 15.; 15.; 5. |]
+                 [| 5.; 5.; 5. +. l; 5. +. l |])
+          in
+          let near = render 20. 20. (open_box 1e4)
+          and far = render 20. 20. (open_box 1e305) in
+          for y = 3 to 7 do
+            for x = 7 to 13 do
+              equal color (rgba near y x) (rgba far y x)
+            done
+          done);
+      prop "a wedge or a ray draws alike however far its far points lie"
+        gen_wedge wedge_alike;
+      test "a dashed stroke of points whose differences overflow is dashed"
+        (fun () ->
+          (* As below, with dashes of 1e307 on and off, 1 pixel each: from the
+             page's left edge, where it starts, 10 dashes 1 by 2. *)
+          let p =
+            Picture.transform
+              Affine.(translate 10. 5. * scale 1e-307 1e-307)
+              (Picture.stroke
+                 (Stroke.v ~cap:`Butt ~dash:[ 1e307; 1e307 ] 2e307)
+                 red
+                 (segment (-1e308) 0. 1e308 0.))
+          in
+          equal float_exact 20. (coverage (render 20. 10. p)));
+      test "a stroke of points whose differences overflow crosses the page"
+        (fun () ->
+          (* The map brings ±1e308 to ±10 about the page's middle: a band 2 high
+             across the 20 pixels of the page. *)
+          let p =
+            Picture.transform
+              Affine.(translate 10. 5. * scale 1e-307 1e-307)
+              (Picture.stroke
+                 (Stroke.v ~cap:`Butt 2e307)
+                 red
+                 (segment (-1e308) 0. 1e308 0.))
+          in
+          equal float_exact 40. (coverage (render 20. 10. p)));
       test "an image to near max_float covers the page" (fun () ->
           let p =
             image ~box:(Box2.v 0. 0. 1e308 1e308) [| 1; 1; 1 |] [| 255 |]

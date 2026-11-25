@@ -738,6 +738,47 @@ let crop_fills_circle_part (_, (b, expected)) =
   in
   equal (float 1e-12) expected (area (polygons (fine (Path.crop b disc))))
 
+(* The line law under a map: a polyline cropped to the points a map takes into
+   the box draws, mapped, the points of the mapped polyline within the box, and
+   no other. *)
+let crop_keeps_lines_under ((m : Affine.t), subs) =
+  assume (Float.abs ((m.xx *. m.yy) -. (m.xy *. m.yx)) > 0.1);
+  let p = shapes_path ~closed:false subs in
+  let original = edges (segs (Path.transform m p))
+  and cropped = edges (segs (Path.transform m (Path.crop ~m crop_box p))) in
+  let mid ((x0, y0), (x1, y1)) = ((x0 +. x1) /. 2., (y0 +. y1) /. 2.) in
+  cover "a polyline crossing an edge"
+    (List.length cropped > 0 && List.length cropped <> List.length original);
+  List.iter
+    (fun e ->
+      let q = mid e in
+      satisfies ~claim:"within the box" point_t
+        (inside_box ~margin:(-1e-9) crop_box)
+        q;
+      satisfies ~claim:"on the polyline" point_t (near_edges original) q)
+    cropped;
+  List.iter
+    (fun ((x0, y0), (x1, y1)) ->
+      for k = 0 to 8 do
+        let t = Float.of_int k /. 8. in
+        let q = (x0 +. (t *. (x1 -. x0)), y0 +. (t *. (y1 -. y0))) in
+        if inside_box ~margin:1e-6 crop_box q then
+          satisfies ~claim:"kept by the crop" point_t (near_edges cropped) q
+      done)
+    original
+
+(* A cubic whose control values reach 1 in magnitude, and a box that cuts it
+   several times. *)
+let wavy =
+  Path.empty
+  |> Path.move_to (pt (-1.) 0.5)
+  |> Path.cubic_to (pt 1. 0.5) (pt (-1.) 0.5) (pt 1. 0.5)
+
+let wavy_box = Box2.v 0. 0. 0.25 1.
+
+(* A triangle that the unit box cuts to a square. *)
+let corner = Path.polygon [| 0.; 7.; 0. |] [| 0.; 0.; 7. |]
+
 let cropping =
   group "crop"
     [
@@ -839,6 +880,68 @@ let cropping =
             (segs
                (Path.crop unit_box
                   (Path.polyline [| 2.; 3.; 3. |] [| 0.; 0.; 5. |]))));
+      cases "crop cuts a segment whose differences overflow along its line"
+        ~id:fst
+        [
+          ( "a diagonal across max_float",
+            ( Box2.v 0. 0. 10. 10.,
+              ( -.Float.max_float,
+                -.Float.max_float,
+                Float.max_float,
+                Float.max_float ),
+              [ M (0., 0.); L (10., 10.) ] ) );
+          ( "a diagonal from 1e300",
+            (unit_box, (1e300, 1e300, 0.5, 0.5), [ M (1., 1.); L (0.5, 0.5) ])
+          );
+        ]
+        (fun (_, (b, (x0, y0, x1, y1), expected)) ->
+          equal segs_near expected
+            (segs (Path.crop b (Path.polyline [| x0; x1 |] [| y0; y1 |]))));
+      cases "crop commutes with scaling by a power of two"
+        ~id:(fun (n, _, _, e) -> Printf.sprintf "%s by 2^%d" n e)
+        [
+          ("a wavy cubic", wavy, wavy_box, 1);
+          ("a wavy cubic", wavy, wavy_box, 996);
+          ("a triangle", corner, unit_box, 1);
+          ("a triangle", corner, unit_box, 1020);
+        ]
+        (fun (_, p, b, e) ->
+          (* Scaling by a power of two is exact, so the crops agree bit for bit,
+             however large the path's values. *)
+          let k = Float.ldexp 1. e in
+          let m = Affine.scale k k in
+          equal segs_exact
+            (segs (Path.transform m (Path.crop b p)))
+            (segs (Path.crop (Box2.transform m b) (Path.transform m p))));
+      prop "crop with a map keeps the points of polylines within the box"
+        (Gen.pair gen_affine (gen_shapes ~closed:false))
+        crop_keeps_lines_under;
+      cases "crop with a map keeps a line's direction past the floats"
+        ~id:(Printf.sprintf "to %g") [ 100.; 1e300; 1e308 ] (fun l ->
+          (* The image runs from (4, 4) along (2, 1) and leaves the box at x =
+             10, wherever its far end lies, beyond the floats included. *)
+          let m = Affine.scale 4. 4. in
+          let p = Path.polyline [| 1.; 1. +. l |] [| 1.; 1. +. (l /. 2.) |] in
+          equal segs_near
+            [ M (4., 4.); L (10., 7.) ]
+            (segs (Path.transform m (Path.crop ~m (Box2.v 0. 0. 10. 10.) p))));
+      test "cut keeps a closed subpath's start, running along the box beyond"
+        (fun () ->
+          (* From (5, 5) out past x = 10 and back: the part beyond runs along x
+             = 10, and the subpath still starts at (5, 5), so a stroke's dashes
+             keep their phase there. *)
+          let p = Path.polygon [| 5.; 20.; 20.; 5. |] [| 5.; 5.; 8.; 8. |] in
+          equal segs_exact
+            [ M (5., 5.); L (10., 5.); L (10., 8.); L (5., 8.); Z ]
+            (segs (Path.cut (Box2.v 0. 0. 10. 10.) p)));
+      test "cut keeps a flat closed subpath that crop drops" (fun () ->
+          let p = Path.polygon [| 5.; 20. |] [| 5.; 5. |] in
+          let b = Box2.v 0. 0. 10. 10. in
+          equal segs_exact [] (segs (Path.crop b p));
+          equal segs_exact [ M (5., 5.); L (10., 5.); Z ] (segs (Path.cut b p)));
+      test "cut keeps a closed subpath within the box closed" (fun () ->
+          let p = Path.rect (Box2.v 1. 1. 2. 2.) in
+          equal path_t p (Path.cut (Box2.v 0. 0. 10. 10.) p));
     ]
 
 (* Shapes *)

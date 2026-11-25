@@ -59,8 +59,10 @@ val is_axial : Affine.t -> bool
 
     A frame's {e cut} is the box its geometry is cut at: on the page, a margin
     around it; in a stamp's definition,
-    {!Hugin_vg_instances.Instances.everywhere}. Coordinates mapped beyond
-    [1e15] are taken at [1e15]. *)
+    {!Hugin_vg_instances.Instances.everywhere}. A path is first cut, in its own
+    coordinates, to what its map takes into
+    {!Hugin_vg_instances.Instances.far}, so that every coordinate mapped is a
+    float and keeps its segment's direction. *)
 
 type sink = {
   move : float -> float -> unit;

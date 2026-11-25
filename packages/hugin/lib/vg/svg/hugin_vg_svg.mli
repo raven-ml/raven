@@ -54,7 +54,10 @@
     The document places every point the picture paints on the page within 0.001
     point of where the picture puts it, horizontally and vertically, whatever
     the transforms above it, except the ends of dashes past the first thousand
-    lengths of their pattern along a subpath:
+    lengths of their pattern along a subpath or past a stretch of it mapped
+    beyond [2{^1000}] points, and the points of a segment whose ends both lie
+    beyond about [2{^42}] points from them, which keep the rounding of those
+    ends:
     - Coordinates are mapped to the page through the transforms above them, in
       double precision, and written in points with three decimals, so that the
       numbers of the document are of the order of the page's size.

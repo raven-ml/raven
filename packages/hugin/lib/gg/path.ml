@@ -299,32 +299,48 @@ let flatten ?(tolerance = 0.1) m ~move ~line ~close acc p =
       at !acc x3 y3 line)
     ~close ~gap:Fun.id acc p
 
+(* [turns a b c d] is the parameters in ]0;1[ at which the cubic Bézier
+   coordinate with control values [a], [b], [c] and [d] turns, the roots of its
+   derivative, in increasing order. The values are first scaled by a power of
+   two to at most 1, which moves no root, so that the derivative's coefficients
+   and its discriminant are floats however large the values. Without real roots
+   the square root is NaN, and so are the roots, which are dropped. *)
+let turns a b c d =
+  let top =
+    Float.max
+      (Float.max (Float.abs a) (Float.abs b))
+      (Float.max (Float.abs c) (Float.abs d))
+  in
+  if not (top > 0. && Float.is_finite top) then []
+  else
+    let e = -snd (Float.frexp top) in
+    let a = Float.ldexp a e and b = Float.ldexp b e in
+    let c = Float.ldexp c e and d = Float.ldexp d e in
+    let qa = -.a +. (3. *. b) -. (3. *. c) +. d in
+    let qb = 2. *. (a -. (2. *. b) +. c) in
+    let qc = b -. a in
+    let disc = (qb *. qb) -. (4. *. qa *. qc) in
+    let q = -0.5 *. (qb +. Float.copy_sign (Float.sqrt disc) qb) in
+    List.filter (fun t -> 0. < t && t < 1.) [ q /. qa; qc /. q ]
+    |> List.sort_uniq Float.compare
+
 (* [widen bounds k a b c d] widens the interval of [bounds] at [k] and [k + 2]
    by the extremes of the cubic Bézier coordinate with control values [a], [b],
-   [c] and [d]: its values at the roots in ]0;1[ of its derivative, the
-   quadratic [qa], [qb], [qc]. Without real roots the square root is NaN, and so
-   are the roots. An extreme is clamped to the control values, which bound the
-   curve, so rounding never leaves them. *)
+   [c] and [d], its values where it turns. An extreme is clamped to the control
+   values, which bound the curve, so rounding never leaves them. *)
 let widen bounds k a b c d =
-  let qa = -.a +. (3. *. b) -. (3. *. c) +. d in
-  let qb = 2. *. (a -. (2. *. b) +. c) in
-  let qc = b -. a in
   let lo = Float.min (Float.min a b) (Float.min c d) in
   let hi = Float.max (Float.max a b) (Float.max c d) in
-  let extreme t =
-    if 0. < t && t < 1. then begin
+  List.iter
+    (fun t ->
       let v = Float.min hi (Float.max lo (bezier t a b c d)) in
       bounds.(k) <- Float.min bounds.(k) v;
-      bounds.(k + 2) <- Float.max bounds.(k + 2) v
-    end
-  in
-  let disc = (qb *. qb) -. (4. *. qa *. qc) in
-  let q = -0.5 *. (qb +. Float.copy_sign (Float.sqrt disc) qb) in
-  extreme (q /. qa);
-  extreme (qc /. q)
+      bounds.(k + 2) <- Float.max bounds.(k + 2) v)
+    (turns a b c d)
 
-(* [extent p] is [bounds p] and whether [p] has a gap, from one traversal. *)
-let extent p =
+(* [extent m p] is [bounds (transform m p)] and whether that path has a gap,
+   from one traversal. *)
+let extent m p =
   (* [minx; miny; maxx; maxy; current x; current y] *)
   let b = [| infinity; infinity; neg_infinity; neg_infinity; 0.; 0. |] in
   let add () x y =
@@ -336,7 +352,7 @@ let extent p =
     b.(5) <- y
   in
   let gaps = ref false in
-  fold_drawn Affine.id ~move:add ~line:add
+  fold_drawn m ~move:add ~line:add
     ~cubic:(fun () c1x c1y c2x c2y x y ->
       widen b 0 b.(4) c1x c2x x;
       widen b 1 b.(5) c1y c2y y;
@@ -351,17 +367,22 @@ let extent p =
   in
   (box, !gaps)
 
-let bounds p = fst (extent p)
+let bounds p = fst (extent Affine.id p)
 
 (* Cropping
 
    A box is the intersection of four half-planes, and [crop] cuts each subpath
-   by them in turn. A cut keeps the pieces of an open subpath within the
-   half-plane as subpaths of their own. A closed subpath stays one closed
-   subpath: from where it leaves the half-plane to where it comes back, it runs
-   straight along the edge instead. That segment and the piece it replaces bound
-   a region outside the half-plane, so the winding number of every point inside
-   is unchanged, and so is the region under either fill rule. *)
+   by them in turn. Under a map, each is the half-plane of the points the map
+   takes to one side of an edge, and a cut in the path's own coordinates is the
+   cut of the mapped path, since an affine map keeps lines and the order of
+   their points: the points of a cut are found without mapping them, so the
+   image may lie beyond the floats. A cut keeps the pieces of an open subpath
+   within the half-plane as subpaths of their own. A closed subpath stays one
+   closed subpath: from where it leaves the half-plane to where it comes back,
+   it runs straight along the edge instead. That segment and the piece it
+   replaces bound a region outside the half-plane, so the winding number of
+   every point inside is unchanged, and so is the region under either fill rule.
+   Cut for stroking ([cut]), a region of no area is kept: a stroke draws it. *)
 
 type seg =
   | S_line of float * float
@@ -396,18 +417,70 @@ let subpaths p =
   push false;
   List.rev !subs
 
-(* The half-plane of the points whose coordinate along [axis] is at least [c] if
-   [lower], and at most [c] otherwise. *)
-type half = { axis : [ `X | `Y ]; c : float; lower : bool }
+(* The half-plane of the points whose value [a x + b y] is at least [c] if
+   [lower], and at most [c] otherwise. [a] and [b] are a row of a map scaled by
+   a power of two so that the larger is at least 1/8 and below 1/4: the value of
+   a point is a float, and so is the difference of two. A row along an axis has
+   its edge at [edge] on that axis, where a cut puts its points exactly. *)
+type half = {
+  a : float;
+  b : float;
+  c : float;
+  lower : bool;
+  edge : [ `X of float | `Y of float | `None ];
+}
 
-let within h v = if h.lower then v >= h.c else v <= h.c
-let along h x y = match h.axis with `X -> x | `Y -> y
-let on_edge h x y = match h.axis with `X -> (h.c, y) | `Y -> (x, h.c)
+(* [half (ra, rb, rc) bound ~lower] is the half-plane of the points that the row
+   [ra x + rb y + rc] takes to at least [bound] if [lower], at most
+   otherwise. *)
+let half (ra, rb, rc) bound ~lower =
+  let gap = bound -. rc in
+  let e =
+    let top = Float.max (Float.abs ra) (Float.abs rb) in
+    if top = 0. then 0 else -snd (Float.frexp top) - 2
+  in
+  let c =
+    if Float.is_finite gap then Float.ldexp gap e
+    else Float.ldexp ((0.5 *. bound) -. (0.5 *. rc)) (e + 1)
+  in
+  let edge =
+    if rb = 0. && ra <> 0. then `X (gap /. ra)
+    else if ra = 0. && rb <> 0. then `Y (gap /. rb)
+    else `None
+  in
+  { a = Float.ldexp ra e; b = Float.ldexp rb e; c; lower; edge }
+
+let value h x y = (h.a *. x) +. (h.b *. y)
+let holds h v = if h.lower then v >= h.c else v <= h.c
+let within h x y = holds h (value h x y)
+
+let on_edge h x y =
+  match h.edge with `X e -> (e, y) | `Y e -> (x, e) | `None -> (x, y)
+
+(* [lerp u v t] is [u +. t *. (v -. u)], halving where the difference
+   overflows. *)
+let lerp u v t =
+  let d = v -. u in
+  if Float.is_finite d then u +. (t *. d)
+  else 2. *. ((0.5 *. u) +. (t *. ((0.5 *. v) -. (0.5 *. u))))
+
+(* [crossing h x0 y0 x1 y1] is where the line from [(x0, y0)] to [(x1, y1)],
+   which [h]'s edge separates, crosses it: measured from the end nearer the
+   edge, so that it keeps that end's precision however far the other lies. *)
+let crossing h x0 y0 x1 y1 =
+  let v0 = value h x0 y0 and v1 = value h x1 y1 in
+  let d = v1 -. v0 in
+  if Float.abs (h.c -. v0) <= Float.abs (v1 -. h.c) then
+    let t = (h.c -. v0) /. d in
+    on_edge h (lerp x0 x1 t) (lerp y0 y1 t)
+  else
+    let t = (v1 -. h.c) /. d in
+    on_edge h (lerp x1 x0 t) (lerp y1 y0 t)
 
 (* [split t a b c d] is the control values of the parts of the cubic Bézier
    coordinate [a], [b], [c], [d] before and after [t], by de Casteljau. *)
 let split t a b c d =
-  let lerp u v = u +. (t *. (v -. u)) in
+  let lerp u v = lerp u v t in
   let ab = lerp a b and bc = lerp b c and cd = lerp c d in
   let abc = lerp ab bc and bcd = lerp bc cd in
   let m = lerp abc bcd in
@@ -419,44 +492,39 @@ let section t0 t1 a b c d =
   let (a, b, c, d), _ = split t1 a b c d in
   snd (split (t0 /. t1) a b c d)
 
-let bisections = 64
+(* [bisect inside lo hi] is the parameter in \[[lo];[hi]\] where [inside]
+   changes, from that of [lo], to within adjacent floats: bisected on the bits
+   of the non-negative parameters, whose order is theirs, so that it takes at
+   most 64 steps however small the parameter. *)
+let bisect inside lo hi =
+  let side = inside lo in
+  let lo = ref (Int64.bits_of_float lo) and hi = ref (Int64.bits_of_float hi) in
+  while Int64.sub !hi !lo > 1L do
+    let mid = Int64.add !lo (Int64.div (Int64.sub !hi !lo) 2L) in
+    if inside (Int64.float_of_bits mid) = side then lo := mid else hi := mid
+  done;
+  (Int64.float_of_bits !lo +. Int64.float_of_bits !hi) /. 2.
 
 (* [crossings h a b c d] is the parameters in ]0;1[ at which the cubic
-   coordinate [a], [b], [c], [d] enters or leaves [h], in increasing order. It
-   is monotone between the roots of its derivative, so each such interval holds
-   at most one crossing, found by bisection. *)
+   coordinate of values [a], [b], [c], [d] under [h] enters or leaves [h], in
+   increasing order. It is monotone between the roots of its derivative, so each
+   such interval holds at most one crossing, found by bisection. *)
 let crossings h a b c d =
-  let d0 = b -. a and d1 = c -. b and d2 = d -. c in
-  let qa = d0 -. (2. *. d1) +. d2 and qb = 2. *. (d1 -. d0) and qc = d0 in
-  let disc = (qb *. qb) -. (4. *. qa *. qc) in
-  let q = -0.5 *. (qb +. Float.copy_sign (Float.sqrt disc) qb) in
-  let turns =
-    List.filter (fun t -> 0. < t && t < 1.) [ q /. qa; qc /. q ]
-    |> List.sort_uniq Float.compare
-  in
-  let inside t = within h (bezier t a b c d) in
+  let inside t = holds h (bezier t a b c d) in
   let rec cross acc lo = function
     | [] -> List.rev acc
     | hi :: rest ->
         let acc =
-          if inside lo = inside hi then acc
-          else begin
-            let lo' = ref lo and hi' = ref hi and side = inside lo in
-            for _ = 1 to bisections do
-              let mid = (!lo' +. !hi') /. 2. in
-              if inside mid = side then lo' := mid else hi' := mid
-            done;
-            ((!lo' +. !hi') /. 2.) :: acc
-          end
+          if inside lo = inside hi then acc else bisect inside lo hi :: acc
         in
         cross acc hi rest
   in
-  cross [] 0. (turns @ [ 1. ])
+  cross [] 0. (turns a b c d @ [ 1. ])
 
 (* [contained h s] is [true] iff every point [s] was built with is within [h],
    which then holds all of [s]. *)
 let contained h s =
-  let ok x y = within h (along h x y) in
+  let ok x y = within h x y in
   ok s.sx s.sy
   && List.for_all
        (function
@@ -475,7 +543,10 @@ let degenerate x y = function
    as computed: as a region, [s] has no area. Points on an edge of the box are
    found so exactly. The two products are compared, each rounded on its own:
    ocamlopt on arm64 fuses [a *. b -. c *. d] into one multiply-add, whose
-   rounding can put a point off the line through itself. *)
+   rounding can put a point off the line through itself. The differences are
+   halved and scaled by one power of two to at most 1, which rounds them as they
+   round unscaled, so that the products stay floats however far the points
+   lie. *)
 let flat s =
   let pts =
     List.concat_map
@@ -487,17 +558,26 @@ let flat s =
   match List.find_opt (fun (x, y) -> x <> s.sx || y <> s.sy) pts with
   | None -> true
   | Some (dx, dy) ->
-      let ux = dx -. s.sx and uy = dy -. s.sy in
-      List.for_all
-        (fun (x, y) -> (x -. s.sx) *. uy = (y -. s.sy) *. ux)
-        pts
+      let half v v0 = (0.5 *. v) -. (0.5 *. v0) in
+      let top =
+        List.fold_left
+          (fun t (x, y) ->
+            Float.max t
+              (Float.max (Float.abs (half x s.sx)) (Float.abs (half y s.sy))))
+          0. pts
+      in
+      let e = -snd (Float.frexp top) in
+      let d v v0 = Float.ldexp (half v v0) e in
+      let ux = d dx s.sx and uy = d dy s.sy in
+      List.for_all (fun (x, y) -> d x s.sx *. uy = d y s.sy *. ux) pts
 
-(* [cut h ~region s acc] adds to [acc] the subpaths of [s] within [h], latest
-   first: [s]'s region within [h] as one closed subpath if [region], and its
-   pieces within [h] otherwise. A cut adds no segment of zero length, a region
-   ends with its close and no line back to its start, and a region with no area
-   within [h] is dropped. *)
-let cut h ~region s acc =
+(* [cut_by h ~fill s acc] adds to [acc] the subpaths of [s] within [h], latest
+   first: [s]'s region within [h] as one closed subpath if [s] is closed, and
+   its pieces within [h] otherwise. A cut adds no segment of zero length, a
+   region ends with its close and no line back to its start, and a region with
+   no area within [h] is dropped if [fill]. *)
+let cut_by h ~fill s acc =
+  let region = s.closed in
   if contained h s then s :: acc
   else
     let out = ref acc and start = ref None and segs = ref [] in
@@ -514,7 +594,7 @@ let cut h ~region s acc =
           let sub = { sx; sy; segs = List.rev segs; closed } in
           match segs with
           | [] -> ()
-          | _ :: _ when closed && flat sub -> ()
+          | _ :: _ when closed && fill && flat sub -> ()
           | _ :: _ -> out := sub :: !out)
       | _ -> ());
       start := None;
@@ -537,7 +617,7 @@ let cut h ~region s acc =
       | Some _ -> if x <> !cx || y <> !cy then add (S_line (x, y))
     in
     let leave () = if not region then finish ~closed:false in
-    let inside = ref (within h (along h s.sx s.sy)) in
+    let inside = ref (within h s.sx s.sy) in
     if !inside then begin
       start := Some (s.sx, s.sy);
       cx := s.sx;
@@ -572,13 +652,9 @@ let cut h ~region s acc =
     let rec go x0 y0 = function
       | [] -> ()
       | (S_line (x, y) as seg) :: rest ->
-          let a = along h x0 y0 and b = along h x y in
           (* Where the segment crosses the edge, if it does. *)
-          let cross () =
-            let t = (h.c -. a) /. (b -. a) in
-            on_edge h (x0 +. (t *. (x -. x0))) (y0 +. (t *. (y -. y0)))
-          in
-          (match (within h a, within h b) with
+          let cross () = crossing h x0 y0 x y in
+          (match (within h x0 y0, within h x y) with
           | true, true -> piece seg ~enters:(x0, y0) ~ends:false ~whole:true
           | false, false -> outside ()
           | true, false ->
@@ -588,12 +664,12 @@ let cut h ~region s acc =
           | false, true -> piece seg ~enters:(cross ()) ~ends:false ~whole:false);
           go x y rest
       | (S_cubic (c1x, c1y, c2x, c2y, x, y) as seg) :: rest ->
-          let a = along h x0 y0 and b = along h c1x c1y in
-          let c = along h c2x c2y and d = along h x y in
+          let a = value h x0 y0 and b = value h c1x c1y in
+          let c = value h c2x c2y and d = value h x y in
           let all p = p a && p b && p c && p d in
-          (if all (within h) then
+          (if all (holds h) then
              piece seg ~enters:(x0, y0) ~ends:false ~whole:true
-           else if all (fun v -> not (within h v)) then outside ()
+           else if all (fun v -> not (holds h v)) then outside ()
            else
              let ts = (0. :: crossings h a b c d) @ [ 1. ] in
              let rec pieces = function
@@ -602,11 +678,11 @@ let cut h ~region s acc =
                    and ys = section t0 t1 y0 c1y c2y y in
                    let (px0, px1, px2, px3), (py0, py1, py2, py3) = (xs, ys) in
                    let mid =
-                     along h
+                     within h
                        (bezier 0.5 px0 px1 px2 px3)
                        (bezier 0.5 py0 py1 py2 py3)
                    in
-                   (if not (within h mid) then outside ()
+                   (if not mid then outside ()
                     else
                       let enters =
                         if t0 = 0. then (x0, y0) else on_edge h px0 py0
@@ -627,40 +703,71 @@ let cut h ~region s acc =
     finish ~closed:region;
     !out
 
-(* A path with a gap is cut even when it lies within [b], so that the result
-   holds only the finite points [fold] visits. *)
-let crop b p =
-  match extent p with
-  | None, false -> p
-  | Some pb, false
-    when Box2.minx b <= Box2.minx pb
-         && Box2.maxx pb <= Box2.maxx b
-         && Box2.miny b <= Box2.miny pb
-         && Box2.maxy pb <= Box2.maxy b ->
-      p
-  | _ ->
-      let halves =
-        [
-          { axis = `X; c = Box2.minx b; lower = true };
-          { axis = `X; c = Box2.maxx b; lower = false };
-          { axis = `Y; c = Box2.miny b; lower = true };
-          { axis = `Y; c = Box2.maxy b; lower = false };
-        ]
-      in
-      let cut_all subs h =
-        List.rev
-          (List.fold_left (fun acc s -> cut h ~region:s.closed s acc) [] subs)
-      in
-      let subs = List.fold_left cut_all (subpaths p) halves in
-      let seg acc = function
-        | S_line (x, y) -> Line (x, y) :: acc
-        | S_cubic (a, b, c, d, x, y) -> Cubic (a, b, c, d, x, y) :: acc
-      in
-      List.fold_left
-        (fun acc s ->
-          let acc = List.fold_left seg (Move (s.sx, s.sy) :: acc) s.segs in
-          if s.closed then Close :: acc else acc)
-        [] subs
+(* [maps_within m b p] is [true] iff [m] maps every point [p] was built with
+   into [b], control points included, which then holds all [p] draws. *)
+let maps_within (m : Affine.t) b p =
+  let x0 = Box2.minx b and y0 = Box2.miny b in
+  let x1 = Box2.maxx b and y1 = Box2.maxy b in
+  let[@inline] inside x y =
+    let x' = (m.xx *. x) +. (m.xy *. y) +. m.x0 in
+    let y' = (m.yx *. x) +. (m.yy *. y) +. m.y0 in
+    x0 <= x' && x' <= x1 && y0 <= y' && y' <= y1
+  in
+  let rec poly xs ys i =
+    i >= Array.length xs
+    || inside (Array.unsafe_get xs i) (Array.unsafe_get ys i)
+       && poly xs ys (i + 1)
+  in
+  List.for_all
+    (function
+      | Move (x, y) | Line (x, y) -> inside x y
+      | Cubic (a, b, c, d, x, y) -> inside a b && inside c d && inside x y
+      | Close -> true
+      | Poly { xs; ys; _ } -> poly xs ys 0)
+    p
+
+(* [cropped ~fill m b p] cuts [p] to the points [m] maps into [b], dropping
+   regions left with no area if [fill]. A path with a gap is cut even when it
+   lies within [b], so that the result holds only the finite points [fold]
+   visits. *)
+let cropped ~fill (m : Affine.t) b p =
+  let fits () =
+    match extent m p with
+    | None, false -> true
+    | Some pb, false ->
+        Box2.minx b <= Box2.minx pb
+        && Box2.maxx pb <= Box2.maxx b
+        && Box2.miny b <= Box2.miny pb
+        && Box2.maxy pb <= Box2.maxy b
+    | _, true -> false
+  in
+  if maps_within m b p || fits () then p
+  else
+    let row_x = (m.xx, m.xy, m.x0) and row_y = (m.yx, m.yy, m.y0) in
+    let halves =
+      [
+        half row_x (Box2.minx b) ~lower:true;
+        half row_x (Box2.maxx b) ~lower:false;
+        half row_y (Box2.miny b) ~lower:true;
+        half row_y (Box2.maxy b) ~lower:false;
+      ]
+    in
+    let cut_all subs h =
+      List.rev (List.fold_left (fun acc s -> cut_by h ~fill s acc) [] subs)
+    in
+    let subs = List.fold_left cut_all (subpaths p) halves in
+    let seg acc = function
+      | S_line (x, y) -> Line (x, y) :: acc
+      | S_cubic (a, b, c, d, x, y) -> Cubic (a, b, c, d, x, y) :: acc
+    in
+    List.fold_left
+      (fun acc s ->
+        let acc = List.fold_left seg (Move (s.sx, s.sy) :: acc) s.segs in
+        if s.closed then Close :: acc else acc)
+      [] subs
+
+let crop ?(m = Affine.id) b p = cropped ~fill:true m b p
+let cut ?(m = Affine.id) b p = cropped ~fill:false m b p
 
 (* Comparing and formatting *)
 

@@ -1015,6 +1015,24 @@ let accuracy =
               let y = y0 +. ((y1 -. y0) *. (0. -. x0) /. (x1 -. x0)) in
               equal (float 0.001) 100. y
           | pts -> failf "%d points" (List.length pts));
+      cases "a line to a point far beyond the page keeps its direction"
+        ~id:(Printf.sprintf "to %g") [ 1e9; 1e16; 1e300; 1e308 ] (fun l ->
+          (* From (10, 20) along (2, 1): it leaves the page's margin on its own
+             line, whether its far end maps near the page, past 1e15 or, under
+             the scale, beyond the floats. *)
+          let line =
+            Path.polyline [| 5.; 5. +. l |] [| 10.; 10. +. (l /. 2.) |]
+          in
+          let s =
+            svg ~w:200. ~h:200.
+              (Picture.transform (Affine.scale 2. 2.)
+                 (Picture.stroke (Stroke.v 1.) red line))
+          in
+          match points (attr "d" s) with
+          | [ (x0, y0); (x1, y1) ] ->
+              equal (pair (float 0.001) (float 0.001)) (10., 20.) (x0, y0);
+              equal (float 1e-6) 0.5 ((y1 -. y0) /. (x1 -. x0))
+          | pts -> failf "%d points" (List.length pts));
       prop "dashes keep within the accuracy over a thousand lengths"
         (Gen.pair (Gen.float_range 0.3 3.)
            (Gen.pair (Gen.float_range 0.1 10.) (Gen.float_range 0.1 10.)))
@@ -1055,6 +1073,7 @@ let accuracy =
             ( [| 50.; 50.; 60.; 60. |],
               [| 50.; 1e5; 1e5; 50. |],
               "M50 50L50 202L60 202L60 50Z" ) );
+          ("of no area", ([| 50.; 1e5 |], [| 50.; 50. |], "M50 50L202 50Z"));
         ]
         (fun (_, (xs, ys, d)) ->
           let q = Path.polygon xs ys in

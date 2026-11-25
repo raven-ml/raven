@@ -78,9 +78,10 @@ val transform : Affine.t -> t -> t
 (** [transform m p] is [p] with every point mapped through [m]. Since curves are
     cubic Béziers, the image of a curve is exact. *)
 
-val crop : Box2.t -> t -> t
-(** [crop b p] is what [p] draws within [b], its edges included, subpath by
-    subpath:
+val crop : ?m:Affine.t -> Box2.t -> t -> t
+(** [crop ~m b p] is what [p] draws whose image under [m] lies within [b], its
+    edges included, in the coordinates of [p], subpath by subpath, as filling
+    sees it. [m] defaults to {!Affine.id}.
     - An open subpath keeps its pieces within [b], each an open subpath of its
       own. A segment that crosses an edge of [b] is cut where it crosses, a
       curve into the cubic of its part within [b].
@@ -91,13 +92,28 @@ val crop : Box2.t -> t -> t
       runs. It ends with its close, with no line back to its start, and it is
       dropped if what remains of it has no area, its points on one line.
 
+    The cut is made before mapping: an affine map keeps lines and the order of
+    their points, so [transform m (crop ~m b p)] draws what cropping
+    [transform m p] to [b] draws, also where [m] maps points of [p] beyond the
+    range of floats. A point is cut from the end of its segment nearer the
+    edge, so that it keeps that end's precision however far the other lies.
     A cut adds no segment of zero length. So cropping before filling draws what
-    filling then clipping to [b] draws, and cropping an open path before
-    stroking keeps the pen's ink whole where the path lies within [b]. A point
-    that a cut puts on an edge of [b] has that edge's coordinate exactly.
-    {{!section-gaps}Gaps} are applied first, so every point of [crop b p] is
-    finite. If [p] has no gap and everything {!fold} visits in [p] is within
-    [b], [crop b p] is [p]. *)
+    filling then clipping to [b] draws. Without [m], a point that a cut puts on
+    an edge of [b] has that edge's coordinate exactly. {{!section-gaps}Gaps}
+    are applied first, so every point of [crop ~m b p] is finite. If [p] has no
+    gap and everything {!fold} visits in [transform m p] is within [b],
+    [crop ~m b p] is [p]. *)
+
+val cut : ?m:Affine.t -> Box2.t -> t -> t
+(** [cut ~m b p] is what [p] draws whose image under [m] lies within [b], as
+    stroking sees it: as {!crop}, except that a closed subpath left with no
+    area is kept, since a stroke draws it. A closed subpath whose start lies
+    within [b] keeps it, so a stroke's dashes keep their phase, and its joins,
+    up to where it leaves [b]; one that starts beyond [b] starts where it first
+    enters it. Cutting before stroking keeps the pen's ink whole where the path
+    lies within [b], the runs along the edges of [b] that replace a closed
+    subpath's pieces beyond it drawing ink only as near [b] as the pen
+    reaches. *)
 
 (** {1:shapes Shapes} *)
 

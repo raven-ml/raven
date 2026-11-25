@@ -1439,15 +1439,16 @@ let accuracy =
               (Path.polyline [| 40.; 60. |] [| 50.; 50. |])
           in
           equal numbers [ [ 1e15 ] ] (operands "w" (content (pdf p))));
-      test "a coordinate below -1e15 is written as -1e15" (fun () ->
-          (* A stamp's picture is written once, uncut, relative to its
-             instances. *)
+      test "a segment past -1e15 is cut there along its line" (fun () ->
+          (* A stamp's picture is written once, relative to its instances, cut
+             at 1e15 from them: the closing edge from (-1e20, 0) to (0, 10)
+             crosses x = -1e15 at y = 10 (1 - 1e-5). *)
           let far = Path.polygon [| 0.; -1e20; 0. |] [| 0.; 0.; 10. |] in
           let doc =
             pdf (Picture.stamp [| 50. |] [| 50. |] (Picture.fill red far))
           in
           equal points_w
-            [ (0., 0.); (-1e15, 0.); (0., 10.) ]
+            [ (0., 0.); (-1e15, 0.); (-1e15, 9.9999); (0., 10.) ]
             (points (stream_of doc "/Subtype /Form")));
       prop ~examples:(gapped :: Vg_corpus.extremes)
         "numbers are finite whatever the scales" Vg_corpus.gen_extreme (fun p ->

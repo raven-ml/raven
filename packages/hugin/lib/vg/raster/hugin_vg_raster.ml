@@ -46,8 +46,9 @@ let outline ctx font g =
 (* Coverage of leaves *)
 
 (* [area cover m path] deposits the area of [path] mapped through [m], its
-   subpaths closed. *)
+   subpaths closed, cut first to what [m] maps into [Instances.far]. *)
 let area cover m path =
+  let path = Path.crop ~m Instances.far path in
   (* [start x; start y; current x; current y] *)
   let pt = Array.make 4 0. and open_ = ref false in
   let close () =

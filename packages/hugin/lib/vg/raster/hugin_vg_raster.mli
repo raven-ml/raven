@@ -60,12 +60,12 @@
       it should, [d] being the largest magnitude, in pixels, of the terms that
       map the nearer of its ends to the device (each coordinate times its
       factor, and the translation) and, for an edge of a dash, of the dash's
-      distance from the start of its subpath. A point of a fill that the
-      transforms and the density map beyond the range of floats is a
-      {{!Hugin_gg.Path.section-gaps}gap}, which ends its subpath there; a
-      stroke's such point is held at [±1e15] pixels along each coordinate that
-      overflows, so that the stroke keeps its edges along an axis and may bend
-      the others.
+      distance from the start of its subpath. A segment is drawn along its own
+      line however far the transforms and the density map its points, beyond
+      the range of floats included: it is cut in the coordinates of its path,
+      about [2{^1000}] pixels beyond the page. An open subpath that comes back
+      from there starts its dash pattern afresh, and a closed one carries it
+      across a run along the cut about [2{^1000}] pixels long.
     - A picture under transforms whose composition, with the density, has no
       inverse or overflows the range of floats paints nothing.
     - Tags are ignored. *)

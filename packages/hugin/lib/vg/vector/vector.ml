@@ -148,13 +148,14 @@ let kind s k =
   s.nk <- s.nk + 1
 
 (* [iter_subs m q f] calls [f] on each subpath of [q] mapped through [m]. The
-   subpath given is reused. *)
+   subpath given is reused. [q] has been cut to what [m] maps into
+   [Instances.far], so that every mapped point is a float. *)
 let iter_subs (m : Affine.t) q f =
   let s = sub () in
   let point x y =
     push s
-      (limit ((m.xx *. x) +. (m.xy *. y) +. m.x0))
-      (limit ((m.yx *. x) +. (m.yy *. y) +. m.y0))
+      ((m.xx *. x) +. (m.xy *. y) +. m.x0)
+      ((m.yx *. x) +. (m.yy *. y) +. m.y0)
   in
   let flush () = if s.np > 0 then f s in
   Path.fold
@@ -228,9 +229,10 @@ let emit_whole sink s ~close =
   done;
   if close then sink.close ()
 
-(* [cropped r s ~close sink] gives [sink] the subpath [s], closed if [close], as
-   [Path.crop r] cuts it. *)
-let cropped r s ~close sink =
+(* [cropped crop r s ~close sink] gives [sink] the subpath [s], closed if
+   [close], as [crop r] cuts it: [Path.crop] for an area, [Path.cut] for a
+   stroke. *)
+let cropped crop r s ~close sink =
   let path = ref Path.empty in
   emit_whole
     {
@@ -246,12 +248,12 @@ let cropped r s ~close sink =
     ~move:(fun () -> sink.move)
     ~line:(fun () -> sink.line)
     ~cubic:(fun () -> sink.cubic)
-    ~close:sink.close () (Path.crop r !path)
+    ~close:sink.close () (crop r !path)
 
 let area m r q sink =
-  iter_subs m q (fun s ->
+  iter_subs m (Path.crop ~m Instances.far q) (fun s ->
       if all_inside r s then emit_whole sink s ~close:true
-      else cropped r s ~close:true sink)
+      else cropped Path.crop r s ~close:true sink)
 
 (* Dashed outlines cut to a box: the pieces of a polyline within it, each a run
    of commands with the length along the subpath before it. *)
@@ -425,7 +427,7 @@ let dashes out r s ~piece sink =
 
 let outline ?out m r ~points ~dashed q ~piece sink =
   let sink = mapped out sink in
-  iter_subs m q (fun s ->
+  iter_subs m (Path.cut ~m Instances.far q) (fun s ->
       if is_point s then
         begin if points && inside r s.xs.(0) s.ys.(0) then begin
           piece 0.;
@@ -445,7 +447,7 @@ let outline ?out m r ~points ~dashed q ~piece sink =
       else if dashed then dashes out r s ~piece sink
       else begin
         piece 0.;
-        cropped r s ~close:s.closed sink
+        cropped Path.cut r s ~close:s.closed sink
       end)
 
 (* Leaves *)

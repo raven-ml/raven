@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Hugin_gg
+open Hugin_vg_instances
 
 (* Strokes as coverage. A subpath is stroked in its own coordinates, where the
    pen is round, as the polygon of its outline: along the left of the subpath
@@ -29,6 +30,8 @@ type t = {
       (** The flattening tolerance, a tenth of a pixel, in the stroke's
           coordinates. *)
   step : float;  (** The largest angle of an arc's chord within [tol]. *)
+  reach : float;  (** How far the pen paints from the path, in pixels. *)
+  pt : float array;  (** A point [crossing] finds. *)
   wx0 : float;
       (** The window grown by the reach of the pen: what lies outside it paints
           nothing visible. *)
@@ -54,6 +57,8 @@ let create cover (clip : Surface.clip) m k s =
     tol = 0.1 /. scale;
     step =
       (if r <= 0.1 then Float.pi /. 2. else 2. *. Float.acos (1. -. (0.1 /. r)));
+    reach;
+    pt = Array.make 2 0.;
     wx0 = float clip.x0 -. reach;
     wy0 = float clip.y0 -. reach;
     wx1 = float clip.x1 +. reach;
@@ -162,7 +167,13 @@ let polyline p xs ys n ~closed ~dx ~dy =
     let ux = Array.make segs 0. and uy = Array.make segs 0. in
     for i = 0 to segs - 1 do
       let j = if i = n - 1 then 0 else i + 1 in
-      let ddx = xs.(j) -. xs.(i) and ddy = ys.(j) -. ys.(i) in
+      let ddx = ref (xs.(j) -. xs.(i)) and ddy = ref (ys.(j) -. ys.(i)) in
+      (* Halved where the difference overflows: only its direction counts. *)
+      if not (Float.is_finite !ddx && Float.is_finite !ddy) then begin
+        ddx := (0.5 *. xs.(j)) -. (0.5 *. xs.(i));
+        ddy := (0.5 *. ys.(j)) -. (0.5 *. ys.(i))
+      end;
+      let ddx = !ddx and ddy = !ddy in
       let l = Float.hypot ddx ddy in
       ux.(i) <- ddx /. l;
       uy.(i) <- ddy /. l
@@ -222,11 +233,14 @@ let[@inline] push b x y =
   Array.unsafe_set b.ys b.n y;
   b.n <- b.n + 1
 
-(* [far m dx dy] is [true] iff [m] maps the vector [(dx, dy)] more than a
-   twentieth of a pixel along an axis. *)
-let[@inline] far (m : Affine.t) dx dy =
-  Float.abs ((m.xx *. dx) +. (m.xy *. dy)) > 0.05
-  || Float.abs ((m.yx *. dx) +. (m.yy *. dy)) > 0.05
+(* [far m x0 y0 x1 y1] is [true] iff [m] maps the vector from [(x0, y0)] to
+   [(x1, y1)] more than a twentieth of a pixel along an axis. A vector that
+   overflows is far, as is one that [m] maps beyond the floats. *)
+let[@inline] far (m : Affine.t) x0 y0 x1 y1 =
+  let dx = x1 -. x0 and dy = y1 -. y0 in
+  (not (Float.abs dx < Float.infinity && Float.abs dy < Float.infinity))
+  || (not (Float.abs ((m.xx *. dx) +. (m.xy *. dy)) <= 0.05))
+  || not (Float.abs ((m.yx *. dx) +. (m.yy *. dy)) <= 0.05)
 
 (* [strip p src kept ~closed ~ends] sets [kept] to the points of [src] without
    those within a twentieth of a pixel of the point kept before them, and, for a
@@ -242,13 +256,16 @@ let strip p src kept ~closed ~ends =
     let x = Array.unsafe_get src.xs i and y = Array.unsafe_get src.ys i in
     if kept.n = 0 then push kept x y
     else begin
-      let dx = x -. kept.xs.(kept.n - 1) and dy = y -. kept.ys.(kept.n - 1) in
-      if !ux = 0. && !uy = 0. && (dx <> 0. || dy <> 0.) then begin
+      let px = kept.xs.(kept.n - 1) and py = kept.ys.(kept.n - 1) in
+      if !ux = 0. && !uy = 0. && (x <> px || y <> py) then begin
+        (* Halved, so that a difference beyond the floats keeps its
+           direction. *)
+        let dx = (0.5 *. x) -. (0.5 *. px) and dy = (0.5 *. y) -. (0.5 *. py) in
         let d = Float.hypot dx dy in
         ux := dx /. d;
         uy := dy /. d
       end;
-      if far m dx dy then push kept x y
+      if far m px py x y then push kept x y
       else if ends && kept.n = 1 && i < src.n - 1 then begin
         kept.xs.(0) <- x;
         kept.ys.(0) <- y
@@ -257,8 +274,8 @@ let strip p src kept ~closed ~ends =
   done;
   if closed && kept.n > 1 then begin
     let l = kept.n - 1 in
-    if not (far m (kept.xs.(l) -. kept.xs.(0)) (kept.ys.(l) -. kept.ys.(0)))
-    then kept.n <- l
+    if not (far m kept.xs.(0) kept.ys.(0) kept.xs.(l) kept.ys.(l)) then
+      kept.n <- l
   end;
   (!ux, !uy)
 
@@ -314,9 +331,10 @@ let next d =
 
 (* [advance d len] moves [d] [len] along the pattern. Arriving where a length of
    the pattern ends, it moves to the next, so that a dash of zero length there
-   is still to be drawn. *)
+   is still to be drawn. A length beyond the floats leaves [d] where it is: no
+   phase is known that far. *)
 let advance d len =
-  if len > 0. then
+  if len > 0. && len < Float.infinity then
     if len < d.rest then d.rest <- d.rest -. len
     else begin
       let len = ref (Float.rem (len -. d.rest) d.period) in
@@ -364,69 +382,82 @@ let flush_piece s ~dx ~dy =
     s.piece.n <- 0
   end
 
+(* [crossing p ~x v sx sy tx ty] sets [p.pt] to the point of the segment from
+   the device point [(sx, sy)] to [(tx, ty)] on the line [x = v] if [x], and [y
+   = v] otherwise, mapped back to the stroke's coordinates: its other device
+   coordinate is measured from the end nearer it, as [Cover] cuts its edges. *)
+let crossing p ~x v sx sy tx ty =
+  let dx = if x then v else Cover.at v sy ty sx tx in
+  let dy = if x then Cover.at v sx tx sy ty else v in
+  let i = p.inv in
+  p.pt.(0) <- (i.xx *. dx) +. (i.xy *. dy) +. i.x0;
+  p.pt.(1) <- (i.yx *. dx) +. (i.yy *. dy) +. i.y0
+
 (* [dash_segment s d ax ay bx by] cuts into dashes the segment from [(ax, ay)]
    to [(bx, by)], walking only the part that the grown window reaches. That part
    is found and walked from the points where the segment crosses the window's
-   edges, each measured from the segment's end nearer it, as [Cover] cuts its
-   edges, so that its dashes keep the precision of their place however far the
-   segment's ends lie; only their phase carries the rounding of the distance
-   from the segment's start. *)
+   edges ([crossing]), so that its dashes keep the precision of their place
+   however far the segment's ends lie; only their phase carries the rounding of
+   the distance from the segment's start. *)
 let dash_segment s d ax ay bx by =
   let p = s.pen in
-  let len = Float.hypot (bx -. ax) (by -. ay) in
+  (* Halved, so that a segment longer than the floats keeps its direction. *)
+  let hx = (0.5 *. bx) -. (0.5 *. ax) and hy = (0.5 *. by) -. (0.5 *. ay) in
+  let half = Float.hypot hx hy in
+  let len = 2. *. half in
   if len > 0. then begin
-    let ux = (bx -. ax) /. len and uy = (by -. ay) /. len in
+    let ux = hx /. half and uy = hy /. half in
     s.last.(0) <- ux;
     s.last.(1) <- uy;
     let sx = dev_x p ax ay and sy = dev_y p ax ay in
     let tx = dev_x p bx by and ty = dev_y p bx by in
-    (* [along x y x' y'] is how far [(x', y')] lies past [(x, y)] along the
-       segment. *)
-    let along x y x' y' = ((x' -. x) *. ux) +. ((y' -. y) *. uy) in
-    (* [at x v] is the point of the segment on the device line [x = v] if [x],
-       and [y = v] otherwise, mapped back from the device, where its other
-       coordinate is measured from the end nearer it. *)
-    let at x v =
-      let dx, dy =
-        if x then (v, Cover.at v sx tx sy ty) else (Cover.at v sy ty sx tx, v)
-      in
-      let i = p.inv in
-      ( (i.xx *. dx) +. (i.xy *. dy) +. i.x0,
-        (i.yx *. dx) +. (i.yy *. dy) +. i.y0 )
-    in
     (* Where the segment enters and leaves the grown window, by Liang and
-       Barsky: the last of its entries and the first of its exits. *)
+       Barsky: the last of its entries and the first of its exits along it. *)
     let px = ref ax and py = ref ay and qx = ref bx and qy = ref by in
     let missed = ref false in
-    let edges x a b lo hi =
+    for k = 0 to 1 do
+      let x = k = 0 in
+      let a = if x then sx else sy and b = if x then tx else ty in
+      let lo = if x then p.wx0 else p.wy0 and hi = if x then p.wx1 else p.wy1 in
       if a = b then (if a < lo || a > hi then missed := true)
       else begin
-        let enter, leave = if a < b then (lo, hi) else (hi, lo) in
         if (a < b && a < lo) || (a > b && a > hi) then begin
-          let ex, ey = at x enter in
-          if along !px !py ex ey > 0. then begin
+          crossing p ~x (if a < b then lo else hi) sx sy tx ty;
+          let ex = p.pt.(0) and ey = p.pt.(1) in
+          if ((ex -. !px) *. ux) +. ((ey -. !py) *. uy) > 0. then begin
             px := ex;
             py := ey
           end
         end;
         if (a < b && b > hi) || (a > b && b < lo) then begin
-          let lx, ly = at x leave in
-          if along !qx !qy lx ly < 0. then begin
+          crossing p ~x (if a < b then hi else lo) sx sy tx ty;
+          let lx = p.pt.(0) and ly = p.pt.(1) in
+          if ((lx -. !qx) *. ux) +. ((ly -. !qy) *. uy) < 0. then begin
             qx := lx;
             qy := ly
           end
         end
       end
-    in
-    edges true sx tx p.wx0 p.wx1;
-    edges false sy ty p.wy0 p.wy1;
-    let stop = along !px !py !qx !qy in
+    done;
+    let px = !px and py = !py and qx = !qx and qy = !qy in
+    (* The walk is measured in units of [unit] times the stroke's: halves where
+       the part walked is longer than the floats in the stroke's coordinates,
+       though short on the device. *)
+    let unit = ref 1.
+    and stop = ref (((qx -. px) *. ux) +. ((qy -. py) *. uy)) in
+    if not (Float.is_finite !stop) then begin
+      unit := 0.5;
+      stop :=
+        (((0.5 *. qx) -. (0.5 *. px)) *. ux)
+        +. (((0.5 *. qy) -. (0.5 *. py)) *. uy)
+    end;
+    let unit = !unit and stop = !stop in
+    let more = (1. /. unit) -. 1. in
     if !missed || not (stop > 0.) then begin
       flush_piece s ~dx:ux ~dy:uy;
       advance d len
     end
     else begin
-      let px = !px and py = !py and qx = !qx and qy = !qy in
       let start = Float.hypot (px -. ax) (py -. ay) in
       if start > 0. then begin
         flush_piece s ~dx:ux ~dy:uy;
@@ -436,17 +467,21 @@ let dash_segment s d ax ay bx by =
       let continue = ref true in
       while !continue do
         if is_dash d && s.piece.n = 0 then
-          push s.piece (px +. (ux *. !pos)) (py +. (uy *. !pos));
-        if !pos +. d.rest <= stop then begin
-          pos := !pos +. d.rest;
+          push s.piece
+            (px +. (ux *. !pos) +. (ux *. !pos *. more))
+            (py +. (uy *. !pos) +. (uy *. !pos *. more));
+        if !pos +. (unit *. d.rest) <= stop then begin
+          pos := !pos +. (unit *. d.rest);
           if is_dash d then begin
-            push s.piece (px +. (ux *. !pos)) (py +. (uy *. !pos));
+            push s.piece
+              (px +. (ux *. !pos) +. (ux *. !pos *. more))
+              (py +. (uy *. !pos) +. (uy *. !pos *. more));
             flush_piece s ~dx:ux ~dy:uy
           end;
           next d
         end
         else begin
-          d.rest <- d.rest -. (stop -. !pos);
+          d.rest <- d.rest -. ((stop -. !pos) /. unit);
           if is_dash d then push s.piece qx qy;
           continue := false
         end
@@ -490,12 +525,15 @@ let subpath s ~closed =
 
 (* [in_range p k s] is [true] iff [p], the pen of [s] with its lengths
    multiplied by [k], stays within the range of floats, in the stroke's
-   coordinates and, with its reach, on the device. Transforms within a stamp that magnify as much
-   as its scale shrinks take it beyond, where it draws nothing. *)
+   coordinates and, with its reach, on the device, twice over from the edge of
+   [Instances.far], where its path is cut. Transforms within a stamp that
+   magnify as much as its scale shrinks take it beyond, where it draws
+   nothing. *)
 let in_range p k s =
   let fits l = Float.is_finite (l *. k) in
   Float.is_finite p.tol && p.tol > 0. && Float.is_finite p.hw
   && Float.is_finite p.wx0
+  && Float.is_finite (Box2.maxx Instances.far +. (2. *. p.reach))
   && fits (Stroke.dash_offset s)
   && List.for_all fits (Stroke.dash s)
 
@@ -520,12 +558,14 @@ let stroke cover clip m ~pen:k s path =
         last = [| 0.; 0. |];
       }
     in
+    (* A cut point lies a reach beyond [far], so its cap stays outside it. *)
+    let far = Box2.grow pen.reach Instances.far in
     Path.flatten ~tolerance:pen.tol Affine.id
       ~move:(fun () x y ->
         subpath s ~closed:false;
         push s.raw x y)
       ~line:(fun () x y -> push s.raw x y)
       ~close:(fun () -> subpath s ~closed:true)
-      () path;
+      () (Path.cut ~m far path);
     subpath s ~closed:false
   end

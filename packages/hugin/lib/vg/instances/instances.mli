@@ -17,6 +17,19 @@ open Hugin_vg
 val everywhere : Box2.t
 (** [everywhere] is the box from [-1e15] to [1e15] along both axes. *)
 
+val far : Box2.t
+(** [far] is the box from [-2{^1000}] to [2{^1000}] along both axes, beyond any
+    page or frame a renderer writes. A renderer cuts each leaf, in its own
+    coordinates, to the points its map takes into [far], grown by the reach of
+    its pen, before mapping it ({!Hugin_gg.Path.crop}, {!Hugin_gg.Path.cut}), so
+    that every point it maps is a float with room to spare: a point the map
+    takes beyond the floats is cut from a segment along its own line, about
+    [2{^1000}] beyond the page. An open subpath that leaves [far] and comes back
+    starts its dash pattern afresh there, and a closed one carries it across a
+    run along the edge of [far]: so far from the page that the precision
+    renderers promise leaves the phase free past it in the raster, and the
+    vector renderers state it. *)
+
 val bounds : Picture.t -> Box2.t option
 (** [bounds p] is [Picture.bounds p], or {!everywhere} if the bounds lie beyond
     the range of floats, so that a picture that far is taken to show everywhere.

@@ -22,5 +22,8 @@ val stroke :
 (** [stroke cover clip m ~pen s path] deposits in [cover] the outline of
     [path] stroked with [s], its lengths multiplied by [pen], in the
     coordinates that [m] maps to the device. A pen whose lengths, or whose
-    reach under [m], lie beyond the range of floats deposits nothing. [cover]
-    must have been started on [clip] ({!Cover.start}). *)
+    reach under [m], lie beyond the range of floats deposits nothing, and so
+    does one wider than {!Hugin_vg_instances.Instances.far} leaves room for.
+    [path] is first cut, in its own coordinates, to the points [m] maps into
+    that box grown by the pen's reach ({!Hugin_gg.Path.cut}). [cover] must have
+    been started on [clip] ({!Cover.start}). *)

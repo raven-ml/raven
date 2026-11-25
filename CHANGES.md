@@ -319,6 +319,12 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- The raster, SVG and PDF renderers draw a segment along its own line however
+  far its points map. A fill's point mapped beyond the floats was a gap, and a
+  stroke's, or any past `1e15` in SVG and PDF, was held there, bending it.
+- `Path.crop ?m` cuts to what a map takes into the box, and new `Path.cut` cuts
+  for stroking, keeping closed subpaths of no area. A crop of points near
+  `max_float` was empty or off its segments' lines.
 - `Hugin_vg_raster.render` returns on a dashed stroke whose visible part lies
   far from its segment's start: adding a dash length there left the position
   unchanged.

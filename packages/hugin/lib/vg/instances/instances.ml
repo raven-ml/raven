@@ -7,6 +7,11 @@ open Hugin_gg
 open Hugin_vg
 
 let everywhere = Box2.v (-1e15) (-1e15) 2e15 2e15
+
+let far =
+  let e = Float.ldexp 1. 1000 in
+  Box2.v (-.e) (-.e) (2. *. e) (2. *. e)
+
 let bounds p = try Picture.bounds p with Invalid_argument _ -> Some everywhere
 
 let rec uncut (p : Picture.t) =
