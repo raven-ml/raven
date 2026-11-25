@@ -1415,6 +1415,11 @@ let mvn ~loc ~scale_tril =
       "Norn.Dist.mvn: loc of shape [%s] and scale_tril of shape [%s] do not \
        describe vectors of one length"
       (shape_string ls) (shape_string ms);
+  (* Its density solves a triangular system, which nx computes at float32 and
+     float64 alone. *)
+  if not (List.mem (Nx.Dtype.name dt) [ "float32"; "float64" ]) then
+    invalid_argf "Norn.Dist.mvn: parameters of dtype %s; mvn takes float32 or \
+                  float64" (Nx.Dtype.name dt);
   let d = ls.(nl - 1) in
   let lower = Nx.tril scale_tril in
   let shape =

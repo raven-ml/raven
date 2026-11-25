@@ -1078,6 +1078,12 @@ let mvn =
       test "a scale_tril of another length raises naming mvn" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Dist.mvn:") (fun () ->
               D.mvn ~loc ~scale_tril:(Nx.eye Nx.float64 3)));
+      test "a dtype other than float32 and float64 raises naming mvn"
+        (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"Norn.Dist.mvn:") (fun () ->
+              D.mvn
+                ~loc:(Nx.zeros Nx.float16 [| 2 |])
+                ~scale_tril:(Nx.eye Nx.float16 2)));
       test "a scale_tril that is not square raises naming mvn" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"Norn.Dist.mvn:") (fun () ->
               D.mvn ~loc ~scale_tril:(Nx.zeros Nx.float64 [| 2; 3 |])));

@@ -85,6 +85,8 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.mvn` refuses parameters other than float32 and float64 at the call,
+  naming itself, where nx's triangular solve raised at the first eliminator.
 - `Norn_model.reparam` and `Norn_model.noncentre` no longer raise on a model
   whose parameter leaves its domain at zero coordinates, and
   `Norn_model.constrain` and `Norn_model.unconstrain` name the site where a

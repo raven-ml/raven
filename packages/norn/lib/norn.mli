@@ -824,8 +824,10 @@ module Dist : sig
       last axis, with mean [loc] and covariance [L Lᵀ], [L] the lower triangle
       of [scale_tril]. [L] is finite, its diagonal in [(0, inf)].
 
+      Its parameters are float32 or float64.
+
       Raises [Invalid_argument] if [scale_tril]'s last two axes are not square
-      or not of [loc]'s length. *)
+      or not of [loc]'s length, or if its dtype is another. *)
 
   val von_mises :
     loc:(float, 'f, 'd) Nx.t ->
