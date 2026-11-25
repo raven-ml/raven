@@ -314,10 +314,11 @@ let nesting =
 
 (* Float sums and means
 
-   A float list's sum adds its values in list order from 0, and its mean divides
-   that sum, taken in float64, by their count. The values stay far from
-   overflow; their var and std are any frame's, which the definition law states
-   against an aggregate. *)
+   A float list's sum adds its values in list order, and its mean divides that
+   sum, taken in float64, by their count. No sentence fixes the sign of a sum of
+   zeros, so both sides compare after [+. 0.], which makes [-0.] [0.]. The
+   values stay far from overflow; their var and std are the aggregate's, which
+   the definition law states. *)
 
 let float_values =
   Gen.frequency
@@ -336,7 +337,8 @@ let pp_float_lists ppf rows =
   Format.pp_print_string ppf
     (String.concat " " (Array.to_list (Array.map row rows)))
 
-let sum_in_order xs = List.fold_left ( +. ) 0. xs
+let sum_in_order = function [] -> 0. | x :: xs -> List.fold_left ( +. ) x xs
+let unsigned = Option.map (fun x -> x +. 0.)
 
 let float_sums =
   let x = Col.float "x" and xs = Col.v Kind.(list float) "xs" in
@@ -362,14 +364,17 @@ let float_sums =
       in
       let e = if mean then Expr.mean x else Expr.sum x in
       let t = v [ ("xs", column Type.float64 rows) ] in
+      let got =
+        Column.options Kind.float
+          (out
+             (Query.derive
+                Expr.[ "v" := per_list [ "x" := xs ] e ]
+                (Query.of_table t)))
+      in
       equal
         (array (option float_exact))
-        (Array.map want rows)
-        (Column.options Kind.float
-           (out
-              (Query.derive
-                 Expr.[ "v" := per_list [ "x" := xs ] e ]
-                 (Query.of_table t)))))
+        (Array.map (fun r -> unsigned (want r)) rows)
+        (Array.map unsigned got))
 
 (* Lockstep *)
 
@@ -704,7 +709,7 @@ let rules =
         equal null_ints
           [| Some 1; None; None; Some 10 |]
           (eval Expr.(per_list [ "x" := xs ] (min x))));
-    test "a computed list" (fun () ->
+    test "reads a list that an output computes" (fun () ->
         let t =
           v
             [
@@ -750,7 +755,7 @@ let rules =
         equal null_ints [| None |]
           (Column.options Kind.int
              (out (Query.derive Expr.[ "v" := e ] (Query.of_table t)))));
-    cases "problems"
+    cases "a misplaced output or frame operation is a problem"
       ~id:(fun (n, _, _) -> n)
       Expr.
         [
