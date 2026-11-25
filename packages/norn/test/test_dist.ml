@@ -488,11 +488,13 @@ let holds (type b) (dt : (float, b) Nx.dtype) v =
 let saddle_point =
   [ "gamma"; "inverse_gamma"; "beta"; "student_t"; "dirichlet" ]
 
-(* A golden line's log density [v] against [dt]'s, within the family's bound:
-   the saddle-point families' at float32 for a narrower dtype, which computes at
+(* [near_density dt family args v actual] checks [actual], [dt]'s log density at
+   a golden line, against the line's [v], within the family's bound: the
+   saddle-point families' at float32 for a narrower dtype, which computes at
    float32 and rounds once, half an ulp more; the closed forms' [8 ε Σ |t|] at
    [dt]'s own [ε], and the least subnormal where the log density underflows. *)
-let check_density (type b) (dt : (float, b) Nx.dtype) family args v =
+let near_density (type b) ?(msg = "") (dt : (float, b) Nx.dtype) family args v
+    actual =
   let format = Nx.Dtype.float_format dt in
   let narrow = format.fraction_bits < 23 in
   let tol =
@@ -510,12 +512,13 @@ let check_density (type b) (dt : (float, b) Nx.dtype) family args v =
       in
       (8. *. format.epsilon *. t) +. (format.min_normal *. format.epsilon)
   in
-  let actual = density_at dt family args in
+  let msg = msg ^ Nx.Dtype.name dt in
   if Float.is_finite v then
-    equal ~msg:(Nx.Dtype.name dt)
-      (float (Float.max tol Float.min_float))
-      v actual
-  else equal ~msg:(Nx.Dtype.name dt) float_exact v actual
+    equal ~msg (float (Float.max tol Float.min_float)) v actual
+  else equal ~msg float_exact v actual
+
+let check_density dt family args v =
+  near_density dt family args v (density_at dt family args)
 
 let golden_densities =
   test "log densities are within their bound of mpmath's" (fun () ->
@@ -900,19 +903,10 @@ let compiled_densities =
       let compiled = Nx.to_array (Rune.jit' density p) in
       List.iteri
         (fun i a ->
-          let tol =
-            if List.mem family saddle_point then
-              let logs, off = density_terms family a in
-              density_bound epsilon_float v.(i) ~logs ~off
-            else
-              8. *. epsilon_float
-              *. List.fold_left
-                   (fun s t -> s +. Float.abs t)
-                   0. (closed_terms family a)
+          let msg =
+            String.concat " " (List.map (Printf.sprintf "%h") a) ^ " "
           in
-          equal
-            ~msg:(String.concat " " (List.map (Printf.sprintf "%h") a))
-            (float tol) v.(i) compiled.(i))
+          near_density ~msg Nx.float64 family a v.(i) compiled.(i))
         args)
 
 (* At float16 [z²] overflows from [z = 256], where [-z² / 2] is still a float16
@@ -1239,8 +1233,17 @@ let matrix n xs = Nx.create Nx.float64 [| n; n |] xs
 
 (* nx's digamma within 16 ulps: the normaliser's score sums [n - 1] of them, and
    the density's [n] logs of the diagonal. *)
+(* norn.mli's bound on an lkj log density [v], [diag i] the diagonal of
+   row [i] from 1: [16 ε (|v| + Σ_(i >= 2) |(n - i + 2η - 2) log L_ii|)]. *)
+let lkj_bound eps n eta diag v =
+  let t = ref (Float.abs v) in
+  for i = 2 to n do
+    let c = float_of_int (n - i) +. (2. *. eta) -. 2. in
+    t := !t +. Float.abs (c *. Float.log (diag i))
+  done;
+  16. *. eps *. !t
+
 let lkj =
-  (* norn.mli's bound, [16 ε (|f| + Σ_i |(n - i + 2η - 2) log L_ii|)]. *)
   let densities =
     test "log densities are within their bound of mpmath's" (fun () ->
         List.iter
@@ -1268,13 +1271,7 @@ let lkj =
                     rescaled.((i * n) + j) <- rescaled.((i * n) + j) *. s
                   done
                 done;
-                let terms = ref (Float.abs v) in
-                for i = 2 to n do
-                  let c = float_of_int (n - i) +. (2. *. eta) -. 2. in
-                  terms :=
-                    !terms
-                    +. Float.abs (c *. Float.log entries.(((i - 1) * n) + i - 1))
-                done;
+                let diag i = entries.(((i - 1) * n) + i - 1) in
                 let check (type b) (dt : (float, b) Nx.dtype) entries =
                   let eps = (Nx.Dtype.float_format dt).epsilon in
                   let d = D.lkj_cholesky n ~concentration:(Nx.scalar dt eta) in
@@ -1282,7 +1279,7 @@ let lkj =
                     ~msg:
                       (Printf.sprintf "%s, n = %d, η = %g" (Nx.Dtype.name dt) n
                          eta)
-                    (float (16. *. eps *. !terms))
+                    (float (lkj_bound eps n eta diag v))
                     v
                     (wide (D.factors d (Nx.create dt [| n; n |] entries)))
                 in
@@ -1414,12 +1411,9 @@ let lkj =
           in
           List.iteri
             (fun i (eta, _, l22, v) ->
-              let terms =
-                Float.abs v +. Float.abs (((2. *. eta) -. 2.) *. Float.log l22)
-              in
               equal
                 ~msg:(Printf.sprintf "η = %g" eta)
-                (float (16. *. epsilon_float *. terms))
+                (float (lkj_bound epsilon_float 2 eta (fun _ -> l22) v))
                 v compiled.(i))
             rows);
       (* A row's squared norm within [4 n ε] of one counts as in the support:
@@ -1527,32 +1521,60 @@ let count_mass (type b) (dt : (float, b) Nx.dtype) family a b x =
 let count_mean family a b =
   match family with Binomial -> a *. sigmoid b | Poisson | Neg_binomial -> a
 
-(* Against mpmath at float64 and float32, at the counts and trials each holds;
-   outside the support, [-inf] exactly. *)
-let golden_masses =
-  let check (type b) (dt : (float, b) Nx.dtype) family a b x v =
-    if x > top_of dt || (family = Binomial && a > top_of dt) then ()
-    else if not (Float.is_finite v) then
-      equal ~msg:(Nx.Dtype.name dt) float_exact v (count_mass dt family a b x)
-    else
-      let m = count_mean family a b in
-      equal ~msg:(Nx.Dtype.name dt)
-        (float (mass_bound family (eps_of dt) v x m))
-        v
-        (count_mass dt family a b x)
+(* [check_masses ~run family rows] checks [family]'s golden rows at float64, in
+   one program of their parameters through [run], the program itself or its
+   compilation: each mass within its bound of mpmath's, and [-inf] exactly
+   outside the support. *)
+let check_masses ~run family rows =
+  let col i = Array.of_list (List.map (fun r -> List.nth r i) rows) in
+  let a = col 0 and b = col 1 and x = col 2 and v = col 3 in
+  let ints xs =
+    Nx.create Nx.int32 [| Array.length xs |] (Array.map Int32.of_float xs)
   in
+  let counts = ints x in
+  let mass p =
+    match family with
+    | Poisson -> D.factors (D.poisson ~rate:p) counts
+    | Binomial -> D.factors (D.binomial ~trials:(ints a) ~logits:p) counts
+    | Neg_binomial ->
+        D.factors (D.neg_binomial ~mean:p ~dispersion:(vec b)) counts
+  in
+  let p = vec (match family with Binomial -> b | _ -> a) in
+  Array.iteri
+    (fun i f ->
+      let msg = Printf.sprintf "%h %h at %.0f" a.(i) b.(i) x.(i) in
+      if Float.is_finite v.(i) then
+        let m = count_mean family a.(i) b.(i) in
+        equal ~msg
+          (float (mass_bound family (eps_of Nx.float64) v.(i) x.(i) m))
+          v.(i) f
+      else equal ~msg float_exact v.(i) f)
+    (Nx.to_array (run mass p))
+
+(* Against mpmath at float64 in one program, and at float32 row by row, at the
+   counts and trials it holds. *)
+let golden_masses =
   test "log masses are within their bound of mpmath's" (fun () ->
       List.iter
         (fun (name, rows) ->
           subtest name (fun () ->
               let family = count_family name in
+              let rows = List.map floats rows in
+              check_masses ~run:(fun f p -> f p) family rows;
+              let top = top_of Nx.float32 in
               List.iter
-                (fun row ->
-                  match floats row with
-                  | [ a; b; x; v ] ->
-                      check Nx.float64 family a b x v;
-                      check Nx.float32 family a b x v
-                  | _ -> failwith "dist.golden: a malformed mass line")
+                (function
+                  | [ a; b; x; v ]
+                    when x <= top && (family <> Binomial || a <= top) ->
+                      let msg = "float32" in
+                      let actual = count_mass Nx.float32 family a b x in
+                      if Float.is_finite v then
+                        let m = count_mean family a b in
+                        equal ~msg
+                          (float (mass_bound family (eps_of Nx.float32) v x m))
+                          v actual
+                      else equal ~msg float_exact v actual
+                  | _ -> ())
                 rows))
         (families "mass"))
 
@@ -1946,48 +1968,15 @@ let scores =
             slope (grad_of f r));
     ]
 
-(* Compiled, the golden lines of each family in one program of their parameters:
-   each mass within its bound of mpmath's, as eager. *)
 let compiled_masses =
-  Windtrap.cases "a compiled log mass is within its bound"
-    ~id:(fun (name, _) -> name)
-    [
-      ("poisson", Poisson);
-      ("binomial", Binomial);
-      ("neg_binomial", Neg_binomial);
-    ]
-    (fun (name, family) ->
+  test "a compiled log mass is within its bound" (fun () ->
       Compiled.here ();
-      let rows =
-        List.filter_map
-          (function
-            | [ _; n; a; b; x; v ] when n = name -> Some (floats [ a; b; x; v ])
-            | _ -> None)
-          (lines "mass")
-      in
-      let col i = Array.of_list (List.map (fun r -> List.nth r i) rows) in
-      let a = col 0 and b = col 1 and x = col 2 and v = col 3 in
-      let ints xs =
-        Nx.create Nx.int32 [| Array.length xs |] (Array.map Int32.of_float xs)
-      in
-      let counts = ints x in
-      let mass p =
-        match family with
-        | Poisson -> D.factors (D.poisson ~rate:p) counts
-        | Binomial -> D.factors (D.binomial ~trials:(ints a) ~logits:p) counts
-        | Neg_binomial ->
-            D.factors (D.neg_binomial ~mean:p ~dispersion:(vec b)) counts
-      in
-      let p = vec (match family with Binomial -> b | _ -> a) in
-      let compiled = Nx.to_array (Rune.jit' mass p) in
-      Array.iteri
-        (fun i f ->
-          let m = count_mean family a.(i) b.(i) in
-          equal
-            ~msg:(Printf.sprintf "%h %h at %.0f" a.(i) b.(i) x.(i))
-            (float (mass_bound family (eps_of Nx.float64) v.(i) x.(i) m))
-            v.(i) f)
-        compiled)
+      List.iter
+        (fun (name, rows) ->
+          subtest name (fun () ->
+              check_masses ~run:Rune.jit' (count_family name)
+                (List.map floats rows)))
+        (families "mass"))
 
 let masses =
   group "count masses"
@@ -2263,39 +2252,58 @@ let transform =
 
 (* Truncation *)
 
+(* [check_quantiles ~run name rows] checks gen/dist.py's case [name] at its
+   golden [p] in one call through [run], [D.quantile] itself or its compilation,
+   within norn.mli's bound: [m] and [f] the tail and the density of the case's
+   base at the quantile, which gen/dist.py gives as logarithms. *)
+let check_quantiles ~run name rows =
+  let ps = vec (Array.of_list (List.map List.hd rows)) in
+  let xs = Nx.to_array (run (D.quantile (continuous_case name)) ps) in
+  List.iteri
+    (fun i row ->
+      match row with
+      | [ p; v; log_m; log_f ] ->
+          equal
+            ~msg:(Printf.sprintf "p = %h" p)
+            (float (quantile_bound ~x:v ~log_m ~log_f))
+            v xs.(i)
+      | _ -> failwith "dist.golden: a malformed ppf line")
+    rows
+
+(* [check_truncation ~run name rows] checks gen/dist.py's truncation [name] at
+   its golden points in one call through [run], [D.factors] itself or its
+   compilation: each log density within norn.mli's bound, [-inf] exactly
+   outside. *)
+let check_truncation ~run name rows =
+  let d = continuous_case name in
+  let base, _, _ = List.assoc name truncations in
+  let xs = vec (Array.of_list (List.map List.hd rows)) in
+  let fs = Nx.to_array (run (D.factors d) xs) in
+  let bs = Nx.to_array (D.factors (continuous_case base) xs) in
+  List.iteri
+    (fun i row ->
+      match row with
+      | [ x; v ] ->
+          let msg = Printf.sprintf "x = %h" x in
+          if Float.is_finite v then
+            equal ~msg
+              (float (truncation_bound epsilon_float ~base:bs.(i) ~v))
+              v fs.(i)
+          else equal ~msg float_exact v fs.(i)
+      | _ -> failwith "dist.golden: a malformed logpdf line")
+    rows
+
 let truncation =
   let normal = D.normal ~loc:(f64 0.5) ~scale:(f64 2.) in
   group "truncated"
     [
-      (* norn.mli: the log density is the base's less the log mass, within [ε]
-         times their magnitudes where both are large. The base's [8 ε] of its
-         terms and the mass's [64 ε] hold that and the moderate rows. *)
       test "log densities are within their bound of mpmath's" (fun () ->
           List.iter
             (fun (name, rows) ->
               subtest name (fun () ->
-                  let d = continuous_case name in
-                  let base, _, _ = List.assoc name truncations in
-                  List.iter
-                    (fun row ->
-                      match floats row with
-                      | [ x; v ] ->
-                          let f = item (D.factors d (f64 x)) in
-                          if Float.is_finite v then
-                            let b =
-                              item (D.factors (continuous_case base) (f64 x))
-                            in
-                            equal
-                              ~msg:(Printf.sprintf "x = %h" x)
-                              (float
-                                 (truncation_bound epsilon_float ~base:b ~v))
-                              v f
-                          else
-                            equal
-                              ~msg:(Printf.sprintf "x = %h" x)
-                              float_exact v f
-                      | _ -> failwith "dist.golden: a malformed logpdf line")
-                    rows))
+                  check_truncation
+                    ~run:(fun f x -> f x)
+                    name (List.map floats rows)))
             (families "logpdf"));
       test "its draws lie within the bounds" (fun () ->
           let d = D.truncated ~low:(f64 60.5) ~high:(f64 61.) normal in
@@ -2350,52 +2358,14 @@ let truncation =
             expected g);
       (* gen/dist.py's truncated laplace on (-50, -40), whose tails are closed
          forms: a normal's, read at each of the quantile's Newton steps, compile
-         to a kernel of 700 KB that took a loaded runner past 60 s. One program
-         over the golden's points, one over its p, each within the bound
-         norn.mli states eagerly. *)
+         to a kernel of 700 KB that took a loaded runner past 60 s. *)
       test "a compiled density and quantile are within their bounds" (fun () ->
           Compiled.here ();
-          let d = continuous_case "truncated_laplace" in
-          let base = continuous_case "laplace" in
           let rows kind =
             List.map floats (List.assoc "truncated_laplace" (families kind))
           in
-          let column i rows =
-            vec (Array.of_list (List.map (fun r -> List.nth r i) rows))
-          in
-          let points = rows "logpdf" in
-          let densities =
-            Nx.to_array (Rune.jit' (D.factors d) (column 0 points))
-          in
-          List.iteri
-            (fun i r ->
-              match r with
-              | [ x; v ] when Float.is_finite v ->
-                  let b = item (D.factors base (f64 x)) in
-                  equal
-                    ~msg:(Printf.sprintf "x = %h" x)
-                    (float (truncation_bound epsilon_float ~base:b ~v))
-                    v densities.(i)
-              | [ x; v ] ->
-                  equal
-                    ~msg:(Printf.sprintf "x = %h" x)
-                    float_exact v densities.(i)
-              | _ -> failwith "dist.golden: a malformed logpdf line")
-            points;
-          let ps = rows "ppf" in
-          let quantiles =
-            Nx.to_array (Rune.jit' (D.quantile d) (column 0 ps))
-          in
-          List.iteri
-            (fun i r ->
-              match r with
-              | [ p; v; log_m; log_f ] ->
-                  equal
-                    ~msg:(Printf.sprintf "p = %h" p)
-                    (float (quantile_bound ~x:v ~log_m ~log_f))
-                    v quantiles.(i)
-              | _ -> failwith "dist.golden: a malformed ppf line")
-            ps);
+          check_truncation ~run:Rune.jit' "truncated_laplace" (rows "logpdf");
+          check_quantiles ~run:Rune.jit' "truncated_laplace" (rows "ppf"));
       test "a bound outside the support leaves no mass and raises" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"log mass between the bounds")
             (fun () ->
@@ -3087,28 +3057,12 @@ let reparameterised =
 
 let sample = group "sample" [ reparameterised; fit; draws_inside ]
 
-(* Each case's quantiles at gen/dist.py's p, in one call, within norn.mli's
-   bound: [m] and [f] the tail and the density of the case's base at the
-   quantile, which gen/dist.py gives as logarithms. *)
 let quantile_golden =
   test "is mpmath's at gen/dist.py's p" (fun () ->
       List.iter
         (fun (name, rows) ->
           subtest name (fun () ->
-              let d = continuous_case name in
-              let rows = List.map floats rows in
-              let ps = vec (Array.of_list (List.map List.hd rows)) in
-              let xs = Nx.to_array (D.quantile d ps) in
-              List.iteri
-                (fun i row ->
-                  match row with
-                  | [ p; v; log_m; log_f ] ->
-                      equal
-                        ~msg:(Printf.sprintf "p = %h" p)
-                        (float (quantile_bound ~x:v ~log_m ~log_f))
-                        v xs.(i)
-                  | _ -> failwith "dist.golden: a malformed ppf line")
-                rows))
+              check_quantiles ~run:(fun f p -> f p) name (List.map floats rows)))
         (families "ppf"))
 
 type gamma_family = Gamma | Inverse_gamma
