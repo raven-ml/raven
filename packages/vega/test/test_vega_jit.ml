@@ -830,7 +830,7 @@ module Sets (F : Forms) = struct
             (0., 1e-3, 100, 9900, 0.);
             (1e-7, 0.1, 500, 99500, 1e-5);
           ] );
-      ( "TESSERA's distil and pretrain recipes",
+      ( "warmup_cosine_decay at TESSERA's run lengths",
         [
           (tessera (8e-4, 0.05) 200, 200);
           (tessera (2e-3, 0.1) 300, 300);
@@ -994,6 +994,25 @@ let test_one_step_program () =
     (program (8e-4, 0.05, 1e-4) 200)
     (program (2e-3, 0.1, 0.05) 300)
 
+(* Clipping compiles: the scale is tensor arithmetic selected with [Nx.where],
+   so one program clips gradients above the bound and returns those within it
+   unchanged, bit for bit. Above it, compiled sums associate apart from eager
+   ones: each float32 sum of 15 squares is within [15 * 2^-24] of the exact one,
+   relative, so the two norms, and the elements they scale, are within [2^-19]
+   of each other, relative, with the square root and the quotient. *)
+let test_clip_compiles () =
+  Compiled.here ();
+  let clip g = Vega.clip_by_global_norm Wb.ptree ~max_norm:1.0 g in
+  let compiled = Rune.jit Nx.Ptree.(Wb.ptree @-> returns Wb.ptree) clip in
+  let check name w (g : Wb.t) =
+    let eager = clip g and compiled = compiled g in
+    equal ~msg:(name ^ ": w") (array w) (floats eager.w) (floats compiled.w);
+    equal ~msg:(name ^ ": b") (array w) (floats eager.b) (floats compiled.b)
+  in
+  let small (x : Wb.t) = { Wb.w = Nx.mul_s x.w 0.01; b = Nx.mul_s x.b 0.01 } in
+  check "above the bound" (float_rel ~rel:0x1p-19 ~abs:0.0) (wb 1);
+  check "within the bound" float_exact (small (wb 2))
+
 (* A step's coefficients are constants of its program: a sweep over [b1],
    [b2] or [eps] compiles once per value. *)
 let test_coefficients_are_constants () =
@@ -1006,40 +1025,58 @@ let test_coefficients_are_constants () =
   not_equal ~msg:"b2" string base (program ~b2:0.99 ());
   not_equal ~msg:"eps" string base (program ~eps:1e-6 ())
 
+(* Groups follow the claims of vega.mli's preamble, then the sections that
+   promise a compiled step. *)
 let () =
   exit
     (run "vega jit"
        [
          group "a step compiles with its state donated" tests;
-         group "a compiled step is the eager one"
+         group "coefficients are constants"
            [
-             muon_compiles;
-             test "muon over leaves cut across devices steps as eager"
-               test_muon_cut_compiles;
+             test "a sweep compiles once per value"
+               test_coefficients_are_constants;
+           ];
+         group "a rate's numbers are data"
+           [
+             test "two runs that differ in their rates share one step program"
+               test_one_step_program;
+           ];
+         group "a schedule's numbers are data"
+           (schedule_laws
+           @ [
+               test
+                 "warmup_cosine_decay keeps its literal's bits compiled over \
+                  long runs"
+                 test_tessera_compiled;
+               test
+                 "warmup_cosine_decay keeps its literal's bits at every run \
+                  length to 1000"
+                 test_tessera_eager;
+               test
+                 "a polynomial decay compiles to eager's values after its end"
+                 test_polynomial_decay_compiles;
+             ]);
+         group "clip_by_global_norm"
+           [
+             test "clip_by_global_norm compiles to eager's values"
+               test_clip_compiles;
            ];
          group "a bfloat16 step draws as eager's" half_tests;
-         group "precision"
-           [
-             test "compiled radam rectifies as in float64"
-               test_radam_compiled_rectification;
-             test "a polynomial decay compiles to eager's values"
-               test_polynomial_decay_compiles;
-           ];
          group "loss scaling"
            [
              test "a loss-scaled step compiles, overflow included"
                test_loss_scaled_compiles;
            ];
-         group "a schedule's numbers are data" schedule_laws;
-         group "TESSERA's schedules are data"
+         group "muon_step"
            [
-             test "compiled at every counter" test_tessera_compiled;
-             test "eager at every counter" test_tessera_eager;
-             test "one step program for two runs" test_one_step_program;
+             muon_compiles;
+             test "muon over leaves cut across devices steps as eager"
+               test_muon_cut_compiles;
            ];
-         group "coefficients"
+         group "radam_step"
            [
-             test "a sweep compiles once per value"
-               test_coefficients_are_constants;
+             test "compiled radam rectifies as in float64"
+               test_radam_compiled_rectification;
            ];
        ])
