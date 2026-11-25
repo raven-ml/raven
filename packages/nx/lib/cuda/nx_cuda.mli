@@ -115,8 +115,8 @@
     own order ({!section-own_order}) cuts each slice into {e chunks} of
     4096 terms from its start. A chunk's total is its terms combined in
     lane order, as a reduction of exactly them. The carry into chunk 0 is
-    the slice's element of a given carry, else the identity, but a
-    product's chunk 0 given none has none. The carry into chunk [c + 1] is
+    the slice's element of a given carry, else [+0], but a product's
+    chunk 0 given none has none. The carry into chunk [c + 1] is
     the carry into chunk [c] combined with chunk [c]'s total. Each result
     of a chunk is its carry combined with the chunk's terms up to it, left
     to right. *)
@@ -132,10 +132,10 @@
     [d] = 1, 2, 4, 8 and 16, span [r ≥ d] adds span [r - d]'s value from
     the step before ahead of its own. A strip's total is its last span's
     value, and a chunk's total its strips' totals added in order. A chunk's
-    carry is the slice's carry, then the earlier chunks' totals, added in
-    order. A result adds, left to right, its chunk's carry, the totals of
-    the earlier strips of its chunk, the value of the previous span of its
-    strip, and its span's terms up to it. *)
+    carry is the slice's carry, else [+0], then the earlier chunks'
+    totals, added in order. A result adds, left to right, its chunk's
+    carry, the totals of the earlier strips of its chunk, the value of the
+    previous span of its strip, and its span's terms up to it. *)
 
 (** {3:logsumexp_scans Logsumexp scans}
 

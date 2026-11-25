@@ -221,7 +221,7 @@
     cuts each slice along its axis into {e chunks} of 4096 terms from its
     start. A chunk's total is its terms reduced in lane order, as a reduction
     of exactly them. The carry into chunk 0 is the slice's element of a given
-    carry, else the identity, but a product's chunk 0 given none has none, and
+    carry, else [+0], but a product's chunk 0 given none has none, and
     its first result is its first term. The carry into chunk [c + 1] is the
     carry into chunk [c] combined with [c]'s total, and each result of a chunk
     is its carry combined with the chunk's terms up to it, left to right. So
