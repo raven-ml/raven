@@ -350,7 +350,7 @@ let pp_iints ppf s = pp_ints ppf (Iarray.to_array s)
 let iints = Testable.make ~pp:pp_iints ~equal:(Iarray.equal Int.equal)
 
 (* A witness of [dt]'s values that prints them as [dt] does and compares floats
-   bit for bit. *)
+   bit for bit, NaNs as a class. *)
 let value : type v s. (v, s) Nx_array.Dtype.t -> v testable =
  fun dt ->
   let module D = Nx_array.Dtype in
@@ -393,6 +393,17 @@ let kill ?(why = "consumed by the test") b =
    kills [b]. *)
 let unclaimed b =
   Option.is_some (Rig.Buffer.take ~why:"consumed by the test" [ b ])
+
+(* Nothing claims [b]'s memory: a take of it succeeds, which kills [b]. *)
+let released ?(msg = "released: a take of the memory succeeds") b =
+  ignore (require_some ~msg (Rig.Buffer.take ~why:"consumed by the test" [ b ]))
+
+(* A claim holds [b]'s memory: a take of it fails. *)
+let claimed ?(msg = "claimed: a take of the memory fails") b =
+  is_none ~msg (Rig.Buffer.take ~why:"consumed by the test" [ b ])
+
+(* Devices, equal by {!Rig.equal}. *)
+let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
 
 (* [a] over the buffer a take of its memory gives, which must succeed:
    nothing claims [a]'s memory. [a] is dead from then on. *)
