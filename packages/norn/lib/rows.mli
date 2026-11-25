@@ -106,6 +106,11 @@ val check_floats : string -> ('u, 'd) Nx.Ptree.t -> 'u -> unit
 (** [check_floats context u x] raises [Invalid_argument] naming [context] and
     the path of a tensor of [x] that is not of a float dtype. *)
 
+val check_dtypes : string -> ('u, 'd) Nx.Ptree.t -> 'u -> unit
+(** [check_dtypes context u x] raises [Invalid_argument] naming [context] and
+    the path of a float tensor of [x] whose dtype differs from the first float
+    tensor's. *)
+
 val check_start : string -> (float, 'f, 'd) Nx.t -> unit
 (** [check_start context l] raises through {!Nx.check} at a chain whose log
     density [l] is [-inf], naming it. *)

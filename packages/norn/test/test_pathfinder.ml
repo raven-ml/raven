@@ -406,6 +406,18 @@ let errors =
                "Norn.Gaussian.pathfinder: the density or its gradient is not \
                 finite at chain 0 of the start") (fun () ->
               pf pos ~steps:5 lp (Nx.Rng.key 1) starts));
+      test "a start of float tensors of two dtypes is refused" (fun () ->
+          let u = Nx.Ptree.(pair tensor tensor) in
+          let lp (a, b) =
+            Nx.add
+              (Nx.sum ~axes:[ 1 ] (Nx.square (Nx.cast Nx.float64 a)))
+              (Nx.sum ~axes:[ 1 ] (Nx.square b))
+          in
+          let start =
+            (Nx.ones Nx.float32 [| 2; 1 |], Nx.ones Nx.float64 [| 2; 2 |])
+          in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Gaussian.pathfinder") (fun () ->
+              G.pathfinder u ~steps:5 lp (Nx.Rng.key 1) start));
     ]
 
 let () =

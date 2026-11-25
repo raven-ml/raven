@@ -202,6 +202,7 @@ let vi u ?(rank = 0) ?(draws = 1) ~steps lp k start =
   if draws < 1 then invalid_argf "%s: draws = %d is not positive" context draws;
   if rank < 0 then invalid_argf "%s: rank = %d is negative" context rank;
   let c = Rows.count context u start in
+  Rows.check_dtypes context u start;
   let l0, g0 = Rows.evaluate u lp start in
   Rows.check_density context u lp start l0;
   let d = Rows.elements u c start in

@@ -85,6 +85,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Gaussian.pathfinder` and `Gaussian.vi` refuse a start whose float tensors
+  have two dtypes, as `pathfinder`'s interface stated. `vi` cast them to the
+  density's dtype and back, losing digits with no error; `pathfinder` raised
+  naming `Jera.Minimize.iterates`.
 - `Nuts.init`, `Hmc.init`, `Ensemble.init`, `Nested.init`, `Smc.init`,
   `Gaussian.pathfinder` and `Gaussian.vi` refuse a density whose rows read the
   other chains in a way their order leaves, such as through the chains' mean.

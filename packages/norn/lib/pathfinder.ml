@@ -273,6 +273,7 @@ let pathfinder u ?(history = 6) ?(elbo_draws = 5) ~steps lp k start =
     invalid_argf "%s: elbo_draws = %d is not positive" context elbo_draws;
   if steps < 1 then invalid_argf "%s: steps = %d is not positive" context steps;
   let c = Rows.count context u start in
+  Rows.check_dtypes context u start;
   let l0, g0 = Rows.evaluate u lp start in
   Rows.check_density context u lp start l0;
   let d = Rows.elements u c start in

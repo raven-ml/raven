@@ -201,6 +201,27 @@ let check_floats context u x =
           (Nx.Dtype.name (Nx.dtype t)))
     x ()
 
+(* [check_dtypes context u x] refuses float tensors of two dtypes: a method that
+   computes on flat rows would cast one to the other. *)
+let check_dtypes context u x =
+  let first = ref None in
+  P.fold u
+    (fun p t () ->
+      if float_leaf t then
+        let name = Nx.Dtype.name (Nx.dtype t) in
+        let path =
+          match P.Path.to_string p with "" -> "the position" | s -> s
+        in
+        match !first with
+        | None -> first := Some (path, name)
+        | Some (at, dtype) ->
+            if name <> dtype then
+              invalid_argf
+                "%s: %s is %s where %s is %s; the position's float tensors \
+                 share one dtype"
+                context path name at dtype)
+    x ()
+
 (* [check_start context l] refuses a start whose log density [l] is [-inf] at
    a chain: no transition is defined from a point of zero density. *)
 let check_start context l =

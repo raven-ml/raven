@@ -1230,9 +1230,9 @@ module Gaussian : sig
       reach the largest bound. A chain whose bound estimate, gradient or step
       is not finite stays put.
 
-      Raises [Invalid_argument] if [steps] or [draws] is not positive, [rank]
-      is negative, [start] has no float element, or as {!pathfinder} does
-      for [lp]. *)
+      Raises [Invalid_argument] if [steps] or [draws] is not positive, [rank] is
+      negative, [start] has no float element or float tensors of two dtypes, or
+      as {!pathfinder} does for [lp]. *)
 
   (** {1:eliminators Eliminators} *)
 
