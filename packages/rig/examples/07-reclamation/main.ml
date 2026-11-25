@@ -29,9 +29,10 @@ let try_alloc f =
    allocation raises once reclaiming finds no room. They live in [fill]'s frame,
    so they are unreachable once it returns. A value bound in a module's
    initialisation may stay reachable until the program ends, as the compiler may
-   place it in static data once it inlines [fill] there, which [@inline never]
-   forbids. *)
-let[@inline never] fill d =
+   place it in static data, so [fill] runs outside it: [@inline never] keeps the
+   compiler from copying its body there, and [@local never] from compiling it as
+   a jump within its one caller. *)
+let[@inline never] [@local never] fill d =
   let live = List.init 4 (fun _ -> Buffer.create d (256 * kib)) in
   try_alloc (fun () -> Buffer.create d (256 * kib));
   ignore (Sys.opaque_identity live)

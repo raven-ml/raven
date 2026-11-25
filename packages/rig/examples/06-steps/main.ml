@@ -61,9 +61,10 @@ let step d =
 (* Two runs of one step, each on buffers of its own. The step lives in [runs]'s
    frame, so it is unreachable once [runs] returns. A value bound in a module's
    initialisation may stay reachable until the program ends, as the compiler may
-   place it in static data once it inlines [runs] there, which [@inline never]
-   forbids. *)
-let[@inline never] runs d =
+   place it in static data, so [runs] runs outside it: [@inline never] keeps the
+   compiler from copying its body there, and [@local never] from compiling it as
+   a jump within its one caller. *)
+let[@inline never] [@local never] runs d =
   let run = step d in
   let x = holding d [ 1l; 2l; 3l; 4l ] and y = Buffer.create d (4 * n) in
   Format.printf "run 1: %a@." Point.pp (run ~src:x ~dst:y);
