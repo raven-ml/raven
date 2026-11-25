@@ -85,7 +85,8 @@
     - A kernel is {e deterministic}. For the same operand values, shapes,
       layouts and dtypes and the same attributes, it gives the same bits on
       every run, on any number of threads, on devices of one model, for a
-      host library one architecture.
+      host library one architecture, a NaN result's sign and payload aside
+      (below).
     - A result whose bits this contract fixes, an integer, a boolean, an
       extreme, a position, a move's or a map of kinds {!Prog} defines
       exactly, depends only on the operand elements its own index reads. So
@@ -551,7 +552,9 @@ val attention_refusal :
     operands do not fit. A call of other shapes does not fit. Every shape
     it derives, a padded operand's and each destination's, is one a layout
     admits ({!Nx_array.Layout.max_numel}), and one past it is an [Error].
-    An axis is checked against the rank it indexes, in \[[0], [rank]). *)
+    An axis is checked against the rank it indexes, in \[[0], [rank]).
+    Operands' shapes are arrays' shapes, ones {!Nx_array.Layout.fits}
+    admits; for others the result is unspecified. *)
 module Shape : sig
   type t = int array
   (** The type for shapes. *)
@@ -622,8 +625,9 @@ module Shape : sig
   val assemble : t -> Nx_array.Move.range iarray array -> t array result
   (** [assemble y regions] is the shape of each piece of an assembly of
       shape [y]: its region's, the elements [regions.(i)] keep of each axis
-      of [y], as {!Nx_array.Move.Slice} keeps them. A fold's operand has the
-      shape {!S.fold} states. *)
+      of [y], as {!Nx_array.Move.Slice} keeps them. It is an [Error] for a
+      region that {!Nx_array.Move.shape} refuses as a [Slice] of [y]. A
+      fold's operand has the shape {!S.fold} states. *)
 
   (** {1:contraction Contraction} *)
 

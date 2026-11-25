@@ -29,12 +29,12 @@
     through the C function of its name in [nx_kinds.h] ([nx_exp_f32] for
     [Exp] at float32), which gives these results, and states whether it
     does. On one device model it computes each kind to the same bits in all
-    its paths, so that a kind gives the same bits run alone by its own
-    kernel and as a node of any program. On a device that flushes
-    subnormal numbers to zero, which its library states, a kind's results
-    are as this section states where no operand is subnormal and no
-    nonzero exact result lies below the least normal number in magnitude;
-    its library states what it gives elsewhere.
+    its paths, a NaN result's sign and payload aside ({!section-results}), so
+    that a kind gives the same bits run alone by its own kernel and as a node
+    of any program. On a device that flushes subnormal numbers to zero, which
+    its library states, a kind's results are as this section states where no
+    operand is subnormal and no nonzero exact result lies below the least
+    normal number in magnitude; its library states what it gives elsewhere.
 
     {!v} makes a program from its nodes, {!of_node} from one kind over its
     operands, and {!of_exprs} from {e expressions} ({!E}), nodes written as
@@ -297,11 +297,11 @@ val accepts3 :
     positive base and a real exponent.
 
     Where Annex G leaves a sign unspecified, each kind keeps
-    [f (conj z) = conj (f z)] and its parity bit for bit, a NaN part's sign
-    bit counting as its sign. Where a result's sign comes from a NaN part,
-    as the infinite imaginary part of [Sqrt (-inf + i NaN)] does, that sign
-    is unspecified, as Annex G allows. At operands of positive parts each
-    kind gives:
+    [f (conj z) = conj (f z)] and its parity bit for bit, a NaN operand part's
+    sign bit counting as its sign and a NaN result part as any NaN. Where a
+    result's sign comes from a NaN part, as the infinite imaginary part of
+    [Sqrt (-inf + i NaN)] does, that sign is unspecified, as Annex G allows. At
+    operands of positive parts each kind gives:
 
     {v
     Exp (-inf + i inf), Exp (-inf + i NaN)      +0 + i0
@@ -323,10 +323,10 @@ val accepts3 :
 (** {1:bits Bits} *)
 
 val bits : ('v, 's) Nx_array.Dtype.t -> 'v -> string
-(** [bits dt x] is the bits of [x], an element of [dt], in the host's byte
-    order: {!Nx_array.Dtype.bytes}[ dt 1] bytes, a sub-byte element in the low
-    bits of one byte. It is the payload of [Const]. A float is stored as
-    {!Nx_array.Dtype.of_float} says.
+(** [bits dt x] is the bits of [x], an element of [dt], little-endian as
+    {!Nx_array.Dtype} stores elements: {!Nx_array.Dtype.bytes}[ dt 1] bytes, a
+    sub-byte element in the low bits of one byte. It is the payload of [Const].
+    A float is stored as {!Nx_array.Dtype.of_float} says.
 
     Raises [Invalid_argument] for an [int] outside [dt]'s range. *)
 
