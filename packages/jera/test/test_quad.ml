@@ -471,8 +471,13 @@ let adaptive_tests =
         let s = adaptive ~budget:400 f (unit_range (vec [| 0. |])) in
         equal (at_tol ()) (vec [| truth |]) (Solution.get s));
     test "each element is its integral solved alone" (fun () ->
-        let widths = [| 1.; 1e-1; 1e-2 |] in
-        let solve w = adaptive (peak w) (unit_range w) in
+        (* A negative width marks a pole at the middle node 0.5: that lane ends
+           Not_finite at its first piece among lanes that converge. *)
+        let widths = [| 1.; 1e-1; -1.; 1e-2 |] in
+        let f w x =
+          Nx.where (Nx.less_s w 0.) (Nx.recip (Nx.sub_s x 0.5)) (peak w x)
+        in
+        let solve w = adaptive (f w) (unit_range w) in
         let all = solve (vec widths) in
         let alone read =
           Nx.concatenate ~axis:0
@@ -480,6 +485,12 @@ let adaptive_tests =
                (fun w -> read (solve (vec [| w |])))
                (Array.to_list widths))
         in
+        equal ~msg:"Not_finite" (exact ())
+          (Nx.create Nx.bool [| 4 |] [| false; false; true; false |])
+          (Solution.is Not_finite all);
+        equal ~msg:"statuses" (exact ())
+          (alone (Solution.is Not_finite))
+          (Solution.is Not_finite all);
         equal ~msg:"best" (exact ()) (alone Solution.best) (Solution.best all);
         equal ~msg:"evaluations" (exact ())
           (alone Solution.evaluations)
