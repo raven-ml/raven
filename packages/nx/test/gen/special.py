@@ -1045,12 +1045,56 @@ def sinc_points(fmt):
             + [-x for x in points] + [x for x in drawn if math.isfinite(x)])
 
 
+# logsumexp and logmeanexp: lanes of eight terms, the reductions' rows that
+# float64 cannot hold by a float64 reference. Spreads of a unit to past
+# exp's range, about zero and far from it, so that the bound's u|r| term
+# shows; [-inf] terms among finite ones, equal terms.
+
+LSE_TERMS = 8
+
+
+def lse_reference(mean):
+    def f(fmt, *xs):
+        if any(math.isnan(x) for x in xs):
+            return math.nan
+        if all(x == -math.inf for x in xs):
+            return -math.inf
+        if any(x == math.inf for x in xs):
+            return math.inf
+
+        def g(*a):
+            s = mpmath.fsum(mpmath.exp(t) for t in a)
+            return mpmath.log(s / len(a) if mean else s)
+
+        return correctly_rounded(fmt, g, *xs)
+    return f
+
+
+def lse_points(fmt):
+    rng = random.Random(f"logsumexp {fmt.name}")
+    big = 80.0 if fmt.p == 24 else 700.0
+    lane = lambda f: tuple(round_to(fmt, mpf(f())) for _ in range(LSE_TERMS))
+    lanes = []
+    for spread in [1.0, 5.0, 30.0, big]:
+        for offset in [0.0, 1e3, -1e4]:
+            for _ in range(6):
+                lanes.append(lane(lambda: offset + rng.uniform(-spread, spread)))
+    for _ in range(8):
+        xs = list(lane(lambda: rng.uniform(-5.0, 5.0)))
+        for i in rng.sample(range(LSE_TERMS), rng.randrange(1, LSE_TERMS)):
+            xs[i] = -math.inf
+        lanes.append(tuple(xs))
+    return lanes + [(1.0,) * LSE_TERMS, (-0.0,) + (-math.inf,) * (LSE_TERMS - 1)]
+
+
 FUNCTIONS = [
     Function("asinh", ["x"], asinh_reference, asinh_points),
     Function("acosh", ["x"], acosh_reference, acosh_points),
     Function("atanh", ["x"], atanh_reference, atanh_points),
     Function("hypot", ["x", "y"], hypot_reference, hypot_points),
     Function("sinc", ["x"], sinc_reference, sinc_points),
+    Function("logsumexp", [f"x{i}" for i in range(LSE_TERMS)], lse_reference(False), lse_points),
+    Function("logmeanexp", [f"x{i}" for i in range(LSE_TERMS)], lse_reference(True), lse_points),
     Function("erf", ["x"], erf_reference, erf_points),
     Function("erfinv", ["x"], erfinv_reference, erfinv_points, extra=kappa),
     Function("erfc", ["x"], plain(mpmath.erfc, 2.0, 0.0), erfc_points),

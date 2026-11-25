@@ -9,7 +9,6 @@
   test_exec
   test_elementwise
   test_reduce
-  test_statistics
   test_activations
   test_attention
   test_order
@@ -53,7 +52,6 @@
   test_exec
   test_elementwise
   test_reduce
-  test_statistics
   test_activations
   test_attention
   test_order
