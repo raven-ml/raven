@@ -6,35 +6,383 @@
 open Windtrap
 open Kaun
 
-(* Conv's walk is dtype-generic, so each instance is a type pin: float64 for
-   gradient checking. *)
+(* A tensor's shape and its values widened to float64, which every float dtype
+   widens to exactly: equal bits, NaN equal to NaN. *)
+let tensor = pair (array int) (array float_exact)
+let bits t = (Nx.shape t, Nx.to_array (Nx.cast Nx.float64 t))
+let floats shape values = Nx.create Nx.float32 shape values
 
-let conv64 = Nx.Ptree.instantiate (module Conv)
+type dtype = Dtype : (float, 'b) Nx.dtype -> dtype
 
-let paths p =
-  let conv = Nx.Ptree.instantiate (module Conv) in
-  List.rev
-    (Nx.Ptree.fold conv
-       (fun path _ acc -> Nx.Ptree.Path.to_string path :: acc)
-       p [])
+let float_dtypes =
+  [
+    Dtype Nx.float16;
+    Dtype Nx.bfloat16;
+    Dtype Nx.float32;
+    Dtype Nx.float64;
+    Dtype Nx.float8_e4m3fn;
+    Dtype Nx.float8_e5m2;
+    Dtype Nx.float4_e2m1fn;
+  ]
 
-let grads_ok = function Ok () -> () | Error m -> fail m
-let shape_is ?msg expected t = equal ?msg (array int) expected (Nx.shape t)
+let dtype_name (Dtype dt) = Nx.Dtype.name dt
+let pp_dtype ppf d = Format.pp_print_string ppf (dtype_name d)
 
-let values_are ?msg ~tol expected t =
-  let ft = if tol = 0. then float_exact else float tol in
-  equal ?msg (array ft) expected (Nx.to_array t)
+(* A witness of placements at one brand. *)
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+let software = lazy (Nx.devices [ Result.get_ok (Rig.software "kaun-conv") ])
 
-let image shape values = Nx.create Nx.float32 shape values
-let arange_image shape n = image shape (Array.init n float_of_int)
+let visits p =
+  List.map
+    (Format.asprintf "%a" Nx.Ptree.pp_visit)
+    (Nx.Ptree.visits (Nx.Ptree.instantiate (module Conv)) p)
 
-(* Goldens
+(* Types *)
 
-   golden/conv.npz holds PyTorch's convolutions of inputs, weights and
-   biases that are multiples of 1/4, so that every sum is exact in float64
-   and each result is the exact one. Activations are channels last and
-   weights in PyTorch's layout, moved as an importer moves them. *)
+let test_shapes () =
+  let p =
+    Conv.make ~groups:2 ~key:(Nx.Rng.key 1) ~in_channels:4 ~out_channels:6
+      ~kernel_size:[| 2; 3 |] Nx.float32
+  in
+  equal ~msg:"w" (array int) [| 6; 2; 3; 2 |] (Nx.shape p.w);
+  equal ~msg:"b" (array int) [| 6 |] (Nx.shape (require_some p.b))
 
+let test_no_bias () =
+  let p =
+    Conv.make ~bias:false ~key:(Nx.Rng.key 2) ~in_channels:2 ~out_channels:3
+      ~kernel_size:[| 2 |] Nx.float32
+  in
+  is_none ~pp:Nx.pp p.b
+
+(* Constructors *)
+
+(* Fans at groups 2 of 4 inputs and 6 outputs over 2 x 3 taps: (4 / 2) * 6 and
+   (6 / 2) * 6. *)
+let test_make_draws () =
+  let key = Nx.Rng.key 3 in
+  let p =
+    Conv.make ~bias_init:Init.glorot_uniform ~groups:2 ~key ~in_channels:4
+      ~out_channels:6 ~kernel_size:[| 2; 3 |] Nx.float32
+  in
+  let keys = Nx.Rng.split key in
+  let glorot key shape =
+    Init.glorot_uniform key ~fan_in:12 ~fan_out:18 Nx.float32 shape
+  in
+  equal ~msg:"w" tensor (bits (glorot keys.(0) [| 6; 2; 3; 2 |])) (bits p.w);
+  equal ~msg:"b" tensor
+    (bits (glorot keys.(1) [| 6 |]))
+    (bits (require_some p.b))
+
+let test_zero_bias () =
+  let p =
+    Conv.make ~key:(Nx.Rng.key 3) ~in_channels:4 ~out_channels:2
+      ~kernel_size:[| 3 |] Nx.float32
+  in
+  equal tensor (bits (Nx.zeros Nx.float32 [| 2 |])) (bits (require_some p.b))
+
+(* One output reads 8 / 4 channels at each of 9 taps; one input feeds 12 / 4
+   outputs at each. *)
+let test_make_initializers () =
+  let fans = ref [] in
+  let init name v key ~fan_in ~fan_out dtype shape =
+    fans := (name, fan_in, fan_out) :: !fans;
+    Init.constant v key ~fan_in ~fan_out dtype shape
+  in
+  let p =
+    Conv.make ~w_init:(init "w" 2.) ~bias_init:(init "b" 1.) ~groups:4
+      ~key:(Nx.Rng.key 4) ~in_channels:8 ~out_channels:12
+      ~kernel_size:[| 3; 3 |] Nx.float32
+  in
+  equal ~msg:"fans"
+    (list (triple string int int))
+    [ ("w", 18, 27); ("b", 18, 27) ]
+    (List.rev !fans);
+  equal ~msg:"w" tensor
+    (bits (Nx.full Nx.float32 [| 12; 3; 3; 2 |] 2.))
+    (bits p.w);
+  equal ~msg:"b" tensor
+    (bits (Nx.full Nx.float32 [| 12 |] 1.))
+    (bits (require_some p.b))
+
+let test_make_placement () =
+  let (module D : Nx.Devices) = Lazy.force software in
+  let p =
+    Conv.make
+      ~key:(Nx.Rng.place D.on (Nx.Rng.key 6))
+      ~in_channels:2 ~out_channels:2 ~kernel_size:[| 3 |] Nx.float32
+  in
+  equal ~msg:"w" (placement ()) D.on (Nx.placement p.w);
+  equal ~msg:"b" (placement ()) D.on (Nx.placement (require_some p.b))
+
+type geometry = {
+  id : string;
+  in_channels : int;
+  out_channels : int;
+  kernel_size : int array;
+  groups : int;
+}
+
+let bad_geometries =
+  let row id ?(groups = 1) in_channels out_channels kernel_size =
+    { id; in_channels; out_channels; kernel_size; groups }
+  in
+  [
+    row "an empty kernel_size" 2 2 [||];
+    row "no in_channels" 0 4 [| 3; 3 |];
+    row "no out_channels" 2 0 [| 3 |];
+    row "a kernel extent of 0" 2 2 [| 3; 0 |];
+    row "a negative kernel extent" 2 2 [| -1 |];
+    row "groups 0" ~groups:0 2 2 [| 3 |];
+    row "negative groups" ~groups:(-1) 2 2 [| 3 |];
+    row "groups not dividing in_channels" ~groups:4 6 4 [| 3 |];
+    row "groups not dividing out_channels" ~groups:3 6 4 [| 3 |];
+  ]
+
+let make_refuses g =
+  raises_match Exn.invalid_arg (fun () ->
+      Conv.make ~groups:g.groups ~key:(Nx.Rng.key 7) ~in_channels:g.in_channels
+        ~out_channels:g.out_channels ~kernel_size:g.kernel_size Nx.float32)
+
+let test_init () =
+  let key = Nx.Rng.key 8 in
+  let make =
+    Conv.make ~key ~in_channels:3 ~out_channels:2 ~kernel_size:[| 2; 2 |]
+      Nx.float32
+  in
+  let init =
+    Conv.init ~key ~in_channels:3 ~out_channels:2 ~kernel_size:[| 2; 2 |]
+  in
+  equal ~msg:"w" tensor (bits make.w) (bits init.w);
+  equal ~msg:"b" tensor
+    (bits (require_some make.b))
+    (bits (require_some init.b))
+
+(* Applying *)
+
+type case = {
+  dtype : dtype;
+  batch : int;
+  spatial : int array;
+  kernel : int array;
+  stride : int array;
+  dilation : int array;
+  padding : (int * int) array;
+  groups : int;
+  per_group : int * int;
+  bias : bool;
+  specials : bool;
+  seed : int;
+}
+
+let ints a = String.concat "; " (Array.to_list (Array.map string_of_int a))
+
+let pairs a =
+  let pair (l, h) = Printf.sprintf "(%d, %d)" l h in
+  String.concat "; " (Array.to_list (Array.map pair a))
+
+let pp_case ppf c =
+  Format.fprintf ppf
+    "%a, batch %d, spatial [|%s|], kernel [|%s|], stride [|%s|], dilation \
+     [|%s|], padding [|%s|], groups %d, (in, out) per group (%d, %d), bias %b, \
+     specials %b, seed %d"
+    pp_dtype c.dtype c.batch (ints c.spatial) (ints c.kernel) (ints c.stride)
+    (ints c.dilation) (pairs c.padding) c.groups (fst c.per_group)
+    (snd c.per_group) c.bias c.specials c.seed
+
+(* Padding pairs from -1 to 2 a side: hi below lo, a negative hi that cuts. *)
+let case =
+  let open Gen in
+  let* k = int_range 1 3 in
+  let axes g = array ~size:(constant k) g in
+  let+ dtype = of_list ~pp:pp_dtype float_dtypes
+  and+ batch = frequency [ (1, constant 0); (3, int_range 1 2) ]
+  and+ spatial = axes (int_range 0 5)
+  and+ kernel = axes (int_range 1 3)
+  and+ stride = axes (int_range 1 2)
+  and+ dilation = axes (int_range 1 2)
+  and+ padding = axes (pair (int_range 0 2) (int_range (-1) 2))
+  and+ groups = int_range 1 3
+  and+ per_group = pair (int_range 1 3) (int_range 1 2)
+  and+ bias = bool
+  and+ specials = bool
+  and+ seed = int_range 0 1_000_000 in
+  {
+    dtype;
+    batch;
+    spatial;
+    kernel;
+    stride;
+    dilation;
+    padding;
+    groups;
+    per_group;
+    bias;
+    specials;
+    seed;
+  }
+
+(* A kernel of 3 over 1 element: no window fits. *)
+let no_window =
+  {
+    dtype = Dtype Nx.float32;
+    batch = 1;
+    spatial = [| 1 |];
+    kernel = [| 3 |];
+    stride = [| 1 |];
+    dilation = [| 1 |];
+    padding = [| (0, 0) |];
+    groups = 1;
+    per_group = (1, 1);
+    bias = true;
+    specials = false;
+    seed = 0;
+  }
+
+(* Multiples of 1/4 scaled by 2^-4 to 2^4, which the narrow dtypes round; with
+   [specials], one element in eight NaN, an infinity or -0. *)
+let element rng ~specials =
+  if specials && Random.State.int rng 8 = 0 then
+    [| Float.nan; Float.infinity; Float.neg_infinity; -0. |].(Random.State.int
+                                                                rng 4)
+  else
+    Float.ldexp
+      (Float.of_int (Random.State.int rng 9 - 4) /. 4.)
+      (Random.State.int rng 9 - 4)
+
+let draw (type b) (dt : (float, b) Nx.dtype) rng ~specials shape =
+  Nx.cast dt (Nx.init Nx.float64 shape (fun _ -> element rng ~specials))
+
+(* Per dtype, a case whose result holds a finite non-zero element, so that the
+   comparison reads more than NaN and zeros. *)
+let cover_finite dt values =
+  let read v = Float.is_finite v && v <> 0. in
+  List.iter
+    (fun d ->
+      cover
+        (dtype_name d ^ ": a finite non-zero element")
+        (dtype_name d = Nx.Dtype.name dt && Array.exists read values))
+    float_dtypes
+
+let law_apply_at (type b) (dt : (float, b) Nx.dtype) c =
+  let k = Array.length c.spatial in
+  let cg, og = c.per_group in
+  cover "1 spatial axis" (k = 1);
+  cover "2 spatial axes" (k = 2);
+  cover "3 spatial axes" (k = 3);
+  cover "groups" (c.groups > 1 && cg > 1);
+  cover "depthwise" (c.groups > 1 && cg = 1);
+  cover "stride 2" (Array.mem 2 c.stride);
+  cover "dilation 2" (Array.mem 2 c.dilation);
+  cover "hi below lo" (Array.exists (fun (lo, hi) -> hi < lo) c.padding);
+  cover "a negative hi" (Array.exists (fun (_, hi) -> hi < 0) c.padding);
+  cover "no bias" (not c.bias);
+  cover "an empty batch" (c.batch = 0);
+  cover "an empty spatial axis" (Array.mem 0 c.spatial);
+  cover "NaN, infinities and -0." c.specials;
+  let rng = Random.State.make [| c.seed |] in
+  let draw shape = draw dt rng ~specials:c.specials shape in
+  let o = c.groups * og in
+  let x =
+    draw (Array.concat [ [| c.batch |]; c.spatial; [| c.groups * cg |] ])
+  in
+  let w = draw (Array.concat [ [| o |]; c.kernel; [| cg |] ]) in
+  let b = if c.bias then Some (draw [| o |]) else None in
+  let y =
+    Conv.apply ~stride:c.stride ~padding:c.padding ~dilation:c.dilation
+      ~groups:c.groups { Conv.w; b } x
+  in
+  let expected =
+    bits
+      (Nx.conv ?init:b ~stride:c.stride ~padding:c.padding ~dilation:c.dilation
+         ~groups:c.groups x w)
+  in
+  cover "no window fits" (Array.mem 0 (Array.sub (Nx.shape y) 1 k));
+  cover_finite dt (snd expected);
+  equal tensor expected (bits y)
+
+let law_apply c = match c.dtype with Dtype dt -> law_apply_at dt c
+
+(* y = 10 + the sum of each 2 x 2 window of 0 .. 8. *)
+let test_window_sums () =
+  let p =
+    {
+      Conv.w = floats [| 1; 2; 2; 1 |] [| 1.; 1.; 1.; 1. |];
+      b = Some (floats [| 1 |] [| 10. |]);
+    }
+  in
+  let x = floats [| 1; 3; 3; 1 |] (Array.init 9 Float.of_int) in
+  equal tensor
+    (bits (floats [| 1; 2; 2; 1 |] [| 18.; 22.; 30.; 34. |]))
+    (bits (Conv.apply p x))
+
+(* y(i) = x(i) - x(i + 1): the kernel [1; -1] read in order. *)
+let test_not_flipped () =
+  let p = { Conv.w = floats [| 1; 2; 1 |] [| 1.; -1. |]; b = None } in
+  let x = floats [| 1; 4; 1 |] [| 1.; 3.; 6.; 10. |] in
+  equal tensor
+    (bits (floats [| 1; 3; 1 |] [| -2.; -3.; -4. |]))
+    (bits (Conv.apply p x))
+
+(* [big] is 2^p for p the significand's bits, where [big + 1] rounds to [big]:
+   rounding the sum before adding the bias [-big] gives 0, one rounding gives
+   1. *)
+let bias_rounding_rows =
+  [
+    (Dtype Nx.float16, 2048.);
+    (Dtype Nx.bfloat16, 256.);
+    (Dtype Nx.float8_e4m3fn, 16.);
+    (Dtype Nx.float8_e5m2, 8.);
+    (Dtype Nx.float4_e2m1fn, 4.);
+  ]
+
+let bias_rounds_once_at (type b) (dt : (float, b) Nx.dtype) big =
+  let narrow shape values = Nx.cast dt (floats shape values) in
+  let p =
+    {
+      Conv.w = narrow [| 1; 1; 2 |] [| 1.; 1. |];
+      b = Some (narrow [| 1 |] [| -.big |]);
+    }
+  in
+  equal tensor
+    (bits (floats [| 1; 1; 1 |] [| 1. |]))
+    (bits (Conv.apply p (narrow [| 1; 1; 2 |] [| big; 1. |])))
+
+let bias_rounds_once (d, big) =
+  match d with Dtype dt -> bias_rounds_once_at dt big
+
+let law_odd_extent (half, s) =
+  let k = (2 * half) + 1 in
+  cover "a filter of 1" (k = 1);
+  cover "an axis shorter than the filter" (s < k);
+  cover "an empty axis" (s = 0);
+  let p = { Conv.w = Nx.zeros Nx.float32 [| 1; k; 1 |]; b = None } in
+  let y =
+    Conv.apply
+      ~padding:[| (k / 2, k / 2) |]
+      p
+      (Nx.zeros Nx.float32 [| 1; s; 1 |])
+  in
+  equal int s (Nx.shape y).(1)
+
+let law_ceil_padding (k, stride, dilation, s) =
+  cover "a stride that does not divide the extent" (s mod stride <> 0);
+  cover "an even filter" (k mod 2 = 0);
+  cover "dilation 2" (dilation = 2);
+  let p = { Conv.w = Nx.zeros Nx.float32 [| 1; k; 1 |]; b = None } in
+  let padding =
+    Nx.ceil_padding ~stride:[| stride |] ~dilation:[| dilation |]
+      ~kernel_size:[| k |] [| s |]
+  in
+  let y =
+    Conv.apply ~stride:[| stride |] ~dilation:[| dilation |] ~padding p
+      (Nx.zeros Nx.float32 [| 1; s; 1 |])
+  in
+  equal int ((s + stride - 1) / stride) (Nx.shape y).(1)
+
+(* golden/conv.npz holds PyTorch's convolutions of inputs, weights and biases
+   that are multiples of 1/4, so that every sum is exact in float64 and each
+   result is the exact one. Weights are in PyTorch's layout, [| out; in /
+   groups; k… |], moved as the preamble's importer moves them. *)
 let golden = lazy (Nx_io.load_npz "golden/conv.npz")
 
 let entry name =
@@ -44,699 +392,169 @@ let entry name =
 
 let moved name = Nx.moveaxis 1 (-1) (entry name)
 
-let exact ~msg want got =
-  equal ~msg:(msg ^ ", shape") (array int) (Nx.shape want) (Nx.shape got);
-  equal ~msg (array float_exact) (Nx.to_array want) (Nx.to_array got)
+(* Whisper's stem: two 3-tap convolutions padded by one a side, the second at
+   stride 2, at an even extent and an odd one. A padding that depends on the
+   stride splits them differently: the old `Same split was off by up to 20 at
+   3000 frames and matched at 3001. *)
+let whisper_stem frames =
+  let e = Printf.sprintf "stem%d." frames in
+  let c1 = { Conv.w = moved (e ^ "w1"); b = Some (entry (e ^ "b1")) } in
+  let c2 = { Conv.w = moved (e ^ "w2"); b = Some (entry (e ^ "b2")) } in
+  let padding = [| (1, 1) |] in
+  equal ~msg:"conv1" tensor
+    (bits (entry (e ^ "y1")))
+    (bits (Conv.apply ~padding c1 (entry (e ^ "x"))));
+  equal ~msg:"conv2" tensor
+    (bits (entry (e ^ "y2")))
+    (bits (Conv.apply ~stride:[| 2 |] ~padding c2 (entry (e ^ "y1"))))
 
-(* Whisper's stem, two 3-tap convolutions, the second at stride 2, both
-   padded by one each side: at an even extent and an odd one, which split a
-   stride-dependent padding differently. *)
-let test_stem () =
-  List.iter
-    (fun t ->
-      let e = Printf.sprintf "stem%d." t in
-      let c1 = { Conv.w = moved (e ^ "w1"); b = Some (entry (e ^ "b1")) } in
-      let c2 = { Conv.w = moved (e ^ "w2"); b = Some (entry (e ^ "b2")) } in
-      let padding = [| (1, 1) |] in
-      let y1 = Conv.apply ~padding c1 (entry (e ^ "x")) in
-      exact ~msg:(Printf.sprintf "%d frames, conv1" t) (entry (e ^ "y1")) y1;
-      let y2 = Conv.apply ~stride:[| 2 |] ~padding c2 (entry (e ^ "y1")) in
-      exact ~msg:(Printf.sprintf "%d frames, conv2" t) (entry (e ^ "y2")) y2)
-    [ 3000; 3001 ]
+let ok = function Ok () -> () | Error m -> fail m
+let squares y = Nx.sum (Nx.mul y y)
 
-let test_grouped () =
-  let p = { Conv.w = moved "grouped.w"; b = Some (entry "grouped.b") } in
-  exact ~msg:"two groups, dilation (2, 1), stride (2, 1)" (entry "grouped.y")
-    (Conv.apply ~stride:[| 2; 1 |] ~padding:[| (1, 2); (0, 1) |]
-       ~dilation:[| 2; 1 |] ~groups:2 p (entry "grouped.x"))
-
-let test_volume () =
-  let p = { Conv.w = moved "volume.w"; b = None } in
-  exact ~msg:"3-D, stride (1, 2, 1)" (entry "volume.y")
-    (Conv.apply ~stride:[| 1; 2; 1 |]
-       ~padding:[| (1, 1); (0, 0); (1, 1) |]
-       p (entry "volume.x"))
-
-(* SAM 2's upscaling, a 2x2 transpose at stride 2, and a transpose that
-   PyTorch states with padding 1 and output padding 1: the pair (1, 0). *)
-let test_upscale () =
+let test_parameter_gradients () =
+  let conv = Nx.Ptree.instantiate (module Conv) in
+  let x = Nx.Rng.normal ~key:(Nx.Rng.key 9) Nx.float64 [| 2; 4; 4; 2 |] in
   let p =
-    { Conv_transpose.w = moved "upscale.w"; b = Some (entry "upscale.b") }
-  in
-  exact ~msg:"k2 s2" (entry "upscale.y")
-    (Conv_transpose.apply ~stride:[| 2; 2 |] p (entry "upscale.x"))
-
-let test_output_padding () =
-  let p = { Conv_transpose.w = moved "outpad.w"; b = Some (entry "outpad.b") } in
-  exact ~msg:"k3 s2, padding (1, 1 - 1)" (entry "outpad.y")
-    (Conv_transpose.apply ~stride:[| 2 |] ~padding:[| (1, 0) |] p
-       (entry "outpad.x"))
-
-(* Conv_transpose *)
-
-let transpose64 = Nx.Ptree.instantiate (module Conv_transpose)
-
-let test_transpose_shapes () =
-  Nx.Rng.with_key (Nx.Rng.key 9) @@ fun () ->
-  let fans = ref [] in
-  let w_init key ~fan_in ~fan_out dtype shape =
-    fans := (fan_in, fan_out) :: !fans;
-    Init.glorot_uniform key ~fan_in ~fan_out dtype shape
-  in
-  let p =
-    Conv_transpose.make ~w_init ~key:(Nx.Rng.next_key ()) ~in_channels:4
-      ~out_channels:2 ~kernel_size:[| 2; 3 |] Nx.float32
-  in
-  shape_is ~msg:"w is [in; k...; out]" [| 4; 2; 3; 2 |] p.Conv_transpose.w;
-  (match p.Conv_transpose.b with
-  | None -> fail "make should create a bias"
-  | Some b -> shape_is ~msg:"b is [out]" [| 2 |] b);
-  (* One output reads in_channels at each tap; one input feeds
-     out_channels. *)
-  equal ~msg:"(fan_in, fan_out)" (list (pair int int)) [ (24, 12) ] !fans;
-  let y = Conv_transpose.apply ~stride:[| 2; 2 |] p (Nx.zeros Nx.float32 [| 1; 3; 3; 4 |]) in
-  shape_is ~msg:"(t - 1) stride + k" [| 1; 6; 7; 2 |] y;
-  let none =
-    Conv_transpose.make ~bias:false ~key:(Nx.Rng.next_key ()) ~in_channels:4
-      ~out_channels:2 ~kernel_size:[| 2 |] Nx.float32
-  in
-  equal ~msg:"paths without bias" (list string) [ "w" ]
-    (List.rev
-       (Nx.Ptree.fold
-          (Nx.Ptree.instantiate (module Conv_transpose))
-          (fun path _ acc -> Nx.Ptree.Path.to_string path :: acc)
-          none []))
-
-let test_transpose_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 10) @@ fun () ->
-  let x = Nx.Rng.normal Nx.float64 [| 2; 3; 3; 2 |] in
-  let p =
-    Conv_transpose.make ~key:(Nx.Rng.next_key ()) ~in_channels:2
-      ~out_channels:3 ~kernel_size:[| 2; 2 |] Nx.float64
-  in
-  let loss p =
-    let y = Conv_transpose.apply ~stride:[| 2; 1 |] ~padding:[| (0, 1); (1, 0) |] p x in
-    Nx.sum (Nx.mul y y)
-  in
-  grads_ok (Rune.check_grads transpose64 loss p)
-
-let test_transpose_refusals () =
-  let make ~in_channels ~out_channels kernel_size () =
-    ignore
-      (Conv_transpose.make ~key:(Nx.Rng.next_key ()) ~in_channels ~out_channels
-         ~kernel_size Nx.float32)
-  in
-  raises
-    (Invalid_argument
-       "Conv_transpose.make: channels and kernel extents must be positive, \
-        got in_channels=2 out_channels=0 kernel_size=[|2|]")
-    (make ~in_channels:2 ~out_channels:0 [| 2 |]);
-  raises (Invalid_argument "Conv_transpose.make: kernel_size has no extent")
-    (make ~in_channels:2 ~out_channels:2 [||]);
-  let p =
-    Conv_transpose.init ~key:(Nx.Rng.next_key ()) ~in_channels:2
-      ~out_channels:2 ~kernel_size:[| 2 |]
-  in
-  raises_match (Exn.invalid_arg ~sub:"Nx.conv_transpose: ") (fun () ->
-      Conv_transpose.apply p (Nx.zeros Nx.float32 [| 1; 4; 3 |]))
-
-(* Conv *)
-
-let test_conv_init_shapes () =
-  Nx.Rng.with_key (Nx.Rng.key 1) @@ fun () ->
-  let p =
-    Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:3 ~out_channels:5
-      ~kernel_size:[| 2; 4 |]
-  in
-  shape_is ~msg:"w is [out; k...; in]" [| 5; 2; 4; 3 |] p.Conv.w;
-  (match p.Conv.b with
-  | None -> fail "init should create a bias"
-  | Some b -> shape_is ~msg:"b shape" [| 5 |] b);
-  let g =
-    Conv.make ~key:(Nx.Rng.next_key ()) ~groups:2 ~in_channels:4
-      ~out_channels:6 ~kernel_size:[| 3 |] Nx.float32
-  in
-  shape_is ~msg:"grouped w is [out; k...; in / groups]" [| 6; 3; 2 |] g.Conv.w
-
-let test_conv_window_sums () =
-  (* A 2x2 kernel of ones sums each window; the bias then shifts every output
-     of its channel. *)
-  let p =
-    {
-      Conv.w = image [| 1; 2; 2; 1 |] [| 1.; 1.; 1.; 1. |];
-      b = Some (image [| 1 |] [| 10. |]);
-    }
-  in
-  let x = arange_image [| 1; 3; 3; 1 |] 9 in
-  values_are ~msg:"window sums plus bias" ~tol:0. [| 18.; 22.; 30.; 34. |]
-    (Conv.apply p x)
-
-let test_conv_correlates () =
-  (* y(i) = x(i) - x(i + 1): the kernel is not flipped. *)
-  let p = { Conv.w = image [| 1; 2; 1 |] [| 1.; -1. |]; b = None } in
-  let x = image [| 1; 4; 1 |] [| 1.; 3.; 6.; 10. |] in
-  let y = Conv.apply p x in
-  shape_is ~msg:"unpadded output shrinks by k - 1" [| 1; 3; 1 |] y;
-  values_are ~msg:"x(i) - x(i+1)" ~tol:0. [| -2.; -3.; -4. |] y
-
-let test_conv_mixes_channels () =
-  (* 1x1 filters reduce convolution to a per-pixel channel mix: channels
-     last, pixel 0 is (1, 3) and pixel 1 is (2, 4). *)
-  let p = { Conv.w = image [| 2; 1; 1; 2 |] [| 2.; 3.; 10.; 100. |]; b = None } in
-  let x = image [| 1; 1; 2; 2 |] [| 1.; 3.; 2.; 4. |] in
-  values_are ~msg:"co0 = 2 c0 + 3 c1; co1 = 10 c0 + 100 c1" ~tol:0.
-    [| 11.; 310.; 16.; 420. |] (Conv.apply p x)
-
-(* At float16 a sum of 2048 and 1 rounds to 2048: added to the bias of
-   -2048 before that rounding, as [apply] does, it gives 1, where a sum
-   rounded first would give 0. *)
-let test_conv_bias_rounds_once () =
-  let f16 s vs = Nx.cast Nx.float16 (Nx.create Nx.float32 s vs) in
-  let p = { Conv.w = f16 [| 1; 1; 2 |] [| 1.; 1. |]; b = Some (f16 [| 1 |] [| -2048. |]) } in
-  values_are ~msg:"one rounding" ~tol:0. [| 1. |]
-    (Nx.cast Nx.float32 (Conv.apply p (f16 [| 1; 1; 2 |] [| 2048.; 1. |])))
-
-let test_conv_custom_inits_and_fans () =
-  let fans = ref [] in
-  let w_init key ~fan_in ~fan_out dtype shape =
-    fans := (fan_in, fan_out) :: !fans;
-    Init.constant 2.0 key ~fan_in ~fan_out dtype shape
-  in
-  let p =
-    Conv.make ~key:(Nx.Rng.next_key ()) ~w_init ~bias_init:(Init.constant 1.0)
-      ~in_channels:2 ~out_channels:3 ~kernel_size:[| 2; 2 |] Nx.float32
-  in
-  values_are ~msg:"w_init" ~tol:0.0 (Array.make 24 2.0) p.Conv.w;
-  (match p.Conv.b with
-  | None -> fail "make should create a bias by default"
-  | Some b -> values_are ~msg:"bias_init" ~tol:0.0 (Array.make 3 1.0) b);
-  ignore
-    (Conv.make ~key:(Nx.Rng.next_key ()) ~w_init ~groups:4 ~in_channels:8
-       ~out_channels:12 ~kernel_size:[| 3; 3 |] Nx.float32);
-  (* One output reads in_channels / groups channels of each tap; one input
-     feeds out_channels / groups outputs at each. *)
-  equal ~msg:"(fan_in, fan_out), ungrouped then four groups"
-    (list (pair int int))
-    [ (8, 12); (18, 27) ]
-    (List.rev !fans)
-
-let test_conv_no_bias () =
-  Nx.Rng.with_key (Nx.Rng.key 3) @@ fun () ->
-  let p =
-    Conv.make ~key:(Nx.Rng.next_key ()) ~bias:false ~in_channels:2
-      ~out_channels:2 ~kernel_size:[| 2; 2 |] Nx.float32
-  in
-  equal ~msg:"paths without bias" (list string) [ "w" ] (paths p)
-
-let test_conv_names () =
-  Nx.Rng.with_key (Nx.Rng.key 4) @@ fun () ->
-  let p =
-    Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
-      ~kernel_size:[| 2; 2 |]
-  in
-  equal ~msg:"with bias" (list string) [ "w"; "b" ] (paths p)
-
-let test_conv_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 5) @@ fun () ->
-  let x = Nx.Rng.normal Nx.float64 [| 2; 4; 4; 2 |] in
-  let loss p =
-    let y = Conv.apply p x in
-    Nx.sum (Nx.mul y y)
-  in
-  let p =
-    Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
+    Conv.make ~key:(Nx.Rng.key 10) ~in_channels:2 ~out_channels:2
       ~kernel_size:[| 2; 2 |] Nx.float64
   in
-  grads_ok (Rune.check_grads conv64 loss p);
+  ok (Rune.check_grads conv (fun p -> squares (Conv.apply p x)) p);
   let grouped =
-    Conv.make ~key:(Nx.Rng.next_key ()) ~groups:2 ~in_channels:2
-      ~out_channels:4 ~kernel_size:[| 3; 3 |] Nx.float64
+    Conv.make ~key:(Nx.Rng.key 11) ~groups:2 ~in_channels:2 ~out_channels:4
+      ~kernel_size:[| 3; 3 |] Nx.float64
   in
-  let strided_loss p =
-    let y =
-      Conv.apply ~stride:[| 2; 2 |] ~padding:[| (1, 1); (0, 1) |] ~groups:2 p x
-    in
-    Nx.sum (Nx.mul y y)
+  let strided p =
+    squares
+      (Conv.apply ~stride:[| 2; 2 |]
+         ~padding:[| (1, 1); (0, 1) |]
+         ~groups:2 p x)
   in
-  grads_ok (Rune.check_grads conv64 strided_loss grouped)
+  ok (Rune.check_grads conv strided grouped)
 
-let test_conv_input_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 6) @@ fun () ->
+let test_input_gradients () =
   let p =
-    Conv.make ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:3
+    Conv.make ~key:(Nx.Rng.key 12) ~in_channels:2 ~out_channels:3
       ~kernel_size:[| 3 |] Nx.float64
   in
   let loss x =
-    let y = Conv.apply ~padding:[| (1, 1) |] ~dilation:[| 2 |] p x in
-    Nx.sum (Nx.mul y y)
+    squares (Conv.apply ~padding:[| (1, 1) |] ~dilation:[| 2 |] p x)
   in
-  let x = Nx.Rng.normal Nx.float64 [| 1; 7; 2 |] in
-  grads_ok (Rune.check_grads Nx.Ptree.tensor loss x)
+  let x = Nx.Rng.normal ~key:(Nx.Rng.key 13) Nx.float64 [| 1; 7; 2 |] in
+  ok (Rune.check_grads Nx.Ptree.tensor loss x)
 
-let test_conv_rejects_bad_geometry () =
-  let make ?groups ~in_channels ~out_channels kernel_size () =
-    ignore
-      (Conv.make ~key:(Nx.Rng.next_key ()) ?groups ~in_channels ~out_channels
-         ~kernel_size Nx.float32)
-  in
-  raises
-    (Invalid_argument
-       "Conv.make: channels and kernel extents must be positive, got \
-        in_channels=0 out_channels=4 kernel_size=[|3; 3|]")
-    (make ~in_channels:0 ~out_channels:4 [| 3; 3 |]);
-  raises
-    (Invalid_argument
-       "Conv.make: channels and kernel extents must be positive, got \
-        in_channels=2 out_channels=2 kernel_size=[|3; 0|]")
-    (make ~in_channels:2 ~out_channels:2 [| 3; 0 |]);
-  raises (Invalid_argument "Conv.make: kernel_size has no extent")
-    (make ~in_channels:2 ~out_channels:2 [||]);
-  raises
-    (Invalid_argument
-       "Conv.make: 3 groups do not divide in_channels=6 and out_channels=4")
-    (make ~groups:3 ~in_channels:6 ~out_channels:4 [| 3 |])
-
-let test_conv_rejects_bad_input () =
-  Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
-  let p =
-    Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:2 ~out_channels:2
-      ~kernel_size:[| 3; 3 |]
-  in
-  let rejects f = raises_match (Exn.invalid_arg ~sub:"Nx.conv: ") f in
-  rejects (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 4; 4; 2 |]));
-  rejects (fun () -> Conv.apply p (Nx.zeros Nx.float32 [| 1; 4; 4; 3 |]));
-  rejects (fun () ->
-      Conv.apply ~stride:[| 0; 1 |] p (Nx.zeros Nx.float32 [| 1; 4; 4; 2 |]))
-
-(* Definitions summed directly *)
-
-(* C-order index arithmetic over flat arrays, for the definitions below. *)
-let unflat shape f =
-  let idx = Array.make (Array.length shape) 0 in
-  let r = ref f in
-  for d = Array.length shape - 1 downto 0 do
-    idx.(d) <- !r mod shape.(d);
-    r := !r / shape.(d)
-  done;
-  idx
-
-let flat shape idx =
-  let f = ref 0 in
-  Array.iteri (fun d i -> f := (!f * shape.(d)) + i) idx;
-  !f
-
-let ints a = String.concat "; " (Array.to_list (Array.map string_of_int a))
-
-let pairs a =
-  let pair (l, h) = Printf.sprintf "(%d, %d)" l h in
-  String.concat "; " (Array.to_list (Array.map pair a))
-
-(* The extent of the windows along one axis: [(d + lo + hi - e) / stride + 1]
-   for a window of extent [e], or none where the padded axis is shorter. *)
-let windows_along ~d ~lo ~hi ~e ~stride =
-  let len = d + lo + hi in
-  if len < e then 0 else ((len - e) / stride) + 1
-
-(* {!Nx.conv}'s definition: the output at [(b, p…, j)] is the sum over the
-   taps [q…] and the channels [i] of [j]'s group of
-   [x[b, p · stride + q · dilation - lo…, i]] times [w[j, q…, i]], an element
-   outside [x] reading zero, plus the bias [j]. *)
-let conv_definition ~stride ~padding ~dilation ~groups x w b =
-  let xs = Nx.shape x and ws = Nx.shape w in
-  let k = Array.length xs - 2 in
-  let o = ws.(0) and cg = ws.(k + 1) in
-  let kernel = Array.sub ws 1 k and spatial = Array.sub xs 1 k in
-  let extent d =
-    let lo, hi = padding.(d) in
-    let e = (dilation.(d) * (kernel.(d) - 1)) + 1 in
-    windows_along ~d:spatial.(d) ~lo ~hi ~e ~stride:stride.(d)
-  in
-  let out = Array.concat [ [| xs.(0) |]; Array.init k extent; [| o |] ] in
-  let xv = Nx.to_array x and wv = Nx.to_array w and bv = Nx.to_array b in
-  let taps = Array.fold_left ( * ) 1 kernel in
-  let value f =
-    let idx = unflat out f in
-    let j = idx.(k + 1) in
-    let g = j / (o / groups) in
-    let acc = ref 0. in
-    for t = 0 to taps - 1 do
-      let q = unflat kernel t in
-      let at =
-        Array.init k (fun d ->
-            let lo = fst padding.(d) in
-            (idx.(d + 1) * stride.(d)) + (q.(d) * dilation.(d)) - lo)
-      in
-      if Array.for_all2 (fun a s -> a >= 0 && a < s) at spatial then
-        for i = 0 to cg - 1 do
-          let channel = (g * cg) + i in
-          let xi =
-            flat xs (Array.concat [ [| idx.(0) |]; at; [| channel |] ])
-          in
-          let wi = flat ws (Array.concat [ [| j |]; q; [| i |] ]) in
-          acc := !acc +. (xv.(xi) *. wv.(wi))
-        done
-    done;
-    !acc +. bv.(j)
-  in
-  (out, Array.init (Array.fold_left ( * ) 1 out) value)
-
-type geometry = {
-  batch : int;
-  spatial : int array;
-  kernel : int array;
-  stride : int array;
-  dilation : int array;
-  padding : (int * int) array;
-  groups : int;
-  per_group : int * int;
-  seed : int;
-}
-
-let pp_geometry ppf g =
-  Format.fprintf ppf
-    "batch %d, spatial [|%s|], kernel [|%s|], stride [|%s|], dilation \
-     [|%s|], padding [|%s|], groups %d, (in, out) per group (%d, %d), seed %d"
-    g.batch (ints g.spatial) (ints g.kernel) (ints g.stride) (ints g.dilation)
-    (pairs g.padding) g.groups (fst g.per_group) (snd g.per_group) g.seed
-
-let geometry =
-  let open Gen in
-  let* k = int_range 1 3 in
-  let axes g = array ~size:(constant k) g in
-  let+ batch = int_range 1 2
-  and+ spatial = axes (int_range 1 5)
-  and+ kernel = axes (int_range 1 3)
-  and+ stride = axes (int_range 1 2)
-  and+ dilation = axes (int_range 1 2)
-  and+ padding = axes (pair (int_range 0 2) (int_range 0 2))
-  and+ groups = int_range 1 3
-  and+ per_group = pair (int_range 1 3) (int_range 1 2)
-  and+ seed = int_range 0 1_000_000 in
-  { batch; spatial; kernel; stride; dilation; padding; groups; per_group; seed }
-
-(* Small integers keep every sum exact in float64. *)
-let small_ints rng shape =
-  Nx.init Nx.float64 shape (fun _ -> Float.of_int (Random.State.int rng 7 - 3))
-
-let law_conv_definition g =
-  let k = Array.length g.spatial in
-  let cg, og = g.per_group in
-  cover "1 spatial axis" (k = 1);
-  cover "2 spatial axes" (k = 2);
-  cover "3 spatial axes" (k = 3);
-  cover "groups" (g.groups > 1 && cg > 1);
-  cover "depthwise" (g.groups > 1 && cg = 1);
-  cover "stride 2" (Array.mem 2 g.stride);
-  cover "dilation 2" (Array.mem 2 g.dilation);
-  cover "padding" (Array.exists (fun (l, h) -> l > 0 || h > 0) g.padding);
-  let rng = Random.State.make [| g.seed |] in
-  let c = g.groups * cg and o = g.groups * og in
-  let x = small_ints rng (Array.concat [ [| g.batch |]; g.spatial; [| c |] ]) in
-  let w = small_ints rng (Array.concat [ [| o |]; g.kernel; [| cg |] ]) in
-  let b = small_ints rng [| o |] in
-  let y =
-    Conv.apply ~stride:g.stride ~padding:g.padding ~dilation:g.dilation
-      ~groups:g.groups { Conv.w; b = Some b } x
-  in
-  let shape, expected =
-    conv_definition ~stride:g.stride ~padding:g.padding ~dilation:g.dilation
-      ~groups:g.groups x w b
-  in
-  let empty = Array.exists (fun t -> t = 0) shape in
-  cover "an empty output" empty;
-  cover ~share:0.5 "a non-empty output" (not empty);
-  shape_is ~msg:"shape" shape y;
-  values_are ~msg:"values" ~tol:0. expected y
-
-(* The [Pool] preamble's definition: the output at [(b, t…, c)] reduces
-   [x[b, t · stride + q - lo…, c]] over the window's offsets [q…], an
-   element in the padding reading [pad]. [avg] divides by the window's
-   size. *)
-let pool_definition ~reduce ~pad ~window ~stride ~padding x =
-  let xs = Nx.shape x in
-  let k = Array.length window in
-  let spatial = Array.sub xs 1 k in
-  let extent d =
-    let lo, hi = padding.(d) in
-    windows_along ~d:spatial.(d) ~lo ~hi ~e:window.(d) ~stride:stride.(d)
-  in
-  let out =
-    Array.concat [ [| xs.(0) |]; Array.init k extent; [| xs.(k + 1) |] ]
-  in
-  let xv = Nx.to_array x in
-  let taps = Array.fold_left ( * ) 1 window in
-  let value f =
-    let idx = unflat out f in
-    reduce
-      (List.init taps (fun t ->
-           let q = unflat window t in
-           let at =
-             Array.init k (fun d ->
-                 (idx.(d + 1) * stride.(d)) + q.(d) - fst padding.(d))
-           in
-           let inside = Array.for_all2 (fun a s -> a >= 0 && a < s) at spatial in
-           if not inside then pad
-           else
-             let at = Array.concat [ [| idx.(0) |]; at; [| idx.(k + 1) |] ] in
-             xv.(flat xs at)))
-  in
-  (out, Array.init (Array.fold_left ( * ) 1 out) value)
-
-type pooling = {
-  batch : int;
-  spatial : int array;
-  channels : int;
-  window : int array;
+type bad_input = {
+  input : string;
+  layer_groups : int;
+  in_channels : int;
+  kernel_size : int array;
+  x : int array;
   stride : int array option;
-  padding : (int * int) array option;
-  seed : int;
 }
 
-let pp_pooling ppf (p : pooling) =
-  let opt f = function None -> "default" | Some a -> "[|" ^ f a ^ "|]" in
-  Format.fprintf ppf
-    "batch %d, spatial [|%s|], channels %d, window [|%s|], stride %s, \
-     padding %s, seed %d"
-    p.batch (ints p.spatial) p.channels (ints p.window) (opt ints p.stride)
-    (opt pairs p.padding) p.seed
-
-let pooling =
-  let open Gen in
-  let* k = int_range 1 3 in
-  let axes g = array ~size:(constant k) g in
-  let+ batch = int_range 1 2
-  and+ spatial = axes (int_range 1 5)
-  and+ channels = int_range 1 3
-  and+ window = axes (int_range 1 3)
-  and+ stride = option (axes (int_range 1 3))
-  and+ padding = option (axes (pair (int_range 0 2) (int_range 0 2)))
-  and+ seed = int_range 0 1_000_000 in
-  ({ batch; spatial; channels; window; stride; padding; seed } : pooling)
-
-let law_pool_definition (p : pooling) =
-  let k = Array.length p.window in
-  let stride = Option.value p.stride ~default:p.window in
-  let padding = Option.value p.padding ~default:(Array.make k (0, 0)) in
-  (* [Pool] refuses an input where no window fits. *)
-  assume
-    (Array.for_all
-       (fun d ->
-         let lo, hi = padding.(d) in
-         p.spatial.(d) + lo + hi >= p.window.(d))
-       (Array.init k Fun.id));
-  cover "1 spatial axis" (k = 1);
-  cover "2 spatial axes" (k = 2);
-  cover "3 spatial axes" (k = 3);
-  cover "overlapping windows"
-    (Array.exists2 (fun s w -> s < w) stride p.window);
-  cover "padding" (Array.exists (fun (l, h) -> l > 0 || h > 0) padding);
-  let rng = Random.State.make [| p.seed |] in
-  let x =
-    small_ints rng (Array.concat [ [| p.batch |]; p.spatial; [| p.channels |] ])
+let bad_inputs =
+  let row input ?(layer_groups = 1) ?stride in_channels kernel_size x =
+    { input; layer_groups; in_channels; kernel_size; x; stride }
   in
-  let check ~msg ~tol ~reduce ~pad y =
-    let shape, expected =
-      pool_definition ~reduce ~pad ~window:p.window ~stride ~padding x
-    in
-    shape_is ~msg shape y;
-    values_are ~msg ~tol expected y
+  [
+    row "x of two axes" 2 [| 3 |] [| 4; 2 |];
+    row "x of another rank than w" 2 [| 3; 3 |] [| 1; 4; 2 |];
+    row "x's channels other than w's" 2 [| 3 |] [| 1; 4; 3 |];
+    row "a stride below 1" ~stride:[| 0 |] 2 [| 3 |] [| 1; 4; 2 |];
+    row "groups other than the layer's" ~layer_groups:2 4 [| 3 |] [| 1; 5; 4 |];
+  ]
+
+let apply_refuses r =
+  let p =
+    Conv.make ~groups:r.layer_groups ~key:(Nx.Rng.key 14)
+      ~in_channels:r.in_channels ~out_channels:r.in_channels
+      ~kernel_size:r.kernel_size Nx.float32
   in
-  let size = Float.of_int (Array.fold_left ( * ) 1 p.window) in
-  let maximum = List.fold_left Float.max Float.neg_infinity in
-  let mean l = List.fold_left ( +. ) 0. l /. size in
-  check ~msg:"max" ~tol:0. ~reduce:maximum ~pad:Float.neg_infinity
-    (Pool.max ~window:p.window ?stride:p.stride ?padding:p.padding x);
-  check ~msg:"avg" ~tol:1e-12 ~reduce:mean ~pad:0.
-    (Pool.avg ~window:p.window ?stride:p.stride ?padding:p.padding x)
+  raises_match (Exn.invalid_arg ~sub:"Nx.conv: ") (fun () ->
+      Conv.apply ?stride:r.stride p (Nx.zeros Nx.float32 r.x))
 
-(* Pool *)
+(* Structure *)
 
-let test_pool_goldens () =
-  exact ~msg:"3x3 max at stride 2, padded by 1" (entry "maxpool.y")
-    (Pool.max ~window:[| 3; 3 |] ~stride:[| 2; 2 |]
-       ~padding:[| (1, 1); (1, 1) |] (entry "maxpool.x"));
-  exact ~msg:"2x2 mean at stride 2, padded by 1, padding counted"
-    (entry "avgpool.y")
-    (Pool.avg ~window:[| 2; 2 |] ~stride:[| 2; 2 |]
-       ~padding:[| (1, 1); (1, 1) |] (entry "avgpool.x"));
-  exact ~msg:"3-D mean" (entry "avgpool3.y")
-    (Pool.avg ~window:[| 2; 2; 2 |] ~stride:[| 1; 2; 2 |] (entry "avgpool3.x"))
+let walk_rows =
+  [
+    ("with a bias", true, [ "w: a leaf"; "b: Some"; "b: a leaf" ]);
+    ("without a bias", false, [ "w: a leaf"; "b: None" ]);
+  ]
 
-let test_max_pool_analytic () =
-  let x = arange_image [| 1; 4; 4; 1 |] 16 in
-  let y = Pool.max ~window:[| 2; 2 |] x in
-  shape_is ~msg:"stride defaults to the window" [| 1; 2; 2; 1 |] y;
-  values_are ~msg:"window maxima" ~tol:0.0 [| 5.; 7.; 13.; 15. |] y;
-  (* Channels last: each channel pools alone. *)
-  let x = image [| 1; 4; 2 |] [| 1.; 8.; 3.; 6.; 2.; 7.; 4.; 5. |] in
-  values_are ~msg:"two channels" ~tol:0.0 [| 3.; 8.; 4.; 7. |]
-    (Pool.max ~window:[| 2 |] x)
-
-let test_avg_pool_analytic () =
-  let x = arange_image [| 1; 4; 4; 1 |] 16 in
-  values_are ~msg:"window means" ~tol:0. [| 2.5; 4.5; 10.5; 12.5 |]
-    (Pool.avg ~window:[| 2; 2 |] x);
-  let x = arange_image [| 1; 3; 3; 1 |] 9 in
-  values_are ~msg:"unit stride overlaps the windows" ~tol:0.
-    [| 2.; 3.; 5.; 6. |]
-    (Pool.avg ~window:[| 2; 2 |] ~stride:[| 1; 1 |] x)
-
-(* A window in padding alone holds the dtype's least value: -inf, and
-   -448 in float8_e4m3fn, which has no infinity. A window that meets [x]
-   takes [x]'s greatest, below zero here. *)
-let test_max_pool_padding () =
-  let x = image [| 1; 2; 1 |] [| -3.; -2. |] in
-  let padding = [| (2, 1) |] in
-  values_are ~msg:"float32" ~tol:0. [| Float.neg_infinity; -3.; -2.; -2. |]
-    (Pool.max ~window:[| 2 |] ~stride:[| 1 |] ~padding x);
-  values_are ~msg:"float8_e4m3fn" ~tol:0. [| -448.; -3.; -2.; -2. |]
-    (Nx.cast Nx.float32
-       (Pool.max ~window:[| 2 |] ~stride:[| 1 |] ~padding
-          (Nx.cast Nx.float8_e4m3fn x)))
-
-(* Padding counts as zeros in each mean; dividing by the mean of ones
-   leaves the mean of [x]'s elements alone. A larger [hi] keeps a last,
-   partial window. *)
-let test_avg_pool_padding () =
-  let x = image [| 1; 5; 1 |] [| 2.; 4.; 6.; 8.; 10. |] in
-  let padding = [| (0, 1) |] and window = [| 2 |] in
-  let y = Pool.avg ~window ~padding x in
-  values_are ~msg:"padding counted" ~tol:0. [| 3.; 7.; 5. |] y;
-  values_are ~msg:"x's elements alone" ~tol:0. [| 3.; 7.; 10. |]
-    (Nx.div y (Pool.avg ~window ~padding (Nx.ones_like x)));
-  shape_is ~msg:"no partial window without it" [| 1; 2; 1 |]
-    (Pool.avg ~window x)
-
-let test_pool_shapes () =
-  let x = Nx.zeros Nx.float32 [| 2; 5; 6; 3 |] in
-  shape_is ~msg:"batch and channels are kept" [| 2; 2; 3; 3 |]
-    (Pool.max ~window:[| 2; 2 |] x);
-  shape_is ~msg:"1-D" [| 2; 3; 4 |]
-    (Pool.avg ~window:[| 3 |] ~stride:[| 2 |] (Nx.zeros Nx.float32 [| 2; 7; 4 |]))
-
-let test_max_pool_gradient_routes_to_max () =
-  let x = Nx.create Nx.float64 [| 1; 4; 4; 1 |] (Array.init 16 float_of_int) in
-  let loss x = Nx.sum (Pool.max ~window:[| 2; 2 |] x) in
-  let g = Rune.grad Nx.Ptree.tensor loss x in
-  let expected = Array.make 16 0.0 in
-  List.iter (fun i -> expected.(i) <- 1.0) [ 5; 7; 13; 15 ];
-  values_are ~msg:"gradient is 1 at each window maximum" ~tol:0. expected g
-
-let test_pool_gradients () =
-  Nx.Rng.with_key (Nx.Rng.key 8) @@ fun () ->
-  let x = Nx.Rng.normal Nx.float64 [| 1; 4; 4; 2 |] in
-  let max_loss x =
-    let y =
-      Pool.max ~window:[| 3; 2 |] ~stride:[| 2; 1 |]
-        ~padding:[| (1, 1); (0, 1) |] x
-    in
-    Nx.sum (Nx.mul y y)
+let walk_visits (_, bias, expected) =
+  let p =
+    Conv.make ~bias ~key:(Nx.Rng.key 15) ~in_channels:2 ~out_channels:2
+      ~kernel_size:[| 3 |] Nx.float32
   in
-  grads_ok (Rune.check_grads Nx.Ptree.tensor max_loss x);
-  let avg_loss x =
-    let y = Pool.avg ~window:[| 2; 2 |] ~padding:[| (1, 0); (0, 1) |] x in
-    Nx.sum (Nx.mul y y)
-  in
-  grads_ok (Rune.check_grads Nx.Ptree.tensor avg_loss x)
+  equal (list string) expected (visits p)
 
-let test_pool_rejects_bad_input () =
-  let x = Nx.zeros Nx.float32 [| 1; 2; 5; 1 |] in
-  raises (Invalid_argument "Pool.max: window has no extent") (fun () ->
-      Pool.max ~window:[||] x);
-  raises (Invalid_argument "Pool.max: a window extent below 1 in [|0; 2|]")
-    (fun () -> Pool.max ~window:[| 0; 2 |] x);
-  raises (Invalid_argument "Pool.avg: a stride below 1 in [|1; 0|]")
-    (fun () -> Pool.avg ~window:[| 2; 2 |] ~stride:[| 1; 0 |] x);
-  raises (Invalid_argument "Pool.avg: 1 strides for 2 window extents")
-    (fun () -> Pool.avg ~window:[| 2; 2 |] ~stride:[| 1 |] x);
-  raises (Invalid_argument "Pool.max: a negative padding") (fun () ->
-      Pool.max ~window:[| 1; 1 |] ~padding:[| (0, 0); (-1, 0) |] x);
-  raises
-    (Invalid_argument "Pool.max: 2 window extents take an input of 4 axes, got 3")
-    (fun () -> Pool.max ~window:[| 1; 1 |] (Nx.zeros Nx.float32 [| 2; 5; 1 |]));
-  raises
-    (Invalid_argument
-       "Pool.max: no window of [|3; 3|] fits the input's spatial axes [|2; 5|]")
-    (fun () -> Pool.max ~window:[| 3; 3 |] x)
+let test_cast () =
+  let p =
+    Conv.make ~key:(Nx.Rng.key 16) ~in_channels:2 ~out_channels:2
+      ~kernel_size:[| 3 |] Nx.float32
+  in
+  let q = Nx.Ptree.cast (module Conv) Nx.bfloat16 p in
+  equal ~msg:"w" tensor (bits (Nx.cast Nx.bfloat16 p.w)) (bits q.w);
+  equal ~msg:"b" tensor
+    (bits (Nx.cast Nx.bfloat16 (require_some p.b)))
+    (bits (require_some q.b))
 
 let () =
   exit
     (run "kaun conv"
        [
-         group "goldens"
+         group "t"
            [
-             test "Whisper's stem at 3000 and 3001 frames" test_stem;
-             test "a grouped, dilated 2-D convolution" test_grouped;
-             test "a 3-D convolution" test_volume;
-             test "SAM 2's 2x2 upscaling" test_upscale;
-             test "an output padding is a smaller hi" test_output_padding;
+             test "w is [| out; k…; in / groups |] and b is [| out |]"
+               test_shapes;
+             test "b is None for a layer built without a bias" test_no_bias;
            ];
-         group "conv"
+         group "make"
            [
-             test "init and make produce the documented shapes"
-               test_conv_init_shapes;
-             test "a kernel of ones sums each window" test_conv_window_sums;
-             test "correlates without flipping the kernel" test_conv_correlates;
-             test "1x1 filters mix channels per pixel" test_conv_mixes_channels;
-             test "the bias joins before the one rounding"
-               test_conv_bias_rounds_once;
-             test "make respects w_init, bias_init and the fans per group"
-               test_conv_custom_inits_and_fans;
-             test "bias:false drops the bias parameter" test_conv_no_bias;
-             test "names follow walk order" test_conv_names;
-             test "parameter gradients agree with finite differences"
-               test_conv_gradients;
-             test "input gradients agree with finite differences"
-               test_conv_input_gradients;
-             test "make rejects invalid geometry" test_conv_rejects_bad_geometry;
-             test "apply rejects invalid inputs" test_conv_rejects_bad_input;
-             prop "apply is the defining sum plus the bias"
-               (Gen.with_pp pp_geometry geometry)
-               law_conv_definition;
+             test
+               "draws Glorot-uniform w from the first key Nx.Rng.split makes \
+                of key, and b from the second"
+               test_make_draws;
+             test "defaults to a zero bias" test_zero_bias;
+             test "applies w_init and bias_init with the fans of one group"
+               test_make_initializers;
+             test "lies where its key lies" test_make_placement;
+             cases "raises Invalid_argument on a bad geometry"
+               ~id:(fun g -> g.id)
+               bad_geometries make_refuses;
            ];
-         group "conv_transpose"
+         group "init" [ test "is make at float32" test_init ];
+         group "apply"
            [
-             test "make's shapes and fans, apply's extents"
-               test_transpose_shapes;
-             test "parameter gradients agree with finite differences"
-               test_transpose_gradients;
-             test "refusals" test_transpose_refusals;
+             prop ~count:600 ~examples:[ no_window ]
+               "is Nx.conv of x by w with b as its init, bit for bit"
+               (Gen.with_pp pp_case case) law_apply;
+             test "sums each window, then adds the bias" test_window_sums;
+             test "does not flip the kernel" test_not_flipped;
+             cases "adds the bias before the one rounding"
+               ~id:(fun (d, _) -> dtype_name d)
+               bias_rounding_rows bias_rounds_once;
+             prop "keeps an extent under (k / 2, k / 2) for an odd k"
+               Gen.(pair (int_range 0 3) (int_range 0 6))
+               law_odd_extent;
+             prop "keeps ⌈s / stride⌉ windows under Nx.ceil_padding"
+               Gen.(
+                 quad (int_range 1 4) (int_range 1 3) (int_range 1 2)
+                   (int_range 1 9))
+               law_ceil_padding;
+             cases "reads Whisper's stem from PyTorch's layout"
+               ~id:(Printf.sprintf "%d frames")
+               [ 3000; 3001 ] whisper_stem;
+             test "differentiates in the parameters" test_parameter_gradients;
+             test "differentiates in the input" test_input_gradients;
+             cases "raises as Nx.conv does"
+               ~id:(fun r -> r.input)
+               bad_inputs apply_refuses;
            ];
-         group "pooling"
+         group "walk"
            [
-             test "PyTorch's pools, 2-D and 3-D" test_pool_goldens;
-             test "max takes each window's greatest" test_max_pool_analytic;
-             test "avg takes each window's mean" test_avg_pool_analytic;
-             test "max pads with the dtype's least value"
-               test_max_pool_padding;
-             test "avg counts the padding" test_avg_pool_padding;
-             test "batch and channels are kept" test_pool_shapes;
-             test "max routes the gradient to the maximum"
-               test_max_pool_gradient_routes_to_max;
-             test "gradients agree with finite differences" test_pool_gradients;
-             test "invalid inputs are rejected" test_pool_rejects_bad_input;
-             prop "max and avg are the window reductions"
-               (Gen.with_pp pp_pooling pooling)
-               law_pool_definition;
+             cases "visits w, then b, reporting whether b is present"
+               ~id:(fun (id, _, _) -> id)
+               walk_rows walk_visits;
+             test "Nx.Ptree.cast converts each parameter as Nx.cast" test_cast;
            ];
        ])

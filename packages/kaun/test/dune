@@ -4,10 +4,12 @@
   test_linear
   test_embedding
   test_conv
+  test_conv_transpose
   test_attention
   test_layer_norm
   test_rms_norm
   test_fn
+  test_pool
   test_rope
   test_init
   test_loss
