@@ -342,10 +342,14 @@ let shape_gen =
 let monoids = [ Sum; Prod; Max; Min ]
 
 (* A case of a dtype of [dts]: a reduction over any subset of the axes, or a
-   scan along one. A scan of rank 0 takes a shape of one axis; a maximum or
-   minimum takes an element along each empty reduced axis, since one of no
-   term is refused. *)
-let case_of ?(scan = Gen.bool) ?(monoids = monoids) ?(shapes = shape_gen) dts =
+   scan along one, of [values d n ~specials seed], [n] elements of [d], by
+   default as {!elements} draws them. A scan of rank 0 takes a shape of one
+   axis; a maximum or minimum takes an element along each empty reduced axis,
+   since one of no term is refused. *)
+let case_of ?(scan = Gen.bool) ?(monoids = monoids) ?(shapes = shape_gen)
+    ?(values =
+      fun (D.Any dt) n ~specials seed -> A.Any (elements dt n ~specials seed))
+    dts =
   let open Gen in
   let* scan = scan in
   let* d = of_list ~pp:pp_dtype dts in
@@ -371,7 +375,8 @@ let case_of ?(scan = Gen.bool) ?(monoids = monoids) ?(shapes = shape_gen) dts =
       [ (2, constant 0); (2, constant 500); (1, constant 3000); (3, constant 20) ]
   in
   let+ seed = int in
-  { scan; monoid; axes; x = operand d s v ~specials seed; views = view_names v }
+  let x = operand_with (fun n -> values d n ~specials seed) s v in
+  { scan; monoid; axes; x; views = view_names v }
 
 let base =
   D.
