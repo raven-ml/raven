@@ -141,39 +141,6 @@ def piecewise():
     return m
 
 
-def grid():
-    m = Module("Tensor-product interpolants from scipy.interpolate.")
-    ax0 = np.array([0.0, 0.3, 0.9, 1.4, 2.0])
-    ax1 = np.array([-1.0, -0.2, 0.5, 1.5])
-    g0, g1 = np.meshgrid(ax0, ax1, indexing="ij")
-    v = np.exp(-g0) * np.sin(g1 + 1.0) + 0.2 * g0 * g1
-    pts = np.array([[0.0, -1.0], [0.1, 0.0], [0.9, 0.5], [1.7, 1.2], [2.0, 1.5], [1.2, -0.7]])
-    m.floats("axis0", ax0)
-    m.floats("axis1", ax1)
-    m.floats("values", v)
-    m.floats("points", pts)
-    lin = interpolate.RegularGridInterpolator((ax0, ax1), v, method="linear")
-    m.floats("linear", lin(pts))
-    for name, bc in [("natural", "natural"), ("not_a_knot", "not-a-knot")]:
-        # The tensor product: a spline along axis 1 for each row, then along
-        # axis 0 through the rows' values.
-        out = []
-        for p0, p1 in pts:
-            rows = [interpolate.CubicSpline(ax1, v[i], bc_type=bc)(p1) for i in range(len(ax0))]
-            out.append(interpolate.CubicSpline(ax0, rows, bc_type=bc)(p0))
-        m.floats(f"cubic_{name}", out)
-        # d/dx0 and ∫ from ax0[0] along axis 0.
-        der, itg = [], []
-        for p0, p1 in pts:
-            rows = [interpolate.CubicSpline(ax1, v[i], bc_type=bc)(p1) for i in range(len(ax0))]
-            s = interpolate.CubicSpline(ax0, rows, bc_type=bc)
-            der.append(s.derivative()(p0))
-            itg.append(s.antiderivative()(p0) - s.antiderivative()(ax0[0]))
-        m.floats(f"cubic_{name}_d0", der)
-        m.floats(f"cubic_{name}_i0", itg)
-    return m
-
-
 # Sobol direction numbers
 
 
@@ -202,7 +169,7 @@ def sobol():
     return "\n".join(lines) + "\n"
 
 
-MODULES = {"golden_quad": quad, "golden_piecewise": piecewise, "golden_grid": grid}
+MODULES = {"golden_quad": quad, "golden_piecewise": piecewise}
 LIBRARY = {"sobol": sobol}
 
 
