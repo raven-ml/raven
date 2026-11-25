@@ -6,10 +6,19 @@
   the file: `dtype/test_dtype.ml`, `uop/op/test_op.ml`. A suite
   tests its module through its interface, and its goldens sit beside it.
 - `support/` is the `tolk_test` library that every suite links: its
-  `Golden` module turns goldens into tests. Generators, witnesses and law
-  combinators over tolk types join it as modules of their own, so that a
-  law test is one line too. Its `.golden` files are fixtures of its own suite, not tinygrad
-  output.
+  `Golden` module turns goldens into tests, and it holds what several suites
+  need and is hard to get right: reference interpreters, witnesses and
+  generators over tolk types. A suite states its laws with windtrap's verbs,
+  through no harness of its own. `tolk_run` (running kernels through the engine),
+  `tolk_gpus` (the GPUs) and `tolk_spawn` (a process that cannot start
+  another) sit beside it, for the suites that need them. Its goldens
+  `differs`, `kept_diff`, `lattice`, `listing`, `stale` and `stale_table`
+  are fixtures of `Golden`'s suite; the others are tinygrad output
+  (`gen/support.py`, `gen/support/programs.py`), and `programs/` feeds the
+  bench.
+- `compiles/` holds the executable CI runs before the tests. It fails where
+  the host's programs cannot compile, so that a job with a Clang fails
+  instead of skipping the compiling tests.
 - `gen/` generates the goldens from tinygrad.
 - `REGRESSIONS.md` maps each tinygrad test to the test that keeps its
   behaviour, or to why it is dropped. `../DIVERGENCES.md` lists where tolk differs from tinygrad.
@@ -22,7 +31,8 @@ A suite's stanza:
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
-  (glob_files *.golden)))
+  (glob_files *.golden)
+  (glob_files *.tolk)))
 ```
 
 ## Running
@@ -91,7 +101,7 @@ the suite runs, so run it once with `runtest` before running it with
 `dune exec`.
 
 Each mutant runs in a child forked after a dry run of the suite, so a module
-that memoises its results (Divandmod's `fold_divmod_general`) answers the
+that memoises its results (Shape's `fold_divmod_general`) answers the
 mutant from the dry run's cache: its survivors and unevaluated mutants are not
 verdicts. Rerun each with `--arm <site>`, which starts with an empty cache.
 
@@ -109,7 +119,7 @@ its body and a final newline. A golden check is one line:
   ```
 
 - **Table**: cells separated by tabs, the column names first, then one line
-  per row. A cell is the text tinygrad prints for its value (`dtypes.half`,
+  per row. A cell is the text tinygrad prints for its value (`dtypes.f16`,
   `True`, `inf`). `Golden.cases` makes one test per row, named by its key
   cells (the first column by default), and gives the check the row's `cell`
   function. A failure names the row, and one bad row hides no other.
@@ -122,6 +132,13 @@ its body and a final newline. A golden check is one line:
 
   `Golden.columns` and `Golden.rows` give the table itself, for a claim about
   the whole table, such as that it has no column the suite does not check.
+
+A group of golden tests is named by the `.mli` value it checks and the claim,
+never by its reference: `create_schedule › orders each recorded kernel graph
+as its golden states`, under which the rows keep the names `Golden` gives
+them. A test's name carries no label of its source, such as `X › recorded`,
+and never "as tinygrad does": a row with a `.tolk` beside its golden is not
+tinygrad's output, and a test names tinygrad only through `REGRESSIONS.md`.
 
 A golden is tinygrad's output, with each kernel body's parameters written
 without a device (`gen/graph.py`, D170), and is never edited by hand. When a divergence
@@ -164,12 +181,10 @@ topological order:
 ```
 
 ```
-4 Ops.PARAM dtypes.half [] ParamArg(slot=1, dtype=dtypes.half, size=16, device="CPU")
-5 Ops.CONST dtypes.weakint [] 16
-6 Ops.RANGE dtypes.weakint [5] (AxisType.WEAK, 0)
-7 Ops.INDEX dtypes.half [4, 6]
-8 Ops.CAST dtypes.float [7] dtypes.float
-9 Ops.REDUCE dtypes.float [8, 6] (Ops.ADD, 0)
+4 Ops.CONST dtypes.weakint [] 16
+5 Ops.BUFFER dtypes.f16 [4] ParamArg(slot=1, dtype=dtypes.f16, device="CPU")
+6 Ops.CAST dtypes.f32 [5] dtypes.f32
+7 Ops.REDUCE dtypes.f32 [6] (Ops.ADD, 1)
 ```
 
 - **index** is the line's position, from 0. A node comes after its sources
@@ -190,7 +205,7 @@ topological order:
 | the invalid constant | `Invalid` |
 | string | in double quotes; `"`, `\`, newline and tab escaped as `\"`, `\\`, `\n` and `\t`, and every other byte outside printable ASCII as `\xHH` |
 | bytes | as a string, prefixed with `b`: `b"\x7fELF"` |
-| data type | as `Dtype.pp` prints it: `dtypes.half` |
+| data type | as `Dtype.pp` prints it: `dtypes.f16` |
 | enumeration | `<Enum>.<NAME>`: `Ops.ADD`, `AxisType.WEAK`, `AddrSpace.GLOBAL` |
 | node | `%` and its index: `%12` |
 | tuple | `()`, `(v,)`, `(v, w)` |
@@ -244,11 +259,11 @@ The records, with their fields in order:
 
 | Record | Fields |
 |---|---|
-| `ParamArg` | `slot` integer, `dtype`, `size` integer or none, `vmin_vmax` a pair of constants, `name` string, `addrspace` `AddrSpace`, `device` a device, `volatile` boolean, `image` (always none: images are excluded), `bind_on_realize` boolean, `val` integer, `phase` integer (tolk's own field, D54, never in tinygrad's goldens); `buffer` is runtime state and never written |
-| `KernelInfo` | `name` string, `applied_opts` and `opts_to_apply` tuples of `Opt` (the second may be none), `estimates` `Estimates` or none, `beam` integer |
+| `ParamArg` | `slot` integer, `dtype`, `vmin_vmax` a pair of constants, `name` string, `addrspace` `AddrSpace`, `device` a device, `volatile` boolean, `bind_on_realize` boolean, `val` a constant, and tolk's own `phase` and `align` integers (D54, never in tinygrad's goldens); `image` and `spec` are excluded and `buffer` is runtime state, and none is written |
+| `KernelInfo` | `name` string, `applied_opts` and `opts_to_apply` tuples of `Opt` (the second may be none), `estimates` `Estimates` or none, `beam` integer, `optimized` and `kernel` booleans, and tolk's own `split`, a triple of a size and two integers (D80) |
 | `Opt` | `op` `OptOps`, `axis` integer or none, `arg` an integer, a tuple, or none |
 | `Estimates` | `ops`, `lds`, `mem`: each an integer or a node |
-| `ProgramInfo` | `global_size` and `local_size` tuples of integers, `vars` a tuple of nodes, `globals`, `outs` and `ins` tuples of integers, `target` `Target` |
+| `ProgramInfo` | `global_size` and `local_size` tuples of integers, `params` a tuple of nodes, `globals`, `outs` and `ins` tuples of integers, `target` `Target` |
 | `Target` | `device`, `renderer`, `arch`, `interface`, `indices`: strings |
 | `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile`, `precompile_backward` and `inline` booleans, `aux` (never written), `write` pairs of integers |
 | `CustomFunction` | `name` string, `dtype` data type, `fmt` boolean |

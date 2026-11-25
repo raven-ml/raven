@@ -11,7 +11,7 @@ open Tolk
 
 val dtype : Dtype.t Windtrap.testable
 (** [dtype] compares data types structurally, orders them by {!Dtype.compare}
-    and prints them as tinygrad does, [dtypes.half]. *)
+    and prints them as tinygrad does, [dtypes.f16]. *)
 
 val value : Dtype.value Windtrap.testable
 (** [value] compares values by constructor and payload, floats bit for bit
@@ -30,7 +30,7 @@ val declared : Dtype.t list
 
 val alias : Dtype.t -> string
 (** [alias dt] is the name that tinygrad prints [dt] with, without its [dtypes.]
-    prefix: [half] for {!Dtype.Float16}, [char] for {!Dtype.Int8}. *)
+    prefix: [f16] for {!Dtype.Float16}, [i8] for {!Dtype.Int8}. *)
 
 (** {1:generators Generators} *)
 
@@ -72,7 +72,7 @@ val int_bounds : Dtype.t -> Bigint.t * Bigint.t
     cannot read. *)
 
 val dtype_of_cell : string -> Dtype.t
-(** [dtype_of_cell s] is the data type printed [s], such as [dtypes.half]. *)
+(** [dtype_of_cell s] is the data type printed [s], such as [dtypes.f16]. *)
 
 val value_of_cell : string -> Dtype.value
 (** [value_of_cell s] is the value printed [s]: [True], [False], an integer in

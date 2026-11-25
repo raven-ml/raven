@@ -1,9 +1,3 @@
-(* Nodes of every kind of argument, for the laws of their text and their key.
-   Each field is drawn from few values, among them values a repr prints alike:
-   NaNs of different bits, a stage a custom kernel's argument makes beside one
-   the user materialises, targets whose fields split one text two ways, and
-   nodes in arguments that differ only there. *)
-
 open Windtrap
 open Tolk
 

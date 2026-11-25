@@ -71,7 +71,7 @@ val upstream : string -> Tolk.Ops.t
 
     The body of a table golden is lines of cells separated by tabs: the column
     names, then one line per row, and at least one row. A cell is the text
-    tinygrad prints for its value, such as [dtypes.float], [True] or [inf].
+    tinygrad prints for its value, such as [dtypes.f32], [True] or [inf].
 
     A row is given as its [cell] function: [cell column] is the row's cell in
     [column], and raises [Invalid_argument] if the table has no column [column].
@@ -85,7 +85,7 @@ val cases :
   Windtrap.test
 (** [cases file check] is the table, named [file], that runs [check cell] on
     each row of the table golden [file]. A row is identified by its cells in
-    [key], as [a=dtypes.half b=dtypes.char]; [key] defaults to the first column.
+    [key], as [a=dtypes.f16 b=dtypes.i8]; [key] defaults to the first column.
     A table that cannot be read as a golden is one failing test named [file],
     so a stale [.tolk] does not stop the suite.
 

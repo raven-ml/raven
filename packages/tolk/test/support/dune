@@ -6,7 +6,7 @@
  (libraries windtrap tolk tolk.engine rig unix))
 
 ; Running kernels and schedules on rig's host and software devices through the
-; engine, apart so that only the tests that run them link rig.
+; engine.
 
 (library
  (name tolk_run)
