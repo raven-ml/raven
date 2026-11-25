@@ -774,18 +774,16 @@ let student_terms df scale =
    it is the near side's. *)
 let log1p_square a s log_s =
   let beyond = Nx.greater a s in
-  let one = const a 1. in
+  let zero = const a 0. and one = const a 1. in
   let a_far = Nx.where beyond a one in
-  let s_far = Nx.where beyond s (const s 0.) in
+  let s_far = Nx.where beyond s zero in
   let far =
     Nx.add
       (Nx.mul_s (Nx.sub (Nx.log a_far) log_s) 2.)
       (Nx.log1p (Nx.square (Nx.div s_far a_far)))
   in
-  let a_near = Nx.where beyond (const a 0.) a in
-  let s_near =
-    Nx.where (Nx.logical_or beyond (Nx.equal s (const s 0.))) one s
-  in
+  let a_near = Nx.where beyond zero a in
+  let s_near = Nx.where (Nx.logical_or beyond (Nx.equal s zero)) one s in
   Nx.where beyond far (Nx.log1p (Nx.square (Nx.div a_near s_near)))
 
 (* [log1p (z² / ν)] is [log1p_square |x - loc| (scale √ν)], with [log (scale
@@ -1104,11 +1102,12 @@ let half_cauchy ~scale =
     ~shape:(Nx.shape scale)
     ~checks:[ in_positive family "scale" scale ]
     ~density:(fun x ->
+      let log_scale = Nx.log scale in
       Nx.sub
         (Nx.add_s
-           (Nx.neg (log1p_square x scale (Nx.log scale)))
+           (Nx.neg (log1p_square x scale log_scale))
            (Float.log 2. -. log_pi))
-        (Nx.log scale))
+        log_scale)
     ~draw:(fun k s -> quantile_of tails (open_unit k dt s))
     ~tails scale
 
