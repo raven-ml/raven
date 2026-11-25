@@ -1046,9 +1046,9 @@ module Dist : sig
       is exact there. It is within [64 ε (|x| + (1 + |log m|) m / f)] of the
       exact quantile [x], [m = min (p, 1 - p)] the tail it reads and [f] the
       density at [x]: [m / f] is the inverse's conditioning, and
-      [1 + |log m|] the error of a tail held as its logarithm. For {!gamma} and {!inverse_gamma} it is [0.] at
-      [p = 0.] and [inf] at [p = 1.]; for {!beta},
-      {!Nx.betaincinv}, [0.] at [p = 0.] and [1.] at [p = 1.]; for
+      [1 + |log m|] the error of a tail held as its logarithm. For {!gamma}
+      and {!inverse_gamma} it is [0.] at [p = 0.] and [inf] at [p = 1.]; for
+      {!beta}, {!Nx.betaincinv}, [0.] at [p = 0.] and [1.] at [p = 1.]; for
       {!truncated}, its lower bound at [p = 0.] and its upper at [p = 1.], or
       the edge of [d]'s support on a side without one.
 
