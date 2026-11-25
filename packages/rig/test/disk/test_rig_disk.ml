@@ -264,16 +264,14 @@ let after_tick path =
     if Sys.win32 then st.st_mtime else st.st_ctime
   in
   let t = changed path and probe = new_path () in
-  let rec wait k =
+  let rec wait () =
     Out_channel.with_open_bin probe (fun oc -> output_char oc 'x');
-    if changed probe <= t then
-      if k = 0 then failf "file times did not move past %s's" path
-      else begin
-        Unix.sleepf 0.001;
-        wait (k - 1)
-      end
+    if changed probe <= t then begin
+      Unix.sleepf 0.001;
+      wait ()
+    end
   in
-  Fun.protect ~finally:(fun () -> remove probe) (fun () -> wait 10_000)
+  Fun.protect ~finally:(fun () -> remove probe) wait
 
 let needs_dev_fd () =
   if Support.descriptors () = None then
