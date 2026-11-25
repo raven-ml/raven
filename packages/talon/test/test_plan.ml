@@ -573,6 +573,11 @@ let predicates =
           same_plan
             (Query.filter cast_p (sorting src))
             (sorting (Query.filter cast_p src)));
+      test "a conjunct that can fail passes a select" (fun () ->
+          let keeping = Query.select Expr.[ keep Sel.(names [ "a"; "b" ]) ] in
+          same_plan
+            (Query.filter cast_p (keeping src))
+            (keeping (Query.filter cast_p src)));
       test "a conjunct that can fail passes a derive" (fun () ->
           let deriving = Query.derive Expr.[ "y" := b ] in
           same_plan
@@ -895,6 +900,11 @@ let projections =
             └ derive ["a" := k + 1]
               └ u (5 columns) ~columns:["k"]
             |});
+      test "a replaced column keeps its place in a step an append reads twice"
+        (fun () ->
+          let replaced = Query.derive Expr.[ "a" := int 1 ] src in
+          let q = Query.append replaced replaced in
+          equal schema_w (Query.schema q) (Query.schema (Query.optimize q)));
       test "an unnest repeats only the columns read above it" (fun () ->
           let s =
             source "data"
@@ -1548,113 +1558,103 @@ let one_hots s =
           (Schema.columns s)))
     (Query.schema (Kit.one_hot "cat" (of_schema s)))
 
-let kit_plans () =
+(* Kit's queries are the compositions their documentation shows. *)
+let definitions =
   let q = of_source s_unsupported in
-  let shown =
-    [
-      ("head", Kit.head 3 q);
-      ("tail", Kit.tail 3 q);
-      ("top_k", Kit.top_k 2 [ Order.desc "b" ] q);
-      ("distinct", Kit.distinct q);
-      ("distinct without columns", Kit.distinct (Query.select [] q));
-      ("count_by", Kit.count_by [ "c" ] q);
-      ("value_counts", Kit.value_counts "c" q);
-      ("null_count", Kit.null_count q);
-      ("drop", Kit.drop Sel.(names [ "l" ] + prefix "b") q);
-      ("rename", Kit.rename [ ("a", "x"); ("k", "key") ] q);
-      ("complete", Kit.complete [ "c"; "k" ] q);
-      ( "one_hot",
-        Kit.one_hot "carrier"
-          (of_source
-             (source "f"
-                Type.
-                  [
-                    ("x", Any int8); ("carrier", Any category); ("y", Any bool);
-                  ])) );
-      ( "union",
-        Kit.union
-          (of_source
-             (source "p" Type.[ ("c", Any string); ("t", Any epoch_t) ]))
-          q );
-    ]
+  let f =
+    of_source
+      (source "f"
+         Type.[ ("x", Any int8); ("carrier", Any category); ("y", Any bool) ])
   in
-  expect
-    (String.concat "\n"
-       (List.map (fun (title, q) -> "# " ^ title ^ "\n" ^ str Query.pp q) shown))
-  @@ __POS_OF__
-       {|
-    # head
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:3
-    └ u (5 columns)
-    # tail
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:(-3) ~length:3
-    └ u (5 columns)
-    # top_k
-    query → a int64, b float64, c string, k int8, l list[int64]
-    slice ~offset:0 ~length:2
-    └ sort [desc "b"]
-      └ u (5 columns)
-    # distinct
-    query → a int64, b float64, c string, k int8, l list[int64]
-    aggregate ~by:["a"; "b"; "c"; "k"; "l"] []
-    └ u (5 columns)
-    # distinct without columns
-    query →
-    slice ~offset:0 ~length:1
-    └ select []
-      └ u (5 columns)
-    # count_by
-    query → c string, count int64
-    aggregate ~by:["c"] ["count" := rows]
-    └ u (5 columns)
-    # value_counts
-    query → c string, count int64
-    sort [desc "count"]
-    └ aggregate ~by:["c"] ["count" := rows]
-      └ u (5 columns)
-    # null_count
-    query → a int64, b int64, c int64, k int64, l int64
-    aggregate ~by:[] ["a" := rows - count a; "b" := rows - count b;
-                      "c" := rows - count c; "k" := rows - count k;
-                      "l" := rows - count l]
-    └ u (5 columns)
-    # drop
-    query → a int64, c string, k int8
-    select [keep (names ["a"; "c"; "k"])]
-    └ u (5 columns)
-    # rename
-    query → x int64, b float64, c string, key int8, l list[int64]
-    select ["x" := a; keep (names ["b"; "c"]); "key" := k; keep (names ["l"])]
-    └ u (5 columns)
-    # complete
-    query → a int64, b float64, c string, k int8, l list[int64]
-    select [keep (names ["a"; "b"; "c"; "k"; "l"])]
-    └ join ~on:(keys ["c"; "k"]) ~kind:Left
-      ├ join ~on:all
-      │ ├ aggregate ~by:["c"] []
-      │ │ └ select [keep (names ["c"])]
-      │ │   └ #1 u (5 columns)
-      │ └ aggregate ~by:["k"] []
-      │   └ select [keep (names ["k"])]
-      │     └ #1
-      └ #1
-    # one_hot
-    query → x int8, carrier_AA bool, carrier_B6 bool, carrier_DL bool, y bool
-    select [keep (names ["x"]); "carrier_AA" := carrier = "AA";
-            "carrier_B6" := carrier = "B6"; "carrier_DL" := carrier = "DL";
-            keep (names ["y"])]
-    └ f (3 columns)
-    # union
-    query → a int64, b float64, c string, k int8, l list[int64], t ext[ymir.epoch, float64]
-    append
-    ├ derive ["t" := store ext[ymir.epoch, float64] null]
-    │ └ u (5 columns)
-    └ derive ["a" := store int64 null; "b" := store float64 null;
-              "k" := store int8 null; "l" := store list[int64] null]
-      └ p (2 columns)
-    |}
+  let p =
+    of_source (source "p" Type.[ ("c", Any string); ("t", Any epoch_t) ])
+  in
+  let keep ns q = Query.select Expr.[ keep (Sel.names ns) ] q in
+  group "Kit queries are their definitions"
+    [
+      test "head" (fun () ->
+          equal query_w (Query.slice ~offset:0 ~length:3 q) (Kit.head 3 q));
+      test "tail" (fun () ->
+          equal query_w (Query.slice ~offset:(-3) ~length:3 q) (Kit.tail 3 q));
+      test "top_k" (fun () ->
+          let keys = [ Order.desc "b" ] in
+          equal query_w
+            Query.(q |> sort keys |> slice ~offset:0 ~length:2)
+            (Kit.top_k 2 keys q));
+      test "distinct, with columns and without" (fun () ->
+          equal query_w
+            (Query.aggregate ~by:[ "a"; "b"; "c"; "k"; "l" ] [] q)
+            (Kit.distinct q);
+          let none = Query.select [] q in
+          equal query_w (Kit.head 1 none) (Kit.distinct none));
+      test "count_by" (fun () ->
+          equal query_w
+            (Query.aggregate ~by:[ "c" ] Expr.[ "count" := rows ] q)
+            (Kit.count_by [ "c" ] q));
+      test "value_counts" (fun () ->
+          equal query_w
+            (Kit.count_by [ "c" ] q |> Query.sort [ Order.desc "count" ])
+            (Kit.value_counts "c" q));
+      test "drop" (fun () ->
+          let sel = Sel.(names [ "l" ] + prefix "b") in
+          equal query_w
+            (Query.select Expr.[ keep Sel.(all - sel) ] q)
+            (Kit.drop sel q));
+      test "complete" (fun () ->
+          let values k = Kit.distinct (keep [ k ] q) in
+          equal query_w
+            (Query.join ~on:Join.all (values "k") (values "c")
+            |> Query.join ~kind:Left ~on:(Join.keys [ "c"; "k" ]) q
+            |> keep [ "a"; "b"; "c"; "k"; "l" ])
+            (Kit.complete [ "c"; "k" ] q));
+      test "one_hot" (fun () ->
+          let is cat = Expr.(Col.string "carrier" = string cat) in
+          equal query_w
+            (Query.select
+               Expr.
+                 [
+                   keep (Sel.names [ "x" ]);
+                   "carrier_AA" := is "AA";
+                   "carrier_B6" := is "B6";
+                   "carrier_DL" := is "DL";
+                   keep (Sel.names [ "y" ]);
+                 ]
+               f)
+            (Kit.one_hot "carrier" f));
+      test "union" (fun () ->
+          let padded =
+            Query.derive Expr.[ "t" := store epoch_t null ] q
+            |> Query.append
+                 (Query.derive
+                    Expr.
+                      [
+                        "a" := store Type.int64 null;
+                        "b" := store Type.float64 null;
+                        "k" := store Type.int8 null;
+                        "l" := store (Type.list Type.int64) null;
+                      ]
+                    p)
+          in
+          equal query_w padded (Kit.union p q));
+      test "null_count and rename print as their verbs" (fun () ->
+          (* Their definitions pass a function to each, which equal compares by
+             identity. *)
+          expect
+            (str Query.pp (Kit.null_count q)
+            ^ "\n"
+            ^ str Query.pp (Kit.rename [ ("a", "x"); ("k", "key") ] q))
+          @@ __POS_OF__
+               {|
+            query → a int64, b int64, c int64, k int64, l int64
+            aggregate ~by:[] ["a" := rows - count a; "b" := rows - count b;
+                              "c" := rows - count c; "k" := rows - count k;
+                              "l" := rows - count l]
+            └ u (5 columns)
+            query → x int64, b float64, c string, key int8, l list[int64]
+            select ["x" := a; keep (names ["b"; "c"]); "key" := k; keep (names ["l"])]
+            └ u (5 columns)
+            |});
+    ]
 
 let describe () =
   let without =
@@ -1718,7 +1718,6 @@ let kit_queries =
       prop "count_by has the keys, then count" subset_gen counts;
       prop "complete keeps the schema" keyed_gen completes;
       prop "one_hot puts one bool per category in place" one_hot_gen one_hots;
-      test "each query prints as its verbs" kit_plans;
       test "describe has one row per numeric column" describe;
     ]
 
@@ -1830,5 +1829,6 @@ let () =
          comparing;
          unnest_printed;
          kit_queries;
+         definitions;
          kit_mistakes;
        ])
