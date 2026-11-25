@@ -2028,16 +2028,32 @@ val save :
     and {!draw} raise, and [Sys_error] if [file] cannot be written. It raises
     [Invalid_argument] before it creates [file]. *)
 
+val pp_with :
+  ?id:string -> ?size:Size.t -> unit -> Format.formatter -> t -> unit
+(** [pp_with ~id ~size ()] is a printer that displays a figure in a Quill
+    notebook. It prints a one-line summary of the figure inside a
+    [Format.String_tag] whose string is a display tag of Quill's display
+    protocol: the lines [quill.display], [image/svg+xml] and [id], then an SVG
+    document of the figure at [size]. Hugin depends on no Quill library.
+
+    The document draws the figure in {!Theme.default} and, as its
+    {{!Hugin_vg_svg.section-schemes}dark scheme}, in {!Theme.dark}, each on its
+    own paper, so the figure reads on a page of either scheme. On the dark paper
+    the dark ink contrasts at [4.5:1] or more and the dark palette and scheme at
+    [3:1] or more. Where the two drawings differ in more than colours, as for a
+    mark that draws by {!Mark.theme}, the document holds the {!Theme.default}
+    drawing alone.
+
+    [size] defaults to [Size.figure 372. 248.]: 372 points, 496 CSS pixels, the
+    width of a prose column of about 66 characters of 16 px IBM Plex Sans, at
+    the aspect of {!save}'s default. [id] defaults to [""]. A display of a non-empty [id] replaces the earlier display
+    of that id in its cell, so a figure printed in a loop redraws in place.
+
+    Formatters ignore the tag by default and print the summary alone, which
+    counts the drawing's warnings, as [hugin figure (2 warnings)].
+
+    Raises [Invalid_argument] if [id] holds a newline, and what {!resolve},
+    {!layout} and {!draw} raise. *)
+
 val pp : Format.formatter -> t -> unit
-(** [pp ppf f] displays [f] in a Quill notebook: it renders [f] as SVG as
-    {!save} does by default, and prints on [ppf] a one-line summary of [f]
-    inside a [Format.String_tag]. The tag's string is the line [quill.display],
-    the line [image/svg+xml], an empty display id line, then the SVG document: a
-    display tag of the display protocol documented in Quill's [Quill.Cell]
-    module. Hugin depends on no Quill library.
-
-    Formatters ignore the tag by default and print the summary alone. It counts
-    the drawing's warnings, such as [hugin figure (2 warnings)], so that a user
-    without the display sees that there are some.
-
-    Raises what {!resolve}, {!layout} and {!draw} raise. *)
+(** [pp] is [pp_with ()], the printer for [#install_printer] and ["%a"]. *)

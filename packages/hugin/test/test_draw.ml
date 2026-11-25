@@ -3453,6 +3453,61 @@ let saves =
           equal (list (pair id string)) expected (List.rev !seen));
     ]
 
+(* [tags_of pp f] is the string tags [pp] opens printing [f]. *)
+let tags_of pp f =
+  let b = Buffer.create 1024 in
+  let ppf = Format.formatter_of_buffer b in
+  let tags = ref [] in
+  Format.pp_set_tags ppf true;
+  Format.pp_set_print_tags ppf false;
+  Format.pp_set_mark_tags ppf true;
+  Format.pp_set_formatter_stag_functions ppf
+    {
+      (Format.pp_get_formatter_stag_functions ppf ()) with
+      mark_open_stag =
+        (function
+        | Format.String_tag s ->
+            tags := s :: !tags;
+            ""
+        | _ -> "");
+      mark_close_stag = (fun _ -> "");
+    };
+  Format.fprintf ppf "%a@?" pp f;
+  List.rev !tags
+
+(* The size pp_with states. *)
+let page_size = Size.figure 372. 248.
+
+(* [rendered theme size f] is [f] drawn at [size] in [theme] as pp_with draws
+   it. *)
+let rendered theme size f =
+  Drawing.renderable (draw ~density:2. (layout ~theme size (resolve f)))
+
+(* The document pp_with states: [f] at [size] in the default theme, with the
+   dark theme as its dark scheme, each on its own paper. *)
+let schemes size f =
+  Svg.render ~dark:(rendered Theme.dark size f) (rendered Theme.default size f)
+
+(* A mark that reads its theme: a line drawn only under the default ink. *)
+let by_ink () =
+  let x = f64 [| 1.; 2.; 3. |] in
+  Mark.v ~name:"by_ink"
+    [ Mark.bind Role.x (num x); Mark.bind Role.y (num x) ]
+    (fun rows ->
+      let th = Mark.theme rows in
+      if not (Color.equal (Theme.ink th) (Theme.ink Theme.default)) then
+        Picture.empty
+      else
+        let xs, ys = Mark.points rows in
+        Picture.stroke (Stroke.v 2.) (Theme.ink th) (Path.polyline xs ys))
+
+let contains sub s =
+  let n = String.length sub in
+  let rec loop i =
+    i + n <= String.length s && (String.sub s i n = sub || loop (i + 1))
+  in
+  loop 0
+
 let pps =
   group "pp"
     [
@@ -3470,31 +3525,53 @@ let pps =
                  hugin figure
                  hugin figure (1 warning)
                |});
-      test "pp opens a display tag holding the SVG document save writes"
-        (fun () ->
-          let b = Buffer.create 1024 in
-          let ppf = Format.formatter_of_buffer b in
-          let tags = ref [] in
-          Format.pp_set_tags ppf true;
-          Format.pp_set_print_tags ppf false;
-          Format.pp_set_mark_tags ppf true;
-          Format.pp_set_formatter_stag_functions ppf
-            {
-              (Format.pp_get_formatter_stag_functions ppf ()) with
-              mark_open_stag =
-                (function
-                | Format.String_tag s ->
-                    tags := s :: !tags;
-                    ""
-                | _ -> "");
-              mark_close_stag = (fun _ -> "");
-            };
-          Format.fprintf ppf "%a@?" pp (other ());
-          let file = Filename.concat (temp_dir ()) "f.svg" in
-          save file (other ());
+      test "pp is pp_with ()" (fun () ->
           equal (list text)
-            [ "quill.display\nimage/svg+xml\n\n" ^ read_file file ]
-            !tags);
+            (tags_of pp (other ()))
+            (tags_of (pp_with ()) (other ())));
+      cases "pp_with opens a display tag of the figure in both schemes"
+        ~id:(fun (n, _, _) -> n)
+        [
+          ("by default", (fun f -> tags_of (pp_with ()) f), ("", page_size));
+          ( "with an id",
+            (fun f -> tags_of (pp_with ~id:"loss" ()) f),
+            ("loss", page_size) );
+          ( "at a size",
+            (fun f -> tags_of (pp_with ~size:(Size.panels 50. 40.) ()) f),
+            ("", Size.panels 50. 40.) );
+        ]
+        (fun (_, printed, (id, size)) ->
+          let f = other () in
+          equal (list text)
+            [ "quill.display\nimage/svg+xml\n" ^ id ^ "\n" ^ schemes size f ]
+            (printed f));
+      test
+        "pp_with displays the default theme alone for a figure whose schemes \
+         differ in more than colours" (fun () ->
+          let f = by_ink () in
+          equal (list text)
+            [
+              "quill.display\nimage/svg+xml\n\n"
+              ^ Svg.render (rendered Theme.default page_size f);
+            ]
+            (tags_of (pp_with ()) f));
+      test "pp_with refuses a display id holding a newline" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"newline") (fun () ->
+              Format.asprintf "%a" (pp_with ~id:"a\nb" ()) (other ())));
+      test "pp's figure is as wide as a prose column of 496 px" (fun () ->
+          let svg = List.hd (tags_of pp (other ())) in
+          (* 496 px at 0.75 point a pixel. *)
+          satisfies ~claim:"372pt wide" text (contains "width=\"372pt\"") svg);
+      cases "every benchmark figure displays in both schemes"
+        ~id:(fun (n, _, _, _) -> n)
+        Hugin_test_figures.Figures.goldens
+        (fun (_, f, _, _) ->
+          match tags_of pp (f ()) with
+          | [ s ] ->
+              satisfies ~claim:"a dark scheme" text
+                (contains "prefers-color-scheme:dark")
+                s
+          | l -> failf "%d tags" (List.length l));
     ]
 
 (* Goldens *)

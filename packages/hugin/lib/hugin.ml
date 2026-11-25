@@ -77,7 +77,7 @@ let save ?(warn = Format.eprintf "%a@." pp_warning) ?view ?theme
   let write =
     match String.lowercase_ascii (Filename.extension file) with
     | ".png" -> Hugin_vg_raster.png ~density
-    | ".svg" -> Hugin_vg_svg.render
+    | ".svg" -> fun r -> Hugin_vg_svg.render r
     | ".pdf" -> Hugin_vg_pdf.render
     | ext ->
         Common.err "save" "%S: the extension %S is not .png, .svg or .pdf" file
@@ -89,19 +89,41 @@ let save ?(warn = Format.eprintf "%a@." pp_warning) ?view ?theme
   Out_channel.with_open_bin file (fun oc -> Out_channel.output_string oc data)
 
 (* The header of an SVG display tag in Quill's display protocol: the line
-   [quill.display], the MIME type's line and an empty display id line. The
-   document follows. *)
-let svg_display = "quill.display\nimage/svg+xml\n\n"
+   [quill.display], the MIME type's line and the display id's line. The document
+   follows. *)
+let svg_display id = "quill.display\nimage/svg+xml\n" ^ id ^ "\n"
 
-let pp ppf f =
-  let d = render ~density:default_density default_size f in
-  let tag = svg_display ^ Hugin_vg_svg.render (Drawing.renderable d) in
-  let summary =
-    match List.length (Drawing.warnings d) with
-    | 0 -> "hugin figure"
-    | 1 -> "hugin figure (1 warning)"
-    | n -> Printf.sprintf "hugin figure (%d warnings)" n
-  in
-  Format.pp_open_stag ppf (Format.String_tag tag);
-  Format.pp_print_string ppf summary;
-  Format.pp_close_stag ppf ()
+(* The width of a prose column of about 66 characters of running text in IBM
+   Plex Sans at 16 px: 496 px, 31 rem, which is 372 points at 3/4 point a CSS
+   pixel. *)
+let prose_width = 496. *. 0.75
+
+(* At the prose width, the aspect of [default_size]. *)
+let page_size = Size.figure prose_width (prose_width *. 2. /. 3.)
+
+let pp_with ?(id = "") ?(size = page_size) () =
+  if String.contains id '\n' then
+    Common.err "pp_with" "the display id %S holds a newline" id;
+  fun ppf f ->
+    let r = resolve f in
+    let drawn theme = draw ~density:default_density (layout ~theme size r) in
+    let light = drawn Theme.default and dark = drawn Theme.dark in
+    let lr = Drawing.renderable light in
+    (* A mark that reads its theme may draw the schemes apart; the light one
+       then displays alone. *)
+    let svg =
+      match Hugin_vg_svg.render ~dark:(Drawing.renderable dark) lr with
+      | svg -> svg
+      | exception Invalid_argument _ -> Hugin_vg_svg.render lr
+    in
+    let summary =
+      match List.length (Drawing.warnings light) with
+      | 0 -> "hugin figure"
+      | 1 -> "hugin figure (1 warning)"
+      | n -> Printf.sprintf "hugin figure (%d warnings)" n
+    in
+    Format.pp_open_stag ppf (Format.String_tag (svg_display id ^ svg));
+    Format.pp_print_string ppf summary;
+    Format.pp_close_stag ppf ()
+
+let pp ppf f = pp_with () ppf f

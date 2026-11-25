@@ -1675,4 +1675,229 @@ let determinism =
           equal string (attr "font-family" a) (attr "font-family" b));
     ]
 
-let () = exit (run "hugin.vg svg" [ mapping; accuracy; tags; determinism ])
+(* Colour schemes *)
+
+(* [recolor f px p] is [p] with each colour mapped by [f], keeping its alpha,
+   and each image's pixels by [px]. *)
+let recolor f px p =
+  let c x = Color.with_alpha (Color.alpha x) (f x) in
+  let cs = Option.map (Array.map c) in
+  let rec go (p : Picture.t) =
+    match p with
+    | Empty -> Picture.empty
+    | Fill { rule; color; path } -> Picture.fill ~rule (c color) path
+    | Stroke { stroke; color; path } -> Picture.stroke stroke (c color) path
+    | Glyphs { color; at; run } -> Picture.glyphs (c color) at run
+    | Image { box; pixels } -> Picture.image box (px pixels)
+    | Group ps -> Picture.group (List.map go ps)
+    | Clip { rule; path; picture } -> Picture.clip ~rule path (go picture)
+    | Transform { m; picture } -> Picture.transform m (go picture)
+    | Opacity { opacity; picture } -> Picture.opacity opacity (go picture)
+    | Stamp { picture; xs; ys; scales; fills; strokes } ->
+        Picture.stamp ?fills:(cs fills) ?strokes:(cs strokes) ?scales xs ys
+          (go picture)
+    | Tag { tag; picture } -> Picture.tag tag (go picture)
+  in
+  go p
+
+let inverse x = Color.v (1. -. Color.r x) (1. -. Color.g x) (1. -. Color.b x)
+let swap x = Color.v (Color.b x) (Color.g x) (Color.r x)
+let inverse_pixels px = Nx.sub (Nx.full Nx.uint8 (Nx.shape px) 255) px
+
+(* The recolourings a dark scheme is drawn from: each colour and pixel changed,
+   some colours changed, or nothing. *)
+let gen_scheme =
+  Gen.of_list
+    ~pp:(fun ppf (n, _, _) -> Format.pp_print_string ppf n)
+    [
+      ("inverse", inverse, inverse_pixels);
+      ("swap", swap, Fun.id);
+      ("same", Fun.id, Fun.id);
+    ]
+
+(* A dark scheme and a picture, an image added to half of them so that every run
+   draws dark images. *)
+let gen_themed =
+  let imaged p =
+    Picture.group [ p; Picture.image (Box2.v 10. 10. 20. 20.) Vg_corpus.tensor ]
+  in
+  Gen.pair gen_scheme
+    (Gen.frequency
+       [
+         (1, Vg_corpus.gen_picture);
+         (1, Gen.with_pp Picture.pp (Gen.map imaged Vg_corpus.gen_picture));
+       ])
+
+let themed ?(w = 100.) ?(h = 100.) ~dark p =
+  Hugin_vg_svg.render ~dark:(Renderable.v w h dark) (Renderable.v w h p)
+
+let lines s = String.split_on_char '\n' s
+let contains s sub = Option.is_some (find_from s 0 sub)
+
+(* [remove s sub] is [s] without its occurrences of [sub]. *)
+let remove s sub =
+  let n = String.length sub in
+  let b = Buffer.create (String.length s) in
+  let rec go i =
+    match find_from s i sub with
+    | None -> Buffer.add_substring b s i (String.length s - i)
+    | Some j ->
+        Buffer.add_substring b s i (j - i);
+        go (j + n)
+  in
+  go 0;
+  Buffer.contents b
+
+let is_hex c = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
+
+(* [renumbered s] is [s] with the ids of stamp definitions, which derive from
+   the content they name, numbered in order of first use. *)
+let renumbered s =
+  let ids = Hashtbl.create 8 in
+  let b = Buffer.create (String.length s) in
+  let n = String.length s in
+  let rec go i =
+    if i >= n then ()
+    else if
+      i + 18 <= n
+      && s.[i] = 'h'
+      && s.[i + 1] = 's'
+      && String.for_all is_hex (String.sub s (i + 2) 16)
+    then begin
+      let id = String.sub s i 18 in
+      let k =
+        match Hashtbl.find_opt ids id with
+        | Some k -> k
+        | None ->
+            let k = Hashtbl.length ids in
+            Hashtbl.add ids id k;
+            k
+      in
+      Printf.bprintf b "stamp%d" k;
+      go (i + 18)
+    end
+    else begin
+      Buffer.add_char b s.[i];
+      go (i + 1)
+    end
+  in
+  go 0;
+  Buffer.contents b
+
+let sheet_line l = String.starts_with ~prefix:"<style>@media" l
+
+(* [classes l] is the classes of the element of the line [l]. *)
+let classes l =
+  match find_from l 0 " class=\"" with
+  | None -> []
+  | Some i ->
+      let i = i + 8 in
+      let j = String.index_from l i '"' in
+      String.split_on_char ' ' (String.sub l i (j - i))
+
+let without_classes l =
+  match find_from l 0 " class=\"" with
+  | None -> l
+  | Some i ->
+      let j = String.index_from l (i + 8) '"' in
+      String.sub l 0 i ^ String.sub l (j + 1) (String.length l - j - 1)
+
+(* [set_paint l name hex] is the line [l] with its paint [name] set to
+   [#hex]. *)
+let set_paint l name hex =
+  let key = Printf.sprintf " %s=\"#" name in
+  match find_from l 0 key with
+  | None -> failf "%s: no %s to set" l name
+  | Some i ->
+      let i = i + String.length key in
+      String.sub l 0 i ^ hex ^ String.sub l (i + 6) (String.length l - i - 6)
+
+(* What a viewer shows: in the light scheme, the document without the dark
+   sheet, its dark images and its classes; in the dark scheme, each element's
+   paints set by its classes and only its dark images. *)
+let shown ~dark s =
+  lines s
+  |> List.filter_map (fun l ->
+      let cs = classes l in
+      if sheet_line l then None
+      else if List.mem "hd-light" cs then
+        if dark then None else Some (without_classes l)
+      else if List.mem "hd-dark" cs then
+        if dark then Some (remove (without_classes l) " display=\"none\"")
+        else None
+      else if not dark then Some (without_classes l)
+      else
+        Some
+          (List.fold_left
+             (fun l c ->
+               let name =
+                 if String.starts_with ~prefix:"hdf-" c then "fill"
+                 else if String.starts_with ~prefix:"hds-" c then "stroke"
+                 else failf "%s: unknown class %s" l c
+               in
+               set_paint l name (String.sub c 4 6))
+             (without_classes l) cs))
+  |> String.concat "\n" |> renumbered
+
+let schemes =
+  group "Colour schemes"
+    [
+      test "a dark colour is a class its rule sets in the dark scheme"
+        (fun () ->
+          expect
+            (themed
+               ~dark:(Picture.fill Color.blue square)
+               (Picture.fill red square))
+          @@ __POS_OF__
+               {|
+                 <?xml version="1.0" encoding="UTF-8"?>
+                 <svg xmlns="http://www.w3.org/2000/svg" width="100pt" height="100pt" viewBox="0 0 100 100">
+                 <style>@media screen and (prefers-color-scheme:dark){.hdf-0000ff{fill:#0000ff}}</style>
+                 <path d="M10 20L40 20L40 60L10 60Z" fill="#ff0000" class="hdf-0000ff"/>
+                 </svg>
+               |});
+      test "a dark scheme of the same colours adds nothing" (fun () ->
+          let p =
+            Picture.group
+              [ Picture.fill red square; Picture.stroke (Stroke.v 2.) red disc ]
+          in
+          equal text (svg p) (themed ~dark:p p));
+      test "an image of other pixels is written for each scheme" (fun () ->
+          let px = Vg_corpus.tensor in
+          let im = Picture.image (Box2.v 0. 0. 30. 20.) in
+          let s = themed ~dark:(im (inverse_pixels px)) (im px) in
+          equal (list string) [ "hd-light"; "hd-dark" ]
+            (List.concat_map classes
+               (List.filter (fun l -> contains l "<image") (lines s)));
+          equal string "none" (attr_or "inline" "display" s));
+      prop "a viewer of the light scheme shows the renderable" gen_themed
+        (fun ((_, f, px), p) ->
+          let s = themed ~dark:(recolor f px p) p in
+          cover "a dark class" (contains s "class=\"hd");
+          equal text (renumbered (svg p)) (shown ~dark:false s));
+      prop "a viewer of the dark scheme shows the dark renderable" gen_themed
+        (fun ((_, f, px), p) ->
+          let d = recolor f px p in
+          let s = themed ~dark:d p in
+          cover "a dark image" (contains s "hd-dark");
+          cover "a dark class" (contains s "class=\"hd");
+          equal text (renumbered (svg d)) (shown ~dark:true s));
+      test "a dark scheme of other geometry is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"more than colours") (fun () ->
+              themed
+                ~dark:(Picture.fill red (rect 0. 0. 1. 1.))
+                (Picture.fill red square)));
+      test "a dark scheme of other alphas is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"more than colours") (fun () ->
+              themed
+                ~dark:(Picture.fill (Color.with_alpha 0.5 red) square)
+                (Picture.fill red square)));
+      test "a dark scheme of another page is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"more than colours") (fun () ->
+              Hugin_vg_svg.render
+                ~dark:(Renderable.v 100. 50. (Picture.fill red square))
+                (Renderable.v 100. 100. (Picture.fill red square))));
+    ]
+
+let () =
+  exit (run "hugin.vg svg" [ mapping; accuracy; tags; determinism; schemes ])

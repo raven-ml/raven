@@ -59,6 +59,101 @@ let add_base64 b s =
 let id kind content =
   "h" ^ kind ^ String.sub (Digest.to_hex (Digest.string content)) 0 16
 
+(* Schemes *)
+
+(* What the dark scheme paints a leaf with: the colours of its fill and its
+   stroke, where it sets them, or an image's pixels. *)
+type dark =
+  | Paints of Color.t option * Color.t option
+  | Pixels of Nx.host Nx.uint8_t
+
+let same_alpha c c' = Float.equal (Color.alpha c) (Color.alpha c')
+
+let rows_alike (r : Picture.rows) (r' : Picture.rows) =
+  match (r, r') with
+  | Rows a, Rows a' -> Array.equal Int.equal a a'
+  | Cells c, Cells c' ->
+      Box2.equal c.box c'.box && c.width = c'.width && c.height = c'.height
+  | (Rows _ | Cells _), _ -> false
+
+(* [alike p p'] is [true] iff [p'] is [p] with other colours of the same alphas
+   and images of other pixels of the same shapes. The walk then meets their
+   leaves in the same order, since none of its choices reads a colour's
+   components or a pixel. *)
+let rec alike (p : Picture.t) (p' : Picture.t) =
+  p == p'
+  ||
+  match (p, p') with
+  | Empty, Empty -> true
+  | Fill f, Fill f' ->
+      f.rule = f'.rule
+      && same_alpha f.color f'.color
+      && Path.equal f.path f'.path
+  | Stroke s, Stroke s' ->
+      Stroke.equal s.stroke s'.stroke
+      && same_alpha s.color s'.color
+      && Path.equal s.path s'.path
+  | Glyphs g, Glyphs g' ->
+      same_alpha g.color g'.color
+      && P2.equal g.at g'.at && Run.equal g.run g'.run
+  | Image i, Image i' ->
+      Box2.equal i.box i'.box && Nx.shape i.pixels = Nx.shape i'.pixels
+  | Group ps, Group ps' -> List.equal alike ps ps'
+  | Clip c, Clip c' ->
+      c.rule = c'.rule && Path.equal c.path c'.path
+      && alike c.picture c'.picture
+  | Transform t, Transform t' ->
+      Affine.equal t.m t'.m && alike t.picture t'.picture
+  | Opacity o, Opacity o' ->
+      Float.equal o.opacity o'.opacity && alike o.picture o'.picture
+  | Stamp s, Stamp s' ->
+      let alphas = Option.equal (Array.equal same_alpha) in
+      Array.equal Float.equal s.xs s'.xs
+      && Array.equal Float.equal s.ys s'.ys
+      && Option.equal (Array.equal Float.equal) s.scales s'.scales
+      && alphas s.fills s'.fills
+      && alphas s.strokes s'.strokes
+      && alike s.picture s'.picture
+  | Tag t, Tag t' ->
+      Nx.Ptree.Path.equal t.tag.id t'.tag.id
+      && rows_alike t.tag.rows t'.tag.rows
+      && alike t.picture t'.picture
+  | ( ( Empty | Fill _ | Stroke _ | Glyphs _ | Image _ | Group _ | Clip _
+      | Transform _ | Opacity _ | Stamp _ | Tag _ ),
+      _ ) ->
+      false
+
+let painted (paint : Vector.paint) own =
+  match paint with Own -> Some own | Fixed c -> Some c | Inherit -> None
+
+let nth a i = Option.map (fun a -> a.(i)) a
+
+(* [recorder q] walks a picture pushing on [q] what paints each leaf, in the
+   order the SVG target writes leaves. Its [carry] is the SVG target's. *)
+let recorder q =
+  let push d = Queue.push d q in
+  {
+    Vector.fill =
+      (fun () (ctx : Vector.ctx) _ color _ ->
+        push (Paints (painted ctx.fills color, None)));
+    stroke =
+      (fun () (ctx : Vector.ctx) _ color _ ->
+        push (Paints (None, painted ctx.strokes color)));
+    glyphs =
+      (fun () (ctx : Vector.ctx) color _ _ ->
+        push (Paints (painted ctx.fills color, None)));
+    image = (fun () _ (im : Vector.image) -> push (Pixels im.pixels));
+    clip = (fun () _ _ _ k -> k ());
+    opacity = (fun () _ _ _ k -> k ());
+    tag = (fun () _ _ k -> k ());
+    carry = (fun _ _ s -> s);
+    define = (fun _ _ k -> k ());
+    use =
+      (fun () _ (st : Vector.stamp) () i _ _ ->
+        push (Paints (nth st.fills i, nth st.strokes i)));
+    instance = (fun () _ _ k -> k ());
+  }
+
 (* Documents *)
 
 type doc = {
@@ -67,7 +162,30 @@ type doc = {
   text : (Font.t * Font.glyph list) list;
       (** The glyphs each font shows as text. *)
   mutable families : (Font.t * string) list;
+  dark : dark Queue.t option;
+      (** What the dark scheme paints the leaves still to write with. *)
+  sheet : Buffer.t;
+      (** The rules of the dark scheme, in the order of first use. *)
+  rules : (string, unit) Hashtbl.t;
 }
+
+(* [next doc] is what the dark scheme paints the next leaf with, if [doc] has a
+   dark scheme. *)
+let next doc = Option.map Queue.take doc.dark
+
+let fills = function
+  | Some (Paints (f, _)) -> f
+  | Some (Pixels _) | None -> None
+
+let strokes = function
+  | Some (Paints (_, s)) -> s
+  | Some (Pixels _) | None -> None
+
+let rule doc name body =
+  if not (Hashtbl.mem doc.rules name) then begin
+    Hashtbl.add doc.rules name ();
+    Printf.bprintf doc.sheet ".%s{%s}" name body
+  end
 
 let define doc id content =
   if not (Hashtbl.mem doc.defined id) then begin
@@ -105,8 +223,9 @@ let add_attr_num b name d v =
   add_num b d v;
   Buffer.add_char b '"'
 
+let level v = int_of_float (Float.round (v *. 255.))
+
 let add_color b name ~set c =
-  let level v = int_of_float (Float.round (v *. 255.)) in
   Printf.bprintf b " %s=\"#%02x%02x%02x\"" name
     (level (Color.r c))
     (level (Color.g c))
@@ -119,6 +238,37 @@ let add_paint b name ~set (paint : Vector.paint) own =
   | Own -> add_color b name ~set own
   | Fixed c -> add_color b name ~set c
   | Inherit -> ()
+
+let hex c =
+  Printf.sprintf "%02x%02x%02x"
+    (level (Color.r c))
+    (level (Color.g c))
+    (level (Color.b c))
+
+(* [dark_class doc name light dark] is the class that paints the property [name]
+   with [dark] in the dark scheme, where it differs from [light] as written. The
+   class is named by what it sets, [hdf-ebebeb] setting [fill] to [#ebebeb], so
+   that documents inlined in one HTML page share its rule. *)
+let dark_class doc name light dark =
+  match (light, dark) with
+  | Some l, Some d when hex l <> hex d ->
+      let c = Printf.sprintf "hd%c-%s" name.[0] (hex d) in
+      rule doc c (Printf.sprintf "%s:#%s" name (hex d));
+      Some c
+  | _ -> None
+
+let add_classes b cs =
+  match List.filter_map Fun.id cs with
+  | [] -> ()
+  | cs -> Printf.bprintf b " class=\"%s\"" (String.concat " " cs)
+
+(* [add_themed doc b name ~set paint own dark] adds the paint of a leaf and the
+   class of its dark colour [dark]. A document without a dark scheme writes the
+   paint alone. *)
+let add_themed doc b name ~set paint own dark =
+  add_paint b name ~set paint own;
+  if Option.is_some dark then
+    add_classes b [ dark_class doc name (painted paint own) dark ]
 
 let add_matrix b (u : Affine.t) ox oy d =
   Buffer.add_string b " transform=\"matrix(";
@@ -166,11 +316,12 @@ let area_data (ctx : Vector.ctx) m path =
 
 (* Leaves *)
 
-let fill b (ctx : Vector.ctx) rule color path =
+let fill doc b (ctx : Vector.ctx) rule color path =
+  let dark = fills (next doc) in
   let d = area_data ctx ctx.m path in
   if d <> "" then begin
     Printf.bprintf b "<path d=\"%s\"" d;
-    add_paint b "fill" ~set:ctx.fill_set ctx.fills color;
+    add_themed doc b "fill" ~set:ctx.fill_set ctx.fills color dark;
     if rule = `Even_odd then Buffer.add_string b " fill-rule=\"evenodd\"";
     if ctx.stroke_set then Buffer.add_string b " stroke=\"none\"";
     Buffer.add_string b "/>\n"
@@ -193,7 +344,8 @@ let add_pen b d (pen : Vector.pen) ~offset =
     if offset <> 0. then add_attr_num b "stroke-dashoffset" dd offset
   end
 
-let stroke b (ctx : Vector.ctx) (st : Vector.stroke) color outline =
+let stroke doc b (ctx : Vector.ctx) (st : Vector.stroke) color outline =
+  let dark = strokes (next doc) in
   let pieces = ref [] and current = Buffer.create 64 and offset = ref 0. in
   let flush () =
     if Buffer.length current > 0 then begin
@@ -213,7 +365,7 @@ let stroke b (ctx : Vector.ctx) (st : Vector.stroke) color outline =
     Buffer.add_string b "<path";
     Option.iter (fun u -> add_matrix b u 0. 0. ctx.d) st.frame;
     Printf.bprintf b " d=\"%s\" fill=\"none\"" d;
-    add_paint b "stroke" ~set:ctx.stroke_set ctx.strokes color;
+    add_themed doc b "stroke" ~set:ctx.stroke_set ctx.strokes color dark;
     if not ctx.pen_set then add_pen b ctx.d st.pen ~offset;
     let s = st.style in
     (match Stroke.cap s with
@@ -302,6 +454,7 @@ let unshaped =
    0,'clig' 0,'calt' 0,'rlig' 0,'kern' 0,'ccmp' 0,'locl' 0,'mark' 0,'mkmk' 0"
 
 let glyphs doc b (ctx : Vector.ctx) color at run =
+  let dark = fills (next doc) in
   let m = Affine.(ctx.m * translate (P2.x at) (P2.y at)) in
   if Vector.run_meets ctx.cut m run then
     match text_of run with
@@ -348,7 +501,7 @@ let glyphs doc b (ctx : Vector.ctx) color at run =
         add_attr_num b "font-size"
           (Vector.scale_decimals ctx (Vector.ems (Run.font run)))
           (Run.size run *. s);
-        add_paint b "fill" ~set:ctx.fill_set ctx.fills color;
+        add_themed doc b "fill" ~set:ctx.fill_set ctx.fills color dark;
         if ctx.stroke_set then Buffer.add_string b " stroke=\"none\"";
         Printf.bprintf b " style=\"%s\" xml:space=\"preserve\">" unshaped;
         add_text b text;
@@ -357,7 +510,7 @@ let glyphs doc b (ctx : Vector.ctx) color at run =
         Buffer.add_string b "<g aria-label=\"";
         add_text b (Run.text run);
         Buffer.add_char b '"';
-        add_paint b "fill" ~set:ctx.fill_set ctx.fills color;
+        add_themed doc b "fill" ~set:ctx.fill_set ctx.fills color dark;
         if ctx.stroke_set then Buffer.add_string b " stroke=\"none\"";
         Buffer.add_string b ">\n";
         let font = Run.font run and size = Run.size run in
@@ -370,7 +523,21 @@ let glyphs doc b (ctx : Vector.ctx) color at run =
         done;
         Buffer.add_string b "</g>\n"
 
-let image b (ctx : Vector.ctx) (im : Vector.image) =
+(* An image the dark scheme paints with other pixels is written twice: its own,
+   which the dark scheme hides, then the dark scheme's, which only it shows. *)
+let rec image doc b (ctx : Vector.ctx) (im : Vector.image) =
+  match next doc with
+  | Some (Pixels dark)
+    when not (dark == im.pixels || Nx.item [] (Nx.array_equal dark im.pixels))
+    ->
+      rule doc "hd-light" "display:none";
+      rule doc "hd-dark" "display:inline";
+      write_image b ctx im ~classes:" class=\"hd-light\"";
+      write_image b ctx { im with pixels = dark }
+        ~classes:" class=\"hd-dark\" display=\"none\""
+  | Some (Pixels _ | Paints _) | None -> write_image b ctx im ~classes:""
+
+and write_image b (ctx : Vector.ctx) (im : Vector.image) ~classes =
   let c0, r0, c1, r1 = im.window in
   let shape = Nx.shape im.pixels in
   let pixels =
@@ -398,6 +565,7 @@ let image b (ctx : Vector.ctx) (im : Vector.image) =
     add_attr_num b "width" (Vector.finer 1 ctx.d) (s *. bw);
     add_attr_num b "height" (Vector.finer 1 ctx.d) (s *. bh)
   end;
+  Buffer.add_string b classes;
   Buffer.add_string b
     " preserveAspectRatio=\"none\" style=\"image-rendering:pixelated\" \
      href=\"data:image/png;base64,";
@@ -523,7 +691,8 @@ let add_row b (st : Vector.stamp) i =
   | None -> ()
   | Some a -> Printf.bprintf b " data-row=\"%d\"" a.(i)
 
-let use b (ctx : Vector.ctx) (st : Vector.stamp) def i at s =
+let use doc b (ctx : Vector.ctx) (st : Vector.stamp) def i at s =
+  let dark = next doc in
   let x = P2.x at and y = P2.y at in
   Printf.bprintf b "<use href=\"#%s\"" def;
   if not st.scaled then begin
@@ -550,6 +719,12 @@ let use b (ctx : Vector.ctx) (st : Vector.stamp) def i at s =
   Option.iter
     (fun a -> add_color b "stroke" ~set:ctx.stroke_set a.(i))
     st.strokes;
+  if Option.is_some dark then
+    add_classes b
+      [
+        dark_class doc "fill" (nth st.fills i) (fills dark);
+        dark_class doc "stroke" (nth st.strokes i) (strokes dark);
+      ];
   add_row b st i;
   Buffer.add_string b "/>\n"
 
@@ -565,33 +740,59 @@ let instance b (st : Vector.stamp) i k =
 
 let target doc =
   {
-    Vector.fill;
-    stroke;
+    Vector.fill = fill doc;
+    stroke = stroke doc;
     glyphs = glyphs doc;
-    image;
+    image = image doc;
     clip = clip doc;
     opacity;
     tag;
     carry = (fun _ _ s -> s);
     define = define doc;
-    use;
+    use = use doc;
     instance;
   }
 
 (* Documents *)
 
-let render r =
+(* The dark scheme's rules apply on screens only, so that print shows the light
+   scheme on paper. *)
+let dark_media = "@media screen and (prefers-color-scheme:dark){"
+
+let render ?dark r =
   let w = Renderable.w r and h = Renderable.h r in
+  let dark =
+    Option.map
+      (fun d ->
+        if
+          not
+            (Float.equal (Renderable.w d) w
+            && Float.equal (Renderable.h d) h
+            && alike (Renderable.picture r) (Renderable.picture d))
+        then
+          invalid_arg
+            "Hugin_vg_svg.render: dark differs from the renderable in more \
+             than colours";
+        let q = Queue.create () in
+        Vector.walk (recorder q) (Vector.page d) () (Renderable.picture d);
+        q)
+      dark
+  in
   let doc =
     {
       defs = Buffer.create 1024;
       defined = Hashtbl.create 16;
       text = text_glyphs (Renderable.picture r);
       families = [];
+      dark;
+      sheet = Buffer.create 256;
+      rules = Hashtbl.create 16;
     }
   in
   let body = Buffer.create 4096 in
   Vector.walk (target doc) (Vector.page r) body (Renderable.picture r);
+  (* The two walks met the same leaves. *)
+  assert (Option.fold ~none:true ~some:Queue.is_empty dark);
   let out = Buffer.create (Buffer.length body + Buffer.length doc.defs + 256) in
   Buffer.add_string out
     "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -604,6 +805,12 @@ let render r =
   Buffer.add_char out ' ';
   Vector.add_exact out h;
   Buffer.add_string out "\">\n";
+  if Buffer.length doc.sheet > 0 then begin
+    Buffer.add_string out "<style>";
+    Buffer.add_string out dark_media;
+    Buffer.add_buffer out doc.sheet;
+    Buffer.add_string out "}</style>\n"
+  end;
   if Buffer.length doc.defs > 0 then begin
     Buffer.add_string out "<defs>\n";
     Buffer.add_buffer out doc.defs;

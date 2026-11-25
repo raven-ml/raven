@@ -47,7 +47,29 @@
       describes.
 
     Styles are attributes of each element, never selectors of a style sheet, so
-    that documents inlined in one HTML page do not restyle each other.
+    that documents inlined in one HTML page do not restyle each other. The rules
+    of a {{!section-schemes}dark scheme} are the one exception, and they are
+    named by what they set, so that two documents' rules of one name are the
+    same rule.
+
+    {1:schemes Colour schemes}
+
+    A document of a renderable [r] given a dark scheme [d], a renderable that
+    differs from [r] only in its colours, paints [r] and, on a screen whose
+    viewer prefers a dark colour scheme, [d]:
+    - Every element writes its colours as [r] has them, so a viewer without
+      style sheets or media queries, and print, show [r].
+    - An element that [d] paints in another colour, as written, takes a class
+      that sets it: [hdf-ebebeb] sets its [fill] to [#ebebeb] and [hds-ebebeb]
+      its [stroke], by a rule of a style sheet at the start of the document,
+      under the media query [screen and (prefers-color-scheme: dark)].
+    - An image that [d] paints with other pixels is written twice: [r]'s, of
+      class [hd-light], which the dark scheme hides, then [d]'s, of class
+      [hd-dark] and with [display="none"], which only the dark scheme shows.
+
+    A viewer decides the scheme of a document shown in an HTML page's [img]
+    element: some follow the page's colour scheme, others the operating
+    system's.
 
     {1:accuracy Accuracy}
 
@@ -123,8 +145,12 @@
     that documents inlined in one HTML page share an id only for equal content,
     and never conflict. *)
 
-val render : Hugin_vg.Renderable.t -> string
-(** [render r] is the SVG document of [r], encoded in UTF-8.
+val render : ?dark:Hugin_vg.Renderable.t -> Hugin_vg.Renderable.t -> string
+(** [render ~dark r] is the SVG document of [r], encoded in UTF-8, with the
+    {{!section-schemes}dark scheme} [dark] if given.
 
-    Raises what reading the tensor of an image of [r] raises, such as for a
-    tensor whose storage a compiled call consumed. *)
+    Raises [Invalid_argument] if [dark] differs from [r] in more than colours:
+    if their pages differ in size, or their pictures in anything but the red,
+    green and blue of their colours and the pixels of their images of equal
+    shapes. Raises what reading the tensor of an image of [r] or [dark] raises,
+    such as for a tensor whose storage a compiled call consumed. *)

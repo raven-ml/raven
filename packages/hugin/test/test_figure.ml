@@ -1103,6 +1103,10 @@ let contrast a b =
   let la = luminance a and lb = luminance b in
   (Float.max la lb +. 0.05) /. (Float.min la lb +. 0.05)
 
+(* [blend a get c c'] is the component [get] of [c] at opacity [a] over the
+   opaque [c'], composited on encoded components as viewers do. *)
+let blend a get c c' = (a *. get c) +. ((1. -. a) *. get c')
+
 let theme_ =
   group "Theme"
     [
@@ -1151,6 +1155,39 @@ let theme_ =
           let paper = Theme.paper Theme.dark in
           at_least float_exact ~than:3.
             (contrast (Scheme.color Scheme.viridis u) paper));
+      (* A figure on a page shows dark's colours on the page's background: on
+         dark's paper they keep WCAG's contrast for text, 4.5:1, and for marks,
+         3:1, and being lighter than it, they keep more on any darker
+         background. *)
+      cases "dark's ink and labels contrast with its paper at 4.5:1 or more"
+        ~id:(fun (n, _) -> n)
+        [ ("titles", 1.); ("tick and legend labels", 0.75) ]
+        (fun (_, a) ->
+          let paper = Theme.paper Theme.dark and ink = Theme.ink Theme.dark in
+          let over =
+            Color.v
+              (blend a Color.r ink paper)
+              (blend a Color.g ink paper)
+              (blend a Color.b ink paper)
+          in
+          at_least float_exact ~than:4.5 (contrast over paper);
+          greater float_exact ~than:(luminance paper) (luminance over));
+      cases "dark's palette and accent contrast with its paper at 3:1 or more"
+        ~id:fst
+        (("accent", Theme.accent Theme.dark)
+        :: List.map
+             (fun c -> ("palette " ^ Color.to_hex c, c))
+             (Array.to_list (Scheme.table (Theme.palette Theme.dark))))
+        (fun (_, c) ->
+          let paper = Theme.paper Theme.dark in
+          at_least float_exact ~than:3. (contrast c paper);
+          greater float_exact ~than:(luminance paper) (luminance c));
+      prop "dark's scheme contrasts with its paper at 3:1 or more"
+        (Gen.float_range 0. 1.) (fun u ->
+          let paper = Theme.paper Theme.dark in
+          let c = Scheme.color (Theme.scheme Theme.dark) u in
+          at_least float_exact ~than:3. (contrast c paper);
+          greater float_exact ~than:(luminance paper) (luminance c));
       test "equal tells apart themes that differ in accent alone" (fun () ->
           not_equal theme Theme.default (Theme.v ~accent:Color.red ()));
     ]

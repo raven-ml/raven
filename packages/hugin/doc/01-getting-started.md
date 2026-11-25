@@ -138,9 +138,11 @@ In a Quill notebook, a cell whose value is a figure shows the figure:
 let fig = Hugin.(line ~y:(num curves) ())
 ```
 
-`Hugin.pp` renders the figure as SVG and hands it to the notebook. Printed
-anywhere else, such as in a terminal toplevel, it is a one-line summary:
-`hugin figure`.
+`Hugin.pp` renders the figure as SVG and hands it to the notebook. The
+figure is as wide as the page's prose, in the light theme or, on a screen
+that prefers a dark scheme, in `Theme.dark`, each on its own paper.
+`Hugin.pp_with ~size ()` prints at another size. Printed anywhere else, such
+as in a terminal toplevel, it is a one-line summary: `hugin figure`.
 
 ## Errors and warnings
 

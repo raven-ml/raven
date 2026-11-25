@@ -319,6 +319,16 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin.pp` shows a figure in the scheme of the screen: its SVG carries
+  `Theme.default` and `Theme.dark`, each on its own paper, and shows the dark
+  one on screens that prefer a dark scheme. Print, and viewers without the
+  preference, show the light one. A figure was a white box on a dark page.
+- `Hugin.pp` draws a figure 372 points (496 px) wide, a prose column of about
+  66 characters, where it drew 360. New `Hugin.pp_with ?id ?size ()`, a printer
+  whose `size` sets the figure's and whose `id` lets a later display of the
+  same cell replace it.
+- New `?dark` on `Hugin_vg_svg.render`: a renderable that differs only in
+  colours, which the document paints on screens that prefer a dark scheme.
 - `Hugin_vg_raster` places the instances of a stamp that holds stamps at their
   positions, unrounded. Each stamp rounded its own to a quarter pixel, so a
   nested instance moved an eighth of a pixel per stamp, outside its bounds.
