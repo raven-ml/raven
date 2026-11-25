@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- A SentencePiece BPE model without an unknown token or fallback tokens merges
+  across a character it has no piece for, as Hugging Face does: `"▁ü▁▁▁a▁a"`
+  gave `[0; 31; 30; 30]` where tokenizers gives `[31; 31; 1; 30]`.
 - `Brot.bpe` takes `?rng`, the `Random.State.t` its `dropout` draws from;
   without it, and from `of_json`, a tokenizer draws from its own state of a
   constant seed. Dropout drew from the encoding domain's default `Random`.

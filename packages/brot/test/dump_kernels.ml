@@ -493,12 +493,13 @@ let sp_vocab_of pieces =
   List.mapi (fun i piece -> (piece, i)) (pieces @ derived)
 
 (* Letters, the mark, two punctuation pieces and one accented character; a
-   character outside these hands the unit back and is dropped (no unknown
-   token). *)
+   character outside these hands the unit back and is the unknown token, one per
+   character. A model without one would drop it, and merges such a span
+   whole. *)
 let synth_sp ?cache_capacity () =
   Brot.bpe
-    ~vocab:(sp_vocab_of sp_base_vocab)
-    ~merges:sp_base_merges ?cache_capacity ()
+    ~vocab:(sp_vocab_of (sp_base_vocab @ [ "<unk>" ]))
+    ~merges:sp_base_merges ~unk_token:"<unk>" ?cache_capacity ()
 
 (* An unknown token under fuse_unk: unknown runs fuse within a unit, and the
    punctuation bytes without a piece lose their slots. *)
@@ -525,14 +526,14 @@ let synth_sp_disagree () =
     sp_base_merges
     @ [ ("<", "0"); ("<0", "x"); ("<0x", "4"); ("1", ">"); ("<0x4", "1>") ]
   in
-  let pieces = sp_base_vocab @ spell @ [ "<0x41>" ] in
+  let pieces = sp_base_vocab @ spell @ [ "<0x41>"; "<unk>" ] in
   let derived =
     List.map (fun (a, b) -> a ^ b) merges
     |> List.filter (fun m -> not (List.mem m pieces))
   in
   Brot.bpe
     ~vocab:(List.mapi (fun i piece -> (piece, i)) (pieces @ derived))
-    ~merges ~byte_fallback:true ()
+    ~merges ~byte_fallback:true ~unk_token:"<unk>" ()
 
 (* The bytes [from] to [until] of [s], in hex. *)
 let hex s ~from ~until =

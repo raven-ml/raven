@@ -1038,11 +1038,14 @@ let encode_unit_into model st ids ~opaque text ~pos ~len =
    byte-level models (their vocabularies encode text differently), under
    [ignore_merges] and dropout (whole-word lookup and stochastic merges have no
    per-unit equivalence), under affixes (a cut changes which characters carry
-   them), and when the unknown token could reach across a boundary: unless no
-   unknown token is set or every byte has a fallback token, ▁ itself must be a
-   vocabulary piece, so that an unknown run can never contain a boundary and
-   pending unknowns flush at the same places cut or not. The byte tests are
-   exact on valid UTF-8, where 0xE2 only ever leads a character.
+   them), when a character can give no token, and when the unknown token could
+   reach across a boundary. A character that neither a piece, the unknown token
+   nor fallback tokens covers drops out of the merge, which joins its neighbours
+   across any cut: ▁ü▁ merges into ▁▁ whole. Unless every byte has a fallback
+   token, ▁ itself must be a vocabulary piece, so that an unknown run can never
+   contain a boundary and pending unknowns flush at the same places cut or not.
+   The byte tests are exact on valid UTF-8, where 0xE2 only ever leads a
+   character.
 
    A unit also ends before one of eight frequent punctuation bytes when no
    vocabulary piece holds its previous byte and it side by side — the same
@@ -1664,13 +1667,13 @@ let create ~vocab ~merges ?(byte_level = false) ?(spaced = false)
   (* The SentencePiece sub-cut's gates, argued where the walker lives. *)
   let marker = if spaced then " " else space_marker in
   let sp_cut =
-    let unk_reachable =
-      unk_id >= 0
-      && not
-           (byte_fallback && Array.for_all (fun id -> id >= 0) byte_fallback_ids)
+    let full_fallback =
+      byte_fallback && Array.for_all (fun id -> id >= 0) byte_fallback_ids
     in
+    let unk_reachable = unk_id >= 0 && not full_fallback in
+    let drops = unk_id < 0 && not full_fallback in
     if
-      (not byte_level) && (not ignore_merges)
+      (not byte_level) && (not ignore_merges) && (not drops)
       && (match dropout with Some p -> p <= 0.0 | None -> true)
       && continuing_subword_prefix = None
       && end_of_word_suffix = None

@@ -626,7 +626,7 @@ let sp_lists m =
     @
     if m.fallback then
       List.init 256 (fun b -> (Printf.sprintf "<0x%02X>" b, 40 + b))
-    else []
+    else [ ("<unk>", 39) ]
   in
   let merges =
     (if m.runs then [ (sp_mark, sp_mark) ] else [])
@@ -635,9 +635,14 @@ let sp_lists m =
   in
   (vocab, merges)
 
+(* The model without fallback tokens has an unknown token: one with neither
+   drops a character it has no piece for, and merges a span whole
+   ([dropping]). *)
 let sp_tokenizer m =
   let vocab, merges = sp_lists m in
-  Brot.bpe ~vocab ~merges ~byte_fallback:m.fallback ?cache_capacity:m.cache ()
+  let unk_token = if m.fallback then None else Some "<unk>" in
+  Brot.bpe ~vocab ~merges ~byte_fallback:m.fallback ?unk_token
+    ?cache_capacity:m.cache ()
 
 (* Units of the ▁ walk and their neighbours: runs of ▁, units past the key,
    punctuation and a piece across a full stop; and, for a model with fallback
@@ -721,10 +726,24 @@ let sp_law =
         (words_of expect) (Brot.Encoding.word_ids e))
 
 (* A character with no piece, no fallback token and no unknown token gives no
-   token: Hugging Face's tokenizers 0.23.1 gives these ids. *)
-let test_sp_pieceless () =
-  let text = sp_mark ^ "a" ^ sp_mark ^ "\195\188" ^ repeat 2 (sp_mark ^ "a") in
-  equal (array int) [| 30; 0; 30; 30 |] (ids (sp_tokenizer simple) text)
+   token, and its neighbours merge across it: in the second text the ▁ before ü
+   meets the ▁ after it. Hugging Face's tokenizers 0.23.1 gives these ids. *)
+let dropping =
+  cases "a character without a piece or an unknown token gives no token"
+    ~id:(fun (id, _, _, _) -> id)
+    [
+      ( "between two units",
+        simple,
+        sp_mark ^ "a" ^ sp_mark ^ "\195\188" ^ repeat 2 (sp_mark ^ "a"),
+        [| 30; 0; 30; 30 |] );
+      ( "between two \u{2581}",
+        { simple with runs = true },
+        sp_mark ^ "\195\188" ^ repeat 3 sp_mark ^ "a" ^ sp_mark ^ "a",
+        [| 31; 31; 1; 30 |] );
+    ]
+    (fun (_, m, text, expect) ->
+      let vocab, merges = sp_lists m in
+      equal (array int) expect (ids (Brot.bpe ~vocab ~merges ()) text))
 
 (* 100000 units outgrow the ids one call holds, so the walk stops at a unit and
    the next call resumes it. "▁a" is a piece, and the merge of ▁ and a. *)
@@ -749,7 +768,11 @@ let disagreeing_sp =
        [ "<"; "0"; "4"; "1"; ">"; "<0"; "<0x"; "<0x4"; "1>"; "<0x41>" ]
      in
      Brot.bpe
-       ~vocab:(sp_vocab @ List.mapi (fun i s -> (s, 31 + i)) spell)
+       ~vocab:
+         (sp_vocab
+         @ List.mapi (fun i s -> (s, 31 + i)) spell
+         @ [ ("<unk>", 41) ])
+       ~unk_token:"<unk>"
        ~merges:
          [
            (sp_mark, "a");
@@ -1016,9 +1039,11 @@ let grown_byte_level cache_capacity =
     ~vocab:(grown_vocab base_vocab extra)
     ~merges:(grown_pairs @ extra) ~pre:(pre ()) ?cache_capacity ()
 
+(* With an unknown token, as a model without one merges a span whole. *)
 let grown_sp cache_capacity =
-  Brot.bpe ~vocab:(grown_vocab sp_vocab []) ~merges:grown_pairs ?cache_capacity
-    ()
+  Brot.bpe
+    ~vocab:(grown_vocab (sp_vocab @ [ ("<unk>", 31) ]) [])
+    ~merges:grown_pairs ~unk_token:"<unk>" ?cache_capacity ()
 
 let spaced words = String.concat " " words
 let marked words = String.concat "" (List.map (( ^ ) sp_mark) words)
@@ -1215,7 +1240,9 @@ let spill_docs =
       ] );
     ( "SentencePiece",
       lazy
-        (Brot.bpe ~vocab:sp_vocab
+        (Brot.bpe
+           ~vocab:(sp_vocab @ [ ("<unk>", 31) ])
+           ~unk_token:"<unk>"
            ~merges:[ (sp_mark, "a") ]
            ~added_tokens:[ Brot.added_token "<sep>" ]
            ()),
@@ -1456,9 +1483,7 @@ let () =
              sp_law;
              test "a stream of 100000 units encodes as its units"
                test_sp_long_stream;
-             test
-               "a character without a piece or an unknown token gives no token"
-               test_sp_pieceless;
+             dropping;
              test_disagreeing;
              test_ignore_merges;
              spaced_law;
