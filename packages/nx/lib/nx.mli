@@ -1522,9 +1522,10 @@ val scatter :
 (** {1:arith Arithmetic}
 
     Elementwise operations compute where their operands lie and give a new
-    value. Binary operations broadcast: aligned at their last axes, two extents
-    are equal or one of them is [1], which stretches. Integers wrap. The float
-    formats narrower than 32 bits compute at [float32] and round once.
+    value. Binary operations, {!fma}, {!lerp} and {!where} broadcast: aligned at
+    their last axes, two extents are equal or one of them is [1], which
+    stretches. Integers wrap. The float formats narrower than 32 bits compute at
+    [float32] and round once.
 
     Each raises [Invalid_argument] naming itself if the shapes do not broadcast,
     or if its operation does not take the operands' dtype: what each takes is
@@ -1557,12 +1558,14 @@ val mod_ : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val pow : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [pow a b] is [a] to the power [b]. On complex numbers it is the principal
-    value [exp (b * log a)]: [1] where [b] is [0], [0] at [a = 0] where
-    [b]'s real part is positive, with [log]'s branch cut
-    ({!section-transcendental}); its error grows with [|b log a|], within
-    [(3 + 3|b log a|) u |a{^b}|]. On floats it is within 4 ulps at float32
-    and 2 at float64, with Annex F's special values
-    ({!section-transcendental}). Every dtype but booleans. *)
+    value [exp (b * log a)]: [1] where [b] is [0], [0] at [a = 0] where [b]'s
+    real part is positive, with [log]'s branch cut ({!section-transcendental});
+    its error grows with [|b log a|], within [(3 + 3|b log a|) u |a{^b}|]. On
+    floats it is within 4 ulps at float32 and 2 at float64, with Annex F's
+    special values ({!section-transcendental}). On integers it is [a{^b}] modulo
+    [2{^w}] for a dtype of [w] bits, [1] where [b] is [0], [0] included; a
+    negative [b] gives [0], but [1] at a base of [1] and [1] or [-1] by [b]'s
+    parity at a base of [-1]. Every dtype but booleans. *)
 
 val fma : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [fma a b c] is [a * b + c] rounded once. Floats and integers. *)
@@ -1890,7 +1893,7 @@ val sinc : (float, 's, 'd) t -> (float, 's, 'd) t
     derivatives of every order are accurate at [0] and near it; elsewhere the
     sine is taken of [π] times [x]'s distance to the nearest integer, so [sinc]
     is exactly [0] at every other integer. It is NaN at NaN and at infinities.
-*)
+    Within 10 ulps at float32 and float64. *)
 
 val cos : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [cos x] is the cosine of [x] radians. Within 2 ulps at float32 and
@@ -1970,7 +1973,11 @@ val erf : (float, 's, 'd) t -> (float, 's, 'd) t
     from [1.] to the next float of the dtype. An inverse's bound adds [κ]
     times its forward function's bound, where [κ = |p / (x F'(x))|] at its
     result [x], for [F] the forward function, is its condition number. These
-    bounds hold where those of {!section-transcendental} do.
+    bounds hold where those of {!section-transcendental} do. Their ulps count an
+    infinity as the float past the greatest finite one and a zero as the float
+    beside the least subnormal of its sign, so where the exact value rounds to
+    an infinity or to zero, a result may lie as many floats from it as the bound
+    allows.
 
     The formats narrower than 32 bits follow {!section-transcendental};
     where a bound is absolute, their result is within that bound at
@@ -2764,8 +2771,9 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
 (** [bitcast dt x] is [x]'s bits read as elements of [dt], NaN payloads
     included: [x] itself where [dt] is [x]'s dtype. At one width the shape is
     [x]'s. A [dt] [k] times narrower appends an axis of [k], its elements the
-    pieces of [x]'s element, in the host's byte order; one [k] times wider reads
-    [x]'s last axis, of [k] elements, as one element, and drops it.
+    pieces of [x]'s element from its low bits, as {!Dtype} stores elements; one
+    [k] times wider reads [x]'s last axis, of [k] elements, its first the low
+    bits, as one element, and drops it.
 
     Raises [Invalid_argument] where [dt] is wider and [x]'s last axis does not
     have [k] elements, and where [dt] is narrower and [x] has the greatest rank
