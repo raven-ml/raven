@@ -85,6 +85,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.truncated` keeps its quantile and draws inside the base's support
+  where a bound lies deep in a tail: a gamma truncated above at `1e-130` gave
+  the quantile `-1e-129` at `p = 1e-12`, where it is `1.6e-135`.
 - `Weighted.resample` never copies a draw of weight zero. A point that
   rounding put at or past the end of the cumulative weights took the last
   draw whatever its weight: 100000 float32 draws copied a draw of log weight

@@ -2525,6 +2525,26 @@ let truncation =
           in
           let eps = (Nx.Dtype.float_format Nx.float32).epsilon in
           equal (float (4. *. eps *. 5e11)) (at Nx.float64) (at Nx.float32));
+      (* gen/dist.py's truncated_gamma_deep at p = 1e-12: the quantile
+         1.5848931924611137e-135, the base's lower tail there e^-776.16 and
+         its log density -464.85, so the quantile is within
+         [64 ε (x + (1 + 776) m / f)], about [7e-12] relatively. Newton's
+         steps from the bound 1e-130 once crossed the gamma's 0. *)
+      test "a deep truncation's quantile and draws lie in its support"
+        (fun () ->
+          let d =
+            D.truncated ~high:(f64 1e-130)
+              (D.gamma ~concentration:(f64 2.5) ~rate:(f64 1.5))
+          in
+          let x = 1.5848931924611137e-135 in
+          let spread = Float.exp (-776.16 +. 464.85) *. 777.16 in
+          equal
+            (float (64. *. epsilon_float *. (x +. spread)))
+            x
+            (item (D.quantile d (f64 1e-12)));
+          satisfies ~claim:"within (0, 1e-130)" (array float_exact)
+            (Array.for_all (fun v -> v > 0. && v < 1e-130))
+            (Nx.to_array (D.sample (Nx.Rng.key 5) (D.iid [| 1000 |] d))));
       test "it needs a bound and a distribution function" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"has no bound") (fun () ->
               D.truncated normal);

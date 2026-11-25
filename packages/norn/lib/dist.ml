@@ -1993,15 +1993,28 @@ let truncated ?low ?high d =
   (* Where the tail at the point underflows the dtype, the base's inverse
      cannot read it: the point is found from the bound on that side by
      Newton's steps on the tail's logarithm, whose slope is [± f / F], the
-     density over the tail. Each step is clamped to the bounds. *)
+     density over the tail. Each step is clamped to the bounds. Toward an
+     edge of the base's support, as a gamma's [0], a step is taken in the
+     logarithm of the gap to it, [x = e ± g] with [g] moved by
+     [g exp (-step / g)]: a step past the edge, as Newton's from [1e-130]
+     toward a gamma's tail at [1e-135], lands short of it. *)
   let tiny = Float.log (Prec.tiny d.dtype) in
   let newton ~upper target start =
+    let edge = if upper then base_hi else base_lo in
+    let finite_edge = Nx.isfinite edge in
     let x = ref start in
     for _ = 1 to newton_steps do
       let tail = if upper then t.log_sf !x else t.log_cdf !x in
       let slope = Nx.exp (Nx.sub (d.factors !x) tail) in
       let step = Nx.div (Nx.sub tail target) slope in
-      let next = clamp ((if upper then Nx.add else Nx.sub) !x step) in
+      (* An infinite edge enters as one away from [x], so that neither arm
+         nor its derivative is NaN. *)
+      let e = Nx.where finite_edge edge ((if upper then Nx.add_s else Nx.sub_s) !x 1.) in
+      let gap = Nx.abs (Nx.sub !x e) in
+      let shrunk = Nx.mul gap (Nx.exp (Nx.neg (Nx.div step gap))) in
+      let toward_edge = (if upper then Nx.sub else Nx.add) e shrunk in
+      let plain = (if upper then Nx.add else Nx.sub) !x step in
+      let next = clamp (Nx.where finite_edge toward_edge plain) in
       x := Nx.where (Nx.isfinite next) next !x
     done;
     !x
