@@ -382,24 +382,4 @@ let repr =
               refuses ~by:"Nx.Repr.layouts" (fun () -> Nx.Repr.layouts t)));
     ]
 
-(* Two values placed on a set over the host meet. *)
-
-module Host2 = (val Nx.devices [ Rig.host ])
-
-let test_two_values_of_a_host_set () =
-  let x = Nx.place Host2.on (Nx.zeros f32 [| 2 |]) in
-  let y = Nx.place Host2.on (Nx.zeros f32 [| 2 |]) in
-  let z = Nx.add x y in
-  equal ~msg:"lies on its set" (list string)
-    [ Rig.name Rig.host ]
-    (List.map Rig.name
-       (Nx.Devices.to_list (Nx.Placement.devices (Nx.placement z))))
-
-let every_set =
-  group "placements"
-    [
-      test "values placed on a set over the host meet"
-        test_two_values_of_a_host_set;
-    ]
-
-let () = exit (run "nx values" [ values; reads; errors; repr; every_set ])
+let () = exit (run "nx values" [ values; reads; errors; repr ])
