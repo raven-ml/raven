@@ -319,6 +319,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Hugin_vg_raster` draws a round join once where a stroke turns straight back.
+  Both sides of the outline drew it, darkening its edge pixels; a dash that
+  turned back drew its join once or twice by the rounding of its points.
 - `Hugin_vg_raster` draws an image moved on its page alike, but for centres
   within the rounding of an edge or a line between its pixels, which its
   interface now bounds. A fixed allowance of 1e-9 pixels let rounding decide.

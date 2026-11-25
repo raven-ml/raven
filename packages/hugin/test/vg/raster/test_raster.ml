@@ -381,6 +381,44 @@ let joins =
     ("a miter beyond the limit is bevelled", (`Miter, 1.2), 62., 0.);
   ]
 
+(* Subpaths that turn straight back, drawn 4 wide with butt caps. A corner's
+   outer side is either side there, and its join is one piece: a round one is
+   the half disc of 2 pi beyond the turn, and a miter, bevelled at a reversal
+   under any limit, and a bevel add nothing. One goes from (2, 10) to (10, 10)
+   and back to (6, 10), a body of 32 that the way back lies within; a closed one
+   from (2, 10) to (10, 10) is that body with a join at each end. *)
+let reversals =
+  let back = Path.polyline [| 2.; 10.; 6. |] [| 10.; 10.; 10. |] in
+  let closed =
+    Path.(empty |> move_to (P2.v 2. 10.) |> line_to (P2.v 10. 10.) |> close)
+  in
+  let disc = 2. *. Float.pi in
+  [
+    ("a round join is a half disc", (`Round, back), (10., 4.), 32. +. disc, disc);
+    ("a miter is bevelled", (`Miter, back), (10., 4.), 32., 0.);
+    ("a bevel adds nothing", (`Bevel, back), (10., 4.), 32., 0.);
+    ( "a closed subpath has a half disc at each end",
+      (`Round, closed),
+      (12., 4.),
+      32. +. (2. *. disc),
+      2. *. disc );
+  ]
+
+let slanted_reversal () =
+  (* From (2, 2) along (0.6, 0.8) to (8, 10) and back to (5, 6): its turn, from
+     products of 0.6 and 0.8, may round to either sign, and draws as turns short
+     of straight back by 1e-10 radians, to either side, whose sign no rounding
+     changes. *)
+  let draw y =
+    render 20. 20.
+      (Picture.stroke
+         (Stroke.v ~cap:`Butt ~join:`Round 4.)
+         red
+         (Path.polyline [| 2.; 8.; 5. |] [| 2.; 10.; y |]))
+  in
+  same_image ~within:1 (draw (6. +. 1e-9)) (draw 6.);
+  same_image ~within:1 (draw (6. -. 1e-9)) (draw 6.)
+
 (* Dashes of a line 2 wide along y = 5, on whole pixels. *)
 let dashes =
   [
@@ -524,6 +562,14 @@ let strokes =
           let p = Picture.stroke s red corner in
           area ~arc ~box:(10., 10.) a (coverage (render 20. 20. p)));
       test "a corner sharper than the miter limit is bevelled" sharp_corner;
+      cases "where a subpath turns straight back,"
+        ~id:(fun (n, _, _, _, _) -> n)
+        reversals
+        (fun (_, (join, q), box, a, arc) ->
+          let p = Picture.stroke (Stroke.v ~cap:`Butt ~join 4.) red q in
+          area ~arc ~box a (coverage (render 20. 20. p)));
+      test "a slanted turn straight back draws as turns just short of it"
+        slanted_reversal;
       test "a closed subpath joins at its start" (fun () ->
           (* An 8 by 8 square stroked 2 wide with mitred corners is a 10 by 10
              frame around a 6 by 6 hole, on whole pixels. *)
@@ -1728,6 +1774,12 @@ let cut_by_the_page =
       stroke
         (butt [ 2.; 2. ])
         (Path.polyline [| 2.; 34.; 34.; 2. |] [| 5.; 5.; 15.; 15. |]);
+      (* A dash that turns back 1e-231 off the top edge: the page of 20 places
+         its points on the line, so the turn is straight back, the larger one
+         just off it. *)
+      stroke
+        (Stroke.v ~cap:`Butt ~join:`Round ~dash:[ 3.; 1. ] 1.)
+        (Path.polyline [| 0.; 10.5; 0. |] [| 0.; 1e-231; 0. |]);
       stroke (butt ~w:0.4 [ 2.; 2. ]) (segment 0.3 0. 0.3 20.);
       stroke (butt ~w:0.4 [ 2.; 2. ]) (segment 19.7 0. 19.7 20.);
       stroke (butt ~w:0.4 [ 2.; 2. ]) (segment 0. 19.7 20. 19.7);

@@ -169,27 +169,25 @@ let[@inline] arc p x y nx ny sweep =
     done
   end
 
-(* [join p x y ax ay bx by] continues the outline, on the left of a line
+(* [join p ~outer x y ax ay bx by] continues the outline, on the left of a line
    arriving at [(x, y)] along the unit vector [(ax, ay)], to the left of one
-   leaving along [(bx, by)]. *)
-let[@inline] join p x y ax ay bx by =
+   leaving along [(bx, by)]; [outer] is whether the left is the corner's outer
+   side, which draws its join. The inner side goes through the corner's
+   point. *)
+let[@inline] join p ~outer x y ax ay bx by =
   let hw = p.hw in
   let nax = -.ay *. hw and nay = ax *. hw in
   let nbx = -.by *. hw and nby = bx *. hw in
   let cross = (ax *. by) -. (ay *. bx) and dot = (ax *. bx) +. (ay *. by) in
   if dot > 0. && Float.abs cross *. hw < p.tol then
     line_to p (x +. nbx) (y +. nby)
-  else if cross > 0. then begin
-    (* The inner side of the corner. *)
+  else if not outer then begin
     line_to p x y;
     line_to p (x +. nbx) (y +. nby)
   end
   else
     match p.join with
-    | `Round ->
-        (* A reversal turns about the side of the arriving line's end. *)
-        let sweep = if cross = 0. then -.Float.pi else Float.atan2 cross dot in
-        arc p x y nax nay sweep
+    | `Round -> arc p x y nax nay (-.Float.atan2 (Float.abs cross) dot)
     | `Miter
       when dot > -1. && 1. /. Float.sqrt ((1. +. dot) /. 2.) <= p.miter_limit ->
         let k = 1. /. (1. +. dot) in
@@ -248,16 +246,26 @@ let polyline p xs ys n ~closed ~dx ~dy =
       uy.(i) <- ddy /. l
     done;
     let hw = p.hw in
+    (* [left i j] is whether the corner from segment [i] to [j] has its outer
+       side on the left: whether it turns right, or straight back. Both passes
+       of the outline ask it of the corner in this order, so that exactly one
+       draws its join, whatever the rounding of the turn. *)
+    let left i j = (ux.(i) *. uy.(j)) -. (uy.(i) *. ux.(j)) <= 0. in
     (* Forward along the left. *)
     move_to p (xs.(0) -. (uy.(0) *. hw)) (ys.(0) +. (ux.(0) *. hw));
     for i = 1 to segs - 1 do
       line_to p (xs.(i) -. (uy.(i - 1) *. hw)) (ys.(i) +. (ux.(i - 1) *. hw));
-      join p xs.(i) ys.(i) ux.(i - 1) uy.(i - 1) ux.(i) uy.(i)
+      join p
+        ~outer:(left (i - 1) i)
+        xs.(i) ys.(i)
+        ux.(i - 1)
+        uy.(i - 1)
+        ux.(i) uy.(i)
     done;
     let l = segs - 1 in
     if closed then begin
       line_to p (xs.(0) -. (uy.(l) *. hw)) (ys.(0) +. (ux.(l) *. hw));
-      join p xs.(0) ys.(0) ux.(l) uy.(l) ux.(0) uy.(0);
+      join p ~outer:(left l 0) xs.(0) ys.(0) ux.(l) uy.(l) ux.(0) uy.(0);
       close p;
       (* Backward along the right, the left of the way back. *)
       move_to p (xs.(0) +. (uy.(l) *. hw)) (ys.(0) -. (ux.(l) *. hw))
@@ -268,11 +276,23 @@ let polyline p xs ys n ~closed ~dx ~dy =
     end;
     for i = l downto 1 do
       line_to p (xs.(i) +. (uy.(i) *. hw)) (ys.(i) -. (ux.(i) *. hw));
-      join p xs.(i) ys.(i) (-.ux.(i)) (-.uy.(i)) (-.ux.(i - 1)) (-.uy.(i - 1))
+      join p
+        ~outer:(not (left (i - 1) i))
+        xs.(i) ys.(i)
+        (-.ux.(i))
+        (-.uy.(i))
+        (-.ux.(i - 1))
+        (-.uy.(i - 1))
     done;
     if closed then begin
       line_to p (xs.(0) +. (uy.(0) *. hw)) (ys.(0) -. (ux.(0) *. hw));
-      join p xs.(0) ys.(0) (-.ux.(0)) (-.uy.(0)) (-.ux.(l)) (-.uy.(l))
+      join p
+        ~outer:(not (left l 0))
+        xs.(0) ys.(0)
+        (-.ux.(0))
+        (-.uy.(0))
+        (-.ux.(l))
+        (-.uy.(l))
     end
     else begin
       line_to p (xs.(0) +. (uy.(0) *. hw)) (ys.(0) -. (ux.(0) *. hw));
