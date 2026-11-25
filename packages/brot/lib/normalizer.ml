@@ -261,46 +261,25 @@ let rec original_length = function
   | Map m -> m.original
   | View v -> original_length v.base
 
-(* The byte length of the character a byte opens as {!Char_class.at} reads
-   it, 1 for a byte that cannot open one. *)
-let[@inline] lead_length b =
-  if b < 0xC2 then 1
-  else if b < 0xE0 then 2
-  else if b < 0xF0 then 3
-  else if b < 0xF8 then 4
-  else 1
-
-(* Whether the [n] bytes of [s] from [p] are its lead and continuation bytes. *)
-let whole s p n =
-  p + n <= String.length s
-  &&
-  let ok = ref true in
-  for k = 1 to n - 1 do
-    if not (is_continuation s (p + k)) then ok := false
-  done;
-  !ok
-
-(* The range of continuation byte [i] of [s]: the character of the nearest
-   byte before it that is no continuation byte, at most three back, if that
-   lead's character reaches [i]; [i] alone otherwise. [p] walks back from
-   [i - 1]. *)
+(* The range of continuation byte [i] of [s]: the character of the nearest byte
+   before it that is no continuation byte, at most three back, if that character
+   reaches [i]; [i] alone otherwise. [p] walks back from [i - 1]. *)
 let rec owner s i p =
   if p < 0 || p < i - 3 then pack i (i + 1)
   else if is_continuation s p then owner s i (p - 1)
   else
-    let n = lead_length (Char.code (String.unsafe_get s p)) in
-    if p + n > i && whole s p n then pack p (p + n) else pack i (i + 1)
+    let n = Char_class.length s p ~stop:(String.length s) in
+    if p + n > i then pack p (p + n) else pack i (i + 1)
 
-(* A character of text that was not normalized is what {!Char_class.at} and
-   the pre-tokenizers read: a lead byte with all the continuation bytes its
-   length asks for. Any other byte, a stray continuation byte or a lead cut
-   short, is a character of its own: ["R\x80"] is two. *)
+(* A character of text that was not normalized is what {!Char_class.decode} and
+   the pre-tokenizers read: a sequence RFC 3629 allows. Any other byte, a stray
+   continuation byte, a lead cut short or a byte of a forbidden sequence, is a
+   character of its own: ["R\x80"] is two. *)
 let identity_range s i =
   let b = Char.code (String.unsafe_get s i) in
   if b < 0x80 then pack i (i + 1)
   else if b land 0xC0 <> 0x80 then
-    let n = lead_length b in
-    if n > 1 && whole s i n then pack i (i + n) else pack i (i + 1)
+    pack i (i + Char_class.length s i ~stop:(String.length s))
   else owner s i (i - 1)
 
 (* The range of the character byte [i] falls in. Byte [-1] is what a character

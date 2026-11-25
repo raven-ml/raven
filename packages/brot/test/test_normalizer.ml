@@ -1674,6 +1674,18 @@ let original_span_tests =
     test "gives a prepended text the span of the first character" (fun () ->
         aligns_as_hf "prepend" prepend;
         aligns_as_hf "prepend multi" (Normalizer.prepend "<<"));
+    test "gives each byte of a sequence RFC 3629 forbids a span of its own"
+      (fun () ->
+        (* A surrogate's three bytes are three characters of one byte (brot.mli,
+           encode), so the prepended text stands at the first of them. *)
+        let _, a =
+          Normalizer.apply_aligned (Normalizer.prepend "_") "\xed\xa0\x80b"
+        in
+        equal
+          (list (pair int int))
+          [ (0, 1); (0, 1); (1, 2); (2, 3); (3, 4) ]
+          (List.init 5 (fun i ->
+               Normalizer.original_span a ~start:i ~stop:(i + 1))));
     test "composes the spans of a sequence" (fun () ->
         let seq = Normalizer.sequence in
         aligns_as_hf "llama" (seq [ prepend; replace ]);
