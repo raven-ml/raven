@@ -428,7 +428,8 @@ module Point : sig
 
   val value : t -> int
   (** [value p] is [p]'s value, above the value its device's timeline
-      started after ({!Rig.submitted}). *)
+      started after ({!Rig.submitted}), or [0] for the point {!submitted}
+      gives on a device with no work submitted. *)
 
   val wait : t -> unit
   (** [wait p] returns once [p]'s device has reached [p]'s value. It commits
