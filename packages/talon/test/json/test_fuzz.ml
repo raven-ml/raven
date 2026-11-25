@@ -145,12 +145,19 @@ let sniff =
       cover "sniffed" (Result.is_ok r);
       cover "refused" (Result.is_error r))
 
+(* Decode reads the text as the document's format, and as the format sniff gives
+   for the text itself, as Talon_json.file does without one. *)
 let decode =
   prop ~count:1000 "decode › malformed text is a table or an Error" case
     (fun c ->
       let r = J.decode (Lazy.force formats).(c.doc) (reader c) in
+      let sniffed = J.sniff ?rows:c.rows (reader c) in
+      let r' = Result.map (fun f -> J.decode f (reader c)) sniffed in
       cover_mutations c;
       cover "read" (Result.is_ok r);
-      cover "refused" (Result.is_error r))
+      cover "refused" (Result.is_error r);
+      cover "read as sniffed" (match r' with Ok (Ok _) -> true | _ -> false);
+      cover "refused as sniffed"
+        (match r' with Ok (Error _) -> true | _ -> false))
 
 let () = exit (run "talon.json fuzz" [ sniff; decode ])

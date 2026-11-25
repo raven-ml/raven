@@ -172,6 +172,16 @@ let id_format framing = J.format ~framing [ ("id", any Type.int64) ]
 let id_text framing =
   Lazy.force (match framing with J.Lines -> id_lines | Array -> id_array)
 
+(* The table of each framing's text, read once. *)
+let id_tables =
+  lazy
+    (List.map
+       (fun framing ->
+         (framing, Error.get_ok (read (id_format framing) (id_text framing))))
+       [ J.Lines; J.Array ])
+
+let id_table framing = List.assoc framing (Lazy.force id_tables)
+
 (* Streaming *)
 
 let streaming =
@@ -204,7 +214,10 @@ let streaming =
 let syntax =
   group "syntax"
     [
-      cases "a value that breaks RFC 8259 fails at its first wrong byte" ~id:fst
+      cases
+        "a value that breaks RFC 8259 fails at the byte of the value or escape \
+         that breaks it"
+        ~id:fst
         [
           ({|{"a":01}|}, (7, 6));
           ({|{"a":+1}|}, (6, 5));
@@ -569,28 +582,33 @@ let values =
       (* Error.pp quotes a text, with a quote or backslash escaped, and cuts one
          past 64 bytes with an ellipsis. *)
       cases "a value of another JSON type fails with its place, text and fix"
-        ~id:(fun (_, value, _, _) -> value)
+        ~id:(fun (_, value, _, _, _) -> value)
         [
-          (any Type.float64, {|"1.5"|}, {|"\"1.5\""|}, {|"a"|});
-          (any Type.bool, "1", {|"1"|}, {|"a"|});
-          (any Type.int64, "true", {|"true"|}, {|"a"|});
+          (any Type.float64, {|"1.5"|}, 5, {|"\"1.5\""|}, {|"a"|});
+          (any Type.bool, "1", 5, {|"1"|}, {|"a"|});
+          (any Type.int64, "true", 5, {|"true"|}, {|"a"|});
           ( any (Type.list Type.int64),
             {|{"x": [1]}|},
+            5,
             {|"{\"x\": [1]}"|},
             {|"a"|} );
-          (any (Type.list Type.int64), "[[1]]", {|"[1]"|}, {|"a[]"|});
+          (any (Type.list Type.int64), "[[1]]", 6, {|"[1]"|}, {|"a[]"|});
           ( any (Type.record [ ("x", any Type.int64) ]),
             "[1]",
+            5,
             {|"[1]"|},
             {|"a"|} );
           ( any Type.int64,
             nested 1 (String.concat "," (List.init 40 (Fun.const "1"))),
+            5,
             {|"[|} ^ String.concat "," (List.init 32 (Fun.const "1")) ^ {|"…|},
             {|"a"|} );
         ]
-        (fun (Type.Any ty, value, text, path) ->
+        (fun (Type.Any ty, value, byte, text, path) ->
           let e = fails_one ty value in
-          contains ~sub:(": " ^ text ^ ": column " ^ path ^ ": ") e;
+          starts_with
+            ~prefix:(place 1 (byte + 1) byte ^ text ^ ": column " ^ path ^ ": ")
+            e;
           contains ~sub:"with_type" e);
     ]
 
@@ -661,11 +679,19 @@ let sniffing =
         ]
         (fun (_, (value, ty)) ->
           equal string ("  a " ^ ty) (sniffed_type [ {|{"a":|} ^ value ^ "}" ]));
-      test "a value a million levels deep sniffs as string" (fun () ->
+      (* Rendered as gen/corpus.py renders a list of strings. *)
+      test "a value a million levels deep sniffs as string, holding its text"
+        (fun () ->
           let row = {|{"a":|} ^ Lazy.force deep ^ "}" in
           equal string
-            ("  a " ^ list_type 63 "string")
-            (in_small_stack (fun () -> sniffed_type [ row ])));
+            (list_type 63 "string" ^ "\n"
+            ^ nested 63 ("\"" ^ nested (depth - 63) "" ^ "\""))
+            (in_small_stack (fun () ->
+                 let f = sniffed row in
+                 let t = Error.get_ok (read f row) in
+                 type_text (Column.type_ (column t "a"))
+                 ^ "\n"
+                 ^ List.hd (rendered t "a"))));
     ]
 
 (* Formats *)
@@ -815,7 +841,7 @@ let decode =
         (fun (slice_length, array) ->
           let framing = if array then J.Array else J.Lines in
           let f = id_format framing and s = id_text framing in
-          let whole = Error.get_ok (read f s) in
+          let whole = id_table framing in
           let sliced = Error.get_ok (read ~slice_length f s) in
           equal (list int)
             (List.map rows (batches whole))
@@ -859,8 +885,11 @@ let decode =
               (String.split_on_char '\n' (read_file "golden/values.txt"))
           in
           let files =
-            List.sort_uniq compare
-              (List.map (fun l -> List.hd (String.split_on_char '\t' l)) golden)
+            List.fold_left
+              (fun files l ->
+                let file = List.hd (String.split_on_char '\t' l) in
+                if List.mem file files then files else files @ [ file ])
+              [] golden
           in
           let lines_of file =
             let s = read_file (Filename.concat "support" file) in
@@ -876,7 +905,7 @@ let decode =
                   ])
               (Schema.columns (schema t))
           in
-          equal (slist string compare) golden (List.concat_map lines_of files));
+          equal (list string) golden (List.concat_map lines_of files));
     ]
 
 (* Source *)
@@ -952,6 +981,38 @@ let file =
           let path = Filename.concat (temp_dir ()) "missing.ndjson" in
           is_error ~msg:"sniffed" (J.file path);
           is_error ~msg:"declared" (J.file ~format:(one Type.int64) path));
+      test "with a format, a named pipe is read once" (fun () ->
+          chdir (temp_dir ());
+          (try Unix.mkfifo "data.ndjson" 0o600
+           with Unix.Unix_error _ | Invalid_argument _ ->
+             skip ~reason:"no named pipes" ());
+          (* No writer has the pipe open at the call, so a call that opened it
+             would wait for ever. *)
+          let s =
+            Error.get_ok (J.file ~format:(one Type.int64) "data.ndjson")
+          in
+          let writer =
+            Domain.spawn (fun () ->
+                Out_channel.with_open_bin "data.ndjson" (fun oc ->
+                    output_string oc "{\"a\":1}\n{\"a\":2}\n"))
+          in
+          let t = Error.get_ok (Query.run (Query.of_source s)) in
+          Domain.join writer;
+          equal strings [ Some "1"; Some "2" ] (printed t "a"));
+      test "each read opens the file again" (fun () ->
+          let path = temp_file ~suffix:".ndjson" () in
+          let write text =
+            Out_channel.with_open_bin path (fun oc -> output_string oc text)
+          in
+          write "{\"a\":1}\n";
+          let q =
+            Query.of_source
+              (Error.get_ok (J.file ~format:(one Type.int64) path))
+          in
+          equal strings [ Some "1" ] (printed (Error.get_ok (Query.run q)) "a");
+          write "{\"a\":2}\n{\"a\":3}\n";
+          equal strings [ Some "2"; Some "3" ]
+            (printed (Error.get_ok (Query.run q)) "a"));
       test
         "with a format, a file gone before the read fails it, naming its path"
         (fun () ->
