@@ -68,8 +68,8 @@
      {- {b The types}, from the non-null fields of the records after the header:
         - [bool] if every value is [true] or [false];
         - [int64] if every value is a decimal integer that [int64] holds;
-        - [float64] if every value is a number and at least one is not such an
-          integer;
+        - [float64] if every value is a number, at least one is not an integer,
+          and none is an integer that [int64] does not hold;
         - [date] if every value is a date;
         - [datetime[us]] if every value is a datetime without an offset, and
           [datetime[us, UTC]] if every value is one with an offset, in
