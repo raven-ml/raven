@@ -210,7 +210,7 @@ A mixture-of-experts model, OpenAI's gpt-oss, is an app:
 - `Batch_norm.init` builds float32 parameters and statistics; cast the
   parameters with `Nx.Ptree.cast (module Batch_norm) dt` for other
   precisions and keep the statistics at float32, where a moving average
-  stalls within about 6e-6 of its target (`Batch_norm.Stats`). `apply` is
+  stalls within about 6e-6 of its target, relative (`Batch_norm.Stats`). `apply` is
   generic over float dtypes.
 - `Metric.auc_roc` and macro-averaged scores do not decompose over
   batches — compute them on the full evaluation set (see the `Metric`
