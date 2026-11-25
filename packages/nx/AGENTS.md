@@ -12,9 +12,10 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   C kernels claim arrays. `nx.kernel` holds `Nx_kernel.S`, the contract a
   kernel library implements, its programs (`Prog`) and `nx_kinds.h`.
 - `nx.cpu` computes on memory the host addresses, `nx.cuda` on NVIDIA
-  GPUs of sm_89 and `nx.amd` on AMD GPUs of RDNA4. No kernel library uses
-  another's code. Other GPUs have no eager kernel library: their sets
-  compute under `Rune.jit`.
+  GPUs of sm_89, `nx.amd` on AMD GPUs of RDNA4 and `nx.metal` on Apple
+  GPUs of the Apple7 family. No kernel library uses another's code. A GPU
+  set computes eagerly when `Nx.devices` mints it with `~kernels`; other
+  sets of GPUs compute under `Rune.jit`.
 - `nx.cuda`'s device code is compiled into committed sm_89 cubins:
   regenerate them with `uv run packages/nx/lib/cuda/kernels/gen.py`, check
   them with `--check`.

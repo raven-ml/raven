@@ -377,22 +377,20 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     brand no other set has, computed eagerly by [kernels]. Without [kernels], a
     set whose every device runs on the host ({!Rig.runs_on_host}) is computed by
     nx.cpu, and any other set by none, as a GPU set is outside a compiler.
-    [~kernels:(module Nx_cuda)], from the library [nx.cuda], computes a set
-    of NVIDIA GPUs of [sm_89], and [~kernels:(module Nx_amd)], from
-    [nx.amd], a set of AMD GPUs of RDNA4.
-    On a set without kernels, a creation ({!section-creation}), a value whose
-    elements come from numbers, is made on the devices of the placement the
-    call names, its bits the host form's: the host computes it into a
-    device's memory where it addresses it, else in slabs of at most 32 MiB
-    each copied there, and a creation whose bytes are one byte repeated, as
-    a zero, sets them on the device. Every operation other
-    than a creation raises on such a set where it makes elements, naming
-    the {!place} onto a set with kernels or the compiler that would compute
-    it, even where it needs no element of its operands, as
-    [matrix_power a 0] does. {!place}, a view and a call that gives its
-    operand itself make none.
-    Under a compiler such as [Rune.jit], the compiler receives a creation's
-    operations.
+    [~kernels:(module Nx_cuda)], from the library [nx.cuda], computes a set of
+    NVIDIA GPUs of [sm_89], [~kernels:(module Nx_amd)], from [nx.amd], a set of
+    AMD GPUs of RDNA4, and [~kernels:(module Nx_metal)], from [nx.metal], a set
+    of Apple GPUs of the Apple7 family. On a set without kernels, a creation
+    ({!section-creation}), a value whose elements come from numbers, is made on
+    the devices of the placement the call names, its bits the host form's: the
+    host computes it into a device's memory where it addresses it, else in slabs
+    of at most 32 MiB each copied there, and a creation whose bytes are one byte
+    repeated, as a zero, sets them on the device. Every operation other than a
+    creation raises on such a set where it makes elements, naming the {!place}
+    onto a set with kernels or the compiler that would compute it, even where it
+    needs no element of its operands, as [matrix_power a 0] does. {!place}, a
+    view and a call that gives its operand itself make none. Under a compiler
+    such as [Rune.jit], the compiler receives a creation's operations.
 
     Raises [Invalid_argument] if [ds] is empty or repeats a device, or if
     [kernels] does not compute on one of [ds]. *)

@@ -19,8 +19,9 @@ device sets apart.
 - Linear algebra (`matmul`, `solve`, `cholesky`, `qr`, `svd`, `eigh`, ...)
   and Fourier transforms
 - Random numbers from explicit keys
-- Host computation by C kernels, NVIDIA GPUs of sm_89 by `nx.cuda`'s and
-  AMD GPUs of RDNA4 by `nx.amd`'s; arrays on device sets, each operation
+- Host computation by C kernels, NVIDIA GPUs of sm_89 by `nx.cuda`'s,
+  AMD GPUs of RDNA4 by `nx.amd`'s and Apple GPUs of the Apple7 family by
+  `nx.metal`'s; arrays on device sets, each operation
   computing where its operands lie
 - I/O support: images (PNG, JPEG), TIFF, NumPy files (.npy, .npz),
   SafeTensors, GGUF and HDF5 (read)
