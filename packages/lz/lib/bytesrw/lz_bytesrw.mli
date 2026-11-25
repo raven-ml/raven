@@ -60,7 +60,10 @@
     [r]'s positions for a reader and in the filtering writer's for a writer.
     The message prints [e] with {!Lz.pp_error}. The filter delivers the
     decoded bytes of every step before the failing one, and none of that
-    step's.
+    step's. A decompressing writer steps its decoder over each slice as it
+    is written, so the write of the bytes in which the decoder finds the
+    error raises, and a stream cut short raises [Truncated] at the write
+    of [eod].
 
     An exception raised while the filter steps its decoder or encoder,
     such as one from a write on [w] or [Out_of_memory], propagates. After
@@ -75,14 +78,16 @@ type Bytesrw.Bytes.Stream.error +=
 (** {1:formats Formats}
 
     A decompressing filter reads the streams its format's [decode] reads,
-    and a decompressing reader that has returned [eod] returns it on every
-    later read. A deflate or zlib [decompress_reads] decodes one stream. It
-    reads a slice of [r] only once its decoder has taken all of the last
-    one, so before its [eod], [r] is at most one slice past the last byte
-    the decoder took. Once it has returned [eod], [r]'s next read begins
-    at the first byte after the stream, with the rest of the last slice
-    the filter read when any is left. A gzip or Zstandard
-    [decompress_reads] decodes every member up to [r]'s end.
+    except a Zstandard frame whose window size passes [window], which it
+    refuses as {!Lz.Zstd.decoder} does, and a decompressing reader that has
+    returned [eod] returns it on every later read. A deflate or zlib
+    [decompress_reads] decodes one stream. It reads a slice of [r] only
+    once its decoder has taken all of the last one, so before its [eod],
+    [r] is at most one slice past the last byte the decoder took. Once it
+    has returned [eod], [r]'s next read begins at the first byte after the
+    stream, with the rest of the last slice the filter read when any is
+    left. A gzip or Zstandard [decompress_reads] decodes every member up to
+    [r]'s end.
     [decompress_writes] decodes up to the [eod] written on it. A writer
     cannot hand back bytes written after a deflate or zlib stream, so they
     are [Malformed] at their first byte, with the message

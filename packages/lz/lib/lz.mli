@@ -90,14 +90,16 @@
     Since the collector never moves a buffer's bytes, a call releases the domain
     lock once it has done a threshold of work, and takes it back when it
     returns. A decode's work is the bytes it has read and written. An encode's
-    work is the input it has compressed, which for an encoder step includes
-    input that earlier steps took ({!Encoder}), and for a Zstandard encoder step
-    also the bytes of its window it moves to make room for new input, over 4 MiB
-    at levels 9 to 12. The threshold is 8 KiB, except 4 KiB when deflate, zlib
-    or gzip encodes and 16 KiB when LZ4 or Snappy decodes. An LZW or LZF decode
-    releases the lock at its first check. So a short call holds the lock
-    whatever the size of its input and destination, and a long one releases it
-    whatever the size of its input: a decode of a few KiB that writes megabytes
+    work is the input it compresses, counted before it compresses it. A
+    whole-buffer encode counts all of its input at its start. An encoder step
+    counts the input it compresses, which includes input that earlier steps
+    took ({!Encoder}), and a Zstandard encoder step also the bytes of its window
+    it moves to make room for new input, over 4 MiB at levels 9 to 12. The
+    threshold is 8 KiB, except 4 KiB when deflate, zlib or gzip encodes and
+    16 KiB when LZ4 or Snappy decodes. An LZW or LZF decode releases the lock
+    at its first check. So a short call holds the lock whatever the size of
+    its input and destination, and a long one releases it whatever the size
+    of its input: a decode of a few KiB that writes megabytes
     releases it, and a step on a few bytes that writes a few hundred holds it,
     unless it moves a Zstandard window. While the lock is released, another
     thread of the domain may take it, and the call then waits on return until
@@ -105,12 +107,14 @@
 
     A call checks its work between the units it works in: a format's
     blocks and members, and each 32 KiB of a decode's output, or of an LZW
-    or LZF decode's input and output. An LZ4 or Snappy decode also checks
-    before it copies 32 KiB or more, and releases the lock before the copy
-    when the copy would bring its work to the threshold. A call may thus
-    go on for one unit past its threshold before it releases the lock, and
-    a call whose last unit takes it past the threshold holds the lock to
-    its end. *)
+    or LZF decode's input and output. A Zstandard decode checks before a
+    block only once 4 KiB of work has added up since its last check, so
+    that small blocks in a row are one unit. An LZ4 or Snappy decode also
+    checks before it copies 32 KiB or more, and releases the lock before
+    the copy when the copy would bring its work to the threshold. A call
+    may thus go on for one unit past its threshold before it releases the
+    lock, and a call whose last unit takes it past the threshold holds the
+    lock to its end. *)
 
 type bigbytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -208,11 +212,14 @@ type progress = { consumed : int; produced : int }
 (** {1:steps Decoders and encoders}
 
     A decoder's step takes all of [src] unless the stream ends inside it
-    or the run reaches the decoder's {e run capacity}, the most bytes one
-    run holds ({!Decoder}). An encoder's step takes all of [src] up to the
-    encoder's {e quota}, the most input one step takes, and so exactly the
-    quota of a longer [src] ({!Encoder}). The next step begins at the
-    first byte not taken.
+    or its run is full. A run is full once it holds the decoder's
+    {e run capacity}, the most bytes one run holds ({!Decoder}), and a
+    Zstandard run also once its next block might pass that capacity, so a
+    full Zstandard run holds at least the run capacity less the frame's
+    Block_Maximum_Size ({!Zstd}). An encoder's step takes all of [src] up
+    to the encoder's {e quota}, the most input one step takes, and so
+    exactly the quota of a longer [src] ({!Encoder}). The next step begins
+    at the first byte not taken.
 
     A decoder or encoder is {e busy} while a step on it runs, [f]
     included. A step applies [f] with the domain lock held, and [f] may
@@ -252,9 +259,9 @@ type step =
     a step with [~last:true], with [k] the length of [src], since without
     it the decoder cannot tell the last member from one that more input
     would follow. A step of any decoder that returns [More k] with [k] the
-    length of [src] has taken all of it. With [~last:true] it has filled
-    its run before the output ended, and the program steps again on an
-    empty [src].
+    length of [src] has taken all of it. With [~last:true] its run was
+    full ({!section-steps}) before the output ended, and the program
+    steps again on an empty [src].
 
     With [~last:true] a stream still open is [Truncated], and a step
     returns [Truncated] only then. Every error a step returns is the one
@@ -512,8 +519,9 @@ end
     {- a sequence whose offset is 0, above Window_Size or before the
        frame's start, whose Literals_Length passes the literals, or whose
        output passes Block_Maximum_Size;}
-    {- a Huffman-coded or sequences bitstream whose last byte is 0, at that
-       byte, or that is not read exactly to its start;}
+    {- a bitstream of Huffman-coded literals, of FSE-coded Huffman weights
+       or of sequences whose last byte is 0, at that byte, or that is not
+       read exactly to its start;}
     {- a Frame_Content_Size or Content_Checksum that does not match the
        frame's decoded bytes.}}
     A frame naming a dictionary is [Unsupported] at its Dictionary_ID.
@@ -586,7 +594,8 @@ module Lz4 : sig
       {!Zstd}, read to the input's end. A frame's blocks are independent or
       linked, and a match in a linked block may reach back into the earlier
       blocks of its frame. The encoder writes one frame of independent
-      blocks with the content size and the content checksum.
+      blocks without block checksums, with the content size and the content
+      checksum.
 
       A decode refuses:
       {ul
