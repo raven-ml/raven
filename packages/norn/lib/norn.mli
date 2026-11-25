@@ -1031,7 +1031,10 @@ module Dist : sig
   val sample : 'd Nx.Rng.key -> ('x, 'f, 'd) t -> 'x
   (** [sample k d] is a draw of [d] from the key [k]. It is reparameterised,
       differentiable in the parameters, wherever rune differentiates the
-      {!Nx.Rng} sampler it uses. *)
+      {!Nx.Rng} sampler it uses. A draw of a family on an open interval lies
+      inside it: one that rounds onto a finite bound, as one in a few hundred
+      does at bfloat16, is the float next to the bound, and one that
+      overflows is the largest finite float. *)
 
   val quantile :
     ((float, 'f, 'd) Nx.t, 'f, 'd) t -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t

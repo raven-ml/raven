@@ -2200,8 +2200,8 @@ let truncation =
       test "its draws lie within the bounds" (fun () ->
           let d = D.truncated ~low:(f64 60.5) ~high:(f64 61.) normal in
           let xs = Nx.to_array (D.sample (Nx.Rng.key 7) (D.iid [| 1000 |] d)) in
-          satisfies ~claim:"within [60.5, 61]" (array float_exact)
-            (Array.for_all (fun x -> x >= 60.5 && x <= 61.))
+          satisfies ~claim:"within (60.5, 61)" (array float_exact)
+            (Array.for_all (fun x -> x > 60.5 && x < 61.))
             xs);
       (* Newton's steps from the bound 1e-130 once crossed the gamma's 0. *)
       test "its draws lie in the support where a bound is deep in a tail"
@@ -2876,6 +2876,38 @@ let fit =
                   (chi_square name (draws_of name))))
         (families "threshold"))
 
+(* A family of an open support at [dt], at gen/dist.py's parameters. *)
+let open_family (type b) (dt : (float, b) Nx.dtype) name :
+    ((float, b, Nx.host) Nx.t, b, Nx.host) D.t =
+  let s = Nx.scalar dt in
+  match name with
+  | "uniform" -> D.uniform ~low:(s (-1.)) ~high:(s 3.)
+  | "exponential" -> D.exponential ~rate:(s 1.7)
+  | "half_normal" -> D.half_normal ~scale:(s 1.5)
+  | "half_cauchy" -> D.half_cauchy ~scale:(s 2.)
+  | "lognormal" -> D.lognormal ~loc:(s 0.) ~scale:(s 8.)
+  | "gamma" -> D.gamma ~concentration:(s 0.0625) ~rate:(s 1.)
+  | "beta" -> D.beta ~a:(s 0.0625) ~b:(s 0.0625)
+  | "truncated" -> D.truncated ~low:(s 60.5) ~high:(s 61.) (D.normal ~loc:(s 0.5) ~scale:(s 2.))
+  | _ -> failwith name
+
+(* At a narrow dtype one draw in a few hundred rounds onto a bound, so 4000
+   draws per row reach it. *)
+let draws_inside =
+  Windtrap.cases "a draw lies in the open support, at every dtype"
+    ~id:(fun (name, Dtype dt) -> name ^ " at " ^ Nx.Dtype.name dt)
+    (List.concat_map
+       (fun name ->
+         List.map (fun d -> (name, d))
+           [ Dtype Nx.float64; Dtype Nx.float32; Dtype Nx.float16; Dtype Nx.bfloat16 ])
+       [ "uniform"; "exponential"; "half_normal"; "half_cauchy"; "lognormal"; "gamma"; "beta"; "truncated" ])
+    (fun (name, Dtype dt) ->
+      let d = D.iid [| 4000 |] (open_family dt name) in
+      let f = D.factors d (D.sample (Nx.Rng.key 17) d) in
+      satisfies ~claim:"every draw's factor finite" (array float_exact)
+        (Array.for_all Float.is_finite)
+        (Nx.to_array (Nx.cast Nx.float64 f)))
+
 let sample =
   group "sample"
     [
@@ -2894,6 +2926,7 @@ let sample =
           in
           equal ~msg:r.name (float (16. *. epsilon_float *. scale)) expected g);
       fit;
+      draws_inside;
     ]
 
 (* Each case's quantiles at gen/dist.py's p, in one call. A quantile read from

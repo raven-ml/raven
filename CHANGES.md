@@ -85,6 +85,10 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.sample` keeps a draw of `uniform`, `exponential`, `half_normal`,
+  `half_cauchy`, `lognormal`, `gamma`, `inverse_gamma`, `beta` and
+  `truncated` inside the open support: a draw that rounded onto a bound, as
+  one in a few hundred does at bfloat16, had log density `-inf`.
 - `Dist.student_t` keeps a finite log density far in its tails, where
   `(x - loc) / scale` or its quotient by `√df` overflows: at `x - loc = 1`,
   `scale = 1e-310` and `df = 1` it was `-inf` and is now `-714.9`.

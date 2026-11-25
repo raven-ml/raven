@@ -795,6 +795,22 @@ let widen x = Nx.cast Nx.float32 x
 (* [open_unit k dt s] is uniform on [(0, 1)]: a draw of [Noise.uniform], a
    multiple of [2^-p], moved by half a step, so neither end is reached. *)
 let open_unit k dt s = Nx.add_s (Noise.uniform k dt s) (Prec.eps dt /. 4.)
+
+(* [off_bounds lo hi x] is the draw [x] in the open [(lo, hi)]: a draw that
+   rounds onto a finite bound, as one in a few hundred does at bfloat16, is
+   moved inside by [max (3/4 ε |bound|, tiny)], which rounds to the float
+   next to the bound, and one that overflows onto an infinite bound is the
+   largest finite float, as a bijector saturates. *)
+let off_bounds lo hi x =
+  let dt = Nx.dtype x in
+  let huge = const x (Prec.huge dt) in
+  let nudge b =
+    Nx.maximum (Nx.mul_s (Nx.abs b) (0.75 *. Prec.eps dt)) (const b (Prec.tiny dt))
+  in
+  let lo_in = Nx.where (Nx.isfinite lo) (Nx.add lo (nudge lo)) (Nx.neg huge) in
+  let hi_in = Nx.where (Nx.isfinite hi) (Nx.sub hi (nudge hi)) huge in
+  let x = Nx.where (Nx.less_equal x lo) lo_in x in
+  Nx.where (Nx.greater_equal x hi) hi_in x
 let broadcast_to s x = Nx.broadcast_to s x
 
 (* Families *)
@@ -999,7 +1015,9 @@ let lognormal ~loc ~scale =
     ~checks:[ in_reals family "loc" loc; in_positive family "scale" scale ]
     ~support:(fun () -> Support.Greater 0.)
     ~factors
-    ~draw:(fun k s -> x (Noise.normal k dt s))
+    ~draw:(fun k s ->
+      let v = x (Noise.normal k dt s) in
+      off_bounds (const v 0.) (const v Float.infinity) v)
     ~coords:Bij.exp
     ~standardize:(Bij.compose Bij.exp (Bij.affine ~loc ~scale))
     ~tails:
@@ -1017,6 +1035,10 @@ let positive_family ~family ~params ~shape ~checks ~density ~draw ?quantile
   let factors x =
     let ok = positive x in
     outside ok (density (inside ok x 1.))
+  in
+  let draw k s =
+    let x = draw k s in
+    off_bounds (const x 0.) (const x Float.infinity) x
   in
   continuous ~family ~params ~shape ~checks
     ~support:(fun () -> Support.Greater 0.)
@@ -1232,7 +1254,9 @@ let beta ~a ~b =
     ~checks:[ in_positive family "a" a; in_positive family "b" b ]
     ~support:(fun () -> Support.Interval (0., 1.))
     ~factors
-    ~draw:(fun k s -> Nx.Rng.beta ~key:k (broadcast_to s a) (broadcast_to s b))
+    ~draw:(fun k s ->
+      let x = Nx.Rng.beta ~key:k (broadcast_to s a) (broadcast_to s b) in
+      off_bounds (const x 0.) (const x 1.) x)
     ~coords:(Bij.interval ~low:(Nx.scalar_like a 0.) ~high:(Nx.scalar_like a 1.))
     ~quantile:(fun p -> Nx.betaincinv a b p)
     ~tails:
@@ -1267,7 +1291,8 @@ let uniform ~low ~high =
       ]
     ~support:(fun () -> Bij.image coords Support.Real [||])
     ~factors
-    ~draw:(fun k s -> Nx.add low (Nx.mul width (Noise.uniform k dt s)))
+    ~draw:(fun k s ->
+      off_bounds low high (Nx.add low (Nx.mul width (open_unit k dt s))))
     ~coords
     ~tails:
       {
@@ -2095,7 +2120,10 @@ let truncated ?low ?high d =
     support = (fun () -> Bij.image coords Support.Real [||]);
     bounds = coord_bounds d.at d.dtype coords;
     factors;
-    draw = (fun k s -> quantile (open_unit k d.dtype s));
+    draw =
+      (fun k s ->
+        off_bounds (edge lo base_lo) (edge hi base_hi)
+          (quantile (open_unit k d.dtype s)));
     coords = Some coords;
     standardize = None;
     quantile = Some quantile;
