@@ -6,78 +6,47 @@
 open Windtrap
 open Hugin_kit
 
-let invalid f = raises_match (Exn.invalid_arg ?sub:None) f
 let floats = array float_exact
+let ints = array int
+let host t = Nx.to_array t
+let f64 shape a = Nx.create Nx.float64 shape a
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
 (* Floats compared as numbers: [-0.] equals [0.], and [nan] equals [nan]. *)
 let number =
   Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "%h" x) ~equal:Float.equal
 
-let ints = array int
-let host t = Nx.to_array t
-let f64 shape a = Nx.create Nx.float64 shape a
-
 (* A set of one software device, computed by nx.cpu as the host is. *)
-module Memory = (val Nx.devices [ Result.get_ok (Rig.software "m0") ])
+let memory =
+  fixture (fun () -> Nx.devices [ Result.get_ok (Rig.software "m0") ])
 
 (* Two software devices, over which data is cut along its first axis. *)
-module Two =
-  (val Nx.devices
-         [
-           Result.get_ok (Rig.software "m1");
-           Result.get_ok (Rig.software "m2");
-         ])
-
-let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+let two =
+  fixture (fun () ->
+      Nx.devices
+        [ Result.get_ok (Rig.software "m1"); Result.get_ok (Rig.software "m2") ])
 
 (* Data *)
 
-(* The dtypes the data is drawn in: every float dtype and some integers. *)
-type dtype =
-  | F16
-  | Bf16
-  | F32
-  | F64
-  | F8_e4m3fn
-  | F8_e5m2
-  | F4_e2m1fn
-  | I8
-  | U8
-  | I32
-  | I64
+type dtype = D : ('a, 'b) Nx.dtype -> dtype
 
+let name (D d) = Nx.Dtype.name d
+
+(* Every float dtype and some integers. *)
 let dtypes =
-  [ F16; Bf16; F32; F64; F8_e4m3fn; F8_e5m2; F4_e2m1fn; I8; U8; I32; I64 ]
-
-let dtype_name = function
-  | F16 -> "float16"
-  | Bf16 -> "bfloat16"
-  | F32 -> "float32"
-  | F64 -> "float64"
-  | F8_e4m3fn -> "float8_e4m3fn"
-  | F8_e5m2 -> "float8_e5m2"
-  | F4_e2m1fn -> "float4_e2m1fn"
-  | I8 -> "int8"
-  | U8 -> "uint8"
-  | I32 -> "int32"
-  | I64 -> "int64"
-
-(* [histogram ?bins d v] is the histogram of [v] cast to [d], with the values it
-   holds read back as floats. *)
-let histogram ?bins d v =
-  let run t = (Stats.histogram ?bins t, host (Nx.cast Nx.float64 t)) in
-  match d with
-  | F16 -> run (Nx.cast Nx.float16 v)
-  | Bf16 -> run (Nx.cast Nx.bfloat16 v)
-  | F32 -> run (Nx.cast Nx.float32 v)
-  | F64 -> run v
-  | F8_e4m3fn -> run (Nx.cast Nx.float8_e4m3fn v)
-  | F8_e5m2 -> run (Nx.cast Nx.float8_e5m2 v)
-  | F4_e2m1fn -> run (Nx.cast Nx.float4_e2m1fn v)
-  | I8 -> run (Nx.cast Nx.int8 v)
-  | U8 -> run (Nx.cast Nx.uint8 v)
-  | I32 -> run (Nx.cast Nx.int32 v)
-  | I64 -> run (Nx.cast Nx.int64 v)
+  [
+    D Nx.float16;
+    D Nx.bfloat16;
+    D Nx.float32;
+    D Nx.float64;
+    D Nx.float8_e4m3fn;
+    D Nx.float8_e5m2;
+    D Nx.float4_e2m1fn;
+    D Nx.int8;
+    D Nx.uint8;
+    D Nx.int32;
+    D Nx.int64;
+  ]
 
 type case = {
   dtype : dtype;
@@ -88,18 +57,27 @@ type case = {
 }
 
 let pp_case ppf c =
+  let list pp =
+    Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ") pp
+  in
   Format.fprintf ppf
     "@[<2>{ dtype = %s;@ shape = [%a];@ bins = %s;@ values = [%a] }@]"
-    (dtype_name c.dtype)
-    (Format.pp_print_list
-       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-       Format.pp_print_int)
+    (name c.dtype) (list Format.pp_print_int)
     (Array.to_list c.lead @ [ c.len ])
     (match c.bins with None -> "default" | Some n -> string_of_int n)
-    (Format.pp_print_list
-       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
-       (fun ppf x -> Format.fprintf ppf "%h" x))
+    (list (fun ppf x -> Format.fprintf ppf "%h" x))
     (Array.to_list c.values)
+
+let f64_case ?bins values =
+  { dtype = D Nx.float64; lead = [||]; len = Array.length values; values; bins }
+
+(* [histogram c] is the histogram of [c]'s values cast to its dtype, and those
+   values read back as floats. *)
+let histogram c =
+  match c.dtype with
+  | D d ->
+      let v = Nx.cast d (f64 (Array.append c.lead [| c.len |]) c.values) in
+      (Stats.histogram ?bins:c.bins v, host (Nx.cast Nx.float64 v))
 
 (* Values on a small range, small integers that fall on the edges of bins that
    divide their span, the signed zeros and the non-finite values. *)
@@ -162,37 +140,54 @@ let gen_case =
   let size = Array.fold_left ( * ) 1 lead * len in
   (* Independent draws almost never give samples whose finite values are all
      equal or span too little for their bins, and give one finite value, or a
-     group without one, in about one case in twenty-five. A repeated value
-     draws the first, a cluster of floats a few spacings apart, kept in
-     float64, the second, one finite value among non-finite ones the third,
-     and non-finite values alone the fourth. *)
+     group without one, in about one case in twenty-five. A repeated value draws
+     the first, a cluster of floats a few spacings apart, kept in float64, the
+     second, one finite value among non-finite ones the third, and non-finite
+     values alone the fourth. *)
   let+ dtype, values =
     frequency
       [
         (4, pair (of_list dtypes) (array ~size:(constant size) gen_value));
         (1, pair (of_list dtypes) (map (Array.make size) gen_value));
         (1, pair (of_list dtypes) (gen_lone size));
-        ( 1,
-          pair (of_list dtypes) (array ~size:(constant size) gen_non_finite) );
-        (1, map (fun v -> (F64, v)) (gen_cluster size));
+        (1, pair (of_list dtypes) (array ~size:(constant size) gen_non_finite));
+        (1, map (fun v -> (D Nx.float64, v)) (gen_cluster size));
       ]
   and+ bins = option (int_range 1 12) in
   { dtype; lead; len; values; bins }
 
 let gen_case = Gen.with_pp pp_case gen_case
 
-(* The groups of [values]: one array per index of the axes before the last. *)
-let groups len values =
-  if len = 0 then [||]
-  else
-    Array.init
-      (Array.length values / len)
-      (fun g -> Array.sub values (g * len) len)
+(* The rarest label of a law, a dtype, marks about one case in twelve: 300 cases
+   miss it with odds under one in a billion. *)
+let law_cases = 300
+
+(* The groups of [values], whose last axis is [len] long: one array per index of
+   the axes [lead] before the last, empty when [len] is [0]. *)
+let groups lead len values =
+  Array.init (Array.fold_left ( * ) 1 lead) (fun g ->
+      Array.sub values (g * len) len)
 
 let finite a = List.filter Float.is_finite (Array.to_list a)
 
-(* The reference: the number of the finite [values] in each bin, by the bin's
-   edges, the last bin closed. *)
+(* The least and greatest finite values, or [0.] and [1.] if there are none. *)
+let ends values =
+  match finite values with
+  | [] -> (0., 1.)
+  | f :: fs -> (List.fold_left Float.min f fs, List.fold_left Float.max f fs)
+
+(* The width [w] that a span of [n] bins from [lo] to [hi] widens to. *)
+let least_width n (lo, hi) =
+  let m = Float.max (Float.abs lo) (Float.abs hi) in
+  let w = Float.of_int n *. Float.max (m *. (4. *. epsilon_float)) min_float in
+  if lo = hi then Float.max w 1. else w
+
+let sturges len =
+  if len <= 1 then 1
+  else 1 + int_of_float (Float.ceil (Float.log2 (Float.of_int len)))
+
+(* The number of the finite [values] in each bin, by the bin's edges, the last
+   bin closed. *)
 let count_ref x x2 values =
   let n = Array.length x in
   Array.init n (fun j ->
@@ -201,332 +196,393 @@ let count_ref x x2 values =
            (fun v -> x.(j) <= v && (v < x2.(j) || (j = n - 1 && v = x2.(j))))
            (finite values)))
 
-let run_case c =
-  let shape = Array.append c.lead [| c.len |] in
-  let h, values = histogram ?bins:c.bins c.dtype (f64 shape c.values) in
-  (h, values)
+(* Results *)
 
-(* Laws *)
+let fields (h : _ Stats.bins) (m : _ Stats.bins) =
+  [
+    ("x", host h.x, host m.x);
+    ("x2", host h.x2, host m.x2);
+    ("count", host h.count, host m.count);
+    ("density", host h.density, host m.density);
+  ]
 
-let law_edges c =
-  let h, values = run_case c in
+let on_set c =
+  let (module M : Nx.Devices) = memory () in
+  let v = f64 (Array.append c.lead [| c.len |]) c.values in
+  let m = Stats.histogram ?bins:c.bins (Nx.place M.on v) in
+  List.iter
+    (fun (msg, p) -> equal (placement ()) ~msg M.on p)
+    [
+      ("x", Nx.placement m.x);
+      ("x2", Nx.placement m.x2);
+      ("count", Nx.placement m.count);
+      ("density", Nx.placement m.density);
+    ];
+  List.iter
+    (fun (msg, a, b) -> equal floats ~msg a b)
+    (fields (Stats.histogram ?bins:c.bins v) m)
+
+(* The edges are whole on each device, as the constants made beside the data
+   are. *)
+let on_two () =
+  let (module M : Nx.Devices) = two () in
+  let v = f64 [| 2; 5 |] [| 3.; -1.; 0.5; nan; 2.; 7.; 7.; 1.; -4.; 0. |] in
+  let m = Stats.histogram ~bins:3 (Nx.place (M.split ~axis:0) v) in
+  equal (placement ()) ~msg:"x" M.on (Nx.placement m.x);
+  equal (placement ()) ~msg:"x2" M.on (Nx.placement m.x2);
+  List.iter
+    (fun (msg, a, b) -> equal floats ~msg a b)
+    (fields (Stats.histogram ~bins:3 v) m)
+
+let results =
+  group "results"
+    [
+      prop ~count:law_cases "lie on the data's set, equal to the host's"
+        gen_case on_set;
+      test "of data cut over two devices lie on both, equal to the host's"
+        on_two;
+    ]
+
+(* Bins *)
+
+let edge_shapes c =
+  let h, _ = histogram c in
+  let n = Option.value c.bins ~default:(sturges c.len) in
+  equal ints ~msg:"x" [| n |] (Nx.shape h.x);
+  equal ints ~msg:"x2" [| n |] (Nx.shape h.x2)
+
+let x2_follows c =
+  let h, _ = histogram c in
   let x = host h.x and x2 = host h.x2 in
   let n = Array.length x in
-  let expected_n =
-    match c.bins with
-    | Some n -> n
-    | None ->
-        if c.len <= 1 then 1
-        else 1 + int_of_float (Float.ceil (Float.log2 (Float.of_int c.len)))
-  in
-  equal int ~msg:"bins" expected_n n;
-  equal floats ~msg:"x2 follows x"
-    (Array.sub x 1 (n - 1))
-    (Array.sub x2 0 (n - 1));
-  let fs = finite values in
-  let lo, hi =
-    match fs with
-    | [] -> (0., 1.)
-    | f :: fs -> (List.fold_left Float.min f fs, List.fold_left Float.max f fs)
-  in
-  cover "no finite value" (fs = []);
-  cover "one finite value" (match fs with [ _ ] -> true | _ -> false);
-  cover "all equal"
-    (fs <> [] && List.for_all (fun v -> v = List.hd fs) fs && List.length fs > 1);
-  let m = Float.max (Float.abs lo) (Float.abs hi) in
-  let w = Float.of_int n *. Float.max (m *. (4. *. epsilon_float)) min_float in
-  let w = if lo = hi then Float.max w 1. else w in
+  equal floats (Array.sub x 1 (n - 1)) (Array.sub x2 0 (n - 1))
+
+let value_shapes c =
+  let h, _ = histogram c in
+  cover "no group" (Array.mem 0 c.lead);
+  cover "two axes before the last" (Array.length c.lead = 2);
+  let shape = Array.append c.lead [| Nx.numel h.x |] in
+  equal ints ~msg:"count" shape (Nx.shape h.count);
+  equal ints ~msg:"density" shape (Nx.shape h.density)
+
+let bins =
+  group "bins"
+    [
+      prop ~count:law_cases "x and x2 have the shape [|n|]" gen_case edge_shapes;
+      prop ~count:law_cases "x2.{j} is x.{j+1}" gen_case x2_follows;
+      prop ~count:law_cases
+        "count and density have the data's shape, its last axis the bins"
+        gen_case value_shapes;
+    ]
+
+(* Histogram *)
+
+let spans_finite c =
+  let h, values = histogram c in
+  let x = host h.x and x2 = host h.x2 in
+  let n = Array.length x in
+  let lo, hi = ends values in
+  let kept = hi -. lo >= least_width n (lo, hi) in
+  cover "no finite value" (finite values = []);
+  cover "a span kept" (kept && finite values <> []);
+  if kept then equal (pair number number) (lo, hi) (x.(0), x2.(n - 1))
+
+(* The edges of four bins, derived from the rule by hand. *)
+let four_bins =
+  let big = Float.ldexp 1. 60 in
+  (* [max_float] widens by [4 * 4 max_float epsilon], all of it below. *)
+  let below_max = max_float -. (max_float *. (16. *. epsilon_float)) in
+  [
+    ( "least to greatest finite value",
+      [| 3.; nan; -2.; infinity; 7.; neg_infinity |],
+      (-2., 7.) );
+    ("equal values: a half either side", [| 3.; 3.; nan |], (2.5, 3.5));
+    ("one value: a half either side", [| -1. |], (-1.5, -0.5));
+    ("signed zeros: equal values", [| -0.; 0. |], (-0.5, 0.5));
+    ( "2^60 twice: four spacings a bin",
+      [| big; big |],
+      (big -. 2048., big +. 2048.) );
+    ("max_float: shifted below it", [| max_float |], (below_max, max_float));
+    ("no finite value: 0 to 1", [| nan; infinity |], (0., 1.));
+    ("no value: 0 to 1", [||], (0., 1.));
+  ]
+
+let spans_four (_, values, span) =
+  let h = Stats.histogram ~bins:4 (f64 [| Array.length values |] values) in
+  equal (pair float_exact float_exact) span ((host h.x).(0), (host h.x2).(3))
+
+(* The code makes three rounded operations ([w - (hi - lo)], [lo - d], [hi + d])
+   and the law one ([last - first]), each on values below [2 max (m, 1)], so
+   each errs by at most [max (m, 1) epsilon]. *)
+let widens c =
+  let h, values = histogram c in
+  let x = host h.x and x2 = host h.x2 in
+  let n = Array.length x in
+  let lo, hi = ends values in
+  let w = least_width n (lo, hi) in
   let first = x.(0) and last = x2.(n - 1) in
-  if hi -. lo >= w then (
-    equal number ~msg:"first edge" lo first;
-    equal number ~msg:"last edge" hi last)
-  else (
-    cover "a span widened for its bins" (lo < hi);
+  let narrow = hi -. lo < w in
+  let inside = first > -.max_float && last < max_float in
+  cover "equal ends" (narrow && lo = hi);
+  cover "ends apart" (narrow && lo < hi);
+  cover "shifted within the finite floats" (narrow && not inside);
+  if narrow then begin
+    let m = Float.max (Float.abs lo) (Float.abs hi) in
+    let within = float (4. *. Float.max m 1. *. epsilon_float) in
     at_most float_exact ~msg:"first edge" ~than:lo first;
     at_least float_exact ~msg:"last edge" ~than:hi last;
     at_least float_exact ~msg:"first edge" ~than:(-.max_float) first;
     at_most float_exact ~msg:"last edge" ~than:max_float last;
-    let eps = 4. *. Float.max m 1. *. epsilon_float in
-    equal (float eps) ~msg:"span" w (last -. first);
-    if first > -.max_float && last < max_float then
-      equal (float eps) ~msg:"widened equally" (lo -. first) (last -. hi));
-  let width = (last -. first) /. Float.of_int n in
-  (* Spacings are [min_float *. epsilon_float] apart below [min_float]. *)
-  let eps =
-    4. *. epsilon_float
+    equal within ~msg:"span" w (last -. first);
+    if inside then equal within ~msg:"widened equally" (lo -. first) (last -. hi)
+  end
+
+(* An edge, a few rounded operations on values within [M], the greater magnitude
+   of the two ends, is within 1.5 spacings of [M]: a bin's width is within 3.5
+   once subtracted, and the law's width [last / n - first / n], which cannot
+   overflow, within 1.5. Spacings are [min_float epsilon] apart below
+   [min_float]. *)
+let equal_widths c =
+  let h, _ = histogram c in
+  let x = host h.x and x2 = host h.x2 in
+  let n = Float.of_int (Array.length x) in
+  let first = x.(0) and last = x2.(Array.length x - 1) in
+  let width = (last /. n) -. (first /. n) in
+  let spacing =
+    epsilon_float
     *. Float.max min_float (Float.max (Float.abs first) (Float.abs last))
   in
   Array.iteri
     (fun j a ->
-      let msg = Printf.sprintf "width of bin %d" j in
-      greater float_exact ~msg ~than:a x2.(j);
-      equal (float eps) ~msg width (x2.(j) -. a))
+      equal
+        ~msg:(Printf.sprintf "bin %d" j)
+        (float (5. *. spacing))
+        width
+        (x2.(j) -. a))
     x
 
-let law_counts c =
-  let h, values = run_case c in
-  let x = host h.x and x2 = host h.x2 in
-  let n = Array.length x in
-  equal ints ~msg:"shape" (Array.append c.lead [| n |]) (Nx.shape h.count);
-  let count = groups n (host h.count) in
+let positive_widths x x2 =
   Array.iteri
-    (fun g group ->
-      cover "a non-finite value"
-        (Array.exists (fun v -> not (Float.is_finite v)) group);
-      cover "a value on an inner edge"
-        (Array.exists
-           (fun v -> Array.exists (fun e -> e = v) (Array.sub x 1 (n - 1)))
-           group);
-      let msg = Printf.sprintf "group %d" g in
-      equal floats ~msg
-        (Array.map Float.of_int (count_ref x x2 group))
-        count.(g);
-      equal float_exact ~msg:(msg ^ ", total")
-        (Float.of_int (List.length (finite group)))
-        (Array.fold_left ( +. ) 0. count.(g)))
-    (groups c.len values)
+    (fun j a ->
+      greater float_exact ~msg:(Printf.sprintf "bin %d" j) ~than:a x2.(j))
+    x
 
-let law_density c =
-  let h, values = run_case c in
+let finite_densities density =
+  Array.iteri
+    (fun j d ->
+      satisfies ~claim:"a finite density"
+        ~msg:(Printf.sprintf "bin %d" j)
+        float_exact Float.is_finite d)
+    density
+
+let positive c =
+  let h, values = histogram c in
+  let x = host h.x and x2 = host h.x2 in
+  positive_widths x x2;
+  let density = groups c.lead (Array.length x) (host h.density) in
+  Array.iteri
+    (fun g group -> if finite group <> [] then finite_densities density.(g))
+    (groups c.lead c.len values)
+
+(* Inputs whose bins had a width of zero or an infinite density. *)
+let few_spacings =
+  let big = Float.ldexp 1. 60 and tiny = Float.ldexp 1. (-1000) in
+  [
+    ( "three int64 at max_int",
+      fun () ->
+        Stats.histogram
+          (Nx.create Nx.int64 [| 3 |] (Array.make 3 Int64.max_int)) );
+    ( "2^60 and its successor in 12 bins",
+      fun () -> Stats.histogram ~bins:12 (f64 [| 2 |] [| big; Float.succ big |])
+    );
+    ( "2^-1024, 0 and 0",
+      fun () ->
+        Stats.histogram (f64 [| 3 |] [| Float.ldexp 1. (-1024); 0.; 0. |]) );
+    ( "the least subnormal, 0 and 0",
+      fun () ->
+        Stats.histogram (f64 [| 3 |] [| Float.ldexp 1. (-1074); 0.; 0. |]) );
+    ( "2^-1000 and its successor in 2 bins",
+      fun () ->
+        Stats.histogram ~bins:2 (f64 [| 2 |] [| tiny; Float.succ tiny |]) );
+  ]
+
+let few_spacings_hold (_, histogram) =
+  let (h : _ Stats.bins) = histogram () in
+  positive_widths (host h.x) (host h.x2);
+  finite_densities (host h.density)
+
+let counts c =
+  let h, values = histogram c in
   let x = host h.x and x2 = host h.x2 in
   let n = Array.length x in
-  equal ints ~msg:"shape" (Array.append c.lead [| n |]) (Nx.shape h.density);
-  let density = groups n (host h.density) and count = groups n (host h.count) in
+  List.iter (fun d -> cover (name d) (name c.dtype = name d)) dtypes;
+  cover "an empty group" (c.len = 0 && not (Array.mem 0 c.lead));
+  cover "a non-finite value"
+    (Array.exists (fun v -> not (Float.is_finite v)) values);
+  cover "a value on an inner edge"
+    (Array.exists
+       (fun v -> Array.exists (fun e -> e = v) (Array.sub x 1 (n - 1)))
+       values);
+  let count = groups c.lead n (host h.count) in
   Array.iteri
     (fun g group ->
-      let msg = Printf.sprintf "group %d" g in
+      equal floats
+        ~msg:(Printf.sprintf "group %d" g)
+        (Array.map Float.of_int (count_ref x x2 group))
+        count.(g))
+    (groups c.lead c.len values)
+
+(* Integers on the inner edges of four bins from 0 to 4. *)
+let on_edges =
+  {
+    dtype = D Nx.int32;
+    lead = [||];
+    len = 6;
+    values = [| 0.; 1.; 1.; 2.; 3.; 4. |];
+    bins = Some 4;
+  }
+
+(* Two groups of no value, in one default bin. *)
+let empty_groups =
+  { dtype = D Nx.float64; lead = [| 2 |]; len = 0; values = [||]; bins = None }
+
+(* Two bins over the whole float range, each [max_float] wide. *)
+let whole_range = f64_case ~bins:2 [| -.max_float; max_float |]
+
+(* One bin over the whole float range, wider than [max_float]. *)
+let wider_than_max = f64_case ~bins:1 [| -.max_float; max_float |]
+
+(* Either side, [count / total / width] or [count / (total * width)], rounds
+   twice, so the two agree within [2 epsilon], or within a subnormal spacing
+   where densities are that small. *)
+let quotient =
+  float_rel ~rel:(2. *. epsilon_float) ~abs:(Float.ldexp 1. (-1074))
+
+let density_is c =
+  let h, values = histogram c in
+  let x = host h.x and x2 = host h.x2 in
+  let n = Array.length x in
+  let count = groups c.lead n (host h.count)
+  and density = groups c.lead n (host h.density) in
+  Array.iteri
+    (fun g group ->
       let total = Float.of_int (List.length (finite group)) in
-      cover "a group without a finite value" (total = 0.);
-      if total = 0. then equal floats ~msg (Array.make n nan) density.(g)
-      else (
+      cover "a group with a finite value" (total > 0.);
+      if total > 0. then
         Array.iteri
           (fun j d ->
-            equal
-              (float_rel ~rel:1e-12 ~abs:0.)
-              ~msg:(Printf.sprintf "%s, bin %d" msg j)
+            equal quotient
+              ~msg:(Printf.sprintf "group %d, bin %d" g j)
               (count.(g).(j) /. total /. (x2.(j) -. x.(j)))
               d)
-          density.(g);
-        let integral = ref 0. in
-        Array.iteri
-          (fun j d -> integral := !integral +. (d *. (x2.(j) -. x.(j))))
-          density.(g);
-        equal (float 1e-12) ~msg:(msg ^ ", integral") 1. !integral))
-    (groups c.len values)
+          density.(g))
+    (groups c.lead c.len values)
 
-(* Each group's counts are those of [Nx.histogram] over its values alone, with
-   the edges the histogram shares. *)
-let law_batch c =
-  let h, values = run_case c in
-  let n = Nx.numel h.x in
-  let e = Nx.concatenate ~axis:0 [ h.x; Nx.slice [ Nx.R (n - 1, n) ] h.x2 ] in
-  let count = groups n (host h.count) in
+(* Each of the [n] terms [d * w] rounds three times on its way, [1.5 epsilon] of
+   the term, and where [d] is subnormal errs by at most half a subnormal spacing
+   times a width below [2^1024], [2 epsilon]. Each addition adds half an
+   [epsilon]. So the sum is within [4 n epsilon] of one. *)
+let sum_to_one c =
+  let h, values = histogram c in
+  let x = host h.x and x2 = host h.x2 in
+  let n = Array.length x in
+  let widths = Array.init n (fun j -> x2.(j) -. x.(j)) in
+  let wide = Array.exists (fun w -> w = infinity) widths in
+  cover "a bin wider than max_float" wide;
+  let density = groups c.lead n (host h.density) in
   Array.iteri
     (fun g group ->
-      let row =
-        Nx.cast Nx.float64 (Nx.histogram [ (e, f64 [| c.len |] group) ])
-      in
-      equal floats ~msg:(Printf.sprintf "group %d" g) (host row) count.(g))
-    (groups c.len values)
+      let msg = Printf.sprintf "group %d" g in
+      if finite group = [] then ()
+      else if wide then
+        Array.iteri
+          (fun j d -> if widths.(j) = infinity then equal ~msg float_exact 0. d)
+          density.(g)
+      else
+        let sum = ref 0. in
+        Array.iteri (fun j d -> sum := !sum +. (d *. widths.(j))) density.(g);
+        equal ~msg (float (4. *. Float.of_int n *. epsilon_float)) 1. !sum)
+    (groups c.lead c.len values)
 
-(* The cases of each law that covers labels. The rarest label, a dtype, marks
-   about one case in twelve: 300 cases miss it with odds under one in a
-   billion, where 100 missed it in one run in 5000. *)
-let law_cases = 300
+let no_finite_nan c =
+  let h, values = histogram c in
+  let n = Nx.numel h.x in
+  let density = groups c.lead n (host h.density) in
+  Array.iteri
+    (fun g group ->
+      cover "a group without a finite value" (finite group = []);
+      cover "an empty group" (group = [||]);
+      if finite group = [] then
+        equal
+          ~msg:(Printf.sprintf "group %d" g)
+          floats (Array.make n nan) density.(g))
+    (groups c.lead c.len values)
 
-(* A histogram of data on another set lies there and equals the host's. *)
-let law_set c =
-  let shape = Array.append c.lead [| c.len |] in
-  let v = f64 shape c.values in
-  let h = Stats.histogram ?bins:c.bins v in
-  let m = Stats.histogram ?bins:c.bins (Nx.place Memory.on v) in
-  List.iter
-    (fun (msg, a, b) ->
-      equal (placement ()) ~msg Memory.on (Nx.placement b);
-      equal floats ~msg (host a) (host b))
+let sturges_rows =
+  [
+    (0, 1);
+    (1, 1);
+    (2, 2);
+    (3, 3);
+    (4, 3);
+    (5, 4);
+    (8, 4);
+    (9, 5);
+    (1024, 11);
+    (1025, 12);
+  ]
+
+let histograms =
+  group "histogram"
     [
-      ("x", h.x, m.x);
-      ("x2", h.x2, m.x2);
-      ("count", h.count, m.count);
-      ("density", h.density, m.density);
-    ]
-
-(* A histogram of data cut over two devices equals the host's, its edges whole
-   on each device, as the constants it makes beside the data are. *)
-let split =
-  test "a histogram of data cut over two devices is the host's" (fun () ->
-      let v =
-        f64 [| 2; 5 |] [| 3.; -1.; 0.5; nan; 2.; 7.; 7.; 1.; -4.; 0. |]
-      in
-      let h = Stats.histogram ~bins:3 v in
-      let m = Stats.histogram ~bins:3 (Nx.place (Two.split ~axis:0) v) in
-      equal (placement ()) ~msg:"x" Two.on (Nx.placement m.x);
-      equal (placement ()) ~msg:"x2" Two.on (Nx.placement m.x2);
-      List.iter
-        (fun (msg, a, b) -> equal floats ~msg (host a) (host b))
-        [
-          ("x", h.x, m.x);
-          ("x2", h.x2, m.x2);
-          ("count", h.count, m.count);
-          ("density", h.density, m.density);
-        ])
-
-let laws =
-  group "laws"
-    [
-      prop "a histogram lies on its data's set" gen_case law_set;
-      split;
       prop ~count:law_cases
-        "edges span the finite values in bins of equal width" gen_case
-        (fun c ->
-          List.iter (fun d -> cover (dtype_name d) (c.dtype = d)) dtypes;
-          law_edges c);
+        "the bins span the least to the greatest finite value, or 0 to 1"
+        gen_case spans_finite;
+      cases "four bins span as the rule states"
+        ~id:(fun (n, _, _) -> n)
+        four_bins spans_four;
       prop ~count:law_cases
-        "each bin counts the finite values between its edges" gen_case
-        law_counts;
-      prop ~count:law_cases "densities times widths sum to one" gen_case
-        law_density;
-      prop "groups count as Nx.histogram row by row" gen_case law_batch;
-    ]
-
-(* Cases *)
-
-let span name values (lo, hi) =
-  test name (fun () ->
-      let h = Stats.histogram ~bins:4 (f64 [| Array.length values |] values) in
-      let x = host h.x and x2 = host h.x2 in
-      equal float_exact ~msg:"first edge" lo x.(0);
-      equal float_exact ~msg:"last edge" hi x2.(3))
-
-let spans =
-  let big = Float.ldexp 1. 60 in
-  let below_max = max_float -. (max_float *. (16. *. epsilon_float)) in
-  group "spans"
-    [
-      span "spans the least to the greatest finite value"
-        [| 3.; nan; -2.; infinity; 7.; neg_infinity |]
-        (-2., 7.);
-      span "equal values span a half either side" [| 3.; 3.; nan |] (2.5, 3.5);
-      span "one value spans a half either side" [| -1. |] (-1.5, -0.5);
-      span "signed zeros are equal values" [| -0.; 0. |] (-0.5, 0.5);
-      span "a large value spans four spacings per bin" [| big; big |]
-        (big -. 2048., big +. 2048.);
-      span "the largest float shifts within the finite floats" [| max_float |]
-        (below_max, max_float);
-      span "no finite value spans zero to one" [| nan; infinity |] (0., 1.);
-      span "no value spans zero to one" [||] (0., 1.);
-    ]
-
-(* Each bin has a positive width, and its densities times widths sum to one. *)
-let widths name ?bins v =
-  test name (fun () ->
-      let h = Stats.histogram ?bins v in
-      let x = host h.x and x2 = host h.x2 and density = host h.density in
-      Array.iteri
-        (fun j a ->
-          greater float_exact
-            ~msg:(Printf.sprintf "right edge of bin %d" j)
-            ~than:a x2.(j))
-        x;
-      let integral = ref 0. in
-      Array.iteri
-        (fun j d -> integral := !integral +. (d *. (x2.(j) -. x.(j))))
-        density;
-      equal (float 1e-12) ~msg:"integral" 1. !integral)
-
-let narrow =
-  let big = Float.ldexp 1. 60 in
-  group "narrow spans"
-    [
-      widths "equal extreme integers fill their bins"
-        (Nx.create Nx.int64 [| 3 |] (Array.make 3 Int64.max_int));
-      widths "adjacent large floats fill many bins" ~bins:12
-        (f64 [| 2 |] [| big; Float.succ big |]);
-      (* Each bin is at least [min_float] wide: bins a few spacings wide near
-         zero would have edges that round together, or densities that
-         overflow. *)
-      widths "a subnormal span fills its bins"
-        (f64 [| 3 |] [| Float.ldexp 1. (-1024); 0.; 0. |]);
-      widths "the least subnormal fills its bins"
-        (f64 [| 3 |] [| Float.ldexp 1. (-1074); 0.; 0. |]);
-      widths "adjacent tiny normal floats fill their bins" ~bins:2
-        (let tiny = Float.ldexp 1. (-1000) in
-         f64 [| 2 |] [| tiny; Float.succ tiny |]);
-    ]
-
-let sturges =
-  cases "default bins"
-    ~id:(fun (len, n) -> Printf.sprintf "%d values make %d bins" len n)
-    [
-      (0, 1);
-      (1, 1);
-      (2, 2);
-      (3, 3);
-      (4, 3);
-      (5, 4);
-      (8, 4);
-      (9, 5);
-      (1024, 11);
-      (1025, 12);
-    ]
-    (fun (len, n) ->
-      let h = Stats.histogram (Nx.zeros Nx.float64 [| 2; len |]) in
-      equal int n (Nx.numel h.x))
-
-let shapes =
-  group "shapes"
-    [
-      test "an empty axis gives empty histograms with density nan" (fun () ->
-          let h = Stats.histogram (Nx.zeros Nx.float64 [| 2; 0 |]) in
-          equal floats [| 0.; 0. |] (host h.count);
-          equal floats [| nan; nan |] (host h.density);
-          equal floats [| 0. |] (host h.x);
-          equal floats [| 1. |] (host h.x2));
-      test "no group gives histograms of no row" (fun () ->
-          let h = Stats.histogram ~bins:3 (Nx.zeros Nx.float64 [| 0; 4; 5 |]) in
-          equal ints [| 0; 4; 3 |] (Nx.shape h.count);
-          equal ints [| 0; 4; 3 |] (Nx.shape h.density);
-          equal floats [| 0.; 1. /. 3.; 2. /. 3. |] (host h.x));
-      test "the last axis becomes the bins" (fun () ->
-          let h = Stats.histogram ~bins:5 (Nx.zeros Nx.float32 [| 2; 3; 7 |]) in
-          equal ints [| 2; 3; 5 |] (Nx.shape h.count);
-          equal ints [| 5 |] (Nx.shape h.x);
-          equal ints [| 5 |] (Nx.shape h.x2));
-      test "a bin wider than max_float has density zero" (fun () ->
-          let h =
-            Stats.histogram ~bins:1 (f64 [| 2 |] [| -.max_float; max_float |])
-          in
-          equal floats [| 2. |] (host h.count);
-          equal floats [| 0. |] (host h.density));
-      test "two bins over the whole float range have finite widths" (fun () ->
-          let h =
-            Stats.histogram ~bins:2 (f64 [| 2 |] [| -.max_float; max_float |])
-          in
-          equal floats [| -.max_float; 0. |] (host h.x);
-          equal floats [| 1.; 1. |] (host h.count);
-          equal floats [| 0.5 /. max_float; 0.5 /. max_float |] (host h.density));
-      test "integers count by value" (fun () ->
-          let v = Nx.create Nx.int32 [| 6 |] [| 0l; 1l; 1l; 2l; 3l; 4l |] in
-          let h = Stats.histogram ~bins:4 v in
-          equal floats [| 0.; 1.; 2.; 3. |] (host h.x);
-          equal floats [| 1.; 2.; 1.; 2. |] (host h.count));
-    ]
-
-let errors =
-  group "errors"
-    [
-      test "raises on zero bins" (fun () ->
-          invalid (fun () ->
-              Stats.histogram ~bins:0 (Nx.zeros Nx.float64 [| 3 |])));
-      test "raises on negative bins" (fun () ->
-          invalid (fun () ->
-              Stats.histogram ~bins:(-1) (Nx.zeros Nx.float64 [| 3 |])));
+        ~examples:[ f64_case ~bins:4 [| max_float |] ]
+        "a narrow span widens to w equally on either side, within the floats"
+        gen_case widens;
+      prop ~count:law_cases ~examples:[ whole_range ]
+        "the bins have equal widths" gen_case equal_widths;
+      prop ~count:law_cases
+        "every bin has a positive width and a finite density" gen_case positive;
+      cases "a span a few spacings wide keeps bins wide and densities finite"
+        ~id:fst few_spacings few_spacings_hold;
+      prop ~count:law_cases ~examples:[ on_edges; empty_groups ]
+        "a bin counts the finite values from its left edge, the last closed"
+        gen_case counts;
+      prop ~count:law_cases ~examples:[ whole_range ]
+        "the density is the count over the total and the bin's width" gen_case
+        density_is;
+      prop ~count:law_cases
+        ~examples:[ whole_range; wider_than_max ]
+        "densities times widths sum to one, a bin wider than max_float at 0"
+        gen_case sum_to_one;
+      prop ~count:law_cases ~examples:[ empty_groups ]
+        "a histogram with no finite value has the density nan" gen_case
+        no_finite_nan;
+      cases "bins defaults to Sturges' rule"
+        ~id:(fun (len, n) -> Printf.sprintf "%d values make %d bins" len n)
+        sturges_rows
+        (fun (len, n) ->
+          let h = Stats.histogram (Nx.zeros Nx.float64 [| 2; len |]) in
+          equal int n (Nx.numel h.x));
+      cases "raises if bins < 1" ~id:string_of_int [ 0; -1; min_int ]
+        (fun bins ->
+          raises_match Exn.invalid_arg (fun () ->
+              Stats.histogram ~bins (Nx.zeros Nx.float64 [| 3 |])));
       test "raises on a scalar" (fun () ->
-          invalid (fun () -> Stats.histogram (Nx.scalar Nx.float64 1.)));
+          raises_match Exn.invalid_arg (fun () ->
+              Stats.histogram (Nx.scalar Nx.float64 1.)));
       test "raises on complex values" (fun () ->
-          invalid (fun () -> Stats.histogram (Nx.zeros Nx.complex64 [| 3 |])));
+          raises_match Exn.invalid_arg (fun () ->
+              Stats.histogram (Nx.zeros Nx.complex64 [| 3 |])));
       test "raises on booleans" (fun () ->
-          invalid (fun () -> Stats.histogram (Nx.zeros Nx.bool [| 3 |])));
+          raises_match Exn.invalid_arg (fun () ->
+              Stats.histogram (Nx.zeros Nx.bool [| 3 |])));
     ]
 
-let () = exit (run "Stats" [ laws; spans; narrow; sturges; shapes; errors ])
+let () = exit (run "Stats" [ results; bins; histograms ])
