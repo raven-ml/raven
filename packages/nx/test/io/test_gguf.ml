@@ -214,13 +214,38 @@ let gguf_dtype =
   Testable.make ~equal:( = ) ~pp:(fun ppf d ->
       Format.pp_print_string ppf (List.assoc d gguf_dtypes))
 
-let gguf_group =
-  group "gguf"
+let values =
+  group "Gguf.value"
     [
-      test "metadata of every value type loads as it was written" (fun () ->
+      test
+        "metadata of every value type, arrays of strings and of ints among \
+         them, loads as it was written" (fun () ->
           let g = Nx_io.load_gguf (file (gguf_file ())) in
           equal ~msg:"version" int 3 (Gguf.version g);
           equal (list (pair string gguf_value)) metadata (Gguf.metadata g));
+      test "metadata of arrays nested a million deep loads" (fun () ->
+          (* Each level is an array of one array: its element type, then its
+             count. The innermost is an empty array of uint8. *)
+          let n = 1_000_000 in
+          let deep =
+            gstring "k" ^ le 9 4
+            ^ String.concat "" (List.init n (fun _ -> le 9 4 ^ u64 1))
+            ^ le 0 4 ^ u64 0
+          in
+          let g =
+            Nx_io.load_gguf (file (gguf [ deep ] [ ("w", 0, [ 1 ], "abcd") ]))
+          in
+          let rec depth d : Gguf.value -> int = function
+            | Array [| v |] -> depth (d + 1) v
+            | Array [||] -> d + 1
+            | _ -> -1
+          in
+          equal int (n + 1) (depth 0 (List.assoc "k" (Gguf.metadata g))));
+    ]
+
+let tensors =
+  group "Gguf.tensors and info"
+    [
       cases
         "a tensor loads its bytes as stored, at any offset of the file, over \
          the file's pages where the offset is a multiple of its element's size \
@@ -339,32 +364,40 @@ let gguf_group =
           in
           fails ~path ~naming:(Printf.sprintf "not of blocks of %d" elements)
             (fun () -> Nx_io.load_gguf path));
-      test "metadata of arrays nested a million deep loads" (fun () ->
-          (* Each level is an array of one array: its element type, then its
-             count. The innermost is an empty array of uint8. *)
-          let n = 1_000_000 in
-          let deep =
-            gstring "k" ^ le 9 4
-            ^ String.concat "" (List.init n (fun _ -> le 9 4 ^ u64 1))
-            ^ le 0 4 ^ u64 0
-          in
-          let g =
-            Nx_io.load_gguf (file (gguf [ deep ] [ ("w", 0, [ 1 ], "abcd") ]))
-          in
-          let rec depth d : Gguf.value -> int = function
-            | Array [| v |] -> depth (d + 1) v
-            | Array [||] -> d + 1
-            | _ -> -1
-          in
-          equal int (n + 1) (depth 0 (List.assoc "k" (Gguf.metadata g))));
-      test "every proper prefix fails, naming the file" (fun () ->
-          prefixes_fail Nx_io.load_gguf (gguf_file ()));
-      test "any header byte flipped loads or fails" (fun () ->
-          flips_load_or_fail Nx_io.load_gguf ~upto:600 (gguf_file ()));
       test "an absent tensor's info fails" (fun () ->
           let g = Nx_io.load_gguf (file (gguf_file ())) in
           raises_match (Exn.failure ~sub:"absent") (fun () ->
               Gguf.info "absent" g));
+      test "two tensors at one position load the same bytes" (fun () ->
+          let s =
+            gguf [] [ ("a", 0, [ 1 ], "abcd"); ("b", 0, [ 1 ], "efgh") ]
+          in
+          (* b's offset, after its name, rank, extent and type. *)
+          let info = gstring "b" ^ le 1 4 ^ u64 1 ^ le 0 4 in
+          let rec at i =
+            if String.sub s i (String.length info) = info then i else at (i + 1)
+          in
+          let b = Bytes.of_string s in
+          Bytes.blit_string (u64 0) 0 b (at 0 + String.length info) 8;
+          let g = Nx_io.load_gguf (file (Bytes.to_string b)) in
+          let t = Gguf.tensors g in
+          equal ~msg:"a"
+            (triple string (array int) string)
+            ("float32", [| 1 |], "abcd")
+            (stored (find t "a"));
+          equal ~msg:"b"
+            (triple string (array int) string)
+            ("float32", [| 1 |], "abcd")
+            (stored (find t "b")));
+    ]
+
+let loads =
+  group "load_gguf"
+    [
+      test "every proper prefix fails, naming the file" (fun () ->
+          prefixes_fail Nx_io.load_gguf (gguf_file ()));
+      test "any header byte flipped loads or fails" (fun () ->
+          flips_load_or_fail Nx_io.load_gguf ~upto:600 (gguf_file ()));
       (let one = [ ("w", 0, [ 1 ], "abcd") ] in
        let raw ?magic ?version ?alignment ?shift kvs tensors () =
          file (gguf ?magic ?version ?alignment ?shift kvs tensors)
@@ -401,7 +434,8 @@ let gguf_group =
          ]
          (fun (_, path) ->
            let path = path () in
-           fails ~path (fun () -> Nx_io.load_gguf path)));
+           within_budget (fun () ->
+               fails ~path (fun () -> Nx_io.load_gguf path))));
     ]
 
-let () = exit (run "nx.io GGUF" [ gguf_group ])
+let () = exit (run "nx.io GGUF" [ values; tensors; loads ])
