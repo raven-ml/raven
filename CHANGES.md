@@ -92,7 +92,8 @@ All notable changes to this project will be documented in this file.
   effective size over the draws of positive weight only. A draw of weight
   zero entered the sums times zero, which gave NaN beside an infinite
   quotient and lost digits as the mean's anchor: draws `1e300; 1; 2; 3` with
-  the first of no weight had the mean `0`, where it is `2.25`.
+  the first of no weight had the mean `0`, where it is `2.25`. With no weight
+  positive every column is NaN.
 - A refusal that names a tensor at the root of the structure names it as
   "the draws", "the ranks", "the values" or "the precision", where
   `Diag`, `Draws.v`, `Draws.append`, `Summary.of_weighted` and

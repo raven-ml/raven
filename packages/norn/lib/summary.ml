@@ -317,13 +317,15 @@ let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
      [c], which [spread] returns beside them, so that squares neither underflow
      nor overflow: draws 1e-200 apart would square to 0. *)
   let spread ys =
-    let c = Chains.scale ys in
-    let ys = Array.map (fun y -> y /. c) ys in
-    let m = mean ys in
-    let d y = y -. m in
-    ( c,
-      dot (fun w y -> w *. d y *. d y) ys,
-      dot (fun w y -> w *. w *. d y *. d y) ys )
+    if Array.length ys = 0 then (1., Float.nan, Float.nan)
+    else
+      let c = Chains.scale ys in
+      let ys = Array.map (fun y -> y /. c) ys in
+      let m = mean ys in
+      let d y = y -. m in
+      ( c,
+        dot (fun w y -> w *. d y *. d y) ys,
+        dot (fun w y -> w *. w *. d y *. d y) ys )
   in
   let column f = Array.of_list (List.map (fun e -> f e.draws) elements) in
   let columns =

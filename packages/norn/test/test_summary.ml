@@ -389,6 +389,14 @@ let of_weighted =
               ("ess", [| 0.6875 /. 0.2421875 |]);
             ]
             (List.map (fun (name, c) -> (name, Nx.to_array c)) (S.columns s)));
+      test "gives every statistic NaN when no weight is positive" (fun () ->
+          let lw = Nx.full Nx.float64 [| 3 |] Float.neg_infinity in
+          let s = S.of_weighted t (weighted (vec [| 1.; 2.; 3. |]) lw) in
+          List.iter
+            (fun (name, c) ->
+              satisfies ~msg:name ~claim:"nan" float_exact Float.is_nan
+                (Nx.to_array c).(0))
+            (S.columns s));
       test "keeps the statistics of draws far from 1 at their scale" (fun () ->
           (* Two draws [2d] apart, of weight 1/2 each, have the standard
              deviation [d], the error [d / sqrt 2] and the effective size 2.
