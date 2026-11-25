@@ -103,18 +103,18 @@ let degrees g =
 
 (* Interpolants *)
 
-let linear_tests =
+let interpolant_tests =
   [
     prop "linear and cubic are Piecewise's along each axis in turn"
       Gen.(pair (of_list interpolants) grid)
-      (fun ((name, (on_grid, on_axis)), ((a0, a1, v, _) as g)) ->
+      (fun ((name, (on_grid, on_axis)), ((a0, a1, _, _) as g)) ->
         cover name true;
         cover "an axis of two knots" (Array.length a0 = 2 || Array.length a1 = 2);
-        let a0, a1, v', p = tensors g in
         (* Each axis's spline system has condition below 30 for gaps in [0.1,
            1], and the two orders round apart by that times the knots' count of
-           ε of the values. *)
-        let n = Array.length v in
+           ε of the values, up to 2. *)
+        let n = Array.length a0 + Array.length a1 in
+        let a0, a1, v', p = tensors g in
         let bound = 1e3 *. float_of_int n *. epsilon_float *. 2. in
         equal
           (Oracle.tensor ~abs:bound ())
@@ -354,8 +354,7 @@ let () =
   exit
     (run "Jera.Grid"
        [
-         group "linear" linear_tests;
-         group "cubic" cubic_tests;
+         group "Interpolants" (interpolant_tests @ cubic_tests);
          group "chebyshev" chebyshev_tests;
          group "eval" eval_tests;
          group "derivative" derivative_tests;
