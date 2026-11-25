@@ -6,6 +6,7 @@
   test_conv
   test_conv_transpose
   test_attention
+  test_cache_index
   test_layer_norm
   test_rms_norm
   test_batch_norm
