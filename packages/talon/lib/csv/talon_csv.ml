@@ -59,11 +59,7 @@ let check_nulls fn ~seps ~quote nulls =
       then
         invalid fn
           "the null token %s holds a separator, the quote or a line break"
-          (quoted t);
-      (* A read skips a byte order mark at the start of the input, where a
-         one-column file may write a null token. *)
-      if String.starts_with ~prefix:"\xEF\xBB\xBF" t then
-        invalid fn "the null token %s starts with a byte order mark" (quoted t))
+          (quoted t))
     nulls
 
 let format ?(sep = ',') ?(quote = '"') ?(header = true) ?(nulls = []) columns =
@@ -755,9 +751,14 @@ let encode ?(eod = false) f q w =
     Buffer.clear b
   in
   (* A null is an empty field, but a record of one empty field is an empty line,
-     which is no record: one column writes a null as a non-empty null token. *)
+     which is no record: one column writes a null as a non-empty null token, and
+     one that a read cannot mistake for a byte order mark at the start of the
+     input. *)
+  let writable t =
+    t <> "" && not (String.starts_with ~prefix:"\xEF\xBB\xBF" t)
+  in
   let null =
-    match (f.columns, List.find_opt (fun t -> t <> "") f.nulls) with
+    match (f.columns, List.find_opt writable f.nulls) with
     | [| _ |], Some t -> fun () -> Buffer.add_string b t
     | [| c |], None ->
         fun () ->

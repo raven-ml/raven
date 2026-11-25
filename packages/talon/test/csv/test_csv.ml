@@ -595,11 +595,6 @@ let formats =
           ("a null token holding the quote", ',', '"', [ "\"x" ], two);
           ("a null token holding a line feed", ',', '"', [ "a\nb" ], two);
           ("a null token holding a carriage return", ',', '"', [ "\r" ], two);
-          ( "a null token that starts with a byte order mark",
-            ',',
-            '"',
-            [ "\xEF\xBB\xBFNA" ],
-            two );
         ]
         (fun (_, sep, quote, nulls, columns) ->
           raises_match (Exn.invalid_arg ~sub:"Talon_csv.format") (fun () ->
@@ -869,10 +864,9 @@ let sniffing =
             (v [ ("x", Column.of_options Type.int64 [| None; Some 1; None |]) ])
             (Error.get_ok (read (sniffed ~nulls:[ "NA"; "-" ] s) s)));
       cases
-        "raises on a null token holding a separator, the quote or a line \
-         break, or starting with a byte order mark"
-        ~id:(Printf.sprintf "%S")
-        [ "a,b"; "a\tb"; "a;b"; "a|b"; "\""; "\n"; "\xEF\xBB\xBFNA" ] (fun t ->
+        "raises on a null token holding a separator, the quote or a line break"
+        ~id:(Printf.sprintf "%S") [ "a,b"; "a\tb"; "a;b"; "a|b"; "\""; "\n" ]
+        (fun t ->
           raises_match (Exn.invalid_arg ~sub:"Talon_csv.sniff") (fun () ->
               Csv.sniff ~nulls:[ t ] (Reader.of_string "a\n")));
       test "raises on rows below 1" (fun () ->
@@ -1614,6 +1608,18 @@ let writing =
             (written
                (Csv.format ~nulls:[ ""; "NA" ] [ ("a", any Type.int64) ])
                (Query.of_table t)));
+      test
+        "writes a null in one column as a null token that does not start with \
+         a byte order mark" (fun () ->
+          let t =
+            v [ ("a", Column.of_options Type.string [| None; Some "x" |]) ]
+          in
+          (* A null token that starts the input would read without its mark. *)
+          let f =
+            Csv.format ~header:false ~nulls:[ "\xEF\xBB\xBFNA"; "NA" ]
+              [ ("a", any Type.string) ]
+          in
+          equal string "NA\nx\n" (written f (Query.of_table t)));
       test "fails at a null in one column without a null token, at its line"
         (fun () ->
           let t =

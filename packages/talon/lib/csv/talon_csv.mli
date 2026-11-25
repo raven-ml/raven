@@ -113,8 +113,7 @@ val format :
     same name or a name is not valid UTF-8, if a type is not one CSV reads
     ({{!values}values}), if [sep] or [quote] is a line feed, a carriage return
     or a byte outside ASCII, if [sep] equals [quote], or if a null token holds
-    the separator, the quote, a line feed or a carriage return, or starts with a
-    UTF-8 byte order mark. *)
+    the separator, the quote, a line feed or a carriage return. *)
 
 val with_type : string -> Talon.Type.any -> format -> format
 (** [with_type name t f] is [f] with the column [name] read as [t]. The type is
@@ -163,8 +162,7 @@ val sniff :
     where the input fails.
 
     Raises [Invalid_argument] if [rows < 1], or if a null token holds the quote,
-    a line break or one of the separators sniffing chooses from, or starts with
-    a UTF-8 byte order mark. *)
+    a line break or one of the separators sniffing chooses from. *)
 
 (** {1:reading Reading} *)
 
@@ -222,14 +220,14 @@ val encode :
     one of [f]'s null tokens, holds the separator, the quote, a line feed or a
     carriage return, or starts with a UTF-8 byte order mark, which {!decode}
     skips at the start of the input. A quote inside a quoted field is doubled. A
-    format of one column writes a null as its first non-empty null token, since
-    a record of one empty field is an empty line, which is no record. [eod]
-    indicates whether [Bytesrw.Bytes.Slice.eod] is written on [w] after the
-    records, when they are all written: the caller decides when [w] ends.
-    Defaults to [false].
+    format of one column writes a null as its first null token that is not empty
+    and does not start with a UTF-8 byte order mark, since a record of one empty
+    field is an empty line, which is no record. [eod] indicates whether
+    [Bytesrw.Bytes.Slice.eod] is written on [w] after the records, when they are
+    all written: the caller decides when [w] ends. Defaults to [false].
 
     [Error e] if running [q] fails, if a null is to be written in a format of
-    one column without a non-empty null token, at the line it would be on, or if
+    one column without such a null token, at the line it would be on, or if
     writing to [w] raises [Bytesrw.Bytes.Stream.Error] or [Sys_error]. The
     records before the failure are written.
 

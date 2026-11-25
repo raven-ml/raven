@@ -6120,9 +6120,6 @@ its lock and from samples the dashboard saw arrive.
 - A JSON row that is `null` fails naming it null; `Talon_json.decode` and
   `Talon_json.sniff` called it a number. A row that starts with no JSON value
   fails as a syntax error at that byte, where it was also called a number.
-- `Talon_csv.format`, `Talon_csv.sniff` and `Talon_csv.file` raise on a null
-  token that starts with a UTF-8 byte order mark. A one-column file that
-  started with such a token read its first null back as text.
 - `Expr.Str.regex` names the first byte of a pattern that is not valid
   UTF-8, as it does for every other refusal.
 - `Expr.Str.regex` reads a property name or value without an initial `is`,
@@ -6139,8 +6136,10 @@ its lock and from samples the dashboard saw arrive.
   null token gives the null's line when a field or a header name before it
   holds a line break; it counted one line per record.
 - In a format of one column, `Talon_csv.encode` writes a null as the first
-  non-empty null token. With `~nulls:[""; "NA"]` it wrote an empty line, which
-  `Talon_csv.decode` skips, so the row was lost.
+  null token that is not empty and does not start with a UTF-8 byte order
+  mark. With `~nulls:[""; "NA"]` it wrote an empty line, which
+  `Talon_csv.decode` skips, so the row was lost; a token led by the mark, as
+  the file's first field, read back as text.
 - `Talon_csv.encode` quotes a field that starts with a UTF-8 byte order mark.
   Written unquoted as a file's first field, the mark was skipped by
   `Talon_csv.decode`, so the value or the header did not read back.
