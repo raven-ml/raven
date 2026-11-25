@@ -439,8 +439,12 @@ module Diskcache = struct
 
   (* An entry's file is named by the digest of its key, followed by a dot and
      the digest of its generation's name after the first clear; a write in
-     progress adds a suffix that ends in [.tmp]. An entry of a generation reads,
-     to a tolk from before generations, as a write in progress. *)
+     progress by the digest of its key, a dot and a suffix that ends in [.tmp].
+     An entry of a generation reads, to a tolk from before generations, as a
+     write in progress. The write's name is the shorter of the two, since
+     Windows holds a path of at most 259 characters: beneath {!cachedb} the
+     longest path is then a table's directory and an entry of a generation, of
+     34 and 65. *)
   let is_entry name =
     starts_with_digest name && (String.length name = 32 || name.[32] = '.')
 
@@ -705,13 +709,13 @@ module Diskcache = struct
      itself. On Windows the rename fails while a program that does not share
      the entry for deletion holds it open, which the cache's own reads and
      marks do not; that entry is complete, so it stays. *)
-  let write path entry =
+  let write path ~key entry =
     let dir = Filename.dirname path in
     mkdir_p dir;
     if linked dir then raise (Sys_error (dir ^ ": a link, not a directory"));
     let tmp, oc =
       Filename.open_temp_file ~mode:[ Open_binary ] ~perms:0o600 ~temp_dir:dir
-        (Filename.basename path ^ ".")
+        (digest key ^ ".")
         ".tmp"
     in
     match
@@ -741,7 +745,7 @@ module Diskcache = struct
         if Option.is_none found then
           raise (Sys_error (generations_dir ^ ": unreadable"));
         make_room limit bytes;
-        write (entry_path name generation key) entry
+        write (entry_path name generation key) ~key entry
       end
     end
 

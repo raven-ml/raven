@@ -1580,6 +1580,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Tolk (new)
 
+- On Windows, `Helpers.Diskcache` keeps entries under a `Helpers.cachedb` whose
+  full path has up to 158 characters, within the 259 a Windows path holds.
 - `Compiler_cpu.registers arch` returns a function that asks the Clang
   `Setting.cc` named when it was made, so `Cstyle.clang` takes its vector
   widths from its compiler's Clang, whatever `CC` names later.

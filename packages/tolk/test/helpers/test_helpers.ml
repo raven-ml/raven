@@ -65,6 +65,12 @@ let play = function
       Diskcache.put ~table Sys.argv.(2) Sys.argv.(2);
       print_string
         (Option.value ~default:"<none>" (Diskcache.get ~table Sys.argv.(3)))
+  | "put after a clear" ->
+      let table = Sys.argv.(1) in
+      Diskcache.put ~table "k" "v";
+      Diskcache.clear ();
+      Diskcache.put ~table "k" "v";
+      print_string (Option.value ~default:"<none>" (Diskcache.get ~table "k"))
   | "write" ->
       let table = Sys.argv.(1)
       and payload = String.make (1 lsl 20) Sys.argv.(2).[0] in
@@ -702,6 +708,24 @@ let keeps_writes_in_progress () =
   Sys.remove write;
   Diskcache.clear ()
 
+(* Windows holds a path of at most 259 characters, and the cache's files lie at
+   most 101 beneath its directory: an entry of a generation, its longest name,
+   is put in a child whose cache's full path has the remaining 158. *)
+let longest_cachedb () =
+  let root = temp_dir () in
+  let root =
+    if Filename.is_relative root then Filename.concat (Sys.getcwd ()) root
+    else root
+  in
+  let room = 158 - String.length root - 1 in
+  if room < 1 then
+    skip ~reason:("the temporary directory is too deep: " ^ root) ();
+  let cachedb = Filename.concat root (String.make room 'd') in
+  let table = fresh_table () in
+  equal string "v"
+    (succeeds
+       (child ~env:[ ("CACHEDB", Some cachedb) ] "put after a clear" [ table ]))
+
 (* The file in which the puts of all processes count the cache's size. *)
 let size_file = Filename.concat cachedb "f7bd60b75b29d79b660a2859395c1a24_size"
 
@@ -1212,6 +1236,10 @@ let diskcache =
               let table = fresh_table () in
               ignore (succeeds (child "put" [ table; "k"; "remote" ]));
               equal (option string) (Some "remote") (Diskcache.get ~table "k"));
+          test
+            "an entry of a generation is kept in a cache whose path has 158 \
+             characters, what the cache's names leave of Windows' 259"
+            longest_cachedb;
           test "another process reads an entry put back" (fun () ->
               let table = fresh_table () in
               Diskcache.put ~table "k" "getme";

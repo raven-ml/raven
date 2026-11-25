@@ -206,7 +206,10 @@ val open_owned : string -> Unix.file_descr option
 val cachedb : string
 (** [cachedb] is the directory of the {!Diskcache}, from the variable [CACHEDB].
     Defaults to [cache] in {!cache_dir}, made absolute against the current
-    directory when {!cache_dir} is relative. *)
+    directory when {!cache_dir} is relative. The cache's files lie at most 101
+    characters beneath it: on Windows, where a path holds at most 259, under a
+    [cachedb] whose full path is longer than 158, puts after a clear fail
+    ({!Diskcache.put}) and gets miss. *)
 
 (** Persistent key-value tables.
 
