@@ -80,7 +80,6 @@ let old_proxy_lost () =
     (read (far_of_string far' "abc"))
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote.own"
        [

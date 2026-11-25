@@ -695,7 +695,6 @@ let drained_after_late_abort () =
     (refused_after t_sent p)
 
 let () =
-  Watchdog.start ();
   (* A failed link closes its socket once its peer has ended its stream or
      the bound has passed, and a peer's write after that fails with EPIPE.
      Windows has no SIGPIPE. *)

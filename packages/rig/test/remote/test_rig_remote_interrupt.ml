@@ -1030,7 +1030,6 @@ let exit_in_close () =
   greater ~msg:"failures" int ~than:0 !failures
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote interrupt"
        [

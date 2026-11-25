@@ -230,7 +230,6 @@ let on_one_machine () =
     (bits (Nx.place Nx.Host.on y))
 
 let () =
-  Watchdog.start ();
   exit
     (run "Rune.jit on another machine's host"
        [

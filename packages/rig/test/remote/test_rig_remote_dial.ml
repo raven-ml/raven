@@ -113,7 +113,6 @@ let interrupted () =
   equal ~msg:"descriptors held" int before (descriptors ())
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote.dial"
        [

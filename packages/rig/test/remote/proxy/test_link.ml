@@ -2182,7 +2182,6 @@ let domains =
 (* The fork test runs before the domains are spawned: after them, fork
    raises. *)
 let () =
-  Watchdog.start ();
   (* A write to a peer that reset its connection fails with EPIPE. Windows
      has no SIGPIPE. *)
   if not Sys.win32 then Sys.set_signal Sys.sigpipe Sys.Signal_ignore;

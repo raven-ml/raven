@@ -36,7 +36,6 @@ let devices_racing () =
   List.iter race [ "MEM"; "POLLED"; "TIGHT"; "HIDDEN"; "MAPLESS" ]
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote domains"
        [

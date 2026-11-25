@@ -166,7 +166,6 @@ let dialled_while_replying () =
   equal ~msg:"serve" (option (result unit string)) (Some (Ok ())) !served
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote.join"
        [

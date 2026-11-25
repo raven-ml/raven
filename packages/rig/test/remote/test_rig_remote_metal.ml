@@ -80,7 +80,6 @@ let refused () =
   contains ~sub:"its required constant b (1) is past the image's 1 value" why
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote.metal"
        [

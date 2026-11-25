@@ -755,7 +755,6 @@ let failures =
     ]
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote_proxy.proxy"
        [ group "proxy" [ facts; memory; copies; work; code; failures ] ])

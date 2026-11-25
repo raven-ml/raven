@@ -70,7 +70,6 @@ let agent_device_lost () =
   equal ~msg:"the agent" exit_w (2, [ "failed: " ^ root ]) (finish agent)
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote.lost"
        [

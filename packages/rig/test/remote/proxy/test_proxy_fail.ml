@@ -45,7 +45,6 @@ let stopped_in_flight () =
     (String.init n (Bigarray.Array1.get bytes))
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote_proxy.proxy_fail"
        [

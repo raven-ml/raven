@@ -38,7 +38,6 @@ let process_failed () =
   equal ~msg:"the fresh agent's exit" int 2 (fst (finish first))
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote.failed"
        [

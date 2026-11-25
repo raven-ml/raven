@@ -79,7 +79,6 @@ let timed () =
   equal ~msg:"its submits" int (before + 1) (Rig.submitted h)
 
 let () =
-  Watchdog.start ();
   exit
     (run "Tolk_engine on another machine's host"
        [

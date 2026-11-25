@@ -1,10 +1,9 @@
-; What every suite here shares: jobs over real agent processes, and the
-; watchdog that kills a suite hung inside C.
+; What every suite here shares: jobs over real agent processes.
 
 (library
  (name rig_remote_job)
  (wrapped false)
- (modules remote_job watchdog)
+ (modules remote_job)
  (libraries rig rig_remote rig_remote_proxy rig_support threads.posix unix
   windtrap))
 
@@ -33,7 +32,6 @@
   :standard
   \
   remote_job
-  watchdog
   remote_program
   test_rig_remote_rail
   test_rig_remote_dial

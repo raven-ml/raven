@@ -1575,7 +1575,6 @@ let processes =
     ]
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote"
        [

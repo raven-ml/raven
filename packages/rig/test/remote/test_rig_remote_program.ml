@@ -742,7 +742,6 @@ let too_many_threads () =
   equal ~msg:"the job's failure" (option string) None (Rig_remote.failed j)
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote.program"
        [

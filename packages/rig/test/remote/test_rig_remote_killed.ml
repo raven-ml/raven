@@ -89,7 +89,6 @@ let agent_first () =
       reports ~msg:"the controller" cause (finish c))
 
 let () =
-  Watchdog.start ();
   exit
     (run "rig_remote.killed"
        [

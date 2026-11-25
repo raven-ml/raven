@@ -205,5 +205,4 @@ let tests =
     gpus
 
 let () =
-  Watchdog.start ();
   exit (run "rig_remote.rail" [ group "rig_remote" tests ])

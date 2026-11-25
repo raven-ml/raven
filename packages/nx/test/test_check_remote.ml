@@ -40,7 +40,6 @@ let test_copied_at_issue () =
   raises Failed (fun () -> Nx.sync failing)
 
 let () =
-  Watchdog.start ();
   exit
     (run "nx check on another machine"
        [
