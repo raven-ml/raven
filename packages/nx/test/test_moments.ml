@@ -3,18 +3,21 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Moments over ranges: each range's mean and variance against the exact
-   ones (golden/moments_ranges.golden, written by gen/moments_ranges.py),
-   within the bound nx.mli states, and the laws of its bits: a function of
-   the range's bounds and rows alone, of no thread count, of each column
-   alone, and for a narrow float the carrier's rounded once. *)
+(* Moments over ranges: each range's mean and variance against the exact ones
+   (golden/moments_ranges.golden, written by gen/moments_ranges.py), within the
+   bound nx.mli states, and the laws of its bits: a function of the range's
+   bounds and rows alone, of no thread count, of each column alone, and for a
+   narrow float the carrier's rounded once. *)
 
 open Windtrap
 module D = Nx.Dtype
 
 let golden = "golden/moments_ranges.golden"
 let invalid ~by f = raises_match (Exn.invalid_arg ~sub:(by ^ ": ")) f
-let bounds a = Nx.create Nx.int64 [| Array.length a |] (Array.map Int64.of_int a)
+
+let bounds a =
+  Nx.create Nx.int64 [| Array.length a |] (Array.map Int64.of_int a)
+
 let clip n v = max 0 (min n v)
 
 (* The golden *)
@@ -85,11 +88,10 @@ let depth k =
     let rec bits v = if v = 0 then 0 else 1 + bits (v lsr 1) in
     1 + bits (k - 2)
 
-(* Whether [y], a result stored in [dt], is within [tol] of the exact [z],
-   given rounded to float64: the carrier's bound, then one rounding, the
-   result's to a narrower [dt] or the reference's to float64, a subnormal's
-   included. Where [z] and its bound reach past [dt]'s range, the stored
-   extreme. *)
+(* Whether [y], a result stored in [dt], is within [tol] of the exact [z], given
+   rounded to float64: the carrier's bound, then one rounding, the result's to a
+   narrower [dt] or the reference's to float64, a subnormal's included. Where
+   [z] and its bound reach past [dt]'s range, the stored extreme. *)
 let within (type s) (dt : (float, s) D.t) ~p ~emin ~emax z tol y =
   let u = Float.ldexp 1. (-p) and tiny = Float.ldexp 1. (emin - p + 1) in
   let top = D.max_value dt in
@@ -99,8 +101,8 @@ let within (type s) (dt : (float, s) D.t) ~p ~emin ~emax z tol y =
   in
   let tol = tol +. (u *. (Float.abs z +. tol)) +. tiny in
   Float.abs (y -. z) <= tol
-  || (Float.abs z +. tol >= top
-      && same y (stored dt (Float.copy_sign Float.infinity z)))
+  || Float.abs z +. tol >= top
+     && same y (stored dt (Float.copy_sign Float.infinity z))
 
 let check_case c =
   let (F (dt, p, emin, emax, u)) = format c.dtype in
@@ -169,9 +171,9 @@ let local =
     let+ seed = int_range 0 1000 in
     (n, lo, hi, fill, extra, seed))
 
-(* A range's bits are its clipped bounds' and its rows': the same with the
-   rows outside it filled with [fill], rows appended past [x], and the other
-   ranges dropped. *)
+(* A range's bits are its clipped bounds' and its rows': the same with the rows
+   outside it filled with [fill], rows appended past [x], and the other ranges
+   dropped. *)
 let law_local (n, lo, hi, fill, extra, seed) =
   let x = level n seed in
   let one i =
@@ -192,7 +194,10 @@ let law_local (n, lo, hi, fill, extra, seed) =
   let m = bits m and v = bits v in
   Array.iteri
     (fun i _ ->
-      equal (pair (array int64) (array int64)) ([| m.(i) |], [| v.(i) |]) (one i))
+      equal
+        (pair (array int64) (array int64))
+        ([| m.(i) |], [| v.(i) |])
+        (one i))
     lo
 
 (* One thread or many, the bits are one. *)
@@ -209,72 +214,151 @@ let test_threads () =
   let one = Nx_cpu.one_thread run in
   equal (triple (array int64) (array int64) (array int64)) many one
 
-(* Columns are independent: a row of three columns is three ranges' worth
-   of each column's. *)
+(* Columns are independent: a row of three columns is three ranges' worth of
+   each column's. *)
 let test_columns () =
   let n = 37 in
   let x =
     Nx.reshape [| n; 3 |]
-      (Nx.add_s (Nx.mul_s (Nx.Rng.uniform ~key:(Nx.Rng.key 5) Nx.float64 [| 3 * n |]) 10.) 1e5)
+      (Nx.add_s
+         (Nx.mul_s
+            (Nx.Rng.uniform ~key:(Nx.Rng.key 5) Nx.float64 [| 3 * n |])
+            10.)
+         1e5)
   in
-  let lo = bounds [| -3; 0; 5; 30; 36; 12 |] and hi = bounds [| 4; 37; 5; 40; 37; 30 |] in
+  let lo = bounds [| -3; 0; 5; 30; 36; 12 |]
+  and hi = bounds [| 4; 37; 5; 40; 37; 30 |] in
   let m, v = Nx.moments_ranges ~lo ~hi x in
   for j = 0 to 2 do
     let col = Nx.slice [ Nx.A; Nx.I j ] x in
     let mj, vj = Nx.moments_ranges ~lo ~hi col in
-    equal ~msg:"mean" (array int64) (bits mj) (bits (Nx.slice [ Nx.A; Nx.I j ] m));
-    equal ~msg:"variance" (array int64) (bits vj) (bits (Nx.slice [ Nx.A; Nx.I j ] v))
+    equal ~msg:"mean" (array int64) (bits mj)
+      (bits (Nx.slice [ Nx.A; Nx.I j ] m));
+    equal ~msg:"variance" (array int64) (bits vj)
+      (bits (Nx.slice [ Nx.A; Nx.I j ] v))
   done
 
-(* A narrow float computes in float32 and rounds once. *)
-let test_carrier () =
-  let n = 70 in
-  let lo = bounds [| 0; -2; 10; 60; 69; 30; 5 |]
-  and hi = bounds [| 70; 3; 40; 80; 70; 30; 64 |] in
-  let check (type s) (dt : (float, s) D.t) =
-    let x =
-      Nx.cast dt
-        (Nx.add_s (Nx.mul_s (Nx.Rng.uniform ~key:(Nx.Rng.key 9) Nx.float64 [| n |]) 6.) 1.)
-    in
-    let m, v = Nx.moments_ranges ~lo ~hi x in
-    let m32, v32 = Nx.moments_ranges ~lo ~hi (Nx.cast Nx.float32 x) in
-    let b t = Nx.to_array (Nx.cast Nx.float64 t) in
-    equal ~msg:(D.name dt) (pair (array float_exact) (array float_exact))
-      (b (Nx.cast dt m32), b (Nx.cast dt v32))
-      (b m, b v)
+(* A narrow float computes in float32 and rounds once: over every range kind, a
+   range of no row (NaN, [+0.] in float4_e2m1fn) among them. *)
+let narrow_floats =
+  D.
+    [
+      Any Float16;
+      Any Bfloat16;
+      Any Float8_e4m3fn;
+      Any Float8_e5m2;
+      Any Float4_e2m1fn;
+    ]
+
+let check_carrier (D.Any dt) =
+  match D.kind dt with
+  | D.Float ->
+      let n = 70 in
+      let lo = bounds [| 0; -2; 10; 60; 69; 30; 5 |]
+      and hi = bounds [| 70; 3; 40; 80; 70; 30; 64 |] in
+      let x =
+        Nx.cast dt
+          (Nx.add_s
+             (Nx.mul_s
+                (Nx.Rng.uniform ~key:(Nx.Rng.key 9) Nx.float64 [| n |])
+                6.)
+             1.)
+      in
+      let m, v = Nx.moments_ranges ~lo ~hi x in
+      let m32, v32 = Nx.moments_ranges ~lo ~hi (Nx.cast Nx.float32 x) in
+      let b t = Nx.to_array (Nx.cast Nx.float64 t) in
+      equal
+        (pair (array float_exact) (array float_exact))
+        (b (Nx.cast dt m32), b (Nx.cast dt v32))
+        (b m, b v)
+  | _ -> ()
+
+(* Values the doc states: bounds clipped to the rows, a range of no row NaN for
+   both, one row exact, a [-0.] row's mean [+0.]. *)
+(* No rows of two columns: each range's row is two NaNs. *)
+let test_no_rows () =
+  let m, v =
+    Nx.moments_ranges
+      ~lo:(bounds [| 0; -1 |])
+      ~hi:(bounds [| 1; 3 |])
+      (Nx.zeros Nx.float32 [| 0; 2 |])
   in
-  check D.Float16;
-  check D.Bfloat16;
-  check D.Float8_e4m3fn;
-  check D.Float8_e5m2;
-  check D.Float4_e2m1fn
+  equal ~msg:"shape" (array int) [| 2; 2 |] (Nx.shape m);
+  equal ~msg:"mean" (array float_exact) (Array.make 4 Float.nan) (Nx.to_array m);
+  equal ~msg:"variance" (array float_exact) (Array.make 4 Float.nan)
+    (Nx.to_array v)
 
-(* Bounds past both ends, no row and one. *)
-let test_small () =
-  let x = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  let lo = bounds [| -2; 0; 3; 4 |] and hi = bounds [| 1; 3; 3; 9 |] in
-  let m, v = Nx.moments_ranges ~lo ~hi x in
-  equal (array float_exact) [| 1.; 2.; Float.nan; 5. |] (Nx.to_array m);
-  equal (array float_exact) [| 0.; 2. /. 3.; Float.nan; 0. |] (Nx.to_array v);
-  let empty = Nx.zeros Nx.float32 [| 0; 2 |] in
-  let m, v = Nx.moments_ranges ~lo:(bounds [| 0; -1 |]) ~hi:(bounds [| 1; 3 |]) empty in
-  equal (array int) [| 2; 2 |] (Nx.shape m);
-  equal (array float_exact) (Array.make 4 Float.nan) (Nx.to_array m);
-  equal (array float_exact) (Array.make 4 Float.nan) (Nx.to_array v);
-  let one = Nx.create Nx.float64 [| 1 |] [| -0. |] in
-  let m, v = Nx.moments_ranges ~lo:(bounds [| 0 |]) ~hi:(bounds [| 1 |]) one in
-  equal (array float_exact) [| 0. |] (Nx.to_array m);
-  equal (array float_exact) [| 0. |] (Nx.to_array v)
+let check_values (x, lo, hi, mean, var) =
+  let m, v = Nx.moments_ranges ~lo:(bounds lo) ~hi:(bounds hi) x in
+  equal ~msg:"mean" (array float_exact) mean (Nx.to_array m);
+  equal ~msg:"variance" (array float_exact) var (Nx.to_array v)
 
-let test_errors () =
-  let by = "Nx.moments_ranges" in
+let values =
+  let five = Nx.create Nx.float64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
+  [
+    ( "bounds past both ends are clipped",
+      (five, [| -2; 4 |], [| 1; 9 |], [| 1.; 5. |], [| 0.; 0. |]) );
+    ("three rows", (five, [| 0 |], [| 3 |], [| 2. |], [| 2. /. 3. |]));
+    ( "a range of no row is NaN",
+      (five, [| 3; 4 |], [| 3; 1 |], [| nan; nan |], [| nan; nan |]) );
+    ( "ranges over no rows are NaN",
+      ( Nx.zeros Nx.float64 [| 0 |],
+        [| 0; -1 |],
+        [| 1; 3 |],
+        [| nan; nan |],
+        [| nan; nan |] ) );
+    ( "a -0. row's mean is +0.",
+      ( Nx.create Nx.float64 [| 1 |] [| -0. |],
+        [| 0 |],
+        [| 1 |],
+        [| 0. |],
+        [| 0. |] ) );
+  ]
+
+(* Along the first axis [x] is read whole on each device; along another it folds
+   where it lies. *)
+module Cpu3 = (val Nx.devices (List.map Nx_support.memory [ 0; 1; 3 ]))
+
+let test_cut () =
+  let x = level 36 4 |> Nx.reshape [| 9; 4 |] in
+  let lo = bounds [| 0; 2; 7 |] and hi = bounds [| 9; 5; 7 |] in
+  let host = Nx.moments_ranges ~lo ~hi x in
+  let on b = Nx.place Cpu3.on b in
+  (* The refusal names the [Nx.place] that reads the rows whole. *)
+  raises_match
+    (fun e ->
+      Exn.invalid_arg ~sub:"Nx.moments_ranges: " e
+      && Exn.invalid_arg ~sub:"Nx.place (" e)
+    (fun () ->
+      Nx.moments_ranges ~lo:(on lo) ~hi:(on hi)
+        (Nx.place (Cpu3.split ~axis:0) x));
+  let m, v =
+    Nx.moments_ranges ~lo:(on lo) ~hi:(on hi) (Nx.place (Cpu3.split ~axis:1) x)
+  in
+  equal ~msg:"placement" string
+    (Format.asprintf "%a" Nx.Placement.pp (Cpu3.split ~axis:1))
+    (Format.asprintf "%a" Nx.Placement.pp (Nx.placement m));
+  let bits t = bits (Nx.place Nx.Host.on t) in
+  equal ~msg:"mean" (array int64) (bits (fst host)) (bits m);
+  equal ~msg:"variance" (array int64) (bits (snd host)) (bits v)
+
+let raise_rows =
   let b = Nx.zeros Nx.int64 [| 2 |] in
-  invalid ~by (fun () -> Nx.moments_ranges ~lo:b ~hi:b (Nx.zeros Nx.float32 [||]));
-  invalid ~by (fun () ->
-      Nx.moments_ranges ~lo:b ~hi:(Nx.zeros Nx.int64 [| 3 |]) (Nx.zeros Nx.float32 [| 2 |]));
-  invalid ~by (fun () ->
-      let b = Nx.zeros Nx.int64 [| 2; 1 |] in
-      Nx.moments_ranges ~lo:b ~hi:b (Nx.zeros Nx.float32 [| 2 |]))
+  [
+    ( "a 0-d x",
+      fun () ->
+        ignore (Nx.moments_ranges ~lo:b ~hi:b (Nx.zeros Nx.float32 [||])) );
+    ( "bounds of two lengths",
+      fun () ->
+        ignore
+          (Nx.moments_ranges ~lo:b
+             ~hi:(Nx.zeros Nx.int64 [| 3 |])
+             (Nx.zeros Nx.float32 [| 2 |])) );
+    ( "bounds of rank 2",
+      fun () ->
+        let b = Nx.zeros Nx.int64 [| 2; 1 |] in
+        ignore (Nx.moments_ranges ~lo:b ~hi:b (Nx.zeros Nx.float32 [| 2 |])) );
+  ]
 
 let () =
   exit
@@ -286,7 +370,18 @@ let () =
          prop "a range's bits read its rows and bounds alone" local law_local;
          test "one thread or many give one result" test_threads;
          test "each column is its own" test_columns;
-         test "narrow floats compute in float32 and round once" test_carrier;
-         test "bounds past both ends, no row and one" test_small;
-         test "misuse raises" test_errors;
+         cases "a narrow float computes in float32 and rounds once"
+           ~id:(fun (D.Any dt) -> D.name dt)
+           narrow_floats check_carrier;
+         cases "ranges have the values the doc states" ~id:fst values
+           (fun (_, c) -> check_values c);
+         test "ranges over no rows of columns are a NaN row each" test_no_rows;
+         test
+           "cut along its first axis it raises; cut along another it has the \
+            host's bits, placed as x"
+           test_cut;
+         cases
+           "raises naming Nx.moments_ranges for a 0-d x and bounds not 1-d of \
+            one length"
+           ~id:fst raise_rows (fun (_, f) -> invalid ~by:"Nx.moments_ranges" f);
        ])
