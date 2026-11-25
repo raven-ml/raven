@@ -239,6 +239,43 @@ let kernel_args =
             (Realize.get_call_kernel_args (Ops.call prg [ a ]) prg));
     ]
 
+(* A slot past a call's arguments, and a negative one, as a nameless scalar
+   parameter. *)
+let nameless slot = Shape.param ~addrspace:Alu slot Int32
+
+let values =
+  group "call_values"
+    [
+      test "replaces a nameless parameter by the call's argument in its slot"
+        (fun () ->
+          let trip = Ops.O.((loop * int 2) + int 1) in
+          let call = Ops.call (program plus_one) [ storage 1; trip ] in
+          equal uop
+            Ops.O.(trip * int 3)
+            (Realize.call_values call Ops.O.(nameless 1 * int 3)));
+      test "replaces a variable by the variable the call binds to its name"
+        (fun () ->
+          let call = Ops.call (program (scaled_kernel [ n ])) [ bound n 4 ] in
+          equal uop
+            Ops.O.(bound n 4 + int 1)
+            (Realize.call_values call Ops.O.(n + int 1)));
+      test "replaces a variable the call leaves free by the run's, at slot -1"
+        (fun () ->
+          let call = Ops.call (program (scaled_kernel [ n ])) [ storage 1 ] in
+          match Ops.arg (Realize.call_values call n) with
+          | Param p ->
+              equal (pair (option string) int) (Some "n", -1) (p.name, p.slot)
+          | _ -> fail "n is replaced by a parameter");
+      test "raises Failure for a nameless slot past the call's arguments"
+        (fun () ->
+          let call = Ops.call (program plus_one) [ storage 1 ] in
+          raises_match (Exn.failure ?sub:None) (fun () ->
+              Realize.call_values call (nameless 3)));
+      test "raises Invalid_argument for a negative nameless slot" (fun () ->
+          let call = Ops.call (program plus_one) [ storage 1 ] in
+          rejects (fun () -> Realize.call_values call (nameless (-2))));
+    ]
+
 let outs_ins =
   group "get_call_outs_ins"
     [
@@ -408,7 +445,7 @@ let compiling =
                (Realize.lower_and_compile ~targets (doubled_on "CPU"))));
       test "leaves a linear of no kernel as it is" (fun () ->
           let l = linear [ Shape.store_call (storage 4) (storage 4) ] in
-          is_true (Realize.lower_and_compile ~targets l == l));
+          equal uop l (Realize.lower_and_compile ~targets l));
       test "makes each call of a kernel a call of its program" (fun () ->
           let l = linear [ Ops.call plus_one [ storage 4; storage 4 ] ] in
           equal
@@ -517,7 +554,10 @@ let compiling =
 (* Beam search *)
 
 (* A search that records the width each kernel asks for and leaves the kernel as
-   it is, with the most searches it saw run at once. *)
+   it is, with the most searches it saw run at once. Each search lasts 10 ms so
+   that searches run in parallel would overlap. No event can hold them instead:
+   a search that waited for another would deadlock the serial call it checks.
+   The sleep can only miss an overlap, never fail a serial call. *)
 let recording_search () =
   let widths = ref [] and live = Atomic.make 0 and peak = Atomic.make 0 in
   let lock = Mutex.create () in
@@ -638,6 +678,19 @@ let parallel =
                (calls_of (Realize.lower_and_compile ~targets (linear calls)))));
     ]
 
+let collecting =
+  group "collecting"
+    [
+      test "is true on the domain running kernels' function alone" (fun () ->
+          let (here, elsewhere), _ =
+            Realize.kernels (fun () ->
+                ( Realize.collecting (),
+                  Domain.join (Domain.spawn Realize.collecting) ))
+          in
+          equal (triple bool bool bool) (false, true, false)
+            (Realize.collecting (), here, elsewhere));
+    ]
+
 let () =
   Disk_cache.play parts;
   exit
@@ -646,6 +699,7 @@ let () =
          recorded_calls;
          arguments;
          kernel_args;
+         values;
          outs_ins;
          names;
          costs;
@@ -653,4 +707,5 @@ let () =
          compiling;
          beam;
          parallel;
+         collecting;
        ])

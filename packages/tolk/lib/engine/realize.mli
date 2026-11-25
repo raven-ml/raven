@@ -60,8 +60,9 @@ val get_call_name :
 
 val estimate_uop : Ops.t -> Ops.estimates
 (** [estimate_uop call] is the cost of [call], seen through its {!Op.After}s: a
-    program's kernel estimates and, for a copy, its bytes as both memory
-    touched and bytes loaded and stored. Any other call costs nothing. *)
+    program's kernel estimates, nothing where its kernel holds none, and, for
+    a copy, its bytes as both memory touched and bytes loaded and stored. Any
+    other call costs nothing. *)
 
 (** {1:compiling Compiling} *)
 
