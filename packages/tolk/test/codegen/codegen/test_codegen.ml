@@ -5700,8 +5700,9 @@ let compiled_on d (r : Renderer.t) k =
 
 let on_host k = (false, None, compiled_on Rig.host (Lazy.force host) k)
 
-(* [k] compiled for arm64 at [arch] and run on this machine's host, which
-   runs it where the host is arm64 with each feature [arch] names. *)
+(* [k] compiled for arm64 at [arch] and run on this machine's host, which runs
+   it where the host is arm64 with each feature [arch] names and compiles
+   ([Clang.here]). *)
 let on_arm64 arch k =
   let features = List.tl (String.split_on_char '+' (Rig.arch Rig.host)) in
   if Rig.instruction_set Rig.host <> "arm64" then
@@ -5709,6 +5710,7 @@ let on_arm64 arch k =
   (match String.split_on_char ',' arch with
   | _ :: _ :: needs when List.for_all (fun f -> List.mem f features) needs -> ()
   | _ -> skip ~reason:("the host does not run " ^ arch) ());
+  Clang.here arch;
   let r = Cstyle.clang (target "CPU" "CLANG" arch) in
   (false, None, compiled_on Rig.host r k)
 
