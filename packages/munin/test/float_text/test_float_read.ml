@@ -196,9 +196,7 @@ let test_infinity =
       ("-688706.565804865188962e303", Float.neg_infinity);
     ]
     (fun (text, expected) ->
-      equal ~msg:"read" (option float_exact) (Some expected) (R.read text);
-      equal ~msg:"of_string" (option float_exact) (Some expected)
-        (R.of_string text))
+      equal float_exact expected (require_some (R.of_string text)))
 
 let test_long_exponent =
   test "an exponent of seven digits offset by as many digits reads exactly"
@@ -265,7 +263,7 @@ let ends =
   ]
 
 let test_ends =
-  cases "number_end is the index after the longest number"
+  cases "is the index after the longest number"
     ~id:(fun (s, i, stop, _) -> Printf.sprintf "%S %d %d" s i stop)
     ends
     (fun (s, i, stop, expected) -> equal int expected (R.number_end s i stop))
@@ -286,7 +284,7 @@ let test_substring =
         (R.of_substring s (String.length before) (String.length text)))
 
 let test_substring_bounds =
-  cases "of_substring refuses what names no substring"
+  cases "refuses a position and length that name no substring"
     ~id:(fun (pos, len) -> Printf.sprintf "pos %d len %d of \"123\"" pos len)
     [ (-1, 1); (0, -1); (2, 2); (4, 0) ]
     (fun (pos, len) ->

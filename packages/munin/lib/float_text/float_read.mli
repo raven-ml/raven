@@ -31,10 +31,3 @@ val of_substring : string -> int -> int -> float option
 
     Raises [Invalid_argument] if [pos] and [len] do not name a substring of [s].
 *)
-
-(**/**)
-
-val read : string -> float option
-(** [read s] is [of_string s] without the reading of short decimals by sums of
-    floats, which relies on [Float.fma]: tests check that reading against this
-    one. *)
