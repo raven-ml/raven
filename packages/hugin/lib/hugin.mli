@@ -965,7 +965,8 @@ module View : sig
       zoom whose node lies in another scope with a scale of its name and kind
       applies there; one whose node, name or kind is gone, whose node no scope
       of its name holds, or whose domain the scale cannot take, is ignored with
-      a warning, and so are the zooms of a scale that several set.
+      a warning about its node [at], and so are the zooms of a scale that
+      several set.
 
       Raises [Invalid_argument] if [s] is unnamed or categorical. *)
 
