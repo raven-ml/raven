@@ -569,16 +569,15 @@ let check_chunks p length =
         Fail.failf "%s: %s %d holds %d bytes, too few for its %d"
           (field (counts_tag p)) (unit p) k count need)
     p.offsets;
-  (* Each count is at most the file's length, so the sum stays below twice
-     it. *)
+  (* The total stays at most [length], so [length - total] cannot wrap where
+     [total + count] could, for a partial file's length. *)
   ignore
     (Array.fold_left
        (fun total count ->
-         let total = total + count in
-         if total > length then
+         if count > length - total then
            Fail.failf "%s: the %ss take more than the file's %d bytes"
              (field (counts_tag p)) (unit p) length;
-         total)
+         total + count)
        0 p.counts
       : int);
 

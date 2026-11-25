@@ -724,6 +724,30 @@ let refusals =
             else Printf.sprintf "Compression (259) %d" codec
           in
           fails ~path ~naming (fun () -> load_one path));
+      test
+        "strips whose counts sum past the largest integer take more bytes than \
+         a partial file of any length" (fun () ->
+          (* Two strips of 2^61 bytes in a partial file of [max_int] bytes:
+             their sum wraps past [max_int]. *)
+          let x = Nx.P (Nx.zeros Nx.uint8 [| 2; 1; 1 |]) in
+          let l =
+            { plain with form = { f with bigtiff = true }; chunks = Strips 1 }
+          in
+          let count = 1 lsl 61 in
+          let fields _ =
+            by_tag (fields l (raster x) ~at:[ 16; 16 ] ~counts:[ count; count ])
+          in
+          let whole = build l.form [ ([], fields) ] in
+          let p =
+            Nx_io.Partial.add
+              (Nx_io.Partial.v ~name:"part" ~length:max_int)
+              ~at:0 whole
+          in
+          match Nx_io.decode_tiff p with
+          | Ok [ d ] ->
+              fails ~path:"part" ~naming:"StripByteCounts (279)" (fun () ->
+                  T.window d ~row:0 ~col:0 ~rows:1 ~cols:1)
+          | _ -> failf "not one IFD");
       test "a Deflate strip that decodes to fewer bytes than its rows"
         (fun () ->
           let z n = Lz.Zlib.encode_string (String.make n 'a') in
