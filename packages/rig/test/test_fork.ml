@@ -23,10 +23,10 @@ let status = function
   | Unix.WSIGNALED n -> "killed by " ^ Sys.signal_to_string n
   | Unix.WSTOPPED n -> "stopped by " ^ Sys.signal_to_string n
 
-(* After a fork that returned [pid], runs [child] in the child and is what
-   it returned, with the child's status: the child writes its answer to the
-   pipe [(r, w)] made before the fork and leaves without running this
-   process's exit. *)
+(* After a fork that returned [pid], runs [child] in the child and is what it
+   returned, with the child's status: the child writes its answer to the pipe
+   [(r, w)] made before the fork and leaves without running this process's exit.
+   A wait for the answer that the test's timeout ends kills the child. *)
 let answer (r, w) pid child =
   match pid with
   | 0 ->
@@ -39,8 +39,9 @@ let answer (r, w) pid child =
   | pid ->
       Unix.close w;
       let ic = Unix.in_channel_of_descr r in
+      Fun.protect ~finally:(fun () -> close_in ic) @@ fun () ->
+      Support.reaping pid @@ fun () ->
       let lines = In_channel.input_lines ic in
-      close_in ic;
       let _, status = Unix.waitpid [] pid in
       (lines, status)
 
@@ -312,8 +313,8 @@ let submit_part s = Rig.submit s ~buffers:[||] ~args:(Support.zeros 1)
 (* A thread of the parent blocked in a hand-over at the fork, holding its
    device's turn and its submission, with a profile being taken, leaves the
    child a working rig: devices the child opens submit, and the parent's are
-   lost at once. A child that waits for what the thread holds is killed by its
-   alarm. *)
+   lost at once. A child that waits for what the thread holds hangs, and the
+   test times out. *)
 let test_locks () =
   if Sys.win32 then skip ~reason:"Windows has no fork" ();
   let io = open_io "fork:io-locked" in
@@ -328,8 +329,6 @@ let test_locks () =
   Support.await "a blocked submit" (fun () -> P.blocked p = 1);
   let lines, ended =
     in_child (fun () ->
-        Sys.set_signal Sys.sigalrm Sys.Signal_default;
-        ignore (Unix.alarm 5);
         let made = B.length (store io 8) in
         let e, _ = P.open_ ~capacity:1 ~may_block:true "fork:opened-in-child" in
         let v = Rig.Point.value (submit_part (one_part e)) in
@@ -405,8 +404,6 @@ let test_staging () =
   Support.await "a copy holding a half" (fun () -> P.sleepers p = 1);
   let lines, ended =
     in_child (fun () ->
-        Sys.set_signal Sys.sigalrm Sys.Signal_default;
-        ignore (Unix.alarm 5);
         let e, _ = P.open_ ~host_visible:false "fork:staging-child" in
         let on_e = B.create e 64 and back = B.create Rig.host 64 in
         B.copy ~src:(filled 'c') ~dst:on_e;

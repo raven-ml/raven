@@ -543,6 +543,13 @@ val needs_fork : unit -> unit
     child can inherit one that another thread held, and hang. A test calls it
     before it forks. *)
 
+val reaping : int -> (unit -> 'a) -> 'a
+(** [reaping pid f] is [f ()]. When an exception leaves [f], a failure or the
+    test's timeout included, it kills the child process [pid] with [SIGKILL] and
+    waits for it, unless [pid] has ended or was reaped, then raises the
+    exception again with its backtrace. A test that ends early so leaves no
+    child. *)
+
 val needs_loopback : unit -> unit
 (** [needs_loopback ()] skips the running test where the system refuses this
     process a TCP socket bound to [127.0.0.1], as opam's sandbox on macOS does:

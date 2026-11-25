@@ -34,16 +34,6 @@ module P = Rig_support.Polled
 module Sub = Rig.Submission
 module S = Rig_support
 
-(* The limit of each test, WINDTRAP_TIMEOUT's, and of each child within 1/6 of
-   it: a test run with a larger limit, as under a sanitizer, gives each child
-   more time. *)
-let timeout =
-  match Option.map float_of_string_opt (Sys.getenv_opt "WINDTRAP_TIMEOUT") with
-  | Some (Some t) -> t
-  | Some None | None -> 60.
-
-let child_limit = timeout /. 6.
-
 (* What an interrupted allocation raises. *)
 exception Injected
 
@@ -295,11 +285,11 @@ let polling n f =
 (* [in_child what f] is [f ()], run in a forked child, which starts from this
    process's state: what one attempt leaves, such as memory an interrupt leaks,
    never changes the next one's allocations. It fails with the child's
-   exception, and if the child has not answered within [child_limit] s: a
-   lock that an exception left held makes the next call that takes it wait
-   for good, in C, where no timeout interrupts it. The child's answer, or
-   the end of its pipe as it exits, wakes the wait. A failure adds the
-   child's last [note] to [what]. *)
+   exception. A lock that an exception left held makes the next call that takes
+   it wait for good, in C: the child never answers, and the test times out. The
+   child's answer, or the end of its pipe as it exits, wakes the wait. A failure
+   adds the child's last [note] to [what]. A wait that the test's timeout ends
+   kills the child and prints [what] with its last note. *)
 let in_child what (f : unit -> 'a) : 'a =
   let r, w = Unix.pipe () and noted, noting = Unix.pipe () in
   match Unix.fork () with
@@ -324,24 +314,16 @@ let in_child what (f : unit -> 'a) : 'a =
         close_in ic;
         match List.rev lines with last :: _ -> what ^ last | [] -> what
       in
-      let until = Unix.gettimeofday () +. child_limit in
-      let rec ready () =
-        let left = until -. Unix.gettimeofday () in
-        left > 0.
-        &&
-        match Unix.select [ r ] [] [] left with
-        | [], _, _ -> ready ()
-        | _ -> true
-        | exception Unix.Unix_error (EINTR, _, _) -> ready ()
-      in
-      if not (ready ()) then begin
-        Unix.kill pid Sys.sigkill;
-        ignore (Unix.waitpid [] pid);
-        Unix.close r;
-        failf "no return from rig%s after %.0f s" (where ()) child_limit
-      end;
       let ic = Unix.in_channel_of_descr r in
-      let answer = In_channel.input_all ic in
+      let answer =
+        match Rig_support.reaping pid (fun () -> In_channel.input_all ic) with
+        | answer -> answer
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            close_in_noerr ic;
+            prerr_endline ("no return from rig" ^ where ());
+            Printexc.raise_with_backtrace e bt
+      in
       close_in ic;
       let _, status = Unix.waitpid [] pid in
       match (answer, status) with

@@ -942,6 +942,32 @@ let needs_fork () =
     Windtrap.skip
       ~reason:"GCC's AddressSanitizer holds no allocator lock across fork" ()
 
+(* Kills the child [pid] and waits for it, unless it has ended. A child that
+   ended is reaped here, or was already, which refuses the wait with ECHILD: its
+   pid may then name another process, which the kill must spare. *)
+let rec reap pid =
+  let rec wait () =
+    match Unix.waitpid [] pid with
+    | _ -> ()
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
+    | exception Unix.Unix_error (Unix.ECHILD, _, _) -> ()
+  in
+  match Unix.waitpid [ WNOHANG ] pid with
+  | 0, _ ->
+      Unix.kill pid Sys.sigkill;
+      wait ()
+  | _ -> ()
+  | exception Unix.Unix_error (Unix.EINTR, _, _) -> reap pid
+  | exception Unix.Unix_error (Unix.ECHILD, _, _) -> ()
+
+let reaping pid f =
+  match f () with
+  | v -> v
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      reap pid;
+      Printexc.raise_with_backtrace e bt
+
 (* The system's refusal of a socket bound to the loopback, if it refuses one:
    EPERM or EACCES, where any other answer leaves the test to fail. *)
 let refused () =
