@@ -533,9 +533,19 @@ let schedule kind dtype =
   }
 
 (* The terms [w f(x)] of one chunk's nodes, [side], [offset] and [weight] of
-   shape [[c] @ ones]. A node whose point rounds to an end of a finite range is
-   unused, its input replaced by the midpoint. *)
-let terms fn f range (side, offset, weight) =
+   shape [[c] @ ones], in the lanes [live]. A node whose point rounds to an end
+   of a finite range, or of a lane not live, is unused: its input is the
+   midpoint or the anchor and its term zero, so neither its value nor its
+   derivative reaches the sum. *)
+let terms fn f range ~live (side, offset, weight) =
+  let live = Nx.unsqueeze ~axes:[ 0 ] live in
+  let anchored anchor =
+    let x = Nx.add anchor offset in
+    let use = Nx.broadcast_to (Nx.shape x) live in
+    let x = Nx.where use x (Nx.broadcast_to (Nx.shape x) anchor) in
+    let y = call fn f x in
+    Nx.where use (Nx.mul weight y) (Nx.zeros_like y)
+  in
   match range with
   | Range.Finite (a, b) ->
       let half = Nx.div_s (Nx.sub b a) 2. in
@@ -550,11 +560,14 @@ let terms fn f range (side, offset, weight) =
         Nx.logical_or (Nx.equal_s side 0.)
           (Nx.logical_and (Nx.not_equal x a) (Nx.not_equal x b))
       in
+      let valid =
+        Nx.logical_and (Nx.broadcast_to (Nx.shape valid) live) valid
+      in
       let x = Nx.where valid x (Nx.broadcast_to (Nx.shape x) mid) in
       let y = call fn f x in
       Nx.where valid (Nx.mul (Nx.mul half weight) y) (Nx.zeros_like y)
-  | From a -> Nx.mul weight (call fn f (Nx.add a offset))
-  | Line c -> Nx.mul weight (call fn f (Nx.add c offset))
+  | From a -> anchored a
+  | Line c -> anchored c
 
 let tanh_sinh ~tol f range =
   let fn = "Jera.Quad.tanh_sinh" in
@@ -602,7 +615,8 @@ let tanh_sinh ~tol f range =
     let run = Elementwise.searching st in
     let i64 = Nx.cast Nx.int64 i in
     let t =
-      terms fn search detached (row side i64, row offset i64, row weight i64)
+      terms fn search detached ~live:run
+        (row side i64, row offset i64, row weight i64)
     in
     let sum = Nx.add sum (Nx.sum ~axes:[ 0 ] t) in
     let tail =
@@ -674,11 +688,14 @@ let tanh_sinh ~tol f range =
   in
   let ok = Nx.equal_s st (Solution.code Converged) in
   (* The answer: 2^-K times the terms of every level up to each lane's final
-     level K, tracked, chunk by chunk. *)
+     level K, tracked, chunk by chunk. A lane that did not converge takes no
+     term, so its derivative is zero. *)
   let chunk_sum total (k, (s, (u, w))) =
-    let t = terms fn f range (column s, column u, column w) in
-    let keep = Nx.less_equal (Nx.broadcast_to lanes k) final in
-    (Nx.add total (Nx.where keep (Nx.sum ~axes:[ 0 ] t) zeros), ())
+    let live =
+      Nx.logical_and ok (Nx.less_equal (Nx.broadcast_to lanes k) final)
+    in
+    let t = terms fn f range ~live (column s, column u, column w) in
+    (Nx.add total (Nx.sum ~axes:[ 0 ] t), ())
   in
   let total, () =
     Rune.scan Nx.Ptree.tensor

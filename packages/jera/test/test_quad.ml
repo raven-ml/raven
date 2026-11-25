@@ -502,6 +502,19 @@ let de_tests =
           (Oracle.tensor ~rel:1e-9 ())
           (Nx.map_item (fun a -> 2. /. (a *. a *. a)) a)
           (Rune.grad' (fun a -> Nx.sum (Solution.get (log_moment a))) a));
+    test "an element that did not converge has a zero derivative" (fun () ->
+        (* x^(p − 1) on [0, 1]: integrable for p = 1, not for p = −0.5. *)
+        let p = vec [| 1.; -0.5 |] in
+        let solve p =
+          ts
+            (fun x -> Nx.pow x (Nx.sub_s p 1.))
+            (Quad.Range.v (Nx.zeros_like p) (Nx.ones_like p))
+        in
+        equal (Oracle.tensor ())
+          (Nx.create Nx.bool [| 2 |] [| true; false |])
+          (Solution.ok (solve p));
+        let g = Rune.grad' (fun p -> Nx.sum (Solution.best (solve p))) p in
+        equal (Oracle.tensor ()) (scalar 0.) (Nx.get [ 1 ] g));
     test "a divergent integral does not converge" (fun () ->
         let s = ts Nx.recip (Quad.Range.v (vec [| 0. |]) (vec [| 1. |])) in
         equal (Oracle.tensor ()) (Nx.zeros Nx.bool [| 1 |]) (Solution.ok s));

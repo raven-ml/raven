@@ -1281,6 +1281,11 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Quad.tanh_sinh` gives an element that did not converge a zero derivative,
+  as `jera.mli` states, where it could be NaN: its answer evaluated the
+  integrand's derivative at nodes near a singular end, where it overflows, and
+  multiplied it by zero. The answer now evaluates such an element's nodes at
+  the range's midpoint or anchor, as it does nodes past a lane's final level.
 - `System.lanes` on lanes of no unknowns, a guess of shape `[l; 0]`,
   converges; its answer raised `Nx.stack`'s error.
 - `Solution.evaluations` of `Quad.adaptive`, `Quad.tanh_sinh`,
