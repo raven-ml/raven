@@ -54,8 +54,8 @@ val silu : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 
 val softplus : (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [softplus x] is [log(1 + exp(x))], a smooth approximation of {!relu}:
-    {!Nx.softplus}, which does not overflow for large [x]. Its derivative is
-    the logistic function [1 / (1 + exp (-x))], so [1/2] at [0.] and [-0.]. *)
+    {!Nx.softplus}, which does not overflow for large [x]. Its derivative is the
+    logistic function [1 / (1 + exp (-x))], so [1/2] at [0.] and [-0.]. *)
 
 (** {1:sampling Sampling masks}
 
