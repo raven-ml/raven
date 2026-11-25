@@ -3,14 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx on a set whose kernels are nx.cuda's: Nx's contractions, reductions
-   and scans of values placed on CUDA's GPU 0 compute there. A matmul or a
-   sum of small integers, which every association computes exactly, gives
-   the host's values; a float32 sum along rows, NaNs and infinities among
-   its terms, nx.cpu's bits; and a float32 scan along rows the same bits
-   each run, within its bound. Shapes of zero, one and many elements along
-   each axis, rows on either side of a block of 1024 terms and of a chunk
-   of 4096. Every test skips where CUDA opens no GPU. *)
+(* nx on a set whose kernels are nx.cuda's: Nx's contractions, reductions and
+   scans of values placed on CUDA's GPU 0 compute there. A matmul or a sum of
+   small integers, which every association computes exactly, gives the host's
+   values; a float32 sum along rows, NaNs and infinities among its terms,
+   nx.cpu's bits; and a float32 cumsum along rows, as nx.mli states it on one
+   device, the prefix of its rows' cumsum for a prefix of them, bit for bit, and
+   within its bound. Shapes of zero, one and many elements along each axis, rows
+   on either side of a block of 1024 terms and of a chunk of 4096. Every test
+   skips where CUDA opens no GPU. *)
 
 open Windtrap
 module A = Nx_array
@@ -176,30 +177,74 @@ let law_sum_bits ((rows, r, specials, _) as c) =
     (bits (read (Nx.sum ~axes:[ 1 ] x)))
     (bits (read (Nx.sum ~axes:[ 1 ] (Nx.place G.on x))))
 
-(* nx_cuda.mli: a float32 scan along rows associates in nx.cuda's own
-   order, the same bits each run, each result within n u of the sum of its
-   terms' magnitudes of nx.cpu's, which keeps the same bound, n a row's
-   terms and u float32's unit roundoff. Its terms are finite. *)
+(* A row case and a prefix of its rows to scan alone: anywhere along the row, or
+   one of its last three terms' ends one time in two, so that a prefix past a
+   chunk of 4096 is drawn about one case in five. *)
+let prefixes =
+  let open Gen in
+  let* ((_, r, _, _) as c) = rows in
+  let+ p =
+    frequency
+      [
+        (1, int_range 0 r); (1, map (fun j -> Int.max 0 (r - j)) (int_range 0 2));
+      ]
+  in
+  (c, p)
+
+let pp_prefix ppf (c, p) = Format.fprintf ppf "%a, its first %d" pp_rows c p
+
+(* The first [p] terms of each of [c]'s rows. *)
+let first p ((rows, r, _, _) as c) =
+  let xs = terms c in
+  host D.Float32 [| rows; p |]
+    (Array.init (rows * p) (fun k -> xs.((k / p * r) + (k mod p))))
+
+(* nx.mli's cumsum: on one device, the cumsum of a prefix of the axis is the
+   prefix of the cumsum, bit for bit, NaNs as a class. *)
+let law_prefix (((rows, r, _, _) as c), p) =
+  cover "rows past a chunk" (r > 4096);
+  cover "a prefix past a chunk" (p > 4096);
+  let module G = (val Lazy.force set) in
+  let whole =
+    read
+      (Nx.cumsum ~axis:1
+         (Nx.place G.on (host D.Float32 [| rows; r |] (terms c))))
+  in
+  let got = read (Nx.cumsum ~axis:1 (Nx.place G.on (first p c))) in
+  let want = Array.init (rows * p) (fun k -> whole.((k / p * r) + (k mod p))) in
+  equal (array int32) (bits want) (bits got)
+
+(* nx.mli's cumsum: a float result is within [γ(n - 1) Σ|x|] of the exact sum of
+   its [n] terms. The float64 sum of float32 terms in [-1, 1) errs by at most [n
+   2^-53 Σ|x|], far below the bound, which it is held to. *)
 let law_scan (rows, r, _, seed) =
   cover "rows past a chunk" (r > 4096);
   let xs = terms (rows, r, false, seed) in
-  let x = host D.Float32 [| rows; r |] xs in
   let module G = (val Lazy.force set) in
-  let gx = Nx.place G.on x in
-  let got = read (Nx.cumsum ~axis:1 gx) in
-  equal (array int32) (bits got) (bits (read (Nx.cumsum ~axis:1 gx)));
-  let want = read (Nx.cumsum ~axis:1 x) in
-  let worst = ref 0. and mag = ref 0. in
+  let got =
+    read (Nx.cumsum ~axis:1 (Nx.place G.on (host D.Float32 [| rows; r |] xs)))
+  in
+  let u = ldexp 1. (-24) and w = ldexp 1. (-53) in
+  let gamma k u = Float.of_int k *. u /. (1. -. (Float.of_int k *. u)) in
+  let worst = ref 0. and sum = ref 0. and mag = ref 0. in
   Array.iteri
-    (fun i w ->
-      if i mod r = 0 then mag := 0.;
-      mag := !mag +. Float.abs xs.(i);
-      let bound = Float.of_int r *. ldexp 1. (-24) *. !mag in
-      if bound > 0. then
-        worst := Float.max !worst (Float.abs (got.(i) -. w) /. bound)
-      else equal ~msg:(Printf.sprintf "result %d" i) float_exact w got.(i))
-    want;
-  less float_exact ~than:1. !worst
+    (fun i x ->
+      let n = (i mod r) + 1 in
+      if n = 1 then begin
+        sum := 0.;
+        mag := 0.
+      end;
+      sum := !sum +. x;
+      mag := !mag +. Float.abs x;
+      (* A NaN for finite terms is an infinite error, never a pass. *)
+      let err =
+        if Float.is_nan got.(i) then Float.infinity
+        else Float.abs (got.(i) -. !sum)
+      in
+      let bound = (gamma (n - 1) u +. gamma n w) *. !mag in
+      if err > 0. then worst := Float.max !worst (err /. bound))
+    xs;
+  at_most ~msg:"the largest error over its bound" float_exact ~than:1. !worst
 
 let () =
   exit
@@ -214,9 +259,14 @@ let () =
                (Gen.with_pp pp_sum sums) law_sum;
              prop "a float32 sum along rows has nx.cpu's bits"
                (Gen.with_pp pp_rows rows) law_sum_bits;
+             prop ~count:200
+               "a float32 cumsum of a prefix of the rows is the prefix of \
+                their cumsum"
+               (Gen.with_pp pp_prefix prefixes)
+               law_prefix;
              prop
-               "a float32 scan along rows has the same bits each run, within \
-                its bound"
+               "a float32 cumsum is within γ(n - 1) Σ|x| of the exact sum of \
+                its n terms"
                (Gen.with_pp pp_rows rows) law_scan;
            ];
        ])
