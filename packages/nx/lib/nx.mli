@@ -46,7 +46,9 @@
     has at most {!Nx_array.Layout.max_rank} axes, no negative extent, and
     extents other than [0] that multiply to at most
     {!Nx_array.Layout.max_numel}. A function given or making another shape
-    raises [Invalid_argument] naming itself. *)
+    raises [Invalid_argument] naming itself. A function reads a shape its
+    caller passes as an [int array] during the call only, so a later change
+    to the array changes no value. *)
 
 type (!'v, !'s, +!'d) t
 (** The type for arrays of ['s]-format elements read as ['v], on the device set
@@ -391,6 +393,12 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     needs no element of its operands, as [matrix_power a 0] does. {!place}, a
     view and a call that gives its operand itself make none. Under a compiler
     such as [Rune.jit], the compiler receives a creation's operations.
+
+    A set's kernels may decline a case they do not compute ({!Nx_kernel}).
+    The function then raises [Invalid_argument] naming itself, the kernel
+    library, the operation as {!Prim} names it, its dtypes, the device and
+    the {!place} onto a set whose kernels compute it, and nothing computes
+    in the kernels' place.
 
     Raises [Invalid_argument] if [ds] is empty or repeats a device, or if
     [kernels] does not compute on one of [ds]. *)
@@ -826,7 +834,10 @@ val scalar_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
     it, one raises. Operations on several domains that read one handle race
     for its memory: one may take it, and each other reads the elements as
     they were or raises naming it. No operation overwrites elements another
-    call is reading: one that would computes into fresh memory. *)
+    call is reading: one that would computes into fresh memory. A call that
+    reads [x] while another domain donates it reads [x]'s elements, or
+    raises saying [x] was donated or naming the operation that took or freed
+    its memory. *)
 
 val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [donate x] ends [x] and is a handle over its memory ({!section-moving}).
@@ -1532,10 +1543,10 @@ val scatter :
     or if its operation does not take the operands' dtype: what each takes is
     stated with it. The host computes every dtype stated. Where a device's
     kernels do not compute one, as a GPU's may not compute complex numbers,
-    the function raises naming itself. The operators of these functions, such
-    as [a + b] for [add a b], are in {!Infix} ({!section-operators}), with
-    those of the comparisons, the bitwise functions, {!matmul}, {!get} and
-    {!slice}. *)
+    the function raises as a decline does ({!val-devices}). The operators of
+    these functions, such as [a + b] for [add a b], are in {!Infix}
+    ({!section-operators}), with those of the comparisons, the bitwise
+    functions, {!matmul}, {!get} and {!slice}. *)
 
 val add : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [add a b] is the elementwise sum. Every dtype but booleans. *)
@@ -2410,7 +2421,8 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Each raises [Invalid_argument] naming itself for an axis outside [x]'s rank
     or repeated, or a dtype it does not take. The host computes every dtype
     stated. Where a device's kernels do not compute one, as a GPU's may not
-    compute complex numbers, the function raises naming itself. *)
+    compute complex numbers, the function raises as a decline does
+    ({!val-devices}). *)
 
 val sum : ?axes:int list -> ?keepdims:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sum ~axes x] adds the elements from [+0]: a sum of [-0.] terms is [+0.],
