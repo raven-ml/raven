@@ -116,12 +116,10 @@ def piecewise():
     x = np.array([-1.0, -0.4, 0.1, 0.35, 1.2, 1.9, 3.0])
     y = np.sin(2 * x) + 0.3 * x**2
     y2 = np.stack([y, np.cos(x) - x], axis=1)  # samples with a value axis
-    slopes = 2 * np.cos(2 * x) + 0.6 * x
     points = np.array([-1.0, -0.7, -0.4, 0.0, 0.2, 0.35, 0.9, 1.9, 2.5, 3.0])
     m.floats("knots", x)
     m.floats("samples", y)
     m.floats("samples2", y2)
-    m.floats("slopes", slopes)
     m.floats("points", points)
     ends = {
         "natural": "natural",
@@ -140,9 +138,6 @@ def piecewise():
         inside = points[(points >= x[0]) & (points <= x[n - 1])]
         m.floats(f"not_a_knot{n}_points", inside)
         m.floats(f"not_a_knot{n}", s(inside))
-    h = interpolate.CubicHermiteSpline(x, y, slopes)
-    m.floats("hermite", h(points))
-    m.floats("linear", np.interp(points, x, y))
     return m
 
 
