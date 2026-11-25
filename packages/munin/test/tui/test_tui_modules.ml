@@ -1841,12 +1841,18 @@ let differences =
       ("not finite", "loss", Float.nan, 1., None);
       ("against zero", "loss", 0.9, 0., Some "+0.9000");
       ("four digits before the point", "loss", 100.99, 1., Some "+9999%");
+      ("five digits before the point", "loss", 101., 1., Some "+100");
       ("past four digits", "loss", 1., 1e-300, Some "+1");
       ( "past the largest float",
         "loss",
         Float.max_float,
         -.Float.max_float,
         Some "+inf" );
+      ( "past the largest float, below",
+        "loss",
+        -.Float.max_float,
+        Float.max_float,
+        Some "-inf" );
     ]
     (fun (_, key, value, other, expected) ->
       equal (option string) expected

@@ -17,9 +17,10 @@
 
     The status bar names the depth and the keys that act at it
     ({!section-keys}); where they do not fit, they leave from the last, and
-    [? keys], which lists the rest, stays. Colour repeats what a glyph or a word says, so a terminal
-    without colour, or [NO_COLOR], shows every fact: bold and faint remain, the
-    cursor's row is reverse video, and each overlay's line ends in its letter.
+    [? keys], which lists the rest, stays. Colour repeats what a glyph or a
+    word says, so a terminal without colour, or [NO_COLOR], shows every fact:
+    bold and faint remain, the cursor's row is reverse video, and each
+    overlay's line ends in its letter.
     The colours follow the terminal's background, dark or light.
 
     A text cut to its column ends in […] and keeps a blank before the next
@@ -47,9 +48,9 @@
     run pane hidden at the strips and zoom depths; below 100, neither, and a
     line under the top bar names the cursor's run and counts it among the
     runs kept, as [12 of 33]. [1] and [3] show or hide either pane at any
-    width, and [/] shows a hidden runs pane while the filter is typed. Below 60 columns or 16 lines the screen is one
-    line per live run and asks for a larger terminal. A store without runs
-    shows how a program starts one.
+    width, and [/] shows a hidden runs pane while the filter is typed. Below
+    60 columns or 16 lines the screen is one line per live run and asks for a
+    larger terminal. A store without runs shows how a program starts one.
 
     {b The runs pane} has a header per experiment, open or folded to one line
     that counts its runs and its failed or live ones, and a line per run of an
@@ -77,17 +78,16 @@
     {b The centre} starts with a {e banner} when the cursor's run failed,
     crashed or logged a sample that is not finite, which names the first such
     sample's metric, value and step, and how many metrics went NaN or an
-    infinity, as [× a NaN from step 5; 2 metrics went NaN or inf]; then the
-    {e hero}: the key
-    metric's latest value in large digits, its best, and the latest values of
-    up to three other metrics with a goal, four from 150 columns, smoothed
-    where their charts smooth them. Below 100 columns or 30 lines one line of
-    those values takes the hero's place.
+    infinity, as [× val/loss NaN from step 5; 2 metrics went NaN or inf];
+    then the {e hero}: the key metric's latest value in large digits, its
+    best, and the latest values of up to three other metrics with a goal,
+    four from 150 columns, smoothed where their charts smooth them. Below
+    100 columns or 30 lines one line of those values takes the hero's place.
 
     At the {e charts} depth the centre has the metric tabs, which [left] and
     [right] move, a legend that gives each drawn run's value at the cursor's
-    run's latest step, ending in [r others] while the experiment has runs
-    not drawn, one large chart and, from 100 columns and 30 lines, two
+    run's latest step, ending in [r others] until [r] draws the experiment's
+    other runs, one large chart and, from 100 columns and 30 lines, two
     small charts of the other metrics with a goal, three from 150 columns and
     44 lines. A run without a metric sample shows, in their place, [no
     metric sample yet], or, once it ended, [the run logged no metric]. At
@@ -178,8 +178,8 @@
     ({!Munin.Run.val-status}) and from when its samples arrived:
     - [starting]: a process holds the run's lock and the run has no metric
       sample;
-    - [running]: a process holds the lock and no metric sample has arrived since
-      the dashboard began watching the run;
+    - [running]: a process holds the lock and no metric sample has arrived
+      since the dashboard began watching the run;
     - [live]: a process holds the lock and a metric sample has arrived, within
       three usual gaps once they are known;
     - [stalled]: a process holds the lock and no metric sample has arrived for
@@ -197,10 +197,10 @@
 
     The dashboard times each arrival on its own clock. A poll that finds new
     metric samples of a run is an arrival at that poll's time, and a run's
-    samples that the first read finds are none. The {e usual gap} is the median
-    of the gaps between the run's last 32 arrivals, known once two arrivals have
-    been timed, and three of them are never less than 10 s. No time the run
-    recorded judges its state. *)
+    samples that the first read finds are none. The {e usual gap} is the
+    median of the gaps between the run's last 32 arrivals, known once two
+    arrivals have been timed, and three of them are never less than 10 s. No
+    time the run recorded judges its state. *)
 
 (** {1:numbers Numbers}
 
