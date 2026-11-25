@@ -696,7 +696,9 @@ let needs_quote f { get; len } =
   in
   len = 0 || bom || special 0 || List.exists token f.nulls
 
-let add_field b f ({ get; len } as x) =
+(* [add_field b f ~line x] writes [x] to [b], counting in [line] the line feeds
+   it holds, which only a quoted field does. *)
+let add_field b f ~line ({ get; len } as x) =
   if not (needs_quote f x) then
     for k = 0 to len - 1 do
       Buffer.add_char b (get k)
@@ -706,6 +708,7 @@ let add_field b f ({ get; len } as x) =
     for k = 0 to len - 1 do
       let c = get k in
       if c = f.quote then Buffer.add_char b c;
+      if c = '\n' then incr line;
       Buffer.add_char b c
     done;
     Buffer.add_char b f.quote
@@ -762,7 +765,7 @@ let encode ?(eod = false) f q w =
     Array.iteri
       (fun j c ->
         if j > 0 then Buffer.add_char b f.sep;
-        add_field b f (of_string c.name))
+        add_field b f ~line (of_string c.name))
       f.columns;
     Buffer.add_char b '\n';
     incr line
@@ -776,7 +779,9 @@ let encode ?(eod = false) f q w =
     for i = 0 to Talon.rows t - 1 do
       for j = 0 to Array.length cells - 1 do
         if j > 0 then Buffer.add_char b f.sep;
-        match cells.(j) i with None -> null () | Some x -> add_field b f x
+        match cells.(j) i with
+        | None -> null ()
+        | Some x -> add_field b f ~line x
       done;
       Buffer.add_char b '\n';
       incr line

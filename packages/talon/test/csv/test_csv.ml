@@ -1207,6 +1207,14 @@ let writing =
             (written
                (Csv.format ~nulls:[ ""; "NA" ] [ ("a", any Type.int64) ])
                (of_table t)));
+      test "a null in one column without a null token fails at its line"
+        (fun () ->
+          let t =
+            v [ ("a", Column.of_options Type.string [| Some "x\ny"; None |]) ]
+          in
+          (* The header is line 1, the quoted field lines 2 and 3. *)
+          starts_with ~prefix:"a\n\"x\ny\"\nerror: line 4, column 1:"
+            (written (Csv.format [ ("a", any Type.string) ]) (of_table t)));
     ]
 
 (* Sources *)
