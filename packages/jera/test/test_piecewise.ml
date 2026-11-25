@@ -658,7 +658,23 @@ let adapt_tests =
     test "a non-finite value ends it Not_finite" (fun () ->
         (* The midpoint 0.5 of [0, 1] is a node at degree 8. *)
         let s = adapt (fun x -> Nx.recip (Nx.sub_s x 0.5)) 0. 1. in
-        equal Oracle.status_t Not_finite (Oracle.status s));
+        equal Oracle.status_t Not_finite (Oracle.status s);
+        (* No fit was finite: the lane holds the zero series. *)
+        let x = Nx.linspace f64 0. 1. 11 in
+        equal ~msg:"best" (exact ()) (Nx.zeros_like x)
+          (Piecewise.eval (Solution.best s) x));
+    test "a Not_finite fit's best is its last finite estimate" (fun () ->
+        (* 0.25 is no node of [0, 1] but the middle node of [0, ½], so the first
+           bisection ends the fit: its best is the whole range's series, the
+           best of a budget of one piece. *)
+        let f x = Nx.recip (Nx.sub_s x 0.25) in
+        let failed = adapt f 0. 1. and spent = adapt ~budget:1 f 0. 1. in
+        equal Oracle.status_t Not_finite (Oracle.status failed);
+        equal Oracle.status_t Budget_spent (Oracle.status spent);
+        let x = Nx.linspace f64 0. 0.99 12 in
+        equal (exact ())
+          (Piecewise.eval (Solution.best spent) x)
+          (Piecewise.eval (Solution.best failed) x));
     test "a piece at level 62 ends it Stalled" (fun () ->
         (* √x looks the same on [0, 2^−L] at every L, so its tail there never
            meets a relative tol, and floats never run out near 0: only the level

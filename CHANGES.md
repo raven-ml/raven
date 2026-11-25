@@ -1281,9 +1281,10 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
-- A lane of `Quad.tanh_sinh` or `Quad.qmc` that ends `Not_finite` holds its
-  last finite estimate in `Solution.best`, as `jera.mli` states, instead of the
-  non-finite one that ended it.
+- A lane of `Quad.adaptive`, `Quad.cubature`, `Quad.tanh_sinh`, `Quad.qmc` or
+  `Piecewise.adapt` that ends `Not_finite` holds its last finite estimate in
+  `Solution.best`, as `jera.mli` states, instead of the non-finite one that
+  ended it; a lane with none holds zero.
 - An Ode solve stops a lane whose step falls below `eps` times its first
   step, as well as below the time's resolution, so a lane near `t = 0` ends
   `Stalled` or `Not_finite` as it does elsewhere. Near 0 the floats' spacing

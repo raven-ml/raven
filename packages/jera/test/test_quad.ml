@@ -518,7 +518,19 @@ let adaptive_tests =
             (fun x -> Nx.recip (Nx.sub_s x 0.5))
             (unit_range (vec [| 0. |]))
         in
-        equal Oracle.status_t Not_finite (Oracle.status s));
+        equal Oracle.status_t Not_finite (Oracle.status s);
+        (* No estimate was finite: the lane holds the empty sum. *)
+        equal ~msg:"best" (exact ()) (vec [| 0. |]) (Solution.best s));
+    test "a Not_finite lane's best is its last finite estimate" (fun () ->
+        (* 0.25 is no node of [0, 1] but the middle node of [0, ½], so the first
+           bisection ends the lane: its best is the whole range's estimate, the
+           best of a budget of one piece. *)
+        let f x = Nx.recip (Nx.sub_s x 0.25) in
+        let solve budget = adaptive ~budget f (unit_range (vec [| 0. |])) in
+        let failed = solve 200 and spent = solve 1 in
+        equal Oracle.status_t Not_finite (Oracle.status failed);
+        equal Oracle.status_t Budget_spent (Oracle.status spent);
+        equal (exact ()) (Solution.best spent) (Solution.best failed));
     test "a jump no piece resolves ends Stalled" (fun () ->
         (* Floats near 0.3 are 2^−54 apart, so the piece holding the jump holds
            none inside at level 54: 55 pieces, which evaluate 15 (2 · 55 − 1 +
@@ -851,7 +863,19 @@ let cubature_tests =
         let s =
           cube (fun x -> Nx.recip (Nx.sub_s (coord 0 x) 0.5)) (unit_box [||] 2)
         in
-        equal Oracle.status_t Not_finite (Oracle.status s));
+        equal Oracle.status_t Not_finite (Oracle.status s);
+        (* No estimate was finite: the lane holds the empty sum. *)
+        equal ~msg:"best" (exact ()) (scalar 0.) (Solution.best s));
+    test "a Not_finite lane's best is its last finite estimate" (fun () ->
+        (* x = 0.25 is no point of the whole box but the center's of [0, ½] ×
+           [0, 1], so the first bisection, along x, ends the lane: its best is
+           the whole box's estimate, the best of a budget of one box. *)
+        let f x = Nx.recip (Nx.sub_s (coord 0 x) 0.25) in
+        let solve budget = cube ~budget f (unit_box [||] 2) in
+        let failed = solve 2000 and spent = solve 1 in
+        equal Oracle.status_t Not_finite (Oracle.status failed);
+        equal Oracle.status_t Budget_spent (Oracle.status spent);
+        equal (exact ()) (Solution.best spent) (Solution.best failed));
     test "a box at level 62 ends Stalled" (fun () ->
         (* The worst box of x^(−½) is [0, 2^−L] × [0, 1], split along x, whose
            floats never run out: only the level stops it, within a budget of

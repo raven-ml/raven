@@ -62,7 +62,11 @@ val refine :
     [Stalled] when its worst box is at level 62 along its split axis, or no
     float lies strictly between its ends there; [Budget_spent] when its [budget]
     slots are used. A bisection puts the left half in the worst box's slot and
-    the right half in the next free one. *)
+    the right half in the next free one.
+
+    A lane that ends [Not_finite] keeps its last finite partition: a bisection
+    that makes it not finite is undone, its evaluations counted. A lane whose
+    first box is not finite holds that box with zero data and error. *)
 
 val in_use : ('q, 'b, 'd) t -> 'd Nx.bool_t
 (** [in_use p] is whether each slot holds a box, [[budget] @ lanes]. *)

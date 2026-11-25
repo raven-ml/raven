@@ -106,6 +106,7 @@ let refine s ~at ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
         { level; index; axis; data; error; used; status; evaluations })
   in
   let slot = slots ~at ~budget ~lanes in
+  let not_finite p = Nx.equal_s p.status (Solution.code Not_finite) in
   let settle p =
     let live = live slot p in
     let not_finite, met = verdict p live in
@@ -163,19 +164,48 @@ let refine s ~at ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
       in
       Nx.where (widen left v) (child 0) (Nx.where (widen right v) (child 1) v)
     in
-    settle
-      {
-        level = put p.level level2;
-        index = put p.index index2;
-        axis = (if dims = 1 then p.axis else put p.axis axis2);
-        data = Nx.Ptree.map2 s (fun _ v two -> put v two) p.data data2;
-        error = put p.error error2;
-        used = Nx.add p.used (Nx.cast Nx.int32 run);
-        status = p.status;
-        evaluations =
-          Nx.add p.evaluations
-            (Nx.mul_s (Nx.cast Nx.int32 run) (Int32.of_int (2 * cost)));
-      }
+    let p' =
+      settle
+        {
+          level = put p.level level2;
+          index = put p.index index2;
+          axis = (if dims = 1 then p.axis else put p.axis axis2);
+          data = Nx.Ptree.map2 s (fun _ v two -> put v two) p.data data2;
+          error = put p.error error2;
+          used = Nx.add p.used (Nx.cast Nx.int32 run);
+          status = p.status;
+          evaluations =
+            Nx.add p.evaluations
+              (Nx.mul_s (Nx.cast Nx.int32 run) (Int32.of_int (2 * cost)));
+        }
+    in
+    (* A bisection that makes a lane not finite is undone: the lane keeps its
+       last finite partition, with the evaluations it spent. *)
+    let undone = Nx.logical_and run (not_finite p') in
+    let lead = Array.append [| 1 |] (Nx.shape undone) in
+    let mask r =
+      Nx.reshape
+        (Array.append lead (Array.make (r - Array.length lead) 1))
+        undone
+    in
+    let flat = mask (Nx.ndim p.error) and deep = mask (Nx.ndim p.level) in
+    let keep v' v =
+      let m =
+        if Nx.ndim v = Nx.ndim p.error then flat
+        else if Nx.ndim v = Nx.ndim p.level then deep
+        else mask (Nx.ndim v)
+      in
+      Nx.where m v v'
+    in
+    {
+      p' with
+      level = keep p'.level p.level;
+      index = keep p'.index p.index;
+      axis = (if dims = 1 then p.axis else keep p'.axis p.axis);
+      data = Nx.Ptree.map2 s (fun _ v' v -> keep v' v) p'.data p.data;
+      error = keep p'.error p.error;
+      used = Nx.where undone p.used p'.used;
+    }
   in
   let initial =
     let whole dt =
@@ -192,17 +222,31 @@ let refine s ~at ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
       in
       Nx.where (Nx.broadcast_to (Nx.shape v) at0) v (Nx.zeros_like v)
     in
-    settle
-      {
-        level = Nx.zeros_at at Nx.int32 (Array.append shape [| dims |]);
-        index = Nx.zeros_at at Nx.int64 (Array.append shape [| dims |]);
-        axis = first axis;
-        data = Nx.Ptree.map s (fun _ v -> first v) data;
-        error = first error;
-        used = Nx.ones_at at Nx.int32 lanes;
-        status = Nx.full_at at Nx.int32 lanes Elementwise.running;
-        evaluations = Nx.full_at at Nx.int32 lanes (Int32.of_int cost);
-      }
+    let p =
+      settle
+        {
+          level = Nx.zeros_at at Nx.int32 (Array.append shape [| dims |]);
+          index = Nx.zeros_at at Nx.int64 (Array.append shape [| dims |]);
+          axis = first axis;
+          data = Nx.Ptree.map s (fun _ v -> first v) data;
+          error = first error;
+          used = Nx.ones_at at Nx.int32 lanes;
+          status = Nx.full_at at Nx.int32 lanes Elementwise.running;
+          evaluations = Nx.full_at at Nx.int32 lanes (Int32.of_int cost);
+        }
+    in
+    (* A lane whose first box is not finite has no finite partition: its box
+       holds zero data and error, the empty estimate. *)
+    let blank v =
+      Nx.where
+        (widen (Nx.unsqueeze ~axes:[ 0 ] (not_finite p)) v)
+        (Nx.zeros_like v) v
+    in
+    {
+      p with
+      data = Nx.Ptree.map s (fun _ v -> blank v) p.data;
+      error = blank p.error;
+    }
   in
   Rune.iterate (tree ()) ~max:budget
     ~until:(fun p -> Nx.logical_not (Nx.any (Elementwise.searching p.status)))
