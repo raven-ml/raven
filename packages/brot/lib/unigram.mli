@@ -111,11 +111,14 @@ val get_byte_fallback : t -> bool
 
 (** {1:serialization Serialization} *)
 
-val save : t -> folder:string -> unit -> string list
-(** [save t ~folder ()] writes [unigram.json] to [folder]. The file contains
-    each token with its ID and log-probability in JSON format, together with the
-    unknown token's id and whether byte fallback is on. Returns the list of
-    created filenames. *)
+val to_json : t -> Jsont.json
+(** [to_json t] is [t] as the [model] member of a [tokenizer.json]: its type,
+    the unknown token's id, the vocabulary as [[token, score]] pairs in id order
+    and whether byte fallback is on. *)
+
+val save : t -> folder:string -> ?prefix:string -> unit -> string list
+(** [save t ~folder ()] writes {!to_json} to [unigram.json] in [folder] and
+    returns its path. With [prefix], the file is [<prefix>-unigram.json]. *)
 
 (** {1:training Training} *)
 

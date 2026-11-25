@@ -63,36 +63,22 @@ let get_vocab model =
 let get_vocab_size model = Hashtbl.length model.vocab
 let get_unk_token model = model.unk_token
 
-let json_obj pairs =
-  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
-
-let json_to_string j =
-  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
-  | Ok s -> s
-  | Error e -> failwith e
-
-let save model ~folder () =
-  let vocab_items =
+(* tokenizers' WordLevel.save: the vocabulary as a map from token to id, in id
+   order, in [vocab.json] or [<prefix>-vocab.json]. *)
+let save model ~folder ?prefix () =
+  let name =
+    match prefix with Some p -> p ^ "-vocab.json" | None -> "vocab.json"
+  in
+  let path = Filename.concat folder name in
+  let vocab =
     get_vocab model
-    |> List.sort (fun (_, id1) (_, id2) -> compare id1 id2)
-    |> List.map (fun (token, id) ->
-        json_obj
-          [ ("token", Jsont.Json.string token); ("id", Jsont.Json.int id) ])
+    |> List.sort (fun (_, a) (_, b) -> Int.compare a b)
+    |> List.map (fun (token, id) -> (Jsont.Json.name token, Jsont.Json.int id))
   in
-  let json =
-    json_obj
-      [
-        ("type", Jsont.Json.string "WordLevel");
-        ("unk_token", Jsont.Json.string model.unk_token);
-        ("vocab", Jsont.Json.list vocab_items);
-      ]
-  in
-  let path = Filename.concat folder "wordlevel.json" in
-  let oc = open_out path in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc (json_to_string json));
-  [ "wordlevel.json" ]
+  Out_channel.with_open_bin path (fun oc ->
+      Out_channel.output_string oc
+        (Json_text.to_string (Jsont.Json.object' vocab)));
+  [ path ]
 
 let train ~vocab_size ~min_frequency ~show_progress ~special_tokens ~unk_token
     word_counts =

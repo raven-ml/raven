@@ -189,8 +189,8 @@ let alg_save algorithm ~folder ?prefix () =
       in
       [ name "vocab" "json"; name "merges" "txt" ]
   | Alg_wordpiece m -> [ Wordpiece.save m ~path:folder ?name:prefix () ]
-  | Alg_wordlevel m -> Word_level.save m ~folder ()
-  | Alg_unigram m -> Unigram.save m ~folder ()
+  | Alg_wordlevel m -> Word_level.save m ~folder ?prefix ()
+  | Alg_unigram m -> Unigram.save m ~folder ?prefix ()
   | Alg_chars m -> Chars.save m ~folder ()
 
 let alg_token_table = function
@@ -2196,20 +2196,7 @@ let alg_to_json = function
           ("unk_token", Jsont.Json.string (Word_level.get_unk_token wl));
           ("vocab", vocab_to_json (Word_level.get_vocab wl));
         ]
-  | Alg_unigram ug ->
-      let vocab_json =
-        Unigram.get_vocab ug
-        |> List.map (fun (token, score) ->
-            Jsont.Json.list [ Jsont.Json.string token; Json_text.f64 score ])
-        |> Jsont.Json.list
-      in
-      json_obj
-        [
-          ("type", Jsont.Json.string "Unigram");
-          ("unk_id", json_option_of Jsont.Json.int (Unigram.get_unk_id ug));
-          ("vocab", vocab_json);
-          ("byte_fallback", Jsont.Json.bool (Unigram.get_byte_fallback ug));
-        ]
+  | Alg_unigram ug -> Unigram.to_json ug
   | Alg_chars _ ->
       json_obj [ ("type", Jsont.Json.string "Chars"); ("vocab", json_obj []) ]
 

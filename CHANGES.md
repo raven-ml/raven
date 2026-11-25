@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.save_model_files` writes WordLevel and Unigram models as Hugging Face
+  does, to `[<prefix>-]vocab.json` and `[<prefix>-]unigram.json`, and returns
+  their paths, where it ignored `prefix` and returned bare names.
 - `Brot.pp` shows `vocab_size`, added tokens included, where it showed the
   model's vocabulary alone.
 - `Brot.encode` and the other encoders take a `pair` on a tokenizer without a

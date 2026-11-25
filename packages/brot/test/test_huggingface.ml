@@ -201,28 +201,53 @@ let test_wordpiece_files () =
         (ids read text))
     [ "hello"; "worlds"; "hellos world"; "xyz" ]
 
-let test_paths =
-  cases "returns the paths of the files it writes in folder" ~id:fst
+let word_level_model () = word_level ~vocab:[ ("a", 0) ] ()
+let unigram_model () = unigram ~vocab:[ ("a", -1.0) ] ()
+
+(* tokenizers' Model.save: each name preceded by the prefix and [-] when one is
+   given, the empty one included, and the full paths returned. *)
+let test_file_names =
+  cases "names the files after the model and prefix, and returns their paths"
+    ~id:(fun (name, _, prefix, _) ->
+      match prefix with
+      | None -> name ^ " without prefix"
+      | Some p -> Printf.sprintf "%s %S" name p)
     [
-      ("bpe", bpe_model);
-      ("wordpiece", wordpiece_model);
-      ("chars", fun () -> chars ());
+      ("bpe", bpe_model, None, [ "vocab.json"; "merges.txt" ]);
+      ("bpe", bpe_model, Some "p", [ "p-vocab.json"; "p-merges.txt" ]);
+      ("bpe", bpe_model, Some "", [ "-vocab.json"; "-merges.txt" ]);
+      ("wordpiece", wordpiece_model, Some "p", [ "p-vocab.txt" ]);
+      ("word_level", word_level_model, None, [ "vocab.json" ]);
+      ("word_level", word_level_model, Some "p", [ "p-vocab.json" ]);
+      ("unigram", unigram_model, Some "p", [ "p-unigram.json" ]);
+      ("chars", (fun () -> chars ()), Some "p", []);
     ]
-    (fun (_, make) ->
+    (fun (_, make, prefix, names) ->
       let folder = temp_dir () in
-      let files = save_model_files (make ()) ~folder in
-      List.iter (fun f -> equal ~msg:f string folder (Filename.dirname f)) files;
-      equal (list string)
-        (List.sort String.compare (Array.to_list (Sys.readdir folder)))
-        (List.sort String.compare (List.map Filename.basename files)))
+      let files = save_model_files ?prefix (make ()) ~folder in
+      equal ~msg:"paths" (list string)
+        (List.map (Filename.concat folder) names)
+        files;
+      equal ~msg:"files in folder" (list string)
+        (List.sort String.compare names)
+        (List.sort String.compare (Array.to_list (Sys.readdir folder))))
+
+(* tokenizers' WordLevel.save writes the vocabulary as a map from token to
+   id. *)
+let test_word_level_file () =
+  let folder = temp_dir () in
+  let files =
+    save_model_files (word_level ~vocab:[ ("a", 0); ("b", 1) ] ()) ~folder
+  in
+  equal (list string) [ {|{"a":0,"b":1}|} ]
+    (List.map (fun f -> json_text (json_of_text (read_file f))) files)
 
 let test_model_file_scores () =
   let vocab = [ ("<unk>", 0.0); ("a", -0.1); ("b", -1e16); ("c", -1.5e-7) ] in
   let folder = temp_dir () in
   let written =
     save_model_files (unigram ~vocab ~unk_id:0 ()) ~folder
-    |> List.concat_map (fun f ->
-        number_texts (read_file (Filename.concat folder (Filename.basename f))))
+    |> List.concat_map (fun f -> number_texts (read_file f))
   in
   List.iter
     (fun score -> mem ~msg:score string score written)
@@ -861,7 +886,9 @@ let () =
              test
                "writes a WordPiece vocab.txt, which from_model_file reads back"
                test_wordpiece_files;
-             test_paths;
+             test_file_names;
+             test "writes a WordLevel vocabulary as tokenizers' vocab.json"
+               test_word_level_file;
              test "writes Unigram scores as tokenizers writes them"
                test_model_file_scores;
            ];

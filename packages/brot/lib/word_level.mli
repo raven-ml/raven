@@ -66,10 +66,10 @@ val get_unk_token : t -> string
 
 (** {1:serialization Serialization} *)
 
-val save : t -> folder:string -> unit -> string list
-(** [save t ~folder ()] writes [wordlevel.json] to [folder]. The file contains
-    the vocabulary and [unk_token] in JSON format. Returns the list of created
-    filenames. *)
+val save : t -> folder:string -> ?prefix:string -> unit -> string list
+(** [save t ~folder ()] writes the vocabulary to [vocab.json] in [folder], as a
+    JSON object from each token to its id, and returns the file's path. With
+    [prefix], the file is [<prefix>-vocab.json]. *)
 
 (** {1:training Training} *)
 

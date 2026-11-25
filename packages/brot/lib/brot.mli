@@ -1902,10 +1902,11 @@ val train_unigram :
 (** {1:model_files Model files} *)
 
 val save_model_files : ?prefix:string -> t -> folder:string -> string list
-(** [save_model_files t ~folder] saves [t]'s underlying model files (vocabulary
-    and merges) to [folder] and returns the list of created file paths.
-
-    [prefix] defaults to [""]. *)
+(** [save_model_files t ~folder] writes [t]'s model to files in [folder] as
+    tokenizers' [Model.save] does and returns their paths. BPE writes
+    [vocab.json] and [merges.txt], WordPiece [vocab.txt], WordLevel [vocab.json]
+    and Unigram [unigram.json]; a {!chars} tokenizer writes none. With [prefix],
+    each name is preceded by [prefix] and [-]. *)
 
 (** {1:huggingface HuggingFace compatibility} *)
 

@@ -396,35 +396,31 @@ let encode_into model st ids ~opaque text ~pos ~len =
 let json_obj pairs =
   Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
 
-let save model ~folder () =
-  let json_vocab =
+let to_json model =
+  let vocab =
     get_vocab model
-    |> List.mapi (fun id (token, prob) ->
-        json_obj
-          [
-            ("id", Jsont.Json.int id);
-            ("token", Jsont.Json.string token);
-            ("prob", Json_text.f64 prob);
-          ])
+    |> List.map (fun (token, score) ->
+        Jsont.Json.list [ Jsont.Json.string token; Json_text.f64 score ])
   in
-  let json =
-    json_obj
-      [
-        ("type", Jsont.Json.string "Unigram");
-        ( "unk_id",
-          match get_unk_id model with
-          | None -> Jsont.Json.null ()
-          | Some id -> Jsont.Json.int id );
-        ("byte_fallback", Jsont.Json.bool model.byte_fallback);
-        ("vocab", Jsont.Json.list json_vocab);
-      ]
+  json_obj
+    [
+      ("type", Jsont.Json.string "Unigram");
+      ( "unk_id",
+        match get_unk_id model with
+        | None -> Jsont.Json.null ()
+        | Some id -> Jsont.Json.int id );
+      ("vocab", Jsont.Json.list vocab);
+      ("byte_fallback", Jsont.Json.bool model.byte_fallback);
+    ]
+
+let save model ~folder ?prefix () =
+  let name =
+    match prefix with Some p -> p ^ "-unigram.json" | None -> "unigram.json"
   in
-  let path = Filename.concat folder "unigram.json" in
-  let oc = open_out path in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc (Json_text.to_string json));
-  [ "unigram.json" ]
+  let path = Filename.concat folder name in
+  Out_channel.with_open_bin path (fun oc ->
+      Out_channel.output_string oc (Json_text.to_string (to_json model)));
+  [ path ]
 
 (* Training *)
 
