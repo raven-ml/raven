@@ -77,6 +77,16 @@ let golden_tests =
             equal (close ())
               (Nx.create f64 [| Array.length G.points; 2 |] values)
               (Piecewise.eval p points));
+        test "clamped through two knots has its slopes at the ends" (fun () ->
+            let p =
+              Piecewise.cubic
+                (`Clamped (scalar 0.5, scalar (-2.)))
+                (vec [| 0.; 1. |])
+                (vec [| 0.; 1. |])
+            in
+            equal (close ())
+              (vec [| 0.5; -2. |])
+              (Piecewise.eval (Piecewise.derivative p) (vec [| 0.; 1. |])));
         test "hermite is scipy's" (fun () ->
             let p =
               Piecewise.hermite knots ~values:samples ~slopes:(vec G.slopes)

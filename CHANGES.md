@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Piecewise.cubic (`Clamped (s0, s1))` through two knots takes the slopes
+  `s0` and `s1` at its ends, as `jera.mli` states. It drew the line through
+  the two samples and ignored them.
 - `Quad.tanh_sinh` gives an element that did not converge a zero derivative,
   as `jera.mli` states, where it could be NaN: its answer evaluated the
   integrand's derivative at nodes near a singular end, where it overflows, and

@@ -48,7 +48,11 @@ let cubic ends x y =
   let n = Nx.dim 0 x in
   let h, d = secants x y in
   let slopes =
-    if n = 2 then cat [ d; d ]
+    if n = 2 then
+      (* One piece: the line, or the cubic of the clamped slopes. *)
+      match ends with
+      | `Clamped (s0, s1) -> cat [ one s0; one s1 ]
+      | `Natural | `Not_a_knot -> cat [ d; d ]
     else
       let col = column (rows 0 (n - 2) d) in
       let h0 = rows 0 (n - 2) h and h1 = rows 1 (n - 1) h in
