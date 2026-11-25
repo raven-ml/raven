@@ -701,9 +701,10 @@ module Minimize : sig
       through {!Rune.root}, so its derivative is [−H⁻¹ ∂θ∇f] through every
       tracked value [f] reads, with [H] the Hessian at the answer, solved by the
       method's [linear] on Hessian-vector products; zero at a lane that did not
-      converge. Where [H] is singular the derivative does not exist: its solve
-      by [linear] misses the solver's bound, and the derivative raises
-      [Invalid_argument] naming the entry point. *)
+      converge. Where [H] is singular the derivative does not exist; where its
+      solve by [linear] misses the solver's bound, as it does at an exactly
+      singular [H], the derivative raises [Invalid_argument] naming the entry
+      point, and near one it may be finite and steep. *)
 
   type ('x, 'f, 'd) t
   (** The type for methods for objectives of type ['f] over values of type ['x].
@@ -772,7 +773,8 @@ module Minimize : sig
       {b Cost.} [n] products and one solve of [linear] per iteration, and one
       evaluation of [r] per trial. {b Derivative.} The minimum is the zero of
       rune's gradient of [|r|² / 2]; at a rank-deficient minimum the derivative
-      does not exist, and raises as the other methods' do. *)
+      does not exist, and raises where its solve misses the solver's bound, as
+      the other methods' does. *)
 
   val nelder_mead : ('x, 'x -> (float, 'b, 'd) Nx.t, 'd) t
   (** [nelder_mead] is the Nelder–Mead simplex, for an objective with no useful
