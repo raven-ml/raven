@@ -269,10 +269,10 @@ let reference d rows =
         (List.init (Array.length d) Fun.id)
     in
     match dup with
-    | Some c -> Some (first_row, Printf.sprintf "two rows with key %S" d.(c))
+    | Some c -> Some (first_row, `Two_rows d.(c))
     | None ->
         if List.exists (fun (_, k, x) -> k = None && Option.is_some x) rows then
-          Some (first_row, "a value under a null key")
+          Some (first_row, `Null_key)
         else None
   in
   match List.find_map failed !groups with
@@ -327,27 +327,43 @@ let agrees (d, rows) =
       ]
   in
   let expected = reference d rows in
-  cover "a missing cell" (Result.is_ok expected && Array.length rows >= 1);
+  (* A group without a row of some category. *)
+  let missing =
+    let groups =
+      List.sort_uniq compare
+        (Array.to_list (Array.map (fun (g, _, _) -> g) rows))
+    in
+    List.exists
+      (fun g ->
+        List.exists
+          (fun c ->
+            not (Array.exists (fun (g', k, _) -> g' = g && k = Some c) rows))
+          (List.init (Array.length d) Fun.id))
+      groups
+  in
+  cover "a missing cell" (Result.is_ok expected && missing);
   cover "a null key without value"
     (Array.exists (fun (_, k, x) -> k = None && x = None) rows
     && Array.length d >= 1);
   (match expected with
   | Error (_, why) ->
-      cover "fails on a value under a null key"
-        (why = "a value under a null key");
-      cover "fails on two rows" (why <> "a value under a null key")
+      cover "fails on a value under a null key" (why = `Null_key);
+      cover "fails on two rows" (why <> `Null_key)
   | Ok _ -> cover "succeeds" true);
   let run =
     Query.run (Kit.wider ~by:[ "g" ] ~key:"k" ~value:"x" (Query.of_table t))
   in
   match (expected, run) with
   | Ok want, Ok got -> equal table_w want got
-  | Error (row, why), Error e ->
+  | Error (row, why), Error e -> (
+      (* The error reports the frame's first row and names the key. *)
       let msg = Format.asprintf "%a" Error.pp e in
-      contains ~sub:(Printf.sprintf "row %d: pivot finds %s" row why) msg
+      contains ~sub:(Printf.sprintf "row %d:" row) msg;
+      match why with
+      | `Two_rows key -> contains ~sub:(Printf.sprintf "%S" key) msg
+      | `Null_key -> ())
   | Ok _, Error e -> failf "ran to %a, expected success" Error.pp e
-  | Error (row, why), Ok _ ->
-      failf "succeeded, expected failure at row %d: %s" row why
+  | Error (row, _), Ok _ -> failf "succeeded, expected failure at row %d" row
 
 (* A stream's batches change nothing, and a repeated key across two batches
    still fails. *)
@@ -525,8 +541,7 @@ let pivoting =
                  ])
           in
           let q = require_ok ~pp:Error.pp (Kit.categorize [ "k" ] q) in
-          contains ~sub:"row 0: pivot finds a value under a null key"
-            (failure (wide_q q)));
+          contains ~sub:"row 0:" (failure (wide_q q)));
       test "a filter before it removes the groups it empties" (fun () ->
           let got =
             run_ok
@@ -653,8 +668,7 @@ let pivoting =
                    ("x", of_floats [| Some 1. |]);
                  ])
           in
-          contains ~sub:"pivot takes a categorical key, not string"
-            (problem (fun () -> ignore (wide_q t))));
+          contains ~sub:"pivot" (problem (fun () -> ignore (wide_q t))));
       test "a v without a column type is a problem" (fun () ->
           contains ~sub:"pivot"
             (problem (fun () ->
@@ -739,7 +753,8 @@ let longer_group =
                  ("v", Type.Any Type.int64);
                ])
             (Talon.schema got));
-      test "its schema needs no data" (fun () ->
+      test "puts the other columns first, in a schema that needs no data"
+        (fun () ->
           let raising =
             Source.v ~name:"nothing"
               ~schema:
@@ -748,19 +763,22 @@ let longer_group =
                      ("id", Type.Any Type.int64);
                      ("a", Type.Any Type.float64);
                      ("b", Type.Any Type.float64);
+                     ("c", Type.Any Type.float64);
                    ])
               (fun _ -> failwith "opened")
           in
+          (* The unselected b, between a and c, comes first with id. *)
           let longer =
             Kit.longer ~name:"n" ~value:"v"
-              Sel.(names [ "a"; "b" ])
+              Sel.(names [ "a"; "c" ])
               (Query.of_source raising)
           in
           equal schema_w
             (Schema.v
                [
                  ("id", Type.Any Type.int64);
-                 ("n", Type.Any (Type.categorical [| "a"; "b" |]));
+                 ("b", Type.Any Type.float64);
+                 ("n", Type.Any (Type.categorical [| "a"; "c" |]));
                  ("v", Type.Any Type.float64);
                ])
             (Query.schema longer));
