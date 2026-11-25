@@ -317,8 +317,8 @@ let encoding_of d =
   in
   { id = int64 d 0 0; index_bits; index_signed }
 
-(* [field budget parent t]: a children vector may repeat an entry, so that a
-   few bytes describe a huge tree. Each field takes 4 bytes of a tree, which
+(* [field budget parent t]: a children vector may repeat an entry, so that a few
+   bytes describe a huge tree. Each field takes 4 bytes of a tree, which
    [budget] counts down from the size of the metadata. A type that is not
    Arrow's names the field's path below [parent]. *)
 let rec field budget parent t =
