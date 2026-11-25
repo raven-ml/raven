@@ -362,12 +362,13 @@ let of_weighted =
           equal (list string) (statistics @ [ "ess" ])
             (List.map fst (S.columns s)));
       test "weighs each draw by its normalised weight" (fun () ->
-          (* Weights 1/4, 1/4, 1/2 and 0: draws 1, 2 and 3 stand at 1/8, 3/8 and
-             3/4, q5 below the first is the first draw. *)
+          (* Weights 0, 1/4, 1/4 and 1/2: draws 1, 2 and 3 stand at 1/8, 3/8
+             and 3/4, q5 below the first is the first draw, and the draw of no
+             weight, first and far, is read by no statistic. *)
           let w =
             weighted
-              (vec [| 1.; 2.; 3.; 6. |])
-              (vec [| 0.; 0.; Float.log 2.; Float.neg_infinity |])
+              (vec [| 1e300; 1.; 2.; 3. |])
+              (vec [| Float.neg_infinity; 0.; 0.; Float.log 2. |])
           in
           let s = S.of_weighted t w in
           equal

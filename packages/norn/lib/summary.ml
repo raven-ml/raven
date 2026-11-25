@@ -285,37 +285,40 @@ let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
     List.rev_append (Array.to_list (Array.map one (Chains.leaf x))) acc
   in
   let elements = List.rev (Nx.Ptree.fold u leaf wd.values []) in
-  let dot f xs =
-    let s = ref 0. in
-    Array.iteri (fun i x -> s := !s +. f w.(i) x) xs;
-    !s
-  in
+  (* The statistics read the draws of positive weight alone: a draw of no
+     weight, however far, changes none of them. *)
   let positive xs =
     Array.of_list (List.filteri (fun i _ -> w.(i) > 0.) (Array.to_list xs))
   in
-  (* About the first draw, so that a constant element's mean is exact and its
-     spread 0 however the weights round, and over the draws' scale, so that
-     draws a float's range apart do not overflow their difference. *)
-  let mean xs =
-    if Array.length xs = 0 then Float.nan
-    else
-      let c = Chains.scale (positive xs) in
-      let y0 = xs.(0) /. c in
-      c *. (y0 +. dot (fun w x -> w *. ((x /. c) -. y0)) xs)
+  let wp = positive w in
+  let dot f ys =
+    let s = ref 0. in
+    Array.iteri (fun i y -> s := !s +. f wp.(i) y) ys;
+    !s
   in
-  (* The weighted variance, and the variance of the weighted mean of
-     independent draws (Vehtari et al. 2024, equation 5). Their ratio, the
-     [ess] column, is Var_p(h) / Var(Î): the draws a plain Monte Carlo mean
-     needs for the same error, which for an [h] whose spread is unrelated to
-     the weights is Kish's 1 / Σ w̃² (their equation 8). Their equation 7
-     puts the spread of [h] over the unweighted draws in the numerator, the
-     proposal's and not the target's: on 4 draws it can give 14.5. Both
-     sums are of the draws over their scale [c], which [spread] returns
-     beside them, so that squares neither underflow nor overflow: draws 1e-200
-     apart would square to 0. The scale is of the draws of positive weight. *)
-  let spread xs =
-    let c = Chains.scale (positive xs) in
-    let ys = Array.map (fun x -> x /. c) xs in
+  (* [mean ys] is about the first draw, so that a constant element's mean is
+     exact and its spread 0 however the weights round, and over the draws'
+     scale, so that draws a float's range apart do not overflow their
+     difference. *)
+  let mean ys =
+    if Array.length ys = 0 then Float.nan
+    else
+      let c = Chains.scale ys in
+      let y0 = ys.(0) /. c in
+      c *. (y0 +. dot (fun w y -> w *. ((y /. c) -. y0)) ys)
+  in
+  (* The weighted variance, and the variance of the weighted mean of independent
+     draws (Vehtari et al. 2024, equation 5). Their ratio, the [ess] column, is
+     Var_p(h) / Var(Î): the draws a plain Monte Carlo mean needs for the same
+     error, which for an [h] whose spread is unrelated to the weights is Kish's
+     1 / Σ w̃² (their equation 8). Their equation 7 puts the spread of [h] over
+     the unweighted draws in the numerator, the proposal's and not the target's:
+     on 4 draws it can give 14.5. Both sums are of the draws over their scale
+     [c], which [spread] returns beside them, so that squares neither underflow
+     nor overflow: draws 1e-200 apart would square to 0. *)
+  let spread ys =
+    let c = Chains.scale ys in
+    let ys = Array.map (fun y -> y /. c) ys in
     let m = mean ys in
     let d y = y -. m in
     ( c,
@@ -325,10 +328,10 @@ let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
   let column f = Array.of_list (List.map (fun e -> f e.draws) elements) in
   let columns =
     [
-      ("mean", column mean);
+      ("mean", column (fun xs -> mean (positive xs)));
       ( "sd",
         column (fun xs ->
-            let c, v, _ = spread xs in
+            let c, v, _ = spread (positive xs) in
             c *. Float.sqrt v) );
     ]
     @ List.map
@@ -337,11 +340,11 @@ let of_weighted (type u f) (u : (u, 'd) Nx.Ptree.t)
     @ [
         ( "mcse",
           column (fun xs ->
-              let c, _, e = spread xs in
+              let c, _, e = spread (positive xs) in
               c *. Float.sqrt e) );
         ( "ess",
           column (fun xs ->
-              let _, v, e = spread xs in
+              let _, v, e = spread (positive xs) in
               v /. e) );
       ]
   in
