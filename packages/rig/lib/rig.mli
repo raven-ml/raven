@@ -705,7 +705,9 @@ val word : int
     After a loss, these raise {!Lost}:
     {ul
     {- every use of the lost device, of its memory through any buffer, and
-       of a borrow on it;}
+       of a borrow on it, unless the function's doc states another outcome
+       on a lost device, as those of {!close}, {!set_budget}, {!free_cache}
+       and the properties ({!section-properties}) do;}
     {- every use of other memory that depends on a point the lost device
        never reached, since that point's work may never have run.}}
     A point the lost device never reached stays so. Memory with a last write
@@ -985,10 +987,13 @@ val failure : unit -> string option
     its own. Each of these moves first releases the keeps collected on any
     device ({!Buffer.val-keep}), and moves the memory and lets go of the kept
     values collected on any device whose stop returned, such as a closed
-    one. Memory collected while a domain blocks returns through other
-    domains' calls. A device reports its values up to [k] values late
-    ({!section-timeline}), and memory and kept values return by what it
-    reports.
+    one. Moving collected memory whose work is done into its device's cache
+    allocates nothing of rig's own on the OCaml heap, unless the cache comes
+    to hold more entries of one size than it has held since it last held
+    none of that size. Memory collected while a domain blocks returns
+    through other domains' calls. A device reports its values up to [k]
+    values late ({!section-timeline}), and memory and kept values return by
+    what it reports.
 
     A device's {e budget} is the most bytes it holds at one time of the
     memory that counts in it: its live buffers, its loaded images' code and
@@ -1082,7 +1087,9 @@ val failure : unit -> string option
        and the host's, as the driver may grow them in memory that counts in
        either.}}
     An allocation may wait, without bound, for the work of any device that
-    holds memory back. Losing that device ({!lose}) ends the wait. *)
+    holds memory back. Losing that device ({!section-loss}) ends the wait.
+    An allocation for another device that then still finds no room raises
+    {!Out_of_memory} for its own device. *)
 
 val budget : t -> int
 (** [budget d] is [d]'s budget ({!section-reclaim}). It starts at [max_int]
@@ -1093,7 +1100,11 @@ val budget : t -> int
 val allocated : t -> int
 (** [allocated d] is the bytes that [d] holds now of the memory that counts
     in its budget ({!section-reclaim}), its cache included, each region as
-    {!allocation} counts it. *)
+    {!allocation} counts it. On {!host} it leaves out the collected buffers
+    the host keeps for reuse ({!free_cache}). They count in the host's
+    budget, and an allocation frees them before the budget refuses it, so
+    an allocation of [budget host - allocated host] bytes, as {!allocation}
+    counts them, fits the budget. *)
 
 type capacity = Rig_edge.capacity = {
   total : int;
@@ -1163,7 +1174,7 @@ val allocation : ?memory:Rig_edge.memory -> t -> int -> int
 val set_budget : t -> int -> unit
 (** [set_budget d n] sets [d]'s budget to [n], then frees cached memory
     ({!free_cache}) until [d] holds at most [n] bytes or its cache is empty.
-    It never frees a live buffer.
+    It never frees a live buffer. On a lost [d] it raises no {!Lost}.
 
     Raises [Invalid_argument] if [n < 0]. *)
 
@@ -1179,7 +1190,8 @@ val free_cache : t -> unit
     work not yet done, and, where [d]'s driver's interface says so, the driver's
     memory, also once the work using it is done. On {!host}, it frees the
     collected buffers the host keeps for reuse, and the blocks rig keeps for
-    later submits that no submit holds. *)
+    later submits that no submit holds. On a lost [d] it raises no
+    {!Lost}. *)
 
 exception Out_of_memory of t * int
 (** [Out_of_memory (d, n)] is raised when [d] cannot allocate [n] bytes,
