@@ -1281,6 +1281,9 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- `Root.newton` and `System.anderson` end a lane `Stalled` where a step
+  overflows to `±∞` while `f` stays finite there, as `tanh` does, and keep
+  its last finite estimate: `Solution.best` held the infinity.
 - A `Minimize.bracket` that spends its budget advises an absolute term in
   `tol` as well as a narrower bracket: a relative tolerance at a minimum at 0
   cannot be met however narrow the bracket.

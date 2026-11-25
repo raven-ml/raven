@@ -217,8 +217,13 @@ let newton ~tol ~budget ~slope f x0 =
         (Nx.logical_and moving (Nx.logical_not (Search.finite fx)))
         Not_finite
     in
-    (* An iterate where f is not finite is no estimate: the lane keeps its last,
-       as the systems' searches do. *)
+    let st =
+      settle st
+        (Nx.logical_and moving (Nx.logical_not (Search.finite next)))
+        Stalled
+    in
+    (* An iterate that is not finite, or where f is not, is no estimate: the
+       lane keeps its last, as the systems' searches do. *)
     let kept = Nx.logical_and moving (searching st) in
     ( {
         s with

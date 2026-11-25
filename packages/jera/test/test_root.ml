@@ -113,6 +113,18 @@ let solution_tests =
         in
         equal Oracle.status_t Not_finite (Oracle.status s);
         equal (Oracle.tensor ()) (vec [| 0. |]) (Solution.best s));
+    test
+      "a step that overflows where f is finite ends Stalled, at a finite best"
+      (fun () ->
+        (* The slope 1e-310 sends the step from 0 to ∞, where tanh is 1. *)
+        let s =
+          Root.newton ~tol:tight ~budget:5
+            ~slope:(fun x -> Nx.full_like x 1e-310)
+            (fun x -> Nx.sub_s (Nx.tanh x) 0.5)
+            (vec [| 0. |])
+        in
+        equal Oracle.status_t Stalled (Oracle.status s);
+        equal (Oracle.tensor ()) (vec [| 0. |]) (Solution.best s));
     test "ok marks the converged lanes" (fun () ->
         equal (Oracle.tensor ())
           (Nx.create Nx.bool [| 3 |] [| true; false; true |])

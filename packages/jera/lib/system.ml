@@ -228,6 +228,8 @@ let anderson_search ~tol ~budget ~memory ~residual (s : _ Search.state) =
     let st =
       settle s.Search.st (Nx.logical_not (Search.finite fx)) Not_finite
     in
+    (* A point that overflowed is no estimate, whatever f is there. *)
+    let st = settle st (Nx.logical_not (Search.finite x)) Stalled in
     let column v = Nx.reshape [| size; 1 |] v in
     let shift h v =
       if m = 0 then h

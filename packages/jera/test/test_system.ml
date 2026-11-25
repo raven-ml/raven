@@ -799,6 +799,20 @@ let solve_tests =
             (vec [| 0.5 |])
         in
         equal Oracle.status_t Not_finite (Oracle.status s));
+    test
+      "a point that overflows where f is finite ends Stalled, at a finite best"
+      (fun () ->
+        (* Picard on the constant 1e308 from 1e308 steps to ∞, where f is still
+           1e308. *)
+        let s =
+          System.solve one
+            (System.anderson ~memory:0)
+            ~linear:Linear.dense ~tol:tight ~budget:10
+            (fun x -> Nx.full_like x 1e308)
+            (vec [| 1e308 |])
+        in
+        equal Oracle.status_t Stalled (Oracle.status s);
+        equal (Oracle.tensor ()) (vec [| 1e308 |]) (Solution.best s));
     test "a budget of one iteration ends Budget_spent" (fun () ->
         let a = jacobian (Nx.eye f64 2) (vec [| 0.; 0. |]) in
         let f = field a (vec [| 1.; 2. |]) in
