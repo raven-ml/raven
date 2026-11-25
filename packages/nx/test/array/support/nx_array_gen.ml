@@ -389,11 +389,6 @@ let floats32 s xs = Nx_array.of_array Nx_array.Dtype.Float32 s xs
 let kill ?(why = "consumed by the test") b =
   ignore (require_some ~msg:"a take" (Rig.Buffer.take ~why [ b ]))
 
-(* Whether nothing claims [b]'s memory: whether a take of it succeeds, which
-   kills [b]. *)
-let unclaimed b =
-  Option.is_some (Rig.Buffer.take ~why:"consumed by the test" [ b ])
-
 (* Nothing claims [b]'s memory: a take of it succeeds, which kills [b]. *)
 let released ?(msg = "released: a take of the memory succeeds") b =
   ignore (require_some ~msg (Rig.Buffer.take ~why:"consumed by the test" [ b ]))
@@ -447,11 +442,6 @@ let on_late d xs =
   pending a xs;
   Rig.Buffer.wait (Nx_array.buffer a) Rig.Read_write;
   a
-
-(* Whether no claim holds [a]'s memory: a take of it succeeds, which kills
-   [a]. *)
-let no_claim a =
-  equal ~msg:"no claim left" bool true (unclaimed (Nx_array.buffer a))
 
 (* Whether [e] is a device's loss. *)
 let lost = function Rig.Lost _ -> true | _ -> false
