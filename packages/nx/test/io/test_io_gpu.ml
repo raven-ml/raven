@@ -4,9 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 (* A value over a file's pages, copied onto a GPU whose memory the host does not
-   address after a truncation cut its pages off: the copy raises Sys_error
-   naming the file. A child copies, since a host read of such a page may end
-   the process. It skips without such a GPU. *)
+   address after a truncation cut its pages off: nx_io.mli says the truncation
+   may end the process and the copy may raise Sys_error naming the file, so it
+   places the value, raises that or ends the child by a signal, and nothing
+   else. A child copies, since a host read of such a page may end the process.
+   It skips without such a GPU. *)
 
 open Windtrap
 
@@ -42,9 +44,11 @@ let test_truncated () =
   match Unix.close_process_in ic with
   | WEXITED 0 when String.starts_with ~prefix:"skip: " out ->
       skip ~reason:(String.sub out 6 (String.length out - 6)) ()
-  | WEXITED 0 -> equal string "Sys_error naming the file" out
+  | WEXITED 0 -> mem string out [ "placed"; "Sys_error naming the file" ]
   | WEXITED n -> failf "the child exited %d: %s" n out
-  | WSIGNALED n | WSTOPPED n -> failf "the child ended by signal %d: %s" n out
+  (* nx_io.mli: "a truncation may end the process". *)
+  | WSIGNALED _ -> ()
+  | WSTOPPED n -> failf "the child stopped by signal %d: %s" n out
 
 let () =
   match Array.to_list Sys.argv with
@@ -56,8 +60,8 @@ let () =
              group "truncation"
                [
                  test
-                   "a copy of a value whose file a truncation cut short \
-                    raises Sys_error naming the file"
+                   "a copy of a value whose file a truncation cut short raises \
+                    no exception but Sys_error naming the file"
                    test_truncated;
                ];
            ])
