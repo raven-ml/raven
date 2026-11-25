@@ -4,10 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (* The window law, through Nx: each device of a set computes its window of a
-   result from the windows of the operands it holds, so an operation over
-   values cut along axes its result keeps gives the result it gives on one
-   device, bitwise but for which NaN a NaN result is, which no operation on
-   numbers specifies. *)
+   result from the windows of the operands it holds (nx.mli, Routing), so an
+   operation over values cut along axes its result keeps gives the result it
+   gives on one device, lying at its operands' cuts. The memory devices compute
+   with nx.cpu, whose association depends on no extent but the reduced one and
+   whose transforms on no batch (nx_cpu.mli, its preamble and Fourier
+   transforms), so the results compare bitwise but for which NaN a NaN result
+   is, which no operation on numbers specifies. Then attention over keys and
+   pools cut across devices (nx.mli, Attention). *)
 
 open Windtrap
 open Nx_support
@@ -39,13 +43,15 @@ type 'd placer = {
 
 type run = { run : 'd. 'd placer -> 'd Nx.packed list }
 
-(* An operation of a family over host operands, and the axes of its first
-   result a placement may cut: an operand that holds such an axis holds it
-   at the same position. *)
+(* An operation of a family over host operands, and the axes of its first result
+   a placement may cut: an operand that holds such an axis holds it at the same
+   position, and the first result at that position less the axes before it among
+   [drops], which it reduces away. *)
 type case = {
   family : string;
   show : Format.formatter -> unit;
   free : int list;
+  drops : int list;
   run : run;
 }
 
@@ -98,6 +104,7 @@ let map_case =
     family = "Map";
     show = (fun ppf -> Format.fprintf ppf "add %a %a" pp_x x pp_x y);
     free = axes rank;
+    drops = [];
     run = { run = (fun pl -> [ Nx.P (Nx.add (pl.place x) (pl.place y)) ]) };
   }
 
@@ -111,6 +118,7 @@ let creation_case =
     family = "creation";
     show = (fun ppf -> Format.fprintf ppf "eye ~m:%d ~k:%d %d" m k n);
     free = [ 0; 1 ];
+    drops = [];
     run = { run = (fun pl -> [ Nx.P (Nx.eye_at ~m ~k pl.at Nx.float32 n) ]) };
   }
 
@@ -123,6 +131,7 @@ let copy_case =
     family = "Copy";
     show = (fun ppf -> Format.fprintf ppf "copy %a" pp_x x);
     free = axes rank;
+    drops = [];
     run = { run = (fun pl -> [ Nx.P (Nx.copy (pl.place x)) ]) };
   }
 
@@ -165,6 +174,7 @@ let reduce_case =
         Format.fprintf ppf "reduce along %a %a" pp_ints (Array.of_list reduced)
           pp_x x);
     free = List.filter (fun a -> not (List.mem a reduced)) (axes rank);
+    drops = reduced;
     run = { run };
   }
 
@@ -182,6 +192,7 @@ let scan_case =
     family = "Scan";
     show = (fun ppf -> Format.fprintf ppf "scan along %d %a" a pp_x x);
     free = without a rank;
+    drops = [];
     run = { run };
   }
 
@@ -276,6 +287,7 @@ let padded_map_case =
       (fun ppf ->
         Format.fprintf ppf "map of %a by %a and %a" pp_x x pp_pad pad pp_x y);
     free = without a (Array.length (Nx.shape x));
+    drops = [];
     run = { run };
   }
 
@@ -330,6 +342,7 @@ let padded_reduce_case =
           (Array.of_list reduced) pp_x x pp_pad pad);
     free =
       List.filter (fun b -> b <> a && not (List.mem b reduced)) (axes rank);
+    drops = reduced;
     run = { run };
   }
 
@@ -383,6 +396,7 @@ let padded_scan_case =
           (if arg then "running argmax" else "running sum")
           axis pp_x x pp_pad pad);
     free = List.filter (fun b -> b <> a && b <> axis) (axes rank);
+    drops = [];
     run = { run };
   }
 
@@ -407,6 +421,7 @@ let gather_case =
         Format.fprintf ppf "take_along_axis ~axis:%d %a %a" axis pp_x idx pp_x
           x);
     free = without axis rank;
+    drops = [];
     run = { run };
   }
 
@@ -431,36 +446,51 @@ let scatter_case =
         Format.fprintf ppf "scatter ~combine:Add ~axis:%d %a %a %a" axis pp_x
           idx pp_x u pp_x into);
     free = without axis rank;
+    drops = [];
     run = { run };
   }
 
-(* A sort, or its first [k] along the axis. *)
+(* A sort along an axis, ascending or descending. *)
 let sort_case =
   let open Gen in
   let* rank = int_range 2 3 in
   let* s = shape_of rank in
   let* axis = axis_of rank in
   let* descending = bool in
-  let* first = bool in
-  let* k = int_range 0 s.(axis) in
   let+ x = f32 s in
-  let show ppf =
-    if first then Format.fprintf ppf "top_k ~k:%d ~axis:%d %a" k axis pp_x x
-    else
-      Format.fprintf ppf "sort ~descending:%b ~axis:%d %a" descending axis pp_x
-        x
-  in
   let run pl =
-    let v, i =
-      if first then Nx.top_k ~k ~axis (pl.place x)
-      else Nx.sort ~descending ~axis (pl.place x)
-    in
+    let v, i = Nx.sort ~descending ~axis (pl.place x) in
     [ Nx.P v; Nx.P i ]
   in
   {
-    family = (if first then "Sort k" else "Sort");
-    show;
+    family = "Sort";
+    show =
+      (fun ppf ->
+        Format.fprintf ppf "sort ~descending:%b ~axis:%d %a" descending axis
+          pp_x x);
     free = without axis rank;
+    drops = [];
+    run = { run };
+  }
+
+(* The first [k] along an axis. *)
+let top_k_case =
+  let open Gen in
+  let* rank = int_range 2 3 in
+  let* s = shape_of rank in
+  let* axis = axis_of rank in
+  let* k = int_range 0 s.(axis) in
+  let+ x = f32 s in
+  let run pl =
+    let v, i = Nx.top_k ~k ~axis (pl.place x) in
+    [ Nx.P v; Nx.P i ]
+  in
+  {
+    family = "Sort k";
+    show =
+      (fun ppf -> Format.fprintf ppf "top_k ~k:%d ~axis:%d %a" k axis pp_x x);
+    free = without axis rank;
+    drops = [];
     run = { run };
   }
 
@@ -495,6 +525,7 @@ let fold_case =
            ~dilation:%d ~padding:(%d, %d) %a"
           o k stride dilation lo hi pp_x p);
     free = axes lead;
+    drops = [];
     run = { run };
   }
 
@@ -520,6 +551,7 @@ let c2c_case =
           (if inverse then "ifft" else "fft")
           axis pp_x x);
     free = without axis rank;
+    drops = [];
     run = { run };
   }
 
@@ -534,6 +566,7 @@ let r2c_case =
     family = "R2c";
     show = (fun ppf -> Format.fprintf ppf "rfft ~axes:[%d] %a" axis pp_x x);
     free = without axis rank;
+    drops = [];
     run = { run };
   }
 
@@ -555,12 +588,13 @@ let c2r_case =
       (fun ppf ->
         Format.fprintf ppf "irfft ~axes:[%d] ~s:[%d] %a" axis n pp_x x);
     free = without axis rank;
+    drops = [];
     run = { run };
   }
 
 (* Routines, over a batch of matrices *)
 
-let routine family show run = { family; show; free = [ 0 ]; run }
+let routine family show run = { family; show; free = [ 0 ]; drops = []; run }
 
 let lu_case =
   let open Gen in
@@ -673,10 +707,11 @@ let contract_case =
     family = "Contract";
     show = (fun ppf -> Format.fprintf ppf "matmul %a %a" pp_x a pp_x b);
     free = axes (nb + 2);
+    drops = [];
     run = { run };
   }
 
-let cases =
+let operation_cases =
   [
     map_case;
     creation_case;
@@ -688,6 +723,7 @@ let cases =
     gather_case;
     scatter_case;
     sort_case;
+    top_k_case;
     fold_case;
     c2c_case;
     r2c_case;
@@ -744,7 +780,7 @@ let pp_case ppf (c, w) = Format.fprintf ppf "%t at %a" c.show pp_where w
 
 let case =
   Gen.with_pp pp_case
-    (Gen.bind (Gen.one_of cases) (fun c ->
+    (Gen.bind (Gen.one_of operation_cases) (fun c ->
          Gen.map (fun w -> (c, w)) (where_of c.free)))
 
 let placer (type d) (cut : (int -> bool) -> d Nx.Placement.t) : d placer =
@@ -779,6 +815,15 @@ let same (type d e) i (Nx.P x : d Nx.packed) (Nx.P y : e Nx.packed) =
         (Array.to_list (Nx.to_array x))
         (Array.to_list (Nx.to_array y))
 
+let has_nan (type v s d) (x : (v, s, d) Nx.t) =
+  match D.kind (Nx.dtype x) with
+  | D.Complex ->
+      Array.exists
+        (fun (z : Complex.t) -> Float.is_nan z.re || Float.is_nan z.im)
+        (Nx.to_array x)
+  | D.Float -> Array.exists Float.is_nan (Nx.to_array x)
+  | _ -> false
+
 (* Covers the windows the first of [results] lies in. *)
 let cover_windows family (Nx.P first : _ Nx.packed) =
   let whole = Nx.shape first and ws = windows first in
@@ -786,6 +831,7 @@ let cover_windows family (Nx.P first : _ Nx.packed) =
   List.iter
     (fun f -> cover ("a cut window of " ^ f) (cut && family = f))
     families;
+  cover "a NaN in a cut window of C2c" (cut && family = "C2c" && has_nan first);
   cover "an empty window of a result with elements"
     (numel whole > 0 && Array.exists (fun s -> numel s = 0) ws);
   cover "windows of two extents, none empty"
@@ -799,75 +845,66 @@ let law (c, w) =
   cover "two axes cut" (match w with Two _ -> true | _ -> false);
   cover "a cut beside copies" (match w with Minor _ -> true | _ -> false);
   let expected = c.run.run (placer (fun _ -> Set1.on)) in
-  let check : type d. d Nx.packed list -> unit =
-   fun actual ->
+  (* The first result's axis of the operands' axis [a]. *)
+  let r a = a - List.length (List.filter (fun d -> d < a) c.drops) in
+  let check : type d. d Nx.Placement.t -> d Nx.packed list -> unit =
+   fun at actual ->
     cover_windows c.family (List.hd actual);
     equal ~msg:"results" int (List.length expected) (List.length actual);
-    List.iteri (fun i (e, a) -> same i e a) (List.combine expected actual)
+    List.iteri (fun i (e, a) -> same i e a) (List.combine expected actual);
+    let (Nx.P first) = List.hd actual in
+    equal ~msg:"where the first result lies" (placement ()) at
+      (Nx.placement first)
   in
   let split (type d) (on : d Nx.Placement.t)
       (cut : axis:int -> d Nx.Placement.t) a =
     placer (fun keep -> if keep a then cut ~axis:a else on)
   in
+  let mesh cuts = Nx.Placement.mesh mesh4 cuts in
   match w with
-  | Split (2, a) -> check (c.run.run (split Set2.on Set2.split a))
-  | Split (3, a) -> check (c.run.run (split Set3.on Set3.split a))
-  | Split (_, a) -> check (c.run.run (split Set4.on Set4.split a))
+  | Split (2, a) ->
+      check (Set2.split ~axis:(r a)) (c.run.run (split Set2.on Set2.split a))
+  | Split (3, a) ->
+      check (Set3.split ~axis:(r a)) (c.run.run (split Set3.on Set3.split a))
+  | Split (_, a) ->
+      check (Set4.split ~axis:(r a)) (c.run.run (split Set4.on Set4.split a))
   | Both a ->
-      check (c.run.run (placer (fun keep -> meshed keep [ (a, [ "a"; "b" ]) ])))
+      check
+        (mesh [ (r a, [ "a"; "b" ]) ])
+        (c.run.run (placer (fun keep -> meshed keep [ (a, [ "a"; "b" ]) ])))
   | Two (a, b) ->
       let cuts = [ (a, [ "a" ]); (b, [ "b" ]) ] in
-      check (c.run.run (placer (fun keep -> meshed keep cuts)))
+      check
+        (mesh [ (r a, [ "a" ]); (r b, [ "b" ]) ])
+        (c.run.run (placer (fun keep -> meshed keep cuts)))
   | Minor a ->
-      check (c.run.run (placer (fun keep -> meshed keep [ (a, [ "b" ]) ])))
+      check
+        (mesh [ (r a, [ "b" ]) ])
+        (c.run.run (placer (fun keep -> meshed keep [ (a, [ "b" ]) ])))
 
-(* NaNs of both signs, as a negated NaN gives, in a transform's lines and a
-   contraction's terms. *)
+(* Attention *)
 
-let test_fft_nans () =
-  let re =
-    [|
-      3.3; 3.3; 1.; -1e7; nan; 3.3; -1e7; 0.; 1.; -1e7; 1.; nan; -0.; nan; 0.;
-      0.1; nan; 1.; 0.; nan; -2.5e-3; 1.; -2.5e-3; -0.; 1e7; nan; 1.; -0.;
-      -1e7; 0.;
-    |]
-  in
-  let x =
-    Nx.create Nx.complex64 [| 5; 2; 3 |]
-      (Array.map (fun re -> { Complex.re; im = -.re }) re)
-  in
-  let p = Nx.Placement.mesh mesh4 [ (1, [ "a" ]); (2, [ "b" ]) ] in
-  same 0
-    (Nx.P (Nx.fft ~axes:[ 0 ] (Nx.place Set1.on x)))
-    (Nx.P (Nx.fft ~axes:[ 0 ] (Nx.place p x)))
+type fdt = Fdt : (float, 's) Nx.dtype -> fdt
 
-let test_contract_nans () =
-  let a =
-    Nx.create Nx.float32 [| 8; 3 |]
-      (Array.init 24 (fun i -> [| nan; -.nan; 1. |].(i mod 3)))
-  in
-  let b = Nx.create Nx.float32 [| 3; 8 |] (Array.make 24 1.) in
-  let rows = Nx.Placement.mesh mesh4 [ (0, [ "a" ]) ] in
-  let cols = Nx.Placement.mesh mesh4 [ (1, [ "b" ]) ] in
-  same 0
-    (Nx.P (Nx.matmul (Nx.place Set1.on a) (Nx.place Set1.on b)))
-    (Nx.P (Nx.matmul (Nx.place rows a) (Nx.place cols b)))
+let fdts = [ Fdt Nx.float32; Fdt Nx.float64 ]
+let fdt_name (Fdt dt) = D.name dt
 
-(* Attention over query heads and rows cut across devices: each device's
-   window offsets its mask's and score's row coordinates and reads the keys
-   whole, as on one device. In float32 and in float64. *)
-let test_attention dt () =
-  let draw seed s =
-    Nx.create dt s
-      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 0.37) +. seed)))
-  in
+(* [s]'s elements [sin (0.37 k + seed)] times [mag], in [dt]. *)
+let draw ?(mag = 1.) dt seed s =
+  Nx.create dt s
+    (Array.init (numel s) (fun k ->
+         mag *. Float.sin ((Float.of_int k *. 0.37) +. seed)))
+
+(* Over query heads and rows cut across devices, each device's window offsets
+   its mask's and score's row coordinates and reads the keys whole. *)
+let attention_rows (Fdt dt) =
   let attend at_q at_kv =
-    let slopes = Nx.place at_kv (draw 4. [| 4; 1; 1 |]) in
+    let slopes = Nx.place at_kv (draw dt 4. [| 4; 1; 1 |]) in
     let score p s = Nx.(Infix.(s - (cast dt (p.q - p.k) * slopes))) in
-    let k = Nx.place at_kv (draw 2. [| 2; 90; 8 |]) in
-    let v = Nx.place at_kv (draw 3. [| 2; 90; 4 |]) in
+    let k = Nx.place at_kv (draw dt 2. [| 2; 90; 8 |]) in
+    let v = Nx.place at_kv (draw dt 3. [| 2; 90; 4 |]) in
     Nx.attention ~mask:Nx.causal ~score ~acc:dt ~kv:(Nx.Dense { k; v })
-      (Nx.place at_q (draw 1. [| 4; 70; 8 |]))
+      (Nx.place at_q (draw dt 1. [| 4; 70; 8 |]))
   in
   let o, lse = attend Set1.on Set1.on in
   let cut = Nx.Placement.mesh mesh4 [ (0, [ "b" ]); (1, [ "a" ]) ] in
@@ -875,25 +912,19 @@ let test_attention dt () =
   same 0 (Nx.P o) (Nx.P o');
   same 1 (Nx.P lse) (Nx.P lse')
 
-(* Paged attention over pools cut along their key heads, with the queries
-   cut along theirs: each device reads its heads of the pools through the
-   whole table, as on one device. As many key heads as query heads over 4
-   devices, and half as many over 2, each serving a group of two. *)
-let test_paged_heads (type s) (dt : (float, s) Nx.dtype) () =
-  let draw seed s =
-    Nx.create dt s
-      (Array.init (numel s) (fun k -> Float.sin ((Float.of_int k *. 0.37) +. seed)))
-  in
-  let table =
-    Nx.create Nx.int64 [| 2; 4 |] [| 3L; 0L; -1L; 5L; 1L; 6L; 2L; 4L |]
-  in
+let table = Nx.create Nx.int64 [| 2; 4 |] [| 3L; 0L; -1L; 5L; 1L; 6L; 2L; 4L |]
+
+(* Pools cut along their key heads, with the queries' heads: as many key heads
+   as query heads over 4 devices, and half as many over 2, each serving a group
+   of two. *)
+let paged_heads (Fdt dt) =
   let attend ~hk at at_heads =
-    let pool seed d = Nx.place at_heads (draw seed [| 7; hk; 3; d |]) in
+    let pool seed d = Nx.place at_heads (draw dt seed [| 7; hk; 3; d |]) in
     let kv =
       Nx.Paged { k = pool 2. 8; v = pool 3. 4; table = Nx.place at table }
     in
     Nx.attention ~mask:Nx.causal ~acc:dt ~kv
-      (Nx.place at_heads (draw 1. [| 2; 4; 5; 8 |]))
+      (Nx.place at_heads (draw dt 1. [| 2; 4; 5; 8 |]))
   in
   let o, lse = attend ~hk:4 Set1.on Set1.on in
   let o', lse' = attend ~hk:4 Set4.on (Set4.split ~axis:1) in
@@ -902,43 +933,16 @@ let test_paged_heads (type s) (dt : (float, s) Nx.dtype) () =
   let o, lse = attend ~hk:2 Set1.on Set1.on in
   let o', lse' = attend ~hk:2 Set2.on (Set2.split ~axis:1) in
   same 0 (Nx.P o) (Nx.P o');
-  same 1 (Nx.P lse) (Nx.P lse');
-  (* Heads cut along one axis of a mesh and the table's pages along the
-     other: each part's [(o, lse)] combines as keys cut across devices do,
-     within the roundings of that combination. *)
-  let q = draw 1. [| 2; 4; 5; 8 |] in
-  let pool seed d = draw seed [| 7; 2; 3; d |] in
-  let attend at_heads at_table =
-    let kv =
-      Nx.Paged
-        {
-          k = Nx.place at_heads (pool 2. 8);
-          v = Nx.place at_heads (pool 3. 4);
-          table = Nx.place at_table table;
-        }
-    in
-    Nx.attention ~mask:Nx.causal ~acc:dt ~kv (Nx.place at_heads q)
-  in
-  let o, lse = attend Set1.on Set1.on in
-  let heads = Nx.Placement.mesh mesh4 [ (1, [ "a" ]) ] in
-  let o', lse' = attend heads (Nx.Placement.mesh mesh4 [ (1, [ "b" ]) ]) in
-  let tol = match dt with Float64 -> 1e-12 | _ -> 1e-5 in
-  equal ~msg:"o" (array (float tol)) (Nx.to_array o) (Nx.to_array o');
-  equal ~msg:"lse" (array (float tol)) (Nx.to_array lse) (Nx.to_array lse')
+  same 1 (Nx.P lse) (Nx.P lse')
 
-(* Paged attention over pools cut along their pages: each device reads the
-   pages the table names from the devices that hold them, and the result is
-   the dense call's over those keys on one device, which nx.cpu computes with
-   the bits of the read in place. Entries of [-1] and past the pool; lead
-   ranks 0 to 2; with and without lengths and a score; pools cut along their
-   pages over 4 devices, and along their pages and key heads over a mesh. *)
-let test_paged_slots (type s) (dt : (float, s) Nx.dtype) () =
-  let draw seed s =
-    Nx.create dt s
-      (Array.init (numel s) (fun k ->
-           Float.sin ((Float.of_int k *. 0.37) +. seed)))
-  in
-  let slopes = draw 5. [| 4; 1; 1 |] in
+(* Pools cut along their pages: each device reads the pages the table names from
+   the devices that hold them, and the result is the dense call's over those
+   keys on one device, which nx.cpu computes with the bits of the read in place.
+   Entries of [-1] and past the pool; lead ranks 0 to 2; with and without
+   lengths and a score; pools cut along their pages over 4 devices, and along
+   their pages and key heads over a mesh. *)
+let paged_pages (Fdt dt) =
+  let slopes = draw dt 5. [| 4; 1; 1 |] in
   let case lead ~extras =
     let rows = numel lead in
     let entries = [| 3L; 0L; -1L; 5L; 1L; 9L; 2L; 7L; 6L; 4L; -1L; 0L |] in
@@ -947,16 +951,17 @@ let test_paged_slots (type s) (dt : (float, s) Nx.dtype) () =
         (Array.init (rows * 4) (fun i -> entries.(i mod 12)))
     in
     let lengths =
-      Nx.create Nx.int64 lead (Array.init rows (fun i -> Int64.of_int (12 - (3 * i))))
+      Nx.create Nx.int64 lead
+        (Array.init rows (fun i -> Int64.of_int (12 - (3 * i))))
     in
     let attend ~at_q ~at_pool at =
-      let pool seed d = Nx.place at_pool (draw seed [| 8; 2; 3; d |]) in
+      let pool seed d = Nx.place at_pool (draw dt seed [| 8; 2; 3; d |]) in
       let kv =
         Nx.Paged { k = pool 2. 8; v = pool 3. 4; table = Nx.place at table }
       in
       let slopes = Nx.place at slopes in
       let score p s = Nx.(Infix.(s - (cast dt (p.q - p.k) * slopes))) in
-      let q = Nx.place at_q (draw 1. (Array.append lead [| 4; 5; 8 |])) in
+      let q = Nx.place at_q (draw dt 1. (Array.append lead [| 4; 5; 8 |])) in
       if extras then
         Nx.attention ~lengths:(Nx.place at lengths) ~mask:Nx.causal ~score
           ~acc:dt ~kv q
@@ -979,92 +984,135 @@ let test_paged_slots (type s) (dt : (float, s) Nx.dtype) () =
     (fun lead -> List.iter (fun extras -> case lead ~extras) [ false; true ])
     [ [||]; [| 2 |]; [| 2; 1 |] ]
 
-(* Attention over keys cut across 2 and 4 devices against one device,
-   within the sum of the bounds nx.mli states for each: dense keys with
-   lengths, or paged ones through a table cut by its pages, under a mask
-   that hides every key of a device from some rows, where that part's lse
-   is -∞, and every key from the last row. Scores reach about 100 in
-   magnitude and rows read up to 600 keys, so the bounds' [b], [ln tk] and
-   blocks' terms are far from negligible. [a] is the greatest
-   [|scale| Σ |q k|], which bounds [b], [η = (2 dk + 4) u a], [e] nx.cpu's
-   [ε] over [tk] keys and [e4] its [Logsumexp] bound of 4 terms, [u] the
-   accumulator's, float32 or float64, as the operands are. *)
-type split = { seed : float; mag : float; devices : int; paged : bool; tk : int }
+(* Attention over keys cut across 2 and 4 devices against one device, within the
+   sum of the bounds nx.mli states for each: dense keys with lengths, or paged
+   ones through a table cut by its pages, with the pools' key heads cut too over
+   a mesh's other axis, under a mask that hides every key of a device from some
+   rows, where that part's lse is -∞, and every key from the last row. Scores
+   reach about 100 in magnitude and rows read up to 600 keys, so the bounds'
+   [b], [ln tk] and blocks' terms are far from negligible. [a] is the greatest
+   [|scale| Σ |q k|], which bounds [b], [η = (2 dk + 4) u a], [e] nx.cpu's [ε]
+   over [tk] keys and [e4] its [Logsumexp] bound of 4 terms, [u] the
+   accumulator's, float32 or float64, as the operands are. The cut call's bits
+   are the placement's alone: run again, and over operands moved there from
+   another placement, it gives the same bits. *)
+type split = {
+  dt : fdt;
+  seed : float;
+  mag : float;
+  devices : int;
+  paged : bool;
+  heads : bool;
+  tk : int;
+}
 
+(* Paged calls cut their pools' key heads a sixth of the time. *)
 let split_case =
   let open Gen in
+  let* dt = of_list fdts in
   let* seed = float_range 0. 10. in
   let* mag = of_list [ 1.; 6. ] in
-  let* devices = of_list [ 2; 4 ] in
+  let* devices, heads = of_list [ (2, false); (4, false); (4, true) ] in
   let* paged = bool in
   let+ tk = of_list [ 200; 600 ] in
-  { seed; mag; devices; paged; tk }
+  { dt; seed; mag; devices; paged; heads = heads && paged; tk }
 
 let pp_split ppf c =
-  Format.fprintf ppf "seed %g mag %g devices %d paged %b tk %d" c.seed c.mag
-    c.devices c.paged c.tk
+  Format.fprintf ppf "%s seed %g mag %g devices %d%s%s" (fdt_name c.dt) c.seed
+    c.mag c.devices
+    (if c.paged then " paged" else Printf.sprintf " dense tk %d" c.tk)
+    (if c.heads then ", heads cut" else "")
 
-let law_attention_keys (type s) (dt : (float, s) Nx.dtype) c =
+let law_attention_keys c =
+  let (Fdt dt) = c.dt in
+  cover "float32" (D.bits dt = 32);
+  cover "float64" (D.bits dt = 64);
   cover "paged" c.paged;
   cover "dense" (not c.paged);
   cover "four devices" (c.devices = 4);
   cover "large scores" (c.mag > 1.);
-  let draw seed s =
-    Nx.create dt s
-      (Array.init (numel s) (fun k ->
-           c.mag *. Float.sin ((Float.of_int k *. 0.37) +. seed +. c.seed)))
-  in
+  cover "key heads cut beside the pages" c.heads;
+  let draw seed s = draw ~mag:c.mag dt (seed +. c.seed) s in
   let u = match dt with Float64 -> 0x1p-53 | _ -> 0x1p-24 in
   let dk = 8 in
   let page = 25 in
   let tk = if c.paged then 8 * page else c.tk in
   let qx = draw 1. [| 2; 4; 6; dk |] in
-  let kx, vx, pool_k, pool_v =
-    if c.paged then
-      (None, None, Some (draw 4. [| 9; 2; page; dk |]), Some (draw 5. [| 9; 2; page; 3 |]))
-    else (Some (draw 2. [| 2; 2; tk; dk |]), Some (draw 3. [| 2; 2; tk; 3 |]), None, None)
+  let keysx, valsx =
+    if c.paged then (draw 4. [| 9; 2; page; dk |], draw 5. [| 9; 2; page; 3 |])
+    else (draw 2. [| 2; 2; tk; dk |], draw 3. [| 2; 2; tk; 3 |])
   in
   let scale = 1. /. Float.sqrt (Float.of_int dk) in
-  let maxabs x = Array.fold_left (fun m y -> Float.max m (Float.abs y)) 0. (Nx.to_array x) in
-  let keysx = match kx with Some k -> k | None -> Option.get pool_k in
-  let valsx = match vx with Some v -> v | None -> Option.get pool_v in
+  let maxabs x =
+    Array.fold_left (fun m y -> Float.max m (Float.abs y)) 0. (Nx.to_array x)
+  in
   let a = scale *. Float.of_int dk *. maxabs qx *. maxabs keysx in
   let vmax = maxabs valsx in
   let eta = Float.of_int ((2 * dk) + 4) *. u *. a in
   let ln = Float.log (Float.of_int tk) in
   (* nx.cpu's [ε] (Nx_kernels_support.cpu). *)
   let e = (Option.get Nx_kernels_support.cpu.attention).epsilon (D.Any dt) tk in
-  let e4 lse = ((4. +. 5. +. (6. *. Float.log 4.)) *. u) +. (u *. Float.abs lse) in
+  let e4 lse =
+    ((4. +. 5. +. (6. *. Float.log 4.)) *. u) +. (u *. Float.abs lse)
+  in
   let rest = ((2. *. a) +. ln +. 5.) *. u in
   (* [w]'s terms past [2η + ε], nx.mli's [(2b + ln tk) u + 5u/(1 - u)]. *)
   let rest_w = (((2. *. a) +. ln) *. u) +. (5. *. u /. (1. -. u)) in
   let gamma n = Float.of_int n *. 2. *. u in
   let mask p = Nx.(less_equal (mul_s p.q (Int64.of_int (tk / 5))) p.k) in
-  let lengths = Nx.create Nx.int64 [| 2 |] [| Int64.of_int (tk - 37); Int64.of_int tk |] in
+  let lengths =
+    Nx.create Nx.int64 [| 2 |] [| Int64.of_int (tk - 37); Int64.of_int tk |]
+  in
   let table =
     Nx.create Nx.int64 [| 2; 8 |]
       [| 3L; 0L; 7L; 1L; -1L; 2L; 9L; 5L; 6L; 6L; 4L; 0L; 1L; 8L; 2L; 3L |]
   in
-  let attend on keys =
-    let q = Nx.place on qx in
+  (* [on] holds the queries and the pools, [keys] the dense keys or the table,
+     [whole] the lengths; [via] is where the operands lie first. *)
+  let attend ?via on keys whole =
+    let place p x =
+      match via with
+      | Some v -> Nx.place p (Nx.place v x)
+      | None -> Nx.place p x
+    in
+    let q = place on qx in
     let kv =
       if c.paged then
         Nx.Paged
-          {
-            k = Nx.place on (Option.get pool_k);
-            v = Nx.place on (Option.get pool_v);
-            table = Nx.place keys table;
-          }
-      else Nx.Dense { k = Nx.place keys (Option.get kx); v = Nx.place keys (Option.get vx) }
+          { k = place on keysx; v = place on valsx; table = place keys table }
+      else Nx.Dense { k = place keys keysx; v = place keys valsx }
     in
-    Nx.attention ~lengths:(Nx.place on lengths) ~mask ~acc:dt ~kv q
+    Nx.attention ~lengths:(place whole lengths) ~mask ~acc:dt ~kv q
   in
   let arrays (o, lse) = (Nx.to_array o, Nx.to_array lse) in
-  let o, lse = arrays (attend Set1.on Set1.on) in
+  let o, lse = arrays (attend Set1.on Set1.on Set1.on) in
   let axis = if c.paged then 1 else 2 in
+  (* The cut call's arrays, once its bits are the same run again and over
+     operands that lay at [via] first. *)
+  let settled (type d) (call : d Nx.Placement.t option -> _ * _) via =
+    let o, lse = call None in
+    List.iter
+      (fun (o', lse') ->
+        same 0 (Nx.P o) (Nx.P o');
+        same 1 (Nx.P lse) (Nx.P lse'))
+      [ call None; call (Some via) ];
+    arrays (o, lse)
+  in
+  let m = Nx.Placement.mesh mesh4 in
   let o', lse' =
-    if c.devices = 2 then arrays (attend Set2.on (Set2.split ~axis))
-    else arrays (attend Set4.on (Set4.split ~axis))
+    if c.heads then
+      settled
+        (fun via ->
+          attend ?via (m [ (1, [ "a" ]) ]) (m [ (1, [ "b" ]) ]) (m []))
+        (m [ (0, [ "b" ]) ])
+    else if c.devices = 2 then
+      settled
+        (fun via -> attend ?via Set2.on (Set2.split ~axis) Set2.on)
+        (Set2.split ~axis:0)
+    else
+      settled
+        (fun via -> attend ?via Set4.on (Set4.split ~axis) Set4.on)
+        (Set4.split ~axis:0)
   in
   let dv = Array.length o / Array.length lse in
   Array.iteri
@@ -1078,7 +1126,8 @@ let law_attention_keys (type s) (dt : (float, s) Nx.dtype) c =
         let part = e (a +. ln) in
         let one = e l and cut = (3. *. Float.max part (e l)) +. e4 l +. rest in
         at_most ~msg:"lse" float_exact
-          ~than:((3. *. eta) +. one +. cut) (Float.abs (l -. l'));
+          ~than:((3. *. eta) +. one +. cut)
+          (Float.abs (l -. l'));
         let w eta eps = (2. *. eta) +. eps +. rest_w in
         let tol =
           (w eta one +. gamma (tk + 1) +. w (2. *. eta) cut
@@ -1094,38 +1143,75 @@ let law_attention_keys (type s) (dt : (float, s) Nx.dtype) c =
       end)
     lse
 
+(* A pool cut along its slots or its key dimension, neither its pages nor its
+   key heads, raises. *)
+let pool_cut axis =
+  let pool d =
+    Nx.place (Set2.split ~axis) (draw Nx.float32 2. [| 7; 2; 4; d |])
+  in
+  let kv =
+    Nx.Paged { k = pool 8; v = pool 8; table = Nx.place Set2.on table }
+  in
+  raises_match (Exn.invalid_arg ~sub:"Nx.attention") (fun () ->
+      Nx.attention ~acc:Nx.float32 ~kv
+        (Nx.place Set2.on (draw Nx.float32 1. [| 2; 4; 5; 8 |])))
+
+(* The operations [f] applies, by name, each computed eagerly. *)
+let operations f =
+  let log = ref [] in
+  Nx.Prim.interpret ~name:"test.operations" Extent
+    (fun _ ~by op ->
+      log := Nx.Prim.name op :: !log;
+      Nx.Prim.eval ~by op)
+    (fun _ -> ignore (f ()));
+  List.rev !log
+
+(* An interpretation receives one Attention, and over pools cut along their
+   pages a take of each pool before it. *)
+let test_received () =
+  let dt = Nx.float32 in
+  let attend at_pool =
+    let pool seed d = Nx.place at_pool (draw dt seed [| 8; 2; 3; d |]) in
+    let kv =
+      Nx.Paged { k = pool 2. 8; v = pool 3. 4; table = Nx.place Set4.on table }
+    in
+    let q = Nx.place Set4.on (draw dt 1. [| 2; 4; 5; 8 |]) in
+    fun () -> Nx.attention ~acc:dt ~kv q
+  in
+  let count name l = List.length (List.filter (String.equal name) l) in
+  let whole = operations (attend Set4.on) in
+  equal ~msg:"whole pools" (list string) [ "Attention" ] whole;
+  let cut = operations (attend (Set4.split ~axis:0)) in
+  equal ~msg:"pools cut along their pages, attentions" int 1
+    (count "Attention" cut);
+  equal ~msg:"pools cut along their pages, gathers" int 2 (count "Gather" cut)
+
 let () =
   exit
     (run "nx windows"
        [
-         group "laws"
+         group "routing"
            [
              prop ~count:1000
-               "an operation over values cut along axes its result keeps \
-                gives its result on one device"
+               "an operation over values cut along axes its result keeps gives \
+                its result on one device, at its operands' cuts"
                case law;
-             test "a transform over cut NaNs of both signs" test_fft_nans;
-             test "attention over cut heads and rows, float32"
-               (test_attention Nx.float32);
-             test "attention over cut heads and rows, float64"
-               (test_attention Nx.float64);
-             test "paged attention over cut key heads, float32"
-               (test_paged_heads Nx.float32);
-             test "paged attention over cut key heads, float64"
-               (test_paged_heads Nx.float64);
-             test "paged attention over pools cut along their pages, float32"
-               (test_paged_slots Nx.float32);
-             test "paged attention over pools cut along their pages, float64"
-               (test_paged_slots Nx.float64);
-             prop ~count:24
-               "attention over cut keys within its bounds, float32"
+           ];
+         group "attention"
+           [
+             cases "over queries cut along heads and rows, as on one device"
+               ~id:fdt_name fdts attention_rows;
+             cases "pools cut along their key heads, as on one device"
+               ~id:fdt_name fdts paged_heads;
+             cases
+               "pools cut along their pages give the dense call on one device"
+               ~id:fdt_name fdts paged_pages;
+             prop ~count:128
+               "over cut keys within its bounds, its bits the placement's alone"
                (Gen.with_pp pp_split split_case)
-               (law_attention_keys Nx.float32);
-             prop ~count:24
-               "attention over cut keys within its bounds, float64"
-               (Gen.with_pp pp_split split_case)
-               (law_attention_keys Nx.float64);
-             test "a contraction over cut NaNs of both signs"
-               test_contract_nans;
+               law_attention_keys;
+             cases "a pool cut along another axis raises" ~id:string_of_int
+               [ 2; 3 ] pool_cut;
+             test "an interpretation receives one Attention" test_received;
            ];
        ])
