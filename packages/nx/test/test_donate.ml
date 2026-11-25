@@ -62,36 +62,45 @@ let fresh_at s xs =
   in
   Nx.add a (Nx.zeros_like a)
 
+(* Two software devices: a placement onto them borrows the host's memory. *)
+module Two = (val Nx.devices [ Nx_support.memory 1; Nx_support.memory 2 ])
+
 let test_dies_at_the_donation () =
   let x = fresh [| 1.; 2. |] in
   equal ~msg:"usable before" (array float_exact) [| 2.; 4. |]
     (elements (Nx.add x x));
-  let d = Nx.donate x in
+  ignore (Nx.donate x);
   raises (Invalid_argument "Nx.add: float32 [2] was donated") (fun () ->
-      Nx.add x x);
+      Nx.add x x)
+
+let test_donated_twice () =
+  let x = fresh [| 1.; 2. |] in
+  ignore (Nx.donate x);
   raises (Invalid_argument "Nx.donate: float32 [2] was donated") (fun () ->
-      Nx.donate x);
-  let y = Nx.mul d (fresh [| 3.; 4. |]) in
-  equal ~msg:"the result" (array float_exact) [| 3.; 8. |] (elements y);
-  invalid ~sub:"Nx.copy: float32 [2] was donated to Nx.mul" (fun () ->
-      Nx.copy d);
-  equal ~msg:"its shape answers" (array int) [| 2 |] (Nx.shape x);
-  equal ~msg:"it prints dead" string "float32 [2], donated" (Nx.to_string x)
+      Nx.donate x)
+
+(* A value cut across two devices, donated and its handle consumed. *)
+let test_still_answers () =
+  let x =
+    Nx.place (Two.split ~axis:0) (fresh_at [| 2; 3 |] (Array.make 6 1.))
+  in
+  let x = Nx.add x (Nx.zeros_like x) in
+  let p = Nx.placement x in
+  ignore (Nx.neg (Nx.donate x));
+  equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape x);
+  equal ~msg:"dtype" string "float32" (D.name (Nx.dtype x));
+  equal ~msg:"placement" (Nx_support.placement ()) p (Nx.placement x)
 
 (* After [donate x], every use of [x] raises, whatever its handle meets: one
-   operation that writes over it, one that takes nothing in place, one
-   refused, a function of several operations, an interpretation that
-   receives the operation, and a traced [x]. A view of [x] made before the
-   donation lives and reads [x]'s elements. *)
+   operation that writes over it, one that takes nothing in place, one refused,
+   a function of several operations, an interpretation that receives the
+   operation, and a traced [x]. *)
 let test_dies_on_every_path () =
   let after ~msg f =
     let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-    let v = Nx.reshape [| 4 |] x in
     (match f (Nx.donate x) with _ -> () | exception Invalid_argument _ -> ());
     raises ~msg (Invalid_argument "Nx.neg: float32 [2; 2] was donated")
-      (fun () -> Nx.neg x);
-    equal ~msg:(msg ^ ": a view made before") (array float_exact)
-      [| 1.; 2.; 3.; 4. |] (elements v)
+      (fun () -> Nx.neg x)
   in
   after ~msg:"in place" Nx.exp;
   after ~msg:"in fresh memory" (fun h -> Nx.matmul h h);
@@ -113,6 +122,19 @@ let test_dies_on_every_path () =
   in
   raises ~msg:"traced" (Invalid_argument "Nx.neg: float32 [2] was donated")
     traced
+
+(* Views made before the donation, whatever the handle meets: one operation that
+   writes over it, one in fresh memory, one refused. *)
+let test_view_lives () =
+  let after ~msg f =
+    let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+    let v = Nx.reshape [| 4 |] x in
+    (match f (Nx.donate x) with _ -> () | exception Invalid_argument _ -> ());
+    equal ~msg (array float_exact) [| 1.; 2.; 3.; 4. |] (elements v)
+  in
+  after ~msg:"in place" Nx.exp;
+  after ~msg:"in fresh memory" (fun h -> Nx.matmul h h);
+  after ~msg:"refused" (fun h -> Nx.add h (fresh [| 1.; 2.; 3. |]))
 
 let test_passed_on () =
   let x = fresh [| 1.; 2.; 3.; 4. |] in
@@ -464,13 +486,16 @@ let test_several_reads () =
    interpretation it writes in place. *)
 let test_lent () =
   let peek x = Nx.Repr.read ~by:"test" x A.to_array in
-  let in_place h =
+  let written h =
     let b = Nx.Repr.read ~by:"test" h A.buffer in
     let y = Nx.neg h in
-    Rig.Buffer.overlaps b (A.buffer (Option.get (Nx.Repr.array ~by:"test" y)))
+    if
+      Rig.Buffer.overlaps b (A.buffer (Option.get (Nx.Repr.array ~by:"test" y)))
+    then "in place"
+    else "fresh memory"
   in
-  equal ~msg:"no interpretation: in place" bool true
-    (in_place (Nx.donate (fresh [| 1.; 2. |])));
+  equal ~msg:"no interpretation" string "in place"
+    (written (Nx.donate (fresh [| 1.; 2. |])));
   let observed f =
     Nx.Prim.interpret ~name:"test.observer" Extent
       (fun _ ~by op -> Nx.Prim.eval ~by op)
@@ -483,7 +508,8 @@ let test_lent () =
   raises (Invalid_argument (donated_in "test" x)) (fun () -> peek x);
   let later ~msg ~by h =
     either ~msg (array float_exact) ~by [| 1.; 2. |] (fun () -> peek h);
-    either ~msg:(msg ^ ": fresh memory") bool ~by false (fun () -> in_place h)
+    either ~msg:(msg ^ ": its consumer") string ~by "fresh memory" (fun () ->
+        written h)
   in
   later ~msg:"the observer's handle" ~by:[ "Nx.mul" ] h;
   let h = Nx.donate (fresh [| 1.; 2. |]) in
@@ -515,10 +541,8 @@ let test_creation_dies () =
       Nx.add c c)
 
 (* A placement onto software devices borrows the host's memory: the shards of a
-   value placed there lie in one allocation, apart or interleaved, and a
-   device whose window is empty holds none of it. *)
-module Two = (val Nx.devices [ Nx_support.memory 1; Nx_support.memory 2 ])
-
+   value placed there lie in one allocation, apart or interleaved, and a device
+   whose window is empty holds none of it. *)
 let test_shards_of_one_allocation () =
   let donated s axis =
     let msg = Printf.sprintf "[%d; %d] split along %d" s.(0) s.(1) axis in
@@ -578,14 +602,26 @@ let test_after_moved_positions () =
 let test_is_handle () =
   let x = fresh [| 1.; 2. |] in
   let d = Nx.donate x in
-  equal ~msg:"a handle" bool true (Nx.Prim.donated d);
-  equal ~msg:"its donor" bool false (Nx.Prim.donated x);
-  equal ~msg:"a handle passed on" bool true
-    (Nx.Prim.donated (Nx.reshape [| 1; 2 |] (Nx.donate (fresh [| 1.; 2. |]))));
-  equal ~msg:"a donated creation" bool true
-    (Nx.Prim.donated (Nx.donate (Nx.zeros f32 [| 2 |])));
+  let live = Nx.Prim.donated d in
+  let passed_on = Nx.reshape [| 1; 2 |] (Nx.donate (fresh [| 1.; 2. |])) in
+  let creation = Nx.donate (Nx.zeros f32 [| 2 |]) in
   ignore (Nx.copy d);
-  equal ~msg:"a consumed handle" bool true (Nx.Prim.donated d)
+  equal
+    (list (Windtrap.pair string bool))
+    [
+      ("a handle", true);
+      ("its donor", false);
+      ("a handle passed on", true);
+      ("a donated creation", true);
+      ("a consumed handle", true);
+    ]
+    [
+      ("a handle", live);
+      ("its donor", Nx.Prim.donated x);
+      ("a handle passed on", Nx.Prim.donated passed_on);
+      ("a donated creation", Nx.Prim.donated creation);
+      ("a consumed handle", Nx.Prim.donated d);
+    ]
 
 (* A value cut across devices ends as one, at its donation, and its handle once
    a consumer takes or frees its shards' memory. A traced value ends by its
@@ -740,7 +776,15 @@ let test_made_in_place () =
       Nx.Repr.unsafe_of_array Nx.Host.v (A.of_array D.Float32 [| n |] xs));
   at_least ~msg:"Nx.Repr.of_array: a fresh result" int ~than:(4 * n)
     (negated ~msg:"Nx.Repr.of_array" (fun () ->
-         Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] xs)))
+         Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] xs)));
+  let ones () =
+    Bigarray.Array1.init Bigarray.float32 Bigarray.c_layout n (fun _ -> 1.)
+  in
+  at_least ~msg:"Nx.Host.wrap: a fresh result" int ~than:(4 * n)
+    (negated ~msg:"Nx.Host.wrap" (fun () -> Nx.Host.wrap [| n |] (ones ())));
+  let b = ones () in
+  ignore (Nx.neg (Nx.donate (Nx.Host.wrap [| n |] b)));
+  equal ~msg:"Nx.Host.wrap: the bigarray" float_exact 1. b.{n - 1}
 
 let test_set_in_place () =
   let check ~msg idx s =
@@ -810,12 +854,22 @@ let test_cut_in_place () =
     Nx.add a (Nx.zeros_like a)
   in
   let cut = Pair.split ~axis:0 in
-  let case ~msg ?(at = cut) ~fresh b =
+  (* Ones over arrays of each device, given up or kept. *)
+  let shards ~own () =
+    let ones d =
+      A.to_device d (A.of_array D.Float32 [| n / 2 |] (Array.make (n / 2) 1.))
+    in
+    let arrays = Iarray.of_list [ ones device; ones (Nx_support.memory 0) ] in
+    if own then Nx.Repr.unsafe_of_shards cut arrays
+    else Nx.Repr.of_shards cut arrays
+  in
+  let case ~msg ?(donor = donor cut) ~fresh b =
     List.iter
       (fun d ->
         let y, grew =
-          grown_on d (fun () -> (donor at (), b ())) (fun (x, b) ->
-              Nx.add (Nx.donate x) b)
+          grown_on d
+            (fun () -> (donor (), b ()))
+            (fun (x, b) -> Nx.add (Nx.donate x) b)
         in
         let msg = msg ^ " on " ^ Rig.name d in
         if fresh then copied ~msg ~bytes:(2 * n) grew
@@ -827,8 +881,12 @@ let test_cut_in_place () =
       Nx.place (Pair.split ~axis:0) (host (Array.make n 2.)));
   case ~msg:"whole on each device" ~fresh:false (fun () ->
       Nx.place Pair.on (host (Array.make n 2.)));
-  case ~msg:"a whole donor beside a cut operand" ~at:Pair.on ~fresh:true
-    (fun () -> Nx.place cut (host (Array.make n 2.)))
+  case ~msg:"a whole donor beside a cut operand" ~donor:(donor Pair.on)
+    ~fresh:true (fun () -> Nx.place cut (host (Array.make n 2.)));
+  case ~msg:"shards given up" ~donor:(shards ~own:true) ~fresh:false (fun () ->
+      Nx.place cut (host (Array.make n 2.)));
+  case ~msg:"shards kept" ~donor:(shards ~own:false) ~fresh:true (fun () ->
+      Nx.place cut (host (Array.make n 2.)))
 
 (* A read for the extent of a call leaves the memory to the next donation,
    where a crossing ({!Nx.Repr.array}) shares it for good. *)
@@ -866,8 +924,9 @@ let donated_during_read donate =
         let before = A.to_array a in
         let y = donate c in
         let fresh = Option.get (Nx.Repr.array ~by:"test" y) in
-        equal ~msg:"fresh memory" bool false
-          (Rig.Buffer.overlaps (A.buffer a) (A.buffer fresh));
+        satisfies ~msg:"the donation's result" ~claim:"apart from the read" pass
+          (fun () -> not (Rig.Buffer.overlaps (A.buffer a) (A.buffer fresh)))
+          ();
         equal ~msg:"the read's bytes" (array float_exact) before (A.to_array a);
         y)
   in
@@ -1003,9 +1062,6 @@ let test_kept () =
    computes into fresh memory; where at the result's own index, as an
    elementwise operand, it may still write there. *)
 let test_donor_beside () =
-  let c = cache () in
-  raises (Invalid_argument (donated_in "Nx.add" c)) (fun () ->
-      Nx.add (Nx.donate c) c);
   let p =
     positions [| rows; width |]
       (Array.init (rows * width) (fun i ->
@@ -1120,14 +1176,18 @@ let on_dec s xs =
 
 let test_declined_frees () =
   let n = 1 lsl 14 in
-  let freed ~msg y =
+  let freed y =
     let h = Nx.donate (on_dec [| n |] (Array.make n 1.)) in
     let before = settled () in
     invalid ~sub:"does not compute Add" (fun () -> Nx.add h y);
     let freed = before - settled () in
     ignore (Sys.opaque_identity y);
     invalid ~sub:(dead_in "Nx.copy" h "Nx.add") (fun () -> Nx.copy h);
-    at_least ~msg int ~than:(4 * n) freed
+    freed
+  in
+  let freed ~msg y =
+    ignore (freed y);
+    at_least ~msg int ~than:(4 * n) (freed y)
   in
   freed ~msg:"a sum that may write in place" (on_dec [| n |] (Array.make n 2.));
   freed ~msg:"a sum beside a wider operand"
@@ -1329,7 +1389,9 @@ let moved_case =
     Gen.(quad square movements movements bool)
 
 let law_moved_twice =
-  prop "two handles of one value through movements give the undonated result"
+  prop
+    ~examples:[ ((2, [| 0.; 1.5; -2.; 3e38 |]), [ Recut ], [], true) ]
+    "two handles of one value through movements give the undonated result"
     moved_case (fun ((n, xs), m1, m2, beside) ->
       let copies m = n >= 2 && List.mem Recut m in
       cover "a copy passed on" (copies m1 || ((not beside) && copies m2));
@@ -1531,7 +1593,11 @@ let reshape_sys h =
    The result's elements are [f]'s. *)
 let pair_ref f by h1 h2 out =
   let two = h1 != h2 in
-  cover "two handles consumed"
+  (* Most such calls run in the program's prefix, on one domain: the label shows
+     the law's arm of two consumed handles reached, not the race, which "two
+     calls taking one pair of handles in opposite orders" holds. Its share falls
+     as the machine's load rises, when fewer branch calls meet free handles. *)
+  cover "a call consumes two handles"
     (two && match out with Ok (Ok _) -> true | Ok (Error _) | Error _ -> false);
   cover "one handle refused, the other free"
     (two
@@ -1608,6 +1674,8 @@ let commands =
     command "read" (value ^-> returns outcome) read_ref read_sys;
     command "consume" (value ^-> returns outcome) consume_ref consume_sys;
     command "composite" (value ^-> returns outcome) composite_ref composite_sys;
+    (* Listed twice, so that more pair calls meet two free handles. *)
+    command "make a handle" (pair @-> makes handle) make_handle make_handle_sys;
     command "make a handle" (pair @-> makes handle) make_handle make_handle_sys;
     command "add" (handle ^-> judges taken) add_ref add_sys;
     command "mul" (handle ^-> judges taken) mul_ref mul_sys;
@@ -1814,22 +1882,25 @@ let test_none_kept () =
 (* Where a call's operands reach different operations, a donor beside its
    own handle raises naming the call. *)
 let test_beside_elsewhere () =
+  let c = fresh [| 1.; 2. |] in
+  raises ~msg:"one operation"
+    (Invalid_argument (donated_in "Nx.add" c))
+    (fun () -> Nx.add (Nx.donate c) c);
   let p = Nx.cast Nx.int64 (fresh [| 0.; 1.; 2. |]) in
   let len = Nx.cast Nx.int64 (fresh [| 3.; 3.; 3. |]) in
   let h = Nx.donate p in
   let pair = { Nx.q = h; k = p; len; tq = 2 } in
-  raises (Invalid_argument (donated_in "Nx.causal" p)) (fun () ->
-      Nx.causal pair)
+  raises ~msg:"operations of one call"
+    (Invalid_argument (donated_in "Nx.causal" p))
+    (fun () -> Nx.causal pair)
 
 (* Every public function that takes a value, called by one table of cases. A
    case makes fresh operands, passes its operand [i] as [d i x], and prints the
    results. Two promises run over the table: on a dead operand the function
    raises naming itself, the one the user called, whatever it computes through;
-   a donated operand gives the undonated result, its donor is dead whatever
-   the call does with the handle, and the handle reads its elements as they
-   were or raises naming the call, which frees its memory where each operand
-   reaches one operation, through movements ([consumes]). Received by an
-   interpretation, the same. *)
+   a donated operand gives the undonated result, its donor is dead whatever the
+   call does with the handle, and the handle reads its elements as they were or
+   raises naming the call. Received by an interpretation, the same. *)
 
 (* What a function does with a dead operand: raise naming itself, or print
    [death]. *)
@@ -1841,7 +1912,6 @@ type case = {
   dt : string;
   operands : int;
   dead : dead;
-  consumes : bool;  (* Each operand reaches one operation. *)
   run :
     ('v 's. int -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t) -> string;
 }
@@ -1877,9 +1947,9 @@ let shows l = String.concat "; " l
 let showl l = shows (List.map show l)
 
 (* A case of [Nx.fn], whose refusals name [Nx.by], [Nx.fn] by default. *)
-let c ?by ?(dead = Raises) ?(consumes = false) fn operands run dt =
+let c ?by ?(dead = Raises) fn operands run dt =
   let by = "Nx." ^ Option.value by ~default:fn in
-  { fn = "Nx." ^ fn; by; dt; operands; dead; consumes; run }
+  { fn = "Nx." ^ fn; by; dt; operands; dead; run }
 
 (* The cases of a group, at the dtype named [dt]. *)
 let table dt cases = List.map (fun case -> case dt) cases
@@ -1941,10 +2011,9 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
           show (Nx.stack [ d 0 (x [| 3 |]); d 1 (x [| 3 |]) ]));
       c "pad" 1 (fun d ->
           show (Nx.pad [| (1, 0); (0, 1) |] one (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "roll" 1 (fun d -> show (Nx.roll 1 (d 0 (x [| 5 |]))));
-      c ~consumes:true "roll" 1 (fun d ->
-          show (Nx.roll ~axis:1 2 (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "fftshift" 1 (fun d ->
+      c "roll" 1 (fun d -> show (Nx.roll 1 (d 0 (x [| 5 |]))));
+      c "roll" 1 (fun d -> show (Nx.roll ~axis:1 2 (d 0 (x [| 2; 3 |]))));
+      c "fftshift" 1 (fun d ->
           show (Nx.fftshift ~axes:[ 0; 1 ] (d 0 (x [| 2; 3 |]))));
       c "tile" 1 (fun d -> show (Nx.tile [| 2; 1 |] (d 0 (x [| 2; 3 |]))));
       c "tile" 1 (fun d -> show (Nx.tile [| 1; 1 |] (d 0 (x [| 2; 3 |]))));
@@ -2006,8 +2075,7 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "div" 2 (fun d ->
           show (Nx.div (d 0 (x [| 2; 3 |])) (d 1 (nonzero [| 2; 3 |]))));
       c "neg" 1 (fun d -> show (Nx.neg (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "square" 1 (fun d ->
-          show (Nx.square (d 0 (x [| 2; 3 |]))));
+      c "square" 1 (fun d -> show (Nx.square (d 0 (x [| 2; 3 |]))));
       c "add_s" 1 (fun d -> show (Nx.add_s (d 0 (x [| 3 |])) one));
       c "sub_s" 1 (fun d -> show (Nx.sub_s (d 0 (x [| 3 |])) one));
       c "mul_s" 1 (fun d -> show (Nx.mul_s (d 0 (x [| 3 |])) one));
@@ -2019,7 +2087,7 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
           show (Nx.not_equal (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
       c "equal_s" 1 (fun d -> show (Nx.equal_s (d 0 (x [| 4 |])) one));
       c "not_equal_s" 1 (fun d -> show (Nx.not_equal_s (d 0 (x [| 4 |])) one));
-      c ~consumes:true "array_equal" 2 (fun d ->
+      c "array_equal" 2 (fun d ->
           show (Nx.array_equal (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
       c "where" 3 (fun d ->
           let cond = d 0 (Nx.not_equal_s (x [| 2; 3 |]) one) in
@@ -2029,8 +2097,8 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "sum" 1 (fun d ->
           show (Nx.sum ~axes:[ 1 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "prod" 1 (fun d -> show (Nx.prod ~axes:[ 0 ] (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "mean" 1 (fun d -> show (Nx.mean (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "mean" 1 (fun d ->
+      c "mean" 1 (fun d -> show (Nx.mean (d 0 (x [| 2; 3 |]))));
+      c "mean" 1 (fun d ->
           show (Nx.mean ~axes:[ 0 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "cumsum" 1 (fun d -> show (Nx.cumsum (d 0 (x [| 2; 3 |]))));
       c "cumsum" 1 (fun d -> show (Nx.cumsum ~axis:1 (d 0 (x [| 2; 3 |]))));
@@ -2050,14 +2118,14 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
                (d 1 (x [| 3; 2 |]))));
       c "einsum" 2 (fun d ->
           show (Nx.einsum ij_jk [ d 0 (x [| 2; 3 |]); d 1 (x [| 3; 2 |]) ]));
-      c ~consumes:true "einsum" 1 (fun d ->
+      c "einsum" 1 (fun d ->
           show (Nx.einsum (Nx.Pattern.v "i j -> j i") [ d 0 (x [| 2; 3 |]) ]));
-      c ~consumes:true "einsum" 1 (fun d ->
+      c "einsum" 1 (fun d ->
           show (Nx.einsum (Nx.Pattern.v "i i -> i") [ d 0 (x [| 3; 3 |]) ]));
-      c ~consumes:true "einsum" 1 (fun d ->
+      c "einsum" 1 (fun d ->
           show
             (Nx.einsum (Nx.Pattern.v "i j -> i | j") [ d 0 (x [| 2; 3 |]) ]));
-      c ~consumes:true "einsum" 2 (fun d ->
+      c "einsum" 2 (fun d ->
           show
             (Nx.einsum
                (Nx.Pattern.v "i j, k -> i k | j")
@@ -2076,9 +2144,8 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
                (d 0 (x [| 2; 3 |]))
                (d 1 (x [| 3; 2 |]))));
       c "dot" 2 (fun d -> show (Nx.dot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
-      c ~consumes:true "vdot" 2 (fun d ->
-          show (Nx.vdot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
-      c ~consumes:true "cross" 2 (fun d ->
+      c "vdot" 2 (fun d -> show (Nx.vdot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
+      c "cross" 2 (fun d ->
           show (Nx.cross (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
       c "matrix_transpose" 1 (fun d ->
           show (Nx.matrix_transpose (d 0 (x [| 2; 3 |]))));
@@ -2091,50 +2158,50 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "trace" 1 (fun d -> show (Nx.trace (d 0 (x [| 3; 3 |]))));
       c "diag" 1 (fun d -> show (Nx.diag (d 0 (x [| 3 |]))));
       c "diag" 1 (fun d -> show (Nx.diag (d 0 (x [| 3; 3 |]))));
-      c ~consumes:true "tensordot" 2 (fun d ->
+      c "tensordot" 2 (fun d ->
           show
             (Nx.tensordot ~axes:([ 1 ], [ 0 ])
                (d 0 (x [| 2; 3 |]))
                (d 1 (x [| 3; 2 |]))));
-      c ~consumes:true "tensordot" 2 (fun d ->
+      c "tensordot" 2 (fun d ->
           show (Nx.tensordot (d 0 (x [| 2; 3 |])) (d 1 (x [| 2; 3 |]))));
-      c ~consumes:true "inner" 2 (fun d ->
+      c "inner" 2 (fun d ->
           show (Nx.inner (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
-      c ~consumes:true "outer" 2 (fun d ->
-          show (Nx.outer (d 0 (x [| 2 |])) (d 1 (x [| 3 |]))));
-      c ~consumes:true "vecdot" 2 (fun d ->
+      c "outer" 2 (fun d -> show (Nx.outer (d 0 (x [| 2 |])) (d 1 (x [| 3 |]))));
+      c "vecdot" 2 (fun d ->
           show (Nx.vecdot (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
-      c ~consumes:true "kron" 2 (fun d ->
+      c "kron" 2 (fun d ->
           show (Nx.kron (d 0 (x [| 2; 1 |])) (d 1 (x [| 3 |]))));
-      c ~consumes:true "multi_dot" 2 (fun d ->
+      c "multi_dot" 2 (fun d ->
           show (Nx.multi_dot [ d 0 (x [| 3 |]); d 1 (x [| 3; 2 |]) ]));
-      c ~consumes:true "multi_dot" 3 (fun d ->
+      c "multi_dot" 3 (fun d ->
           show
             (Nx.multi_dot
                [ d 0 (x [| 2; 3 |]); d 1 (x [| 3; 1 |]); d 2 (x [| 1; 2 |]) ]));
       c "matrix_power" 1 (fun d -> show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 0));
-      c ~consumes:true "matrix_power" 1 (fun d ->
+      c "matrix_power" 1 (fun d ->
           show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 1));
-      c ~consumes:true "matrix_power" 1 (fun d ->
+      c "matrix_power" 1 (fun d ->
           show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 2));
       c "matrix_power" 1 (fun d ->
           show (Nx.matrix_power (d 0 (x [| 1; 2; 2 |])) 3));
       c "meshgrid" 2 (fun d ->
           showl (Nx.meshgrid ~indexing:`Xy [ d 0 (x [| 2 |]); d 1 (x [| 3 |]) ]));
-      c ~consumes:true "slice" 2 (fun d ->
+      c "slice" 2 (fun d ->
           let mask = d 0 (Nx.not_equal_s (x [| 2; 3 |]) one) in
           show (Nx.slice [ Nx.M mask ] (d 1 (x [| 2; 3 |]))));
-      c ~consumes:true "set" 3 (fun d ->
+      c "set" 3 (fun d ->
           let mask = d 0 (Nx.not_equal_s (x [| 3 |]) one) in
           show (Nx.set [ Nx.A; Nx.M mask ] (d 1 (x [| 2; 1 |])) (d 2 (x [| 2; 3 |]))));
-      c ~consumes:true "extract" 2 (fun d ->
+      c "extract" 2 (fun d ->
           show (Nx.extract (d 0 (x [| 2; 3 |])) (d 1 (x [| 6 |]))));
-      c ~consumes:true "extract" 2 (fun d ->
-          show (Nx.extract ~size:4 ~fill:one (d 0 (x [| 2; 3 |])) (d 1 (x [| 6 |]))));
-      c ~consumes:true "nonzero" 1 (fun d ->
-          showl (Nx.nonzero (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "argwhere" 1 (fun d ->
-          show (Nx.argwhere (d 0 (x [| 2; 3 |]))));
+      c "extract" 2 (fun d ->
+          show
+            (Nx.extract ~size:4 ~fill:one
+               (d 0 (x [| 2; 3 |]))
+               (d 1 (x [| 6 |]))));
+      c "nonzero" 1 (fun d -> showl (Nx.nonzero (d 0 (x [| 2; 3 |]))));
+      c "argwhere" 1 (fun d -> show (Nx.argwhere (d 0 (x [| 2; 3 |]))));
       c "Infix.( *@ )" ~by:"matmul" 2 (fun d ->
           show Nx.Infix.(d 0 (x [| 2; 3 |]) *@ d 1 (x [| 3; 2 |])));
       c "Infix.( .%{} )" ~by:"get" 1 (fun d -> show Nx.Infix.((d 0 (x [| 2; 3 |])).%{[ 1 ]}));
@@ -2151,22 +2218,19 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
   let ids () = ints [| 0; 1; 0; 1 |] in
   table (D.name dt)
     [
-      c ~consumes:true "vector_norm" 1 (fun d ->
-          show (Nx.vector_norm dt (d 0 (x [| 4 |]))));
-      c ~consumes:true "vector_norm" 1 (fun d ->
+      c "vector_norm" 1 (fun d -> show (Nx.vector_norm dt (d 0 (x [| 4 |]))));
+      c "vector_norm" 1 (fun d ->
           show (Nx.vector_norm dt ~ord:3. (d 0 (x [| 4 |]))));
-      c ~consumes:true "vector_norm" 1 (fun d ->
+      c "vector_norm" 1 (fun d ->
           show (Nx.vector_norm Nx.float64 (d 0 (x [| 4 |]))));
-      c ~consumes:true "matrix_norm" 1 (fun d ->
-          show (Nx.matrix_norm dt (d 0 (x [| 2; 2 |]))));
-      c ~consumes:true "matrix_norm" 1 (fun d ->
+      c "matrix_norm" 1 (fun d -> show (Nx.matrix_norm dt (d 0 (x [| 2; 2 |]))));
+      c "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm dt ~ord:`One (d 0 (x [| 2; 2 |]))));
-      c ~consumes:true "matrix_norm" 1 (fun d ->
+      c "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm dt ~ord:`Two (d 0 (x [| 2; 2 |]))));
-      c ~consumes:true "matrix_norm" 1 (fun d ->
+      c "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm Nx.float16 ~ord:`Nuc (d 0 (x [| 2; 2 |]))));
-      c ~consumes:true "cond" 1 (fun d ->
-          show (Nx.cond dt (d 0 (positive [| 2; 2 |]))));
+      c "cond" 1 (fun d -> show (Nx.cond dt (d 0 (positive [| 2; 2 |]))));
       c "cond" 1 (fun d ->
           show (Nx.cond Nx.float64 ~p:`Inf (d 0 (positive [| 2; 2 |]))));
       c "cond" 1 (fun d ->
@@ -2288,8 +2352,7 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "logical_xor" 2 (fun d ->
           show (Nx.logical_xor (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
       c "logical_not" 1 (fun d -> show (Nx.logical_not (d 0 (x [| 4 |]))));
-      c ~consumes:true "isnan" 1 (fun d ->
-          show (Nx.isnan (d 0 (Nx.log (x [| 4 |])))));
+      c "isnan" 1 (fun d -> show (Nx.isnan (d 0 (Nx.log (x [| 4 |])))));
       c "isinf" 1 (fun d -> show (Nx.isinf (d 0 (Nx.log (x [| 4 |])))));
       c "isfinite" 1 (fun d -> show (Nx.isfinite (d 0 (Nx.log (x [| 4 |])))));
       c "clamp" 1 (fun d -> show (Nx.clamp (d 0 (x [| 4 |]))));
@@ -2309,21 +2372,19 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
           show (Nx.argmin ~axis:1 ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "argmin" 1 (fun d ->
           show (Nx.argmin ~keepdims:true (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "var" 1 (fun d -> show (Nx.var (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "std" 1 (fun d ->
-          show (Nx.std ~ddof:1 (d 0 (x [| 5 |]))));
+      c "var" 1 (fun d -> show (Nx.var (d 0 (x [| 2; 3 |]))));
+      c "std" 1 (fun d -> show (Nx.std ~ddof:1 (d 0 (x [| 5 |]))));
       c "logsumexp" 1 (fun d -> show (Nx.logsumexp (d 0 (x [| 2; 3 |]))));
       c "logsumexp" 1 (fun d ->
           show (Nx.logsumexp ~axes:[ 1 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "logmeanexp" 1 (fun d ->
+      c "logmeanexp" 1 (fun d ->
           show (Nx.logmeanexp ~axes:[ 1 ] (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "logmeanexp" 1 (fun d ->
+      c "logmeanexp" 1 (fun d ->
           show (Nx.logmeanexp ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "cummax" 1 (fun d -> show (Nx.cummax ~axis:0 (d 0 (x [| 2; 3 |]))));
       c "cummin" 1 (fun d -> show (Nx.cummin (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "ewma" 1 (fun d ->
-          show (Nx.ewma ~alpha:0.5 (d 0 (x [| 2; 3 |]))));
-      c ~consumes:true "ewma" 1 (fun d ->
+      c "ewma" 1 (fun d -> show (Nx.ewma ~alpha:0.5 (d 0 (x [| 2; 3 |]))));
+      c "ewma" 1 (fun d ->
           show (Nx.ewma ~axis:0 ~alpha:0.5 (d 0 (x [| 2; 3 |]))));
       c "sigmoid" 1 (fun d -> show (Nx.sigmoid (d 0 (x [| 4 |]))));
       c "softplus" 1 (fun d -> show (Nx.softplus (d 0 (x [| 4 |]))));
@@ -2359,7 +2420,7 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
                ~dilation:[| 1 |]
                ~padding:[| (0, 0) |]
                (d 0 (x [| 2; 4 |]))));
-      c ~consumes:true "combine_patches" 1 (fun d ->
+      c "combine_patches" 1 (fun d ->
           show
             (Nx.combine_patches ~output_size:[| 4 |] ~kernel_size:[| 2 |]
                ~stride:[| 1 |] ~dilation:[| 1 |]
@@ -2377,18 +2438,18 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
           shows [ show v; show i ]);
       c "order_key" 1 (fun d -> show (Nx.order_key Nx.uint64 (d 0 (x [| 4 |]))));
       c "lexsort" 1 (fun d -> show (Nx.lexsort (d 0 (x [| 5; 2 |]))));
-      c ~consumes:true "searchsorted" 2 (fun d ->
+      c "searchsorted" 2 (fun d ->
           let s = d 0 (Nx.cumsum (Nx.abs (x [| 4 |]))) in
           show (Nx.searchsorted ~side:`Left s (d 1 (x [| 3 |]))));
-      c ~consumes:true "searchsorted" 2 (fun d ->
+      c "searchsorted" 2 (fun d ->
           let s = d 0 (Nx.cumsum (Nx.abs (x [| 4 |]))) in
           show (Nx.searchsorted ~side:`Right s (d 1 (x [| 3 |]))));
-      c ~consumes:true "searchsorted_along_axis" 2 (fun d ->
+      c "searchsorted_along_axis" 2 (fun d ->
           let s = d 0 (Nx.cumsum ~axis:1 (Nx.abs (x [| 2; 4 |]))) in
           show
             (Nx.searchsorted_along_axis ~axis:1 ~side:`Left s
                (d 1 (x [| 2; 3 |]))));
-      c ~consumes:true "searchsorted_along_axis" 2 (fun d ->
+      c "searchsorted_along_axis" 2 (fun d ->
           let s = d 0 (Nx.cumsum ~axis:1 (Nx.abs (x [| 2; 4 |]))) in
           show
             (Nx.searchsorted_along_axis ~axis:(-1) ~side:`Right s
@@ -2399,7 +2460,7 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "unique" 1 (fun d ->
           let g = Nx.unique (d 0 (x [| 4; 2 |])) in
           showl [ g.ids; g.counts ]);
-      c ~consumes:true "quantile" 1 (fun d ->
+      c "quantile" 1 (fun d ->
           show (Nx.quantile [| 0.25; 0.5 |] (d 0 (x [| 5 |]))));
       c "histogram" 2 (fun d ->
           let edges = d 0 (Nx.add (x [| 3 |]) (Nx.arange_f dt 0. 3. 1.)) in
@@ -2410,11 +2471,9 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
             (Nx.weighted_histogram
                ~weights:(d 2 (x [| 6 |]))
                [ (edges, d 1 (x [| 6 |])) ]));
-      c ~consumes:true "rfft" 1 (fun d ->
-          show (Nx.rfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
-      c ~consumes:true "ihfft" 1 (fun d ->
-          show (Nx.ihfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
-      c ~consumes:true "rfft" 1 (fun d ->
+      c "rfft" 1 (fun d -> show (Nx.rfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
+      c "ihfft" 1 (fun d -> show (Nx.ihfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
+      c "rfft" 1 (fun d ->
           show (Nx.rfft Nx.complex64 ~norm:Forward (d 0 (x [| 4 |]))));
       c "dct" 1 (fun d -> show (Nx.dct (d 0 (x [| 2; 4 |]))));
       c "dct" 1 (fun d -> show (Nx.dct ~type_:Type_1 (d 0 (x [| 2; 4 |]))));
@@ -2422,9 +2481,9 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "dst" 1 (fun d -> show (Nx.dst ~type_:Type_1 (d 0 (x [| 4 |]))));
       c "idst" 1 (fun d -> show (Nx.idst (d 0 (x [| 4 |]))));
       c "idst" 1 (fun d -> show (Nx.idst ~type_:Type_4 (d 0 (x [| 4 |]))));
-      c ~consumes:true "stft" 1 (fun d ->
+      c "stft" 1 (fun d ->
           show (Nx.stft Nx.complex64 ~window:2 (d 0 (x [| 4 |]))));
-      c ~consumes:true "stft" 2 (fun d ->
+      c "stft" 2 (fun d ->
           show
             (Nx.stft Nx.complex64 ~window:4 ~step:2
                ~win:(d 1 (x [| 4 |]))
@@ -2470,58 +2529,52 @@ let routines (type v s r c) (dt : (v, s) Nx.dtype) (r : (float, r) Nx.dtype)
   in
   table (D.name dt)
     [
-      c ~consumes:true "cholesky" 1 (fun d ->
-          show (Nx.cholesky (d 0 (spd ()))));
-      c ~consumes:true "cholesky" 1 (fun d ->
+      c "cholesky" 1 (fun d -> show (Nx.cholesky (d 0 (spd ()))));
+      c "cholesky" 1 (fun d ->
           show (Nx.cholesky ~triangle:Upper (d 0 (spd ()))));
       c "qr" 1 (fun d ->
           let q, r = Nx.qr (d 0 (spd ())) in
           showl [ q; r ]);
-      c ~consumes:true "lu" 1 (fun d ->
+      c "lu" 1 (fun d ->
           let p, l, u = Nx.lu (d 0 (spd ())) in
           shows [ show p; show l; show u ]);
-      c ~consumes:true "svd" 1 (fun d ->
+      c "svd" 1 (fun d ->
           let u, s, vh = Nx.svd r (d 0 (spd ())) in
           shows [ show u; show s; show vh ]);
-      c ~consumes:true "svdvals" 1 (fun d ->
-          show (Nx.svdvals Nx.float16 (d 0 (spd ()))));
-      c ~consumes:true "eigh" 1 (fun d ->
+      c "svdvals" 1 (fun d -> show (Nx.svdvals Nx.float16 (d 0 (spd ()))));
+      c "eigh" 1 (fun d ->
           let w, v = Nx.eigh r (d 0 (spd ())) in
           shows [ show w; show v ]);
-      c ~consumes:true "eigh" 1 (fun d ->
+      c "eigh" 1 (fun d ->
           show (fst (Nx.eigh ~triangle:Upper r (d 0 (spd ())))));
-      c ~consumes:true "eigvalsh" 1 (fun d ->
+      c "eigvalsh" 1 (fun d ->
           show (Nx.eigvalsh ~triangle:Upper r (d 0 (spd ()))));
-      c ~consumes:true "eig" 1 (fun d ->
+      c "eig" 1 (fun d ->
           let w, v = Nx.eig c' (d 0 (spd ())) in
           showl [ w; v ]);
-      c ~consumes:true "eigvals" 1 (fun d ->
-          show (Nx.eigvals c' (d 0 (spd ()))));
-      c ~consumes:true "det" 1 (fun d -> show (Nx.det (d 0 (spd ()))));
-      c ~consumes:true "slogdet" 1 (fun d ->
+      c "eigvals" 1 (fun d -> show (Nx.eigvals c' (d 0 (spd ()))));
+      c "det" 1 (fun d -> show (Nx.det (d 0 (spd ()))));
+      c "slogdet" 1 (fun d ->
           let s, l = Nx.slogdet r (d 0 (spd ())) in
           shows [ show s; show l ]);
-      c ~consumes:true "solve" 2 (fun d ->
-          show (Nx.solve (d 0 (spd ())) (d 1 (x [| 3 |]))));
-      c ~consumes:true "solve_triangular" 2 (fun d ->
+      c "solve" 2 (fun d -> show (Nx.solve (d 0 (spd ())) (d 1 (x [| 3 |]))));
+      c "solve_triangular" 2 (fun d ->
           show
             (Nx.solve_triangular (d 0 (Nx.tril (spd ()))) (d 1 (x [| 3; 1 |]))));
-      c ~consumes:true "solve_triangular" 2 (fun d ->
+      c "solve_triangular" 2 (fun d ->
           show
             (Nx.solve_triangular ~transpose:Transpose
                (d 0 (Nx.tril (spd ())))
                (d 1 (x [| 3; 1 |]))));
-      c ~consumes:true "inv" 1 (fun d -> show (Nx.inv (d 0 (spd ()))));
-      c ~consumes:true "matrix_power" 1 (fun d ->
+      c "inv" 1 (fun d -> show (Nx.inv (d 0 (spd ()))));
+      c "matrix_power" 1 (fun d ->
           show (Nx.matrix_power (d 0 (x [| 2; 2 |])) (-3)));
       c "lstsq" 2 (fun d ->
           let x, res, k, s = Nx.lstsq r (d 0 (spd ())) (d 1 (x [| 3 |])) in
           shows [ show x; show res; show k; show s ]);
-      c ~consumes:true "pinv" 1 (fun d -> show (Nx.pinv (d 0 (spd ()))));
-      c ~consumes:true "pinv" 1 (fun d ->
-          show (Nx.pinv ~hermitian:true (d 0 (spd ()))));
-      c ~consumes:true "matrix_rank" 1 (fun d ->
-          show (Nx.matrix_rank (d 0 (spd ()))));
+      c "pinv" 1 (fun d -> show (Nx.pinv (d 0 (spd ()))));
+      c "pinv" 1 (fun d -> show (Nx.pinv ~hermitian:true (d 0 (spd ()))));
+      c "matrix_rank" 1 (fun d -> show (Nx.matrix_rank (d 0 (spd ()))));
     ]
 
 (* The functions of complex numbers. *)
@@ -2534,45 +2587,41 @@ let complexes =
       c "magnitude" 1 (fun d -> show (Nx.magnitude f32 (d 0 (z [| 4 |]))));
       c "angle" 1 (fun d -> show (Nx.angle f32 (d 0 (z [| 4 |]))));
       c "conjugate" 1 (fun d -> show (Nx.conjugate (d 0 (z [| 4 |]))));
-      c ~consumes:true "complex" 2 (fun d ->
+      c "complex" 2 (fun d ->
           show
             (Nx.complex Nx.complex64
                ~re:(d 0 (data f32 [| 4 |]))
                ~im:(d 1 (data f32 [| 4 |]))));
       c "isinf" 1 (fun d -> show (Nx.isinf (d 0 (z [| 4 |]))));
-      c ~consumes:true "fft" 1 (fun d -> show (Nx.fft (d 0 (z [| 2; 4 |]))));
-      c ~consumes:true "fft" 1 (fun d ->
-          show (Nx.fft ~norm:Ortho (d 0 (z [| 4 |]))));
-      c ~consumes:true "ifft" 1 (fun d ->
-          show (Nx.ifft ~norm:Ortho (d 0 (z [| 4 |]))));
-      c ~consumes:true "irfft" 1 (fun d ->
-          show (Nx.irfft f32 (d 0 (z [| 3 |]))));
-      c ~consumes:true "hfft" 1 (fun d -> show (Nx.hfft f32 (d 0 (z [| 3 |]))));
-      c ~consumes:true "istft" 1 (fun d ->
+      c "fft" 1 (fun d -> show (Nx.fft (d 0 (z [| 2; 4 |]))));
+      c "fft" 1 (fun d -> show (Nx.fft ~norm:Ortho (d 0 (z [| 4 |]))));
+      c "ifft" 1 (fun d -> show (Nx.ifft ~norm:Ortho (d 0 (z [| 4 |]))));
+      c "irfft" 1 (fun d -> show (Nx.irfft f32 (d 0 (z [| 3 |]))));
+      c "hfft" 1 (fun d -> show (Nx.hfft f32 (d 0 (z [| 3 |]))));
+      c "istft" 1 (fun d ->
           show (Nx.istft f32 ~window:2 ~step:1 (d 0 (z [| 2; 2 |]))));
       c "istft" 2 (fun d ->
           show
             (Nx.istft f32 ~window:4 ~step:2
                ~win:(d 1 (Nx.add_s (Nx.abs (data f32 [| 4 |])) 1.))
                (d 0 (z [| 3; 3 |]))));
-      c ~consumes:true "eig" 1 (fun d ->
+      c "eig" 1 (fun d ->
           let w, v =
             Nx.eig Nx.complex64
               (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))
           in
           showl [ w; v ]);
-      c ~consumes:true "vector_norm" 1 (fun d ->
-          show (Nx.vector_norm f32 (d 0 (z [| 4 |]))));
-      c ~consumes:true "vector_norm" 1 (fun d ->
+      c "vector_norm" 1 (fun d -> show (Nx.vector_norm f32 (d 0 (z [| 4 |]))));
+      c "vector_norm" 1 (fun d ->
           show (Nx.vector_norm Nx.float64 ~ord:1. (d 0 (z [| 4 |]))));
-      c ~consumes:true "matrix_norm" 1 (fun d ->
+      c "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm f32 ~ord:`Inf (d 0 (z [| 2; 2 |]))));
-      c ~consumes:true "matrix_norm" 1 (fun d ->
+      c "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm Nx.bfloat16 ~ord:`Two (d 0 (z [| 2; 2 |]))));
-      c ~consumes:true "cond" 1 (fun d ->
+      c "cond" 1 (fun d ->
           show
             (Nx.cond f32 (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))));
-      c ~consumes:true "cond" 1 (fun d ->
+      c "cond" 1 (fun d ->
           show
             (Nx.cond Nx.float64 ~p:`One
                (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))));
@@ -2602,9 +2651,8 @@ let integers =
           show (Nx.maximum (d 0 (x [| 4 |])) (d 1 (ids ()))));
       c "less" 2 (fun d -> show (Nx.less (d 0 (x [| 4 |])) (d 1 (ids ()))));
       c "max" 1 (fun d -> show (Nx.max (d 0 (x [| 4 |]))));
-      c ~consumes:true "positions" 1 (fun d ->
-          show (Nx.positions (d 0 (Nx.abs (x [| 4 |])))));
-      c ~consumes:true "positions" 1 (fun d ->
+      c "positions" 1 (fun d -> show (Nx.positions (d 0 (Nx.abs (x [| 4 |])))));
+      c "positions" 1 (fun d ->
           show (Nx.positions ~size:4 (d 0 (Nx.abs (x [| 4 |])))));
       c "one_hot" 1 (fun d -> show (Nx.one_hot ~num_classes:2 (d 0 (ids ()))));
       c "unique" 1 (fun d ->
@@ -2614,7 +2662,7 @@ let integers =
           showl
             (let v, _ = Nx.sort (d 0 (x [| 5 |])) in
              [ v ]));
-      c ~consumes:true "unravel_index" 1 (fun d ->
+      c "unravel_index" 1 (fun d ->
           showl (Nx.unravel_index (d 0 (ints [| 0; 4; 7 |])) [| 2; 3 |]));
       c "Infix.( land )" ~by:"bitwise_and" 2 (fun d ->
           show Nx.Infix.(d 0 (x [| 4 |]) land d 1 (Nx.flip (x [| 4 |]))));
@@ -2774,7 +2822,7 @@ let attention =
               }
           in
           shown (Nx.attention ~acc:Nx.float32 ~kv q));
-      c ~consumes:true "causal" 3 (fun d -> show (Nx.causal (pair d)));
+      c "causal" 3 (fun d -> show (Nx.causal (pair d)));
     ]
 
 (* An array a score returns or reads is an operand after the call's own, or
@@ -2968,15 +3016,12 @@ let donations =
      let+ mask = int_range 1 ((1 lsl c.operands) - 1) in
      (k, mask))
 
-(* Each case with every donation mask, up to three operands; past three, each
-   operand donated alone, then all. *)
-let seeds =
+(* Each case with every donation mask: the whole of [donations]. *)
+let every_mask =
   List.concat
     (List.mapi
        (fun k (_, c) ->
-         let n = c.operands in
-         if n <= 3 then List.init ((1 lsl n) - 1) (fun m -> (k, m + 1))
-         else List.init n (fun i -> (k, 1 lsl i)) @ [ (k, (1 lsl n) - 1) ])
+         List.init ((1 lsl c.operands) - 1) (fun m -> (k, m + 1)))
        named_cases)
 
 let law_donated (k, mask) =
@@ -2993,18 +3038,14 @@ let law_donated (k, mask) =
   in
   (* As [donor] for a handle: its elements as they were, or a refusal that
      names the call. *)
+  let died = ref false in
   let handle ~received before h =
-    let freed died =
-      if c.consumes && not received then
-        cover "a call that consumes its handle frees the memory" died
-    in
     match Nx.copy h with
     | y ->
-        freed false;
         let now = show y in
         if now = before then [] else [ text h ^ " reads " ^ now ]
     | exception Invalid_argument m ->
-        freed true;
+        if not received then died := true;
         if String.ends_with ~suffix:named m then [] else [ m ]
   in
   let donors = ref [] in
@@ -3023,6 +3064,7 @@ let law_donated (k, mask) =
   equal ~msg:name string plain (c.run donating);
   equal ~msg:(name ^ ", deaths") (list string) []
     (List.concat_map (fun deaths -> deaths ~received:false ()) !donors);
+  cover "a handle its call consumed raises naming the call" !died;
   donors := [];
   let received =
     Nx.Prim.interpret ~name:"test.extent" Extent
@@ -3034,9 +3076,9 @@ let law_donated (k, mask) =
     (List.concat_map (fun deaths -> deaths ~received:true ()) !donors)
 
 let test_donated =
-  prop ~examples:seeds
+  prop ~count:0 ~examples:every_mask
     "a donated operand gives the undonated result, received too; its donor \
-     dies, and its handle where one operation reads it"
+     ends, and its handle reads as it was or names the call"
     donations law_donated
 
 (* Consumers: a function of several operations that consumes handles as one
@@ -3118,32 +3160,51 @@ let test_consumer_takes () =
     C.with_ ~by:"test.call" xs (fun c -> some (C.take c i ~piece:0 dt l))
   in
   let h () = Nx.donate (fresh [| 1.; 2. |]) in
-  equal ~msg:"a handle alone" bool true
-    (take [ Any (h ()) ] 0 D.Float32 (layout_of 2));
-  equal ~msg:"another dtype" bool false
-    (take [ Any (h ()) ] 0 D.Int32 (layout_of 2));
-  equal ~msg:"another layout" bool false
-    (take [ Any (h ()) ] 0 D.Float32 (A.Layout.contiguous [| 1; 2 |]));
-  equal ~msg:"an undonated operand" bool false
-    (take [ Any (fresh [| 1.; 2. |]) ] 0 D.Float32 (layout_of 2));
   let g = h () in
-  equal ~msg:"beside one a movement passed on" bool false
-    (take [ Any g; Any (Nx.flip g) ] 0 D.Float32 (layout_of 2));
   let x = fresh [| 1.; 2. |] in
   let view = Nx.flip x in
-  equal ~msg:"beside a view of it" bool false
-    (take [ Any (Nx.donate x); Any view ] 0 D.Float32 (layout_of 2));
+  let beside_view =
+    take [ Any (Nx.donate x); Any view ] 0 D.Float32 (layout_of 2)
+  in
+  let crossed = fresh [| 1.; 2. |] in
+  ignore (Nx.Repr.array ~by:"test" crossed);
+  let twice =
+    C.with_ ~by:"test.call"
+      [ Any (h ()) ]
+      (fun c ->
+        let first = some (C.take c 0 ~piece:0 D.Float32 (layout_of 2)) in
+        (first, some (C.take c 0 ~piece:0 D.Float32 (layout_of 2))))
+  in
+  equal
+    (list (Windtrap.pair string bool))
+    [
+      ("a handle alone", true);
+      ("another dtype", false);
+      ("another layout", false);
+      ("an undonated operand", false);
+      ("beside one a movement passed on", false);
+      ("beside a view of it", false);
+      ("shared by a crossing", false);
+      ("taken", true);
+      ("taken again", false);
+    ]
+    [
+      ("a handle alone", take [ Any (h ()) ] 0 D.Float32 (layout_of 2));
+      ("another dtype", take [ Any (h ()) ] 0 D.Int32 (layout_of 2));
+      ( "another layout",
+        take [ Any (h ()) ] 0 D.Float32 (A.Layout.contiguous [| 1; 2 |]) );
+      ( "an undonated operand",
+        take [ Any (fresh [| 1.; 2. |]) ] 0 D.Float32 (layout_of 2) );
+      ( "beside one a movement passed on",
+        take [ Any g; Any (Nx.flip g) ] 0 D.Float32 (layout_of 2) );
+      ("beside a view of it", beside_view);
+      ( "shared by a crossing",
+        take [ Any (Nx.donate crossed) ] 0 D.Float32 (layout_of 2) );
+      ("taken", fst twice);
+      ("taken again", snd twice);
+    ];
   equal ~msg:"the view keeps its elements" (array float_exact) [| 2.; 1. |]
-    (elements view);
-  let x = fresh [| 1.; 2. |] in
-  ignore (Nx.Repr.array ~by:"test" x);
-  equal ~msg:"shared by a crossing" bool false
-    (take [ Any (Nx.donate x) ] 0 D.Float32 (layout_of 2));
-  C.with_ ~by:"test.call" [ Any (h ()) ] (fun c ->
-      let first = some (C.take c 0 ~piece:0 D.Float32 (layout_of 2)) in
-      let second = some (C.take c 0 ~piece:0 D.Float32 (layout_of 2)) in
-      equal ~msg:"taken once" (Testable.pair bool bool) (true, false)
-        (first, second))
+    (elements view)
 
 (* A consumer of a handle cut across two devices takes its memory on each
    device apart, once, where that piece is of the result's dtype and layout,
@@ -3160,19 +3221,29 @@ let test_consumer_takes_pieces () =
     C.with_ ~by:"test.call" xs (fun c -> some (C.take c 0 ~piece:j dt l))
   in
   (* Balanced windows of three rows over two devices: two, then one. *)
-  equal ~msg:"the first piece" bool true
-    (piece [ Any (Nx.donate (cut ())) ] 0 D.Float32 (layout_of 2));
-  equal ~msg:"the second piece" bool true
-    (piece [ Any (Nx.donate (cut ())) ] 1 D.Float32 (layout_of 1));
-  equal ~msg:"another piece's layout" bool false
-    (piece [ Any (Nx.donate (cut ())) ] 1 D.Float32 (layout_of 2));
-  equal ~msg:"no third device" bool false
-    (piece [ Any (Nx.donate (cut ())) ] 2 D.Float32 (layout_of 1));
-  equal ~msg:"an undonated operand" bool false
-    (piece [ Any (cut ()) ] 0 D.Float32 (layout_of 2));
   let h = Nx.donate (cut ()) in
-  equal ~msg:"the same handle twice" bool false
-    (piece [ Any h; Any h ] 1 D.Float32 (layout_of 1));
+  equal
+    (list (Windtrap.pair string bool))
+    [
+      ("the first piece", true);
+      ("the second piece", true);
+      ("another piece's layout", false);
+      ("no third device", false);
+      ("an undonated operand", false);
+      ("the same handle twice", false);
+    ]
+    [
+      ( "the first piece",
+        piece [ Any (Nx.donate (cut ())) ] 0 D.Float32 (layout_of 2) );
+      ( "the second piece",
+        piece [ Any (Nx.donate (cut ())) ] 1 D.Float32 (layout_of 1) );
+      ( "another piece's layout",
+        piece [ Any (Nx.donate (cut ())) ] 1 D.Float32 (layout_of 2) );
+      ( "no third device",
+        piece [ Any (Nx.donate (cut ())) ] 2 D.Float32 (layout_of 1) );
+      ("an undonated operand", piece [ Any (cut ()) ] 0 D.Float32 (layout_of 2));
+      ("the same handle twice", piece [ Any h; Any h ] 1 D.Float32 (layout_of 1));
+    ];
   let x = cut () in
   let rest =
     C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun c ->
@@ -3211,10 +3282,15 @@ let test_consumer_takes_pieces () =
     if own then Nx.Repr.unsafe_of_shards p (arrays ())
     else Nx.Repr.of_shards p (arrays ())
   in
-  equal ~msg:"arrays given up" bool true
-    (piece [ Any (Nx.donate (made ~own:true)) ] 1 D.Float32 (layout_of 1));
-  equal ~msg:"arrays kept" bool false
-    (piece [ Any (Nx.donate (made ~own:false)) ] 1 D.Float32 (layout_of 1))
+  equal
+    (list (Windtrap.pair string bool))
+    [ ("arrays given up", true); ("arrays kept", false) ]
+    [
+      ( "arrays given up",
+        piece [ Any (Nx.donate (made ~own:true)) ] 1 D.Float32 (layout_of 1) );
+      ( "arrays kept",
+        piece [ Any (Nx.donate (made ~own:false)) ] 1 D.Float32 (layout_of 1) );
+    ]
 
 (* An update in place, [y = x + 1] over [x]'s taken memory: the taken array
    holds [x]'s elements until it is written, and needs no memory of the
@@ -3240,6 +3316,7 @@ let test_consumer_memory () =
     (Array.init n (fun k -> Float.of_int k +. 1.))
     (elements (Option.get y));
   let freed f =
+    (try f (make ()) with Exit -> ());
     let x = make () in
     let before = settled () in
     (try f x with Exit -> ());
@@ -3260,7 +3337,7 @@ let test_consumer_memory () =
          C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun c ->
              kept := C.take c 0 ~piece:0 D.Float32 (layout_of n);
              raise Exit)));
-  equal ~msg:"it took the memory" bool true (Option.is_some !kept);
+  ignore (require_some ~msg:"it took the memory" !kept);
   ignore (Sys.opaque_identity !kept)
 
 (* A consumer that ends returns the memory of every handle it claimed, in
@@ -3275,62 +3352,821 @@ let test_consumer_frees_every_handle =
       | true -> "a copy, then a view" | false -> "a view, then a copy")
     [ true; false ]
     (fun copy_first ->
-      let x = on_mem [| k; k |] (Array.init (k * k) Float.of_int) in
-      let h = Nx.donate x in
-      let view = Nx.reshape [| k * k |] h in
-      (* A reshape of a transpose copies. *)
-      let copy = Nx.reshape [| k * k |] (Nx.transpose h) in
-      let before = settled () in
-      C.with_ ~by:"test.call"
-        (if copy_first then [ Any copy; Any view ] else [ Any view; Any copy ])
-        ignore;
-      let freed = before - settled () in
-      ignore (Sys.opaque_identity (x, h, view, copy));
+      let freed () =
+        let x = on_mem [| k; k |] (Array.init (k * k) Float.of_int) in
+        let h = Nx.donate x in
+        let view = Nx.reshape [| k * k |] h in
+        (* A reshape of a transpose copies. *)
+        let copy = Nx.reshape [| k * k |] (Nx.transpose h) in
+        let before = settled () in
+        C.with_ ~by:"test.call"
+          (if copy_first then [ Any copy; Any view ] else [ Any view; Any copy ])
+          ignore;
+        let freed = before - settled () in
+        ignore (Sys.opaque_identity (x, h, view, copy));
+        freed
+      in
+      ignore (freed ());
       at_least ~msg:"the donor's memory and the copy's" int ~than:(2 * bytes)
-        freed)
+        (freed ()))
+
+(* Handles on nx.gated, whose kernels decline additions and comparisons and let
+   a call of another domain run inside a kernel call ([meanwhile]): declines
+   consume handles, and calls on two domains race for them. *)
+module On_gate = struct
+  (* Counting nx.cpu, declining every [Add] and [Less], alone or in a map. A
+     call first runs what its domain left [pending], once: a call another domain
+     makes after the operation checked its operands and before its kernel reads
+     them or declines. *)
+  module Gated = struct
+    include Nx_support.Counting
+
+    let name = "nx.gated"
+    let pending = Domain.DLS.new_key (fun () -> None)
+
+    let first () =
+      match Domain.DLS.get pending with
+      | None -> ()
+      | Some f ->
+          Domain.DLS.set pending None;
+          f ()
+
+    let declined : Nx_kernel.Prog.node -> bool = function
+      | Op2 ((Binary Add | Compare Less), _, _) -> true
+      | _ -> false
+
+    let contract ~batch ~contracting ~segments ~acc ~dst ~init a b =
+      first ();
+      Nx_support.Counting.contract ~batch ~contracting ~segments ~acc ~dst ~init
+        a b
+
+    let map (prog : Nx_kernel.Prog.t) ~dsts loads =
+      first ();
+      if Iarray.exists declined prog.nodes then A.Declined
+      else Nx_support.Counting.map prog ~dsts loads
+  end
+
+  module Gate = (val Nx.devices ~kernels:(module Gated) [ Nx_support.memory 1 ])
+
+  (* [xs] of shape [s] on the host, over an array of its own. *)
+  let on_host s xs =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 (Iarray.of_array s) xs)
+
+  (* [f ()] with [g] run on another domain inside its first call into nx.gated:
+     after [f]'s operation checked its operands, before its kernel reads
+     them. *)
+  let meanwhile g f =
+    let other () = Domain.join (Domain.spawn g) in
+    Domain.DLS.set Gated.pending (Some other);
+    Fun.protect ~finally:(fun () -> Domain.DLS.set Gated.pending None) f
+
+  (* Donations on nx.gated: donated values, their handles, views and copies of
+     handles, sums and comparisons that decline, on the fast path and off it,
+     and a product and a sum that consume. A value dies at its donation. A
+     handle is for one use: a view of a handle reads the same memory, a copy
+     memory of its own. An operation whose checks pass consumes its handles'
+     memory, taking it for its result or freeing it when it ends, whether it
+     computes or declines, and a later use of a handle over that memory reads
+     its elements or raises naming the operation. A refusal by the checks
+     consumes nothing. A call made on another domain while a decline holds a
+     handle is held there deterministically ([meanwhile]). *)
+
+  (* Memory a handle reads: what it may be, live ([None]) or gone to a named
+     operation. A handle is for one use: after an operation consumed it, a later
+     use reads its elements or raises naming that operation. *)
+  type memory = { mutable states : string option list }
+  type donor = { xs : float array; mutable donated : bool; mem : memory }
+
+  (* A handle reads its donor's elements in [order], over [m]. *)
+  type handle = { x : donor; order : int array; m : memory }
+
+  let donor = abstract "x"
+  let handle = abstract "h"
+
+  let fours =
+    Gen.with_pp
+      (fun ppf a ->
+        Format.fprintf ppf "[%s]"
+          (String.concat "; " (Array.to_list (Array.map string_of_float a))))
+      (Gen.array ~size:(Gen.int_range 4 4) (Gen.of_list [ 0.; 1.; -2.; 3.5 ]))
+
+  let on_gate xs = Nx.place Gate.on (on_host [| 4 |] xs)
+  let twos () = on_gate (Array.make 4 2.)
+
+  (* Twos that a handle beside them broadcasts to. *)
+  let wide_twos () = Nx.place Gate.on (on_host [| 2; 4 |] (Array.make 8 2.))
+
+  (* Computed, so a consumer may write into its memory. *)
+  let make_sys xs = Nx.mul (on_gate xs) (on_gate (Array.make 4 1.))
+  let live () = { states = [ None ] }
+  let make_ref xs = { xs; donated = false; mem = live () }
+
+  (* What a refusal says: a decline, a donated value, or the operation that took
+     a handle's memory. *)
+  let named m =
+    let has s i =
+      i + String.length s <= String.length m
+      && String.sub m i (String.length s) = s
+    in
+    let rec find s i =
+      if i > String.length m then None
+      else if has s i then Some i
+      else find s (i + 1)
+    in
+    (* As an operand's check says it, or a kernel's refusal of a consumed
+       buffer, which lists the operands after. *)
+    let mark = "donated to " in
+    match find mark 0 with
+    | Some i ->
+        let i = i + String.length mark in
+        let j = Option.value (find " (" i) ~default:(String.length m) in
+        String.sub m i (j - i)
+    | None ->
+        if Option.is_some (find "does not compute" 0) then "declined"
+        else if String.ends_with ~suffix:"was donated" m then "donated"
+        else "refused: " ^ m
+
+  let outcome f =
+    match f () with
+    | ys -> Ok ys
+    | exception Invalid_argument m -> Error (named m)
+
+  let outcomes = result (array float_exact) string
+  let elements_of h = Array.map (fun i -> h.x.xs.(i)) h.order
+  let free m = List.mem None m.states
+  let union a b = List.sort_uniq compare (a @ b)
+
+  (* [h]'s memory possibly live. *)
+  let lives h = if not (free h.m) then fail "a dead handle lives"
+
+  (* A call [by] on [h] that raised naming [e], the operation that took its
+     memory. *)
+  let lost by e h =
+    if not (List.mem (Some e) h.m.states) then fail (by ^ " raised naming " ^ e);
+    h.m.states <- [ Some e ]
+
+  (* [h]'s memory consumed by [by], which met it live: gone to [by], or still
+     there. *)
+  let consumed by h = h.m.states <- union [ Some by; None ] h.m.states
+
+  let donate_ref x =
+    if x.donated then invalid_arg "donated";
+    x.donated <- true;
+    { x; order = [| 0; 1; 2; 3 |]; m = x.mem }
+
+  (* A movement passes on a handle reading [order] of [h], over [m]. *)
+  let moved order m h =
+    if not (free h.m) then invalid_arg "dead";
+    { x = h.x; order = Array.map (fun i -> h.order.(i)) order; m = m h }
+
+  (* Whether no operation consumed [h]'s memory. *)
+  let unused h = h.m.states = [ None ]
+  let view_ref = moved [| 0; 1; 2; 3 |] (fun h -> h.m)
+  let view_sys h = Nx.reshape [| 4 |] (Nx.reshape [| 2; 2 |] h)
+
+  (* A reshape of a transpose copies, into memory of its own. *)
+  let copy_ref = moved [| 0; 2; 1; 3 |] (fun _ -> live ())
+  let copy_sys h = Nx.reshape [| 4 |] (Nx.transpose (Nx.reshape [| 2; 2 |] h))
+
+  (* A decline by [by] of [h], then [h] seen dead or alive ([after]): the
+     decline consumes [h]'s memory, naming [by]. *)
+  let declined by h = function
+    | Error e -> raise e
+    | Ok (Ok _, _) -> fail (by ^ " computed what its kernels decline")
+    | Ok (Error "declined", after) ->
+        lives h;
+        consumed by h;
+        if not (List.mem after h.m.states) then
+          fail (by ^ ": a declined handle seen otherwise after")
+    | Ok (Error e, after) ->
+        lost by e h;
+        if after <> Some e then
+          fail (by ^ ": a dead handle seen otherwise after")
+
+  (* [f h], then [h] seen dead or alive: [Nx.donate] of a handle raises where
+     its memory went. *)
+  let then_seen f h =
+    let out = outcome (fun () -> elements (f h)) in
+    let after =
+      match Nx.donate h with
+      | _ -> None
+      | exception Invalid_argument m -> Some (named m)
+    in
+    (out, after)
+
+  let seen_outcomes = Windtrap.pair outcomes (option string)
+  let add_sys = then_seen (fun h -> Nx.add h (twos ()))
+  let less_sys = then_seen (fun h -> Nx.cast D.Float32 (Nx.less h (twos ())))
+
+  (* Beside a scalar broadcast to its shape. *)
+  let add_scalar_sys = then_seen (fun h -> Nx.add h (Nx.scalar_like h 2.))
+
+  let less_scalar_sys =
+    then_seen (fun h -> Nx.cast D.Float32 (Nx.less h (Nx.scalar_like h 2.)))
+
+  (* A kind refusing [h]'s dtype, on the fast path, where its result would fit
+     [h]'s memory: it consumes nothing. *)
+  let and_ref h = function
+    | Error e -> raise e
+    | Ok (Ok _, _) -> fail "Nx.bitwise_and computed floats"
+    | Ok (Error e, after) ->
+        equal string
+          "refused: Nx.bitwise_and: And does not take float32, float32" e;
+        cover "a live handle refused by dtype" (free h.m);
+        if free h.m then consumed "Nx.bitwise_and" h;
+        if not (List.mem after h.m.states) then
+          fail "Nx.bitwise_and: a handle seen otherwise after"
+
+  let and_sys = then_seen (fun h -> Nx.bitwise_and h (twos ()))
+
+  (* Broadcast beside wider twos: no result fits the handle's memory. *)
+  let add_wide_sys = then_seen (fun h -> Nx.add h (wide_twos ()))
+
+  let less_wide_sys =
+    then_seen (fun h -> Nx.cast D.Float32 (Nx.less h (wide_twos ())))
+
+  let and_wide_sys = then_seen (fun h -> Nx.bitwise_and h (wide_twos ()))
+
+  (* Broadcast, a dead handle raises naming its consumer before the kind's
+     refusal: the call checks its operands before it broadcasts them. *)
+  let and_wide_ref h = function
+    | Ok (Error e, _) when List.mem (Some e) h.m.states ->
+        lost "Nx.bitwise_and" e h
+    | out -> and_ref h out
+
+  (* A consumer [by] of [h] whose result's elements are [f]'s, leaving its
+     memory as [after] says. *)
+  let consumer after by f h = function
+    | Error e -> raise e
+    | Ok (Ok ys) ->
+        if not (free h.m) then fail (by ^ " read a dead handle");
+        equal (array float_exact) (f (elements_of h)) ys;
+        after by h
+    | Ok (Error e) -> lost by e h
+
+  let double = Array.map (fun v -> v *. 2.)
+  let total ys = [| Array.fold_left ( +. ) 0. ys |]
+  let mul_ref = consumer consumed "Nx.mul" double
+  let mul_sys h = outcome (fun () -> elements (Nx.mul h (twos ())))
+
+  let mul_wide_ref =
+    consumer consumed "Nx.mul" (fun ys ->
+        let doubled = double ys in
+        Array.append doubled doubled)
+
+  let mul_wide_sys h = outcome (fun () -> elements (Nx.mul h (wide_twos ())))
+  let sum_ref = consumer consumed "Nx.sum" total
+  let sum_sys h = outcome (fun () -> elements (Nx.sum h))
+
+  (* A read of a donor: its elements until its donation, then a refusal; one
+     that met its memory taken names the operation that took it. *)
+  let read_ref x = function
+    | Error e -> raise e
+    | Ok (Ok ys) ->
+        if x.donated then fail "a donated value read";
+        equal outcomes (Ok x.xs) (Ok ys)
+    | Ok (Error "donated") -> if not x.donated then fail "a live value refused"
+    | Ok (Error e) ->
+        if not (List.mem (Some e) x.mem.states) then
+          fail ("a read raised naming " ^ e)
+
+  let read_sys x = outcome (fun () -> elements x)
+
+  (* A decline [by] of [h] that runs [inner] on another domain meanwhile, whose
+     outcome [met] is [None] where the decline raised before its kernel. A sum
+     that may write over [h] ([takes]) may take its memory before its kernel
+     runs, so a call meanwhile over that memory may lose to it. *)
+  let during ~takes by inner h = function
+    | Error e -> raise e
+    | Ok (((out, after) as seen), met) -> (
+        match met with
+        | Some r ->
+            if not (free h.m) then
+              fail (by ^ " ran a call meanwhile though refused");
+            if takes then consumed by h;
+            inner r;
+            if out <> Error "declined" then
+              fail (by ^ " computed what its kernels decline");
+            consumed by h;
+            if not (List.mem after h.m.states) then
+              fail (by ^ ": a handle seen otherwise after")
+        | None ->
+            if h.m.states = [ None ] then fail (by ^ ": nothing ran meanwhile");
+            declined by h (Ok seen))
+
+  (* [f h], then [h] seen, with [g] run on another domain meanwhile. *)
+  let while_sys f g h =
+    let met = ref None in
+    let out = meanwhile (fun () -> met := Some (g ())) (fun () -> f h) in
+    (out, !met)
+
+  let add_while_mul =
+    command "add, meanwhile mul"
+      (handle ^-> handle
+      ^-> judges (Windtrap.pair seen_outcomes (option outcomes)))
+      (fun h h' -> during ~takes:true "Nx.add" (fun r -> mul_ref h' (Ok r)) h)
+      (fun h h' -> while_sys add_sys (fun () -> mul_sys h') h)
+
+  let less_while_mul =
+    command "less, meanwhile mul"
+      (handle ^-> handle
+      ^-> judges (Windtrap.pair seen_outcomes (option outcomes)))
+      (fun h h' ->
+        during ~takes:false "Nx.less"
+          (fun r ->
+            cover "a call takes memory a decline in flight reads"
+              (h.m == h'.m && Result.is_ok r);
+            mul_ref h' (Ok r))
+          h)
+      (fun h h' -> while_sys less_sys (fun () -> mul_sys h') h)
+
+  let donations =
+    [
+      command "make" (fours @-> makes donor) make_ref make_sys;
+      command "donate" (donor ^-> makes handle) donate_ref Nx.donate;
+      (* A movement makes a handle of one that surely lives. *)
+      command "view" ~pre:unused (handle ^-> makes handle) view_ref view_sys;
+      command "copy" ~pre:unused (handle ^-> makes handle) copy_ref copy_sys;
+      command "add"
+        (handle ^-> judges seen_outcomes)
+        (declined "Nx.add") add_sys;
+      command "add beside a scalar"
+        (handle ^-> judges seen_outcomes)
+        (declined "Nx.add") add_scalar_sys;
+      command "less"
+        (handle ^-> judges seen_outcomes)
+        (declined "Nx.less") less_sys;
+      command "less beside a scalar"
+        (handle ^-> judges seen_outcomes)
+        (declined "Nx.less") less_scalar_sys;
+      command "bitwise_and" (handle ^-> judges seen_outcomes) and_ref and_sys;
+      command "add broadcast"
+        (handle ^-> judges seen_outcomes)
+        (declined "Nx.add") add_wide_sys;
+      command "less broadcast"
+        (handle ^-> judges seen_outcomes)
+        (declined "Nx.less") less_wide_sys;
+      command "bitwise_and broadcast"
+        (handle ^-> judges seen_outcomes)
+        and_wide_ref and_wide_sys;
+      command "mul" (handle ^-> judges outcomes) mul_ref mul_sys;
+      command "mul broadcast"
+        (handle ^-> judges outcomes)
+        mul_wide_ref mul_wide_sys;
+      command "sum" (handle ^-> judges outcomes) sum_ref sum_sys;
+      command "read" (donor ^-> judges outcomes) read_ref read_sys;
+      add_while_mul;
+      less_while_mul;
+    ]
+
+  (* On two domains a decline consumes its handle's memory, as in sequence. *)
+  let raced_decline by h = function
+    | Error e -> raise e
+    | Ok (Ok _) -> fail (by ^ " computed what its kernels decline")
+    | Ok (Error "declined") ->
+        if not (free h.m) then fail (by ^ " read a dead handle");
+        consumed by h
+    | Ok (Error e) -> lost by e h
+
+  let raced_sys f h = outcome (fun () -> elements (f h))
+
+  (* A movement on two domains: it reads [h] live, consuming nothing, or raises
+     naming the consumer that took its memory. *)
+  let raced_moved h = function
+    | Error e -> raise e
+    | Ok (Ok _) -> if not (free h.m) then fail "Nx.reshape read a dead handle"
+    | Ok (Error e) -> lost "Nx.reshape" e h
+
+  (* The movement's handle, which no command reads. *)
+  let moved_sys f h =
+    outcome (fun () ->
+        ignore (f h);
+        [||])
+
+  let raced =
+    [
+      command "make" (fours @-> makes donor) make_ref make_sys;
+      command "donate" (donor ^-> makes handle) donate_ref Nx.donate;
+      command "view racing"
+        (handle ^-> judges outcomes)
+        raced_moved (moved_sys view_sys);
+      command "copy racing"
+        (handle ^-> judges outcomes)
+        raced_moved (moved_sys copy_sys);
+      command "add"
+        (handle ^-> judges outcomes)
+        (raced_decline "Nx.add")
+        (raced_sys (fun h -> Nx.add h (twos ())));
+      command "add beside a scalar"
+        (handle ^-> judges outcomes)
+        (raced_decline "Nx.add")
+        (raced_sys (fun h -> Nx.add h (Nx.scalar_like h 2.)));
+      command "less"
+        (handle ^-> judges outcomes)
+        (raced_decline "Nx.less")
+        (raced_sys (fun h -> Nx.cast D.Float32 (Nx.less h (twos ()))));
+      command "less beside a scalar"
+        (handle ^-> judges outcomes)
+        (raced_decline "Nx.less")
+        (raced_sys (fun h ->
+             Nx.cast D.Float32 (Nx.less h (Nx.scalar_like h 2.))));
+      command "mul"
+        (handle ^-> judges outcomes)
+        (consumer consumed "Nx.mul" double)
+        mul_sys;
+      command "sum"
+        (handle ^-> judges outcomes)
+        (consumer consumed "Nx.sum" total)
+        sum_sys;
+      command "read" (donor ^-> judges outcomes) read_ref read_sys;
+    ]
+
+  (* [f ()]: the elements [expected], or a raise naming [by] and the consumer
+     [consumer] that took the memory, "donated" for a value. *)
+  let read_or_named ~consumer ~by expected f =
+    match f () with
+    | ys -> equal ~msg:(by ^ ": the elements") (array float_exact) expected ys
+    | exception Invalid_argument m ->
+        let n = Stdlib.min (String.length m) (String.length by) in
+        equal ~msg:m
+          (Windtrap.pair string string)
+          (by, consumer)
+          (String.sub m 0 n, named m)
+
+  (* A call that checked a handle live, and whose kernel then meets its memory
+     consumed by an operation on another domain, reads the elements or raises
+     naming that operation: one whose result cannot take the memory, through a
+     movement's copy of a handle, and where the operation computed into fresh
+     memory and freed the handle's. *)
+  let test_raced_read_names () =
+    let consume h = ignore (Nx.mul h (twos ())) in
+    let raced by expected f =
+      let h = Nx.donate (make_sys [| 1.; 2.; 3.; 4. |]) in
+      read_or_named ~consumer:"Nx.mul" ~by expected (fun () ->
+          meanwhile (fun () -> consume h) (fun () -> elements (f h)))
+    in
+    raced "Nx.cast" [| 1.; 2.; 3.; 4. |] (fun h -> Nx.cast D.Float64 h);
+    raced "Nx.mul" [| 2.; 4.; 6.; 8.; 2.; 4.; 6.; 8. |] (fun h ->
+        Nx.mul h (wide_twos ()));
+    raced "Nx.reshape" [| 1.; 3.; 2.; 4. |] copy_sys;
+    let h = Nx.donate (make_sys [| 1.; 2.; 3.; 4. |]) in
+    read_or_named ~consumer:"Nx.sum" ~by:"Nx.cast" [| 1.; 2.; 3.; 4. |]
+      (fun () ->
+        meanwhile
+          (fun () -> ignore (Nx.sum h))
+          (fun () -> elements (Nx.cast D.Float64 h)))
+
+  (* A call on live values, one of which an operation on another domain donates
+     and consumes after the call checked it and before its kernel reads it,
+     reads the elements or raises naming that operation: on each fast path,
+     beside a handle, and in a contraction. A function of several operations
+     whose later operation checks the value after the donation may raise saying
+     it was donated. *)
+  let raced_live =
+    let consume x = ignore (Nx.mul (Nx.donate x) (twos ())) in
+    let fresh () = make_sys [| 1.; 2.; 3.; 4. |] in
+    (* [f c h t x]: a mask [c] of [true; false; true; false], a handle [h] and a
+       value [x] of [1; 2; 3; 4], twos [t], made before the call; its result's
+       elements are [expected], its refusal names [by], then the consumer or
+       "donated". *)
+    let row name by consumer expected f = (name, by, consumer, expected, f) in
+    cases
+      "a call whose live operand another domain donates meanwhile reads it or \
+       raises"
+      ~id:(fun (name, _, _, _, _) -> name)
+      [
+        row "a product" "Nx.mul" "Nx.mul" [| 2.; 4.; 6.; 8. |] (fun _ _ t x ->
+            Nx.mul x t);
+        row "a product beside a handle" "Nx.mul" "Nx.mul" [| 1.; 4.; 9.; 16. |]
+          (fun _ h _ x -> Nx.mul h x);
+        row "a selection" "Nx.where" "Nx.mul" [| 1.; 2.; 3.; 2. |]
+          (fun c _ t x -> Nx.where c x t);
+        row "a selection beside a handle" "Nx.where" "Nx.mul"
+          [| 1.; 2.; 3.; 4. |] (fun c h _ x -> Nx.where c h x);
+        row "a contraction" "Nx.contract" "Nx.mul" [| 20. |] (fun _ _ t x ->
+            Nx.contract Nx.float32 (Nx.Pattern.v "i, i -> | i") x t);
+        (* The einsum multiplies its first two operands first, and its second
+           operation checks [x] after the donation. *)
+        row "a later operation of an einsum" "Nx.einsum" "donated"
+          [| 4.; 8.; 12.; 16. |] (fun _ _ t x ->
+            Nx.einsum (Nx.Pattern.v "i, i, i -> i") [ t; t; x ]);
+      ]
+      (fun (_, by, consumer, expected, f) ->
+        let c = Nx.equal (twos ()) (on_gate [| 2.; 0.; 2.; 0. |]) in
+        let h = Nx.donate (fresh ()) and t = twos () and x = fresh () in
+        read_or_named ~consumer ~by expected (fun () ->
+            meanwhile (fun () -> consume x) (fun () -> elements (f c h t x))))
+
+  (* A call that broadcasts a handle and declines consumes its memory: the
+     broadcast passed on a new handle over it. One that its checks refuse for a
+     handle another domain's consumer took consumes nothing: the checks come
+     before the call reads any memory. *)
+  let at s xs = Nx.place Gate.on (on_host s xs)
+  let computed s xs = Nx.mul (at s xs) (at s (Array.make (Array.length xs) 1.))
+  let ones_to_four = [| 1.; 2.; 3.; 4. |]
+
+  let declined_broadcast =
+    test
+      "a handle a comparison broadcast and declined reads as it was or names it"
+      (fun () ->
+        let h = Nx.donate (computed [| 4 |] ones_to_four) in
+        let t = at [| 2; 4 |] (Array.make 8 2.) in
+        invalid ~sub:"Nx.less: " (fun () -> Nx.less h t);
+        mem ~msg:"the handle" outcomes
+          (outcome (fun () -> elements h))
+          [ Ok ones_to_four; Error "Nx.less" ])
+
+  (* [g ()] on another domain while [Nx.add hy t] holds [hy] inside its kernel,
+     which declines: [g]'s outcome. *)
+  let during_add hy g =
+    let t = at (Nx.shape hy) (Array.make 4 2.) in
+    let met = ref None in
+    invalid ~sub:"Nx.add: " (fun () ->
+        meanwhile (fun () -> met := Some (outcome g)) (fun () -> Nx.add hy t));
+    Option.get !met
+
+  let refused_second =
+    test "a product whose second handle a decline in flight holds raises"
+      (fun () ->
+        (* The sum took [hy]'s memory before its kernel, so the product checks
+           [hy'] dead before it reads [hx]. *)
+        let hx = Nx.donate (computed [| 4 |] ones_to_four) in
+        let hy = Nx.donate (computed [| 4 |] ones_to_four) in
+        let hy' = Nx.reshape [| 4 |] (Nx.reshape [| 2; 2 |] hy) in
+        equal outcomes (Error "Nx.add")
+          (during_add hy (fun () -> elements (Nx.mul hx hy')));
+        either ~msg:"the first handle after the refusal" (array float_exact)
+          ~by:[ "Nx.mul" ] ones_to_four (fun () -> elements (Nx.copy hx)))
+
+  (* Two calls on two domains take one pair of handles in opposite orders. Each
+     reads the elements as they were or raises naming the other: a consumer that
+     holds the first while an operation on another domain reads both, and an
+     operation that holds the second inside its kernel while a consumer on
+     another domain reads both. *)
+  let opposite_orders =
+    let pair () =
+      ( Nx.donate (make_sys [| 1.; 2.; 3.; 4. |]),
+        Nx.donate (make_sys [| 4.; 3.; 2.; 1. |]) )
+    in
+    let module C = Nx.Prim.Consumer in
+    (* [h1 - h2] by a consumer that takes [h1]'s memory, then runs [inside]. *)
+    let consumer ~inside h1 h2 =
+      outcome (fun () ->
+          C.with_ ~by:"test.call" [ Any h1; Any h2 ] (fun c ->
+              let a =
+                require_some ~msg:"the consumer took h1"
+                  (C.take c 0 ~piece:0 D.Float32 (A.Layout.contiguous [| 4 |]))
+              in
+              inside ();
+              let b = A.to_array (A.expect D.Float32 (C.arrays c 1).(0)) in
+              Array.mapi (fun k v -> A.get a [| k |] -. v) b))
+    in
+    let first = [| -3.; -1.; 1.; 3. |] and second = [| 3.; 1.; -1.; -3. |] in
+    let either_of ~msg expected other r =
+      mem ~msg outcomes r [ Ok expected; Error other ]
+    in
+    cases
+      "two calls taking one pair of handles in opposite orders read or raise"
+      ~id:Fun.id
+      [ "a consumer holds the first"; "an operation holds the second" ]
+      (function
+      | "a consumer holds the first" ->
+          let h1, h2 = pair () in
+          let other = ref (Ok [||]) in
+          let inside () =
+            other :=
+              Domain.join
+                (Domain.spawn (fun () ->
+                     outcome (fun () -> elements (Nx.sub h2 h1))))
+          in
+          let mine = consumer ~inside h1 h2 in
+          either_of ~msg:"the consumer" first "Nx.sub" mine;
+          either_of ~msg:"the operation" second "test.call" !other
+      | _ ->
+          let h1, h2 = pair () in
+          let mine = ref (Ok [||]) in
+          let other =
+            outcome (fun () ->
+                meanwhile
+                  (fun () -> mine := consumer ~inside:ignore h1 h2)
+                  (fun () -> elements (Nx.sub h2 h1)))
+          in
+          either_of ~msg:"the operation" second "test.call" other;
+          either_of ~msg:"the consumer" first "Nx.sub" !mine)
+end
+
+(* Copy: float32 operands drawn as their bits (a NaN's payload included), laid
+   out plainly, transposed, at an offset or broadcast, of shapes with extents of
+   0 to 3. *)
+type layout = Plain | Transposed | Offset | Broadcast
+
+let layout_name = function
+  | Plain -> "plain"
+  | Transposed -> "transposed"
+  | Offset -> "offset"
+  | Broadcast -> "broadcast"
+
+let copy_case =
+  let open Gen in
+  with_pp
+    (fun ppf (s, l, bits) ->
+      Format.fprintf ppf "%s [%s] of [%s]" (layout_name l)
+        (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+        (String.concat "; " (Array.to_list (Array.map Int32.to_string bits))))
+    (let* l =
+       of_list
+         ~pp:(fun ppf l -> Format.pp_print_string ppf (layout_name l))
+         [ Plain; Transposed; Offset; Broadcast ]
+     in
+     (* A transpose strides two axes or more, and a broadcast repeats one
+        element: their extents are positive. *)
+     let* rank =
+       match l with
+       | Plain | Offset -> int_range 0 3
+       | Transposed -> int_range 2 3
+       | Broadcast -> int_range 1 3
+     in
+     let extent =
+       match l with
+       | Plain | Offset -> frequency [ (1, constant 0); (2, int_range 1 3) ]
+       | Transposed | Broadcast -> int_range 1 3
+     in
+     let* s = array ~size:(constant rank) extent in
+     let+ bits = array ~size:(constant (Array.fold_left ( * ) 1 s)) int32 in
+     (s, l, bits))
+
+(* [bits] in C order as float32, a host value of shape [s] in memory of its
+   own. *)
+let of_bits s bits = Nx.bitcast f32 (Nx.create Nx.int32 s bits)
+
+(* The value [l] lays out, and its elements' bits in C order. *)
+let laid s l bits =
+  let n = Array.length bits in
+  match l with
+  | Plain -> (of_bits s bits, bits)
+  | Transposed ->
+      let r = Array.length s in
+      let t = Array.init r (fun a -> s.(r - 1 - a)) in
+      let x = Nx.transpose (of_bits t bits) in
+      (* Element [i] of [x] in C order is [t]'s at the reversed index. *)
+      let at k =
+        let idx = Nx_support.index s k in
+        let flat = ref 0 in
+        for a = r - 1 downto 0 do
+          flat := (!flat * s.(a)) + idx.(a)
+        done;
+        bits.(!flat)
+      in
+      (x, Array.init n at)
+  | Offset ->
+      let first = if n = 0 then 0l else bits.(0) in
+      let padded = of_bits [| n + 1 |] (Array.append [| first |] bits) in
+      (Nx.reshape s (Nx.slice [ Nx.R (1, n + 1) ] padded), bits)
+  | Broadcast ->
+      if n = 0 then (of_bits s bits, bits)
+      else
+        (Nx.broadcast_to s (of_bits [||] [| bits.(0) |]), Array.make n bits.(0))
+
+let law_copy (s, l, bits) =
+  let x, expected = laid s l bits in
+  cover "no element" (Array.length bits = 0);
+  cover "a strided operand"
+    (l = Transposed && Array.length s >= 2 && Array.length bits > 1);
+  cover "a broadcast operand" (l = Broadcast && Array.length bits > 1);
+  let y = Nx.copy x in
+  equal ~msg:"the bits" (array int32) expected
+    (Nx.to_array (Nx.bitcast Nx.int32 y));
+  let own a = Nx.Repr.read ~by:"test" a A.buffer in
+  satisfies ~msg:"the copy's memory" ~claim:"apart from the operand's" pass
+    (fun () -> not (Rig.Buffer.overlaps (own x) (own y)))
+    ()
 
 let () =
   exit
     (run "nx donate"
        [
-         group "donation"
+         group "donate"
            [
-             test "a donated value dies at the donation"
+             test "a later use of a donated value raises saying it was donated"
                test_dies_at_the_donation;
-             test "a donated value dies on every path" test_dies_on_every_path;
-             law_one_donor_twice;
-             law_moved_twice;
-             stateful "donated values and handles across calls" lives;
-             test "a one-to-one movement passes the handle on" test_passed_on;
-             test "a value sharing the memory keeps its elements"
-               test_sharer_keeps;
-             test_refusals;
-             test "a set refused for its value's count consumes the mask alone"
-               test_set_count_refused;
-             test "a donated creation dies" test_creation_dies;
-             test "a value whose shards lie in one allocation is donated"
+             test "a donated value's shape, dtype and placement still answer"
+               test_still_answers;
+             test "a second donation raises" test_donated_twice;
+             test "a donated value ends whatever its handle meets"
+               test_dies_on_every_path;
+             test "a view made before the donation lives on" test_view_lives;
+             test "a donated creation ends" test_creation_dies;
+             test "a value whose shards lie in one allocation ends"
                test_shards_of_one_allocation;
              test "a value of no elements donated to a place is its result"
                test_empty_placed;
-             test "a function of several operations shares its handles"
-               test_several_reads;
-             test "a sampler shares its key's handle" test_key_lent;
-             test "an interpretation reads a handle and shares it" test_lent;
-             test "a handle dies naming the function the user called"
-               test_dies_at_the_call;
-             test "a donor beside its handle in another operation raises"
+             test_refusals;
+             test_dead_names;
+             test "a donor beside its own handle raises naming the call"
                test_beside_elsewhere;
              test "a call that keeps none of a dead operand raises"
                test_none_kept;
-             test_dead_names;
+           ];
+         group "handles"
+           [
+             law_one_donor_twice;
+             law_moved_twice;
+             test "a movement passes the handle on" test_passed_on;
+             test "a value sharing the memory keeps its elements"
+               test_sharer_keeps;
+             test "a handle ends naming the function the user called"
+               test_dies_at_the_call;
              test_donated;
+             test "a set refused for its value's count consumes the mask alone"
+               test_set_count_refused;
+             test "a function of several operations reads its handles shared"
+               test_several_reads;
+             test "a sampler reads its key's handle shared" test_key_lent;
+             test "an interpretation reads a handle shared" test_lent;
+             test "the arrays a rule kept keep their elements" test_kept_by_rule;
+             test "a consumer inside a composite leaves its reads alone"
+               test_inside_composite;
              test "a captured handle reads as it was" test_captured;
-             (* A program consumes two handles at once about one time in
-                eleven. *)
-             stateful ~domains:2 ~count:300
+             test "two values a call gives back over one handle stay apart"
+               test_given_back_twice;
+             stateful "donated values and handles across calls" lives;
+           ];
+         group "reuse"
+           [
+             test "a value that owns its memory is written in place"
+               test_made_in_place;
+             test "set writes into a donated target" test_set_in_place;
+             test "scatter writes into a donated target" test_scatter_in_place;
+             test "contract writes into a donated init" test_init_in_place;
+             test "a handle a view passes on is written in place"
+               test_view_in_place;
+             test "where writes into a donated value operand"
+               test_where_in_place;
+             test "a value on one device is written in place beside others"
+               test_beside_in_place;
+             test "a value cut across devices is written in place on each"
+               test_cut_in_place;
+             test "a value read by Repr.read is still written in place"
+               test_read_in_place;
+             test "a donation during Repr.read computes into fresh memory"
+               test_read_donated_inside;
+             test "a strided operand computes into fresh memory"
+               test_strided_copied;
+             test "a broadcast operand computes into fresh memory"
+               test_broadcast_copied;
+             test "an undonated or shared operand keeps its elements" test_kept;
+             test "an operation may read one handle twice" test_donor_beside;
+             test "a donation after a gather moved its positions"
+               test_after_moved_positions;
+             test
+               "an eager call beside an Extent on another domain frees its \
+                donor"
+               test_extent_elsewhere;
+             law_scatter_bits;
+             law_init_bits;
+           ];
+         group "declines"
+           [
+             test "a declining operation returns its handles' memory"
+               test_declined_frees;
+             On_gate.declined_broadcast;
+             stateful ~count:150 "a handle lives until an operation consumes it"
+               On_gate.donations;
+           ];
+         group "several domains"
+           [
+             test
+               "a donation on another domain during Repr.read computes into \
+                fresh memory"
+               test_read_donated_across;
+             test "a read racing a consumer reads the elements or names it"
+               On_gate.test_raced_read_names;
+             On_gate.raced_live;
+             On_gate.refused_second;
+             On_gate.opposite_orders;
+             stateful ~domains:2 "handles declined and consumed on two domains"
+               On_gate.raced;
+             (* About one program in ten calls a pair consumer on two free
+                handles (10.3% mean at a load of 3, 10.8% with eight copies
+                running; 6.3% to 7.3% on the worst seeds): 300 programs miss it
+                with probability 2e-14 at the mean. *)
+             stateful ~domains:2 ~count:300 ~steps:10
                "reads, consumers and handles taken on two domains" commands;
+           ];
+         group "copy"
+           [
+             prop
+               ~examples:[ ([| 2; 0 |], Plain, [||]) ]
+               "a copy holds its operand's bits in memory of its own" copy_case
+               law_copy;
+           ];
+         group "Prim.donated and Prim.dead"
+           [
              test "donated tells a handle, live or not" test_is_handle;
              test "dead tells a cut or traced value's end" test_dead;
+           ];
+         group "Consumer"
+           [
              test "a consumer frees its handles' memory, naming itself"
                test_consumer_frees;
              test "a consumer checks every operand before it reads"
@@ -3345,49 +4181,5 @@ let () =
              test_consumer_frees_every_handle;
              test "a consumer takes a cut handle's memory device by device"
                test_consumer_takes_pieces;
-             test "two values a call gives back over one handle stay apart"
-               test_given_back_twice;
-             test "a donation after a gather moved its positions"
-               test_after_moved_positions;
-           ];
-         group "reuse"
-           [
-             test "a value that owns its memory is written in place"
-               test_made_in_place;
-             test "set writes into a donated target" test_set_in_place;
-             test "scatter writes into a donated target" test_scatter_in_place;
-             test "contract writes into a donated init" test_init_in_place;
-             test "a value read by Repr.read is still written in place"
-               test_read_in_place;
-             test "a value cut across devices is written in place on each"
-               test_cut_in_place;
-             test "a value on one device is written in place beside others"
-               test_beside_in_place;
-             test "a donation during Repr.read computes into fresh memory"
-               test_read_donated_inside;
-             test
-               "a donation on another domain during Repr.read computes into \
-                fresh memory" test_read_donated_across;
-             test "a handle a view passes on is written in place"
-               test_view_in_place;
-             test "where writes into a donated value operand"
-               test_where_in_place;
-             test "a strided operand computes into fresh memory"
-               test_strided_copied;
-             test "a broadcast operand computes into fresh memory"
-               test_broadcast_copied;
-             test "an undonated or shared operand keeps its elements" test_kept;
-             test "an operation may read one handle twice" test_donor_beside;
-             test "a consumer inside a composite leaves its reads alone"
-               test_inside_composite;
-             test
-               "an eager call beside an Extent on another domain frees its \
-                donor" test_extent_elsewhere;
-             test "a declining operation returns its handles' memory"
-               test_declined_frees;
-             test "a donation leaves the arrays a rule kept"
-               test_kept_by_rule;
-             law_scatter_bits;
-             law_init_bits;
            ];
        ])
