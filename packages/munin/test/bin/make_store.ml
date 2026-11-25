@@ -17,6 +17,9 @@
    [hold ROOT] starts a run, prints its id, waits for the end of its standard
    input and exits without finishing the run.
 
+   [calendar ROOT] records a run whose samples lie at the edges of the years
+   RFC 3339 writes, and prints its id.
+
    Samples carry fixed times, so that their output does not change from one test
    run to the next. Runs' start times and ids do. *)
 
@@ -129,6 +132,25 @@ let hold store =
   print_endline (Session.id s);
   ignore (In_channel.input_all stdin)
 
+(* Before 1970; a fraction that rounds up to the next second; the last
+   fraction of year 9999 and the first second of year 10000, which RFC 3339
+   cannot write; the first second of year 1 and half a second before it. *)
+let calendar store =
+  let s = start store ~name:"calendar" "calendar" in
+  let clock = Session.metric s "clock" in
+  List.iteri
+    (fun step time -> Session.log_metrics s ~step ~time [ (clock, 1.) ])
+    [
+      -0.25;
+      1.9999996;
+      253402300799.5;
+      253402300800.;
+      -62135596800.;
+      -62135596800.5;
+    ];
+  Session.finish s;
+  print_endline (Session.id s)
+
 let () =
   (* Windows ends a line with CR LF on a text channel, which the shell would
      keep in the ids it reads. *)
@@ -139,4 +161,5 @@ let () =
   | "crash" -> crash store
   | "resume" -> resume store Sys.argv.(3) (int_of_string Sys.argv.(4))
   | "hold" -> hold store
+  | "calendar" -> calendar store
   | m -> failwith ("make_store: unknown mode " ^ m)

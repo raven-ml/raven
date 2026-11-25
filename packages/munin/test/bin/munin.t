@@ -188,7 +188,9 @@ left out of its series and statistics.
   3	2026-11-01T14:03:11.250000Z	2.5
   4	2026-11-01T14:03:12.250000Z	2.25
 
-  $ munin metrics --root store $base no/such 2>&1 | ids
+  $ munin metrics --root store $base no/such 2> err
+  [1]
+  $ ids < err
   munin: run BASE has no samples of no/such
 
 Compare: the params that differ, and each metric's best, or its last
@@ -261,9 +263,13 @@ Artifacts: name, version, digest, size, run, step, aliases.
   munin: alias takes NAME VERSION ALIAS
   [1]
 
-Deleting version 2 leaves its blob, which gc removes.
+Deleting version 2 removes the aliases that name it and leaves its blob,
+which gc removes.
 
+  $ munin alias --root store mnist-ckpt 2 latest
   $ munin rm-artifact --root store mnist-ckpt 2
+  $ ls store/artifacts/mnist-ckpt/aliases
+  best
   $ munin artifacts --root store | ids
   mnist-ckpt	1	blake2b-256:188e41df655bfeffb5654aeab18124803449b498d61874eca09a2159c6172669	3	BASE	4	best
   $ munin gc --root store
@@ -280,6 +286,24 @@ rm removes what it can and reports the rest.
   RESUMED	finished	TIME	mnist	resumed	-
   WIDE	failed	TIME	mnist	wide	lr-sweep
   BASE	finished	TIME	mnist	base	baseline
+
+A run without its writer file reads silent, as one copied from another
+machine does. rm refuses it, and end ends it as killed at a step that
+orphans none of its samples.
+
+  $ silent=$(./make_store.exe crash store)
+  $ rm store/runs/$silent/writer
+  $ munin runs --root store --status silent | sed "s/$silent/SILENT/" | ids
+  SILENT	silent	TIME	mnist	resumed	-
+  $ munin rm --root store $silent 2> err
+  [1]
+  $ sed "s/$silent/SILENT/" err
+  munin: run SILENT is silent: its writer cannot be probed. Resume it, finish it as killed, then delete it
+  $ munin end --root store $silent
+  $ munin runs --root store --status killed | sed "s/$silent/SILENT/" | ids
+  SILENT	killed	TIME	mnist	resumed	-
+  $ munin metrics --root store $silent
+  train/loss	metric	5	1.0	1.0	0
 
 check lists each path that breaks the format and why, and exits with 1
 when it lists one. gc removes what a writer left.
@@ -308,3 +332,15 @@ watch fails.
   $ munin watch --root store < /dev/null
   munin: the dashboard needs a terminal
   [1]
+
+Times print in RFC 3339 for the years 0001 to 9999, to the microsecond,
+rounded once, and as a float outside them.
+
+  $ calendar=$(./make_store.exe calendar store)
+  $ munin metrics --root store $calendar clock
+  0	1969-12-31T23:59:59.750000Z	1.0
+  1	1970-01-01T00:00:02.000000Z	1.0
+  2	9999-12-31T23:59:59.500000Z	1.0
+  3	253402300800.0	1.0
+  4	0001-01-01T00:00:00.000000Z	1.0
+  5	-62135596800.5	1.0

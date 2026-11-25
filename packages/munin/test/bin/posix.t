@@ -16,25 +16,33 @@ The root is absolute, whether it exists or not.
   $ munin root --root store
   $TESTCASE_ROOT/store
 
-A run being written cannot be removed or ended.
+A run being written cannot be removed or ended. The writer prints its run
+id once it holds the run, through a fifo, so reading it waits for that, and
+ends at the writer's exit if it never prints.
 
-  $ mkfifo input
-  $ ./make_store.exe hold store < input > held &
+  $ mkfifo input output
+  $ ./make_store.exe hold store < input > output &
   $ exec 3> input
-
-The wait for the writer's run id gives up after 60 s, so a writer that
-never starts fails the test.
-
-  $ i=0
-  $ until [ -s held ] || [ $i -ge 600 ]; do i=$((i + 1)); sleep 0.1; done
-  $ [ -s held ] || echo "no run id after 60 s"
-  $ held=$(cat held)
+  $ read held < output
   $ munin runs --root store --status running | sed "s/$held/HELD/" | ids
   HELD	running	TIME	held	-	-
-  $ munin rm --root store $held 2>&1 | sed "s/$held/HELD/"
+  $ munin rm --root store $held 2> err
+  [1]
+  $ sed "s/$held/HELD/" err
   munin: run HELD is being written
-  $ munin end --root store $held 2>&1 | sed "s/$held/HELD/"
+  $ munin end --root store $held 2> err
+  [1]
+  $ sed "s/$held/HELD/" err
   munin: run HELD is being written
+
+Tags and notes change while the run is written.
+
+  $ munin tag --root store $held live
+  $ munin note --root store $held 'while held'
+  $ munin runs --root store --tag live | sed "s/$held/HELD/" | ids
+  HELD	running	TIME	held	-	live
+  $ munin note --root store $held
+  while held
 
 Once its writer exits, end ends the run as killed, and refuses an ended
 one.
@@ -43,29 +51,27 @@ one.
   $ wait
   $ munin end --root store $held
   $ munin runs --root store --status killed | sed "s/$held/HELD/" | ids
-  HELD	killed	TIME	held	-	-
+  HELD	killed	TIME	held	-	live
   SWEEP	killed	TIME	sweep	-	night,sweep
-  $ munin end --root store $held 2>&1 | sed "s/$held/HELD/"
+  $ munin end --root store $held 2> err
+  [1]
+  $ sed "s/$held/HELD/" err
   munin: run HELD has ended
   $ munin rm --root store $held
-  $ munin show --root store $held 2>&1 | sed "s/$held/HELD/"
+  $ munin show --root store $held 2> err
+  [1]
+  $ sed "s/$held/HELD/" err
   munin: no run HELD
 
-check lists each path that breaks the format and why.
-
-  $ munin check --root store
+check names each path that breaks the format.
 
   $ printf 'not a record\n' >> store/runs/$base/events.jsonl
   $ rm store/blobs/blake2b-256/188e41df655bfeffb5654aeab18124803449b498d61874eca09a2159c6172669
   $ mkdir store/artifacts/mnist-ckpt/.left
-  $ munin check --root store | ids
-  $TESTCASE_ROOT/store/artifacts/mnist-ckpt/.left	left by a writer
-  $TESTCASE_ROOT/store/blobs/blake2b-256/188e41df655bfeffb5654aeab18124803449b498d61874eca09a2159c6172669	a version's blob is missing
-  $TESTCASE_ROOT/store/runs/BASE/events.jsonl	damaged lines: 1
-  $ munin check --root store > /dev/null
-  [1]
-  $ munin gc --root store
-  removed 1
+  $ munin check --root store | cut -f 1 | ids
+  $TESTCASE_ROOT/store/artifacts/mnist-ckpt/.left
+  $TESTCASE_ROOT/store/blobs/blake2b-256/188e41df655bfeffb5654aeab18124803449b498d61874eca09a2159c6172669
+  $TESTCASE_ROOT/store/runs/BASE/events.jsonl
 
 watch names an unknown run and the store it looked in.
 

@@ -7,8 +7,9 @@ tab-separated lines without a header, one record a line, so that `cut`,
 `Value.pp` prints it ([`value.mli`](../lib/value.mli)): a float in the
 fewest digits that read back to it, a NaN as `nan`, and a string with its
 tabs and line feeds escaped, so a value never splits a line. Times print
-in RFC 3339, in UTC. An error goes to stderr, and the command exits with
-status 1.
+in RFC 3339, in UTC, to the microsecond; a time outside the years 0001 to
+9999, which RFC 3339 cannot write, prints as a float. An error goes to
+stderr, and the command exits with status 1.
 
 Every command takes `--root DIR`. Without it, the store is the one
 `Store.open_ ()` opens ([`store.mli`](../lib/store.mli)): the directory in
