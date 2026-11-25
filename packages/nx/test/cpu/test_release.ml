@@ -98,15 +98,20 @@ let exponents m x =
   in
   Iarray.of_list [ Nx_kernel.Plain x; along 1.5; along (1. /. 1.5) ]
 
+let held =
+  test
+    "a reduction of 4 Mi terms holds the lock no longer than the copy at a time"
+    (fun () ->
+      let n = 1 lsl 22 in
+      let x = ones n and sum = f32 [||] in
+      holds_within (fun () ->
+          reduce [| (Monoid Sum, 0) |] ~dsts:[| A.Any sum |] x))
+
+(* One call of each family of kernels, at a size whose work lies past the copy,
+   run inline on the calling thread or as a job. *)
 let families =
-  group "a long call lets another domain collect"
+  group "a call past the copy releases the lock"
     [
-      test "a reduction, held for no longer than the copy at a time"
-        (fun () ->
-          let n = 1 lsl 22 in
-          let x = ones n and sum = f32 [||] in
-          holds_within (fun () ->
-              reduce [| (Monoid Sum, 0) |] ~dsts:[| A.Any sum |] x));
       test "many reductions of a program" (fun () ->
           let m = 4096 and k = 2048 in
           let x = ones m in
@@ -221,7 +226,7 @@ let families =
    sub-byte elements the walk cannot reorder, each at the least size past
    the copy. *)
 let estimates =
-  group "a call past the copy by each input of the estimate"
+  group "a call past the copy by each input of the estimate releases the lock"
     [
       test "a batch of many 1 × 1 LUs" (fun () ->
           let b = 1 lsl 20 in
@@ -348,7 +353,10 @@ let at_each_release call check =
       sweep ()
     in
     let (), released = Nx_release_support.compacting ~release run in
-    equal ~msg:(Printf.sprintf "release %d came" release) bool true released;
+    equal
+      ~msg:(Printf.sprintf "the release compacted, of %d" releases)
+      (option int) (Some release)
+      (if released then Some release else None);
     Gc.full_major ();
     check ()
   done
@@ -440,13 +448,12 @@ let tables_moved =
     ]
 
 let domains =
-  group "domains"
+  group "several domains"
     [
-      tables_moved;
-      prop ~count:20 "several domains may call concurrently"
+      prop ~count:20 "call concurrently, each result one thread's"
         Gen.(pair (int_range 0 1_000_000) (int_range 0 1_000_000))
         law_concurrent;
-      test "a call waits for another domain's job released" (fun () ->
+      test "a released call waits for another domain's job" (fun () ->
           (* Another domain occupies the pool with a job that lasts until
              this thread releases the lock. The call adds 16384 float64
              elements, whose job takes two threads and so waits for the
@@ -465,8 +472,9 @@ let domains =
             Domain.cpu_relax ()
           done;
           let ~releases, ~held:_, ~cpu:_ = Nx_release_support.watch small in
-          equal ~msg:"the other job ended on the call's release" bool true
-            (Domain.join other);
+          equal ~msg:"what ended the other job" string "the call's release"
+            (if Domain.join other then "the call's release"
+             else "its deadline of 10 s");
           greater int ~msg:"releases" ~than:0 releases);
     ]
 
@@ -517,9 +525,9 @@ let small_calls { over } =
     calls
 
 let borrowed =
-  group "a call that reads borrowed memory releases, however small"
+  group "borrowed memory"
     [
-      cases "over borrowed memory"
+      cases "a call over borrowed memory releases the lock, however small"
         ~id:(fun (what, _) -> what)
         [
           ("a host borrow of an io device's pages", { over = mapped });
@@ -661,7 +669,7 @@ let borrowed =
           equal ~msg:"int4s reversed" (array int)
             (Array.init n (fun k -> nibbles.(n - 1 - k)))
             (released (fun () -> A.to_array rev)));
-      test "the same calls over the host's own memory hold" (fun () ->
+      test "the same calls over the host's own memory keep the lock" (fun () ->
           equal
             (list (pair string int))
             [ ("a gather", 0); ("a map", 0); ("a sum", 0) ]
@@ -670,4 +678,5 @@ let borrowed =
 
 let () =
   exit
-    (Windtrap.run "nx_cpu.release" [ families; estimates; borrowed; domains ])
+    (Windtrap.run "nx_cpu.release"
+       [ held; families; estimates; borrowed; tables_moved; domains ])
