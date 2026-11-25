@@ -150,6 +150,7 @@ let token =
             "\xce\xb0" (* U+03B0, upper to three *);
             "\xe1\xba\x9e" (* U+1E9E, shorter lowercase *);
             "\xc8\xba" (* U+023A, longer lowercase *);
+            "\xc5\xbf" (* U+017F, shorter uppercase *);
             "\xef\xac\x83" (* U+FB03 *);
             "\xf0\x90\x90\x80" (* U+10400, four bytes *);
             "\xf0\x9f\x98\x80" (* U+1F600, four bytes, unmapped *);
@@ -183,27 +184,28 @@ let shapes =
 
 let agrees name map case vs =
   let has p = Array.exists (function Some t -> p t | None -> false) vs in
-  let grows t = String.length (expect_lower t) > String.length t in
-  let shrinks t = String.length (expect_lower t) < String.length t in
+  let grows t = String.length (map t) > String.length t in
+  let shrinks t = String.length (map t) < String.length t in
   cover "a text with a sigma" (has (fun t -> List.mem 0x3A3 (scalars t)));
-  cover "a text that grows in lowercase" (has grows);
-  cover "a text that shrinks in lowercase" (has shrinks);
+  cover "a text that the mapping lengthens" (has grows);
+  cover "a text that the mapping shortens" (has shrinks);
   cover "a null row" (Array.exists Option.is_none vs);
   cover "no rows" (vs = [||]);
   equal ~msg:name same (Array.map (Option.map map) vs) (case vs)
 
-(* Rows of 0 to 33 bytes, all ASCII and with U+03A3 at each place, past a word
-   of eight bytes. *)
+(* A null, then rows of 0 to 33 bytes, all ASCII and with U+03A3 at each place,
+   past a word of eight bytes. *)
 let every_length () =
   let ascii n = String.init n (fun i -> if i mod 3 = 0 then 'B' else 'x') in
   let with_sigma n p =
     String.sub (ascii n) 0 p ^ "\xce\xa3" ^ String.sub (ascii n) p (n - p)
   in
   Array.of_list
-    (List.concat_map
-       (fun n ->
-         Some (ascii n) :: List.init (n + 1) (fun p -> Some (with_sigma n p)))
-       (List.init 34 Fun.id))
+    (None
+    :: List.concat_map
+         (fun n ->
+           Some (ascii n) :: List.init (n + 1) (fun p -> Some (with_sigma n p)))
+         (List.init 34 Fun.id))
 
 (* Str.trim *)
 
