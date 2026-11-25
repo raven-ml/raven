@@ -214,6 +214,39 @@ let split t =
   Gen.with_pp pp_batches
     (Gen.map cut (Gen.list ~size:(Gen.int_range 0 5) (Gen.int_range 0 n)))
 
+(* Lists laid out by hand *)
+
+let list_column ty ?(lead = 0) ?junk rows =
+  let segment = function
+    | Some xs -> xs
+    | None -> ( match junk with Some v -> [| Some v; Some v |] | None -> [||])
+  in
+  let segments = Array.map segment rows in
+  let pad =
+    match junk with Some v -> Array.make lead (Some v) | None -> [||]
+  in
+  let offsets = Array.make (Array.length rows + 1) (Array.length pad) in
+  Array.iteri
+    (fun i xs -> offsets.(i + 1) <- offsets.(i) + Array.length xs)
+    segments;
+  let valid = Array.map Option.is_some rows in
+  let validity =
+    if Array.for_all Fun.id valid then None
+    else Some (Nx.create Nx.bit [| Array.length valid |] valid)
+  in
+  let offsets =
+    Nx.create Nx.int64
+      [| Array.length offsets |]
+      (Array.map Int64.of_int offsets)
+  in
+  let child =
+    Column.of_options ty (Array.concat (pad :: Array.to_list segments))
+  in
+  Result.get_ok
+    (Column.of_layout
+       (Any (Type.list ty))
+       (Varsize { validity; offsets; child }))
+
 (* Comparing and printing *)
 
 let same_float a b =

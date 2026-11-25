@@ -38,6 +38,14 @@ val split : Talon.t -> Talon.t Gen.t
 (** [split t] draws [t] cut into batches: {!Talon.of_batches} of runs of its
     rows, empty runs and runs of one row included. *)
 
+val list_column :
+  'a Type.t -> ?lead:int -> ?junk:'a -> 'a option array option array -> Column.t
+(** [list_column ty ~lead ~junk rows] is [rows] as a column of lists of [ty],
+    [None] a null list and a [None] element a null element, laid out as
+    {!Column.of_options} never lays one out: with [~junk], each null list spans
+    two [junk] elements and [lead] of them precede the first list, so that
+    offsets start past 0. *)
+
 val witness : 'a Type.t -> 'a Testable.t
 (** [witness ty] compares values of [ty] by {!Type.compare_value}, and floats by
     their bits, all NaNs being equal: [-0.] and [0.] differ. *)
