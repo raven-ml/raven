@@ -16,7 +16,6 @@ let vec a = Nx.create f64 [| Array.length a |] a
 let tight = Tol.v ~rel:1e-13 ~abs:1e-15
 let raises_from fn f = raises_match (Exn.invalid_arg ~sub:fn) f
 let failure_with sub f = raises_match (Exn.failure ~sub) f
-let printed tol = Format.asprintf "%a" Tol.pp tol
 
 (* A vector of one to six positive numbers. *)
 let positive =
@@ -70,17 +69,33 @@ let tol_tests =
     cases ~id:fst "ulps raises unless k is finite and positive"
       [ ("0", 0.); ("-1", -1.); ("nan", nan); ("inf", infinity) ]
       (fun (_, k) -> raises_from "Jera.Tol.ulps" (fun () -> Tol.ulps k));
+    test "ulps meets float32's epsilon" (fun () ->
+        (* Root.bracket's estimate is an end of its final bracket, within twice
+           its error, 8 ulps of float32 under ulps 4, of the zero, and float32's
+           √a within half of one more. *)
+        let a = Nx.create Nx.float32 [| 3 |] [| 2.; 3.; 10. |] in
+        let s =
+          Root.bracket ~tol:(Tol.ulps 4.)
+            (fun x -> Nx.sub (Nx.mul x x) a)
+            ~lo:(Nx.zeros_like a) ~hi:a
+        in
+        equal
+          (Oracle.tensor ~rel:(8.5 *. Float.ldexp 1. (-23)) ())
+          (Nx.sqrt a) (Solution.get s));
     cases ~id:fst "pp writes each number as its shortest decimal"
       [
         ("rel 1e-06 abs 1e-10", Tol.v ~rel:1e-6 ~abs:1e-10);
         ("ulps 4", Tol.ulps 4.);
+        (* rel r is v ~rel:r ~abs:0. *)
+        ("rel 1e-06 abs 0", Tol.rel 1e-6);
         ("rel 0 abs 1000000", Tol.abs 1e6);
         (* The C library's [%g] writes 1e+06, and 1e+006 under mingw-w64. *)
         ("rel 4.58e-72 abs 1000000", Tol.v ~rel:4.58e-72 ~abs:1e6);
         (* −0 is not negative. *)
         ("rel -0 abs 0.001", Tol.v ~rel:(-0.) ~abs:1e-3);
       ]
-      (fun (expected, tol) -> equal string expected (printed tol));
+      (fun (expected, tol) ->
+        equal string expected (Format.asprintf "%a" Tol.pp tol));
   ]
 
 (* Solution *)
@@ -137,12 +152,10 @@ let solution_tests =
             (fun x -> Nx.sub_s x 1.)
             (vec [| 0.; 0. |])
         in
-        let shapes s =
-          (Nx.shape (Solution.is Converged s), Nx.shape (Solution.evaluations s))
-        in
-        let both = pair (array int) (array int) in
-        equal ~msg:"bracket" both ([| 2; 3 |], [| 2; 3 |]) (shapes bracket);
-        equal ~msg:"System.solve" both ([||], [||]) (shapes system));
+        equal (array int) [| 2; 3 |] (Nx.shape (Solution.is Stalled bracket));
+        equal (array int) [| 2; 3 |] (Nx.shape (Solution.evaluations bracket));
+        equal (array int) [||] (Nx.shape (Solution.is Stalled system));
+        equal (array int) [||] (Nx.shape (Solution.evaluations system)));
     test "a compiled function returns the eager answer" (fun () ->
         Compiled.here ();
         let f =
@@ -374,18 +387,6 @@ let bracket_tests =
              (Root.bracket ~tol:tight
                 (fun x -> Nx.sub_s (Nx.square x) 2.)
                 ~lo:(vec [| 3. |]) ~hi:(vec [| 0. |]))));
-    test "Tol.ulps meets float32's epsilon" (fun () ->
-        (* Within 4 ulps of float32, and float32's √a within half of one
-           more. *)
-        let a = Nx.create Nx.float32 [| 3 |] [| 2.; 3.; 10. |] in
-        let s =
-          Root.bracket ~tol:(Tol.ulps 4.)
-            (fun x -> Nx.sub (Nx.mul x x) a)
-            ~lo:(Nx.zeros_like a) ~hi:a
-        in
-        equal
-          (Oracle.tensor ~rel:(4.5 *. Float.ldexp 1. (-23)) ())
-          (Nx.sqrt a) (Solution.get s));
     test "a zero-size problem is an empty answer" (fun () ->
         equal (Oracle.tensor ()) (vec [||])
           (Solution.get (sqrt_bracket (vec [||]))));
@@ -442,7 +443,9 @@ let scaled_tolerances =
       (fun ppf (a, (rel, abs)) ->
         Format.fprintf ppf "a = %a@ rel = %g@ abs = %g" Nx.pp a rel abs)
       (pair positive
-         (pair (float_range 1e-14 1e-6) (of_list [ 0.; 1e-300; 1e-12; 1e-10 ]))))
+         (pair
+            (map (fun e -> 10. ** e) (float_range (-14.) (-6.)))
+            (of_list [ 0.; 1e-300; 1e-12; 1e-10 ]))))
 
 let newton_tests =
   [
