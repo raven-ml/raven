@@ -591,6 +591,11 @@ let decoded =
       | Error e -> Format.fprintf ppf "Error %a" pp_error e)
     ~equal:( = )
 
+(* Refused allocations *)
+
+let out_of_memory f =
+  match f () with v -> Ok v | exception Out_of_memory -> Error "Out_of_memory"
+
 (* Goldens *)
 
 type golden = {

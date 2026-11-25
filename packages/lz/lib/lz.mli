@@ -811,3 +811,16 @@ val zstd_encoder_limit : limit:int -> level:int -> Encoder.t
 
 val releases : unit -> int
 val released_at : unit -> int
+
+(* For the tests, which walk each allocation lz makes outside the OCaml heap in
+   a call: an encode's or a step's tables, and a decoder's buffer. [allocs ()]
+   is the number the calling thread has attempted. [refusing n f] is [f ()] with
+   the calling thread's [n]th next attempt refused, as if the system refused it,
+   [n] from 1; once [f] returns or raises, none is refused. [live ()] is the
+   number of blocks lz has allocated outside the heap through an encode or a
+   step and not yet freed, over every thread; a state and a decoder's buffer are
+   not counted. *)
+
+val allocs : unit -> int
+val refusing : int -> (unit -> 'a) -> 'a
+val live : unit -> int

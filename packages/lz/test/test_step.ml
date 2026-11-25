@@ -443,6 +443,96 @@ let reentry =
       raises_match ~msg:"a step after" invalid (fun () ->
           step d ~last:true (data (small fmt)) ignore))
 
+(* Refused allocations *)
+
+(* A step that allocates outside the heap: [fresh ()] is a fresh decoder or
+   encoder brought to it, [call s f] the step, and [next s] a step after. *)
+type ('a, 'r) allocating = {
+  row : string;
+  fresh : unit -> 'a;
+  call : 'a -> (Lz.bigbytes -> unit) -> 'r;
+  next : 'a -> unit;
+}
+
+(* The step's result on a fresh state with its [i]th allocation refused, and the
+   allocations it attempted; the state is dropped on return. *)
+let[@inline never] attempt a i =
+  let s = a.fresh () in
+  let before = Lz.allocs () in
+  let r =
+    Lz_support.out_of_memory (fun () ->
+        Lz.refusing i (fun () -> a.call s ignore))
+  in
+  (r, Lz.allocs () - before)
+
+(* Refuses the step's [i]th allocation on a fresh state, which it drops. *)
+let[@inline never] refuse_one ~msg out a i =
+  let s = a.fresh () in
+  let applied = ref 0 in
+  equal (result out string) ~msg (Error "Out_of_memory")
+    (Lz_support.out_of_memory (fun () ->
+         Lz.refusing i (fun () -> a.call s (fun _ -> incr applied))));
+  equal int ~msg:(msg ^ ", f applied") 0 !applied;
+  raises_match ~msg:(msg ^ ", the next step") invalid (fun () -> a.next s)
+
+(* The step's allocations are counted from one run in which none is refused,
+   then each is refused in turn; refusing one past them proves the walk reached
+   them all. What a refused step allocated is freed once its state is
+   collected. *)
+let refusals out a =
+  Gc.full_major ();
+  let live = Lz.live () in
+  let expected, k = attempt a max_int in
+  at_least int ~msg:"allocations" ~than:1 k;
+  for i = 1 to k do
+    let msg = Printf.sprintf "allocation %d of %d refused" i k in
+    refuse_one ~msg out a i;
+    Gc.full_major ();
+    equal int ~msg:(msg ^ ", live once collected") live (Lz.live ())
+  done;
+  equal (result out string) ~msg:"allocation past the last refused" expected
+    (fst (attempt a (k + 1)))
+
+let decoder_allocating =
+  let zstd () = Lz.Zstd.decoder ~window:zstd_window () in
+  let next d =
+    ignore (step d ~last:true (data (golden "text_100.zst3")) ignore : _ result)
+  in
+  [
+    {
+      row = "deflate's first step, which allocates its buffer";
+      fresh = Lz.Deflate.decoder;
+      call =
+        (fun d f -> step d ~last:true (data (golden "text_100.ld6.deflate")) f);
+      next;
+    };
+    {
+      row = "Zstandard's step over a frame header";
+      fresh = zstd;
+      call = (fun d f -> step d ~last:true (data (golden "text_100.zst3")) f);
+      next;
+    };
+    (* A 100-byte window bounds the first frame's blocks to 100 bytes; the
+       second frame's 1 MiB window allows 128 KiB. *)
+    {
+      row = "Zstandard's step over a later frame whose blocks may be larger";
+      fresh =
+        (fun () ->
+          let d = zstd () in
+          ignore (step d ~last:false (data (golden "text_100.zst3")) ignore);
+          d);
+      call = (fun d f -> step d ~last:true (data (golden "window1m.zst")) f);
+      next;
+    };
+  ]
+
+let decoder_refused =
+  cases
+    "a step that cannot allocate raises Out_of_memory without applying f, \
+     kills the decoder, and frees what it allocated"
+    ~id:(fun a -> a.row)
+    decoder_allocating (refusals stepped)
+
 (* Where the held step runs, as lz.mli's "from any domain or thread" says. *)
 type from = Another_domain | Another_thread
 
@@ -1075,6 +1165,42 @@ let encoder_reentry =
       raises_match ~msg:"a step after" invalid (fun () ->
           Lz.Encoder.step e ~last:true src ignore))
 
+let encoder_allocating =
+  let src = Lz_support.of_string "hello" in
+  let first e f = Lz.Encoder.step e ~last:false src f in
+  let next e = ignore (Lz.Encoder.step e ~last:true empty ignore : Lz.step) in
+  [
+    {
+      row = "deflate's first step";
+      fresh = (fun () -> Lz.Deflate.encoder ());
+      call = (fun e f -> Lz.Encoder.step e ~last:true src f);
+      next;
+    };
+    {
+      row = "Zstandard's first step";
+      fresh = (fun () -> Lz.Zstd.encoder ());
+      call = first;
+      next;
+    };
+    {
+      row = "Zstandard's first step that writes output";
+      fresh =
+        (fun () ->
+          let e = Lz.Zstd.encoder () in
+          ignore (first e ignore : Lz.step);
+          e);
+      call = (fun e f -> Lz.Encoder.step e ~last:true empty f);
+      next;
+    };
+  ]
+
+let encoder_refused =
+  cases
+    "a step that cannot allocate raises Out_of_memory without applying f, \
+     kills the encoder, and frees what it allocated"
+    ~id:(fun a -> a.row)
+    encoder_allocating (refusals Lz_support.step)
+
 (* The refused step changes nothing: the held step writes the stream of its
    input, and after its Done a step writes the same stream again. *)
 let encoder_other_step =
@@ -1161,7 +1287,7 @@ let () =
     (run "Step"
        [
          group "Decoder.step"
-           ([ after_error; reentry; other_step ]
+           ([ after_error; reentry; decoder_refused; other_step ]
            @ List.map
                (fun (fmt : format) ->
                  group
@@ -1177,7 +1303,7 @@ let () =
                    ])
                formats);
          group "Encoder.step"
-           ([ encoder_reentry; encoder_other_step ]
+           ([ encoder_reentry; encoder_refused; encoder_other_step ]
            @ List.map
                (fun (enc : encoding) ->
                  group

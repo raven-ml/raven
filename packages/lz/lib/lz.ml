@@ -519,3 +519,14 @@ let zstd_encoder_limit ~limit ~level =
 
 external releases : unit -> int = "lz_releases" [@@noalloc]
 external released_at : unit -> int = "lz_released_at" [@@noalloc]
+external allocs : unit -> int = "lz_allocs" [@@noalloc]
+external refuse : int -> unit = "lz_refuse" [@@noalloc]
+external live : unit -> int = "lz_live" [@@noalloc]
+
+let refusing n f =
+  if n < 1 then invalid_arg (Printf.sprintf "Lz.refusing: %d is not positive" n);
+  Fun.protect
+    ~finally:(fun () -> refuse 0)
+    (fun () ->
+      refuse n;
+      f ())

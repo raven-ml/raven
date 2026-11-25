@@ -209,6 +209,13 @@ val decoded : (string, Lz.error) result Windtrap.testable
 (** Decoded bytes or the error, printing a long string by its length and
     digest. *)
 
+(** {1 Refused allocations} *)
+
+val out_of_memory : (unit -> 'a) -> ('a, string) result
+(** [out_of_memory f] is [Ok (f ())], or [Error "Out_of_memory"] if [f] raises
+    [Out_of_memory], for a test to compare: windtrap's [raises] lets it through
+    as a fatal exception, which ends the run. *)
+
 (** {1 Goldens}
 
     Files the vendors wrote, listed in [golden/manifest.txt] by

@@ -192,6 +192,53 @@ let encode_apart =
         (fun (_, src, dst) -> ignore (encode src dst : int option))
         (disjoint ()))
 
+(* Refused allocations *)
+
+(* The encodes that allocate, each on input that reaches every allocation it
+   makes: 64 bytes pass deflate's passthrough at every level and LZ4's shortest
+   input with a table, and Snappy's 32-byte destination, under a 64-byte
+   fragment's worst case, makes it allocate its scratch too. *)
+let allocating =
+  [
+    ("deflate", Lz.Deflate.bound, fun s d -> Lz.Deflate.encode s d);
+    ("zstd", Lz.Zstd.bound, fun s d -> Lz.Zstd.encode s d);
+    ("lz4 block", Lz.Lz4.Block.bound, Lz.Lz4.Block.encode);
+    ("lz4 frame", Lz.Lz4.Frame.bound, Lz.Lz4.Frame.encode);
+    ("snappy", (fun _ -> 32), Lz.Snappy.encode);
+  ]
+
+(* An encode's allocations are counted from one run, then each is refused in
+   turn; refusing one past them proves the walk reached them all. *)
+let encode_refused =
+  cases
+    "raises Out_of_memory at each allocation refused, frees the others, and \
+     the next encode succeeds"
+    ~id:(fun (name, _, _) -> name)
+    allocating
+    (fun (_, bound, encode) ->
+      let src = Lz_support.of_string (String.make 64 'a') in
+      let dst = Lz_support.create (bound 64) in
+      let live = Lz.live () in
+      let before = Lz.allocs () in
+      let expected = encode src dst in
+      let k = Lz.allocs () - before in
+      at_least int ~msg:"allocations" ~than:1 k;
+      is_some ~msg:"the encode" expected;
+      equal int ~msg:"live after the encode" live (Lz.live ());
+      for i = 1 to k do
+        let msg = Printf.sprintf "allocation %d of %d refused" i k in
+        equal
+          (result (option int) string)
+          ~msg (Error "Out_of_memory")
+          (Lz_support.out_of_memory (fun () ->
+               Lz.refusing i (fun () -> encode src dst)));
+        equal int ~msg:(msg ^ ", live") live (Lz.live ());
+        equal (option int) ~msg:(msg ^ ", next encode") expected
+          (encode src dst)
+      done;
+      equal (option int) ~msg:"allocation past the last refused" expected
+        (Lz.refusing (k + 1) (fun () -> encode src dst)))
+
 let () =
   exit
     (run "Hostile"
@@ -200,4 +247,5 @@ let () =
          group "error" [ flips; replaced ];
          group "decode" [ decode_overlap; decode_apart ];
          group "encode" [ encode_overlap; encode_apart ];
+         group "Out_of_memory" [ encode_refused ];
        ])

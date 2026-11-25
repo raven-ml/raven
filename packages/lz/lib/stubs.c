@@ -30,6 +30,7 @@
 #include <caml/mlvalues.h>
 #include <caml/signals.h>
 
+#include <stdatomic.h>
 #include <string.h>
 
 #include "checksum.h"
@@ -80,9 +81,49 @@
    report: LZ4's and Snappy's, the formats of its kind. */
 #define RELEASE_LZF_DECODE (16 * 1024)
 
-void *lz_alloc(size_t n) { return caml_stat_alloc_noexc(n); }
+/* Allocations, for the tests (lz.mli): the ones the calling thread has
+   attempted through [lz_alloc] and a decoder's buffer, the one of them
+   it refuses, counted down from the next (0 refuses none), and the
+   [lz_alloc] blocks not yet freed, over every thread, since a finaliser
+   frees on the thread that sweeps it. */
+static _Thread_local intnat allocs;
+static _Thread_local intnat refuse;
+static atomic_intptr_t live;
 
-void lz_free(void *p) { caml_stat_free(p); }
+/* Counts an attempt; true when it is the one refused. */
+static bool refused(void) {
+  allocs++;
+  if (refuse == 0) return false;
+  return --refuse == 0;
+}
+
+void *lz_alloc(size_t n) {
+  if (refused()) return NULL;
+  void *p = caml_stat_alloc_noexc(n);
+  if (p != NULL) atomic_fetch_add_explicit(&live, 1, memory_order_relaxed);
+  return p;
+}
+
+void lz_free(void *p) {
+  if (p == NULL) return;
+  atomic_fetch_sub_explicit(&live, 1, memory_order_relaxed);
+  caml_stat_free(p);
+}
+
+CAMLprim value lz_allocs(value unit) {
+  (void)unit;
+  return Val_long(allocs);
+}
+
+CAMLprim value lz_refuse(value n) {
+  refuse = Long_val(n);
+  return Val_unit;
+}
+
+CAMLprim value lz_live(value unit) {
+  (void)unit;
+  return Val_long(atomic_load_explicit(&live, memory_order_relaxed));
+}
 
 /* The lock */
 
@@ -523,6 +564,7 @@ static value grow(struct lz_io *io, value buf) {
   CAMLparam1(buf);
   CAMLlocal1(b);
   size_t len = io->produced - io->run;
+  if (refused()) caml_raise_out_of_memory();
   b = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, NULL,
                          (intnat)io->need);
   uint8_t *d = (uint8_t *)Caml_ba_data_val(b);
