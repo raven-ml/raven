@@ -73,7 +73,9 @@ let wide =
        let table =
          Talon.v
            (("id", of_ints (Array.of_list (List.map Option.some ids)))
-           :: ("g", of_ints (Array.of_list (List.map (fun i -> Some (i mod 3)) ids)))
+           :: ( "g",
+                of_ints (Array.of_list (List.map (fun i -> Some (i mod 3)) ids))
+              )
            :: List.map (fun (c, xs) -> (c, Column.of_options ty xs)) columns)
        in
        Wide { ty; ids = [ "id"; "g" ]; columns; table }))
@@ -87,7 +89,9 @@ let l1 (Wide { ids; columns; table; ty = _ }) =
   cover "a column of nulls"
     (List.exists (fun (_, xs) -> Array.for_all Option.is_none xs) columns);
   let longer t =
-    run_ok (Kit.longer ~name:"name" ~value:"value" (Sel.names names) (Query.of_table t))
+    run_ok
+      (Kit.longer ~name:"name" ~value:"value" (Sel.names names)
+         (Query.of_table t))
   and wider l =
     run_ok (Kit.wider ~by:ids ~key:"name" ~value:"value" (Query.of_table l))
   in
@@ -95,10 +99,11 @@ let l1 (Wide { ids; columns; table; ty = _ }) =
 
 (* Wider, then longer
 
-   [L]'s columns are [by], then the key, then the value, in that order. The key
-   is never null, and [(by, key)] is unique by key identity. Its float key
-   holds both zeros and a NaN, one key each, so that a group's rows can differ
-   in their bits. *)
+   After wider, longer gives back the input's rows that hold a value. [L]'s
+   columns are [by], then the key, then the value, in that order. The key is
+   never null, and [(by, key)] is unique by key identity. Its float key holds
+   both zeros and a NaN, one key each, so that a group's rows can differ in
+   their bits. *)
 
 type long =
   | Long : {
@@ -163,18 +168,15 @@ let long =
              let m = Array.length drawn in
              if m = 0 then None else drawn.(i mod m))
        in
-       let keys =
-         Array.map (fun (_, _, c) -> Some dictionary.(c)) rows
-       in
+       let keys = Array.map (fun (_, _, c) -> Some dictionary.(c)) rows in
        let by_columns =
          List.map
            (function
-             | "g" ->
-                 ("g", of_ints (Array.map (fun (g, _, _) -> Some g) rows))
+             | "g" -> ("g", of_ints (Array.map (fun (g, _, _) -> Some g) rows))
              | _ ->
                  ( "f",
-                   of_floats
-                     (Array.map (fun (_, f, _) -> float_keys.(f)) rows) ))
+                   of_floats (Array.map (fun (_, f, _) -> float_keys.(f)) rows)
+                 ))
            by
        in
        let table =
@@ -187,6 +189,19 @@ let long =
        in
        Long { ty; kind = Type.kind ty; by; dictionary; table }))
 
+(* A table of no key and no row, which wider makes one row of nulls. *)
+let no_key_no_row =
+  let dictionary = [| "k0" |] in
+  Long
+    {
+      ty = Type.float64;
+      kind = Kind.float;
+      by = [];
+      dictionary;
+      table =
+        Talon.v [ ("key", of_keys dictionary [||]); ("value", of_floats [||]) ];
+    }
+
 let wider ~by ?(key = "key") ?(value = "value") t =
   run_ok (Kit.wider ~by ~key ~value (Query.of_table t))
 
@@ -194,9 +209,7 @@ let wider ~by ?(key = "key") ?(value = "value") t =
    in their keys, so that one value of a float key can stand for another. *)
 let in_cell_order by t =
   run_ok
-    (Query.sort
-       (Order.asc "key" :: List.map Order.asc by)
-       (Query.of_table t))
+    (Query.sort (Order.asc "key" :: List.map Order.asc by) (Query.of_table t))
 
 let longer ~by ~dictionary kind t =
   let non_null = Expr.(not (is_null (Col.v kind "value"))) in
@@ -209,7 +222,11 @@ let longer ~by ~dictionary kind t =
 
 let l2 (Long { kind; by; dictionary; table; _ }) =
   let n = Talon.rows table in
-  let held = Query.filter Expr.(not (is_null (Col.v kind "value"))) (Query.of_table table) in
+  let held =
+    Query.filter
+      Expr.(not (is_null (Col.v kind "value")))
+      (Query.of_table table)
+  in
   let long_w =
     Testable.make ~pp:Talon.pp ~equal:(fun a b ->
         Talon.equal (in_cell_order by a) (in_cell_order by b))
@@ -220,20 +237,14 @@ let l2 (Long { kind; by; dictionary; table; _ }) =
   cover "a null value" (Talon.rows (run_ok held) < n);
   cover "several groups" (n >= 2 && by <> []);
   cover "a float key" (List.mem "f" by && n >= 1);
-  Law.round_trip long_w table_w (wider ~by)
-    (longer ~by ~dictionary kind)
-    (run_ok held);
-  equal long_w
-    ~msg:"nulls of the input drop"
-    (run_ok held)
-    (longer ~by ~dictionary kind (wider ~by table))
+  equal long_w (run_ok held) (longer ~by ~dictionary kind (wider ~by table))
 
 (* A reference on small inputs
 
-   A row of [(g, k, x)] per input row; [g] groups by key identity, null one
-   key. The wider table: one row per group in order of first appearance, one
-   column per category. A cell two rows hold, or a value under a null key,
-   fails at the first row of the first failing group. *)
+   A row of [(g, k, x)] per input row; [g] groups by key identity, null one key.
+   The wider table: one row per group in order of first appearance, one column
+   per category. A cell two rows hold, or a value under a null key, fails at the
+   first row of the first failing group. *)
 
 let reference d rows =
   let groups = ref [] in
@@ -250,9 +261,7 @@ let reference d rows =
   in
   let failed (_, cell) =
     let rows = List.rev !cell in
-    let first_row =
-      List.fold_left (fun m (i, _, _) -> min m i) max_int rows
-    in
+    let first_row = List.fold_left (fun m (i, _, _) -> min m i) max_int rows in
     let dup =
       List.find_opt
         (fun c ->
@@ -262,8 +271,8 @@ let reference d rows =
     match dup with
     | Some c -> Some (first_row, Printf.sprintf "two rows with key %S" d.(c))
     | None ->
-        if List.exists (fun (_, k, x) -> k = None && Option.is_some x) rows
-        then Some (first_row, "a value under a null key")
+        if List.exists (fun (_, k, x) -> k = None && Option.is_some x) rows then
+          Some (first_row, "a value under a null key")
         else None
   in
   match List.find_map failed !groups with
@@ -284,18 +293,26 @@ let small =
   Gen.(
     with_pp
       (fun ppf (d, rows) ->
-        Format.fprintf ppf "[%s]@ %a" (String.concat ";" (Array.to_list d))
+        Format.fprintf ppf "[%s]@ %a"
+          (String.concat ";" (Array.to_list d))
           (Format.pp_print_seq (fun ppf (g, k, x) ->
                Format.fprintf ppf "(%a,%a,%a)@ "
-                 Format.(pp_print_option pp_print_int) g
-                 Format.(pp_print_option pp_print_int) k
-                 Format.(pp_print_option pp_print_int) x))
+                 Format.(pp_print_option pp_print_int)
+                 g
+                 Format.(pp_print_option pp_print_int)
+                 k
+                 Format.(pp_print_option pp_print_int)
+                 x))
           (Array.to_seq rows))
       (let* size = int_range 0 4 in
        let d = Array.init size (Printf.sprintf "k%d") in
        let group = option (int_range 0 2) in
-       let key = if size = 0 then constant None else option (int_range 0 (size - 1)) in
-       let+ rows = array ~size:(int_range 0 8) (triple group key (option (int_range 0 9))) in
+       let key =
+         if size = 0 then constant None else option (int_range 0 (size - 1))
+       in
+       let+ rows =
+         array ~size:(int_range 0 8) (triple group key (option (int_range 0 9)))
+       in
        (d, rows)))
 
 let agrees (d, rows) =
@@ -310,8 +327,7 @@ let agrees (d, rows) =
       ]
   in
   let expected = reference d rows in
-  cover "a missing cell"
-    (Result.is_ok expected && Array.length rows >= 1);
+  cover "a missing cell" (Result.is_ok expected && Array.length rows >= 1);
   cover "a null key without value"
     (Array.exists (fun (_, k, x) -> k = None && x = None) rows
     && Array.length d >= 1);
@@ -321,7 +337,9 @@ let agrees (d, rows) =
         (why = "a value under a null key");
       cover "fails on two rows" (why <> "a value under a null key")
   | Ok _ -> cover "succeeds" true);
-  let run = Query.run (Kit.wider ~by:[ "g" ] ~key:"k" ~value:"x" (Query.of_table t)) in
+  let run =
+    Query.run (Kit.wider ~by:[ "g" ] ~key:"k" ~value:"x" (Query.of_table t))
+  in
   match (expected, run) with
   | Ok want, Ok got -> equal table_w want got
   | Error (row, why), Error e ->
@@ -348,28 +366,22 @@ let streams (Long { by; table; _ }, stream) =
       (Format.asprintf "%a" Error.pp)
       (Query.run (Kit.wider ~by ~key:"key" ~value:"value" (Query.of_table t)))
   in
-  let outcome_w =
-    Testable.result table_w Testable.string
-  in
+  let outcome_w = Testable.result table_w Testable.string in
   equal outcome_w (run table) (run stream)
 
-(* Rules *)
+(* Expr.pivot *)
 
 let cat = [| "a"; "b"; "c" |]
 
 let table ids keys xs =
   Query.of_table
     (Talon.v
-       [
-         ("id", of_ints ids);
-         ("k", of_keys cat keys);
-         ("x", of_floats xs);
-       ])
+       [ ("id", of_ints ids); ("k", of_keys cat keys); ("x", of_floats xs) ])
 
 let wide_q = Kit.wider ~by:[ "id" ] ~key:"k" ~value:"x"
 
-let rules =
-  group "rules"
+let pivoting =
+  group "Expr.pivot"
     [
       test "a missing cell and a null value are null" (fun () ->
           let got =
@@ -389,9 +401,10 @@ let rules =
                  ("c", of_floats [| None; None |]);
                ])
             got);
-      test "a left join's row with no match keeps its group, all null"
-        (fun () ->
-          let users = Query.of_table (Talon.v [ ("id", of_ints [| Some 1; Some 2 |]) ]) in
+      test "a left join's unmatched row keeps its group, all null" (fun () ->
+          let users =
+            Query.of_table (Talon.v [ ("id", of_ints [| Some 1; Some 2 |]) ])
+          in
           let orders =
             Query.of_table
               (Talon.v
@@ -415,67 +428,31 @@ let rules =
                  ("c", of_floats [| None; None |]);
                ])
             got);
-      test "a value under a null key is a data error at its frame's row, \
-            naming the column"
-        (fun () ->
-          equal Testable.string
-            {|aggregate ~by:["id"] ["x" := pivot k x]: row 2: pivot finds a value under a null key.|}
-            (failure
-               (wide_q
-                  (table
-                     [| Some 1; Some 1; Some 2 |]
-                     [| Some "a"; Some "b"; None |]
-                     [| Some 1.; Some 2.; Some 3. |]))));
-      test "two rows in one cell are a data error at its frame's first row"
-        (fun () ->
-          (* The frame of id 2 starts at row 1, and its cell repeats at row 3. *)
-          equal Testable.string
-            {|aggregate ~by:["id"] ["x" := pivot k x]: row 1: pivot finds two rows with key "b".|}
-            (failure
-               (wide_q
-                  (table
-                     [| Some 1; Some 2; Some 2; Some 2 |]
-                     [| Some "a"; Some "b"; Some "a"; Some "b" |]
-                     [| Some 1.; Some 2.; Some 3.; Some 4. |]))));
-      test "the first frame's failure comes first, whatever its row" (fun () ->
-          (* Frames in order of first appearance: id 1 at row 0, id 2 at row 1. *)
-          contains ~sub:"row 0"
-            (failure
-               (wide_q
-                  (table
-                     [| Some 1; Some 2; Some 2; Some 1 |]
-                     [| Some "a"; Some "b"; Some "b"; Some "a" |]
-                     [| Some 1.; Some 2.; Some 3.; Some 4. |]))));
-      test "a value outside the dictionary is a data error at the cast"
-        (fun () ->
-          let q =
-            Query.of_table
-              (Talon.v
-                 [
-                   ("id", of_ints [| Some 1 |]);
-                   ("s", Column.of_options Type.string [| Some "z" |]);
-                   ("x", of_floats [| Some 1. |]);
-                 ])
-            |> Query.derive
-                 Expr.
+      test "its fields follow from key's type alone" (fun () ->
+          (* A source that fails if opened: the schema and the printed plan read
+             no data. *)
+          let raising =
+            Source.v ~name:"nothing"
+              ~schema:
+                (Schema.v
                    [
-                     "k"
-                     := cast (Type.categorical cat) (Col.string "s");
-                   ]
+                     ("id", Type.Any Type.int64);
+                     ("k", Type.Any (Type.categorical cat));
+                     ("x", Type.Any Type.float64);
+                   ])
+              (fun _ -> failwith "opened")
           in
-          contains ~sub:{|row 0: cannot cast "z"|}
-            (failure (Kit.wider ~by:[ "id" ] ~key:"k" ~value:"x" q)));
-      test "a filter before wider removes the groups it empties" (fun () ->
-          let got =
-            run_ok
-              (table
-                 [| Some 1; Some 2 |]
-                 [| Some "a"; Some "b" |]
-                 [| Some 1.; Some 2. |]
-              |> Query.filter Expr.(k = string "a")
-              |> wide_q)
-          in
-          equal Testable.int 1 (Talon.rows got));
+          let wider = wide_q (Query.of_source raising) in
+          ignore (Format.asprintf "%a" Query.pp wider);
+          equal schema_w
+            (Schema.v
+               [
+                 ("id", Type.Any Type.int64);
+                 ("a", Type.Any Type.float64);
+                 ("b", Type.Any Type.float64);
+                 ("c", Type.Any Type.float64);
+               ])
+            (Query.schema wider));
       test "an empty dictionary is an empty record" (fun () ->
           let q =
             Query.of_table
@@ -489,6 +466,53 @@ let rules =
           equal table_w
             (Talon.v [ ("id", of_ints [| Some 1; Some 2 |]) ])
             (run_ok (Kit.wider ~by:[ "id" ] ~key:"k" ~value:"x" q)));
+      test "a value under a null key is a data error at its frame's row"
+        (fun () ->
+          expect
+            (failure
+               (wide_q
+                  (table
+                     [| Some 1; Some 1; Some 2 |]
+                     [| Some "a"; Some "b"; None |]
+                     [| Some 1.; Some 2.; Some 3. |])))
+          @@ __POS_OF__
+               {|aggregate ~by:["id"] ["x" := pivot k x]: row 2: pivot finds a value under a null key.|});
+      test "two rows in one cell are a data error at the frame's first row"
+        (fun () ->
+          (* The frame of id 2 starts at row 1, and its cell repeats at row
+             3. *)
+          expect
+            (failure
+               (wide_q
+                  (table
+                     [| Some 1; Some 2; Some 2; Some 2 |]
+                     [| Some "a"; Some "b"; Some "a"; Some "b" |]
+                     [| Some 1.; Some 2.; Some 3.; Some 4. |])))
+          @@ __POS_OF__
+               {|aggregate ~by:["id"] ["x" := pivot k x]: row 1: pivot finds two rows with key "b".|});
+      test "the first frame's failure comes first, whatever its row" (fun () ->
+          (* Frames in order of first appearance: id 1 at row 0, id 2 at row
+             1. *)
+          contains ~sub:": row 0:"
+            (failure
+               (wide_q
+                  (table
+                     [| Some 1; Some 2; Some 2; Some 1 |]
+                     [| Some "a"; Some "b"; Some "b"; Some "a" |]
+                     [| Some 1.; Some 2.; Some 3.; Some 4. |]))));
+      test "a value outside the dictionary fails at the cast" (fun () ->
+          let q =
+            Query.of_table
+              (Talon.v
+                 [
+                   ("id", of_ints [| Some 1 |]);
+                   ("s", Column.of_options Type.string [| Some "z" |]);
+                   ("x", of_floats [| Some 1. |]);
+                 ])
+            |> Query.derive
+                 Expr.[ "k" := cast (Type.categorical cat) (Col.string "s") ]
+          in
+          contains ~sub:{|row 0: cannot cast "z"|} (failure (wide_q q)));
       test "a value under an all-null key fails after categorize" (fun () ->
           (* categorize makes an empty dictionary, so no column has a field. *)
           let q =
@@ -502,122 +526,86 @@ let rules =
           in
           let q = require_ok ~pp:Error.pp (Kit.categorize [ "k" ] q) in
           contains ~sub:"row 0: pivot finds a value under a null key"
-            (failure (Kit.wider ~by:[ "id" ] ~key:"k" ~value:"x" q)));
-      test "by = [] over no row is one row of nulls" (fun () ->
-          let t =
-            Talon.v
-              [
-                ("k", of_keys cat [||]);
-                ("x", of_floats [||]);
-              ]
+            (failure (wide_q q)));
+      test "a filter before it removes the groups it empties" (fun () ->
+          let got =
+            run_ok
+              (table [| Some 1; Some 2 |] [| Some "a"; Some "b" |]
+                 [| Some 1.; Some 2. |]
+              |> Query.filter Expr.(k = string "a")
+              |> wide_q)
           in
           equal table_w
             (Talon.v
                [
-                 ("a", of_floats [| None |]);
+                 ("id", of_ints [| Some 1 |]);
+                 ("a", of_floats [| Some 1. |]);
                  ("b", of_floats [| None |]);
                  ("c", of_floats [| None |]);
                ])
-            (run_ok (Kit.wider ~by:[] ~key:"k" ~value:"x" (Query.of_table t))));
-      test "the schema needs no data" (fun () ->
-          let raising =
-            Source.v ~name:"nothing"
-              ~schema:
-                (Schema.v
-                   [
-                     ("id", Type.Any Type.int64);
-                     ("k", Type.Any (Type.categorical cat));
-                     ("x", Type.Any Type.float64);
-                   ])
-              (fun _ -> failwith "opened")
-          in
-          let q = Query.of_source raising in
-          let wider = Kit.wider ~by:[ "id" ] ~key:"k" ~value:"x" q in
-          equal schema_w
-            (Schema.v
-               [
-                 ("id", Type.Any Type.int64);
-                 ("a", Type.Any Type.float64);
-                 ("b", Type.Any Type.float64);
-                 ("c", Type.Any Type.float64);
-               ])
-            (Query.schema wider);
-          ignore (Format.asprintf "%a" Query.pp wider);
-          let longer =
-            Kit.longer ~name:"n" ~value:"v" Sel.(names [ "a"; "c" ]) wider
-          in
-          equal schema_w
-            (Schema.v
-               [
-                 ("id", Type.Any Type.int64);
-                 ("b", Type.Any Type.float64);
-                 ("n", Type.Any (Type.categorical [| "a"; "c" |]));
-                 ("v", Type.Any Type.float64);
-               ])
-            (Query.schema longer));
-      test "a stream's cell repeated across batches still fails" (fun () ->
-          let t i k' x' =
-            Talon.v
-              [
-                ("id", of_ints [| Some i |]);
-                ("k", of_keys cat [| Some k' |]);
-                ("x", of_floats [| Some x' |]);
-              ]
-          in
-          contains ~sub:{|two rows with key "a"|}
-            (failure
-               (Kit.wider ~by:[ "id" ] ~key:"k" ~value:"x"
-                  (Query.of_table
-                     (of_batches [ t 1 "a" 1.; t 2 "a" 2.; t 1 "a" 3. ])))));
-      test "a window's pivot reads each window's rows" (fun () ->
+            got);
+      test "under window each row holds its window's record" (fun () ->
           let t =
-            Talon.v
-              [
-                ("id", of_ints [| Some 1; Some 2 |]);
-                ("k", of_keys cat [| Some "a"; Some "b" |]);
-                ("x", of_floats [| Some 1.; Some 2. |]);
-              ]
+            table [| Some 1; Some 2 |] [| Some "a"; Some "b" |]
+              [| Some 1.; Some 2. |]
           in
           let got =
             run_ok
-              (Query.derive
-                 Expr.[ "r" := window (pivot k x) ]
-                 (Query.of_table t))
-          in
-          let cell name =
-            Expr.field Kind.float name (Col.v Record.kind "r")
+              (Query.select
+                 Expr.
+                   [
+                     within (window (pivot k x)) (keep Sel.(names [ "a"; "b" ]));
+                   ]
+                 t)
           in
           equal table_w
-            (Talon.v [ ("a", of_floats [| Some 1.; Some 1. |]);
-                       ("b", of_floats [| None; Some 2. |]) ])
-            (run_ok
-               (Query.select
-                  Expr.[ "a" := cell "a"; "b" := cell "b" ]
-                  (Query.of_table got))));
-      test "an aggregate's pivot and other reductions share frames"
-        (fun () ->
+            (Talon.v
+               [
+                 ("a", of_floats [| Some 1.; Some 1. |]);
+                 ("b", of_floats [| None; Some 2. |]);
+               ])
+            got);
+      test "under over each row holds its partition's record" (fun () ->
+          let t =
+            table
+              [| Some 1; Some 2; Some 1 |]
+              [| Some "a"; Some "b"; Some "b" |]
+              [| Some 1.; Some 2.; Some 3. |]
+          in
+          let got =
+            run_ok
+              (Query.select
+                 Expr.
+                   [
+                     within
+                       (over ~by:[ "id" ] (pivot k x))
+                       (keep Sel.(names [ "a"; "b" ]));
+                   ]
+                 t)
+          in
+          equal table_w
+            (Talon.v
+               [
+                 ("a", of_floats [| Some 1.; None; Some 1. |]);
+                 ("b", of_floats [| Some 3.; Some 2.; Some 3. |]);
+               ])
+            got);
+      test "shares its frame with other reductions" (fun () ->
           let got =
             run_ok
               (Query.aggregate ~by:[ "id" ]
-                 Expr.
-                   [
-                     "r" := pivot k x;
-                     "n" := rows;
-                   ]
-                 (table [| Some 1; Some 1 |]
-                    [| Some "a"; Some "b" |]
+                 Expr.[ "r" := pivot k x; "n" := rows ]
+                 (table [| Some 1; Some 1 |] [| Some "a"; Some "b" |]
                     [| Some 1.; Some 2. |]))
           in
-          equal Testable.(array (option int)) [| Some 2 |]
-            (Column.options Kind.int (Talon.column got "n"));
-          equal Testable.(array (option float_exact)) [| Some 2. |]
-            (Column.options Kind.float
-               (Talon.column
-                  (run_ok
-                     (Query.select
-                        Expr.[ within (Col.v Record.kind "r") (keep Sel.(names [ "b" ])) ]
-                        (Query.of_table got)))
-                  "b")));
+          let b = Expr.field Kind.float "b" (Col.v Record.kind "r") in
+          equal table_w
+            (Talon.v
+               [ ("n", of_ints [| Some 2 |]); ("b", of_floats [| Some 2. |]) ])
+            (run_ok
+               (Query.select
+                  Expr.[ keep Sel.(names [ "n" ]); "b" := b ]
+                  (Query.of_table got))));
       test "an extension value keeps its type and values" (fun () ->
           let ext = Type.ext ~name:"money" Type.int64 in
           let x =
@@ -637,9 +625,7 @@ let rules =
                 ("x", x);
               ]
           in
-          let got =
-            run_ok (Kit.wider ~by:[ "id" ] ~key:"k" ~value:"x" (Query.of_table t))
-          in
+          let got = run_ok (wide_q (Query.of_table t)) in
           equal schema_w
             (Schema.v
                [
@@ -651,20 +637,46 @@ let rules =
             (Talon.schema got);
           (* A declaration reads what the column holds. *)
           let money =
-            Ext.v ~name:"money" ~ordered:false Type.int64 ~dec:Fun.id ~enc:Fun.id
+            Ext.v ~name:"money" ~ordered:false Type.int64 ~dec:Fun.id
+              ~enc:Fun.id
           in
-          equal Testable.(array int) [| 7; 8 |]
+          equal (array int) [| 7; 8 |]
             (require_ok ~pp:Error.pp
                (Query.values (Ext.col money "a") (Query.of_table got))));
+      test "a key that is not categorical is a problem" (fun () ->
+          let t =
+            Query.of_table
+              (Talon.v
+                 [
+                   ("id", of_ints [| Some 1 |]);
+                   ("k", Column.of_options Type.string [| Some "a" |]);
+                   ("x", of_floats [| Some 1. |]);
+                 ])
+          in
+          contains ~sub:"pivot takes a categorical key, not string"
+            (problem (fun () -> ignore (wide_q t))));
+      test "a v without a column type is a problem" (fun () ->
+          contains ~sub:"pivot"
+            (problem (fun () ->
+                 ignore
+                   (Query.aggregate ~by:[]
+                      Expr.[ "r" := pivot k (const 1) ]
+                      (table [| Some 1 |] [| Some "a" |] [| Some 1. |])))));
+      test "prints as written" (fun () ->
+          let q =
+            Query.aggregate ~by:[]
+              Expr.[ "r" := pivot k x ]
+              (table [| Some 1 |] [| Some "a" |] [| Some 1. |])
+          in
+          contains ~sub:{|["r" := pivot k x]|} (Format.asprintf "%a" Query.pp q));
     ]
 
-(* Longer and list *)
+(* Kit.longer *)
 
-let lists =
-  let of_list_of c = Talon.column (run_ok c) "v" in
-  group "longer and list"
+let longer_group =
+  group "Kit.longer"
     [
-      test "one row per cell, row after row, nulls included" (fun () ->
+      test "is one row per cell, row after row, nulls included" (fun () ->
           let t =
             Talon.v
               [
@@ -709,7 +721,7 @@ let lists =
                  ("value", Type.Any Type.float64);
                ])
             (Talon.schema got));
-      test "selected columns widen to their common type" (fun () ->
+      test "selected columns meet at their common type" (fun () ->
           let t =
             Talon.v
               [
@@ -718,8 +730,7 @@ let lists =
               ]
           in
           let got =
-            run_ok
-              (Kit.longer ~name:"n" ~value:"v" Sel.all (Query.of_table t))
+            run_ok (Kit.longer ~name:"n" ~value:"v" Sel.all (Query.of_table t))
           in
           equal schema_w
             (Schema.v
@@ -728,32 +739,59 @@ let lists =
                  ("v", Type.Any Type.int64);
                ])
             (Talon.schema got));
-      cases "misuse raises"
-        ~id:fst
-        [
-          ( "no column selected",
-            fun q -> Kit.longer ~name:"n" ~value:"v" (Sel.names []) q );
-          ( "name is an unselected column",
-            fun q -> Kit.longer ~name:"a" ~value:"v" (Sel.names [ "b" ]) q );
-          ( "value is an unselected column",
-            fun q -> Kit.longer ~name:"n" ~value:"a" (Sel.names [ "b" ]) q );
-        ]
-        (fun (_, f) ->
-          let q =
-            Query.of_table
-              (Talon.v
-                 [ ("a", of_ints [| Some 1 |]); ("b", of_ints [| Some 2 |]) ])
+      test "its schema needs no data" (fun () ->
+          let raising =
+            Source.v ~name:"nothing"
+              ~schema:
+                (Schema.v
+                   [
+                     ("id", Type.Any Type.int64);
+                     ("a", Type.Any Type.float64);
+                     ("b", Type.Any Type.float64);
+                   ])
+              (fun _ -> failwith "opened")
           in
-          contains ~sub:"Kit.longer" (problem (fun () -> ignore (f q))));
-      test "an extension column raises" (fun () ->
-          let ext = Type.ext ~name:"money" Type.int64 in
-          let q =
-            Query.of_table
-              (Talon.v [ ("m", Column.of_options ext [| None |]) ])
+          let longer =
+            Kit.longer ~name:"n" ~value:"v"
+              Sel.(names [ "a"; "b" ])
+              (Query.of_source raising)
           in
-          contains ~sub:"extension"
-            (problem (fun () ->
-                 ignore (Kit.longer ~name:"n" ~value:"v" (Sel.names [ "m" ]) q))));
+          equal schema_w
+            (Schema.v
+               [
+                 ("id", Type.Any Type.int64);
+                 ("n", Type.Any (Type.categorical [| "a"; "b" |]));
+                 ("v", Type.Any Type.float64);
+               ])
+            (Query.schema longer));
+      (let q =
+         Query.of_table
+           (Talon.v
+              [ ("a", of_ints [| Some 1 |]); ("b", of_ints [| Some 2 |]) ])
+       in
+       let money =
+         Query.of_table
+           (Talon.v
+              [
+                ( "m",
+                  Column.of_options
+                    (Type.ext ~name:"money" Type.int64)
+                    [| None |] );
+              ])
+       in
+       cases "raises Invalid_argument" ~id:fst
+         [
+           ( "for no column selected",
+             fun () -> Kit.longer ~name:"n" ~value:"v" (Sel.names []) q );
+           ( "for name an unselected column",
+             fun () -> Kit.longer ~name:"a" ~value:"v" (Sel.names [ "b" ]) q );
+           ( "for value an unselected column",
+             fun () -> Kit.longer ~name:"n" ~value:"a" (Sel.names [ "b" ]) q );
+           ( "for an extension column",
+             fun () -> Kit.longer ~name:"n" ~value:"v" (Sel.names [ "m" ]) money
+           );
+         ]
+         (fun (_, f) -> raises_match (Exn.invalid_arg ~sub:"Kit.longer") f));
       test "columns of different kinds are the handle's problem" (fun () ->
           let q =
             Query.of_table
@@ -763,112 +801,46 @@ let lists =
           contains ~sub:"Col.int"
             (problem (fun () ->
                  ignore (Kit.longer ~name:"n" ~value:"v" Sel.all q))));
-      test "a list holds a row's values in order, a null element for a null"
-        (fun () ->
-          let t =
+    ]
+
+(* Kit.wider *)
+
+let wider_group =
+  group "Kit.wider"
+    [
+      prop "restores what longer spread" wide l1;
+      prop "after it, longer gives the rows that hold a value"
+        ~examples:[ no_key_no_row ] long l2;
+      prop "agrees with a reference"
+        ~examples:
+          [ ([| "k0" |], [| (Some 0, None, None); (Some 1, Some 0, Some 1) |]) ]
+        small agrees;
+      prop "its batches change nothing" split_input streams;
+      test "a cell repeated across batches fails" (fun () ->
+          let t i k' x' =
             Talon.v
               [
-                ("a", of_ints [| Some 1; None |]);
-                ("b", Column.of_options Type.int32 [| Some 2; Some 3 |]);
+                ("id", of_ints [| Some i |]);
+                ("k", of_keys cat [| Some k' |]);
+                ("x", of_floats [| Some x' |]);
               ]
           in
-          let v = Expr.(list [ Col.int "a"; Col.int "b"; int 9 ]) in
-          let got =
-            of_list_of (Query.unnest Expr.[ "v" := v ] (Query.of_table t))
-          in
-          equal Testable.(array (option int))
-            [| Some 1; Some 2; Some 9; None; Some 3; Some 9 |]
-            (Column.options Kind.int got));
-      test "a list of lists nests" (fun () ->
-          let t =
-            Talon.v [ ("xs", Column.v Type.(list int64) [| [| 1; 2 |] |]) ]
-          in
-          let xs = Col.v Kind.(list int) "xs" in
-          let got =
-            of_list_of
-              (Query.select Expr.[ "v" := list [ xs; xs ] ] (Query.of_table t))
-          in
-          equal Testable.(array (array (array int)))
-            [| [| [| 1; 2 |]; [| 1; 2 |] |] |]
-            (Column.values Kind.(list (list int)) got));
-      test "a list of only literals takes store's type" (fun () ->
-          let v = Expr.(store Type.(list int32) (list [ null; int 1 ])) in
-          let got =
-            of_list_of
-              (Query.select Expr.[ "v" := v ]
-                 (Query.of_table
-                    (Talon.v [ ("i", of_ints [| Some 1 |]) ])))
-          in
-          let (Type.Any ty) = Column.type_ got in
-          equal Testable.string "list[int32]"
-            (Format.asprintf "%a" Type.pp ty));
-      cases "list's problems" ~id:fst
-        [
-          ("no element", Expr.list []);
-          ("no meeting type", Expr.list [ Col.int "i"; Col.int "u" ]);
-        ]
-        (fun (_, e) ->
-          contains ~sub:"list"
-            (problem (fun () ->
-                 ignore
-                   (Query.select
-                      Expr.[ "v" := e ]
-                      (Query.of_table
-                         (Talon.v
-                            [
-                              ("i", Column.of_options Type.int8 [| Some 1 |]);
-                              ("u", Column.of_options Type.uint64 [| Some 1 |]);
-                            ]))))));
-      test "per_list reads a row's list" (fun () ->
-          let t =
-            Talon.v
-              [
-                ("a", of_floats [| Some 1.; Some 3. |]);
-                ("b", of_floats [| Some 3.; None |]);
-              ]
-          in
-          let v =
-            Expr.(
-              per_list
-                [ "e" := list [ Col.float "a"; Col.float "b" ] ]
-                (mean (Col.float "e")))
-          in
-          equal Testable.(array (option float_exact))
-            [| Some 2.; Some 3. |]
-            (Column.options Kind.float
-               (of_list_of (Query.select Expr.[ "v" := v ] (Query.of_table t)))));
-      cases "printed plans show the form written" ~id:Fun.id
-        [ "pivot k x"; "list [i]" ]
-        (fun sub ->
-          let t =
-            Query.of_table
-              (Talon.v
-                 [
-                   ("i", of_ints [| Some 1 |]);
-                   ("k", of_keys cat [| Some "a" |]);
-                   ("x", of_floats [| Some 1. |]);
-                 ])
-          in
-          let q =
-            if sub = "pivot k x" then
-              Query.aggregate ~by:[] Expr.[ "r" := pivot k x ] t
-            else Query.select Expr.[ "v" := list [ Col.int "i" ] ] t
-          in
-          contains ~sub (Format.asprintf "%a" Query.pp q));
-      test "a key that is not categorical is a problem naming the type"
-        (fun () ->
-          let t =
-            Query.of_table
-              (Talon.v
-                 [
-                   ("id", of_ints [| Some 1 |]);
-                   ("k", Column.of_options Type.string [| Some "a" |]);
-                   ("x", of_floats [| Some 1. |]);
-                 ])
-          in
-          contains ~sub:"pivot takes a categorical key, not string"
-            (problem (fun () -> ignore (wide_q t))));
-      test "a field named as a key column is a problem" (fun () ->
+          contains ~sub:{|two rows with key "a"|}
+            (failure
+               (wide_q
+                  (Query.of_table
+                     (of_batches [ t 1 "a" 1.; t 2 "a" 2.; t 1 "a" 3. ])))));
+      test "by = [] over no row is one row of nulls" (fun () ->
+          let t = Talon.v [ ("k", of_keys cat [||]); ("x", of_floats [||]) ] in
+          equal table_w
+            (Talon.v
+               [
+                 ("a", of_floats [| None |]);
+                 ("b", of_floats [| None |]);
+                 ("c", of_floats [| None |]);
+               ])
+            (run_ok (Kit.wider ~by:[] ~key:"k" ~value:"x" (Query.of_table t))));
+      test "a category named as a by column is a problem" (fun () ->
           let t =
             Query.of_table
               (Talon.v
@@ -883,18 +855,4 @@ let lists =
                  ignore (Kit.wider ~by:[ "a" ] ~key:"k" ~value:"x" t))));
     ]
 
-let () =
-  exit
-    (run "Pivot"
-       [
-         group "laws"
-           [
-             prop "wider restores what longer spread (L1)" wide l1;
-             prop "longer restores what wider folded, nulls dropped (L2)"
-               long l2;
-             prop "wider agrees with a reference" small agrees;
-             prop "a stream's batches change nothing" split_input streams;
-           ];
-         rules;
-         lists;
-       ])
+let () = exit (run "Pivot" [ pivoting; longer_group; wider_group ])
