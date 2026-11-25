@@ -1662,8 +1662,8 @@ module Expr : sig
 
       A float {!sum} adds a list's values in list order, a float {!mean} sums
       them in [float64] in list order and divides by their count, and {!var}
-      and {!std} sum squared deviations from the list's mean in list order, less
-      the term that takes out the mean's rounding. *)
+      and {!std} are those of the list's values in list order, whose bits
+      depend on those values alone, as over any frame. *)
 
   (** {3:list_cost Cost}
 
