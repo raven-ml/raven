@@ -2523,22 +2523,33 @@ let stop_running () =
 
 (* Opens and closes keep, of the C heap, each device's edge alone: 80 bytes,
    which glibc's allocator holds in a chunk of 96. Warm opens first make the
-   process's client and the GPU's objects, which stay. The runtime's own
-   tables may grow by a few hundred bytes over the run, so a leak of more
-   than 64 bytes an open fails it. Over PCI each open also gives back every
-   range of the GPUs' addresses it took, which a leak there shows at once
-   where the heap shows it only as its allocator's table doubles. Each open
-   boots the GPU's GSP over PCI, in about 3.6 s: the 20 opens take 75 s. *)
+   process's client and the GPU's objects, which stay. The runtime's own tables
+   may grow by a few hundred bytes over the run, so 16 opens through the
+   kernel's driver fail on a leak of more than 64 bytes an open. Over PCI each
+   open boots the GPU's GSP, and an open and its close take about 4.5 s, so
+   there one warm open and 3 counted ones fit a test's time, and fail on a leak
+   of more than 341 bytes an open, of the edge or of the C heap that only PCI's
+   path takes, for its VFIO calls and the boot's firmware images and VBIOS. Over
+   PCI each open also gives back every range of the GPUs' addresses it took,
+   which a leak there shows at the first open, where the heap shows it only as
+   its allocator's table doubles. *)
 let edge_chunk = 96
 let runtime_slack = 1024
 let warm_opens = 4
 let opens = 16
+let pci_warm_opens = 1
+let pci_opens = 3
 
 let opens_keep_edges () =
   let heap () =
     match Rig_support.heap_bytes () with
     | Some n -> n
     | None -> skip ~reason:"the system counts no C heap" ()
+  in
+  let warm_opens, opens =
+    match S.path () with
+    | Some Pci -> (pci_warm_opens, pci_opens)
+    | Some Kernel | None -> (warm_opens, opens)
   in
   let ranges = Rig_nv_pci.taken in
   let cycle () =
