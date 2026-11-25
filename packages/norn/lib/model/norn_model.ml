@@ -151,9 +151,11 @@ type seen = {
 let learn : type x f d. (x, f, d) D.t -> x * seen =
  fun d ->
   let shape = D.shape d in
+  (* Zero coordinates may give a parameter outside its domain, as a scale of
+     [0]: what is learnt reads no value of it. *)
+  let d = D.check ~unless:(Nx.scalar_at (D.placement d) Nx.bool true) "" d in
   let points x =
-    let yes = Nx.scalar_at (D.placement d) Nx.bool true in
-    let f = D.factors (D.check ~unless:yes "" d) x in
+    let f = D.factors d x in
     if Nx.ndim f = 0 then 1 else (Nx.shape f).(0)
   in
   let seen value ~discrete ~coord_shape ~coordinates x =
@@ -575,9 +577,11 @@ let score m context params parts latent data =
     | (Latent | Fixed), None -> (
         match latent with
         | Coords cs ->
+            (* The site's coordinates map through the distribution its
+               parameters' checks have already read. *)
+            let d, valid = checked name d in
             let x, ld = forward m i d cs.(l.leaf) in
             if parts.prior || parts.jacobian then begin
-              let d, valid = checked name d in
               let f =
                 if parts.prior then D.factors d x
                 else Nx.zeros_at m.at (D.dtype d) [||]

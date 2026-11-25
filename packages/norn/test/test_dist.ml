@@ -2017,6 +2017,20 @@ let narrow_dirichlet_draws =
    [-log π - log s - 2 (log d - log s) - log1p ((s / d)²)] past [d = s]. Each
    term is within a few ulps of itself, so the sum is within [8 ε] of their
    magnitudes. *)
+(* [coords] and [standardize] are eliminators: they run the checks. *)
+let bijectors_check =
+  group "eliminators run the checks"
+    [
+      test "coords refuses a uniform whose high is below its low" (fun () ->
+          raises_match
+            (Exn.invalid_arg ~sub:"Norn.Dist.coords: uniform: high - low")
+            (fun () -> D.coords (D.uniform ~low:(f64 1.) ~high:(f64 0.))));
+      test "standardize refuses a normal of negative scale" (fun () ->
+          raises_match
+            (Exn.invalid_arg ~sub:"Norn.Dist.standardize: normal: scale")
+            (fun () -> D.standardize (D.normal ~loc:(f64 0.) ~scale:(f64 (-1.)))));
+    ]
+
 let cauchy_tails =
   let exact ~half d s =
     let lead = if half then Float.log 2. else 0. in
@@ -2991,6 +3005,7 @@ let () =
          beta_quantiles;
          laplace;
          cauchy_tails;
+         bijectors_check;
          normalisation;
          bijectors;
          validation;

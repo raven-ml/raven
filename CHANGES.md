@@ -85,6 +85,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.coords` and `Dist.standardize` check the parameters, as the other
+  eliminators do: `Dist.standardize (Dist.normal ~loc ~scale:(-1.))` raised
+  nothing and returned a bijector of negative scale.
 - `Evidence.information` of a run that stopped short of `β = 1` is the tempered
   posterior's divergence from the prior, `β E (ln L) - ln Z_β`. It was `E (ln
   L) - ln Z_β`, which is negative at small `β`: `Smc.evidence` of an `init` state

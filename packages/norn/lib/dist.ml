@@ -2383,12 +2383,16 @@ let quantile d p =
 
 let coords d =
   match d.coords with
-  | Some b -> b
+  | Some b ->
+      checked "coords" d;
+      b
   | None -> invalid_argf "Norn.Dist.coords: %s is discrete" d.family
 
 let standardize d =
   match d.standardize with
-  | Some b -> b
+  | Some b ->
+      checked "standardize" d;
+      b
   | None ->
       invalid_argf "Norn.Dist.standardize: %s has no standard form" d.family
 
