@@ -62,6 +62,9 @@ let source ?(suffix = ".bin") data =
 let mkdir_p d =
   try Unix.mkdir d 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
 
+(* [under dir names] is the path of [names] below [dir], joined as munin joins
+   the paths it gives. *)
+let under dir names = List.fold_left Filename.concat dir names
 let lines text = List.filter (( <> ) "") (String.split_on_char '\n' text)
 
 let replace_first text ~sub ~by =
@@ -2546,7 +2549,7 @@ let unreadable_logs =
         (Session.id s, dir) );
     ( "a directory",
       fun store ->
-        let dir = Filename.concat (Store.root store) "runs/dir" in
+        let dir = under (Store.root store) [ "runs"; "dir" ] in
         mkdir_p (Store.root store);
         mkdir_p (Filename.dirname dir);
         mkdir_p dir;
@@ -3242,9 +3245,9 @@ let maintenance_tests =
           Session.finish s;
           let left =
             [
-              Filename.concat (Store.root store) "blobs/blake2b-256/.blob";
-              Filename.concat (Store.root store) "artifacts/.name";
-              Filename.concat (Store.root store) "artifacts/x/.1.json";
+              under (Store.root store) [ "blobs"; "blake2b-256"; ".blob" ];
+              under (Store.root store) [ "artifacts"; ".name" ];
+              under (Store.root store) [ "artifacts"; "x"; ".1.json" ];
             ]
           in
           List.iter (fun p -> write_file p "x") left;
@@ -3254,7 +3257,7 @@ let maintenance_tests =
           equal ~msg:"left" (list string) [] (List.filter Sys.file_exists left));
       test "gc leaves a run directory a start has claimed" (fun () ->
           let store = new_store () in
-          let dir = Filename.concat (Store.root store) "runs/claimed" in
+          let dir = under (Store.root store) [ "runs"; "claimed" ] in
           mkdir_p (Store.root store);
           mkdir_p (Filename.dirname dir);
           mkdir_p dir;
@@ -3311,9 +3314,7 @@ let maintenance_tests =
           let store = new_store () in
           let s = start ~tags:[ "a" ] store in
           Session.finish s;
-          let tag =
-            Filename.concat (Run.dir (reread store s)) ("tags/" ^ hex "a")
-          in
+          let tag = under (Run.dir (reread store s)) [ "tags"; hex "a" ] in
           write_file tag "b";
           equal (list string) [ tag ] (List.map fst (Store.check store)));
       test "check names a file no record names" (fun () ->
@@ -3321,7 +3322,7 @@ let maintenance_tests =
           let s = start store in
           Session.log_file s ~step:5 ~key:"viz" (source ~suffix:".png" "png");
           Session.finish s;
-          let dir = Filename.concat (Run.dir (reread store s)) "files/viz" in
+          let dir = under (Run.dir (reread store s)) [ "files"; "viz" ] in
           write_file (Filename.concat dir "9.png") "png";
           equal (list string)
             [ Filename.concat dir "9.png" ]
@@ -3336,7 +3337,7 @@ let maintenance_tests =
           ignore (Session.log_artifact s ~name:"x" (source "1"));
           Session.finish s;
           let alias =
-            Filename.concat (Store.root store) "artifacts/x/aliases/best"
+            under (Store.root store) [ "artifacts"; "x"; "aliases"; "best" ]
           in
           mkdir_p (Filename.dirname alias);
           write_file alias "9\n";
@@ -3353,7 +3354,7 @@ let maintenance_tests =
       test "check names a version file that does not follow the format"
         (fun () ->
           let store = new_store () in
-          let file = Filename.concat (Store.root store) "artifacts/x/1.json" in
+          let file = under (Store.root store) [ "artifacts"; "x"; "1.json" ] in
           mkdir_p (Filename.concat (Store.root store) "artifacts");
           mkdir_p (Filename.dirname file);
           write_file file {|{"format":1,"time":1.0}|};
