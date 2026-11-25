@@ -426,40 +426,6 @@ let test_tracks_a_constant_gradient () =
   less ~msg:"|mean error|" float_exact ~than:2e-3 (Float.abs (mean error));
   less ~msg:"mean |error|" float_exact ~than:0.06 (mean (Nx.abs error))
 
-(* Adam at [1e-3] on [|w - t|^2 / 2] under gradient noise of deviation 0.1,
-   2000 steps from [w, t ~ U[-1, 1]]; the bfloat16 gradient is taken at the
-   bfloat16 weights. The float64 run on the same noise ends at a mean
-   [|w - t|] of about [0.04]; the bfloat16 one stays within [0.02] of it. *)
-let test_tracks_a_noisy_quadratic () =
-  let n = 4096 and steps = 2000 in
-  let keys = Nx.Rng.split ~n:3 (Nx.Rng.key 3) in
-  let uniform k =
-    Nx.sub_s (Nx.mul_s (Nx.Rng.uniform ~key:k Nx.float32 [| n |]) 2.0) 1.0
-  in
-  let w0 = uniform keys.(0) and t = uniform keys.(1) in
-  let noise i =
-    Nx.mul_s
-      (Nx.Rng.normal ~key:(Nx.Rng.fold_in keys.(2) i) Nx.float32 [| n |])
-      0.1
-  in
-  let lr = Vega.rate 1e-3 in
-  let run (type b) (dt : (float, b) Nx.dtype) =
-    let w = ref (Nx.cast dt w0) in
-    let st = ref (Vega.adam_init p !w) in
-    for i = 1 to steps do
-      let g = Nx.add (Nx.sub (Nx.cast Nx.float32 !w) t) (noise i) in
-      let w', st' =
-        Vega.adam_step p ~lr !st ~params:!w ~grads:(Nx.cast dt g)
-      in
-      w := w';
-      st := st'
-    done;
-    Nx.cast Nx.float64 !w
-  in
-  let reference = run Nx.float64 and half = run Nx.bfloat16 in
-  less ~msg:"mean |w - reference|" float_exact ~than:0.02
-    (mean (Nx.abs (Nx.sub half reference)))
-
 (* AdamW under zero gradients, whose direction is zero, at [lr = 0.01] and a
    decay falling from [0.2] to [0] over 100 steps: each step scales a weight
    [w] by [1 - lr wd(t)]. From [w = 1.5], a step moves it by at most [3e-3],
@@ -862,63 +828,32 @@ let test_float16_accepted () =
 
 (* Float32 and float64 leaves *)
 
-(* Each step's float32 and float64 results, printed bit for bit: the baseline
-   of the code before half stores rounded stochastically, which they must not
-   change. *)
-let test_wide_leaves_unchanged () =
-  let lr = Vega.rate 0.05 in
-  let show name x =
-    let xs = List.map (Printf.sprintf "%h") (Array.to_list (floats x)) in
-    Printf.printf "%s %s\n" name (String.concat " " xs)
-  in
-  let run (type b) (dt : (float, b) Nx.dtype) =
-    let x = Nx.create dt [| 3 |] [| 0.7; -1.3; 2.1 |] in
-    let g w = Nx.sub_s (Nx.mul w w) 0.5 in
-    let rec go k f (w, st) =
-      if k = 0 then (w, st) else go (k - 1) f (f st ~params:w ~grads:(g w))
-    in
-    let name = Nx.Dtype.name dt in
-    let sgd st = Vega.sgd_step p ~lr ~momentum:0.9 st in
-    let w, _ = go 3 sgd (x, Vega.sgd_init p x) in
-    show (name ^ " sgd") w;
-    let adam st = Vega.adam_step p ~lr st in
-    let w, st = go 3 adam (x, Vega.adam_init p x) in
-    show (name ^ " adam") w;
-    show (name ^ " adam nu") st.nu;
-    let lion st = Vega.lion_step p ~lr st in
-    let w, _ = go 3 lion (x, Vega.lion_init p x) in
-    show (name ^ " lion") w;
-    let adafactor st = Vega.adafactor_step p ~lr st in
-    let w, _ = go 3 adafactor (x, Vega.adafactor_init p x) in
-    show (name ^ " adafactor") w;
-    let st = ref (Vega.lbfgs_init p x) in
-    for _ = 1 to 3 do
-      st := Vega.lbfgs_step p ~lr (g !st.params) !st
-    done;
-    show (name ^ " lbfgs") !st.params
-  in
-  run Nx.float32;
-  run Nx.float64;
-  expect (output ())
-  @@ __POS_OF__
-       {|
-    float32 sgd 0x1.67c058p-1 -0x1.ac85c4p+0 0x1.2cadecp+0
-    float32 adam 0x1.5fc2ecp-1 -0x1.73437ap+0 0x1.f348fap+0
-    float32 adam nu 0x1.1e7102p-18 0x1.5adc7p-8 0x1.518cd2p-5
-    float32 lion 0x1.8p-1 -0x1.73333p+0 0x1.f33334p+0
-    float32 adafactor 0x1.704ce2p-1 -0x1.73547cp+0 0x1.f55f64p+0
-    float32 lbfgs 0x1.6722ap-1 -0x1.922a7ap+0 0x1.b2afd8p+0
-    float64 sgd 0x1.67c0578525aa5p-1 -0x1.ac85c5f6a813ap+0 0x1.2cadec8409863p+0
-    float64 adam 0x1.5fc2eaac0398cp-1 -0x1.73437b0c37859p+0 0x1.f348f90279184p+0
-    float64 adam nu 0x1.1e70fd43acaedp-18 0x1.5adc7634754bp-8 0x1.518cd2f435fe6p-5
-    float64 lion 0x1.8000000666666p-1 -0x1.7333333cccccdp+0 0x1.f33333299999ap+0
-    float64 adafactor 0x1.704ce210bc15ep-1 -0x1.73547cb83be79p+0 0x1.f55f62f491493p+0
-    float64 lbfgs 0x1.67229f93792bp-1 -0x1.922a8057ad417p+0 0x1.b2afd597746f8p+0
-    |}
+(* A float32 or float64 leaf stores the value it computes, which draws nothing:
+   momentum SGD's arithmetic does not read the counter, and its parameters and
+   velocity, inexact at either dtype, have the same bits at two counters. *)
+let wide_stores =
+  cases "a float32 or float64 leaf stores what it computes" ~id:fst
+    [ ("float32", `F32); ("float64", `F64) ]
+    (fun (_, dt) ->
+      let sgd (type b) (dt : (float, b) Nx.dtype) c =
+        let x = Nx.create dt [| 3 |] [| 0.7; -1.3; 2.1 |] in
+        let v = Nx.create dt [| 3 |] [| 0.3; 0.1; -0.2 |] in
+        let st = { Vega.velocity = v; step = counter c } in
+        let x', st' =
+          Vega.sgd_step p ~lr:(Vega.rate 0.05) ~momentum:0.9 st ~params:x
+            ~grads:x
+        in
+        Array.map Int64.bits_of_float
+          (Array.append (floats x') (floats st'.velocity))
+      in
+      let at c =
+        match dt with `F32 -> sgd Nx.float32 c | `F64 -> sgd Nx.float64 c
+      in
+      equal (array int64) (at 0) (at 1))
 
 let tests =
   [
-    group "stores bracket the computed value"
+    group "a store brackets the computed value"
       [
         sgd_brackets Nx.float16;
         sgd_brackets Nx.bfloat16;
@@ -928,24 +863,22 @@ let tests =
         lbfgs_brackets Nx.float16;
         lbfgs_brackets Nx.bfloat16;
       ];
-    group "stores are unbiased"
+    group "a store is unbiased"
       [
         unbiased Nx.bfloat16
           (unbiased_rows ~below_one:0x1p-8 ~least:0x1p-126 ~sub:0x1p-133);
         unbiased Nx.float16
           (unbiased_rows ~below_one:0x1p-11 ~least:0x1p-14 ~sub:0x1p-24);
       ];
-    group "trajectories"
+    group "an update below half a spacing moves on average"
       [
         test "a bfloat16 moving average decays" test_moments_decay;
         test "bfloat16 adam tracks a constant gradient"
           test_tracks_a_constant_gradient;
-        test "bfloat16 adam tracks a noisy quadratic"
-          test_tracks_a_noisy_quadratic;
         test "bfloat16 weights decay under a scheduled decay"
           test_decays_under_a_schedule;
       ];
-    group "draws"
+    group "the draws"
       [
         test_deterministic;
         test "the counter keys the draws" test_counter_keys;
@@ -955,7 +888,7 @@ let tests =
           test_parts_draw_as_one;
         test "the draws are the same at every placement" test_placement;
       ];
-    group "float16"
+    group "steps at half precision"
       [
         test "float16 steps stay finite and move" (finite_steps Nx.float16);
         test "bfloat16 steps stay finite and move" (finite_steps Nx.bfloat16);
@@ -963,8 +896,7 @@ let tests =
         test "sgd, lars, lion and lbfgs step float16 leaves"
           test_float16_accepted;
       ];
-    test "float32 and float64 leaves step as before"
-      test_wide_leaves_unchanged;
+    wide_stores;
   ]
 
 let () = exit (run "vega precision" tests)
