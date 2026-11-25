@@ -475,6 +475,13 @@ def image_fixtures():
     gradient(6, 5, "L").save("jpeg_gray.jpg", quality=90)
     gradient(5, 6, "CMYK").save("jpeg_cmyk.jpg", quality=90)
     gradient(9, 11, "RGB").save("jpeg_restart.jpg", quality=90, restart_marker_blocks=1)
+    # Sampling other than 4:2:0, colour stored as RGB (Adobe's transform 0),
+    # and a progressive scan with restart intervals.
+    gradient(10, 13, "RGB").save("jpeg_444.jpg", quality=90, subsampling=0)
+    gradient(10, 13, "RGB").save("jpeg_422.jpg", quality=90, subsampling=1)
+    gradient(10, 13, "RGB").save("jpeg_rgb.jpg", quality=90, keep_rgb=True)
+    gradient(9, 11, "RGB").save("jpeg_progressive_restart.jpg", quality=90,
+                                progressive=True, restart_marker_blocks=1)
     extended_jpeg()
     # Dark content at quality 50, so that many DC coefficients are negative
     # and odd: Pillow's progressive script sends DC without its low bit, then
@@ -485,7 +492,7 @@ def image_fixtures():
     Image.fromarray(dark.clip(0, 255).astype(np.uint8), "RGB").save(
         "jpeg_progressive_dark.jpg", quality=50, progressive=True)
     for name in ["baseline", "progressive", "progressive_dark", "cmyk", "restart",
-                 "extended"]:
+                 "extended", "444", "422", "rgb", "progressive_restart"]:
         reference("jpeg_%s.jpg" % name, "RGB")
     reference("jpeg_gray.jpg", "L")
     late_table_jpeg()
