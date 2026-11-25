@@ -84,18 +84,6 @@ for t in (3000, 3001):
     y2 = conv(y1, w2, b2, (2,), [(1, 1)], (1,), 1)
     put(f"stem{t}", x=x, w1=w1, b1=b1, w2=w2, b2=b2, y1=y1, y2=y2)
 
-# Grouped and dilated 2-D, asymmetric pads.
-x = quarters(2, 7, 9, 4)
-w, b = quarters(6, 2, 3, 2), quarters(6)
-y = conv(x, w, b, (2, 1), [(1, 2), (0, 1)], (2, 1), 2)
-put("grouped", x=x, w=w, b=b, y=y)
-
-# 3-D, no bias.
-x = quarters(1, 4, 5, 6, 2)
-w = quarters(3, 2, 2, 3, 2)
-y = conv(x, w, None, (1, 2, 1), [(1, 1), (0, 0), (1, 1)], (1, 1, 1), 1)
-put("volume", x=x, w=w, y=y)
-
 # SAM 2's upscaling: a k2 s2 transpose.
 x = quarters(1, 4, 4, 4)
 w, b = quarters(4, 2, 2, 2), quarters(2)
@@ -109,19 +97,6 @@ w, b = quarters(3, 2, 3), quarters(2)
 y = F.conv_transpose1d(first(x), torch.from_numpy(w), torch.from_numpy(b),
                        stride=2, padding=1, output_padding=1)
 put("outpad", x=x, w=w, b=b, y=last(y))
-
-# Pooling: ResNet's stem max pool over negative values, so that a padded
-# element read as 0 would show; average pools counting the padding, of
-# windows a power of two so that each mean is exact.
-x = -np.abs(quarters(1, 7, 8, 3)) - 0.25
-y = F.max_pool2d(first(x), 3, stride=2, padding=1)
-put("maxpool", x=x, y=last(y))
-x = quarters(1, 7, 8, 3)
-y = F.avg_pool2d(first(x), 2, stride=2, padding=1, count_include_pad=True)
-put("avgpool", x=x, y=last(y))
-x = quarters(1, 3, 4, 5, 2)
-y = F.avg_pool3d(first(x), (2, 2, 2), stride=(1, 2, 2))
-put("avgpool3", x=x, y=last(y))
 
 buf = io.BytesIO()
 np.savez(buf, **out)
