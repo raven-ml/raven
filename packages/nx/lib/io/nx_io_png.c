@@ -543,7 +543,7 @@ CAMLprim value caml_nx_io_png_probe(value vsrc) {
   if (status != PNG_OK)
     caml_failwith(png_message(status));
   if (info.idat_size < SIZE_MAX / INFLATE_RATIO &&
-      filtered > (info.idat_size + 1) * INFLATE_RATIO)
+      filtered > info.idat_size * INFLATE_RATIO)
     caml_failwith(png_message(PNG_SHORT));
   vresult = caml_alloc_tuple(3);
   Store_field(vresult, 0, Val_long(info.width));

@@ -616,6 +616,22 @@ let files =
           let path = file png in
           fails ~path ~naming:"PNG image data too short for its dimensions"
             (fun () -> Nx_io.load_image path));
+      cases
+        "a PNG whose scanlines take more than 1032 times its image data is \
+         refused, and one at that bound decodes"
+        ~id:fst
+        [ ("one byte past", 1); ("at the bound", 0) ]
+        (fun (_, over) ->
+          (* One row of grey of [w] samples takes [w + 1] bytes with its filter
+             byte; a zlib stream inflates each byte to at most 1032. *)
+          let n = String.length (Lz.Zlib.encode_string "") in
+          let w = (1032 * n) - 1 + over in
+          let path = file (header_png ~width:w ~height:1) in
+          let naming =
+            if over = 1 then "too short for its dimensions"
+            else "invalid PNG zlib stream"
+          in
+          fails ~path ~naming (fun () -> Nx_io.load_image path));
       test
         "a JPEG whose frame states more blocks than its data can code fails"
         (fun () ->

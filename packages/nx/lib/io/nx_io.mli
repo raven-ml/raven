@@ -789,6 +789,13 @@ val encode_txt : ?sep:string -> ('v, 's, 'd) Nx.t -> string
     progressive, in grey, YCbCr, RGB, CMYK or YCCK, with any sampling and
     restart intervals.
 
+    A load refuses, before it allocates the image, a PNG file whose header
+    states more bytes of scanlines than 1032 times the bytes of its image data,
+    the most a zlib stream inflates to, and a JPEG file whose frame states more
+    than 8 blocks of a component for each byte of the file, since a scan codes
+    each block in a bit or more. So an image takes memory linear in its file's
+    length.
+
     {!save_png}, {!save_jpeg} and {!encode_png} raise [Invalid_argument] naming
     the function for a value that does not have three axes or has no pixel, has
     a number of channels its format does not store, or has a side longer than

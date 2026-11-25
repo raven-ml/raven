@@ -3914,6 +3914,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_io.load_image` refuses a PNG whose scanlines take more than 1032 times
+  its image data's bytes, where up to 1032 bytes more passed the check, and
+  states this bound and JPEG's.
 - `Nx.Rng.beta` at `float4_e2m1fn` draws inside (0, 1): a draw that rounds
   to 1 is 0.5, the largest value below 1, where it was 1. Other draws keep
   their bits.
