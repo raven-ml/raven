@@ -498,6 +498,27 @@ let sequence processors = Sequence processors
 
 (* Formatting *)
 
+(* A template in [template]'s syntax, each piece with its type ID. *)
+let template_text pieces =
+  let piece = function
+    | Piece_sequence { id; type_id } ->
+        strf "$%s:%d" (sequence_id_to_label id) type_id
+    | Piece_special { key; type_id } -> strf "%s:%d" key type_id
+  in
+  String.concat " " (List.map piece pieces)
+
+let pp_list pp_item ppf items =
+  Format.fprintf ppf "@[<1>[%a]@]"
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
+       pp_item)
+    items
+
+let pp_special ppf tok =
+  Format.fprintf ppf "@[<1>(%S,@ %a)@]" tok.key
+    (pp_list Format.pp_print_int)
+    tok.value_ids
+
 let rec pp ppf = function
   | Bert { sep = sep_s, _; cls = cls_s, _ } ->
       Format.fprintf ppf "@[<2>Bert@ ~cls:%S@ ~sep:%S@]" cls_s sep_s
@@ -511,7 +532,11 @@ let rec pp ppf = function
       Format.fprintf ppf
         "@[<2>ByteLevel@ ~add_prefix_space:%b@ ~trim_offsets:%b@]"
         add_prefix_space trim_offsets
-  | Template _ -> Format.fprintf ppf "Template"
+  | Template { single; pair; special_tokens } ->
+      Format.fprintf ppf
+        "@[<2>Template@ ~single:%S@ ~pair:%S@ ~special_tokens:%a@]"
+        (template_text single) (template_text pair) (pp_list pp_special)
+        special_tokens
   | Sequence processors ->
       Format.fprintf ppf "@[<2>Sequence[@,%a]@]"
         (Format.pp_print_list

@@ -602,7 +602,10 @@ let test_pp () =
        {|
     Sequence[Bert ~cls:"[CLS]" ~sep:"[SEP]",
       Roberta ~cls:"<s>" ~sep:"</s>" ~trim_offsets:true ~add_prefix_space:true,
-      ByteLevel ~add_prefix_space:true ~trim_offsets:true, Template]
+      ByteLevel ~add_prefix_space:true ~trim_offsets:true,
+      Template ~single:"[CLS]:0 $A:0 [SEP]:0"
+        ~pair:"[CLS]:0 $A:0 [SEP]:0 $B:1 [SEP]:1"
+        ~special_tokens:[("[CLS]", [101]); ("[SEP]", [102])]]
     |}
 
 (* of_json *)

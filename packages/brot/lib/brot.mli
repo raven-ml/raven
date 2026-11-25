@@ -783,7 +783,9 @@ module Post_processor : sig
   (** {1:fmt Formatting} *)
 
   val pp : Format.formatter -> t -> unit
-  (** [pp] formats a post-processor for inspection. *)
+  (** [pp] formats a post-processor for inspection. A template prints its
+      [single] and [pair] in {!template}'s syntax, each piece with its type ID,
+      and each special token with its IDs. *)
 
   (** {1:serialization Serialization} *)
 
