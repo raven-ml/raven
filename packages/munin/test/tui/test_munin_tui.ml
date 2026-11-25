@@ -198,6 +198,16 @@ let chars s =
 let from col row =
   String.concat "" (List.filteri (fun i _ -> i >= col) (chars row))
 
+(* [before row sep] is [row] up to the first [sep] in it. *)
+let before row sep =
+  let n = String.length sep in
+  let rec find i =
+    if i + n > String.length row then None
+    else if String.sub row i n = sep then Some (String.sub row 0 i)
+    else find (i + 1)
+  in
+  find 0
+
 (* The run pane's heading, [³ run], starts its column, and its first two
    lines follow a blank one. *)
 let run_pane screen =
@@ -215,6 +225,19 @@ let run_pane_name screen =
   List.nth_opt
     (List.filter (( <> ) "") (String.split_on_char ' ' (run_pane screen)))
     1
+
+(* [run_pane_heading screen] is the run pane's first line: the run's glyph,
+   name and state word. *)
+let run_pane_heading screen = before (run_pane screen) " / "
+
+(* [legend_entry screen name] is the legend's entry of the run [name], up to
+   the gap before the next entry. *)
+let legend_entry screen name =
+  match T.Screen.find screen ("━ " ^ name) with
+  | (y, x) :: _ ->
+      let r = from x (T.Screen.row screen y) in
+      Some (String.trim (Option.value (before r "   ") ~default:r))
+  | [] -> None
 
 let states_test =
   test "states" (fun () ->
@@ -1300,9 +1323,22 @@ let letters =
       let s = series_of c.samples in
       let ch = chart ~guides:c.guides (domain c.samples) in
       let runs = [ (Munin_tui.Plot.Overlay 'd', 1, s); (me, 0, s) ] in
-      let letter th = cells (drawn th ch ~width:(c.width + 10) ~height:c.height runs) (( = ) "d") in
+      let width = c.width + 10 in
+      let letter th = cells (drawn th ch ~width ~height:c.height runs) (( = ) "d") in
       equal ~msg:"in colour" (list int) [] (letter truecolor);
-      if letter (theme `Mono) = [] then fail "no letter without colour")
+      (* The line's last cell, and the cell right of it within the plot,
+         whose place in the grid the line's first dot column gives. *)
+      let mono = theme `Mono in
+      let line = rows (ink (drawn mono ch ~width ~height:c.height runs)) in
+      cover "a line" (line <> []);
+      match (line, Plot.dots mono ch ~width ~height:c.height) with
+      | (first, _) :: _, Some (dots, dot) ->
+          let offset = first - dot (Float.of_int (fst (List.hd c.samples))) in
+          let last = fst (List.nth line (List.length line - 1)) / 2 in
+          equal ~msg:"without colour" (list int)
+            [ min (last + 1) ((offset + dots - 1) / 2) ]
+            (letter mono)
+      | _ -> not_equal ~msg:"without colour" (list int) [] (letter mono))
 
 (* Rule 1: a y label is a number, never one cut short. A near-constant
    series about a round value, with a step far below the labels' digits,
@@ -1615,19 +1651,28 @@ let now_rule =
     (fun v ->
       let samples = List.init 11 (fun i -> (i * 100, Float.of_int i)) in
       let ch = { (chart (0., 1000.)) with now = Some v } in
-      let g = drawn truecolor ch ~width:60 ~height:10 [ (me, 0, series_of samples) ] in
-      let text =
-        String.concat "\n"
-          (List.init (Matrix.Grid.height g) (fun y ->
-               String.concat ""
-                 (List.init (Matrix.Grid.width g) (fun x ->
-                      Matrix.Grid.get_text g (Matrix.Grid.idx g ~x ~y)))))
+      let width = 60 and height = 10 in
+      let g = drawn truecolor ch ~width ~height [ (me, 0, series_of samples) ] in
+      let dot =
+        match Plot.dots truecolor ch ~width ~height with
+        | Some (_, dot) -> dot
+        | None -> fail "no plot"
       in
-      let rec count i =
-        if i + 3 > String.length text then 0
-        else (if String.sub text i 3 = "now" then 1 else 0) + count (i + 1)
+      (* The line starts at step 0: its first dot column is [dot 0.] in the
+         plot, which places the plot in the grid. *)
+      let shift =
+        match rows (ink ~colour:mine g) with
+        | (k, _) :: _ -> k - dot 0.
+        | [] -> fail "no line"
       in
-      equal ~msg:"the now labels" int 1 (count 0))
+      equal ~msg:"the rule's cells" (list int)
+        [ (dot v + shift) / 2 ]
+        (List.sort_uniq compare (cells g (( = ) "┊")));
+      let rec count t i =
+        if i + 3 > String.length t then 0
+        else (if String.sub t i 3 = "now" then 1 else 0) + count t (i + 1)
+      in
+      equal ~msg:"the now labels" int 1 (count (text g) 0))
 
 (* A rule is context and dots are data: on the [now] rule's or zoom's
    cursor rule's column, a cell that dots take, a line's, a spike's or the
@@ -2168,16 +2213,6 @@ let reading_record ~time step kvs =
 
 (* Runs: the filter and the best value of each experiment *)
 
-(* [before row sep] is [row] up to the first [sep] in it. *)
-let before row sep =
-  let n = String.length sep in
-  let rec find i =
-    if i + n > String.length row then None
-    else if String.sub row i n = sep then Some (String.sub row 0 i)
-    else find (i + 1)
-  in
-  find 0
-
 (* The runs pane: the text of each row before the pane's rule. *)
 let pane screen y =
   let row = T.Screen.row screen y in
@@ -2255,15 +2290,18 @@ let short_of_steps =
       in
       let run = show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [] in
       let runs = show ~cols:120 ~rows:40 store Munin_tui.Runs [] in
-      let found screen s = T.Screen.find screen s <> [] in
-      equal (list bool)
-        [ true; false; true; false ]
-        [
-          found run "99%";
-          found run "100%";
-          found runs " 99%";
-          found runs "100%";
-        ])
+      (* The screen's percentages: the run has no accuracy, so they are
+         its progress. *)
+      let percents screen =
+        List.concat_map
+          (fun y ->
+            List.filter
+              (String.ends_with ~suffix:"%")
+              (String.split_on_char ' ' (T.Screen.row screen y)))
+          (List.init (T.Screen.rows screen) Fun.id)
+      in
+      equal ~msg:"on the run" (list string) [ "99%" ] (percents run);
+      equal ~msg:"on the runs" (list string) [ "99%" ] (percents runs))
 
 (* Runs that log as programs do: the cursor's every 10 steps with the value
    [step / 1000], the overlaid run [marked] samples of [0]. A strip compares
@@ -2293,7 +2331,18 @@ let paired =
         show ~cols:120 ~rows:40 store Munin_tui.Runs
           [ char 'j'; Text " "; char 'k'; Key Enter ]
       in
-      equal bool true (T.Screen.find screen value <> []))
+      (* The strip's last word, left of the run pane's border. *)
+      let difference =
+        match T.Screen.find screen "▌m" with
+        | (y, x) :: _ ->
+            let r = from x (T.Screen.row screen y) in
+            let r = Option.value (before r "│") ~default:r in
+            List.nth_opt
+              (List.rev (List.filter (( <> ) "") (String.split_on_char ' ' r)))
+              0
+        | [] -> None
+      in
+      equal (option string) (Some value) difference)
 
 (* A metric whose every sample a resume orphans has no statistics, and Details
    lists the run all the same. *)
@@ -2318,7 +2367,25 @@ let all_orphans =
       let screen =
         show ~cols:120 ~rows:40 store (Munin_tui.Run (Some id)) [ char 'i' ]
       in
-      equal bool true (T.Screen.find screen "metrics" <> []))
+      (* The keys of the info's metrics: the first word of each row of its
+         value column, from [metrics] to [notes]. *)
+      let row label =
+        match T.Screen.find screen label with
+        | p :: _ -> p
+        | [] -> failf "no %s" label
+      in
+      let y, x = row "metrics" and y_end, _ = row "notes" in
+      let keys =
+        List.filter_map
+          (fun y ->
+            let r = from (x + 12) (T.Screen.row screen y) in
+            let r = Option.value (before r "│") ~default:r in
+            match String.split_on_char ' ' (String.trim r) with
+            | "" :: _ | [] -> None
+            | k :: _ -> Some k)
+          (List.init (y_end - y) (fun i -> y + i))
+      in
+      equal (list string) [ "m" ] keys)
 
 (* Below 100 columns the nav line counts the cursor's run among the runs
    kept. Past 30 runs every experiment but the cursor's starts folded, and a
@@ -2449,7 +2516,8 @@ let kept_pane =
       in
       Sys.rename (log ^ ".away") log;
       equal (list (pair int int)) [] (T.Screen.find screen "cannot read");
-      equal bool true (T.Screen.find screen "amber-fox  finished" <> []))
+      equal (option string) (Some "✓ amber-fox  finished")
+        (run_pane_heading screen))
 
 (* A run logs its last samples and ends after its chart was prepared, and the
    cursor leaves it before a poll reads them: coming back draws them, since a
@@ -2489,8 +2557,10 @@ let ended_away =
       in
       (* The last 50 samples, all 9, are what the legend gives at the run's
          last step. *)
-      equal bool true (T.Screen.find screen "late-end 9 " <> []);
-      equal bool true (T.Screen.find screen "late-end  finished" <> []))
+      equal ~msg:"the legend" (option string) (Some "━ late-end 9")
+        (legend_entry screen "late-end");
+      equal ~msg:"the run pane" (option string) (Some "✓ late-end  finished")
+        (run_pane_heading screen))
 
 (* A run ends between two timer polls after logging its last samples, while
    the dashboard draws it as a trend only (the cursor is on another run) or as
@@ -3155,7 +3225,8 @@ let resumed_readings =
           Hashtbl.replace tops c (min top r))
         (List.assoc "VRAM" strips);
       let heights = List.sort_uniq compare (Hashtbl.fold (fun _ r acc -> r :: acc) tops []) in
-      equal ~msg:"the top dot rows of its columns" int 1 (List.length heights))
+      equal ~msg:"the top dot rows of its columns" (list int)
+        [ List.hd heights ] heights)
 
 (* Zoom's cursor walks the samples the chart draws: on the VRAM of
    [resumed_log]'s run, twelve moves left from the latest step reach step
@@ -3412,11 +3483,19 @@ let same_names =
           let label = "cnn-adam " ^ tail id in
           (* The legend's entry, whole, and the runs pane's row, left of
              column 42, whose name gives way to the id's end. *)
-          let pane = List.filter (fun (_, x) -> x < 42) (T.Screen.find screen (" " ^ tail id)) in
-          equal ~msg:label bool true (List.exists (fun (_, x) -> x >= 42) (T.Screen.find screen label));
+          let pane =
+            List.filter
+              (fun (_, x) -> x < 42)
+              (T.Screen.find screen (" " ^ tail id))
+          in
+          (* Each logged 19 at the latest step. *)
+          equal ~msg:label (option string)
+            (Some ("━ " ^ label ^ " 19"))
+            (legend_entry screen label);
           equal ~msg:(tail id) int 1 (List.length pane))
         ids;
-      equal ~msg:"lone" int 0 (List.length (T.Screen.find screen ("lone " ^ tail lone))))
+      equal ~msg:"lone" (list (pair int int)) []
+        (T.Screen.find screen ("lone " ^ tail lone)))
 
 (* Two runs of one name whose ids share their last five characters take
    six: the fewest that tell them apart. The strips' header keeps the
@@ -3433,15 +3512,21 @@ let long_suffixes =
       run "20261101T000000Z-00b12345";
       (* Overlay the newest, then the cursor to the other, and strips. *)
       let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Text " "; char 'j'; Key Enter ] in
-      let has s = T.Screen.find screen s <> [] in
+      List.iter
+        (fun label ->
+          equal ~msg:label (option string) (Some ("━ " ^ label))
+            (legend_entry screen label))
+        [ "cnn-adam a12345"; "cnn-adam b12345" ];
+      (* The strips' header names the overlay after [vs], up to the run
+         pane's border. *)
       let vs =
-        List.filter_map
-          (fun (y, x) -> Some (from x (T.Screen.row screen y)))
+        List.map
+          (fun (y, x) ->
+            let r = from x (T.Screen.row screen y) in
+            String.trim (Option.value (before r "│") ~default:r))
           (T.Screen.find screen "vs ")
       in
-      equal (list bool) [ true; true ] [ has "cnn-adam a12345"; has "cnn-adam b12345" ];
-      equal ~msg:"the header's overlay" (list bool) [ true ]
-        (List.map (fun r -> before r "b12345" <> None) vs))
+      equal ~msg:"the header's overlay" (list string) [ "vs cn… b12345" ] vs)
 
 (* [Run None] puts the cursor on the newest run without an end that has
    not crashed. A run written without a writer file and without an end
@@ -3530,123 +3615,139 @@ let info_values screen label next =
 let no_blanks s = String.concat "" (String.split_on_char ' ' s)
 
 (* Rule: a cut text ends in […] and keeps a blank before the next column; a
-   number and the info's facts are never cut. *)
-let cut_text =
-  let screens =
-    lazy
-      (with_store ~name:"long" [ long_run; Fixture.amber_fox ] @@ fun store ->
-       let at = Munin_tui.Run (Some long_run.id) in
-       List.map
-         (fun (name, cols, rows, keys) -> (name, show ~cols ~rows store at keys))
-         [
-           ("160x48", 160, 48, []);
-           ("120x40", 120, 40, []);
-           ("info 120x40", 120, 40, [ char 'i' ]);
-           ("info 80x24", 80, 24, [ char 'i' ]);
-         ])
-  in
-  let screen name = List.assoc name (Lazy.force screens) in
-  let holds name sub = T.Screen.find (screen name) sub <> [] in
-  let claims =
-    [
-      ( "info gives the pid whole",
-        fun () -> equal (list bool) [ true; true ] [ holds "info 120x40" "pid 9610"; holds "info 80x24" "pid 9610" ] );
-      ( "info gives the command and the directory whole",
-        fun () ->
+   number and the info's facts are never cut. The screens of [long_run],
+   drawn once. *)
+let long_screens =
+  lazy
+    (with_store ~name:"long" [ long_run; Fixture.amber_fox ] @@ fun store ->
+     let at = Munin_tui.Run (Some long_run.id) in
+     List.map
+       (fun (name, cols, rows, keys) -> (name, show ~cols ~rows store at keys))
+       [
+         ("160x48", 160, 48, []);
+         ("120x40", 120, 40, []);
+         ("info 120x40", 120, 40, [ char 'i' ]);
+         ("info 80x24", 80, 24, [ char 'i' ]);
+       ])
+
+let long_screen name = List.assoc name (Lazy.force long_screens)
+let found name sub = List.length (T.Screen.find (long_screen name) sub)
+
+let info_pid =
+  test "info gives the pid whole" (fun () ->
+      List.iter
+        (fun name -> equal ~msg:name int 1 (found name "pid 9610"))
+        [ "info 120x40"; "info 80x24" ])
+
+let info_command =
+  test "info gives the command and the directory whole" (fun () ->
+      List.iter
+        (fun name ->
+          equal ~msg:name string
+            (no_blanks (String.concat "" long_run.command ^ long_run.cwd))
+            (info_values (long_screen name) "command" "host"))
+        [ "info 120x40"; "info 80x24" ])
+
+let banner_whole =
+  test "the banner gives the error whole, after the step" (fun () ->
+      equal ~msg:"its start" int 1 (found "120x40" "at step 1,100: Rig.Lost");
+      equal ~msg:"its end" int 1 (found "120x40" "conv12"))
+
+let param_keys =
+  test "a param key takes the longest key's width" (fun () ->
+      equal ~msg:"the longest" int 1 (found "160x48" "max_iterations ");
+      equal ~msg:"a shorter" int 1 (found "160x48" "step_size "))
+
+let cut_blank =
+  test "a cut text keeps a blank before the next column" (fun () ->
+      List.iter
+        (fun (name, sc) ->
           List.iter
-            (fun name ->
-              equal ~msg:name string
-                (no_blanks (String.concat "" long_run.command ^ long_run.cwd))
-                (info_values (screen name) "command" "host"))
-            [ "info 120x40"; "info 80x24" ] );
-      ( "the banner gives the error whole, after the step",
-        fun () ->
-          equal (list bool) [ true; true ]
-            [ holds "120x40" "at step 1,100: Rig.Lost"; holds "120x40" "conv12" ] );
-      ( "a param key takes the longest key's width",
-        fun () ->
-          equal (list bool) [ true; true ] [ holds "160x48" "max_iterations "; holds "160x48" "step_size " ] );
-      ( "a cut text keeps a blank before the next column",
-        fun () ->
-          List.iter
-            (fun (name, sc) ->
-              List.iter
-                (fun (y, x) ->
-                  let next = from (x + 1) (T.Screen.row sc y) in
-                  match chars next with
-                  | [] | (" " | "│") :: _ -> ()
-                  | c :: _ -> failf "%s, row %d: … touches %S" name y c)
-                (T.Screen.find sc "…"))
-            (Lazy.force screens) );
-    ]
-  in
-  cases ~id:fst "a cut text is marked, and a number never cut" claims (fun (_, f) -> f ())
+            (fun (y, x) ->
+              let next = from (x + 1) (T.Screen.row sc y) in
+              match chars next with
+              | [] | (" " | "│") :: _ -> ()
+              | c :: _ -> failf "%s, row %d: … touches %S" name y c)
+            (T.Screen.find sc "…"))
+        (Lazy.force long_screens))
 
 (* A run whose values outgrow their columns: sampled floats as params, and
    four metrics with a goal under long keys. A number shows whole: the run
    pane prints a param by the value rule, info gives it exactly, and the line
    of values keeps the metrics that fit. *)
-let long_values =
+let value_screens =
   let keys =
-    [ "validation/loss_total"; "validation/accuracy_top1"; "train/loss_total"; "train/accuracy_top1" ]
-  in
-  let screens =
-    lazy
-      (with_store ~name:"long-values" [] @@ fun store ->
-       ignore
-         (write_log store
-            ~params:{|{"learning_rate":0.0004213752718364,"weight_decay":0.00031622776601683794}|}
-            ~declare:
-              (List.map
-                 (fun k -> metric_record ~goal:(if holds "loss" k then "minimize" else "maximize") k)
-                 keys)
-            (List.init 40 (fun i ->
-                 let s = Float.of_int (i + 1) in
-                 values_record ((i + 1) * 100)
-                   (List.map (fun k -> (k, if holds "loss" k then 1. /. s else 0.9 -. (0.5 /. s))) keys))));
-       List.map
-         (fun (name, cols, rows, keys) -> (name, show ~cols ~rows store Munin_tui.Runs keys))
-         [
-           ("120x40", 120, 40, []);
-           ("80x24", 80, 24, []);
-           ("info", 120, 40, [ char 'i' ]);
-           ("help", 80, 24, [ char '?' ]);
-         ])
-  in
-  let screen name = List.assoc name (Lazy.force screens) in
-  let shows name sub = T.Screen.find (screen name) sub <> [] in
-  cases ~id:fst "a number shows whole"
     [
-      ( "the run pane's params",
-        fun () ->
-          (* Each number in the pane, up to the blank after it. *)
-          let sc = screen "120x40" in
-          let numbers =
-            List.filter_map
-              (fun (y, x) ->
-                if x < 90 then None
-                else
-                  let rest = from x (T.Screen.row sc y) in
-                  Some (List.hd (String.split_on_char ' ' rest)))
-              (T.Screen.find sc "0.000")
-          in
-          equal (list string) [ "0.0004214"; "0.0003162" ] numbers );
-      ("info's params", fun () -> equal bool true (shows "info" "0.0004213752718364"));
-      ( "the line of values",
-        fun () ->
-          let sc = screen "80x24" in
-          match List.sort compare (T.Screen.find sc "train/") with
-          | (y, _) :: _ -> equal ~msg:(T.Screen.row sc y) bool false (holds "…" (T.Screen.row sc y))
-          | [] -> fail "no line of values" );
-      ( "help at 80 columns",
-        fun () ->
-          let sc = screen "help" in
-          let top = match T.Screen.find sc "keys" with (y, _) :: _ -> y | [] -> fail "no help" in
-          List.iter
-            (fun y -> if holds "…" (T.Screen.row sc y) then failf "row %d: %s" y (T.Screen.row sc y))
-            (List.init (T.Screen.rows sc - top) (fun k -> top + k)) );
+      "validation/loss_total";
+      "validation/accuracy_top1";
+      "train/loss_total";
+      "train/accuracy_top1";
     ]
-    (fun (_, f) -> f ())
+  in
+  let goal k = if holds "loss" k then "minimize" else "maximize" in
+  let value k s = if holds "loss" k then 1. /. s else 0.9 -. (0.5 /. s) in
+  lazy
+    (with_store ~name:"long-values" [] @@ fun store ->
+     ignore
+       (write_log store
+          ~params:
+            {|{"learning_rate":0.0004213752718364,"weight_decay":0.00031622776601683794}|}
+          ~declare:(List.map (fun k -> metric_record ~goal:(goal k) k) keys)
+          (List.init 40 (fun i ->
+               let s = Float.of_int (i + 1) in
+               values_record ((i + 1) * 100)
+                 (List.map (fun k -> (k, value k s)) keys))));
+     List.map
+       (fun (name, cols, rows, keys) ->
+         (name, show ~cols ~rows store Munin_tui.Runs keys))
+       [
+         ("120x40", 120, 40, []);
+         ("80x24", 80, 24, []);
+         ("info", 120, 40, [ char 'i' ]);
+         ("help", 80, 24, [ char '?' ]);
+       ])
+
+let value_screen name = List.assoc name (Lazy.force value_screens)
+
+let pane_params =
+  test "the run pane prints a param's number as values print" (fun () ->
+      (* Each number in the pane, up to the blank after it. *)
+      let sc = value_screen "120x40" in
+      let numbers =
+        List.filter_map
+          (fun (y, x) ->
+            if x < 90 then None
+            else
+              let rest = from x (T.Screen.row sc y) in
+              Some (List.hd (String.split_on_char ' ' rest)))
+          (T.Screen.find sc "0.000")
+      in
+      equal (list string) [ "0.0004214"; "0.0003162" ] numbers)
+
+let info_params =
+  test "info gives a param's number as logged" (fun () ->
+      equal int 1
+        (List.length (T.Screen.find (value_screen "info") "0.0004213752718364")))
+
+let values_line =
+  test "the line of values keeps the values that fit whole" (fun () ->
+      let sc = value_screen "80x24" in
+      match List.sort compare (T.Screen.find sc "train/") with
+      | (y, _) :: _ ->
+          equal ~msg:"its cut texts" (list (pair int int)) []
+            (List.filter (fun (y', _) -> y' = y) (T.Screen.find sc "…"))
+      | [] -> fail "no line of values")
+
+let help_whole =
+  test "help at 80 columns cuts no text" (fun () ->
+      let sc = value_screen "help" in
+      let top =
+        match T.Screen.find sc "keys" with
+        | (y, _) :: _ -> y
+        | [] -> fail "no help"
+      in
+      equal (list (pair int int)) []
+        (List.filter (fun (y, _) -> y >= top) (T.Screen.find sc "…")))
 
 (* The status bar's hints *)
 
@@ -3843,8 +3944,10 @@ let strip_keys =
         (write_log store ~declare:(List.map (fun k -> metric_record k) keys)
            (List.init 20 (fun i -> values_record i (List.map (fun k -> (k, Float.of_int i)) keys))));
       let screen = show ~cols:120 ~rows:40 store Munin_tui.Runs [ Key Enter ] in
-      equal (list bool) [ true; false ]
-        [ T.Screen.find screen "train/samples_per_s " <> []; T.Screen.find screen "train/samples_…" <> [] ])
+      equal ~msg:"whole" int 1
+        (List.length (T.Screen.find screen "train/samples_per_s "));
+      equal ~msg:"cut" (list (pair int int)) []
+        (T.Screen.find screen "train/samples_…"))
 
 (* Zoom on a reading of the machine gives its values in the reading's unit,
    as its strip does: RAM in GiB, a busy share in percent. *)
@@ -3858,11 +3961,11 @@ let zoom_units =
       let keys = [ Key Enter ] @ times 30 (Key Down) @ up @ [ Key Enter ] in
       let screen = show ~script ~cols:120 ~rows:40 store Munin_tui.Runs keys in
       let rows = List.init (T.Screen.rows screen) (T.Screen.row screen) in
-      let title = List.exists (fun r -> holds key r) rows in
-      let raw = List.exists (fun r -> holds "e+" r) rows in
-      let readout = List.filter (fun r -> holds unit r) rows in
-      equal ~msg:"the zoomed reading, a raw byte count, values in its unit" (triple bool bool bool)
-        (true, false, true) (title, raw, List.length readout >= 2))
+      let with_text t = List.filter (holds t) rows in
+      not_equal ~msg:"the zoom's title" (list string) [] (with_text key);
+      equal ~msg:"raw byte counts" (list string) [] (with_text "e+");
+      at_least ~msg:"rows of values in its unit" int ~than:2
+        (List.length (with_text unit)))
 
 (* The banner of a run whose metrics went non-finite names what each
    metric's first such sample was: [a] goes first, at step 5, [b] at 7. *)
@@ -3980,7 +4083,11 @@ let () =
              all_orphans;
              short_of_steps;
              paired;
-             cut_text;
+             info_pid;
+             info_command;
+             banner_whole;
+             param_keys;
+             cut_blank;
              no_sample;
              no_others;
              same_names;
@@ -4013,7 +4120,10 @@ let () =
          hints_exact;
          no_values_line;
          long_suffixes;
-         long_values;
+         pane_params;
+         info_params;
+         values_line;
+         help_whole;
          strip_keys;
          zoom_units;
          banner_names;
