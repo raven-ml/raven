@@ -15,11 +15,168 @@ let measure l =
   String.iter (fun c -> if Char.code c land 0xC0 <> 0x80 then incr n) l;
   (6. *. Float.of_int !n) +. 4.
 
-let show t = Format.asprintf "%a" Ticks.pp t
+let ticks_w = Testable.make ~pp:Ticks.pp ~equal:Ticks.equal
 let labels t = List.map (fun (k : Ticks.tick) -> k.label) t.Ticks.major
 let contexts t = List.map (fun (k : Ticks.tick) -> k.context) t.Ticks.major
-let of_values ?locale ?notation s vs = Ticks.of_values ?locale ?notation s vs
+let positions t = List.map (fun (k : Ticks.tick) -> k.position) t.Ticks.major
 let linear a b = Scale.linear ~domain:(a, b) ()
+let at d t = Time.of_date_time (d, t)
+
+let french () =
+  Locale.v ~decimal:"," ~group:"\u{202F}"
+    ~months:
+      [|
+        "janv.";
+        "févr.";
+        "mars";
+        "avr.";
+        "mai";
+        "juin";
+        "juil.";
+        "août";
+        "sept.";
+        "oct.";
+        "nov.";
+        "déc.";
+      |]
+    ()
+
+(* A scale of any kind, for the laws of [choose]. None clamps, so a position in
+   [0;1] is a value in the domain. *)
+type axis = Axis : 'd Scale.t -> axis
+
+let gen_scale =
+  let domain ends =
+    Gen.map
+      (fun (a, b) -> if a <= b then (a, b) else (b, a))
+      (Gen.such_that (fun (a, b) -> a <> b) (Gen.pair ends ends))
+  in
+  let moderate = Gen.float_range (-1e4) 1e4 in
+  let gen_domain = domain (Gen.frequency [ (3, moderate); (1, Gen.float) ]) in
+  (* The transforms of pow and custom scales are checked over moderate domains,
+     where their searches stay short. *)
+  let moderate = domain moderate in
+  let positive =
+    Gen.map
+      (fun (a, b) -> (Float.min a b, Float.max a b))
+      (Gen.such_that
+         (fun (a, b) -> a <> b)
+         (Gen.pair (Gen.float_range 1e-6 1e6) (Gen.float_range 1e-6 1e6)))
+  in
+  let instants =
+    Gen.map
+      (fun (s, w) ->
+        let a = Time.v S (Int64.of_int s) in
+        (a, Time.add (Time.milliseconds 1) w a))
+      (Gen.pair
+         (Gen.int_range (-4_000_000_000) 4_000_000_000)
+         (Gen.frequency
+            [
+              (2, Gen.int_range 1 100_000);
+              (3, Gen.int_range 1 1_000_000_000_000);
+            ]))
+  in
+  let quantities f gen = Gen.map (fun d -> Axis (f d)) gen in
+  Gen.one_of
+    [
+      quantities (fun d -> Scale.linear ~domain:d ()) gen_domain;
+      quantities (fun d -> Scale.symlog ~domain:d ()) gen_domain;
+      quantities (fun d -> Scale.log ~domain:d ()) positive;
+      quantities (fun d -> Scale.log ~base:2. ~domain:d ()) positive;
+      quantities (fun d -> Scale.linear ~reverse:true ~domain:d ()) gen_domain;
+      quantities (fun d -> Scale.pow ~exponent:0.5 ~domain:d ()) moderate;
+      quantities
+        (fun d ->
+          Scale.custom ~transform:"asinh" ~forward:Float.asinh
+            ~inverse:Float.sinh ~domain:d ())
+        moderate;
+      Gen.map
+        (fun (d, reverse) -> Axis (Scale.time ~reverse ~domain:d ()))
+        (Gen.pair instants Gen.bool);
+      Gen.map
+        (fun (n, reverse) ->
+          Axis
+            (Scale.band ~reverse
+               ~domain:(Labels (Array.init n (fun i -> "c" ^ string_of_int i)))
+               ()))
+        (Gen.pair (Gen.int_range 1 40) Gen.bool);
+    ]
+  |> Gen.with_pp (fun ppf (Axis s) -> Scale.pp ppf s)
+
+(* Axes from short to billions of points long, as an aspect panel with very
+   unequal spans asks for. *)
+let gen_length =
+  Gen.frequency
+    [ (4, Gen.float_range 20. 2000.); (1, Gen.float_range 1e6 1e12) ]
+
+let gen_axis = Gen.pair gen_scale gen_length
+
+let tick_extent measure (k : Ticks.tick) =
+  match k.context with
+  | None -> measure k.label
+  | Some c -> Float.max (measure k.label) (measure c)
+
+let check_no_overlap ?(measure = measure) length (t : Ticks.t) =
+  let extent = tick_extent measure in
+  let rec loop = function
+    | (k : Ticks.tick) :: (k' :: _ as rest) ->
+        at_least float_exact
+          ~than:((extent k +. extent k') /. 2.)
+          ((k'.position -. k.position) *. length);
+        loop rest
+    | _ -> ()
+  in
+  loop t.major
+
+(* [fits length t] is [true] iff no two adjacent labels of [t] overlap on an
+   axis [length] long. *)
+let fits length (t : Ticks.t) =
+  let extent = tick_extent measure in
+  let rec loop = function
+    | (k : Ticks.tick) :: (k' :: _ as rest) ->
+        (k'.position -. k.position) *. length >= (extent k +. extent k') /. 2.
+        && loop rest
+    | _ -> true
+  in
+  loop t.major
+
+let check_increasing ps =
+  let rec loop = function
+    | a :: (b :: _ as rest) ->
+        less float_exact ~than:b a;
+        loop rest
+    | _ -> ()
+  in
+  loop ps
+
+(* Labels shown with the context they are read in, the last one set. *)
+let read (t : Ticks.t) =
+  let _, acc =
+    List.fold_left
+      (fun (ctx, acc) (k : Ticks.tick) ->
+        let ctx = match k.context with Some _ -> k.context | None -> ctx in
+        (ctx, (k.label, ctx) :: acc))
+      (None, []) t.major
+  in
+  List.rev acc
+
+(* Ticks *)
+
+let ticks =
+  group "ticks"
+    [
+      prop "major positions increase" gen_axis (fun (Axis s, length) ->
+          check_increasing (positions (Ticks.choose ~length ~measure s)));
+      prop "minor positions increase" gen_axis (fun (Axis s, length) ->
+          check_increasing (Ticks.choose ~length ~measure s).minor);
+      prop "no minor position is a major one" gen_axis (fun (Axis s, length) ->
+          let t = Ticks.choose ~length ~measure s in
+          let majors = positions t in
+          equal (list float_exact) []
+            (List.filter (fun p -> List.mem p majors) t.minor));
+    ]
+
+(* Making ticks *)
 
 (* Axes of every kind, one line each: the labels, with their contexts and note,
    and the number of minor ticks. *)
@@ -36,8 +193,6 @@ let axis_line (Row (name, s, length)) =
     (List.length t.minor)
 
 let axes () =
-  let at d t = Time.of_date_time (d, t) in
-  let linear a b = Scale.linear ~domain:(a, b) () in
   let log ?(base = 10.) a b = Scale.log ~base ~domain:(a, b) () in
   let sym ?(constant = 1.) a b = Scale.symlog ~constant ~domain:(a, b) () in
   let time ?(tz_offset_s = 0) a b = Scale.time ~tz_offset_s ~domain:(a, b) () in
@@ -191,76 +346,146 @@ let axes () =
     one category at 50: c0, 0 minor
     |}
 
-let baselines =
-  group "baselines"
+let choose =
+  group "choose"
     [
-      test "axes of every kind" axes;
-      test "a loss on a log axis" (fun () ->
-          let s = Scale.log ~domain:(0.0123, 4.2) () in
-          expect (show (Ticks.choose ~length:180. ~measure s))
-          @@ __POS_OF__
-               {|
-            (ticks (0.359246 "0.1") (0.753982 "1")
-             (minor 0.0833384 0.152848 0.202166 0.240419 0.271675 0.298101 0.320993
-              0.341184 0.478074 0.547583 0.596901 0.635154 0.66641 0.692836 0.715728
-              0.73592 0.872809 0.942318 0.991636))
-            |});
-      test "steps on an x axis" (fun () ->
-          let s = Scale.linear ~domain:(0., 10000.) () in
-          expect (show (Ticks.choose ~length:300. ~measure s))
-          @@ __POS_OF__
-               {|
-            (ticks (0 "0") (0.25 "2,500") (0.5 "5,000") (0.75 "7,500") (1 "10,000")
-             (minor 0.05 0.1 0.15 0.2 0.3 0.35 0.4 0.45 0.55 0.6 0.65 0.7 0.8 0.85 0.9
-              0.95))
-            |});
-      test "accuracy in percent" (fun () ->
-          let s = Scale.linear ~domain:(0.62, 0.97) () in
-          expect (show (Ticks.choose ~notation:Percent ~length:180. ~measure s))
-          @@ __POS_OF__
-               {|
-            (ticks (0.0857143 "65%") (0.371429 "75%") (0.657143 "85%") (0.942857 "95%")
-             (minor 0.228571 0.514286 0.8))
-            |});
-      test "twelve months" (fun () ->
-          let s =
-            Scale.time
-              ~domain:(Time.of_date (2026, 1, 1), Time.of_date (2026, 12, 31))
-              ()
+      prop "every tick lies in the domain" gen_axis (fun (Axis s, length) ->
+          let t = Ticks.choose ~length ~measure s in
+          List.iter
+            (fun p ->
+              at_least float_exact ~than:0. p;
+              at_most float_exact ~than:1. p)
+            (positions t @ t.minor));
+      prop "chosen labels never overlap"
+        ~examples:
+          [
+            ( Axis
+                (Scale.time
+                   ~domain:
+                     (Time.of_date (2051, 1, 1), Time.of_date (2099, 12, 31))
+                   ()),
+              30. );
+            (Axis (linear 1. (Float.succ (Float.succ (Float.succ 1.)))), 2000.);
+          ]
+        gen_axis
+        (fun (Axis s, length) ->
+          check_no_overlap length (Ticks.choose ~length ~measure s));
+      prop "chosen labels are distinct in their context" gen_axis
+        (fun (Axis s, length) ->
+          let r = read (Ticks.choose ~length ~measure s) in
+          equal
+            (list (pair string (option string)))
+            (List.sort_uniq compare r) (List.sort compare r));
+      prop "a choice is deterministic" gen_axis (fun (Axis s, length) ->
+          equal ticks_w
+            (Ticks.choose ~length ~measure s)
+            (Ticks.choose ~length ~measure s));
+      prop "measure is called once per distinct string" gen_axis
+        (fun (Axis s, length) ->
+          let seen = Hashtbl.create 16 in
+          let measure l =
+            if Hashtbl.mem seen l then failf "measured %S twice" l;
+            Hashtbl.add seen l ();
+            measure l
           in
-          expect (show (Ticks.choose ~length:400. ~measure s))
-          @@ __POS_OF__
-               {|
-            (ticks (0 "Jan" "2026") (0.0851648 "Feb") (0.162088 "Mar") (0.247253 "Apr")
-             (0.32967 "May") (0.414835 "Jun") (0.497253 "Jul") (0.582418 "Aug")
-             (0.667582 "Sep") (0.75 "Oct") (0.835165 "Nov") (0.917582 "Dec"))
-            |});
-      test "128 token categories at 180 pt" (fun () ->
+          ignore (Ticks.choose ~length ~measure s));
+      prop "band ticks are labelled as of_values labels them"
+        (Gen.pair (Gen.int_range 1 300) gen_length)
+        (fun (n, length) ->
           let s =
             Scale.band
               ~domain:
-                (Indices
-                   (Array.init 128 (fun i -> (i, "tok" ^ string_of_int i))))
+                (Indices (Array.init n (fun i -> (i, "c" ^ string_of_int i))))
               ()
           in
-          expect (show (Ticks.choose ~length:180. ~measure s))
-          @@ __POS_OF__
-               {| (ticks (0.00390625 "tok0") (0.394531 "tok50") (0.785156 "tok100")) |});
-      test "the 1e17 domain" (fun () ->
-          let s = linear 1e17 (1e17 +. 32.) in
-          expect (show (Ticks.choose ~length:300. ~measure s))
-          @@ __POS_OF__ {| (ticks (0 "0") (0.5 "20") (1 "30") (note "+10¹⁷")) |});
-      test "a symlog axis" (fun () ->
-          let s = Scale.symlog ~domain:(-1000., 1000.) () in
-          expect (show (Ticks.choose ~length:300. ~measure s))
-          @@ __POS_OF__
-               {|
-            (ticks (0 "−1000") (0.165995 "−100") (0.32646 "−10") (0.449836 "−1")
-             (0.5 "0") (0.550164 "1") (0.67354 "10") (0.834005 "100") (1 "1000"))
-            |});
+          let t = Ticks.choose ~length ~measure s in
+          let vs =
+            List.map (fun p -> Option.get (Scale.invert s p)) (positions t)
+          in
+          equal (list string) (labels t)
+            (labels (Ticks.of_values s (Array.of_list vs))));
+      test "chosen ticks are labelled as of_values labels them" (fun () ->
+          let s = linear 0. 10000. in
+          let t = Ticks.choose ~length:300. ~measure s in
+          equal (list string)
+            (labels (Ticks.of_values s [| 0.; 2500.; 5000.; 7500.; 10000. |]))
+            (labels t));
+      test "a constant domain has one tick" (fun () ->
+          let t = Ticks.choose ~length:100. ~measure (linear 3. 3.) in
+          equal (list string) [ "3" ] (labels t);
+          let t0 = Time.v S 7L in
+          let t =
+            Ticks.choose ~length:100. ~measure (Scale.time ~domain:(t0, t0) ())
+          in
+          equal
+            (list (pair string (option string)))
+            [ (":07", Some "00:00") ]
+            (List.combine (labels t) (contexts t)));
+      test "a band without categories has no tick" (fun () ->
+          equal ticks_w
+            (Ticks.of_values (Scale.band ()) [||])
+            (Ticks.choose ~length:100. ~measure (Scale.band ())));
+      test "a scale that normalises nothing has no tick" (fun () ->
+          let logit =
+            Scale.custom ~transform:"logit"
+              ~forward:(fun p -> Float.log (p /. (1. -. p)))
+              ~inverse:(fun x -> 1. /. (1. +. Float.exp (-.x)))
+              ()
+          in
+          let ln =
+            Scale.custom ~transform:"ln" ~forward:Float.log ~inverse:Float.exp
+              ()
+          in
+          equal ticks_w
+            (Ticks.of_values logit [||])
+            (Ticks.choose ~length:200. ~measure logit);
+          equal ticks_w (Ticks.of_values ln [||])
+            (Ticks.choose ~length:200. ~measure ln));
+      test "two seconds far from the epoch have the ticks they have near it"
+        (fun () ->
+          let positions_at base =
+            let s =
+              Scale.time
+                ~domain:
+                  ( Time.v S (Int64.add base 511L),
+                    Time.v S (Int64.add base 513L) )
+                ()
+            in
+            positions (Ticks.choose ~length:300. ~measure s)
+          in
+          equal (list float_exact) (positions_at 0L)
+            (positions_at (Int64.shift_left 1L 62)));
+      test "the length must be finite and positive" (fun () ->
+          invalid (fun () -> Ticks.choose ~length:0. ~measure (linear 0. 1.));
+          invalid (fun () ->
+              Ticks.choose ~length:Float.nan ~measure (linear 0. 1.));
+          invalid (fun () ->
+              Ticks.choose ~length:Float.infinity ~measure (linear 0. 1.)));
+      test "the spacing must be finite and non-negative" (fun () ->
+          let choose spacing =
+            Ticks.choose ~spacing ~length:100. ~measure (linear 0. 1.)
+          in
+          invalid (fun () -> choose (-1.));
+          invalid (fun () -> choose Float.nan);
+          invalid (fun () -> choose Float.infinity));
+      test "extents must be finite and positive" (fun () ->
+          let choose e =
+            Ticks.choose ~length:100. ~measure:(fun _ -> e) (linear 0. 1.)
+          in
+          invalid (fun () -> choose 0.);
+          invalid (fun () -> choose (-1.));
+          invalid (fun () -> choose Float.nan);
+          invalid (fun () -> choose Float.infinity));
+      test "a notation is refused on a scale that is not quantitative"
+        (fun () ->
+          invalid (fun () ->
+              Ticks.choose ~notation:Si ~length:100. ~measure (Scale.time ())));
+      test "chosen ticks of axes of every kind match their baseline" axes;
       test "a wide symlog axis skips exponents from an offset" (fun () ->
           let s = Scale.symlog ~domain:(-1e6, 1e9) () in
-          expect (show (Ticks.choose ~length:600. ~measure s))
+          expect
+            (Format.asprintf "%a" Ticks.pp
+               (Ticks.choose ~length:600. ~measure s))
           @@ __POS_OF__
                {|
             (ticks (0.0666664 "−10⁵") (0.199971 "−10³") (0.330574 "−10¹") (0.4 "0")
@@ -268,13 +493,15 @@ let baselines =
              (1 "10⁹")
              (minor 0 0.13333 0.266379 0.379931 0.420069 0.533621 0.66667 0.8 0.933333))
             |});
-      test "a day of hours" (fun () ->
+      test "a day takes ticks six hours apart" (fun () ->
           let s =
             Scale.time
               ~domain:(Time.of_date (2026, 3, 3), Time.of_date (2026, 3, 4))
               ()
           in
-          expect (show (Ticks.choose ~length:300. ~measure s))
+          expect
+            (Format.asprintf "%a" Ticks.pp
+               (Ticks.choose ~length:300. ~measure s))
           @@ __POS_OF__
                {|
             (ticks (0 "00:00" "3 Mar") (0.25 "06:00") (0.5 "12:00") (0.75 "18:00")
@@ -285,537 +512,174 @@ let baselines =
             |});
     ]
 
-(* Quantities *)
-
-let labelled name ?notation vs expected note =
-  test name (fun () ->
-      let t = of_values ?notation (linear (-1e300) 1e300) vs in
-      equal (list string) expected (labels t);
-      equal (option string) note t.Ticks.note)
-
-let quantity_labels =
-  group "quantities"
-    [
-      labelled "values a quarter apart share two decimals" [| 0.; 0.25; 0.5 |]
-        [ "0.00"; "0.25"; "0.50" ] None;
-      labelled "a large narrow range reads against an offset"
-        [| 1000000.1; 1000000.2; 1000000.3; 1000000.4; 1000000.5 |]
-        [ "0.1"; "0.2"; "0.3"; "0.4"; "0.5" ]
-        (Some "+10⁶");
-      labelled "millions read against a factor"
-        [| 0.; 500000.; 1000000.; 1500000.; 2000000. |]
-        [ "0.0"; "0.5"; "1.0"; "1.5"; "2.0" ]
-        (Some "×10⁶");
-      (* The floats there are 4 apart, and 18014398509482010 is the midpoint of
-         the first, whose mantissa is even, and the second, whose is odd. *)
-      labelled "a midpoint is the decimal of the even float only"
-        [| 18014398509482008.; 18014398509482012. |]
-        [ "0"; "2" ] (Some "+1.801439850948201×10¹⁶");
-      labelled "years stay ungrouped" [| 2000.; 2005.; 2010. |]
-        [ "2000"; "2005"; "2010" ] None;
-      labelled "ten thousands are grouped" [| 0.; 5000.; 10000. |]
-        [ "0"; "5,000"; "10,000" ] None;
-      labelled "an offset below a million is written plain and grouped"
-        [| 12345.001; 12345.002; 12345.003 |]
-        [ "0.001"; "0.002"; "0.003" ]
-        (Some "+12,345");
-      labelled "a factor and an offset share the note"
-        [| 2500000000.000001; 2500000000.000002; 2500000000.000003 |]
-        [ "1"; "2"; "3" ] (Some "×10⁻⁶ +2.5×10⁹");
-      labelled "negative values take a negative offset"
-        [| -1000000.5; -1000000.3; -1000000.1 |]
-        [ "−0.5"; "−0.3"; "−0.1" ]
-        (Some "−10⁶");
-      labelled "an offset of zero is no offset"
-        [| 0.1; 0.1 +. 0.2 |]
-        [ "0.10000000000000000"; "0.30000000000000004" ]
-        None;
-      labelled "values of both signs take no offset"
-        [| -1000000.1; 1000000.1 |]
-        [ "−1.0000001"; "1.0000001" ]
-        (Some "×10⁶");
-      labelled "zero alone" [| 0. |] [ "0" ] None;
-      labelled "the least subnormal reads as its shortest decimal"
-        [| 0.; 5e-324 |] [ "0"; "5" ] (Some "×10⁻³²⁴");
-      labelled "an offset is cut from the value nearest zero"
-        [| 1000000.9; 1000001.1 |] [ "0.9"; "1.1" ] (Some "+10⁶");
-      labelled "a negative offset is cut from the value nearest zero"
-        [| -1000001.1; -1000000.9 |]
-        [ "−1.1"; "−0.9" ] (Some "−10⁶");
-      labelled "seven digits take no offset" [| 12345.67; 12345.68 |]
-        [ "12,345.67"; "12,345.68" ]
-        None;
-      labelled "10^-4 takes no factor" [| 0.0001; 0.0002 |]
-        [ "0.0001"; "0.0002" ] None;
-      labelled "10^5 takes no factor" [| 100000.; 200000. |]
-        [ "100,000"; "200,000" ] None;
-      labelled "an offset of 10^-4 is written plain"
-        [| 0.00010000001; 0.00010000002 |]
-        [ "10"; "20" ] (Some "×10⁻¹² +0.0001");
-      labelled "exponents take the decimals of a fine step" ~notation:Exponent
-        [| 0.0015; 0.003 |]
-        [ "1.5×10⁻³"; "3×10⁻³" ]
-        None;
-      labelled "one value takes no offset" [| 1234567.89 |] [ "1.23456789" ]
-        (Some "×10⁶");
-      labelled "small values take a factor" [| 0.00001; 0.00002 |]
-        [ "10"; "20" ] (Some "×10⁻⁶");
-      labelled "an offset below 10^-4 is written as an exponent"
-        [| 0.000012345671; 0.000012345672 |]
-        [ "1"; "2" ] (Some "×10⁻¹² +1.234567×10⁻⁵");
-      labelled "plain labels share decimals" ~notation:Plain [| 0.; 0.25; 0.5 |]
-        [ "0.00"; "0.25"; "0.50" ] None;
-      labelled "plain labels take no offset" ~notation:Plain
-        [| 1000000.1; 1000000.2 |]
-        [ "1,000,000.1"; "1,000,000.2" ]
-        None;
-      labelled "percentages share decimals" ~notation:Percent [| 0.192; 0.2 |]
-        [ "19.2%"; "20.0%" ] None;
-      labelled "exponents take the decimals of the step" ~notation:Exponent
-        [| 0.; 1500.; 3000. |]
-        [ "0"; "1.5×10³"; "3×10³" ]
-        None;
-      labelled "SI labels take the decimals of the step" ~notation:Si
-        [| 0.; 500.; 1000.; 1500. |]
-        [ "0"; "500"; "1k"; "1.5k" ]
-        None;
-      test "a reversed scale reads against the same offset" (fun () ->
-          let s = Scale.linear ~reverse:true ~domain:(1000000., 1000001.) () in
-          let t = of_values s [| 1000000.1; 1000000.3 |] in
-          equal (list string) [ "0.3"; "0.1" ] (labels t);
-          equal (option string) (Some "+10⁶") t.note);
-      test "labels follow the locale" (fun () ->
-          let locale = Locale.v ~decimal:"," ~group:"\u{202F}" ~minus:"-" () in
-          let t =
-            of_values ~locale (linear (-1e9) 1e9) [| -12345.5; 0.; 12345.5 |]
-          in
-          equal (list string)
-            [ "-12\u{202F}345,5"; "0,0"; "12\u{202F}345,5" ]
-            (labels t));
-      (* 2^50 + 0.75 reads back from 1125899906842624.7 and .8, which are
-         equally near it: the shortest decimal takes the even last digit. *)
-      test "a value between two shortest decimals reads as the even one"
-        (fun () ->
-          let x = 0x1.0000000000003p+50 in
-          let t = of_values ~notation:Plain (linear 0. 0x1p51) [| x |] in
-          equal (list string) [ "1,125,899,906,842,624.8" ] (labels t));
-      prop "distinct values have distinct labels"
-        (Gen.list ~size:(Gen.int_range 1 12) Gen.float)
-        (fun vs ->
-          let t =
-            of_values
-              (linear (-.Float.max_float) Float.max_float)
-              (Array.of_list vs)
-          in
-          let ls = labels t in
-          equal int (List.length ls)
-            (List.length (List.sort_uniq String.compare ls)));
-    ]
-
-(* Rows from d3-scale's tickFormat-test.js: the label of one value among the
-   multiples [i × m × 10^k] of a step, for [i] from [i0] to [i1], in a linear
-   domain, by notation. *)
-let d3_formats =
-  [
-    ("[0;1] by 0.1", None, (0., 1.), (1, -1), (0, 10), 0.2, "0.2");
-    ("[0;1] by 0.05", None, (0., 1.), (5, -2), (0, 20), 0.2, "0.20");
-    ("[-100;100] by 20", None, (-100., 100.), (2, 1), (-5, 5), -20., "−20");
-    ( "[0;1] by 0.1 in percent",
-      Some Number.Percent,
-      (0., 1.),
-      (1, -1),
-      (0, 10),
-      0.2,
-      "20%" );
-    ( "[0.19;0.21] by 0.002 in percent",
-      Some Number.Percent,
-      (0.19, 0.21),
-      (2, -3),
-      (95, 105),
-      0.2,
-      "20.0%" );
-  ]
-
-let d3_labels =
-  cases "d3"
-    ~id:(fun (n, _, _, _, _, _, _) -> n)
-    d3_formats
-    (fun (_, notation, (a, b), (m, k), (i0, i1), x, expected) ->
-      let vs =
-        Array.init
-          (i1 - i0 + 1)
-          (fun i -> float_of_string (Printf.sprintf "%de%d" ((i0 + i) * m) k))
-      in
-      let t = of_values ?notation (linear a b) vs in
-      let i = Array.find_index (Float.equal x) vs in
-      equal string expected (List.nth (labels t) (Option.get i)))
-
-(* Logarithms *)
-
-let log_labels =
-  let row name s vs expected =
-    test name (fun () -> equal (list string) expected (labels (of_values s vs)))
-  in
-  group "logarithms"
-    [
-      row "base 10 within [10^-3;10^4] is plain"
-        (Scale.log ~domain:(1e-3, 1e5) ())
-        [| 0.01; 0.1; 1.; 10. |]
-        [ "0.01"; "0.1"; "1"; "10" ];
-      row "base 10 groups ten thousand"
-        (Scale.log ~domain:(1., 1e5) ())
-        [| 1.; 10.; 100.; 1000.; 10000. |]
-        [ "1"; "10"; "100"; "1,000"; "10,000" ];
-      row "base 10 beyond the range is in exponents"
-        (Scale.log ~domain:(1e-6, 1.) ())
-        [| 1e-5; 2e-5; 1e-4 |]
-        [ "10⁻⁵"; "2×10⁻⁵"; "10⁻⁴" ];
-      row "every label takes the exponent form together"
-        (Scale.log ~domain:(1., 1e6) ())
-        [| 1.; 1e5 |] [ "10⁰"; "10⁵" ];
-      row "base 2 is written as powers"
-        (Scale.log ~base:2. ~domain:(1., 8.) ())
-        [| 1.; 2.; 4.; 8. |]
-        [ "2⁰"; "2¹"; "2²"; "2³" ];
-      test "base e is written e" (fun () ->
-          let s = Scale.log ~base:(Float.exp 1.) ~domain:(1., 10.) () in
-          equal (list string) [ "e⁰"; "e¹"; "e²" ]
-            (labels
-               (of_values s
-                  (Array.init 3 (fun i ->
-                       Float.pow (Float.exp 1.) (Float.of_int i))))));
-      row "multiples in base 16"
-        (Scale.log ~base:16. ~domain:(1., 1000.) ())
-        [| 256.; 768. |] [ "16²"; "3×16²" ];
-      row "a fractional base is written plain"
-        (Scale.log ~base:1.5 ~domain:(1., 3.) ())
-        [| 1.; 1.5; 2.25 |]
-        [ "1.5⁰"; "1.5¹"; "1.5²" ];
-      row "symlog powers are signed"
-        (Scale.symlog ~domain:(-100., 100.) ())
-        [| -10.; -1.; 0.; 1.; 10. |]
-        [ "−10"; "−1"; "0"; "1"; "10" ];
-      row "symlog beyond the range is in exponents"
-        (Scale.symlog ~domain:(-1e6, 1e6) ())
-        [| -1e5; 0.; 1e5 |]
-        [ "−10⁵"; "0"; "10⁵" ];
-      row "values that are not all powers are quantities"
-        (Scale.log ~domain:(1., 10.) ())
-        [| 2.; 3.; 4.5 |] [ "2.0"; "3.0"; "4.5" ];
-      row "base 10 at 10^-3 is plain"
-        (Scale.log ~domain:(1e-4, 1.) ())
-        [| 0.001; 0.01 |] [ "0.001"; "0.01" ];
-      row "a power whose logarithm rounds below it"
-        (Scale.log ~domain:(1e-6, 1e4) ())
-        [| 1e-5; 1000. |] [ "10⁻⁵"; "10³" ];
-      test "an SI prefix beyond quecto keeps its decimals" (fun () ->
-          let s = Scale.log ~domain:(1e-33, 1e-30) () in
-          equal (list string) [ "0.02q" ]
-            (labels (of_values ~notation:Si s [| 2e-32 |])));
-      test "a notation writes each logarithm alone" (fun () ->
-          let s = Scale.log ~domain:(1e-3, 10.) () in
-          equal (list string) [ "10m"; "100m"; "1" ]
-            (labels (of_values ~notation:Si s [| 0.01; 0.1; 1. |]));
-          equal (list string)
-            [ "10⁻²"; "2×10⁻¹" ]
-            (labels (of_values ~notation:Exponent s [| 0.01; 0.2 |])));
-    ]
-
-(* Time *)
-
-let time_labels =
-  let at d t = Time.of_date_time (d, t) in
-  let row name ?tz_offset_s ?locale vs expected =
-    test name (fun () ->
-        let s =
-          Scale.time ?tz_offset_s
-            ~domain:(Time.v S (-100_000_000_000L), Time.v S 100_000_000_000L)
-            ()
-        in
-        let t = of_values ?locale s (Array.of_list vs) in
-        equal
-          (list (pair string (option string)))
-          expected
-          (List.combine (labels t) (contexts t)))
-  in
-  let ns t k = Time.add (Time.nanoseconds 1) k t in
-  group "time"
-    [
-      row "years"
-        [ at (2024, 1, 1) (0, 0, 0); at (2026, 1, 1) (0, 0, 0) ]
-        [ ("2024", None); ("2026", None) ];
-      row "year starts and a fraction are fractions"
-        [
-          ns (at (2025, 1, 1) (0, 0, 0)) 500_000_000;
-          ns (at (2026, 1, 1) (0, 0, 0)) 500_000_000;
-        ]
-        [ (".5", Some "00:00:00"); (".5", None) ];
-      row "months, the year on change"
-        [
-          at (2025, 12, 1) (0, 0, 0);
-          at (2026, 1, 1) (0, 0, 0);
-          at (2026, 2, 1) (0, 0, 0);
-        ]
-        [ ("Dec", Some "2025"); ("Jan", Some "2026"); ("Feb", None) ];
-      row "days"
-        [ at (2026, 3, 3) (0, 0, 0); at (2026, 3, 4) (0, 0, 0) ]
-        [ ("3", Some "Mar 2026"); ("4", None) ];
-      row "minutes"
-        [ at (2026, 3, 3) (14, 5, 0); at (2026, 3, 3) (14, 10, 0) ]
-        [ ("14:05", Some "3 Mar"); ("14:10", None) ];
-      row "seconds"
-        [ at (2026, 3, 3) (14, 5, 9); at (2026, 3, 3) (14, 5, 10) ]
-        [ (":09", Some "14:05"); (":10", None) ];
-      row "fractions take the fewest digits that write every value"
-        [
-          ns (at (2026, 3, 3) (14, 5, 9)) 250_000_000;
-          ns (at (2026, 3, 3) (14, 5, 9)) 500_000_000;
-        ]
-        [ (".25", Some "14:05:09"); (".50", None) ];
-      row "a fraction has at least one digit"
-        [
-          at (2026, 3, 3) (14, 5, 9);
-          ns (at (2026, 3, 3) (14, 5, 9)) 500_000_000;
-        ]
-        [ (".0", Some "14:05:09"); (".5", None) ];
-      row "nanoseconds take nine digits"
-        [ ns (at (2026, 3, 3) (0, 0, 0)) 1; ns (at (2026, 3, 3) (0, 0, 0)) 2 ]
-        [ (".000000001", Some "00:00:00"); (".000000002", None) ];
-      row "labels are read at the scale's offset" ~tz_offset_s:3600
-        [ Time.of_date ~tz_offset_s:3600 (2026, 3, 3) ]
-        [ ("3", Some "Mar 2026") ];
-      row "negative years take the locale's minus"
-        [ at (-500, 1, 1) (0, 0, 0); at (0, 1, 1) (0, 0, 0) ]
-        [ ("−500", None); ("0", None) ];
-      row "months are named by the locale"
-        ~locale:
-          (Locale.v ~decimal:"," ~group:"\u{202F}"
-             ~months:
-               [|
-                 "janv.";
-                 "févr.";
-                 "mars";
-                 "avr.";
-                 "mai";
-                 "juin";
-                 "juil.";
-                 "août";
-                 "sept.";
-                 "oct.";
-                 "nov.";
-                 "déc.";
-               |]
-             ())
-        [
-          at (2026, 2, 1) (0, 0, 0); ns (at (2026, 2, 1) (0, 0, 0)) 500_000_000;
-        ]
-        [ (",0", Some "00:00:00"); (",5", None) ];
-    ]
-
-(* Values and categories *)
-
-let values =
-  group "values"
+let of_values =
+  group "of_values"
     [
       test "values outside the domain or missing are dropped" (fun () ->
           let t =
-            of_values (linear 0. 10.)
+            Ticks.of_values (linear 0. 10.)
               [| -1.; Float.nan; 5.; 11.; Float.infinity |]
           in
           equal (list string) [ "5" ] (labels t);
           let t =
-            of_values (Scale.log ~domain:(1., 100.) ()) [| 0.; -1.; 10. |]
+            Ticks.of_values (Scale.log ~domain:(1., 100.) ()) [| 0.; -1.; 10. |]
           in
           equal (list string) [ "10" ] (labels t));
       test "instants outside the domain are dropped" (fun () ->
           let s = Scale.time ~domain:(Time.v S 10L, Time.v S 20L) () in
-          let t = of_values s [| Time.v S 5L; Time.v S 15L; Time.v S 25L |] in
-          equal (list string) [ ":15" ] (labels t));
-      test "each value is labelled once, in the order of positions" (fun () ->
-          let t = of_values (linear 0. 10.) [| 5.; 1.; 5.; 3. |] in
-          equal (list string) [ "1"; "3"; "5" ] (labels t);
-          let s = Scale.linear ~reverse:true ~domain:(0., 10.) () in
-          let t = of_values s [| 5.; 1.; 3. |] in
-          equal (list string) [ "5"; "3"; "1" ] (labels t);
-          equal
-            (list (float 1e-12))
-            [ 0.5; 0.7; 0.9 ]
-            (List.map (fun (k : Ticks.tick) -> k.position) t.major));
-      test "categories are labelled by label or text" (fun () ->
-          let s = Scale.band ~domain:(Labels [| "a"; "b" |]) () in
-          equal (list string) [ "a"; "b" ]
-            (labels (of_values s [| "b"; "a"; "z" |]));
-          let s =
-            Scale.band ~domain:(Indices [| (3, "the"); (7, "the") |]) ()
+          let t =
+            Ticks.of_values s [| Time.v S 5L; Time.v S 15L; Time.v S 25L |]
           in
-          equal (list string) [ "the"; "the" ]
-            (labels (of_values s [| "7"; "3" |])));
+          equal (list string) [ ":15" ] (labels t));
+      test "each value is labelled once" (fun () ->
+          let t = Ticks.of_values (linear 0. 10.) [| 5.; 1.; 5.; 3. |] in
+          equal (list string) [ "1"; "3"; "5" ] (labels t));
+      test "ticks are in increasing order of their positions" (fun () ->
+          let s = Scale.linear ~reverse:true ~domain:(0., 10.) () in
+          let t = Ticks.of_values s [| 5.; 1.; 3. |] in
+          equal (list string) [ "5"; "3"; "1" ] (labels t);
+          equal (list float_exact)
+            (List.map (Scale.normalize s) [ 5.; 3.; 1. ])
+            (positions t));
       test "of_values has no minor ticks" (fun () ->
           equal (list float_exact) []
-            (of_values (linear 0. 1.) [| 0.; 1. |]).minor);
+            (Ticks.of_values (linear 0. 1.) [| 0.; 1. |]).minor);
       test "a notation is refused on a scale that is not quantitative"
         (fun () ->
-          invalid (fun () -> of_values ~notation:Plain (Scale.band ()) [||]);
           invalid (fun () ->
-              Ticks.choose ~notation:Si ~length:100. ~measure (Scale.time ())));
+              Ticks.of_values ~notation:Plain (Scale.band ()) [||]));
     ]
 
-(* Choosing *)
+(* Candidates *)
 
-(* A scale of any kind, for the laws of [choose]. *)
-type axis = Axis : 'd Scale.t -> axis
-
-let gen_scale =
-  let domain ends =
-    Gen.map
-      (fun (a, b) -> if a <= b then (a, b) else (b, a))
-      (Gen.such_that (fun (a, b) -> a <> b) (Gen.pair ends ends))
+(* The steps between the values of a linear axis's major ticks, each with the
+   bound on its error: a value inverted from its position is within [8 ε (|x| +
+   |u| (|a| + |b|))] of itself, the bound test_scale derives for a linear
+   inversion. *)
+let steps s (a, b) (t : Ticks.t) =
+  let value p =
+    let x = Option.get (Scale.invert s p) in
+    ( x,
+      8. *. Float.epsilon
+      *. (Float.abs x +. (Float.abs p *. (Float.abs a +. Float.abs b))) )
   in
-  let moderate = Gen.float_range (-1e4) 1e4 in
-  let gen_domain = domain (Gen.frequency [ (3, moderate); (1, Gen.float) ]) in
-  (* The transforms of pow and custom scales are checked over moderate domains,
-     where their searches stay short. *)
-  let moderate = domain moderate in
-  let positive =
-    Gen.map
-      (fun (a, b) -> (Float.min a b, Float.max a b))
-      (Gen.such_that
-         (fun (a, b) -> a <> b)
-         (Gen.pair (Gen.float_range 1e-6 1e6) (Gen.float_range 1e-6 1e6)))
-  in
-  let instants =
-    Gen.map
-      (fun (s, w) ->
-        let a = Time.v S (Int64.of_int s) in
-        (a, Time.add (Time.milliseconds 1) w a))
-      (Gen.pair
-         (Gen.int_range (-4_000_000_000) 4_000_000_000)
-         (Gen.frequency
-            [
-              (2, Gen.int_range 1 100_000);
-              (3, Gen.int_range 1 1_000_000_000_000);
-            ]))
-  in
-  let quantities f gen = Gen.map (fun d -> Axis (f d)) gen in
-  Gen.one_of
-    [
-      quantities (fun d -> Scale.linear ~domain:d ()) gen_domain;
-      quantities (fun d -> Scale.symlog ~domain:d ()) gen_domain;
-      quantities (fun d -> Scale.log ~domain:d ()) positive;
-      quantities (fun d -> Scale.log ~base:2. ~domain:d ()) positive;
-      quantities (fun d -> Scale.linear ~reverse:true ~domain:d ()) gen_domain;
-      quantities (fun d -> Scale.linear ~clamp:true ~domain:d ()) gen_domain;
-      quantities (fun d -> Scale.pow ~exponent:0.5 ~domain:d ()) moderate;
-      quantities
-        (fun d ->
-          Scale.custom ~transform:"asinh" ~forward:Float.asinh
-            ~inverse:Float.sinh ~domain:d ())
-        moderate;
-      Gen.map
-        (fun (d, reverse) -> Axis (Scale.time ~reverse ~domain:d ()))
-        (Gen.pair instants Gen.bool);
-      Gen.map
-        (fun (n, reverse) ->
-          Axis
-            (Scale.band ~reverse
-               ~domain:(Labels (Array.init n (fun i -> "c" ^ string_of_int i)))
-               ()))
-        (Gen.pair (Gen.int_range 1 40) Gen.bool);
-    ]
-  |> Gen.with_pp (fun ppf (Axis s) -> Scale.pp ppf s)
-
-(* Axes from short to billions of points long, as an aspect panel with very
-   unequal spans asks for. *)
-let gen_length =
-  Gen.frequency
-    [ (4, Gen.float_range 20. 2000.); (1, Gen.float_range 1e6 1e12) ]
-
-let tick_extent measure (k : Ticks.tick) =
-  match k.context with
-  | None -> measure k.label
-  | Some c -> Float.max (measure k.label) (measure c)
-
-let check_no_overlap ?(measure = measure) length (t : Ticks.t) =
-  let extent = tick_extent measure in
   let rec loop = function
-    | (k : Ticks.tick) :: (k' :: _ as rest) ->
-        at_least float_exact
-          ~than:((extent k +. extent k') /. 2.)
-          ((k'.position -. k.position) *. length);
-        loop rest
-    | _ -> ()
+    | (x, e) :: ((y, e') :: _ as rest) -> (y -. x, e +. e') :: loop rest
+    | _ -> []
   in
-  loop t.major
+  loop (List.map value (positions t))
 
-(* [fits length t] is [true] iff no two adjacent labels of [t] overlap on an
-   axis [length] long. *)
-let fits length (t : Ticks.t) =
-  let extent = tick_extent measure in
-  let rec loop = function
-    | (k : Ticks.tick) :: (k' :: _ as rest) ->
-        (k'.position -. k.position) *. length >= (extent k +. extent k') /. 2.
-        && loop rest
-    | _ -> true
-  in
-  loop t.major
-
-let check_shape (t : Ticks.t) =
-  let rec increasing = function
-    | a :: (b :: _ as rest) ->
-        less float_exact ~than:b a;
-        increasing rest
-    | _ -> ()
-  in
-  let majors = List.map (fun (k : Ticks.tick) -> k.position) t.major in
-  increasing majors;
-  increasing t.minor;
-  List.iter
-    (fun p ->
-      at_least float_exact ~than:0. p;
-      at_most float_exact ~than:1. p)
-    (majors @ t.minor);
-  List.iter
-    (fun p -> is_false ~msg:(string_of_float p) (List.mem p majors))
-    t.minor
-
-(* Labels shown with the context they are read in, the last one set. *)
-let read (t : Ticks.t) =
-  let _, acc =
-    List.fold_left
-      (fun (ctx, acc) (k : Ticks.tick) ->
-        let ctx = match k.context with Some _ -> k.context | None -> ctx in
-        (ctx, (k.label, ctx) :: acc))
-      (None, []) t.major
-  in
-  List.rev acc
-
-let choice =
-  group "choose"
+let candidates =
+  group "candidates"
     [
-      prop "major ticks are in the domain, minor ticks between, none at a major"
-        (Gen.pair gen_scale gen_length) (fun (Axis s, length) ->
-          check_shape (Ticks.choose ~length ~measure s));
-      prop "an axis has at most a hundred ticks" (Gen.pair gen_scale gen_length)
+      prop "every step of a linear axis is 1, 2, 2.5 or 5 times a power of ten"
+        (Gen.quad
+           (Gen.float_range (-1e4) 1e4)
+           (Gen.float_range 1e-3 1e4)
+           (Gen.float_range 20. 2000.)
+           (Gen.float_range 0. 100.))
+        (fun (a, w, length, spacing) ->
+          let s = linear a (a +. w) in
+          let t = Ticks.choose ~spacing ~length ~measure s in
+          List.iter
+            (fun (d, e) ->
+              (* The mantissa in \[[1];[10]\], with 10 for a step rounded up to
+                 the next power. *)
+              let mantissa = d /. Float.pow 10. (Float.floor (Float.log10 d)) in
+              let in_q m =
+                List.exists
+                  (fun q -> Float.abs (m -. q) <= q *. e /. d)
+                  [ 1.; 2.; 2.5; 5.; 10. ]
+              in
+              satisfies ~claim:"a mantissa of 1, 2, 2.5 or 5" float_exact in_q
+                mantissa)
+            (steps s (a, a +. w) t));
+      test "a step finer than the floats gives the decimals of their floats"
+        (fun () ->
+          let t =
+            Ticks.choose ~length:300. ~measure (linear 1e17 (1e17 +. 32.))
+          in
+          equal (list float_exact) [ 0.; 0.5; 1. ] (positions t);
+          equal (list string) [ "0"; "20"; "30" ] (labels t);
+          equal (option string) (Some "+10¹⁷") t.note);
+      prop "a candidate is always chosen"
+        ~examples:
+          [
+            ( Axis
+                (Scale.time
+                   ~domain:
+                     (Time.of_date (2051, 1, 1), Time.of_date (2099, 12, 31))
+                   ()),
+              30.,
+              None );
+            ( Axis (linear 1. (Float.succ (Float.succ (Float.succ 1.)))),
+              2000.,
+              None );
+            (Axis (linear 0. 1.), 1000., Some 0.5);
+            (Axis (linear 0. 1.), 50., Some 100.);
+          ]
+        (Gen.triple gen_scale gen_length
+           (Gen.option (Gen.float_range 0.5 500.)))
+        (fun (Axis s, length, extent) ->
+          let measure = Option.fold ~none:measure ~some:Fun.const extent in
+          at_least int ~than:1
+            (List.length (Ticks.choose ~length ~measure s).major));
+      test "labels exactly as wide as their gap do not overlap" (fun () ->
+          let t =
+            Ticks.choose ~length:100. ~measure:(fun _ -> 100.) (linear 0. 1.)
+          in
+          equal (list string) [ "0"; "1" ] (labels t));
+      test "a band takes the least stride whose labels have room" (fun () ->
+          (* Six tokens, each label at most 22 long: a sixth of 150 holds one, a
+             sixth of 75 does not, and a third of 75 does. *)
+          let tokens = [| "the"; "cat"; "sat"; "on"; "the"; "mat" |] in
+          let s =
+            Scale.band
+              ~domain:(Indices (Array.mapi (fun i t -> (i, t)) tokens))
+              ()
+          in
+          equal (list string)
+            [ "the"; "cat"; "sat"; "on"; "the"; "mat" ]
+            (labels (Ticks.choose ~length:150. ~measure s));
+          equal (list string) [ "the"; "sat"; "the" ]
+            (labels (Ticks.choose ~length:75. ~measure s)));
+      test "128 tokens on 180 points take a stride of 50" (fun () ->
+          (* A category is 180 / 128 = 1.41 long. Labels "tokN" are 28 to 40
+             long: 20 categories, 28, are less than two of 34, and 50, 70, hold
+             any two. *)
+          let s =
+            Scale.band
+              ~domain:
+                (Indices
+                   (Array.init 128 (fun i -> (i, "tok" ^ string_of_int i))))
+              ()
+          in
+          equal (list string)
+            [ "tok0"; "tok50"; "tok100" ]
+            (labels (Ticks.choose ~length:180. ~measure s)));
+      prop "an axis has at most a hundred ticks" gen_axis
         (fun (Axis s, length) ->
           let n = List.length (Ticks.choose ~length ~measure s).major in
           cover ~share:0.05 "more than fifty ticks" (n > 50);
           at_most int ~than:100 n);
-      prop "past room for fifty ticks, a longer axis only lifts overlaps"
-        (Gen.pair gen_scale
-           (Gen.pair (Gen.float_range 1e6 1e12) (Gen.float_range 1. 1e6)))
-        (fun (Axis s, (length, factor)) ->
-          (* From [1e6] on, [m] is fifty for the labels of these scales, so [ρt]
-             and every score are the same at both lengths, and the longer axis
-             only admits candidates whose labels overlap on the shorter: its
-             choice is the shorter axis's if its labels fit there. *)
-          let long = Ticks.choose ~length:(length *. factor) ~measure s in
-          let fit = fits length long in
-          cover ~share:0.5 "the longer axis's ticks fit the shorter" fit;
-          if fit then
-            equal
-              (Testable.make ~pp:Ticks.pp ~equal:Ticks.equal)
-              long
-              (Ticks.choose ~length ~measure s));
+      cases "a band shows at most a hundred ticks on any axis"
+        ~id:(fun (n, k) -> Printf.sprintf "%d categories, a stride of %d" n k)
+        [ (100, 1); (101, 2); (400, 5); (1001, 20) ]
+        (fun (n, k) ->
+          let names = Array.init n (fun i -> "c" ^ string_of_int i) in
+          let s = Scale.band ~domain:(Labels names) () in
+          equal (list string)
+            (List.init ((n + k - 1) / k) (fun i -> names.(i * k)))
+            (labels (Ticks.choose ~length:1e7 ~measure s)));
+      test "a tick at 1 counts for the simplicity of a log axis" (fun () ->
+          let t =
+            Ticks.choose ~length:900.
+              ~measure:(fun l -> (8. *. Float.of_int (String.length l)) +. 4.)
+              (Scale.log ~domain:(0.48, 2.3) ())
+          in
+          equal (list string)
+            [ "0.6"; "0.8"; "1.0"; "1.2"; "1.4"; "1.6"; "1.8"; "2.0"; "2.2" ]
+            (labels t));
       test "an axis of billions of points aims for fifty ticks" (fun () ->
           (* [m] is [50], so [ρt = 49]: the step [0.02] has [ρ = 50], a density
              of [2 - 50/49], the tick [0] and full coverage. The step [0.01]
@@ -854,123 +718,12 @@ let choice =
               (Scale.symlog ~domain:(0.5, 5010.) ())
           in
           at_most int ~than:100 (List.length t.major));
-      prop "chosen labels never overlap" (Gen.pair gen_scale gen_length)
-        (fun (Axis s, length) ->
-          check_no_overlap length (Ticks.choose ~length ~measure s));
-      prop "chosen labels are distinct" (Gen.pair gen_scale gen_length)
-        (fun (Axis s, length) ->
-          let r = read (Ticks.choose ~length ~measure s) in
-          equal int (List.length r) (List.length (List.sort_uniq compare r)));
-      prop "a choice is deterministic" (Gen.pair gen_scale gen_length)
-        (fun (Axis s, length) ->
-          equal
-            (Testable.make ~pp:Ticks.pp ~equal:Ticks.equal)
-            (Ticks.choose ~length ~measure s)
-            (Ticks.choose ~length ~measure s));
-      prop "measure is called once per distinct string"
-        (Gen.pair gen_scale gen_length) (fun (Axis s, length) ->
-          let seen = Hashtbl.create 16 in
-          let measure l =
-            if Hashtbl.mem seen l then failf "measured %S twice" l;
-            Hashtbl.add seen l ();
-            measure l
-          in
-          ignore (Ticks.choose ~length ~measure s));
-      prop "band ticks are labelled as of_values labels them"
-        (Gen.pair (Gen.int_range 1 300) gen_length)
-        (fun (n, length) ->
-          let s =
-            Scale.band
-              ~domain:
-                (Indices (Array.init n (fun i -> (i, "c" ^ string_of_int i))))
-              ()
-          in
-          let t = Ticks.choose ~length ~measure s in
-          let vs =
-            List.map
-              (fun (k : Ticks.tick) -> Option.get (Scale.invert s k.position))
-              t.major
-          in
-          equal (list string) (labels t)
-            (labels (of_values s (Array.of_list vs))));
-      test "chosen ticks are labelled as of_values labels them" (fun () ->
-          let s = linear 0. 10000. in
-          let t = Ticks.choose ~length:300. ~measure s in
-          equal (list string)
-            (labels (of_values s [| 0.; 2500.; 5000.; 7500.; 10000. |]))
-            (labels t));
-      test "a constant domain has one tick" (fun () ->
-          let t = Ticks.choose ~length:100. ~measure (linear 3. 3.) in
-          equal (list string) [ "3" ] (labels t);
-          let t0 = Time.v S 7L in
-          let t =
-            Ticks.choose ~length:100. ~measure (Scale.time ~domain:(t0, t0) ())
-          in
-          equal int 1 (List.length t.major));
-      test "a band labels every category whose labels have room" (fun () ->
-          (* Six tokens, each label at most 22 long: a sixth of 150 holds one, a
-             sixth of 75 does not, and a third of 75 does. *)
-          let tokens = [| "the"; "cat"; "sat"; "on"; "the"; "mat" |] in
-          let s =
-            Scale.band
-              ~domain:(Indices (Array.mapi (fun i t -> (i, t)) tokens))
-              ()
-          in
-          equal (list string)
-            [ "the"; "cat"; "sat"; "on"; "the"; "mat" ]
-            (labels (Ticks.choose ~length:150. ~measure s));
-          equal (list string) [ "the"; "sat"; "the" ]
-            (labels (Ticks.choose ~length:75. ~measure s)));
-      cases "a band shows at most a hundred ticks on any axis"
-        ~id:(fun (n, k) -> Printf.sprintf "%d categories, a stride of %d" n k)
-        [ (100, 1); (101, 2); (400, 5); (1001, 20) ]
-        (fun (n, k) ->
-          let names = Array.init n (fun i -> "c" ^ string_of_int i) in
-          let s = Scale.band ~domain:(Labels names) () in
-          equal (list string)
-            (List.init ((n + k - 1) / k) (fun i -> names.(i * k)))
-            (labels (Ticks.choose ~length:1e7 ~measure s)));
-      test "a band without categories has no tick" (fun () ->
-          equal (list string) []
-            (labels (Ticks.choose ~length:100. ~measure (Scale.band ()))));
-      test "a scale that normalises nothing has no tick" (fun () ->
-          let logit =
-            Scale.custom ~transform:"logit"
-              ~forward:(fun p -> Float.log (p /. (1. -. p)))
-              ~inverse:(fun x -> 1. /. (1. +. Float.exp (-.x)))
-              ()
-          in
-          let ln =
-            Scale.custom ~transform:"ln" ~forward:Float.log ~inverse:Float.exp
-              ()
-          in
-          let none = Testable.make ~pp:Ticks.pp ~equal:Ticks.equal in
-          equal none (of_values logit [||])
-            (Ticks.choose ~length:200. ~measure logit);
-          equal none (of_values ln [||]) (Ticks.choose ~length:200. ~measure ln));
-      test "two seconds far from the epoch have the ticks they have near it"
-        (fun () ->
-          let positions base =
-            let s =
-              Scale.time
-                ~domain:
-                  ( Time.v S (Int64.add base 511L),
-                    Time.v S (Int64.add base 513L) )
-                ()
-            in
-            List.map
-              (fun (k : Ticks.tick) -> k.position)
-              (Ticks.choose ~length:300. ~measure s).major
-          in
-          equal (list float_exact) (positions 0L)
-            (positions (Int64.shift_left 1L 62)));
       prop "a spacing below twice every extent changes nothing"
         (Gen.triple gen_scale gen_length (Gen.float_range 0. 20.))
         (fun (Axis s, length, spacing) ->
           (* Every extent is at least [10], so twice the mean is at least
              [20]. *)
-          equal
-            (Testable.make ~pp:Ticks.pp ~equal:Ticks.equal)
+          equal ticks_w
             (Ticks.choose ~length ~measure s)
             (Ticks.choose ~spacing ~length ~measure s));
       test "a spacing of a fifth of the axis aims for five steps" (fun () ->
@@ -991,103 +744,8 @@ let choice =
           equal (list string) [ "0"; "5"; "10" ]
             (labels
                (Ticks.choose ~spacing:50. ~length:120. ~measure (linear 0. 10.))));
-      prop "every step of a linear axis is 1, 2, 2.5 or 5 times a power of ten"
-        (Gen.quad
-           (Gen.float_range (-1e4) 1e4)
-           (Gen.float_range 1e-3 1e4)
-           (Gen.float_range 20. 2000.)
-           (Gen.float_range 0. 100.))
-        (fun (a, w, length, spacing) ->
-          let s = linear a (a +. w) in
-          let t = Ticks.choose ~spacing ~length ~measure s in
-          let values =
-            List.map
-              (fun (k : Ticks.tick) -> Option.get (Scale.invert s k.position))
-              t.major
-          in
-          let rec steps = function
-            | x :: (y :: _ as rest) -> (y -. x) :: steps rest
-            | _ -> []
-          in
-          List.iter
-            (fun d ->
-              (* The mantissa in \[[1];[10]\], with 10 for a step rounded up to
-                 the next power. *)
-              let mantissa = d /. Float.pow 10. (Float.floor (Float.log10 d)) in
-              let in_q q =
-                List.exists
-                  (fun q' -> Float.abs (q -. q') <= 1e-6 *. q')
-                  [ 1.; 2.; 2.5; 5.; 10. ]
-              in
-              satisfies ~claim:"a mantissa of 1, 2, 2.5 or 5" float_exact in_q
-                mantissa)
-            (steps values));
-      test "the spacing must be finite and non-negative" (fun () ->
-          let choose spacing =
-            Ticks.choose ~spacing ~length:100. ~measure (linear 0. 1.)
-          in
-          invalid (fun () -> choose (-1.));
-          invalid (fun () -> choose Float.nan);
-          invalid (fun () -> choose Float.infinity));
-      test "the length must be finite and positive" (fun () ->
-          invalid (fun () -> Ticks.choose ~length:0. ~measure (linear 0. 1.));
-          invalid (fun () ->
-              Ticks.choose ~length:Float.nan ~measure (linear 0. 1.));
-          invalid (fun () ->
-              Ticks.choose ~length:Float.infinity ~measure (linear 0. 1.)));
-      test "extents must be finite and positive" (fun () ->
-          invalid (fun () ->
-              Ticks.choose ~length:100. ~measure:(fun _ -> 0.) (linear 0. 1.));
-          invalid (fun () ->
-              Ticks.choose ~length:100.
-                ~measure:(fun _ -> Float.nan)
-                (linear 0. 1.)));
-      test "a log domain within a decade has several ticks" (fun () ->
-          let t =
-            Ticks.choose ~length:200. ~measure (Scale.log ~domain:(2., 8.) ())
-          in
-          at_least int ~than:2 (List.length t.major));
-      test "a tick at 1 counts for the simplicity of a log axis" (fun () ->
-          let t =
-            Ticks.choose ~length:900.
-              ~measure:(fun l -> (8. *. Float.of_int (String.length l)) +. 4.)
-              (Scale.log ~domain:(0.48, 2.3) ())
-          in
-          equal (list string)
-            [ "0.6"; "0.8"; "1.0"; "1.2"; "1.4"; "1.6"; "1.8"; "2.0"; "2.2" ]
-            (labels t));
-      test "ticks of the 1e17 domain read as the decimals of their floats"
+      test "of candidates that score the same, the coarsest step is chosen"
         (fun () ->
-          let t =
-            Ticks.choose ~length:300. ~measure (linear 1e17 (1e17 +. 32.))
-          in
-          equal (list string) [ "0"; "20"; "30" ] (labels t);
-          equal (option string) (Some "+10¹⁷") t.note);
-      test "a time domain without a lone boundary on a short axis" (fun () ->
-          let s =
-            Scale.time
-              ~domain:(Time.of_date (2051, 1, 1), Time.of_date (2099, 12, 31))
-              ()
-          in
-          let t = Ticks.choose ~length:30. ~measure s in
-          check_no_overlap 30. t;
-          at_least int ~than:1 (List.length t.major));
-      test "a domain of few floats on a long axis" (fun () ->
-          let a = 1. and b = Float.succ (Float.succ (Float.succ 1.)) in
-          let t = Ticks.choose ~length:2000. ~measure (linear a b) in
-          check_no_overlap 2000. t;
-          at_least int ~than:1 (List.length t.major));
-      test "short labels on a long axis" (fun () ->
-          let measure _ = 0.5 in
-          let t = Ticks.choose ~length:1000. ~measure (linear 0. 1.) in
-          check_no_overlap ~measure 1000. t;
-          at_least int ~than:50 (List.length t.major));
-      test "labels exactly as wide as their gap do not overlap" (fun () ->
-          let t =
-            Ticks.choose ~length:100. ~measure:(fun _ -> 100.) (linear 0. 1.)
-          in
-          equal (list string) [ "0"; "1" ] (labels t));
-      test "equal candidates go to the coarsest step" (fun () ->
           (* Only one label fits, and 0 alone is the multiple of every step from
              100: the coarsest of them has no minor tick, the step of 100 would
              have -20 and 20. *)
@@ -1096,11 +754,430 @@ let choice =
           in
           equal (list string) [ "0" ] (labels t);
           equal (list float_exact) [] t.minor);
-      test "hundred-point labels on a short axis keep one tick" (fun () ->
-          let t =
-            Ticks.choose ~length:50. ~measure:(fun _ -> 100.) (linear 0. 1.)
+      test
+        "of calendar candidates that score the same, the coarsest interval is \
+         chosen" (fun () ->
+          (* Only one label fits. The day, the month and the year, each the
+             least multiple of its unit, have one boundary in the domain, the
+             first of 2026, and score the same; the hour has several. The year
+             is chosen, whose quarters hold no other minor tick there; the day's
+             six hours would be 12:00, 18:00, 06:00 and 12:00. *)
+          let s =
+            Scale.time
+              ~domain:(at (2025, 12, 31) (12, 0, 0), at (2026, 1, 1) (12, 0, 0))
+              ()
           in
-          equal int 1 (List.length t.major));
+          let t = Ticks.choose ~length:300. ~measure:(fun _ -> 1000.) s in
+          equal (list string) [ "2026" ] (labels t);
+          equal (list float_exact) [] t.minor);
+      prop "past room for fifty ticks, a longer axis only lifts overlaps"
+        (Gen.pair gen_scale
+           (Gen.pair (Gen.float_range 1e6 1e12) (Gen.float_range 1. 1e6)))
+        (fun (Axis s, (length, factor)) ->
+          (* From [1e6] on, [m] is fifty for the labels of these scales, so [ρt]
+             and every score are the same at both lengths, and the longer axis
+             only admits candidates whose labels overlap on the shorter: its
+             choice is the shorter axis's if its labels fit there. *)
+          let long = Ticks.choose ~length:(length *. factor) ~measure s in
+          let fit = fits length long in
+          cover ~share:0.5 "the longer axis's ticks fit the shorter" fit;
+          if fit then equal ticks_w long (Ticks.choose ~length ~measure s));
+    ]
+
+(* Labels *)
+
+(* Quantities over a domain that holds every value drawn. *)
+let quantities ?notation vs =
+  Ticks.of_values ?notation (linear (-1e300) 1e300) vs
+
+let reads expected note t =
+  equal (pair (list string) (option string)) (expected, note) (labels t, t.note)
+
+(* The multiples [i × m × 10^k] of a step, for [i] from [i0] to [i1]. *)
+let multiples (m, k) (i0, i1) =
+  Array.init
+    (i1 - i0 + 1)
+    (fun i -> float_of_string (Printf.sprintf "%de%d" ((i0 + i) * m) k))
+
+let quantity_labels =
+  group "quantities"
+    [
+      test "values a quarter apart share two decimals" (fun () ->
+          reads [ "0.00"; "0.25"; "0.50" ] None (quantities [| 0.; 0.25; 0.5 |]));
+      test "a large narrow range reads against an offset" (fun () ->
+          reads
+            [ "0.1"; "0.2"; "0.3"; "0.4"; "0.5" ]
+            (Some "+10⁶")
+            (quantities
+               [| 1000000.1; 1000000.2; 1000000.3; 1000000.4; 1000000.5 |]));
+      test "an offset of zero is no offset" (fun () ->
+          reads
+            [ "0.10000000000000000"; "0.30000000000000004" ]
+            None
+            (quantities [| 0.1; 0.1 +. 0.2 |]));
+      test "values of both signs take no offset" (fun () ->
+          reads
+            [ "−1.0000001"; "1.0000001" ]
+            (Some "×10⁶")
+            (quantities [| -1000000.1; 1000000.1 |]));
+      test "one value takes no offset" (fun () ->
+          reads [ "1.23456789" ] (Some "×10⁶") (quantities [| 1234567.89 |]));
+      test "seven digits take no offset" (fun () ->
+          reads
+            [ "12,345.67"; "12,345.68" ]
+            None
+            (quantities [| 12345.67; 12345.68 |]));
+      test "an offset is cut from the value nearest zero" (fun () ->
+          reads [ "0.9"; "1.1" ] (Some "+10⁶")
+            (quantities [| 1000000.9; 1000001.1 |]));
+      test "a negative offset is cut from the value nearest zero" (fun () ->
+          reads [ "−1.1"; "−0.9" ] (Some "−10⁶")
+            (quantities [| -1000001.1; -1000000.9 |]));
+      test "negative values take a negative offset" (fun () ->
+          reads
+            [ "−0.5"; "−0.3"; "−0.1" ]
+            (Some "−10⁶")
+            (quantities [| -1000000.5; -1000000.3; -1000000.1 |]));
+      test "a reversed scale reads against the same offset" (fun () ->
+          let s = Scale.linear ~reverse:true ~domain:(1000000., 1000001.) () in
+          reads [ "0.3"; "0.1" ] (Some "+10⁶")
+            (Ticks.of_values s [| 1000000.1; 1000000.3 |]));
+      test "millions read against a factor" (fun () ->
+          reads
+            [ "0.0"; "0.5"; "1.0"; "1.5"; "2.0" ]
+            (Some "×10⁶")
+            (quantities [| 0.; 500000.; 1000000.; 1500000.; 2000000. |]));
+      test "small values take a factor" (fun () ->
+          reads [ "10"; "20" ] (Some "×10⁻⁶")
+            (quantities [| 0.00001; 0.00002 |]));
+      test "10^-4 takes no factor" (fun () ->
+          reads [ "0.0001"; "0.0002" ] None (quantities [| 0.0001; 0.0002 |]));
+      test "10^5 takes no factor" (fun () ->
+          reads [ "100,000"; "200,000" ] None
+            (quantities [| 100000.; 200000. |]));
+      test "zero alone reads 0" (fun () ->
+          reads [ "0" ] None (quantities [| 0. |]));
+      test "the least subnormal reads as its shortest decimal" (fun () ->
+          reads [ "0"; "5" ] (Some "×10⁻³²⁴") (quantities [| 0.; 5e-324 |]));
+      test "years stay ungrouped" (fun () ->
+          reads [ "2000"; "2005"; "2010" ] None
+            (quantities [| 2000.; 2005.; 2010. |]));
+      test "ten thousands are grouped" (fun () ->
+          reads [ "0"; "5,000"; "10,000" ] None
+            (quantities [| 0.; 5000.; 10000. |]));
+      (* The floats there are 4 apart, and 18014398509482010 is the midpoint of
+         the first, whose mantissa is even, and the second, whose is odd. *)
+      test "a midpoint is the decimal of the even float only" (fun () ->
+          reads [ "0"; "2" ] (Some "+1.801439850948201×10¹⁶")
+            (quantities [| 18014398509482008.; 18014398509482012. |]));
+      (* 2^50 + 0.75 reads back from 1125899906842624.7 and .8, which are
+         equally near it: the shortest decimal takes the even last digit. *)
+      test "a value between two shortest decimals reads as the even one"
+        (fun () ->
+          let x = 0x1.0000000000003p+50 in
+          equal (list string)
+            [ "1,125,899,906,842,624.8" ]
+            (labels
+               (Ticks.of_values ~notation:Plain (linear 0. 0x1p51) [| x |])));
+      prop "distinct values have distinct labels"
+        (Gen.list ~size:(Gen.int_range 1 12) Gen.float)
+        (fun vs ->
+          let t =
+            Ticks.of_values
+              (linear (-.Float.max_float) Float.max_float)
+              (Array.of_list vs)
+          in
+          let ls = labels t in
+          equal (list string) (List.sort_uniq compare ls) (List.sort compare ls));
+      test "an offset below a million is written plain and grouped" (fun () ->
+          reads
+            [ "0.001"; "0.002"; "0.003" ]
+            (Some "+12,345")
+            (quantities [| 12345.001; 12345.002; 12345.003 |]));
+      test "a factor and an offset share the note" (fun () ->
+          reads [ "1"; "2"; "3" ] (Some "×10⁻⁶ +2.5×10⁹")
+            (quantities
+               [| 2500000000.000001; 2500000000.000002; 2500000000.000003 |]));
+      test "an offset of 10^-4 is written plain" (fun () ->
+          reads [ "10"; "20" ] (Some "×10⁻¹² +0.0001")
+            (quantities [| 0.00010000001; 0.00010000002 |]));
+      test "an offset below 10^-4 is written as an exponent" (fun () ->
+          reads [ "1"; "2" ] (Some "×10⁻¹² +1.234567×10⁻⁵")
+            (quantities [| 0.000012345671; 0.000012345672 |]));
+      test "plain labels share decimals" (fun () ->
+          reads [ "0.00"; "0.25"; "0.50" ] None
+            (quantities ~notation:Plain [| 0.; 0.25; 0.5 |]));
+      test "plain labels take no offset" (fun () ->
+          reads
+            [ "1,000,000.1"; "1,000,000.2" ]
+            None
+            (quantities ~notation:Plain [| 1000000.1; 1000000.2 |]));
+      test "percentages share decimals" (fun () ->
+          reads [ "19.2%"; "20.0%" ] None
+            (quantities ~notation:Percent [| 0.192; 0.2 |]));
+      test "exponents take the decimals of the step" (fun () ->
+          reads
+            [ "0"; "1.5×10³"; "3×10³" ]
+            None
+            (quantities ~notation:Exponent [| 0.; 1500.; 3000. |]));
+      test "exponents take the decimals of a fine step" (fun () ->
+          reads
+            [ "1.5×10⁻³"; "3×10⁻³" ]
+            None
+            (quantities ~notation:Exponent [| 0.0015; 0.003 |]));
+      test "SI labels take the decimals of the step" (fun () ->
+          reads
+            [ "0"; "500"; "1k"; "1.5k" ]
+            None
+            (quantities ~notation:Si [| 0.; 500.; 1000.; 1500. |]));
+      test "labels follow the locale" (fun () ->
+          let locale = Locale.v ~decimal:"," ~group:"\u{202F}" ~minus:"-" () in
+          let t =
+            Ticks.of_values ~locale (linear (-1e9) 1e9)
+              [| -12345.5; 0.; 12345.5 |]
+          in
+          equal (list string)
+            [ "-12\u{202F}345,5"; "0,0"; "12\u{202F}345,5" ]
+            (labels t));
+      (* Rows from d3-scale's tickFormat-test.js: the label of one value among
+         the multiples of a step, in a linear domain, by notation. *)
+      cases "a value among multiples of a step reads as d3 writes it"
+        ~id:(fun (n, _, _, _, _, _) -> n)
+        [
+          ("[0;1] by 0.1", None, (0., 1.), multiples (1, -1) (0, 10), 0.2, "0.2");
+          ( "[0;1] by 0.05",
+            None,
+            (0., 1.),
+            multiples (5, -2) (0, 20),
+            0.2,
+            "0.20" );
+          ( "[-100;100] by 20",
+            None,
+            (-100., 100.),
+            multiples (2, 1) (-5, 5),
+            -20.,
+            "−20" );
+          ( "[0;1] by 0.1 in percent",
+            Some Number.Percent,
+            (0., 1.),
+            multiples (1, -1) (0, 10),
+            0.2,
+            "20%" );
+          ( "[0.19;0.21] by 0.002 in percent",
+            Some Number.Percent,
+            (0.19, 0.21),
+            multiples (2, -3) (95, 105),
+            0.2,
+            "20.0%" );
+        ]
+        (fun (_, notation, (a, b), vs, x, expected) ->
+          let t = Ticks.of_values ?notation (linear a b) vs in
+          let i = Option.get (Array.find_index (Float.equal x) vs) in
+          equal string expected (List.nth (labels t) i));
+    ]
+
+let log_labels =
+  let reads expected s vs =
+    equal (list string) expected (labels (Ticks.of_values s vs))
+  in
+  group "logarithms"
+    [
+      test "values that are not all powers are quantities" (fun () ->
+          reads [ "2.0"; "3.0"; "4.5" ]
+            (Scale.log ~domain:(1., 10.) ())
+            [| 2.; 3.; 4.5 |]);
+      test "a base above 16 labels its multiples as quantities" (fun () ->
+          let s = Scale.log ~base:17. ~domain:(1., 1e4) () in
+          reads [ "17"; "34" ] s [| 17.; 34. |];
+          reads [ "17¹"; "17²" ] s [| 17.; 289. |]);
+      test "base 10 within [10^-3;10^4] is plain" (fun () ->
+          reads
+            [ "0.01"; "0.1"; "1"; "10" ]
+            (Scale.log ~domain:(1e-3, 1e5) ())
+            [| 0.01; 0.1; 1.; 10. |]);
+      test "base 10 at 10^-3 is plain" (fun () ->
+          reads [ "0.001"; "0.01" ]
+            (Scale.log ~domain:(1e-4, 1.) ())
+            [| 0.001; 0.01 |]);
+      test "base 10 groups ten thousand" (fun () ->
+          reads
+            [ "1"; "10"; "100"; "1,000"; "10,000" ]
+            (Scale.log ~domain:(1., 1e5) ())
+            [| 1.; 10.; 100.; 1000.; 10000. |]);
+      test "base 10 beyond the range is in exponents" (fun () ->
+          reads
+            [ "10⁻⁵"; "2×10⁻⁵"; "10⁻⁴" ]
+            (Scale.log ~domain:(1e-6, 1.) ())
+            [| 1e-5; 2e-5; 1e-4 |]);
+      test "every label takes the exponent form together" (fun () ->
+          reads [ "10⁰"; "10⁵" ] (Scale.log ~domain:(1., 1e6) ()) [| 1.; 1e5 |]);
+      test "10^i is the float nearest it" (fun () ->
+          reads [ "10⁻⁵"; "10³" ]
+            (Scale.log ~domain:(1e-6, 1e4) ())
+            [| 1e-5; 1000. |]);
+      test "symlog powers are signed" (fun () ->
+          reads
+            [ "−10"; "−1"; "0"; "1"; "10" ]
+            (Scale.symlog ~domain:(-100., 100.) ())
+            [| -10.; -1.; 0.; 1.; 10. |]);
+      test "symlog beyond the range is in exponents" (fun () ->
+          reads
+            [ "−10⁵"; "0"; "10⁵" ]
+            (Scale.symlog ~domain:(-1e6, 1e6) ())
+            [| -1e5; 0.; 1e5 |]);
+      test "base 2 is written as powers" (fun () ->
+          reads
+            [ "2⁰"; "2¹"; "2²"; "2³" ]
+            (Scale.log ~base:2. ~domain:(1., 8.) ())
+            [| 1.; 2.; 4.; 8. |]);
+      test "multiples in base 16 are written n×16ⁱ" (fun () ->
+          reads [ "16²"; "3×16²" ]
+            (Scale.log ~base:16. ~domain:(1., 1000.) ())
+            [| 256.; 768. |]);
+      test "a fractional base is written plain" (fun () ->
+          reads
+            [ "1.5⁰"; "1.5¹"; "1.5²" ]
+            (Scale.log ~base:1.5 ~domain:(1., 3.) ())
+            [| 1.; 1.5; 2.25 |]);
+      test "base e is written e" (fun () ->
+          let e = Float.exp 1. in
+          reads [ "e⁰"; "e¹"; "e²" ]
+            (Scale.log ~base:e ~domain:(1., 10.) ())
+            (Array.init 3 (fun i -> Float.pow e (Float.of_int i))));
+      test "a notation writes each logarithm alone" (fun () ->
+          let s = Scale.log ~domain:(1e-3, 10.) () in
+          equal (list string) [ "10m"; "100m"; "1" ]
+            (labels (Ticks.of_values ~notation:Si s [| 0.01; 0.1; 1. |]));
+          equal (list string)
+            [ "10⁻²"; "2×10⁻¹" ]
+            (labels (Ticks.of_values ~notation:Exponent s [| 0.01; 0.2 |])));
+      test "an SI prefix beyond quecto keeps its decimals" (fun () ->
+          let s = Scale.log ~domain:(1e-33, 1e-30) () in
+          equal (list string) [ "0.02q" ]
+            (labels (Ticks.of_values ~notation:Si s [| 2e-32 |])));
+    ]
+
+(* The labels and contexts of instants, on a scale whose domain holds every year
+   from -29000 to 33000. *)
+let time_labels ?tz_offset_s ?locale vs =
+  let s =
+    Scale.time ?tz_offset_s
+      ~domain:(Time.v S (-1_000_000_000_000L), Time.v S 1_000_000_000_000L)
+      ()
+  in
+  let t = Ticks.of_values ?locale s (Array.of_list vs) in
+  List.combine (labels t) (contexts t)
+
+let label_context = list (pair string (option string))
+let ns t k = Time.add (Time.nanoseconds 1) k t
+
+let time_labels_group =
+  group "time"
+    [
+      test "year starts are labelled by the year alone" (fun () ->
+          equal label_context
+            [ ("2024", None); ("2026", None) ]
+            (time_labels
+               [ at (2024, 1, 1) (0, 0, 0); at (2026, 1, 1) (0, 0, 0) ]));
+      test "month starts read the month, the year on change" (fun () ->
+          equal label_context
+            [ ("Dec", Some "2025"); ("Jan", Some "2026"); ("Feb", None) ]
+            (time_labels
+               [
+                 at (2025, 12, 1) (0, 0, 0);
+                 at (2026, 1, 1) (0, 0, 0);
+                 at (2026, 2, 1) (0, 0, 0);
+               ]));
+      test "day starts read the day, then the month and year" (fun () ->
+          equal label_context
+            [ ("3", Some "Mar 2026"); ("4", None) ]
+            (time_labels
+               [ at (2026, 3, 3) (0, 0, 0); at (2026, 3, 4) (0, 0, 0) ]));
+      test "minute starts read the time, then the day and month" (fun () ->
+          equal label_context
+            [ ("14:05", Some "3 Mar"); ("14:10", None) ]
+            (time_labels
+               [ at (2026, 3, 3) (14, 5, 0); at (2026, 3, 3) (14, 10, 0) ]));
+      test "second starts read the second, then the time to the minute"
+        (fun () ->
+          equal label_context
+            [ (":09", Some "14:05"); (":10", None) ]
+            (time_labels
+               [ at (2026, 3, 3) (14, 5, 9); at (2026, 3, 3) (14, 5, 10) ]));
+      test "year starts and a fraction are fractions" (fun () ->
+          equal label_context
+            [ (".5", Some "00:00:00"); (".5", None) ]
+            (time_labels
+               [
+                 ns (at (2025, 1, 1) (0, 0, 0)) 500_000_000;
+                 ns (at (2026, 1, 1) (0, 0, 0)) 500_000_000;
+               ]));
+      test "fractions take the fewest digits that write every value" (fun () ->
+          equal label_context
+            [ (".25", Some "14:05:09"); (".50", None) ]
+            (time_labels
+               [
+                 ns (at (2026, 3, 3) (14, 5, 9)) 250_000_000;
+                 ns (at (2026, 3, 3) (14, 5, 9)) 500_000_000;
+               ]));
+      test "a fraction has at least one digit" (fun () ->
+          equal label_context
+            [ (".0", Some "14:05:09"); (".5", None) ]
+            (time_labels
+               [
+                 at (2026, 3, 3) (14, 5, 9);
+                 ns (at (2026, 3, 3) (14, 5, 9)) 500_000_000;
+               ]));
+      test "nanoseconds take nine digits" (fun () ->
+          equal label_context
+            [ (".000000001", Some "00:00:00"); (".000000002", None) ]
+            (time_labels
+               [
+                 ns (at (2026, 3, 3) (0, 0, 0)) 1;
+                 ns (at (2026, 3, 3) (0, 0, 0)) 2;
+               ]));
+      test "a fraction takes the locale's decimal separator" (fun () ->
+          equal label_context
+            [ (",0", Some "00:00:00"); (",5", None) ]
+            (time_labels ~locale:(french ())
+               [
+                 at (2026, 2, 1) (0, 0, 0);
+                 ns (at (2026, 2, 1) (0, 0, 0)) 500_000_000;
+               ]));
+      test "labels are read at the scale's offset" (fun () ->
+          equal label_context
+            [ ("3", Some "Mar 2026") ]
+            (time_labels ~tz_offset_s:3600
+               [ Time.of_date ~tz_offset_s:3600 (2026, 3, 3) ]));
+      test "months are named by the locale" (fun () ->
+          equal label_context
+            [ ("déc.", Some "2025"); ("janv.", Some "2026") ]
+            (time_labels ~locale:(french ())
+               [ at (2025, 12, 1) (0, 0, 0); at (2026, 1, 1) (0, 0, 0) ]));
+      test "years of five digits are not grouped" (fun () ->
+          equal label_context
+            [ ("10000", None); ("10001", None) ]
+            (time_labels
+               [ at (10000, 1, 1) (0, 0, 0); at (10001, 1, 1) (0, 0, 0) ]));
+      test "a negative year takes the locale's minus" (fun () ->
+          equal label_context
+            [ ("−500", None); ("0", None) ]
+            (time_labels [ at (-500, 1, 1) (0, 0, 0); at (0, 1, 1) (0, 0, 0) ]));
+    ]
+
+let category_labels =
+  group "categories"
+    [
+      test "a category is labelled by its label or its integer's text"
+        (fun () ->
+          let s = Scale.band ~domain:(Labels [| "a"; "b" |]) () in
+          equal (list string) [ "a"; "b" ]
+            (labels (Ticks.of_values s [| "b"; "a"; "z" |]));
+          let s =
+            Scale.band ~domain:(Indices [| (3, "the"); (7, "the") |]) ()
+          in
+          equal (list string) [ "the"; "the" ]
+            (labels (Ticks.of_values s [| "7"; "3" |])));
     ]
 
 (* Minor ticks *)
@@ -1120,49 +1197,54 @@ let q_minors =
     ("2", 2., 60., [ "0"; "2" ], [ 0.5; 1.; 1.5 ]);
   ]
 
-let q_minor (_, b, length, ticks, minor) =
-  let s = linear 0. b in
-  let t = Ticks.choose ~length ~measure s in
-  equal (list string) ticks (labels t);
-  equal (list (float 1e-12)) (List.map (Scale.normalize s) minor) t.minor
+(* [minor_at s t vs] states that the minor ticks of [t] are at the values [vs]
+   of [s]. *)
+let minor_at s (t : Ticks.t) vs =
+  equal (list float_exact) (List.map (Scale.normalize s) vs) t.minor
 
 let minor_ticks =
   group "minor"
     [
-      cases "each step cuts into its parts"
+      cases "a step cuts into its parts, beyond the outer ticks to the ends"
         ~id:(fun (q, _, _, _, _) -> "q = " ^ q)
-        q_minors q_minor;
-      test "a step of one cuts into fifths" (fun () ->
-          let t =
-            Ticks.choose ~length:200. ~measure:(fun _ -> 40.) (linear 0. 2.)
-          in
-          equal (list string) [ "0"; "1"; "2" ] (labels t);
-          equal
-            (list (float 1e-12))
-            [ 0.1; 0.2; 0.3; 0.4; 0.6; 0.7; 0.8; 0.9 ]
-            t.minor);
-      test "a step of two cuts into quarters" (fun () ->
-          let t =
-            Ticks.choose ~length:100. ~measure:(fun _ -> 40.) (linear 0. 2.)
-          in
-          equal (list string) [ "0"; "2" ] (labels t);
-          equal (list (float 1e-12)) [ 0.25; 0.5; 0.75 ] t.minor);
+        q_minors
+        (fun (_, b, length, ticks, minor) ->
+          let s = linear 0. b in
+          let t = Ticks.choose ~length ~measure s in
+          equal (list string) ticks (labels t);
+          minor_at s t minor);
       test "a skip leaves its multiples as minor ticks" (fun () ->
-          let t =
-            Ticks.choose ~notation:Percent ~length:180. ~measure
-              (linear 0.62 0.97)
-          in
+          let s = linear 0.62 0.97 in
+          let t = Ticks.choose ~notation:Percent ~length:180. ~measure s in
           equal (list string) [ "65%"; "75%"; "85%"; "95%" ] (labels t);
-          equal
-            (list (float 1e-12))
+          minor_at s t [ 0.7; 0.8; 0.9 ]);
+      test "a log axis takes the multiples its powers leave out" (fun () ->
+          let s = Scale.log ~domain:(0.0123, 4.2) () in
+          let t = Ticks.choose ~length:180. ~measure s in
+          equal (list string) [ "0.1"; "1" ] (labels t);
+          minor_at s t
             [
-              (0.7 -. 0.62) /. 0.35;
-              (0.8 -. 0.62) /. 0.35;
-              (0.9 -. 0.62) /. 0.35;
-            ]
-            t.minor);
+              0.02;
+              0.03;
+              0.04;
+              0.05;
+              0.06;
+              0.07;
+              0.08;
+              0.09;
+              0.2;
+              0.3;
+              0.4;
+              0.5;
+              0.6;
+              0.7;
+              0.8;
+              0.9;
+              2.;
+              3.;
+              4.;
+            ]);
       test "a day cuts into six hours" (fun () ->
-          let at d t = Time.of_date_time (d, t) in
           let s =
             Scale.time
               ~domain:(at (2026, 3, 2) (23, 0, 0), at (2026, 3, 6) (1, 0, 0))
@@ -1170,56 +1252,70 @@ let minor_ticks =
           in
           let t = Ticks.choose ~length:300. ~measure s in
           equal (list string) [ "3"; "4"; "5"; "6" ] (labels t);
-          equal int 9 (List.length t.minor));
-      test "a week cuts into days, two weeks into weeks" (fun () ->
-          let weeks days length =
-            let a = Time.of_date (2026, 3, 2) in
-            Ticks.choose ~length ~measure
-              (Scale.time ~domain:(a, Time.add (Time.days 1) days a) ())
-          in
-          let t = weeks 21 150. in
+          minor_at s t
+            (List.concat_map
+               (fun d ->
+                 List.map (fun h -> at (2026, 3, d) (h, 0, 0)) [ 6; 12; 18 ])
+               [ 3; 4; 5 ]));
+      test "a week cuts into days" (fun () ->
+          let a = Time.of_date (2026, 3, 2) in
+          let s = Scale.time ~domain:(a, Time.add (Time.days 1) 21 a) () in
+          let t = Ticks.choose ~length:150. ~measure s in
           equal (list string) [ "2"; "9"; "16"; "23" ] (labels t);
-          equal int 18 (List.length t.minor);
-          let t = weeks 56 250. in
-          equal (list string) [ "2"; "16"; "30"; "13"; "27" ] (labels t);
-          equal int 4 (List.length t.minor));
-      test "a log axis takes the multiples its powers leave out" (fun () ->
-          let t =
-            Ticks.choose ~length:180. ~measure
-              (Scale.log ~domain:(0.0123, 4.2) ())
+          (* The days from the 2nd to the 23rd that start no week. *)
+          let days =
+            List.filter (fun d -> (d - 2) mod 7 <> 0) (List.init 22 (( + ) 2))
           in
-          equal (list string) [ "0.1"; "1" ] (labels t);
-          equal int 19 (List.length t.minor));
+          minor_at s t (List.map (fun d -> Time.of_date (2026, 3, d)) days));
+      test "two weeks cut into the weeks the skip leaves out" (fun () ->
+          let a = Time.of_date (2026, 3, 2) in
+          let s = Scale.time ~domain:(a, Time.add (Time.days 1) 56 a) () in
+          let t = Ticks.choose ~length:250. ~measure s in
+          equal (list string) [ "2"; "16"; "30"; "13"; "27" ] (labels t);
+          minor_at s t
+            [
+              Time.of_date (2026, 3, 9);
+              Time.of_date (2026, 3, 23);
+              Time.of_date (2026, 4, 6);
+              Time.of_date (2026, 4, 20);
+            ]);
     ]
 
-let comparing =
-  group "comparing"
+let equal_tests =
+  group "equal"
     [
-      test "equal compares positions, labels, contexts and notes" (fun () ->
+      test "equal holds iff major ticks, minor positions and notes are equal"
+        (fun () ->
           let s = linear 0. 10. in
-          let w = Testable.make ~pp:Ticks.pp ~equal:Ticks.equal in
-          equal w (of_values s [| 1.; 2. |]) (of_values s [| 2.; 1. |]);
-          not_equal w (of_values s [| 1.; 2. |]) (of_values s [| 1.; 3. |]);
-          not_equal w (of_values s [| 1.; 2. |]) (of_values s [| 1. |]);
-          not_equal w
-            (of_values s [| 1.; 2. |])
-            (of_values ~notation:Percent s [| 1.; 2. |]);
+          equal ticks_w
+            (Ticks.of_values s [| 1.; 2. |])
+            (Ticks.of_values s [| 2.; 1. |]);
+          not_equal ticks_w
+            (Ticks.of_values s [| 1.; 2. |])
+            (Ticks.of_values s [| 1.; 3. |]);
+          not_equal ticks_w
+            (Ticks.of_values s [| 1.; 2. |])
+            (Ticks.of_values s [| 1. |]);
+          not_equal ticks_w
+            (Ticks.of_values s [| 1.; 2. |])
+            (Ticks.of_values ~notation:Percent s [| 1.; 2. |]);
           let s = linear 0. 2. in
           let chosen = Ticks.choose ~length:200. ~measure:(fun _ -> 40.) s in
-          not_equal w (of_values s [| 0.; 1.; 2. |]) chosen);
+          not_equal ticks_w (Ticks.of_values s [| 0.; 1.; 2. |]) chosen);
     ]
 
 let () =
   exit
     (run "Ticks"
        [
+         ticks;
+         choose;
+         of_values;
+         candidates;
          quantity_labels;
-         d3_labels;
          log_labels;
-         time_labels;
-         values;
-         choice;
+         time_labels_group;
+         category_labels;
          minor_ticks;
-         comparing;
-         baselines;
+         equal_tests;
        ])

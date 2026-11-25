@@ -163,8 +163,13 @@ val of_values :
       domain's length, or of the next finer one that has one in the domain, the
       interval its nice domain rounds to.
 
-    The search makes candidates of a number of ticks bounded whatever [length].
-*)
+    Of candidates that score the same, [choose] takes the one of fewest ticks,
+    then of the family listed first above, then of the least skip [j], then: of
+    decimal steps, the earliest [q] in [Q], then the coarsest step; of powers,
+    the powers alone, then with their multiples by [2] and [5], then with every
+    multiple; of calendar intervals, the least multiple of its unit, then the
+    coarsest interval; and last, of the least offset [r]. The search makes
+    candidates of a number of ticks bounded whatever [length]. *)
 
 (** {1:labels Labels}
 
