@@ -1942,15 +1942,14 @@ type pair_state = {
 }
 
 (* Calls [f] on each character of [word] with the place it holds in it, which is
-   what decides the affixes it carries. *)
+   what decides the affixes it carries. A byte that opens no character is a
+   character of one byte, as encoding reads it. *)
 let iter_chars word f =
   let len = String.length word in
   let pos = ref 0 in
   while !pos < len do
-    let d = String.get_utf_8_uchar word !pos in
-    let n = Uchar.utf_decode_length d in
-    if Uchar.utf_decode_is_valid d then
-      f (String.sub word !pos n) ~is_first:(!pos = 0) ~is_last:(!pos + n >= len);
+    let n = Char_class.length word !pos ~stop:len in
+    f (String.sub word !pos n) ~is_first:(!pos = 0) ~is_last:(!pos + n >= len);
     pos := !pos + n
   done
 

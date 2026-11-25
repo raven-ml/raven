@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `train_bpe` reads a byte that opens no character as a character of one byte,
+  as encoding does. It skipped the byte and merged across it: `"a\xffb"`
+  taught it `ab`.
 - `of_json`, `from_file` and `from_model_file` reject a member of the wrong
   type, or an id or count that is no integer from 0 to 2^31 - 1, naming it:
   `"lowercase":"false"` lowercased and `{"a":1.5}` gave `a` the id 1.

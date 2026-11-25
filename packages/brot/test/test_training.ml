@@ -422,6 +422,14 @@ let test_bpe_spells_words =
         (fun w -> equal ~msg:w string w (String.concat "" (tokens t w)))
         words)
 
+(* Source: brot.mli, encode: a byte that opens no whole character is read by
+   every stage as a character of one byte, and train_bpe merges adjacent
+   characters, so [a] and [b] are never adjacent in ["a\xffb"]. *)
+let test_bpe_stray_byte () =
+  let t = train_bpe (texts [ "a\xffb" ]) in
+  equal ~msg:"ab" (option int) None (token_to_id t "ab");
+  equal ~msg:"spelled" string "a\xffb" (String.concat "" (tokens t "a\xffb"))
+
 (* train_wordpiece *)
 
 let test_wordpiece_subwords () =
@@ -650,6 +658,8 @@ let () =
                test_bpe_pipeline;
              test_bpe_vocab_size;
              test_bpe_spells_words;
+             test "reads a byte that opens no character as a character"
+               test_bpe_stray_byte;
            ];
          group "train_wordpiece"
            [
