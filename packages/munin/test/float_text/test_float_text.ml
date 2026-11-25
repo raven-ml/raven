@@ -47,25 +47,44 @@ let leading x =
   done;
   !k
 
+(* [pred m] is the digits of [m - 1], for the digits [m] of a positive
+   integer. *)
+let pred m =
+  let b = Bytes.of_string m in
+  let i = ref (Bytes.length b - 1) in
+  while Bytes.get b !i = '0' do
+    Bytes.set b !i '9';
+    decr i
+  done;
+  Bytes.set b !i (Char.chr (Char.code (Bytes.get b !i) - 1));
+  Bytes.to_string b
+
 (* [rounds x ~unit (d, e)] checks that [d 10^e] is [|x|] rounded to a multiple
    of [10^unit], to nearest, ties to even. With [d 10^e = m 10^unit], [|x|] lies
    between the midpoints [(10m - 5) 10^(unit-1)] and [(10m + 5) 10^(unit-1)], on
-   one only when [m] is even. Callers keep [m] below 2^58. *)
+   one only when [m] is even. [m] is kept as digits, so the check holds at any
+   number of them. *)
 let rounds x ~unit (d, e) =
   let c, q, _ = Exact.decode F.binary64 x in
   satisfies ~claim:"is a multiple of the unit" digits
     (fun (d, e) -> d = "0" || e >= unit)
     (d, e);
-  let m = if d = "0" then 0 else int_of_string d * Exact.pow10 (e - unit) in
-  let even = m land 1 = 0 in
-  let mid k = (string_of_int ((10 * m) + k), unit - 1) in
+  let m = if d = "0" then "0" else d ^ String.make (e - unit) '0' in
+  let even = Char.code m.[String.length m - 1] land 1 = 0 in
   (* The signs of each midpoint less [|x|]. *)
-  let lo = if m = 0 then -1 else Exact.compare_dec (mid (-5)) c q in
-  let hi = Exact.compare_dec (mid 5) c q in
+  let lo =
+    if m = "0" then -1 else Exact.compare_dec (pred m ^ "5", unit - 1) c q
+  in
+  let hi = Exact.compare_dec (m ^ "5", unit - 1) c q in
   cover "a tie" (lo = 0 || hi = 0);
   satisfies ~claim:"lies within half a unit of x, a tie to the even one" digits
     (fun _ -> (lo < 0 || (lo = 0 && even)) && (hi > 0 || (hi = 0 && even)))
     (d, e)
+
+(* [ndigits x] is the number of digits of [|x|]'s exact value, and [nfraction x]
+   the number of them after the point. *)
+let ndigits x = String.length (fst (F.significant max_int x))
+let nfraction x = max 0 (-snd (F.decimals max_int x))
 
 (* [is_exact x] checks that a decimal is [|x|]'s exact value. *)
 let is_exact x de =
@@ -337,14 +356,18 @@ let test_not_a_value =
 
 (* significant *)
 
-(* [n] up to 17 keeps the rounded digits below 2^58 in [rounds]. Ties come from
+(* Any number of digits up to one past [x]'s, and as often at most 17; ties from
    [k 2^-r], [k] odd, whose decimal [k 5^r 10^-r] ends in 5, rounded to one
    digit fewer. *)
 let significant_input =
   let open Gen in
   frequency
     [
-      (3, pair (int_range 1 17) double);
+      ( 2,
+        let* x = double in
+        let+ n = int_range 1 (ndigits x + 1) in
+        (n, x) );
+      (1, pair (int_range 1 17) double);
       ( 1,
         let+ k = int_range 0 (1 lsl 20) and+ r = int_range 2 8 in
         let k = (2 * k) + 1 in
@@ -357,13 +380,20 @@ let test_significant =
   prop "rounds |x| to n significant digits, ties to even" ~count:500
     significant_input (fun (n, x) ->
       assume (x <> 0.);
+      cover "past 17 digits" (n > 17);
       rounds x ~unit:(leading x - n + 1) (F.significant n x))
 
 let test_significant_exact =
   prop "is x exactly at x's digit count or more"
     ~examples:[ (max_int, 5e-324); (max_int, 0.005); (767, max_float) ]
-    Gen.(pair (of_list [ 767; max_int ]) double)
-    (fun (n, x) -> is_exact x (F.significant n x))
+    Gen.(
+      let* x = double in
+      let nd = ndigits x in
+      let+ n = one_of [ constant nd; int_range nd 800; constant max_int ] in
+      (n, x))
+    (fun (n, x) ->
+      cover "at x's digit count" (n = ndigits x);
+      is_exact x (F.significant n x))
 
 (* The .mli's examples; the exact decimal of the double nearest 0.005. *)
 let significant_rows =
@@ -388,17 +418,22 @@ let test_significant_refused =
 
 (* decimals *)
 
-(* Values from 10^-8 to 10^16 units, so that some round to zero; ties from [k
-   2^-r], [k] odd, at [r - 1] decimals, whose scaled value [k 5^(r-1) / 2] ends
-   in a half, and from [(2m + 1) 5 10^(-n-1)] at a negative [n]. *)
+(* Values from 10^-8 to 10^16 units, so that some round to zero; any double at
+   up to one decimal past its own, so that hundreds of digits are kept; ties
+   from [k 2^-r], [k] odd, at [r - 1] decimals, whose scaled value [k 5^(r-1) /
+   2] ends in a half, and from [(2m + 1) 5 10^(-n-1)] at a negative [n]. *)
 let decimals_input =
   let open Gen in
   frequency
     [
-      ( 3,
+      ( 2,
         let* n = int_range (-10) 25 in
         let+ d = int_range 1 999_999 and+ j = int_range (-n - 8) (10 - n) in
         (n, float_of_string (Printf.sprintf "%de%d" d j)) );
+      ( 2,
+        let* x = double in
+        let+ n = int_range (-10) (nfraction x + 1) in
+        (n, Float.abs x) );
       ( 1,
         let+ k = int_range 0 (1 lsl 20) and+ r = int_range 1 8 in
         (r - 1, Float.ldexp (Float.of_int ((2 * k) + 1)) (-r)) );
@@ -415,13 +450,20 @@ let test_decimals =
       let x = if neg then -.x else x in
       let r = F.decimals n x in
       cover "rounds to zero" (r = ("0", 0));
+      cover "keeps more than 17 digits" (String.length (fst r) > 17);
       rounds x ~unit:(-n) r)
 
 let test_decimals_exact =
-  prop "is x exactly at 1074 decimals or more"
+  prop "is x exactly at x's decimals or more"
     ~examples:[ (max_int, 5e-324); (1074, max_float) ]
-    Gen.(pair (of_list [ 1074; max_int ]) double)
-    (fun (n, x) -> is_exact x (F.decimals n x))
+    Gen.(
+      let* x = double in
+      let nf = nfraction x in
+      let+ n = one_of [ constant nf; int_range nf 1100; constant max_int ] in
+      (n, x))
+    (fun (n, x) ->
+      cover "at x's decimals" (n = nfraction x);
+      is_exact x (F.decimals n x))
 
 (* The .mli's examples, a negative number that rounds to zero, and the ends of
    [n]. *)
