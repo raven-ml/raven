@@ -346,19 +346,22 @@ val capability : t -> Rig_nv_abi.Gpu.t
     [params_bytes], and its [threads] the launch's
     {!Rig_nv_abi.Launch.max_threads}. It sets the function up for launch
     ({!Rig_nv_abi.Launch.make}) and grows the compute channel's local memory to
-    serve it ({!Rig_nv_abi.Gpu.t.local}). The local memory stays at its largest
-    until the device stops, through a {!Rig.free_cache} too. One a larger one
-    replaced goes back, once the device has reached the work that used it, at
-    the first {!entry} that sets a function up or call of
-    {!Rig_nv_abi.Gpu.t.local} after a submission took the larger one; where the
-    device had not reached that work then, at a later such call, allocation or
-    {!Rig.free_cache}. With no such call after that submission, it stays until
-    the device stops. It answers [No_memory n], having made nothing, if the GPU
-    has no memory for the [n] bytes of that local memory, and raises
-    [Invalid_argument] with the reason if the function takes more than a launch
-    can, such as a constant bank 0 of more than 64 KiB. {!unload} frees the
-    launch descriptors of the image's functions, and leaves its code region to
-    rig. *)
+    serve it ({!Rig_nv_abi.Gpu.t.local}). A {!Rig.free_cache} replaces the local
+    memory with one that serves only the functions an image's {!entry} set up,
+    until its {!unload}, and what {!Rig_nv_abi.Gpu.t.local} was asked for, or
+    gives it back where there are none; where the GPU has no memory for the
+    smaller one, the larger stays until a later {!Rig.free_cache}. A local
+    memory another replaced goes back once the device has reached the work
+    submitted before the replacement: at once, or at the device's next {!entry}
+    that sets a function up, call of {!Rig_nv_abi.Gpu.t.local}, allocation or
+    {!Rig.free_cache}. Every function's threads need at least the 576 bytes the
+    driver reserves, so that much stays from the first function an image's
+    {!entry} sets up until its {!unload}. It answers [No_memory n], having made
+    nothing, if the GPU has no memory for the [n] bytes of that local memory,
+    and raises [Invalid_argument] with the reason if the function takes more
+    than a launch can, such as a constant bank 0 of more than 64 KiB. {!unload}
+    frees the launch descriptors of the image's functions, and leaves its code
+    region to rig. *)
 
 (** {1:faults Faults and stopping}
 

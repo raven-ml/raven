@@ -811,11 +811,21 @@ static void enter(struct submission *s, int q) {
           s->v);
   }
   if (q != COMPUTE) return;
-  /* Only the OCaml side writes a pending memory, so an exchange after the
-     load takes a pending one too: the newer, if it replaced it. */
-  uint64_t local = atomic_load_explicit(&d->local, memory_order_acquire);
-  if (local != 0 && !(local & LOCAL_TAKEN)) {
-    d->placed_local = atomic_exchange(&d->local, s->v << 1 | LOCAL_TAKEN);
+  /* A publish exchanges [local], then loads [entered]; this stores
+     [entered], then loads [local]. Both sequentially consistent: a publish
+     whose memory this load misses reads this value or a later one, which
+     bounds the work on the memory it replaced. Only the OCaml side
+     publishes, so an exchange after the load takes a published memory too:
+     the newer, if it replaced it. */
+  atomic_store_explicit(&d->entered, s->v, memory_order_seq_cst);
+  uint64_t local = atomic_load_explicit(&d->local, memory_order_seq_cst);
+  /* 0 is a withdrawal, whose memory goes back once the work submitted before
+     it completes: channels made later place none, so none names freed
+     memory. */
+  if (local == 0)
+    d->placed_local = 0;
+  else if (!(local & LOCAL_TAKEN)) {
+    d->placed_local = atomic_exchange(&d->local, LOCAL_TAKEN);
     c->owes_local = 1;
   }
   if (c->owes_local && d->placed_local != 0) {

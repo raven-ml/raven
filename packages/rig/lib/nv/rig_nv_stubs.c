@@ -94,6 +94,7 @@ value caml_rig_nv_create(value v_word, value v_word_gpu, value v_join_gpu,
   d->status_at = (uint32_t)Long_val(v_status);
   uint64_t base = atomic_load_explicit(d->word, memory_order_acquire);
   atomic_store_explicit(&d->last, base, memory_order_relaxed);
+  atomic_store_explicit(&d->entered, base, memory_order_relaxed);
   for (int q = 0; q < CHANNELS; q++) {
     d->ch[q].owes_setup = 1;
     d->ch[q].released = base;
@@ -576,16 +577,18 @@ value caml_rig_nv_copy_word(value v_to, value v_from) {
 
 /* Owed words */
 
-/* The pending local memory word (struct device's [local]). */
-value caml_rig_nv_pending_local(value v_self) {
-  return Val_long(
-      atomic_load_explicit(&Device_val(v_self)->local, memory_order_acquire));
-}
-
-/* Makes [v_packed] the pending local memory: the word it replaced. */
+/* Makes [v_packed] the published local memory: the word it replaced. */
 value caml_rig_nv_exchange_local(value v_self, value v_packed) {
   return Val_long(atomic_exchange(&Device_val(v_self)->local,
                                   (uint64_t)Long_val(v_packed)));
+}
+
+/* The value of the last submission that entered COMPUTE (struct device's
+   [entered]), sequentially consistent, as its store in enter: read after an
+   exchange of [local], it bounds the work on the memory replaced. */
+value caml_rig_nv_entered(value v_self) {
+  return Val_long(
+      atomic_load_explicit(&Device_val(v_self)->entered, memory_order_seq_cst));
 }
 
 value caml_rig_nv_owe_invalidate(value v_self) {

@@ -730,12 +730,15 @@ module type Driver = sig
   val retire : t -> unit
   (** [retire d] gives back the memory that [trim] or a [room] took out of [d]'s
       queues, or a growth made that no [room] put in them, and that no work of
-      [d] still reads, as [d]'s word shows. It never waits for [d]'s work:
-      memory that work still reads stays for a later [retire], or for a time the
-      driver's interface states. rig calls it at each {!Rig.free_cache} of [d],
-      after [trim], while other threads may submit to [d], run its growths and
-      call any of its functions, [retire] included, and never once [d] is lost.
-      A driver with nothing to give back does nothing. Counted. *)
+      [d] still reads, as [d]'s word shows. It may also replace memory that the
+      functions an image's {!val-entry} set up share, until its {!val-unload},
+      with less that still serves them, as the driver's interface states. It
+      never waits for [d]'s work: memory that work still reads stays for a later
+      [retire], or for a time the driver's interface states. rig calls it at
+      each {!Rig.free_cache} of [d], after [trim], while other threads may
+      submit to [d], run its growths and call any of its functions, [retire]
+      included, and never once [d] is lost. A driver with nothing to give back
+      does nothing. Counted. *)
 
   (** {1:timeline Timeline} *)
 

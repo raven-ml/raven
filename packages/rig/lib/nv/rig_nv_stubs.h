@@ -325,14 +325,17 @@ struct device {
   uint64_t word_gpu;
   uint64_t join_gpu; /* the channels' join words follow it */
   _Atomic uint64_t last; /* the last value submitted */
+  /* the value of the last submission that entered COMPUTE, stored before it
+     loads [local] */
+  _Atomic uint64_t entered;
   struct channel ch[CHANNELS];
   volatile uint32_t *doorbell;
   struct template t[TEMPLATES];
   /* an entry is address + base + words * word */
   uint64_t entry_base, entry_word;
-  /* a pending local memory, per_tpc / 32 KiB << (1 + LOCAL_PAGE_BITS) |
-     address / 4 KiB << 1, or once a submission took it, v << 1 | LOCAL_TAKEN
-     for its value v */
+  /* the published local memory, per_tpc / 32 KiB << (1 + LOCAL_PAGE_BITS) |
+     address / 4 KiB << 1, LOCAL_TAKEN once a submission took it, or 0 for
+     none */
   _Atomic uint64_t local;
   /* whether the compute caches are owed an invalidation */
   _Atomic int invalidate;
@@ -369,7 +372,8 @@ struct device {
      the channels a growth handed only then, since the OCaml side keeps a
      set the RM cannot free, and the next growth would make another */
   int rm_frees;
-  /* the local memory word a submission last placed, 0 for none */
+  /* the local memory word a submission last placed, 0 for none or once a
+     submission saw it withdrawn */
   uint64_t placed_local;
   /* the path's flush word, a word of the GPU's BAR whose read returns once
      the host's writes through that BAR reached the GPU, or NULL without one

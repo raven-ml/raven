@@ -344,12 +344,12 @@ let v_value = 10
 (* The sizes in the order of rig_nv_stubs.h's launch limits. *)
 let dims = Abi.Qmd.[ Grid X; Grid Y; Grid Z; Block X; Block Y; Block Z ]
 
-(* A pending local memory is one word: bit 0 clear, the number of its address's
-   4 KiB page in the [local_page_bits] bits above, which hold the 49 bits of an
-   address the local memory methods take (clc7c0.h,
+(* A published local memory is one word: bit 0 clear, the number of its
+   address's 4 KiB page in the [local_page_bits] bits above, which hold the 49
+   bits of an address the local memory methods take (clc7c0.h,
    SET_SHADER_LOCAL_MEMORY_A_ADDRESS_UPPER 16:0), and its bytes per cluster in
-   units of 32 KiB above them. The submission of value [v] that takes it leaves
-   [v lsl 1 lor 1] in its place. *)
+   units of 32 KiB above them; 0 for none. The submission that takes it leaves 1
+   in its place. *)
 let local_page_shift = 12
 let local_page_bits = 37
 let local_unit_shift = 15
@@ -420,7 +420,7 @@ external copy_word : int -> int -> unit = "caml_rig_nv_copy_word" [@@noalloc]
 external exchange_local : int -> int -> int = "caml_rig_nv_exchange_local"
 [@@noalloc]
 
-external pending_local : int -> int = "caml_rig_nv_pending_local" [@@noalloc]
+external entered : int -> int = "caml_rig_nv_entered" [@@noalloc]
 external owe_invalidate : int -> unit = "caml_rig_nv_owe_invalidate" [@@noalloc]
 external read_word : int -> int = "caml_rig_nv_signaled" [@@noalloc]
 
@@ -489,8 +489,9 @@ let bits (lo, n) v = (v land ((1 lsl n) - 1)) lsl lo
 
 (* Devices *)
 
-(* A local memory the GPU's work no longer uses once the device reached
-   [until], the value of the submission that took its successor. *)
+(* A local memory the GPU's work no longer uses once the device reached [until],
+   the value of the last submission that entered the compute channel before its
+   replacement was published. *)
 type 'm retired = { mem : 'm memory; mutable until : int }
 
 (* A ring a growth makes, listed before the path's call so that its memory is
@@ -531,9 +532,12 @@ type 'm live = {
       (* the sets of channels, the newest first, under [local_lock]: the one
          installed, the one handed, and those not yet given back *)
   mutable per_thread : int; (* under [local_lock], as the fields below *)
-  mutable local_current : 'm memory option;
-  mutable local_pending : 'm memory option;
+  mutable local_published : 'm memory option;
   mutable local_retired : 'm retired list;
+  mutable needs : int ref list;
+      (* the cells of what the local memory serves, each a thread's bytes as
+         [per_thread] counts them: an image's, which its unload zeroes without
+         the lock, and the capability's *)
 }
 
 (* A device: its facts, what [peer] uses for the life of the process, and its
@@ -554,8 +558,9 @@ type 'm dev = {
   capability : Abi.Gpu.t;
   word : 'm reg; (* kept, with the C state, for the process *)
   local_lock : lock;
-      (* held by [grow_local], [grow] and the retirement of rings, and by stop
-         over [live] *)
+      (* held by [grow_local], [shrink], [grow] and the retirement of rings, and
+         by stop over [live] *)
+  asked : int ref; (* the need of the capability's [local], never zeroed *)
   mutable live : 'm live option; (* [None] once stop began *)
 }
 
@@ -658,43 +663,13 @@ let capacity (T d) =
 
 (* Local memory *)
 
-(* The pending local memory's word [x] says a submission took it iff its bit 0
-   is set, and then holds the submission's value above it. *)
+(* The published local memory's word [x] says a submission took it iff its bit 0
+   is set. *)
 let taken x = x land 1 = 1
-let taker x = x lsr 1
 
-(* What making the pending memory current stores, allocated ahead, so that a
-   change allocates nothing between its first store and its last: the current
-   memory retired, its value to be set, and the retired list it heads. *)
-let retiring l =
-  match l.local_current with
-  | Some c ->
-      let r = { mem = c; until = 0 } in
-      (Some r, r :: l.local_retired)
-  | None -> (None, l.local_retired)
-
-(* Makes the pending memory, [current], current from the value [v], which
-   the current one served up to. *)
-let succeed l (r, retired) current v =
-  (match r with Some r -> r.until <- v | None -> ());
-  l.local_retired <- retired;
-  l.local_current <- current
-
-(* Moves the pending local memory to current once a submission took it. *)
-let settle d l =
-  match l.local_pending with
-  | None -> ()
-  | Some _ as current ->
-      let x = pending_local d.self in
-      if taken x then begin
-        let ahead = retiring l in
-        succeed l ahead current (taker x);
-        l.local_pending <- None
-      end
-
-(* Frees the retired local memories no work uses, those whose successor's value
-   is reached, one at a time: each leaves the list before its free, so an
-   exception leaves the rest for the next call. *)
+(* Frees the retired local memories no work uses, those whose [until] is
+   reached, one at a time: each leaves the list before its free, so an exception
+   leaves the rest for the next call. *)
 let rec retire_local d l =
   let seen = read_word d.self in
   match List.find_opt (fun r -> r.until <= seen) l.local_retired with
@@ -704,51 +679,107 @@ let rec retire_local d l =
       l.path.free r.mem;
       retire_local d l
 
-(* Makes [m], whose word is [packed], the pending local memory: the pending
-   one that no submission took, for the caller to free, if any. The exchange
-   hands [m] to the submissions, so what it decides is allocated before it. *)
-let publish d l m packed =
-  let pending = Some m and current = l.local_pending in
-  let ahead = retiring l in
+(* What [publish] stores if a submission placed the memory it replaces: that
+   memory retired, its [until] to be set, and the retired list it heads. The
+   caller makes it before the path's allocation of the new memory. *)
+let retiring l =
+  match l.local_published with
+  | Some p ->
+      let r = { mem = p; until = max_int } in
+      Some (r, r :: l.local_retired)
+  | None -> None
+
+(* Makes [m], whose word is [packed], the memory the next submission on the
+   compute channel places, [None] for none, with [ahead] made by [retiring]: the
+   memory it replaces, if no submission placed it, for the caller to free. One a
+   submission placed goes once the device reaches [entered] read after the
+   exchange. The callers allocate nothing between the path's answer [m] and the
+   exchange, nor does [publish] before it, so no finaliser or Memprof callback
+   raises there and leaves [m] in no list. *)
+let publish d l m packed ahead =
+  let replaced = l.local_published in
   let x = exchange_local d.self packed in
-  match current with
-  | Some _ when taken x ->
-      succeed l ahead current (taker x);
-      l.local_pending <- pending;
+  let u = entered d.self in
+  l.local_published <- m;
+  match ahead with
+  | Some (r, retired) when taken x ->
+      r.until <- u;
+      l.local_retired <- retired;
       None
-  | Some _ ->
-      l.local_pending <- pending;
-      current
-  | None ->
-      l.local_pending <- pending;
-      None
+  | Some _ | None -> replaced
+
+(* The largest of the needs of [l]'s cells, 0 for none. *)
+let live_need l = List.fold_left (fun n r -> Int.max n !r) 0 l.needs
+
+(* [l]'s cells as they stand once the cell [need] rises: a cell is listed from
+   its first rise, when the cells unloads zeroed leave the list. *)
+let listing l need =
+  if !need > 0 then l.needs else need :: List.filter (fun r -> !r > 0) l.needs
 
 type served = Served | Stopped | Short of int | Failed of string
 
-(* Makes the local memory serve kernels whose threads need [n] bytes each:
-   [Short bytes] if the GPU has no memory for the [bytes] that takes, [Failed
-   why] if the path fails to allocate it. A free's [Fault] passes on, once the
+(* Makes the local memory serve kernels whose threads need [n] bytes each, and
+   raises the cell [need] of what asks to their share: [Short bytes] if the GPU
+   has no memory for the [bytes] that takes, [Failed why] if the path fails to
+   allocate it, either raising nothing. A free's [Fault] passes on, once the
    local memory is whole. *)
-let grow_local d n =
+let grow_local d need n =
   protect d.local_lock @@ fun () ->
   match d.live with
   | None -> Stopped
   | Some l -> (
-      settle d l;
       retire_local d l;
-      let need = Abi.Local_memory.make d.capability n in
-      if need.per_thread <= l.per_thread then Served
+      let m = Abi.Local_memory.make d.capability n in
+      if m.per_thread <= l.per_thread then begin
+        if m.per_thread > !need then begin
+          l.needs <- listing l need;
+          need := m.per_thread
+        end;
+        Served
+      end
       else
-        match path_alloc l.path Gpu need.bytes with
+        let needs = listing l need and ahead = retiring l in
+        match path_alloc l.path Gpu m.bytes with
         | exception Fault why -> Failed why
-        | None -> Short need.bytes
-        | Some m ->
-            let untaken =
-              publish d l m (local_word m.address ~per_tpc:need.per_tpc)
-            in
-            l.per_thread <- need.per_thread;
-            Option.iter l.path.free untaken;
+        | None -> Short m.bytes
+        | Some mem as fresh ->
+            let packed = local_word mem.address ~per_tpc:m.per_tpc in
+            let replaced = publish d l fresh packed ahead in
+            l.per_thread <- m.per_thread;
+            l.needs <- needs;
+            need := m.per_thread;
+            Option.iter l.path.free replaced;
             Served)
+
+(* Replaces the local memory with one that serves the largest need of [d]'s
+   cells, or withdraws it for none, once the reached retired ones went. Where
+   the GPU has no memory for the smaller one, the larger stays. *)
+let shrink d =
+  match d.live with
+  | None -> ()
+  | Some l ->
+      retire_local d l;
+      let n = live_need l in
+      if n < l.per_thread then begin
+        let ahead = retiring l in
+        let replaced =
+          if n = 0 then begin
+            let replaced = publish d l None 0 ahead in
+            l.per_thread <- 0;
+            replaced
+          end
+          else
+            let m = Abi.Local_memory.make d.capability n in
+            match path_alloc l.path Gpu m.bytes with
+            | None -> None
+            | Some mem as fresh ->
+                let packed = local_word mem.address ~per_tpc:m.per_tpc in
+                let replaced = publish d l fresh packed ahead in
+                l.per_thread <- m.per_thread;
+                replaced
+        in
+        Option.iter l.path.free replaced
+      end
 
 (* Retired rings *)
 
@@ -860,26 +891,33 @@ let retire_channels d l =
       l.sets <- left;
       each (drop_channels l) dropped
 
-(* Gives back the rings, channels and local memories the device retired that no
-   work uses, where no growth holds the local lock: what it skips goes at the
-   next growth, allocation or retire. The closure is made only when there is
-   something to give back, so the call allocates nothing otherwise. *)
-let retire_all d l =
+(* Whether the device may hold retired rings, channels or local memories, read
+   without the local lock. *)
+let retirable d l =
   let channels =
     Option.is_some l.path.rm.free && List.compare_length_with l.sets 1 > 0
   in
-  if rings_retired d.self || channels || not (List.is_empty l.local_retired)
-  then
-    ignore
-      (try_protect d.local_lock (fun () ->
-           retire_rings d l;
-           retire_channels d l;
-           retire_local d l)
-        : bool)
+  rings_retired d.self || channels || not (List.is_empty l.local_retired)
+
+(* Gives back the rings, channels and local memories the device retired that no
+   work uses, under the local lock. *)
+let release d l =
+  retire_rings d l;
+  retire_channels d l;
+  retire_local d l
+
+(* An allocation's [release], where no growth holds the local lock. What it
+   skips goes at a later allocation or retire, rings and channels at a ring's
+   growth too, and local memories at an entry or a [local] call. The closure is
+   made only when there is something to give back, so the call allocates nothing
+   otherwise. *)
+let retire_all d l =
+  if retirable d l then
+    ignore (try_protect d.local_lock (fun () -> release d l) : bool)
 
 let local d n =
   guarded "Rig_nv_abi.Gpu.local" @@ fun () ->
-  match grow_local d n with
+  match grow_local d d.asked n with
   | Served -> Ok ()
   | Stopped -> Error "the device is stopped"
   | Short bytes ->
@@ -1339,6 +1377,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
             bytes = 8;
           };
         local_lock = ranked local_rank;
+        asked = ref 0;
         live =
           Some
             {
@@ -1349,9 +1388,9 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
               release = (module R);
               sets = [ channels ];
               per_thread = 0;
-              local_current = None;
-              local_pending = None;
+              local_published = None;
               local_retired = [];
+              needs = [];
             };
       }
     in
@@ -1642,7 +1681,18 @@ let grow (T d) =
   if !short = 0 then short := lacked;
   if !short = 0 then Rig_edge.Grown else Short !short
 
-let retire (T d) = retire_all d (live d)
+(* Gives back the local memory beyond the live need, then what the device
+   retired. The guard reads without the lock what the shrink and [release] read
+   again under it; the closure is made only when there is something to give
+   back. The take waits for a growth on another domain: rig masks signals around
+   the call and refuses it on a thread that holds a driver's lock, so the wait
+   ends only with the growth, which waits for nothing this thread holds. *)
+let retire (T d) =
+  let l = live d in
+  if live_need l < l.per_thread || retirable d l then (
+    protect d.local_lock @@ fun () ->
+    shrink d;
+    release d l)
 
 (* Images *)
 
@@ -1657,7 +1707,8 @@ type image = {
   base : int;
   cubin : Cubin.t;
   gpu : Abi.Gpu.t;
-  grow_local : int -> served; (* its device's [grow_local] *)
+  grow_local : int ref -> int -> served; (* its device's [grow_local] *)
+  need : int ref; (* its cell of the device's needs, zeroed at its unload *)
   lock : lock;
   mutable entries : Rig_edge.entry Names.t;
   mutable launches : nativeint list; (* the entries' *)
@@ -1675,6 +1726,7 @@ let lay d c r =
       cubin = c;
       gpu = d.capability;
       grow_local = grow_local d;
+      need = ref 0;
       lock = ranked image_rank;
       entries = Names.empty;
       launches = [];
@@ -1697,7 +1749,7 @@ let set_up c name (k : Cubin.kernel) =
     | Error why -> invalid_arg ("Rig_nv.entry: " ^ why)
   in
   let bytes = Launch.local_bytes l in
-  match c.grow_local bytes with
+  match c.grow_local c.need bytes with
   | Short n -> Rig_edge.No_memory n
   | Stopped -> raise (Fault "the device is stopped")
   | Failed why -> raise (Fault why)
@@ -1747,6 +1799,7 @@ let unload (T _) c =
   let launches = c.launches in
   c.entries <- Names.empty;
   c.launches <- [];
+  c.need := 0;
   free_launches launches;
   give_lock c.lock
 
@@ -1890,14 +1943,7 @@ let give_owned l =
   and retired = List.map (fun (r : _ retired) -> r.mem) l.local_retired in
   each l.path.free
     (List.concat
-       [
-         l.owned;
-         sets;
-         rings;
-         Option.to_list l.local_current;
-         Option.to_list l.local_pending;
-         retired;
-       ])
+       [ l.owned; sets; rings; Option.to_list l.local_published; retired ])
 
 (* Never raised: [halt]'s mark that nothing raised. *)
 exception Unraised

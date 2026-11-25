@@ -47,10 +47,14 @@ type t = {
           whose threads need up to [n] bytes each ({!Launch.local_bytes}): it
           does nothing if the memory already does, else replaces it with a
           larger one ({!Local_memory.make}) and keeps the old one until the work
-          placed before the call completes. The result is [Error msg] if the
-          device cannot allocate it. It raises the driver's fault where the
-          free of a memory it gives back fails, once the new memory serves;
-          the driver keeps the memory it failed to free. Any domain may call
-          it. *)
+          placed before the call completes. What it serves stays until the
+          device stops. The driver also grows the memory for the functions it
+          sets up, and a [Rig.free_cache] may shrink it to what those still need
+          and [local] was asked for: a launch the driver did not set up, whose
+          need was not asked of [local], can then fault. The result is
+          [Error msg] if the device cannot allocate it. It raises the driver's
+          fault where the free of a memory it gives back fails, once the new
+          memory serves; the driver keeps the memory it failed to free. Any
+          domain may call it. *)
 }
 (** The type for GPUs. Every count is positive. *)
