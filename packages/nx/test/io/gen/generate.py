@@ -207,6 +207,13 @@ def skipped_entries_npz():
         z.writestr(zipfile.ZipInfo("weights/w.npy", date_time=date), npy.getvalue())
     with zipfile.ZipFile("suffix_only.npz", "w") as z:
         z.writestr(zipfile.ZipInfo(".npy", date_time=date), npy.getvalue())
+    # The AppleDouble file macOS's Finder zips beside w.npy, whose name ends
+    # in .npy and which holds no npy stream: its header, magic 0x00051607 and
+    # version 0x00020000, then no entry.
+    double = struct.pack(">II", 0x00051607, 0x00020000) + b"Mac OS X        " + b"\0\0"
+    with zipfile.ZipFile("macosx.npz", "w") as z:
+        z.writestr(zipfile.ZipInfo("w.npy", date_time=date), npy.getvalue())
+        z.writestr(zipfile.ZipInfo("__MACOSX/._w.npy", date_time=date), double)
 
 
 def paeth(a, b, c):

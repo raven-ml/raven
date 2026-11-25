@@ -39,10 +39,9 @@ let long_case =
           Plain ))
     (Gen.int_range 0 4095)
 
-(* Values of every dtype npy holds, and one in nine a long vector. The law
-   draws 200 cases, so that it misses the long vector with probability
-   6 10^-11, and each kind of value, 1/7 of the others, with probability
-   below 10^-10. *)
+(* Values of every dtype npy holds, and one in nine a long vector. The law draws
+   200 cases, so that it misses the long vector with probability 6 10^-11, and
+   each kind of value, 1/7 of the others, with probability below 10^-10. *)
 let npy_cases =
   Gen.with_pp
     (fun ppf (Case (dt, s, _, view)) ->
@@ -53,11 +52,11 @@ let npy =
   let loads name expected () =
     equal packed expected (Nx_io.load_npy (fixture name))
   in
-  group "npy"
+  group "load_npy and save_npy"
     [
       prop ~count:200 "a value saved as npy loads as itself, bit for bit"
-        npy_cases
-        (fun (Case (_, s, _, _) as c) ->
+        ~examples:[ empty_case; scalar_case; strided_case; broadcast_case ]
+        npy_cases (fun (Case (_, s, _, _) as c) ->
           covers c;
           cover "a value of 2^17 + 3 elements" (s = [| long |]);
           Law.round_trip packed string
@@ -90,6 +89,14 @@ let npy =
         ]
         (fun (_, (name, expected)) ->
           equal memory expected (memory_of (Nx_io.load_npy (fixture name))));
+      test
+        "a mapped value placed on a set that addresses host memory keeps the \
+         file's pages" (fun () ->
+          let module M = (val Nx.devices [ Nx_support.memory 0 ]) in
+          let x =
+            Nx.unpack Nx.int32 (Nx_io.load_npy (fixture "version2.npy"))
+          in
+          equal memory Over_file (memory_of (Nx.P (Nx.place M.on x))));
       test "a complex big-endian element keeps its real part first" (fun () ->
           let data =
             "\x3f\xf0\000\000\000\000\000\000\xc0\000\000\000\000\000\000\000"
@@ -126,30 +133,42 @@ let npy =
             read (saved ".npy" save_npy (Nx.P (Nx.arange Nx.int16 0 5 1)))
           in
           flips_load_or_fail Nx_io.load_npy ~upto:128 whole);
+      (* Each header's data is the bytes its dtype and shape would take, so that
+         only the header fails. *)
       cases "a malformed header fails, naming the file" ~id:fst
         [
           ( "a field twice",
-            "{'descr': '<i2', 'descr': '<i2', 'fortran_order': False, 'shape': \
-             (1,), }" );
+            ( "{'descr': '<i2', 'descr': '<i2', 'fortran_order': False, \
+               'shape': (1,), }",
+              "\000\000" ) );
           ( "an unknown field",
-            "{'descr': '<i2', 'fortran_order': False, 'shape': (1,), 'x': 1, }"
-          );
-          ("no shape", "{'descr': '<i2', 'fortran_order': False, }");
+            ( "{'descr': '<i2', 'fortran_order': False, 'shape': (1,), 'x': 1, }",
+              "\000\000" ) );
+          ( "no shape",
+            ("{'descr': '<i2', 'fortran_order': False, }", "\000\000") );
           ( "a negative extent",
-            "{'descr': '<i2', 'fortran_order': False, 'shape': (-1,), }" );
+            ("{'descr': '<i2', 'fortran_order': False, 'shape': (-1,), }", "")
+          );
           ( "a byte-order mark on a wide dtype",
-            "{'descr': '|i2', 'fortran_order': False, 'shape': (1,), }" );
+            ( "{'descr': '|i2', 'fortran_order': False, 'shape': (1,), }",
+              "\000\000" ) );
           ( "33 axes",
-            "{'descr': '<i2', 'fortran_order': False, 'shape': ("
-            ^ String.concat ", " (List.init 33 (fun _ -> "1"))
-            ^ "), }" );
+            ( "{'descr': '<i2', 'fortran_order': False, 'shape': ("
+              ^ String.concat ", " (List.init 33 (fun _ -> "1"))
+              ^ "), }",
+              "\000\000" ) );
           ( "an extent past 2^53",
-            "{'descr': '<i2', 'fortran_order': False, 'shape': (0, \
-             9007199254740993), }" );
+            ( "{'descr': '<i2', 'fortran_order': False, 'shape': (0, \
+               9007199254740993), }",
+              "" ) );
+          ( "extents whose product wraps to 0",
+            ( "{'descr': '<i2', 'fortran_order': False, 'shape': (4294967296, \
+               4294967296), }",
+              "" ) );
         ]
-        (fun (_, dict) ->
-          let path = file (npy_file dict "\000\000") in
-          fails ~path (fun () -> Nx_io.load_npy path));
+        (fun (_, (dict, data)) ->
+          let path = file (npy_file dict data) in
+          within_budget (fun () -> fails ~path (fun () -> Nx_io.load_npy path)));
       (* numpy.lib.format, "Format Version 2.0": "The version 2.0 format extends
          the header size to 4 GiB". *)
       test "a version 2.0 header padded past 1 MiB loads" (fun () ->
@@ -198,8 +217,8 @@ let npy =
 
 (* npy from blocks *)
 
-(* Blocks of one dtype and cell, each [k] rows of drawn elements, flipped
-   along axis 0 or not. *)
+(* Blocks of one dtype and cell, each [k] rows of drawn elements, flipped along
+   axis 0 or not. *)
 type blocks =
   | Blocks : ('v, 's) D.t * int array * ('v array * int * bool) list -> blocks
 
@@ -235,10 +254,10 @@ let joined dt cell xs =
 let by = "Nx_io.save_npy_concat"
 
 let concat =
-  group "npy from blocks"
+  group "save_npy_concat"
     [
-      prop "blocks saved as one npy load as their concatenation, mapped"
-        blocks (fun (Blocks (dt, cell, bs)) ->
+      prop "blocks saved as one npy load as their concatenation, mapped" blocks
+        (fun (Blocks (dt, cell, bs)) ->
           cover "no block" (bs = []);
           cover "one block" (List.length bs = 1);
           cover "several blocks" (List.length bs > 1);
@@ -264,8 +283,8 @@ let concat =
             (Nx.P (Nx.reshape [| 9; 2 |] (Nx.arange Nx.int32 0 18 1)))
             (Nx_io.load_npy path));
       (* The file beside the path holds the header's width and every block
-         before the one being forced, so each block is written before the
-         next is forced. *)
+         before the one being forced, so each block is written before the next
+         is forced. *)
       test "a block is forced once the one before it is written" (fun () ->
           let dir = temp_dir () in
           let path = Filename.concat dir "x.npy" in
@@ -299,9 +318,9 @@ let concat =
           equal ~msg:"the file" string "old" (read path);
           equal ~msg:"the directory" (array string) [| "old" |]
             (Sys.readdir dir));
-      test "what forcing the blocks raises passes on, and the path is left as \
-            it was"
-        (fun () ->
+      test
+        "what forcing the blocks raises passes on, and the path is left as it \
+         was" (fun () ->
           let dir = temp_dir () in
           let path = Filename.concat dir "old" in
           write path "old";
@@ -315,13 +334,16 @@ let concat =
             (Sys.readdir dir));
       cases "a dtype or a cell npy cannot hold is refused" ~id:fst
         [
-          ("bfloat16", fun () ->
-              Nx_io.save_npy_concat (temp_file ()) Nx.bfloat16 [||] Seq.empty);
-          ("a negative extent", fun () ->
-              Nx_io.save_npy_concat (temp_file ()) Nx.int8 [| -1 |] Seq.empty);
-          ("32 axes", fun () ->
+          ( "bfloat16",
+            fun () ->
+              Nx_io.save_npy_concat (temp_file ()) Nx.bfloat16 [||] Seq.empty );
+          ( "a negative extent",
+            fun () ->
+              Nx_io.save_npy_concat (temp_file ()) Nx.int8 [| -1 |] Seq.empty );
+          ( "32 axes",
+            fun () ->
               Nx_io.save_npy_concat (temp_file ()) Nx.int8 (Array.make 32 1)
-                Seq.empty);
+                Seq.empty );
         ]
         (fun (_, save) -> invalid ~by save);
     ]
@@ -401,12 +423,14 @@ let paged pages =
   ^ pattern (pages * 4096) 3
 
 let rows =
-  group "npy windows"
+  group "load_npy_rows"
     [
       prop
-        "windows of a saved value load as the value's rows, sliced and \
-         joined, in memory of its own"
-        windows (fun (Windows (dt, s, vs, ws)) ->
+        "windows of a saved value load as the value's rows, sliced and joined, \
+         in memory of its own"
+        ~examples:[ Windows (D.Int8, [| 2 |], [| 1; 2 |], []) ]
+        windows
+        (fun (Windows (dt, s, vs, ws)) ->
           cover "no window" (ws = []);
           cover "a window of no row" (List.exists (fun (_, m) -> m = 0) ws);
           cover "overlapping windows" (overlap ws);
@@ -470,8 +494,7 @@ let rows =
          (fun (_, (row, rows)) ->
            invalid ~by:"Nx_io.load_npy_rows" (fun () ->
                Nx_io.load_npy_rows (Lazy.force path) ~row ~rows)));
-      test "windows of more than 2^53 rows of no element are refused"
-        (fun () ->
+      test "windows of more than 2^53 rows of no element are refused" (fun () ->
           let path =
             file
               (npy_file
@@ -485,10 +508,16 @@ let rows =
                ~sub:"Nx_io.load_npy_rows: the windows hold more than 2^53 rows")
             (fun () ->
               Nx_io.load_npy_rows path ~row:[| 0; 0 |] ~rows:[| n; n |]));
+      test "rows read the file the path names at the call" (fun () ->
+          let path = temp_file ~suffix:".npy" () in
+          Nx_io.save_npy path (Nx.arange Nx.int16 0 5 1);
+          ignore (rows_of path [ (0, 1) ]);
+          Nx_io.save_npy path (Nx.arange Nx.int16 10 13 1);
+          equal packed
+            (Nx.P (Nx.create Nx.int16 [| 2 |] [| 12; 10 |]))
+            (rows_of path [ (2, 1); (0, 1) ]));
       test "a window of no row may start at the end" (fun () ->
-          let path =
-            saved ".npy" save_npy (Nx.P (Nx.arange Nx.int16 0 5 1))
-          in
+          let path = saved ".npy" save_npy (Nx.P (Nx.arange Nx.int16 0 5 1)) in
           equal packed
             (Nx.P (Nx.zeros Nx.int16 [| 0 |]))
             (rows_of path [ (5, 0) ]));
@@ -500,7 +529,7 @@ let rows =
          page reads more and fails the test. *)
       test "windows of a file not in memory read their pages from storage"
         (fun () ->
-          let pages = 2048 in
+          let pages = 320 in
           let path =
             Filename.temp_file ~temp_dir:(Sys.getcwd ()) "nx-io-paged" ".npy"
           in
@@ -518,10 +547,9 @@ let rows =
             (x, resident_pages path)
           in
           let _, header = cold [] in
-          (* Rows 29 apart from 1 MiB on, and a window of 3. *)
-          let ws =
-            List.init 60 (fun j -> (256 + (29 * j), 1)) @ [ (2000, 3) ]
-          in
+          (* Rows 4 apart from 1 MiB on, and a window of 3: the gaps of 3 pages
+             show any read-ahead. *)
+          let ws = List.init 12 (fun j -> (256 + (4 * j), 1)) @ [ (310, 3) ] in
           let x, read = cold ws in
           equal packed (sliced path ws) x;
           (* Row r's bytes lie from 4096 (r + 1), past the header's page. *)
@@ -560,19 +588,23 @@ let without_zip64_end s =
     let record = Int64.to_int (String.get_int64_le s (eocd - 12)) in
     String.sub s 0 record ^ String.sub s eocd 22
 
-let npz =
-  let one = Nx.P (Nx.zeros Nx.int8 [| 1 |]) in
-  group "npz"
+let one = Nx.P (Nx.zeros Nx.int8 [| 1 |])
+
+(* 70 000 bytes of noise, which DEFLATE does not shrink, and as many zeros,
+   which it does. *)
+let noise () =
+  let s = Random.State.make [| 0x4e58 |] in
+  Nx.init Nx.uint8 [| 70_000 |] (fun _ -> Random.State.int s 256)
+
+let zeros () = Nx.zeros Nx.uint8 [| 70_000 |]
+
+(* An npz file of one stored entry, "w", of [noise ()]. *)
+let stored_npz () = saved ".npz" save_npz [ ("w", Nx.P (noise ())) ]
+let stored_bytes = lazy (read (stored_npz ()))
+
+let load_npz =
+  group "load_npz"
     [
-      prop "an archive saved as npz loads as itself"
-        (Gen.with_pp pp_entries (archives npy_dtypes))
-        (fun entries ->
-          List.iter (fun (_, c) -> covers c) entries;
-          cover "an empty archive" (entries = []);
-          cover "several entries" (List.length entries >= 2);
-          Law.round_trip archive string
-            (saved ".npz" Nx_io.save_npz)
-            Nx_io.load_npz (archive_of entries));
       cases "archives numpy wrote load, deflated or stored" ~id:fst
         [
           ( "archive.npz",
@@ -589,15 +621,29 @@ let npz =
         (fun (name, entries) ->
           equal archive (Archive.of_list entries)
             (Nx_io.load_npz (fixture name)));
+      (* The save and each load take about 0.3 s on fudge, nx.io's own cost of
+         4.5 us an entry; the comparison takes the names, and every entry's
+         bytes in one array. *)
       test
         "an archive of 65535 entries, the most a 16-bit count holds, loads as \
          itself, with or without a ZIP64 end record" (fun () ->
-          let a =
-            Archive.of_list (List.init 65535 (fun i -> (string_of_int i, one)))
-          in
+          let names = List.init 65535 string_of_int in
+          let a = Archive.of_list (List.map (fun n -> (n, one)) names) in
           let whole = read (saved ".npz" Nx_io.save_npz a) in
-          equal archive a (Nx_io.load_npz (file whole));
-          equal archive a (Nx_io.load_npz (file (without_zip64_end whole))));
+          let all a =
+            Nx.to_array
+              (Nx.concatenate ~axis:0
+                 (List.map
+                    (fun n -> Nx.unpack Nx.int8 (find a n))
+                    (Archive.names a)))
+          in
+          List.iter
+            (fun s ->
+              let loaded = Nx_io.load_npz (file s) in
+              equal (list string) (List.sort compare names)
+                (Archive.names loaded);
+              equal (array int) (Array.make 65535 0) (all loaded))
+            [ whole; without_zip64_end whole ]);
       cases
         "entries of other names than an npy file's are ignored, whatever they \
          hold"
@@ -622,6 +668,21 @@ let npz =
         [
           ("a text file", fun () -> "hello, nx\n");
           ("an npy file", fun () -> read (fixture "version2.npy"));
+          ( "an entry named ._w.npy holding an AppleDouble file",
+            fun () -> read (fixture "macosx.npz") );
+          ( "an entry of another name whose local name differs from its record",
+            fun () ->
+              let s = read (fixture "other_names.npz") in
+              let rec local i =
+                if
+                  String.sub s i 4 = "PK\003\004"
+                  && String.sub s (i + 30) 6 = "README"
+                then i + 30
+                else local (i + 1)
+              in
+              let b = Bytes.of_string s in
+              Bytes.set b (local 0) 'X';
+              Bytes.to_string b );
         ]
         (fun (_, contents) ->
           let path = file (contents ()) in
@@ -634,59 +695,12 @@ let npz =
             (Archive.of_list
                [ ("w", Nx.P (Nx.create Nx.uint8 [| Array.length w |] w)) ])
             (Nx_io.load_npz path));
-      (* Noise over two stored blocks, a full one of 65535 bytes and up to
-         16 KiB more, after a run of zeros, which the encoder codes and which
-         makes the entry's first 64 KiB shrink. Each case writes and syncs its
-         file, so the entry is no longer than that needs. *)
-      prop ~count:20
-        "an entry of a run of zeros then noise, saved as npz, loads as itself"
-        (Gen.triple
-           (Gen.int_range 8_192 16_384)
-           (Gen.int_range 65_536 81_920)
-           Gen.nat)
-        (fun (run, noise, seed) ->
-          let random = Random.State.make [| seed |] in
-          let b = Bigarray.(Array1.create int8_unsigned c_layout) (run + noise) in
-          for i = 0 to run + noise - 1 do
-            b.{i} <- (if i < run then 0 else Random.State.int random 256)
-          done;
-          let t = Nx.of_bigarray (Bigarray.genarray_of_array1 b) in
-          let path = saved ".npz" save_npz [ ("w", Nx.P t) ] in
-          equal ~msg:"deflated" int 8 (String.get_uint16_le (read path) 8);
-          equal packed (Nx.P t) (find (Nx_io.load_npz path) "w"));
       test
         "a deflated entry whose data starts at no multiple of its element size \
          loads" (fun () ->
           equal packed
             (Nx.P (Nx.create Nx.float64 [| 5 |] [| 0.; 1.5; 3.; 4.5; 6. |]))
             (find (Nx_io.load_npz (fixture "unaligned.npz")) "w"));
-      cases "an invalid name is refused" ~id:Fun.id
-        [ "/w"; "a//b"; "./w"; "a/../b"; "\xff"; "a\\b"; "c:w" ] (fun name ->
-          invalid ~by:"Nx_io.save_npz" (fun () ->
-              save_npz (temp_file ()) [ (name, one) ]));
-      test "a dtype npy lacks is refused, naming the entry" (fun () ->
-          raises_match
-            (Exn.invalid_arg ~sub:"Nx_io.save_npz: w: npy has no bfloat16")
-            (fun () ->
-              save_npz (temp_file ())
-                [ ("w", Nx.P (Nx.zeros Nx.bfloat16 [| 1 |])) ]));
-      (let s = Random.State.make [| 0x4e58 |] in
-       let random _ = Random.State.int s 256 in
-       cases
-         "an incompressible entry is stored, over the file, and a compressible \
-          one deflated, into memory of its own"
-         ~id:fst
-         [
-           ("stored", (Nx.init Nx.uint8 [| 70_000 |] random, 0, Over_file));
-           ("deflated", (Nx.zeros Nx.uint8 [| 70_000 |], 8, Own_memory));
-         ]
-         (fun (name, (t, method_, lies)) ->
-           let path = saved ".npz" save_npz [ (name, Nx.P t) ] in
-           (* The compression method of the archive's first entry. *)
-           equal ~msg:"method" int method_ (String.get_uint16_le (read path) 8);
-           let loaded = find (Nx_io.load_npz path) name in
-           equal packed (Nx.P t) loaded;
-           equal memory lies (memory_of loaded)));
       test "a deflated entry's donation writes in place" (fun () ->
           let n = 70_000 in
           let path =
@@ -697,14 +711,21 @@ let npz =
           let y, grew = grown Rig.host load (fun x -> Nx.neg (Nx.donate x)) in
           less ~msg:"no memory of the result's size" int ~than:n grew;
           equal (array int) (Array.make n 0) (Nx.to_array y));
-      test "an entry whose checksum does not match fails" (fun () ->
-          let s = read (saved ".npz" save_npz [ ("w", one) ]) in
-          (* The CRC-32 of the central directory's first entry. *)
-          let rec crc i =
-            if String.sub s i 4 = "PK\001\002" then i + 16 else crc (i + 1)
+      cases "an entry whose checksum does not match fails" ~id:fst
+        [
+          ("deflated", fun () -> read (saved ".npz" save_npz [ ("w", one) ]));
+          ("stored, over the file", fun () -> read (stored_npz ()));
+        ]
+        (fun (_, contents) ->
+          (* The CRC-32 the entry's descriptor and its central record state,
+             both flipped, so that they agree with each other. *)
+          let s = contents () in
+          let rec at signature i =
+            if String.sub s i 4 = signature then i else at signature (i + 1)
           in
-          let path = file (flip_byte s (crc 0)) in
-          fails ~path (fun () -> Nx_io.load_npz path));
+          let s = flip_byte s (at "PK\007\008" 0 + 4) in
+          let path = file (flip_byte s (at "PK\001\002" 0 + 16)) in
+          fails ~path ~naming:"CRC-32" (fun () -> Nx_io.load_npz path));
       test "an entry whose stated checksum is 0 loads unchecked" (fun () ->
           let x = Nx.P (Nx.arange Nx.int16 0 5 1) in
           let b = Bytes.of_string (read (saved ".npz" save_npz [ ("w", x) ])) in
@@ -740,6 +761,91 @@ let npz =
           in
           prefixes_fail Nx_io.load_npz whole;
           flips_load_or_fail Nx_io.load_npz whole);
+      (* APPNOTE 4.4.7: the CRC-32 is of the entry's data, which a stored entry
+         holds as it is, and a CRC-32 detects every burst of 32 bits or
+         fewer. *)
+      prop "a flipped byte of a stored entry's data fails"
+        (Gen.int_range 0 max_int) (fun k ->
+          let s = Lazy.force stored_bytes in
+          (* The data lies after the local record's name and extra field, for
+             the size its descriptor states. *)
+          let data =
+            30 + String.get_uint16_le s 26 + String.get_uint16_le s 28
+          in
+          let rec descriptor i =
+            if String.sub s i 4 = "PK\007\008" then i else descriptor (i + 1)
+          in
+          let size =
+            Int64.to_int (String.get_int64_le s (descriptor data + 8))
+          in
+          let path = file (flip_byte s (data + (k mod size))) in
+          fails ~path (fun () -> Nx_io.load_npz path));
     ]
 
-let () = exit (run "nx.io NumPy" [ npy; concat; rows; npz ])
+let save_npz =
+  group "save_npz"
+    [
+      prop "an archive saved as npz loads as itself" ~examples:[ [] ]
+        (Gen.with_pp pp_entries (archives npy_dtypes))
+        (fun entries ->
+          List.iter (fun (_, c) -> covers c) entries;
+          cover "an empty archive" (entries = []);
+          cover "several entries" (List.length entries >= 2);
+          Law.round_trip archive string
+            (saved ".npz" Nx_io.save_npz)
+            Nx_io.load_npz (archive_of entries));
+      (* Noise over two stored blocks, a full one of 65535 bytes and up to 16
+         KiB more, after a run of zeros, which the encoder codes and which makes
+         the entry's first 64 KiB shrink. Each case writes and syncs its file,
+         so the entry is no longer than that needs. *)
+      prop ~count:20
+        "an entry of a run of zeros then noise, saved as npz, loads as itself"
+        (Gen.triple
+           (Gen.int_range 8_192 16_384)
+           (Gen.int_range 65_536 81_920)
+           Gen.nat)
+        (fun (run, noise, seed) ->
+          let random = Random.State.make [| seed |] in
+          let b =
+            Bigarray.(Array1.create int8_unsigned c_layout) (run + noise)
+          in
+          for i = 0 to run + noise - 1 do
+            b.{i} <- (if i < run then 0 else Random.State.int random 256)
+          done;
+          let t = Nx.of_bigarray (Bigarray.genarray_of_array1 b) in
+          let path = saved ".npz" save_npz [ ("w", Nx.P t) ] in
+          equal ~msg:"deflated" int 8 (String.get_uint16_le (read path) 8);
+          equal packed (Nx.P t) (find (Nx_io.load_npz path) "w"));
+      cases "an invalid name is refused" ~id:(Printf.sprintf "%S")
+        [ "/w"; "a//b"; "./w"; "a/../b"; "\xff"; "a\\b"; "c:w"; "a\000b"; "w/" ]
+        (fun name ->
+          invalid ~by:"Nx_io.save_npz" (fun () ->
+              save_npz (temp_file ()) [ (name, one) ]));
+      test "a dtype npy lacks is refused, naming the entry" (fun () ->
+          raises_match
+            (Exn.invalid_arg ~sub:"Nx_io.save_npz: w: npy has no bfloat16")
+            (fun () ->
+              save_npz (temp_file ())
+                [ ("w", Nx.P (Nx.zeros Nx.bfloat16 [| 1 |])) ]));
+      cases
+        "an incompressible entry is stored, over the file, and a compressible \
+         one deflated, into memory of its own"
+        ~id:fst
+        [
+          ("stored", (stored_npz, noise, 0, Over_file));
+          ( "deflated",
+            ( (fun () -> saved ".npz" save_npz [ ("w", Nx.P (zeros ())) ]),
+              zeros,
+              8,
+              Own_memory ) );
+        ]
+        (fun (_, (save, t, method_, lies)) ->
+          let path = save () in
+          (* The compression method of the archive's first entry. *)
+          equal ~msg:"method" int method_ (String.get_uint16_le (read path) 8);
+          let loaded = find (Nx_io.load_npz path) "w" in
+          equal packed (Nx.P (t ())) loaded;
+          equal memory lies (memory_of loaded));
+    ]
+
+let () = exit (run "nx.io NumPy" [ npy; rows; concat; load_npz; save_npz ])
