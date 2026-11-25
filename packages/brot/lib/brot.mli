@@ -980,11 +980,15 @@ type added_token = {
     ones.
 
     Token IDs are assigned automatically: a token already in the model
-    vocabulary keeps its ID, the others are numbered from the end of it. The
-    call that would number a token 2{^ 31} or more, past the [int32] values of
-    {!type-ids}, raises [Invalid_argument]. A token with [special] set is
-    skipped by {!decode} when [skip_special_tokens] is [true]; one without it is
-    an ordinary vocabulary entry that happens to be matched atomically. The
+    vocabulary keeps its ID, the others take the next free ID, one past the
+    largest the model or an earlier added token holds. This departs from Hugging
+    Face, which numbers them from the size of the model vocabulary: on a
+    vocabulary whose IDs leave gaps, that number can be one the model holds, and
+    the model's entry then decodes as the added token. The call that would
+    number a token 2{^ 31} or more, past the [int32] values of {!type-ids},
+    raises [Invalid_argument]. A token with [special] set is skipped by
+    {!decode} when [skip_special_tokens] is [true]; one without it is an
+    ordinary vocabulary entry that happens to be matched atomically. The
     semantic role (pad, unk, bos, etc.) is contextual, not encoded in the type.
 *)
 
@@ -1113,13 +1117,13 @@ val bpe :
     - [decoder]: decoding strategy. Default: none.
     - [added_tokens]: added tokens. They are matched atomically in the input on
       {!encode}: against the raw text before normalization when [normalized] is
-      unset, against the normalized text when it is set. They are numbered from
-      the end of [vocab] without entering it. A token of empty content is
-      ignored, and a content given twice is one token, with the ID of its first
-      and the flags of its last. Raises [Invalid_argument] when a normalized
-      token normalizes to the empty text, and when two of different content
-      match the same text, as two normalized tokens whose contents normalize
-      alike do. Default: [[]].
+      unset, against the normalized text when it is set. They are numbered past
+      the largest ID of [vocab] ({!type-added_token}) without entering it. A
+      token of empty content is ignored, and a content given twice is one token,
+      with the ID of its first and the flags of its last. Raises
+      [Invalid_argument] when a normalized token normalizes to the empty text,
+      and when two of different content match the same text, as two normalized
+      tokens whose contents normalize alike do. Default: [[]].
     - [bos_token], [eos_token], [pad_token]: role markers. Each is a special
       token in its own right, matched in the input like the entries of
       [added_tokens] and numbered like them when [vocab] does not hold it. One
@@ -1358,8 +1362,8 @@ val from_model_file :
 val add_tokens : t -> added_token list -> t
 (** [add_tokens t tokens] is [t] with [tokens] registered as added tokens,
     exactly as if they had been passed as [added_tokens] at construction:
-    matched atomically in the input, numbered from the end of the vocabulary,
-    and skipped by {!decode} when their [special] is set. Works for every model.
+    matched atomically in the input, numbered past the largest ID in use, and
+    skipped by {!decode} when their [special] is set. Works for every model.
 
     A token [t] already holds keeps the ID it has; its flags are replaced by the
     new ones. Added tokens never enter the model's own vocabulary: to build one,

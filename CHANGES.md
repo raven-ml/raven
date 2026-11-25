@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- An added token the model does not hold takes the next free id, one past the
+  largest in use, where it was numbered from `vocab_size` and could take an id
+  the model holds over gapped ids. Hugging Face keeps the collision.
 - `Brot.bpe` raises `Invalid_argument` for a merge that names or makes a token
   `vocab` lacks, as for its other arguments, where it raised `Failure`.
 - `Brot.from_model_file` reads a `vocab.txt` line as Hugging Face does,

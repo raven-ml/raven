@@ -573,7 +573,30 @@ let test_numbered_after () =
   equal ~msg:"id 18" (option string) (Some "<pad>") (id_to_token t 18);
   equal ~msg:"vocab_size" int 19 (vocab_size t)
 
-(* [b] keeps its model id, so [<x>] would be numbered 2^31. *)
+(* Hugging Face numbers [<x>] 2 over this vocabulary, the id of [b] (tokenizers
+   0.23.1), so that [b] decodes as [<x>]. Here an added token never takes an id
+   the model holds. *)
+let test_next_free_id () =
+  let pairs = [ ("a", 0); ("b", 2) ] in
+  let t =
+    bpe ~vocab:pairs ~merges:[]
+      ~added_tokens:[ added_token "<x>"; added_token "<y>" ]
+      ()
+  in
+  equal ~msg:"<x>" (option int) (Some 3) (token_to_id t "<x>");
+  equal ~msg:"<y>" (option int) (Some 4) (token_to_id t "<y>");
+  equal ~msg:"b" (array int) [| 2 |] (encode_ids t "b");
+  equal ~msg:"decode" string "b" (decode t [| 2 |]);
+  equal ~msg:"vocab"
+    (list (pair string int))
+    [ ("<x>", 3); ("<y>", 4); ("a", 0); ("b", 2) ]
+    (List.sort compare (vocab t));
+  let added =
+    add_tokens (bpe ~vocab:pairs ~merges:[] ()) [ added_token "<x>" ]
+  in
+  equal ~msg:"add_tokens" (option int) (Some 3) (token_to_id added "<x>")
+
+(* The model holds 2^31 - 1, so [<x>] would be numbered 2^31. *)
 let test_past_int32 () =
   raises_match (Exn.invalid_arg ~sub:"2^31") (fun () ->
       bpe
@@ -763,7 +786,7 @@ let test_flags_replaced () =
   equal ~msg:"not skipped" string "a <s>"
     (decode t ~skip_special_tokens:true (ids_of t "a <s>"))
 
-(* [b] keeps its model id, so [<x>] would be numbered 2^31. *)
+(* The model holds 2^31 - 1, so [<x>] would be numbered 2^31. *)
 let past_int32 =
   cases "raises Invalid_argument past 2^31 - 1" ~id:fst
     [
@@ -812,6 +835,8 @@ let () =
              test "keeps the id of the model's entry" test_model_id;
              test "is numbered from the end of the vocabulary"
                test_numbered_after;
+             test "takes the next id past the largest the model holds"
+               test_next_free_id;
              test "raises Invalid_argument past 2^31 - 1" test_past_int32;
            ];
          group "bpe"

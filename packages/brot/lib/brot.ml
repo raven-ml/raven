@@ -269,34 +269,32 @@ let role_tokens ~bos_token ~eos_token ~pad_token given =
   |> List.filter (fun content -> not (named content))
   |> List.map added_token
 
-(* Identifiers follow HuggingFace: a token the model holds keeps the model's
-   identifier, the others are numbered from the end of the model vocabulary.
-   Repeated content is one token and takes one identifier. *)
+(* A token the model holds keeps the model's identifier; the others take the
+   next free one, one past the largest the model or an earlier token holds, so
+   that none stands for a model entry. HuggingFace numbers them from the size of
+   the model vocabulary instead, which on a vocabulary whose identifiers leave
+   gaps is one the model holds. Repeated content is one token and takes one
+   identifier. *)
 let added_tokens_of algorithm tokens =
-  let vocab_size = alg_vocab_size algorithm in
+  let largest = List.fold_left (fun m (_, id) -> max m id) (-1) in
   let assigned = Hashtbl.create 16 in
-  let number (a : added_token) highest =
+  let number (a : added_token) next =
     match Hashtbl.find_opt assigned a.content with
     | Some id -> id
     | None -> (
         match alg_token_to_id algorithm a.content with
         | Some id -> id
         | None ->
-            let id =
-              match highest with
-              | Some id when id >= vocab_size || vocab_size = 0 -> id + 1
-              | _ -> vocab_size
-            in
-            if not (Id_table.in_range id) then
+            if not (Id_table.in_range next) then
               invalid_arg
                 (Printf.sprintf "added token %S would have id %d, past 2^31 - 1"
-                   a.content id);
-            id)
+                   a.content next);
+            next)
   in
   let tokens, _ =
     List.fold_left
-      (fun (acc, highest) (a : added_token) ->
-        let id = number a highest in
+      (fun (acc, next) (a : added_token) ->
+        let id = number a next in
         Hashtbl.replace assigned a.content id;
         let token =
           {
@@ -309,13 +307,9 @@ let added_tokens_of algorithm tokens =
             normalized = a.normalized;
           }
         in
-        let highest =
-          match highest with
-          | Some other -> Some (max other id)
-          | None -> Some id
-        in
-        (token :: acc, highest))
-      ([], None) tokens
+        (token :: acc, max next (id + 1)))
+      ([], largest (alg_vocab algorithm) + 1)
+      tokens
   in
   List.rev tokens
 
