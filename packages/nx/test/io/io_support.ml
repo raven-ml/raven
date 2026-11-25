@@ -59,20 +59,34 @@ let write_at path pos s =
       Out_channel.seek oc (Int64.of_int pos);
       Out_channel.output_string oc s)
 
-(* Every proper prefix of [whole] fails to load, naming its file. One file grows
-   a byte at a time; a file per prefix made 14780 files for a 14 KiB input, half
-   the test's time. *)
+(* [within_budget f] is [f ()] with the host's budget at the memory it holds now
+   and 256 MiB more, restored after: a load that sizes a Rig buffer from a
+   hostile header raises [Rig.Out_of_memory] rather than take the machine's
+   memory. The budget counts Rig's buffers and mappings alone, a file a load
+   maps included, so the margin is far above every fixture; what a load sizes in
+   the OCaml heap is test_hostile.ml's, under a limit of its process's
+   memory. *)
+let within_budget f =
+  let old = Rig.budget Rig.host in
+  Rig.set_budget Rig.host (Rig.allocated Rig.host + (256 lsl 20));
+  Fun.protect ~finally:(fun () -> Rig.set_budget Rig.host old) f
+
+(* Every proper prefix of [whole] fails to load, naming its file, within the
+   budget. One file grows a byte at a time; a file per prefix made 14780 files
+   for a 14 KiB input, half the test's time. *)
 let prefixes_fail load whole =
   let path = temp_file () in
+  within_budget @@ fun () ->
   for n = 0 to String.length whole - 1 do
     if n > 0 then write_at path (n - 1) (String.sub whole (n - 1) 1);
     fails ~path (fun () -> load path)
   done
 
-(* Every byte of [whole] below [upto], flipped, loads or fails, each flip made
-   and undone in place in one file. *)
+(* Every byte of [whole] below [upto], flipped, loads or fails within the
+   budget, each flip made and undone in place in one file. *)
 let flips_load_or_fail load ?(upto = max_int) whole =
   let path = file whole in
+  within_budget @@ fun () ->
   for i = 0 to Int.min upto (String.length whole) - 1 do
     write_at path i (String.make 1 (flip whole.[i]));
     loads_or_fails ~path (fun () -> load path);
