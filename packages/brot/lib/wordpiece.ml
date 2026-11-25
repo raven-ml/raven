@@ -199,7 +199,7 @@ let trim_end line =
 
 let read_file ~vocab_file =
   let vocab = Hashtbl.create 10000 in
-  let ic = open_in vocab_file in
+  let ic = open_in_bin vocab_file in
   Fun.protect
     ~finally:(fun () -> close_in ic)
     (fun () ->
@@ -341,7 +341,7 @@ let save model ~path ?name () =
     |> List.sort compare
     |> List.map (fun (_, k) -> k)
   in
-  let oc = open_out vocab_file in
+  let oc = open_out_bin vocab_file in
   Fun.protect
     ~finally:(fun () -> close_out oc)
     (fun () ->

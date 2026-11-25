@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- Tokenizer files are read and written in binary mode, so `from_file` reads
+  a CRLF `tokenizer.json` on Windows, and `from_model_file` a `merges.txt`
+  whose lines end in CRLF, as Hugging Face does.
 - `Brot.save_pretrained` and `Brot.save_model_files` raise `Invalid_argument`
   on a token that is not valid UTF-8. They wrote it as raw bytes, a file that
   is not JSON and that `from_file` then refused.

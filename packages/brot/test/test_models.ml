@@ -907,6 +907,13 @@ let test_bpe_files () =
   equal ~msg:"the first rule alone" (list string) [ "ab"; "b" ] (tokens t "abb");
   equal ~msg:"ids" (array int) [| 4 |] (encode_ids t "abc")
 
+(* tokenizers reads merges.txt by lines, which end in LF or CRLF. *)
+let test_crlf_merges () =
+  let vocab = file {|{"a": 0, "b": 1, "ab": 2, "c": 3, "abc": 4}|} in
+  let merges = file "#version: 0.2\r\na b\r\nab c\r\n" in
+  equal (array int) [| 4 |]
+    (encode_ids (from_model_file ~vocab ~merges ()) "abc")
+
 let test_unreadable () =
   let missing = Filename.concat (temp_dir ()) "missing.txt" in
   raises_match ~msg:"vocab.txt" Exn.sys_error (fun () ->
@@ -1025,6 +1032,7 @@ let () =
              test "takes off the white space that ends a line" test_line_ends;
              test "reads a vocab.json and a merges.txt, skipping #version"
                test_bpe_files;
+             test "reads a merges.txt whose lines end in CRLF" test_crlf_merges;
              test "raises Sys_error for a file it cannot read" test_unreadable;
              test "raises Failure for a file not in its format" test_malformed;
              test "gives the model unk_token" test_files_unk_token;

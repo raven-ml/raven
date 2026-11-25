@@ -1383,7 +1383,8 @@ val from_model_file :
       blank line holds the empty token; of several blank lines, the empty token
       takes the last one's number.
     - [merges]: path to merges file ([merges.txt]). One merge per line as
-      space-separated token pairs. Lines starting with ["#version"] are skipped.
+      space-separated token pairs, a line ending in LF or CRLF. Lines starting
+      with ["#version"] are skipped.
 
     - [unk_token]: as in {!bpe} with [merges], and as in {!wordpiece} without.
 

@@ -2377,12 +2377,12 @@ let is_unigram json =
 (* File I/O *)
 
 let write_string_to_file path s =
-  let oc = open_out path in
+  let oc = open_out_bin path in
   Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc s)
 
 let from_file path =
   try
-    let ic = open_in path in
+    let ic = open_in_bin path in
     let s =
       Fun.protect
         ~finally:(fun () -> close_in ic)

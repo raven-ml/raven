@@ -1761,7 +1761,7 @@ let json_of_string s =
 
 let read_files ~vocab_file ~merges_file =
   let vocab_json =
-    let ic = open_in vocab_file in
+    let ic = open_in_bin vocab_file in
     let content =
       Fun.protect
         ~finally:(fun () -> close_in ic)
@@ -1780,7 +1780,7 @@ let read_files ~vocab_file ~merges_file =
         mems
   | _ -> failwith "Invalid vocab.json format");
   let merges =
-    let ic = open_in merges_file in
+    let ic = open_in_bin merges_file in
     Fun.protect
       ~finally:(fun () -> close_in ic)
       (fun () ->
@@ -1788,6 +1788,12 @@ let read_files ~vocab_file ~merges_file =
         (try
            while true do
              let line = input_line ic in
+             (* A line ends in LF or CRLF, as tokenizers reads it. *)
+             let line =
+               if String.ends_with ~suffix:"\r" line then
+                 String.sub line 0 (String.length line - 1)
+               else line
+             in
              (* Skip empty lines and comment lines that start with #version *)
              if
                String.length line > 0
@@ -1830,11 +1836,11 @@ let save model ~path ?name () =
   (* Rendered before either file is opened, so a refused vocabulary leaves the
      folder as it was. *)
   let vocab_text = Json_text.to_string vocab_json in
-  let oc = open_out vocab_file in
+  let oc = open_out_bin vocab_file in
   Fun.protect
     ~finally:(fun () -> close_out oc)
     (fun () -> output_string oc vocab_text);
-  let oc = open_out merges_file in
+  let oc = open_out_bin merges_file in
   Fun.protect
     ~finally:(fun () -> close_out oc)
     (fun () ->

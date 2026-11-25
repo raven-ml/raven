@@ -405,6 +405,20 @@ let test_file_dropout () =
   let t = require_ok ~pp:Format.pp_print_string (from_text dropout_file) in
   equal string "0x1.99999ap-4" (dropout t)
 
+(* JSON white space includes CR (RFC 8259, section 2). This fails only where a
+   channel opened in text mode turns CRLF into LF, as on Windows, where the file
+   reads as fewer characters than its length; on Linux and macOS it holds either
+   way. *)
+let test_crlf_file () =
+  let lf =
+    {|{"model":{"type":"WordLevel","vocab":{"a":0,"b":1},"unk_token":"a"},
+"pre_tokenizer":{"type":"WhitespaceSplit"}}
+|}
+  in
+  let crlf = String.concat "\r\n" (String.split_on_char '\n' lf) in
+  let read text = require_ok ~pp:Format.pp_print_string (from_text text) in
+  equal (array int) (ids (read lf) "a b") (ids (read crlf) "a b")
+
 let test_file_errors =
   cases "errors on a file it cannot read or parse" ~id:fst
     [
@@ -947,6 +961,7 @@ let () =
              test_file_decoder;
              test_file_post_processor;
              test "holds a BPE dropout in single precision" test_file_dropout;
+             test "reads a file whose lines end in CRLF" test_crlf_file;
              test_file_errors;
            ];
          group "of_json"
