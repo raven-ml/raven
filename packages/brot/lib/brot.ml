@@ -13,7 +13,6 @@ let strf = Printf.sprintf
 
 (* Error messages *)
 
-let err_pair_no_post = "pair sequences require a configured post-processor"
 let err_no_pad_token = "padding requested but no pad token configured"
 let err_pad_not_in_vocab tok = strf "pad token '%s' not in vocabulary" tok
 let err_stride = "truncation: stride must be less than the room for content"
@@ -1039,13 +1038,13 @@ let ids_of_text t text =
       let (_ : Run.t option) = encode_document t sc text ~record:false in
       Ints.to_array sc.ids)
 
+(* Without a post-processor a pair is its two sequences end to end, the second
+   with type ID 1, which is what the empty sequence of processors makes of it. *)
+let unprocessed = Post_processor.sequence []
+
 let post_process t ~add_special primary pair =
-  match t.post_processor with
-  | None ->
-      if Option.is_some pair then invalid_arg err_pair_no_post else primary
-  | Some processor ->
-      Post_processor.process processor ?pair primary
-        ~add_special_tokens:add_special
+  let processor = Option.value t.post_processor ~default:unprocessed in
+  Post_processor.process processor ?pair primary ~add_special_tokens:add_special
 
 (* Truncation happens before the post-processor runs, on a budget the tokens it
    will add are taken out of, so that a special token never pushes content past

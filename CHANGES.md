@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Brot.encode` and the other encoders take a `pair` on a tokenizer without a
+  post-processor, as Hugging Face does: the pair's tokens follow the text's,
+  with type ID 1. They raised `Invalid_argument`.
 - Every encoder resolves a `padding` at the call, so `encode_ids` raises
   without a pad token as `encode` does, and a `pad_token` named without
   `pad_id` pads with its own id, not the tokenizer's pad token's.

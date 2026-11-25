@@ -1496,7 +1496,8 @@ val encode :
     domains.
 
     - [pair]: a second sentence for sentence-pair tasks. The post-processor
-      merges both sequences with appropriate type IDs. Default: none.
+      merges both sequences with appropriate type IDs; without one, [pair]'s
+      tokens follow [text]'s with type ID [1]. Default: none.
     - [add_special_tokens]: whether to insert special tokens via the
       post-processor. Default: [true].
     - [match_special_tokens]: whether the added tokens whose [special] is set

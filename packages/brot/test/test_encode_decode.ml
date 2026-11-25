@@ -1266,6 +1266,22 @@ let test_encode_pair () =
   equal ~msg:"ids" (array int) [| 8; 0; 1; 9; 2; 9 |] (Encoding.ids e);
   equal ~msg:"type ids" (array int) [| 0; 0; 0; 0; 1; 1 |] (Encoding.type_ids e)
 
+(* HuggingFace, with and without special tokens: ids [0, 1, 2], type ids [0, 0,
+   1]. *)
+let test_encode_pair_without_post () =
+  let t = plain_words () in
+  let e = encode t ~pair:"c" "a b" in
+  equal ~msg:"ids" (array int) [| 0; 1; 2 |] (Encoding.ids e);
+  equal ~msg:"type ids" (array int) [| 0; 0; 1 |] (Encoding.type_ids e);
+  equal ~msg:"without special tokens" (array int) [| 0; 1; 2 |]
+    (ids_of t ~add_special_tokens:false ~pair:"c" "a b");
+  equal ~msg:"encode_ids" (array int) [| 0; 1; 2 |]
+    (encode_ids t ~pair:"c" "a b");
+  equal ~msg:"encode_batch_pairs"
+    (list (array int))
+    [ [| 0; 1; 2 |] ]
+    (List.map Encoding.ids (encode_batch_pairs t [ ("a b", "c") ]))
+
 (* exec *)
 
 (* Every task on the calling domain, last first. *)
@@ -2439,6 +2455,10 @@ let () =
                test_encode_inserted;
              test "merges a pair through the post-processor with its type ids"
                test_encode_pair;
+             test
+               "follows the text with the pair, type ID 1, without a \
+                post-processor"
+               test_encode_pair_without_post;
            ];
          group "exec"
            [
