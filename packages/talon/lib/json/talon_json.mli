@@ -27,9 +27,10 @@
     {1:syntax Syntax}
 
     The input is UTF-8, and every value is RFC 8259 JSON: its bytes are
-    checked, including in a value no column reads, so that a read's errors do
-    not depend on the columns it requests. A UTF-8 byte order mark at the start
-    of the input is not part of the first value, and line 1 starts after it.
+    checked, including in a value no column reads, so that a read's syntax
+    errors do not depend on the columns it requests. A UTF-8 byte order mark
+    at the start of the input is not part of the first value, and line 1
+    starts after it.
 
     - A string holds any Unicode scalar value. Unpaired surrogate escapes are
       refused. Control characters must be escaped.
@@ -43,7 +44,7 @@
       value. A key the format does not read is skipped without this check.
 
     {!Lines} is one JSON value per line, each line ended by a line feed or the
-    end of the input; a carriage return before a line feed, and blank lines, are
+    end of the input; a carriage return before either, and blank lines, are
     allowed, and a line break inside a value is not, as NDJSON says. An
     {!Array} is one array whose elements are the rows; only whitespace may
     follow it.
@@ -73,16 +74,20 @@
     {1:sniffing_rules Sniffing}
 
     {!sniff} reads a file's first rows to infer its format. A [\[] as the first
-    value picks {!Array}, and a [{] picks {!Lines}. A column's type is inferred
-    from every value it has in those rows, each key's own column:
+    value picks {!Array}, and a [{] picks {!Lines}. The columns are the rows'
+    keys in the order they first appear. A column's type is inferred from every
+    value it has in those rows, a [null] being no value:
     - [bool] if every value is [true] or [false];
-    - [int64] if every value is an integer that [int64] holds;
+    - [int64] if every value is an integer, a number with neither fraction nor
+      exponent, that [int64] holds;
     - [float64] if every value is a number and at least one is not such an
       integer, none being an integer beyond [int64];
     - a list if every value is an array, of the type of its elements taken
       together, and [string] for an empty list's elements;
     - a record if every value is an object, of the fields of its objects in the
-      order they first appear, each field its own column;
+      order they first appear, each field its own column, and [string] if no
+      object has a field, since a record of no field would skip every key a
+      later row holds;
     - [string] otherwise: strings, integers beyond [int64], a column whose
       values are of several JSON types, and a column of no value.
 
@@ -138,7 +143,8 @@ val sniff :
   ?rows:int -> Bytesrw.Bytes.Reader.t -> (format, Talon.Error.t) result
 (** [sniff ?rows r] is the format of the JSON text that [r] reads, inferred from
     its first rows as {{!sniffing_rules}sniffing} says. [rows] is the number of
-    rows types are inferred from. Defaults to [16384].
+    rows types are inferred from. Defaults to [16384]. [sniff] reads [r] no
+    further than its sampled rows need.
 
     [r] is left as it was: the bytes [sniff] reads are pushed back on [r], which
     then reads its whole input from where it was, unless reading it failed.
@@ -170,7 +176,9 @@ val source : format -> (unit -> Bytesrw.Bytes.Reader.t) -> Talon.Source.t
     [open_ ()] read, as [f] says, in {!decode}'s batches. Each read of the
     source calls [open_] once. It keeps the request's columns only, stops after
     its limit, and applies no conjunct. Its errors are {!decode}'s, for the rows
-    it reads, which checks each row's syntax whatever the request names. *)
+    it reads, which checks each row's syntax, and a key the format reads named
+    twice, whatever the request names. A value of a column the request does not
+    name is checked as JSON, and not read as its column's type. *)
 
 val file :
   ?format:format -> string -> (Talon.Source.t, Talon.Error.t) result
