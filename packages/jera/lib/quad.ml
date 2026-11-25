@@ -533,41 +533,39 @@ let schedule kind dtype =
   }
 
 (* The terms [w f(x)] of one chunk's nodes, [side], [offset] and [weight] of
-   shape [[c] @ ones], in the lanes [live]. A node whose point rounds to an end
-   of a finite range, or of a lane not live, is unused: its input is the
-   midpoint or the anchor and its term zero, so neither its value nor its
-   derivative reaches the sum. *)
+   shape [[c] @ ones], in the lanes [live]. A node the sum drops (padding, of
+   weight zero; a point that rounds to an end of a finite range; a lane not
+   live) is evaluated at the t = 0 node, the one the search evaluates first, and
+   its term is zero, so neither its value nor its derivative reaches the sum. *)
 let terms fn f range ~live (side, offset, weight) =
-  let live = Nx.unsqueeze ~axes:[ 0 ] live in
-  let anchored anchor =
-    let x = Nx.add anchor offset in
-    let use = Nx.broadcast_to (Nx.shape x) live in
-    let x = Nx.where use x (Nx.broadcast_to (Nx.shape x) anchor) in
-    let y = call fn f x in
-    Nx.where use (Nx.mul weight y) (Nx.zeros_like y)
+  let x, scale, spare, kept =
+    match range with
+    | Range.Finite (a, b) ->
+        let half = Nx.div_s (Nx.sub b a) 2. in
+        let mid = Nx.add a half in
+        let left = Nx.add a (Nx.mul half offset)
+        and right = Nx.sub b (Nx.mul half offset) in
+        let x =
+          Nx.where (Nx.less_s side 0.) left
+            (Nx.where (Nx.greater_s side 0.) right mid)
+        in
+        let inside =
+          Nx.logical_or (Nx.equal_s side 0.)
+            (Nx.logical_and (Nx.not_equal x a) (Nx.not_equal x b))
+        in
+        (x, Nx.mul half weight, mid, inside)
+    | From a ->
+        (Nx.add a offset, weight, Nx.add_s a 1., Nx.ones_like (Nx.isnan a))
+    | Line c -> (Nx.add c offset, weight, c, Nx.ones_like (Nx.isnan c))
   in
-  match range with
-  | Range.Finite (a, b) ->
-      let half = Nx.div_s (Nx.sub b a) 2. in
-      let mid = Nx.add a half in
-      let left = Nx.add a (Nx.mul half offset)
-      and right = Nx.sub b (Nx.mul half offset) in
-      let x =
-        Nx.where (Nx.less_s side 0.) left
-          (Nx.where (Nx.greater_s side 0.) right mid)
-      in
-      let valid =
-        Nx.logical_or (Nx.equal_s side 0.)
-          (Nx.logical_and (Nx.not_equal x a) (Nx.not_equal x b))
-      in
-      let valid =
-        Nx.logical_and (Nx.broadcast_to (Nx.shape valid) live) valid
-      in
-      let x = Nx.where valid x (Nx.broadcast_to (Nx.shape x) mid) in
-      let y = call fn f x in
-      Nx.where valid (Nx.mul (Nx.mul half weight) y) (Nx.zeros_like y)
-  | From a -> anchored a
-  | Line c -> anchored c
+  let use =
+    Nx.logical_and
+      (Nx.logical_and (Nx.unsqueeze ~axes:[ 0 ] live) (Nx.greater_s weight 0.))
+      kept
+  in
+  let use = Nx.broadcast_to (Nx.shape x) use in
+  let y = call fn f (Nx.where use x (Nx.broadcast_to (Nx.shape x) spare)) in
+  Nx.where use (Nx.mul scale y) (Nx.zeros_like y)
 
 let tanh_sinh ~tol f range =
   let fn = "Jera.Quad.tanh_sinh" in
@@ -988,9 +986,9 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
     Nx.bitcast Nx.uint32
       (Nx.Rng.bits_at (Nx.Rng.placement key) ~key [| shifts; d |])
   in
-  (* The integrand's sum over chunk [j]'s points under each shift, of shape
-     [[shifts] @ lanes]. *)
-  let chunk_sums f lo hi j =
+  (* Chunk [j]'s points in the unit cube under each shift, of shape [[64;
+     shifts] @ ones @ [d]]. *)
+  let unit_chunk j =
     let first = Nx.mul_s (Nx.cast Nx.uint32 j) (Int32.of_int qmc_chunk) in
     let i =
       Nx.add
@@ -1002,13 +1000,14 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
         (Nx.unsqueeze ~axes:[ 1 ] (sobol_words d i))
         (Nx.unsqueeze ~axes:[ 0 ] shift)
     in
-    let u = unit_points dtype words in
-    let u =
-      Nx.reshape
-        (Array.concat
-           [ [| qmc_chunk; shifts |]; Array.make (rank - 1) 1; [| d |] ])
-        u
-    in
+    Nx.reshape
+      (Array.concat
+         [ [| qmc_chunk; shifts |]; Array.make (rank - 1) 1; [| d |] ])
+      (unit_points dtype words)
+  in
+  (* The integrand at the points [u] of the unit cube mapped into the box, of
+     shape [[64; shifts] @ lanes]. *)
+  let values f lo hi u =
     let points = Nx.add lo (Nx.mul (Nx.sub hi lo) u) in
     let y = f points in
     let expected = Array.sub (Nx.shape points) 0 (Nx.ndim points - 1) in
@@ -1018,7 +1017,10 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
            "%s: the integrand returned shape %s for points of shape %s" fn
            (Num.shape (Nx.shape y))
            (Num.shape (Nx.shape points)));
-    Nx.sum ~axes:[ 0 ] y
+    y
+  in
+  let chunk_sums f lo hi j =
+    Nx.sum ~axes:[ 0 ] (values f lo hi (unit_chunk j))
   in
   let lo0 = Rune.detach box.lo and hi0 = Rune.detach box.hi in
   let search x = Rune.detach (f x) in
@@ -1089,11 +1091,31 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
   in
   let ok = Nx.equal_s st (Solution.code Converged) in
   (* The answer: the volume times the mean over each lane's final points,
-     tracked, chunk by chunk. *)
+     tracked, chunk by chunk. A chunk the answer drops, past a lane's last or of
+     a lane that did not converge, is evaluated at chunk 0's points, which the
+     search evaluated first, and adds zero, so neither its value nor its
+     derivative reaches the sum. *)
+  let first = unit_chunk (Nx.scalar_at at Nx.int32 0l) in
   let sum_chunk total j =
-    let keep = Nx.unsqueeze ~axes:[ 0 ] (Nx.less (per_lane j) used) in
-    let s = chunk_sums f box.lo box.hi j in
-    (Nx.add total (Nx.sum ~axes:[ 0 ] (Nx.where keep s (Nx.zeros_like s))), ())
+    let keep = Nx.logical_and ok (Nx.less (per_lane j) used) in
+    let along shape =
+      Nx.broadcast_to shape
+        (Nx.reshape
+           (Array.concat
+              [
+                [| 1; 1 |]; lanes; Array.make (Array.length shape - rank - 1) 1;
+              ])
+           keep)
+    in
+    let shape = Array.concat [ [| qmc_chunk; shifts |]; lanes; [| d |] ] in
+    let u =
+      Nx.where (along shape)
+        (Nx.broadcast_to shape (unit_chunk j))
+        (Nx.broadcast_to shape first)
+    in
+    let y = values f box.lo box.hi u in
+    let y = Nx.where (along (Nx.shape y)) y (Nx.zeros_like y) in
+    (Nx.add total (Nx.sum ~axes:[ 0; 1 ] y), ())
   in
   let total, () =
     Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit sum_chunk

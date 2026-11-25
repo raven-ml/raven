@@ -693,13 +693,14 @@ let adapt_tests =
           (scalar (Oracle.dot x (Nx.cos (Nx.mul_s x 1.7))))
           (Rune.grad' at theta));
     test "a fit that did not converge has a zero derivative" (fun () ->
-        let fit t = adapt ~budget:3 (fun z -> Nx.abs (Nx.sub z t)) 0. 1. in
-        let value t =
-          Nx.sum (Piecewise.eval (Solution.best (fit t)) (vec [| 0.2; 0.7 |]))
+        (* The pole of p / (x − 1/4) is the middle node of the piece [0, ½]. *)
+        let fit p = adapt (fun x -> Nx.div p (Nx.sub_s x 0.25)) 0. 1. in
+        let value p =
+          Nx.sum (Piecewise.eval (Solution.best (fit p)) (vec [| 0.7 |]))
         in
-        let t = scalar 0.37 in
-        equal Oracle.status_t Budget_spent (Oracle.status (fit t));
-        equal (exact ()) (scalar 0.) (Rune.grad' value t));
+        let p = scalar 1. in
+        equal Oracle.status_t Not_finite (Oracle.status (fit p));
+        equal (exact ()) (scalar 0.) (Rune.grad' value p));
     test "compiled equals eager within the fit's rounding" (fun () ->
         Compiled.here ();
         (* The fit is a matrix product, whose sums a compiled call may associate

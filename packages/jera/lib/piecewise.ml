@@ -252,9 +252,8 @@ let adapt s ~degree ~tol ~budget f a b =
   let level = sorted level
   and index = sorted index
   and live = sorted used_mask in
-  let t0, t1 = fractions level index in
-  let t0 = Nx.where live t0 (Nx.ones_like t0)
-  and t1 = Nx.where live t1 (Nx.ones_like t1) in
+  let t0, _ = fractions level index in
+  let t0 = Nx.where live t0 (Nx.ones_like t0) in
   let series a b c =
     let breaks =
       Nx.concatenate ~axis:0
@@ -273,11 +272,12 @@ let adapt s ~degree ~tol ~budget f a b =
     in
     { s; breaks; coefficients = c; extension = Cheb.Bounded }
   in
-  (* The answer interpolates the tracked f at the final pieces' points; an
-     unused piece's points are inside the range. *)
-  let mid = Nx.full_like t0 0.5 in
+  (* The answer interpolates the tracked f at the final pieces' points; a piece
+     it drops is evaluated at the whole range's points, as the search first did,
+     and zeroed. *)
   let tracked =
-    fit f (points a b (Nx.where live t0 mid, Nx.where live t1 mid))
+    let level, index, _ = Partition.answer p in
+    fit f (points a b (fractions (sorted level) (sorted index)))
   in
   let best = series a0 b0 (Nx.Ptree.map s (fun _ x -> sorted x) c) in
   let answer = series a b tracked in

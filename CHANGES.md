@@ -1281,6 +1281,17 @@ All notable changes to this project will be documented in this file.
 
 ### Jera (new)
 
+- A lane that did not converge has a zero derivative in `Quad.adaptive`,
+  `Quad.cubature`, `Quad.tanh_sinh`, `Quad.qmc` and `Piecewise.adapt` wherever
+  the integrand's derivative is finite at the search's first points, where it
+  could be NaN. Each answer evaluated the points it drops (an unconverged
+  lane's, an unused piece's, a chunk past a lane's end, padding) through the
+  tracked integrand and masked the result, so a pole there gave 0 × ∞; such a
+  point is now evaluated at the lane's first search point and adds zero.
+  `jera.mli` narrows the promise to that case.
+- `Quad.tanh_sinh` converges on a half-line or the line for an integrable
+  singularity at its anchor, as `jera.mli` states, where it ended `Not_finite`:
+  the schedule's padding nodes were evaluated at the anchor itself.
 - `Root.newton` and `System.anderson` end a lane `Stalled` where a step
   overflows to `±∞` while `f` stays finite there, as `tanh` does, and keep
   its last finite estimate: `Solution.best` held the infinity.

@@ -82,12 +82,19 @@ val padded : int -> int
 (** [padded budget] is the slots {!integrate} evaluates for [budget] slots:
     [budget] rounded up to a whole number of chunks of 32. *)
 
+val answer :
+  ('q, 'b, 'd) t -> 'd Nx.int32_t * 'd Nx.int64_t * 'd Nx.bool_t
+(** [answer p] is the slots an answer evaluates: each slot's level and index,
+    and whether the answer keeps it. A slot it drops, unused or of a lane that
+    did not converge, is its lane's first box, level 0 and index 0, whose
+    points the search evaluated first: the answer evaluates it there and adds
+    zero, so neither its value nor its derivative reaches the answer. *)
+
 val integrate :
   ('q, 'b, 'd) t ->
   ('d Nx.int32_t -> 'd Nx.int64_t -> (float, 'b, 'd) Nx.t) ->
   (float, 'b, 'd) Nx.t
-(** [integrate p f] is the sum of [f level index] over the boxes in use, [f]
-    taking a chunk of [k] boxes per lane and returning [[k] @ lanes]. The chunks
-    run under a {!Rune.scan}, so reverse mode keeps one chunk's values; an
-    unused slot evaluates [[0, 1]^d] with weight zero, so its points lie inside
-    the problem. *)
+(** [integrate p f] is the sum of [f level index] over the slots {!answer}
+    keeps, [f] taking a chunk of [k] boxes per lane and returning
+    [[k] @ lanes]. The chunks run under a {!Rune.scan}, so reverse mode keeps
+    one chunk's values. *)

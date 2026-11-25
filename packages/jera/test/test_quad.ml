@@ -552,16 +552,14 @@ let adaptive_tests =
         in
         equal (Oracle.tensor ~rel:1e-9 ()) (Nx.cos b) (Rune.grad' integral b));
     test "an element that did not converge has a zero derivative" (fun () ->
-        (* x^(p − 1) on [0, 1]: integrable for p = 1, not for p = −0.5. *)
-        let p = vec [| 1.; -0.5 |] in
+        (* The pole of p / (x − 1/4) is a node of the piece [0, ½]. *)
         let solve p =
-          adaptive ~budget:20 (fun x -> Nx.pow x (Nx.sub_s p 1.)) (unit_range p)
+          adaptive (fun x -> Nx.div p (Nx.sub_s x 0.25)) (unit_range p)
         in
-        equal (exact ())
-          (Nx.create Nx.bool [| 2 |] [| true; false |])
-          (Solution.ok (solve p));
-        let g = Rune.grad' (fun p -> Nx.sum (Solution.best (solve p))) p in
-        equal (exact ()) (scalar 0.) (Nx.get [ 1 ] g));
+        let p = vec [| 1. |] in
+        equal Oracle.status_t Not_finite (Oracle.status (solve p));
+        equal (exact ()) (vec [| 0. |])
+          (Rune.grad' (fun p -> Nx.sum (Solution.best (solve p))) p));
     test "compiled equals eager" (fun () ->
         Compiled.here ();
         equal
@@ -626,6 +624,14 @@ let tanh_sinh_tests =
         in
         let s = ts f (Quad.Range.from (vec [| 0.; 0. |])) in
         equal (at_tol ()) (vec [| 1.; Float.pi /. 2. |]) (Solution.get s));
+    test "an end singularity converges on a half-line" (fun () ->
+        (* ∫₀^∞ x^(−½) e^(−x) dx = Γ(½) = √π. *)
+        let s =
+          ts
+            (fun x -> Nx.mul (Nx.rsqrt x) (Nx.exp (Nx.neg x)))
+            (Quad.Range.from (vec [| 0. |]))
+        in
+        equal (at_tol ()) (vec [| Float.sqrt Float.pi |]) (Solution.get s));
     test "sinh-sinh integrates the line" (fun () ->
         let c = vec [| 0.; 0.5 |] in
         let s =
@@ -849,14 +855,13 @@ let cubature_tests =
           (scalar (Float.exp 0.7 *. (Float.exp 1. -. 1.)))
           (Rune.grad' integral (scalar 0.7)));
     test "a lane that did not converge has a zero derivative" (fun () ->
+        (* The pole of t / (x − 1/4) is the center of the box [0, ½] × [0,
+           1]. *)
         let solve t =
-          cube ~budget:1
-            (fun x ->
-              Nx.exp (Nx.mul t (sum_coords (Nx.square (Nx.sub_s x 0.4)))))
-            (unit_box [||] 2)
+          cube (fun x -> Nx.div t (Nx.sub_s (coord 0 x) 0.25)) (unit_box [||] 2)
         in
-        let t = scalar (-50.) in
-        equal Oracle.status_t Budget_spent (Oracle.status (solve t));
+        let t = scalar 1. in
+        equal Oracle.status_t Not_finite (Oracle.status (solve t));
         equal (exact ()) (scalar 0.)
           (Rune.grad' (fun t -> Solution.best (solve t)) t));
     test "compiled equals eager" (fun () ->

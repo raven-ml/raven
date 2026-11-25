@@ -109,7 +109,9 @@
       equation through {!Rune.root}, an integral by its rule over the final
       partition, a flow by its accepted steps taken again, a fit by its final
       pieces. The derivative is the answer's: no search is differentiated, and a
-      lane that did not converge has a zero derivative.
+      lane that did not converge has a zero derivative wherever the problem's
+      function and its derivative are finite at the first points its search
+      evaluated.
     - {b Tags.} A method's tag says which drivers take it: [`Formula] runs in a
       formula, [`Embedded] estimates its error and drives a solve. An impossible
       pairing is a type error.

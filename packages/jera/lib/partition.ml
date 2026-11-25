@@ -210,6 +210,16 @@ let refine s ~at ~budget ~lanes ~dims ~cost ~evaluate ~point ~verdict =
 
 let padded budget = chunk * ((budget + chunk - 1) / chunk)
 
+let answer p =
+  let ok = Nx.equal_s p.status (Solution.code Converged) in
+  let used = in_use p in
+  let keep =
+    Nx.logical_and used
+      (Nx.broadcast_to (Nx.shape used) (Nx.unsqueeze ~axes:[ 0 ] ok))
+  in
+  let first v = Nx.where (widen keep v) v (Nx.zeros_like v) in
+  (first p.level, first p.index, keep)
+
 let integrate p f =
   let budget = Nx.dim 0 p.error in
   let padded = padded budget in
@@ -226,10 +236,10 @@ let integrate p f =
   let chunks v =
     Nx.reshape (Array.append [| padded / chunk; chunk |] (tail v)) (pad v)
   in
-  let used = in_use p in
-  let unused v = Nx.where (widen used v) v (Nx.zeros_like v) in
-  let sum_chunk total (level, (index, weight)) =
-    (Nx.add total (Nx.sum ~axes:[ 0 ] (Nx.mul weight (f level index))), ())
+  let level, index, keep = answer p in
+  let sum_chunk total (level, (index, keep)) =
+    let y = f level index in
+    (Nx.add total (Nx.sum ~axes:[ 0 ] (Nx.where keep y (Nx.zeros_like y))), ())
   in
   let dtype = Nx.dtype p.error in
   let total, () =
@@ -237,7 +247,6 @@ let integrate p f =
       Nx.Ptree.(pair tensor (pair tensor tensor))
       Nx.Ptree.unit sum_chunk
       ~init:(Nx.zeros_at (Nx.placement p.used) dtype (Nx.shape p.used))
-      ( chunks (unused p.level),
-        (chunks (unused p.index), chunks (Nx.cast dtype used)) )
+      (chunks level, (chunks index, chunks keep))
   in
   total
