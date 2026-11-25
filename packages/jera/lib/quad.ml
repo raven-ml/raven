@@ -635,12 +635,15 @@ let tanh_sinh ~tol f range =
         (Nx.add (Nx.div_s current 2.) (Nx.mul h sum))
     in
     let closing = Nx.logical_and run (Nx.broadcast_to lanes ends) in
-    let prev' = Nx.where closing current prev
-    and current' = Nx.where closing estimate current in
+    (* A non-finite estimate ends the lane, which keeps its last finite one. *)
+    let finite = Nx.isfinite estimate in
+    let kept = Nx.logical_and closing finite in
+    let prev' = Nx.where kept current prev
+    and current' = Nx.where kept estimate current in
     let final = Nx.where closing (Nx.broadcast_to lanes k) final in
     let st' =
       Elementwise.settle st
-        (Nx.logical_and closing (Nx.logical_not (Nx.isfinite estimate)))
+        (Nx.logical_and closing (Nx.logical_not finite))
         Not_finite
     in
     let e = Nx.abs (Nx.sub current' prev') in
@@ -1057,11 +1060,14 @@ let qmc key ~tol ~budget f (box : (_, 'd) Box.t) =
            (float (shifts * (shifts - 1))))
     in
     let testing = Nx.logical_and run (per_lane power) in
-    let estimate = Nx.where testing mean estimate
-    and error = Nx.where testing se error in
+    (* A non-finite mean ends the lane, which keeps its last finite estimate. *)
+    let finite = Nx.isfinite mean in
+    let kept = Nx.logical_and testing finite in
+    let estimate = Nx.where kept mean estimate
+    and error = Nx.where kept se error in
     let st =
       Elementwise.settle st
-        (Nx.logical_and testing (Nx.logical_not (Nx.isfinite mean)))
+        (Nx.logical_and testing (Nx.logical_not finite))
         Not_finite
     in
     let st =

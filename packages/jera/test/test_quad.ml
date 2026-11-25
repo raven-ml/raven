@@ -662,6 +662,23 @@ let tanh_sinh_tests =
           ts (fun x -> Nx.recip (Nx.sub_s x 0.5)) (unit_range (vec [| 0. |]))
         in
         equal Oracle.status_t Not_finite (Oracle.status s));
+    test "a Not_finite lane's best is its last finite estimate" (fun () ->
+        (* Lane 0's pole is the midpoint, t = 0, so level 0 closes non-finite
+           and the lane holds the estimate before it, the empty sum 0. Lane 1's
+           pole is the node at t = ½, so level 0 closes finite and level 1 does
+           not. *)
+        let sh = Float.pi /. 2. *. Float.sinh 0.5 in
+        let p = 1. -. (0.5 *. (2. /. (Float.exp (2. *. sh) +. 1.))) in
+        let f x =
+          let lane i c = Nx.recip (Nx.sub_s (Nx.slice [ Nx.A; Nx.I i ] x) c) in
+          Nx.stack ~axis:1 [ lane 0 0.5; lane 1 p ]
+        in
+        let s = ts f (unit_range (vec [| 0.; 0. |])) in
+        let both = Nx.create Nx.bool [| 2 |] [| true; true |] in
+        equal ~msg:"Not_finite" (exact ()) both (Solution.is Not_finite s);
+        let best = Solution.best s in
+        equal ~msg:"finite" (exact ()) both (Nx.isfinite best);
+        equal ~msg:"lane 0" (exact ()) (scalar 0.) (Nx.get [ 0 ] best));
     test "evaluations count the search's chunks and the whole schedule"
       (fun () ->
         (* Lane 0 diverges and searches every chunk of 64 nodes, so it evaluates
@@ -1053,6 +1070,26 @@ let qmc_tests =
         equal int32 24576l (Nx.item [] (Solution.evaluations (solve t)));
         equal (exact ()) (scalar 0.)
           (Rune.grad' (fun t -> Solution.best (solve t)) t));
+    test "a Not_finite lane's best is its last finite estimate" (fun () ->
+        (* The lane of the test above tests its estimate at 1, 2 and 4 chunks,
+           all finite, and ends Not_finite at 8: its best is its estimate at 4
+           chunks, the best of the same solve with a budget of 4. *)
+        let edge = 1. -. Float.ldexp 1. (-12) in
+        let f x =
+          let c = coord 0 x in
+          Nx.mul
+            (Nx.add_s (coord 1 x) 1.)
+            (Nx.where (Nx.greater_s c edge) (Nx.full_like c nan)
+               (Nx.ones_like c))
+        in
+        let solve budget =
+          Quad.qmc (Nx.Rng.key 1) ~tol:(Tol.abs 1e-300) ~budget f
+            (unit_box [||] 2)
+        in
+        let failed = solve 16 and spent = solve 4 in
+        equal Oracle.status_t Not_finite (Oracle.status failed);
+        equal Oracle.status_t Budget_spent (Oracle.status spent);
+        equal (exact ()) (Solution.best spent) (Solution.best failed));
     test "compiled equals eager with the key an argument" (fun () ->
         Compiled.here ();
         let f x = Nx.exp (sum_coords x) in
