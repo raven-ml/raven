@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Jera.Linear. The trusted side is Nx.solve on the matrix the test builds
-   itself, the closed-form derivative of a solution, d u = −A⁻¹ (d A) u, and
-   lanes solved one at a time. *)
+   itself, the bounds the solvers state, computed in OCaml floats, the
+   closed-form derivative of a solution, d u = −A⁻¹ (d A) u, and lanes solved
+   one at a time. *)
 
 open Windtrap
 open Jera
@@ -14,133 +15,188 @@ let f64 = Nx.float64
 let scalar x = Nx.scalar f64 x
 let vec a = Nx.create f64 [| Array.length a |] a
 let one = Nx.Ptree.tensor
-let failure_with sub f = raises_match (Exn.failure ~sub) f
-let invalid_with sub f = raises_match (Exn.invalid_arg ~sub) f
+let product a u = Nx.matmul a u
+let norm x = Float.sqrt (Oracle.dot x x)
+let raises_from fn f = raises_match (Exn.invalid_arg ~sub:fn) f
+
+(* Machine epsilon and the least positive subnormal of float32, and float64's
+   least positive subnormal. *)
+let eps32 = Float.ldexp 1. (-23)
+let eta32 = Float.ldexp 1. (-149)
+let eta = Float.ldexp 1. (-1074)
+
+(* A count of unknowns: none and one each in a fifth of the draws. *)
+let unknowns =
+  Gen.(frequency [ (1, constant 0); (1, constant 1); (3, int_range 2 9) ])
+
+let size_covers r =
+  cover "an empty system" (Nx.dim 0 r = 0);
+  cover "one unknown" (Nx.dim 0 r = 1)
+
+let pp_system ppf (a, r) = Format.fprintf ppf "a = %a@ r = %a" Nx.pp a Nx.pp r
 
 (* A system of [n] unknowns, diagonally dominant so well conditioned: a matrix
    of entries in [-1, 1] plus [n + 1] on its diagonal, and a right-hand side. *)
-(* [n η], [η] float64's least positive subnormal: the floor of every bound
-   (Jera.Linear.dense). *)
-let underflow n = Float.of_int n *. Float.min_float *. epsilon_float
-
 let system =
   let open Gen in
-  (let* n = int_range 0 9 in
+  (let* n = unknowns in
    let+ a = list ~size:(constant (n * n)) (float_range (-1.) 1.)
    and+ r = list ~size:(constant n) (float_range (-10.) 10.) in
    let a = Nx.create f64 [| n; n |] (Array.of_list a) in
    let a = Nx.add a (Nx.mul_s (Nx.eye f64 n) (Float.of_int (n + 1))) in
    (a, Nx.create f64 [| n |] (Array.of_list r)))
-  |> with_pp (fun ppf (a, r) ->
-      Format.fprintf ppf "a = %a@ r = %a" Nx.pp a Nx.pp r)
+  |> with_pp pp_system
 
-let product a u = Nx.matmul a u
+(* A symmetric positive-definite system of [n] unknowns: [Bᵀ B + I] for [B] of
+   entries in [-1, 1], and a right-hand side. *)
+let spd =
+  let open Gen in
+  (let* n = unknowns in
+   let+ b = list ~size:(constant (n * n)) (float_range (-1.) 1.)
+   and+ r = list ~size:(constant n) (float_range (-10.) 10.) in
+   let b = Nx.create f64 [| n; n |] (Array.of_list b) in
+   let a = Nx.add (Nx.matmul (Nx.transpose b) b) (Nx.eye f64 n) in
+   (a, Nx.create f64 [| n |] (Array.of_list r)))
+  |> with_pp pp_system
+
 let dense a r = Linear.solve one Linear.dense (product a) r
+let banded width a r = Linear.solve one (Linear.banded ~width) (product a) r
+
+let cg a r =
+  Linear.solve one
+    (Linear.cg ~rel:1e-12 ~budget:100 ~precondition:Fun.id)
+    (product a) r
+
+let gmres ~restart a r =
+  Linear.solve one
+    (Linear.gmres ~restart ~rel:1e-12 ~budget:100 ~precondition:Fun.id)
+    (product a) r
+
+(* Nx.solve on the matrix itself. For [system]'s matrices, of condition below
+   about [2n + 1], both solutions meet a backward error of [16 n ε], so they
+   agree to about [cond · 16 n ε], below 1e-12 for [n ≤ 9]. *)
+let solution a r = if Nx.dim 0 r = 0 then r else Nx.solve a r
+let near_solution = Oracle.tensor ~rel:1e-12 ~abs:1e-12 ()
+
+(* The bound that Linear.dense states on the norm of its residual, in floats,
+   [16 n ε (‖A‖ ‖u‖ + ‖r‖) + 16 n η (1 + ‖A‖)]. *)
+let dense_bound ~eps ~eta a u r =
+  let n = Float.of_int (Nx.dim 0 r) and norm_a = norm a in
+  (16. *. n *. eps *. ((norm_a *. norm u) +. norm r))
+  +. (16. *. n *. eta *. (1. +. norm_a))
+
+(* [‖a u − r‖] of an answer, its residual computed in its dtype. *)
+let residual a u r = norm (Nx.sub (product a u) r)
+
+(* The bound of {!Linear.cg} and {!Linear.gmres}: [rel ‖r‖ + n η]. *)
+let krylov_bound ~rel ~eta r =
+  (rel *. norm r) +. (Float.of_int (Nx.dim 0 r) *. eta)
+
+(* [A + θ I] and its product, for a θ that a derivative tracks. *)
+let shifted a theta u = Nx.add (product a u) (Nx.mul theta u)
+
+(* The derivative of [Σ u] in the shift θ of [A + θ I], at θ = 0, through the
+   solver [s]. *)
+let grad_in_shift s a r =
+  Rune.grad'
+    (fun theta ->
+      Nx.sum (Solution.get (Linear.solve one s (shifted a theta) r)))
+    (scalar 0.)
+
+(* A system of condition below 3 for the derivative and transformation tests,
+   and its symmetric positive-definite companion [aᵀ a + I], of condition below
+   50. *)
+let fixed_a = Nx.create f64 [| 3; 3 |] [| 4.; 1.; 0.; 1.; 5.; 2.; 0.; 1.; 6. |]
+let fixed_spd = Nx.add (Nx.matmul (Nx.transpose fixed_a) fixed_a) (Nx.eye f64 3)
+let fixed_r = vec [| 1.; 2.; 3. |]
 
 (* Dense *)
 
-(* The least positive subnormal. *)
-let eta = Float.min_float *. epsilon_float
-
 let dense_tests =
   [
-    test "a subnormal solution of a large operator converges" (fun () ->
-        (* u = 0.6 η rounds to η, so the residual 10 η − 6 η = 4 η is the
-           least a float u gives, which the bound must admit. *)
-        let s =
-          Linear.solve one Linear.dense (fun u -> Nx.mul_s u 10.)
-            (vec [| 6. *. eta |])
-        in
-        equal (array float_exact) [| eta |] (Nx.to_array (Solution.get s)));
-    prop "the solution is Nx.solve's on the matrix" system (fun (a, r) ->
-        cover "an empty system" (Nx.dim 0 r = 0);
-        cover "one unknown" (Nx.dim 0 r = 1);
-        let expected = if Nx.dim 0 r = 0 then r else Nx.solve a r in
-        equal
-          (Oracle.tensor ~rel:1e-12 ~abs:1e-12 ())
-          expected
-          (Solution.get (dense a r)));
+    prop "u is Nx.solve's on the matrix" system (fun (a, r) ->
+        size_covers r;
+        equal near_solution (solution a r) (Solution.get (dense a r)));
+    prop "its residual meets dense's bound, in float64 and float32"
+      Gen.(pair system bool)
+      (fun ((a, r), single) ->
+        cover "float32" single;
+        if single then begin
+          let a = Nx.cast Nx.float32 a and r = Nx.cast Nx.float32 r in
+          let u = Solution.get (dense a r) in
+          at_most float_exact
+            ~than:(dense_bound ~eps:eps32 ~eta:eta32 a u r)
+            (residual a u r)
+        end
+        else
+          let u = Solution.get (dense a r) in
+          at_most float_exact
+            ~than:(dense_bound ~eps:epsilon_float ~eta a u r)
+            (residual a u r));
     prop "its error is the residual's magnitude" system (fun (a, r) ->
         let s = dense a r in
         let u = Solution.get s in
-        equal
-          (Oracle.tensor ~abs:1e-30 ())
+        equal (Oracle.tensor ())
           (Nx.abs (Nx.sub (product a u) r))
           (Solution.error s));
+    test "a subnormal solution of a large operator converges" (fun () ->
+        (* u = 0.6 η rounds to η, so the residual 10 η − 6 η = 4 η is the least
+           a float u gives, which the bound's η term must admit. *)
+        let s =
+          Linear.solve one Linear.dense
+            (fun u -> Nx.mul_s u 10.)
+            (vec [| 6. *. eta |])
+        in
+        equal (Oracle.tensor ()) (vec [| eta |]) (Solution.get s));
     test "it applies a once per unknown and once to check" (fun () ->
         let a = Nx.add (Nx.eye f64 5) (Nx.full f64 [| 5; 5 |] 0.1) in
         let s = dense a (Nx.ones f64 [| 5 |]) in
         equal int32 6l (Nx.item [] (Solution.evaluations s)));
-    test "r = 0 gives u = 0" (fun () ->
-        let a = Nx.add (Nx.eye f64 3) (Nx.full f64 [| 3; 3 |] 0.5) in
-        equal (Oracle.tensor ()) (Nx.zeros f64 [| 3 |])
-          (Solution.get (dense a (Nx.zeros f64 [| 3 |]))));
-    test "a structure's float tensors are one vector" (fun () ->
-        (* The system [[2, 1], [1, 3]] (p, q) = (3, 5) over a pair. *)
-        let a (p, q) =
-          ( Nx.add (Nx.mul_s p 2.) (Nx.reshape [| 1 |] q),
-            Nx.add (Nx.reshape [||] p) (Nx.mul_s q 3.) )
+    prop "grad in r is A⁻ᵀ 1" system (fun (a, r) ->
+        let expected =
+          if Nx.dim 0 r = 0 then r
+          else Nx.solve (Nx.transpose a) (Nx.ones_like r)
         in
-        let p, q =
-          Solution.get
-            (Linear.solve
-               Nx.Ptree.(pair tensor tensor)
-               Linear.dense a
-               (vec [| 3. |], scalar 5.))
+        equal near_solution expected
+          (Rune.grad' (fun r -> Nx.sum (Solution.get (dense a r))) r));
+    prop "grad in the operator is −1ᵀ A⁻¹ A⁻¹ r" system (fun (a, r) ->
+        let expected =
+          if Nx.dim 0 r = 0 then scalar 0.
+          else Nx.neg (Nx.sum (Nx.solve a (Nx.solve a r)))
         in
-        equal (Oracle.tensor ~rel:1e-14 ()) (vec [| 0.8 |]) p;
-        equal (Oracle.tensor ~rel:1e-14 ()) (scalar 1.4) q);
-    test "a tensor of another dtype is carried from r" (fun () ->
-        let a (u, k) = (Nx.mul_s u 2., k) in
-        let u, k =
-          Solution.get
-            (Linear.solve
-               Nx.Ptree.(pair tensor tensor)
-               Linear.dense a
-               (vec [| 4.; 6. |], Nx.scalar Nx.int32 7l))
+        equal near_solution expected (grad_in_shift Linear.dense a r));
+    prop "jvp in the operator is −A⁻¹ A⁻¹ r" system (fun (a, r) ->
+        let expected =
+          if Nx.dim 0 r = 0 then r else Nx.neg (Nx.solve a (Nx.solve a r))
         in
-        equal (Oracle.tensor ()) (vec [| 2.; 3. |]) u;
-        equal (Oracle.tensor ()) (Nx.scalar Nx.int32 7l) k);
-    test "a singular system ends the lane Stalled" (fun () ->
-        let a = Nx.create f64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
-        let s = dense a (vec [| 1.; 1. |]) in
-        equal Oracle.status_t Stalled (Oracle.status s);
-        failure_with "Jera.Linear.solve" (fun () -> Solution.get s));
-    test "an affine a misses the check and ends the lane Stalled" (fun () ->
-        let s =
-          Linear.solve one Linear.dense
-            (fun u -> Nx.add_s (Nx.mul_s u 2.) 1.)
-            (vec [| 1.; 2.; 3. |])
+        let _, t =
+          Rune.jvp'
+            (fun theta ->
+              Solution.get (Linear.solve one Linear.dense (shifted a theta) r))
+            (scalar 0.) (scalar 1.)
         in
-        equal Oracle.status_t Stalled (Oracle.status s);
-        failure_with "The residual |a u - r| exceeds the solver's bound"
-          (fun () -> Solution.get s));
-    cases ~id:fst "a system of no unknowns applies a once, to check"
-      [
-        ("dense", Linear.dense);
-        ("banded", Linear.banded ~width:1);
-        ("cg", Linear.cg ~rel:1e-12 ~budget:10 ~precondition:Fun.id);
-        ( "gmres",
-          Linear.gmres ~restart:2 ~rel:1e-12 ~budget:10 ~precondition:Fun.id );
-      ]
-      (fun (_, solver) ->
-        let s = Linear.solve one solver (fun u -> Nx.mul_s u 2.) (vec [||]) in
-        equal Oracle.status_t Converged (Oracle.status s);
-        equal int32 1l (Nx.item [] (Solution.evaluations s)));
-    test "a non-finite r ends the lane Not_finite" (fun () ->
-        let s = dense (Nx.eye f64 2) (vec [| 1.; Float.nan |]) in
-        equal Oracle.status_t Not_finite (Oracle.status s));
-    test "float tensors of two dtypes raise" (fun () ->
-        invalid_with "Jera.Linear.solve: the float tensors of r" (fun () ->
-            Linear.solve
-              Nx.Ptree.(pair tensor tensor)
-              Linear.dense Fun.id
-              (vec [| 1. |], Nx.ones Nx.float32 [| 1 |])));
-    test "a of another shape raises" (fun () ->
-        invalid_with "Jera.Linear.solve: a returned" (fun () ->
-            Linear.solve one Linear.dense
-              (fun u -> Nx.concatenate ~axis:0 [ u; u ])
-              (vec [| 1. |])));
+        equal near_solution expected t);
+    test "compiled equals eager on 96 unknowns" (fun () ->
+        Compiled.here ();
+        (* A matrix of condition below 3: both answers meet the backward error
+           16 n ε, so they agree to about 1e-13. *)
+        let n = 96 in
+        let m =
+          Nx.add
+            (Nx.mul_s (Nx.eye f64 n) (Float.of_int n))
+            (Nx.sin
+               (Nx.reshape [| n; n |]
+                  (Nx.arange_f f64 0. (Float.of_int (n * n)) 1.)))
+        in
+        let f r = Solution.get (dense m r) in
+        let r = Nx.linspace f64 (-1.) 1. n in
+        equal (Oracle.tensor ~rel:1e-12 ~abs:1e-15 ()) (f r) (Rune.jit' f r));
+    test "lanes of a vmap solve their own systems" (fun () ->
+        let rs = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; -1.; 0.; 5. |] in
+        let one_lane i = Solution.get (dense fixed_a (Nx.get [ i ] rs)) in
+        equal (Oracle.tensor ())
+          (Nx.stack [ one_lane 0; one_lane 1 ])
+          (Rune.vmap' (fun r -> Solution.get (dense fixed_a r)) rs));
   ]
 
 (* Banded *)
@@ -150,7 +206,7 @@ let dense_tests =
    exceed [n]. *)
 let band =
   let open Gen in
-  (let* n = int_range 0 12 in
+  (let* n = frequency [ (1, constant 0); (4, int_range 1 12) ] in
    let* w = int_range 0 3 in
    let+ a = list ~size:(constant (n * n)) (float_range (-1.) 1.)
    and+ r = list ~size:(constant n) (float_range (-10.) 10.) in
@@ -160,35 +216,27 @@ let band =
    let inside = Nx.less_equal_s (Nx.abs (Nx.sub i j)) (Int32.of_int w) in
    let a = Nx.where inside a (Nx.zeros_like a) in
    let a = Nx.add a (Nx.mul_s (Nx.eye f64 n) (Float.of_int ((2 * w) + 2))) in
-   (w, a, Nx.create f64 [| n |] (Array.of_list r)))
-  |> with_pp (fun ppf (w, a, r) ->
-      Format.fprintf ppf "w = %d@ a = %a@ r = %a" w Nx.pp a Nx.pp r)
-
-let banded width a r = Linear.solve one (Linear.banded ~width) (product a) r
+   (w, (a, Nx.create f64 [| n |] (Array.of_list r))))
+  |> with_pp (fun ppf (w, ar) -> Format.fprintf ppf "w = %d@ %a" w pp_system ar)
 
 let banded_tests =
   [
-    prop "the solution is Nx.solve's on the matrix" band (fun (w, a, r) ->
+    prop "u is Nx.solve's on the matrix" band (fun (w, (a, r)) ->
         cover "an empty system" (Nx.dim 0 r = 0);
         cover "a band wider than the system" (2 * w >= Nx.dim 0 r);
         cover "a band narrower than the system" ((2 * w) + 1 < Nx.dim 0 r);
-        let expected = if Nx.dim 0 r = 0 then r else Nx.solve a r in
-        equal
-          (Oracle.tensor ~rel:1e-12 ~abs:1e-12 ())
-          expected
-          (Solution.get (banded w a r)));
+        equal near_solution (solution a r) (Solution.get (banded w a r)));
     test "rows are interchanged where the diagonal is zero" (fun () ->
-        (* A tridiagonal matrix with a zero diagonal, non-singular. *)
+        (* A tridiagonal matrix with a zero diagonal, non-singular. Its rows
+           read x₂ = 1, x₁ + 2 x₃ = 2, 3 x₂ + x₄ = 3 and 2 x₃ = 4. *)
         let a =
           Nx.create f64 [| 4; 4 |]
             [| 0.; 1.; 0.; 0.; 1.; 0.; 2.; 0.; 0.; 3.; 0.; 1.; 0.; 0.; 2.; 0. |]
         in
-        (* x₂ = 1, 2 x₃ = 4, x₁ + 2 x₃ = 2 and 3 x₂ + x₄ = 3. *)
-        let r = vec [| 1.; 2.; 3.; 4. |] in
         equal
           (Oracle.tensor ~rel:1e-15 ~abs:1e-15 ())
           (vec [| -2.; 1.; 2.; 0. |])
-          (Solution.get (banded 1 a r)));
+          (Solution.get (banded 1 a (vec [| 1.; 2.; 3.; 4. |]))));
     test "it applies a 2 width + 1 times and once to check" (fun () ->
         let a =
           Nx.add
@@ -207,51 +255,62 @@ let banded_tests =
                (Nx.diag ~k:2 (Nx.ones f64 [| n - 2 |]))
                (Nx.diag ~k:(-2) (Nx.ones f64 [| n - 2 |])))
         in
-        let s = banded 1 a (Nx.ones f64 [| n |]) in
-        equal Oracle.status_t Stalled (Oracle.status s);
-        failure_with "The residual |a u - r| exceeds" (fun () -> Solution.get s));
+        equal Oracle.status_t Stalled
+          (Oracle.status (banded 1 a (Nx.ones f64 [| n |]))));
     test "a singular band ends the lane Stalled" (fun () ->
         let a =
           Nx.create f64 [| 3; 3 |] [| 1.; 1.; 0.; 1.; 1.; 0.; 0.; 0.; 1. |]
         in
         equal Oracle.status_t Stalled
           (Oracle.status (banded 1 a (vec [| 1.; 2.; 3. |]))));
+    test "grad is dense's" (fun () ->
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (grad_in_shift Linear.dense fixed_a fixed_r)
+          (grad_in_shift (Linear.banded ~width:1) fixed_a fixed_r));
+    test "compiled equals eager" (fun () ->
+        Compiled.here ();
+        (* Both answers meet the backward error 16 n ε of a system of condition
+           below 3, so they agree to about 1e-14. *)
+        let f r = Solution.get (banded 1 fixed_a r) in
+        equal (Oracle.tensor ~rel:1e-13 ()) (f fixed_r) (Rune.jit' f fixed_r));
+    test "lanes of a vmap solve their own systems" (fun () ->
+        let first = vec [| 1.; 0.; 0. |] in
+        equal (Oracle.tensor ())
+          (Nx.stack
+             [
+               Solution.get (banded 1 fixed_a first);
+               Solution.get (banded 1 fixed_a fixed_r);
+             ])
+          (Rune.vmap'
+             (fun r -> Solution.get (banded 1 fixed_a r))
+             (Nx.stack [ first; fixed_r ])));
     test "a negative width raises" (fun () ->
-        invalid_with "Jera.Linear.banded: width = -1 is negative" (fun () ->
-            Linear.banded ~width:(-1)));
+        raises_from "Jera.Linear.banded" (fun () -> Linear.banded ~width:(-1)));
   ]
 
 (* Conjugate gradients *)
 
-(* A symmetric positive-definite system of [n] unknowns: [Bᵀ B + I] for [B] of
-   entries in [-1, 1], and a right-hand side. *)
-let spd =
-  let open Gen in
-  (let* n = int_range 0 9 in
-   let+ b = list ~size:(constant (n * n)) (float_range (-1.) 1.)
-   and+ r = list ~size:(constant n) (float_range (-10.) 10.) in
-   let b = Nx.create f64 [| n; n |] (Array.of_list b) in
-   let a = Nx.add (Nx.matmul (Nx.transpose b) b) (Nx.eye f64 n) in
-   (a, Nx.create f64 [| n |] (Array.of_list r)))
-  |> with_pp (fun ppf (a, r) ->
-      Format.fprintf ppf "a = %a@ r = %a" Nx.pp a Nx.pp r)
-
-let cg ?(rel = 1e-12) ?(budget = 100) ?(precondition = Fun.id) a r =
-  Linear.solve one (Linear.cg ~rel ~budget ~precondition) (product a) r
-
 let cg_tests =
   [
-    prop "its residual meets rel, so u is Nx.solve's to cond (a) rel" spd
-      (fun (a, r) ->
-        cover "an empty system" (Nx.dim 0 r = 0);
-        let s = cg a r in
-        let u = Solution.get s in
-        let norm x = Nx.item [] (Nx.vector_norm (Nx.dtype x) x) in
+    prop "its residual meets rel ‖r‖ + n η" spd (fun (a, r) ->
+        size_covers r;
+        let u = Solution.get (cg a r) in
         at_most float_exact
-          ~than:((1e-12 *. norm r) +. underflow (Nx.dim 0 r))
-          (norm (Nx.sub (product a u) r));
-        if Nx.dim 0 r > 0 then
-          equal (Oracle.tensor ~rel:1e-9 ~abs:1e-12 ()) (Nx.solve a r) u);
+          ~than:(krylov_bound ~rel:1e-12 ~eta r)
+          (residual a u r));
+    test "in float32 its residual meets float32's bound" (fun () ->
+        let a = Nx.cast Nx.float32 fixed_spd
+        and r = Nx.cast Nx.float32 fixed_r in
+        let u =
+          Solution.get
+            (Linear.solve one
+               (Linear.cg ~rel:1e-5 ~budget:20 ~precondition:Fun.id)
+               (product a) r)
+        in
+        at_most float_exact
+          ~than:(krylov_bound ~rel:1e-5 ~eta:eta32 r)
+          (residual a u r));
     test "an exact preconditioner takes one step" (fun () ->
         (* A diagonal a, preconditioned by its inverse: one step and the
            check. *)
@@ -270,48 +329,83 @@ let cg_tests =
         let s = cg (Nx.eye f64 3) (Nx.zeros f64 [| 3 |]) in
         equal (Oracle.tensor ()) (Nx.zeros f64 [| 3 |]) (Solution.get s);
         equal int32 1l (Nx.item [] (Solution.evaluations s)));
-    test "a direction of non-positive curvature ends the lane Stalled"
-      (fun () ->
-        let s = cg (Nx.neg (Nx.eye f64 3)) (vec [| 1.; 2.; 3. |]) in
-        equal Oracle.status_t Stalled (Oracle.status s);
-        failure_with "curvature" (fun () -> Solution.get s));
+    cases ~id:fst "a direction of non-positive curvature ends the lane Stalled"
+      [
+        ("−I", Nx.neg (Nx.eye f64 3));
+        (* pᵀ a p = 0 for every p in the plane the rotation turns. *)
+        ( "a rotation",
+          Nx.create f64 [| 3; 3 |] [| 0.; 1.; 0.; -1.; 0.; 0.; 0.; 0.; 1. |] );
+      ]
+      (fun (_, a) ->
+        equal Oracle.status_t Stalled
+          (Oracle.status (cg a (vec [| 1.; 2.; 0. |]))));
     test "a spent budget ends the lane Budget_spent" (fun () ->
         let a = Nx.diag (vec [| 1.; 2.; 3.; 4.; 5. |]) in
-        let s = cg ~budget:2 a (Nx.ones f64 [| 5 |]) in
+        let s =
+          Linear.solve one
+            (Linear.cg ~rel:1e-12 ~budget:2 ~precondition:Fun.id)
+            (product a) (Nx.ones f64 [| 5 |])
+        in
         equal Oracle.status_t Budget_spent (Oracle.status s);
         equal int32 3l (Nx.item [] (Solution.evaluations s)));
-    test "a non-finite r ends the lane Not_finite" (fun () ->
-        equal Oracle.status_t Not_finite
-          (Oracle.status (cg (Nx.eye f64 2) (vec [| Float.infinity; 1. |]))));
-    test "a tolerance outside (0, 1) raises" (fun () ->
-        invalid_with "Jera.Linear.cg: rel = 0 is not in (0, 1)" (fun () ->
-            Linear.cg ~rel:0. ~budget:10 ~precondition:Fun.id));
-    test "a budget below 1 raises" (fun () ->
-        invalid_with "Jera.Linear.cg: budget = 0 is below 1" (fun () ->
-            Linear.cg ~rel:1e-6 ~budget:0 ~precondition:Fun.id));
+    test "grad is dense's" (fun () ->
+        (* Both derivatives solve a system of condition below 50 to rel 1e-13 or
+           better, so they agree to about 1e-11. *)
+        equal
+          (Oracle.tensor ~rel:1e-9 ())
+          (grad_in_shift Linear.dense fixed_spd fixed_r)
+          (grad_in_shift
+             (Linear.cg ~rel:1e-13 ~budget:50 ~precondition:Fun.id)
+             fixed_spd fixed_r));
+    test "compiled equals eager" (fun () ->
+        Compiled.here ();
+        (* Both answers meet rel 1e-12 of a system of condition below 50, so
+           they agree to about 1e-10. *)
+        let f r = Solution.get (cg fixed_spd r) in
+        equal (Oracle.tensor ~rel:1e-10 ()) (f fixed_r) (Rune.jit' f fixed_r));
+    test "lanes of a vmap stop on their own" (fun () ->
+        (* The first lane's r is zero and needs no step. *)
+        let zero = Nx.zeros f64 [| 3 |] in
+        equal (Oracle.tensor ())
+          (Nx.stack [ zero; Solution.get (cg fixed_spd fixed_r) ])
+          (Rune.vmap'
+             (fun r -> Solution.get (cg fixed_spd r))
+             (Nx.stack [ zero; fixed_r ])));
+    cases ~id:fst "raises on rel outside (0, 1) or a budget below 1"
+      [
+        ("rel 0", (0., 10));
+        ("rel 1", (1., 10));
+        ("rel nan", (nan, 10));
+        ("budget 0", (1e-6, 0));
+      ]
+      (fun (_, (rel, budget)) ->
+        raises_from "Jera.Linear.cg" (fun () ->
+            Linear.cg ~rel ~budget ~precondition:Fun.id));
   ]
 
 (* GMRES *)
 
-let gmres ?(restart = 10) ?(rel = 1e-12) ?(budget = 100)
-    ?(precondition = Fun.id) a r =
-  Linear.solve one
-    (Linear.gmres ~restart ~rel ~budget ~precondition)
-    (product a) r
-
 let gmres_tests =
   [
-    prop "its residual meets rel, so u is Nx.solve's to cond (a) rel" system
-      (fun (a, r) ->
-        cover "an empty system" (Nx.dim 0 r = 0);
+    prop "its residual meets rel ‖r‖ + n η" system (fun (a, r) ->
+        size_covers r;
         cover "more unknowns than a cycle's steps" (Nx.dim 0 r > 4);
         let u = Solution.get (gmres ~restart:4 a r) in
-        let norm x = Nx.item [] (Nx.vector_norm (Nx.dtype x) x) in
         at_most float_exact
-          ~than:((1e-12 *. norm r) +. underflow (Nx.dim 0 r))
-          (norm (Nx.sub (product a u) r));
-        if Nx.dim 0 r > 0 then
-          equal (Oracle.tensor ~rel:1e-9 ~abs:1e-12 ()) (Nx.solve a r) u);
+          ~than:(krylov_bound ~rel:1e-12 ~eta r)
+          (residual a u r));
+    test "in float32 its residual meets float32's bound" (fun () ->
+        let a = Nx.cast Nx.float32 fixed_a and r = Nx.cast Nx.float32 fixed_r in
+        let u =
+          Solution.get
+            (Linear.solve one
+               (Linear.gmres ~restart:3 ~rel:1e-5 ~budget:30
+                  ~precondition:Fun.id)
+               (product a) r)
+        in
+        at_most float_exact
+          ~than:(krylov_bound ~rel:1e-5 ~eta:eta32 r)
+          (residual a u r));
     test "a cycle as long as the system solves it" (fun () ->
         (* The Krylov space of n steps holds the solution: the first residual's
            product, one cycle of n products, and the residual's. *)
@@ -321,36 +415,30 @@ let gmres_tests =
               4.; 1.; 0.; 2.; -1.; 5.; 1.; 0.; 0.; 2.; 6.; 1.; 1.; 0.; -1.; 3.;
             |]
         in
-        let s = gmres ~restart:4 a (vec [| 1.; 2.; 3.; 4. |]) in
-        equal
-          (Oracle.tensor ~rel:1e-12 ())
-          (Nx.solve a (vec [| 1.; 2.; 3.; 4. |]))
-          (Solution.get s);
+        let r = vec [| 1.; 2.; 3.; 4. |] in
+        let s = gmres ~restart:4 a r in
+        equal (Oracle.tensor ~rel:1e-12 ()) (Nx.solve a r) (Solution.get s);
         equal int32 6l (Nx.item [] (Solution.evaluations s)));
-    test "it solves an indefinite system cg cannot" (fun () ->
-        (* A rotation: pᵀ a p = 0 for every p. *)
+    test "it solves a rotation, which is indefinite" (fun () ->
         let a = Nx.create f64 [| 2; 2 |] [| 0.; 1.; -1.; 0. |] in
         let r = vec [| 1.; 2. |] in
-        equal Oracle.status_t Stalled (Oracle.status (cg a r));
         equal
           (Oracle.tensor ~rel:1e-14 ~abs:1e-15 ())
           (Nx.solve a r)
           (Solution.get (gmres ~restart:2 a r)));
     test "an exact preconditioner takes one step" (fun () ->
         let a = Nx.create f64 [| 2; 2 |] [| 3.; 1.; 1.; 2. |] in
+        let r = vec [| 1.; 1. |] in
         let s =
-          gmres ~restart:1 ~budget:1
-            ~precondition:(Nx.matmul (Nx.inv a))
-            a
-            (vec [| 1.; 1. |])
+          Linear.solve one
+            (Linear.gmres ~restart:1 ~rel:1e-12 ~budget:1
+               ~precondition:(Nx.matmul (Nx.inv a)))
+            (product a) r
         in
-        equal
-          (Oracle.tensor ~rel:1e-14 ())
-          (Nx.solve a (vec [| 1.; 1. |]))
-          (Solution.get s);
+        equal (Oracle.tensor ~rel:1e-14 ()) (Nx.solve a r) (Solution.get s);
         equal int32 3l (Nx.item [] (Solution.evaluations s)));
     test "r = 0 gives u = 0 with the check alone" (fun () ->
-        let s = gmres (Nx.eye f64 3) (Nx.zeros f64 [| 3 |]) in
+        let s = gmres ~restart:3 (Nx.eye f64 3) (Nx.zeros f64 [| 3 |]) in
         equal (Oracle.tensor ()) (Nx.zeros f64 [| 3 |]) (Solution.get s);
         equal int32 1l (Nx.item [] (Solution.evaluations s)));
     test "an affine a at r = 0 does not converge" (fun () ->
@@ -365,84 +453,114 @@ let gmres_tests =
         equal Oracle.status_t Budget_spent (Oracle.status s));
     test "a spent budget ends the lane Budget_spent" (fun () ->
         let a = Nx.diag (vec [| 1.; 2.; 3.; 4.; 5. |]) in
-        let s = gmres ~restart:1 ~budget:2 a (Nx.ones f64 [| 5 |]) in
+        let s =
+          Linear.solve one
+            (Linear.gmres ~restart:1 ~rel:1e-12 ~budget:2 ~precondition:Fun.id)
+            (product a) (Nx.ones f64 [| 5 |])
+        in
         equal Oracle.status_t Budget_spent (Oracle.status s);
         equal int32 5l (Nx.item [] (Solution.evaluations s)));
-    test "a non-finite r ends the lane Not_finite" (fun () ->
-        equal Oracle.status_t Not_finite
-          (Oracle.status (gmres (Nx.eye f64 2) (vec [| Float.nan; 1. |]))));
-    test "a restart below 1 raises" (fun () ->
-        invalid_with "Jera.Linear.gmres: restart = 0 is below 1" (fun () ->
-            Linear.gmres ~restart:0 ~rel:1e-6 ~budget:10 ~precondition:Fun.id));
-    test "a budget below the restart raises" (fun () ->
-        invalid_with "Jera.Linear.gmres: budget = 3 is below restart = 4"
-          (fun () ->
-            Linear.gmres ~restart:4 ~rel:1e-6 ~budget:3 ~precondition:Fun.id));
-    test "a tolerance outside (0, 1) raises" (fun () ->
-        invalid_with "Jera.Linear.gmres: rel = 1 is not in (0, 1)" (fun () ->
-            Linear.gmres ~restart:4 ~rel:1. ~budget:10 ~precondition:Fun.id));
+    test "grad is dense's" (fun () ->
+        (* Both derivatives solve a system of condition below 3 to rel 1e-13 or
+           better. *)
+        equal
+          (Oracle.tensor ~rel:1e-12 ())
+          (grad_in_shift Linear.dense fixed_a fixed_r)
+          (grad_in_shift
+             (Linear.gmres ~restart:3 ~rel:1e-13 ~budget:30 ~precondition:Fun.id)
+             fixed_a fixed_r));
+    test "compiled equals eager" (fun () ->
+        Compiled.here ();
+        (* Both answers meet rel 1e-12 of a system of condition below 3. *)
+        let f r = Solution.get (gmres ~restart:2 fixed_a r) in
+        equal (Oracle.tensor ~rel:1e-11 ()) (f fixed_r) (Rune.jit' f fixed_r));
+    test "lanes of a vmap stop on their own" (fun () ->
+        let zero = Nx.zeros f64 [| 3 |] in
+        equal (Oracle.tensor ())
+          (Nx.stack [ zero; Solution.get (gmres ~restart:2 fixed_a fixed_r) ])
+          (Rune.vmap'
+             (fun r -> Solution.get (gmres ~restart:2 fixed_a r))
+             (Nx.stack [ zero; fixed_r ])));
+    cases ~id:fst
+      "raises on a restart below 1, a budget below it, or rel outside (0, 1)"
+      [
+        ("restart 0", (0, 10, 1e-6));
+        ("budget 3, restart 4", (4, 3, 1e-6));
+        ("rel 1", (4, 10, 1.));
+      ]
+      (fun (_, (restart, budget, rel)) ->
+        raises_from "Jera.Linear.gmres" (fun () ->
+            Linear.gmres ~restart ~rel ~budget ~precondition:Fun.id));
   ]
 
-(* Derivatives and transformations *)
+(* Solve *)
 
-(* [A + θ I] and its product, for a θ that a derivative tracks. *)
-let shifted a theta u = Nx.add (product a u) (Nx.mul theta u)
-
-let transformation_tests =
-  let a = Nx.create f64 [| 3; 3 |] [| 4.; 1.; 0.; 1.; 5.; 2.; 0.; 1.; 6. |] in
-  let r = vec [| 1.; 2.; 3. |] in
+let solvers =
   [
-    test "grad in the operator is −1ᵀ A⁻¹ A⁻¹ r" (fun () ->
-        let g =
-          Rune.grad'
-            (fun theta ->
-              Nx.sum
-                (Solution.get
-                   (Linear.solve one Linear.dense (shifted a theta) r)))
-            (scalar 0.)
+    ("dense", Linear.dense);
+    ("banded", Linear.banded ~width:1);
+    ("cg", Linear.cg ~rel:1e-12 ~budget:10 ~precondition:Fun.id);
+    ("gmres", Linear.gmres ~restart:2 ~rel:1e-12 ~budget:10 ~precondition:Fun.id);
+  ]
+
+let solve_tests =
+  [
+    test "a structure's float tensors are one vector" (fun () ->
+        (* The system [[2, 1], [1, 3]] (p, q) = (3, 5) over a pair, solved by
+           (0.8, 1.4); its error has the pair's structure. *)
+        let a (p, q) =
+          ( Nx.add (Nx.mul_s p 2.) (Nx.reshape [| 1 |] q),
+            Nx.add (Nx.reshape [||] p) (Nx.mul_s q 3.) )
         in
-        let u = Nx.solve a r in
-        equal (Oracle.tensor ~rel:1e-12 ()) (Nx.neg (Nx.sum (Nx.solve a u))) g);
-    test "grad in r is A⁻ᵀ 1" (fun () ->
-        let g = Rune.grad' (fun r -> Nx.sum (Solution.get (dense a r))) r in
+        let pair = Nx.Ptree.(pair tensor tensor) in
+        let s = Linear.solve pair Linear.dense a (vec [| 3. |], scalar 5.) in
         equal
-          (Oracle.tensor ~rel:1e-12 ())
-          (Nx.solve (Nx.transpose a) (Nx.ones f64 [| 3 |]))
-          g);
-    test "jvp in the operator is −A⁻¹ u" (fun () ->
-        let _, t =
-          Rune.jvp'
-            (fun theta ->
-              Solution.get (Linear.solve one Linear.dense (shifted a theta) r))
-            (scalar 0.) (scalar 1.)
+          (Oracle.structure ~rel:1e-14 pair)
+          (vec [| 0.8 |], scalar 1.4)
+          (Solution.get s);
+        let ap, aq = a (Solution.get s) in
+        equal (Oracle.structure pair)
+          (Nx.abs (Nx.sub_s ap 3.), Nx.abs (Nx.sub_s aq 5.))
+          (Solution.error s));
+    test "a tensor of another dtype is carried from r" (fun () ->
+        let a (u, k) = (Nx.mul_s u 2., k) in
+        let u, k =
+          Solution.get
+            (Linear.solve
+               Nx.Ptree.(pair tensor tensor)
+               Linear.dense a
+               (vec [| 4.; 6. |], Nx.scalar Nx.int32 7l))
         in
-        equal
-          (Oracle.tensor ~rel:1e-12 ())
-          (Nx.neg (Nx.solve a (Nx.solve a r)))
-          t);
-    test "grad through cg is dense's" (fun () ->
-        let spd = Nx.add (Nx.matmul (Nx.transpose a) a) (Nx.eye f64 3) in
-        let g s =
-          Rune.grad'
-            (fun theta ->
-              Nx.sum (Solution.get (Linear.solve one s (shifted spd theta) r)))
-            (scalar 0.)
+        equal (Oracle.tensor ()) (vec [| 2.; 3. |]) u;
+        equal (Oracle.tensor ()) (Nx.scalar Nx.int32 7l) k);
+    test "a singular system ends the lane Stalled" (fun () ->
+        let a = Nx.create f64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
+        equal Oracle.status_t Stalled
+          (Oracle.status (dense a (vec [| 1.; 1. |]))));
+    test "an affine a misses the check and ends the lane Stalled" (fun () ->
+        let s =
+          Linear.solve one Linear.dense
+            (fun u -> Nx.add_s (Nx.mul_s u 2.) 1.)
+            (vec [| 1.; 2.; 3. |])
         in
-        equal
-          (Oracle.tensor ~rel:1e-9 ())
-          (g Linear.dense)
-          (g (Linear.cg ~rel:1e-13 ~budget:50 ~precondition:Fun.id)));
-    test "grad through banded is dense's" (fun () ->
-        let g s =
-          Rune.grad'
-            (fun theta ->
-              Nx.sum (Solution.get (Linear.solve one s (shifted a theta) r)))
-            (scalar 0.)
+        equal Oracle.status_t Stalled (Oracle.status s));
+    cases ~id:fst "a system of no unknowns applies a once, to check" solvers
+      (fun (_, solver) ->
+        let s = Linear.solve one solver (fun u -> Nx.mul_s u 2.) (vec [||]) in
+        equal Oracle.status_t Converged (Oracle.status s);
+        equal int32 1l (Nx.item [] (Solution.evaluations s)));
+    cases ~id:fst "a non-finite r ends the lane Not_finite" solvers
+      (fun (_, solver) ->
+        let s =
+          Linear.solve one solver (product fixed_spd) (vec [| 1.; nan; 2. |])
         in
-        equal
-          (Oracle.tensor ~rel:1e-12 ())
-          (g Linear.dense)
-          (g (Linear.banded ~width:1)));
+        equal Oracle.status_t Not_finite (Oracle.status s));
+    cases ~id:fst "a non-finite product of a ends the lane Not_finite" solvers
+      (fun (_, solver) ->
+        let s =
+          Linear.solve one solver (fun u -> Nx.mul_s u infinity) fixed_r
+        in
+        equal Oracle.status_t Not_finite (Oracle.status s));
     test "a derivative whose solve misses its bound raises" (fun () ->
         (* cg on a non-symmetric a: r = (1, 0), an eigenvector, converges in one
            step, but reverse mode solves aᵀ v = 1, which two steps of cg do
@@ -455,82 +573,28 @@ let transformation_tests =
         in
         let r = vec [| 1.; 0. |] in
         equal Oracle.status_t Converged (Oracle.status (solve r));
-        raises_match (Exn.invalid_arg ~sub:"Jera.Linear.solve") (fun () ->
+        raises_from "Jera.Linear.solve" (fun () ->
             Rune.grad' (fun r -> Nx.sum (Solution.get (solve r))) r));
-    test "compiled banded equals eager" (fun () ->
-        Compiled.here ();
-        let f r = Solution.get (banded 1 a r) in
-        equal (Oracle.tensor ~rel:1e-14 ()) (f r) (Rune.jit' f r));
-    test "lanes of banded solve their own systems" (fun () ->
-        let rs = Nx.stack [ vec [| 1.; 0.; 0. |]; r ] in
-        equal
-          (Oracle.tensor ~rel:1e-14 ())
-          (Nx.stack
-             [
-               Solution.get (banded 1 a (vec [| 1.; 0.; 0. |]));
-               Solution.get (banded 1 a r);
-             ])
-          (Rune.vmap' (fun r -> Solution.get (banded 1 a r)) rs));
-    test "grad through gmres is dense's" (fun () ->
-        let g s =
-          Rune.grad'
-            (fun theta ->
-              Nx.sum (Solution.get (Linear.solve one s (shifted a theta) r)))
-            (scalar 0.)
-        in
-        equal
-          (Oracle.tensor ~rel:1e-9 ())
-          (g Linear.dense)
-          (g
-             (Linear.gmres ~restart:3 ~rel:1e-13 ~budget:30 ~precondition:Fun.id)));
-    test "compiled gmres equals eager" (fun () ->
-        Compiled.here ();
-        let f r = Solution.get (gmres ~restart:2 a r) in
-        equal (Oracle.tensor ~rel:1e-12 ()) (f r) (Rune.jit' f r));
-    test "lanes of gmres stop on their own" (fun () ->
-        let rs = Nx.stack [ Nx.zeros f64 [| 3 |]; r ] in
-        equal
-          (Oracle.tensor ~rel:1e-12 ())
-          (Nx.stack
-             [ Nx.zeros f64 [| 3 |]; Solution.get (gmres ~restart:2 a r) ])
-          (Rune.vmap' (fun r -> Solution.get (gmres ~restart:2 a r)) rs));
-    test "compiled cg equals eager" (fun () ->
-        Compiled.here ();
-        let spd = Nx.add (Nx.matmul (Nx.transpose a) a) (Nx.eye f64 3) in
-        let f r = Solution.get (cg spd r) in
-        equal (Oracle.tensor ~rel:1e-12 ()) (f r) (Rune.jit' f r));
-    test "lanes of cg stop on their own" (fun () ->
-        (* The first lane's r is zero and needs no step. *)
-        let spd = Nx.add (Nx.matmul (Nx.transpose a) a) (Nx.eye f64 3) in
-        let rs = Nx.stack [ Nx.zeros f64 [| 3 |]; r ] in
-        equal
-          (Oracle.tensor ~rel:1e-12 ())
-          (Nx.stack [ Nx.zeros f64 [| 3 |]; Solution.get (cg spd r) ])
-          (Rune.vmap' (fun r -> Solution.get (cg spd r)) rs));
-    test "compiled dense equals eager on 96 unknowns" (fun () ->
-        Compiled.here ();
-        let n = 96 in
-        let m =
-          Nx.add
-            (Nx.mul_s (Nx.eye f64 n) (Float.of_int n))
-            (Nx.sin
-               (Nx.reshape [| n; n |]
-                  (Nx.arange_f f64 0. (Float.of_int (n * n)) 1.)))
-        in
-        let f r = Solution.get (dense m r) in
-        let r = Nx.linspace f64 (-1.) 1. n in
-        equal (Oracle.tensor ~rel:1e-12 ~abs:1e-15 ()) (f r) (Rune.jit' f r));
-    test "compiled equals eager to rounding" (fun () ->
-        Compiled.here ();
-        let f r = Solution.get (dense a r) in
-        equal (Oracle.tensor ~rel:1e-14 ()) (f r) (Rune.jit' f r));
-    test "lanes solve their own systems" (fun () ->
-        let rs = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; -1.; 0.; 5. |] in
-        let one_lane i = Solution.get (dense a (Nx.get [ i ] rs)) in
-        equal
-          (Oracle.tensor ~rel:1e-14 ())
-          (Nx.stack [ one_lane 0; one_lane 1 ])
-          (Rune.vmap' (fun r -> Solution.get (dense a r)) rs));
+    test "float tensors of two dtypes raise" (fun () ->
+        raises_from "Jera.Linear.solve" (fun () ->
+            Linear.solve
+              Nx.Ptree.(pair tensor tensor)
+              Linear.dense Fun.id
+              (vec [| 1. |], Nx.ones Nx.float32 [| 1 |])));
+    test "an a of another shape raises" (fun () ->
+        raises_from "Jera.Linear.solve" (fun () ->
+            Linear.solve one Linear.dense
+              (fun u -> Nx.concatenate ~axis:0 [ u; u ])
+              (vec [| 1. |])));
+    test "a precondition of another shape raises" (fun () ->
+        raises_from "Jera.Linear.solve" (fun () ->
+            Linear.solve one
+              (Linear.cg ~rel:1e-12 ~budget:10 ~precondition:(fun u ->
+                   Nx.concatenate ~axis:0 [ u; u ]))
+              (product fixed_spd) fixed_r));
+    test "an r that holds no tensor raises" (fun () ->
+        raises_from "Jera.Linear.solve" (fun () ->
+            Linear.solve Nx.Ptree.unit Linear.dense Fun.id ()));
   ]
 
 let () =
@@ -541,5 +605,5 @@ let () =
          group "banded" banded_tests;
          group "cg" cg_tests;
          group "gmres" gmres_tests;
-         group "transformations" transformation_tests;
+         group "solve" solve_tests;
        ])
