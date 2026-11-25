@@ -1775,6 +1775,22 @@ let differences =
       equal (option string) expected
         (Munin_tui.Numbers.difference key ~value ~other))
 
+let counts =
+  prop "a count prints with a separator every three digits"
+    ~examples:[ 0; 999; 1000; -1000; max_int; min_int ]
+    Gen.int
+    (fun n ->
+      let s = Munin_tui.Numbers.count n in
+      let digits = String.concat "" (String.split_on_char ',' s) in
+      equal ~msg:"without separators" string (string_of_int n) digits;
+      let groups =
+        String.split_on_char ','
+          (if n < 0 then String.sub s 1 (String.length s - 1) else s)
+      in
+      equal ~msg:"the groups after the first" (list int)
+        (List.map (fun _ -> 3) (List.tl groups))
+        (List.map String.length (List.tl groups)))
+
 let spans =
   cases ~id:fst "a span prints in two units, or seconds below a minute"
     [
@@ -2080,6 +2096,7 @@ let () =
              difference_fits;
              tick_labels;
              spans;
+             counts;
            ];
          group "Facts" [ bounds; glyphs ];
          group "Watch" [ watch_test; unwatched ];

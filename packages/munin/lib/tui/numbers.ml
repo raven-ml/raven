@@ -122,7 +122,9 @@ let difference key ~value:v ~other:o =
       if s = "+0.0%" || s = "-0.0%" then None else Some s
 
 let count n =
-  let s = string_of_int (abs n) in
+  (* The digits without the sign: [abs min_int] is [min_int]. *)
+  let s = string_of_int n in
+  let s = if n < 0 then String.sub s 1 (String.length s - 1) else s in
   let l = String.length s in
   let b = Buffer.create (l + (l / 3) + 1) in
   if n < 0 then Buffer.add_char b '-';
