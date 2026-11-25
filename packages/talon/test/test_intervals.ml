@@ -6,16 +6,28 @@
 open Talon
 open Windtrap
 
+let exec q = require_ok ~pp:Error.pp (Query.run q)
+let table_w = Testable.make ~pp:Talon.pp ~equal:Talon.equal
+
 (* Sets
 
-   A drawn case is an operation over sets [a] and [b], rows of a group [g] and
-   a period [(s, e)] whose values come in either order, are equal or null, and
-   draw from few values, so that ends meet often. Integer values are floats
-   with no fraction. *)
+   A drawn case is an operation over sets [a] and [b]: rows of a key [g] and a
+   period [(s, e)] whose values come in either order, are equal or null, and
+   draw from few values, so that ends meet often. Integer values are floats with
+   no fraction. Float keys draw [-0.], [0.] and NaN, which are two keys by
+   identity. *)
 
 type op = Merge | Intersect | Subtract
-type row = { g : int option; s : float option; e : float option }
-type case = { floats : bool; keyed : bool; op : op; a : row array; b : row array }
+type keys = Unkeyed | Ints | Floats
+type row = { g : float option; s : float option; e : float option }
+
+type case = {
+  floats : bool;
+  keys : keys;
+  op : op;
+  a : row array;
+  b : row array;
+}
 
 let ops = [ (Merge, "merge"); (Intersect, "intersect"); (Subtract, "subtract") ]
 
@@ -23,43 +35,66 @@ let values floats =
   if floats then [ neg_infinity; -1.; -0.; 0.; 1.5; 3.; infinity; nan ]
   else [ -2.; 0.; 1.; 3.; 5. ]
 
+let key_values = function
+  | Unkeyed -> []
+  | Ints -> [ 0.; 1. ]
+  | Floats -> [ -0.; 0.; nan ]
+
 (* Every value, and a point between each two. *)
 let grid floats =
-  if floats then [ neg_infinity; -1.; -0.5; -0.; 0.; 0.75; 1.5; 2.; 3.; 4.; infinity; nan ]
+  if floats then
+    [ neg_infinity; -1.; -0.5; -0.; 0.; 0.75; 1.5; 2.; 3.; 4.; infinity; nan ]
   else List.init 10 (fun i -> Float.of_int (i - 3))
 
 let case =
   let open Gen in
-  let* floats = bool in
   let nullable g = frequency [ (1, constant None); (6, map Option.some g) ] in
+  let* floats = bool in
+  let* keys =
+    frequency
+      [ (2, constant Unkeyed); (1, constant Ints); (1, constant Floats) ]
+  in
   let value = nullable (of_list (values floats)) in
-  let row = map (fun (g, (s, e)) -> { g; s; e }) (pair (nullable (int_range 0 1)) (pair value value)) in
-  let set = array ~size:(frequency [ (1, int_range 0 1); (5, int_range 2 8) ]) row in
+  let key =
+    if keys = Unkeyed then constant None
+    else nullable (of_list (key_values keys))
+  in
+  let row =
+    map (fun (g, (s, e)) -> { g; s; e }) (pair key (pair value value))
+  in
+  let set =
+    array ~size:(frequency [ (1, int_range 0 1); (5, int_range 2 8) ]) row
+  in
   let* a, b = pair set set in
-  let+ op, keyed = pair (of_list (List.map fst ops)) bool in
-  { floats; keyed; op; a; b }
+  let+ op = of_list (List.map fst ops) in
+  { floats; keys; op; a; b }
 
 let column floats v =
   if floats then Column.of_options Type.float64 v
   else Column.of_options Type.int64 (Array.map (Option.map Float.to_int) v)
 
-let table floats rows =
-  let col f = column floats (Array.map f rows) in
+let table c rows =
+  let col floats f = column floats (Array.map f rows) in
   Query.of_table
     (Talon.v ~rows:(Array.length rows)
-       [ ("g", Column.of_options Type.int64 (Array.map (fun r -> r.g) rows));
-         ("s", col (fun r -> r.s)); ("e", col (fun r -> r.e)) ])
-
-let exec q = Error.get_ok (Query.run q)
+       [
+         ("g", col (c.keys = Floats) (fun r -> r.g));
+         ("s", col c.floats (fun r -> r.s));
+         ("e", col c.floats (fun r -> r.e));
+       ])
 
 let pp ppf c =
-  Format.fprintf ppf "%s by=%b@.%a@.%a" (List.assoc c.op ops) c.keyed Talon.pp
-    (exec (table c.floats c.a)) Talon.pp (exec (table c.floats c.b))
+  Format.fprintf ppf "%s@.%a@.%a" (List.assoc c.op ops) Talon.pp
+    (exec (table c c.a))
+    Talon.pp
+    (exec (table c c.b))
+
+let drawn = Gen.with_pp pp case
 
 let apply c =
-  let by = if c.keyed then [ "g" ] else [] and t = table c.floats in
+  let by = if c.keys = Unkeyed then [] else [ "g" ] and t = table c in
   match c.op with
-  | Merge -> Kit.merge_intervals ~by ("s", "e") (t c.a)
+  | Merge -> Kit.merge_intervals ~by ("s", "e") (Query.append (t c.b) (t c.a))
   | Intersect -> Kit.intersect_intervals ~by ("s", "e") (t c.b) (t c.a)
   | Subtract -> Kit.subtract_intervals ~by ("s", "e") (t c.b) (t c.a)
 
@@ -71,22 +106,28 @@ let order a b =
   | false, false -> Float.compare (a +. 0.) (b +. 0.)
   | na, nb -> Bool.compare na nb
 
-(* [holds c rows g x] is whether a row of [rows] in the group [g] holds [x]:
-   its period runs from the lesser of its values, included, to the greater,
-   excluded. *)
-let holds c rows g x =
-  let holds r =
-    match (r.s, r.e) with
-    | Some s, Some e ->
-        let lo, hi = if order s e <= 0 then (s, e) else (e, s) in
-        ((not c.keyed) || r.g = g) && order lo x <= 0 && order x hi < 0
-    | _ -> false
-  in
-  Array.exists holds rows
+let same_key = Option.equal (fun a b -> order a b = 0)
+
+(* [holds g x (lo, hi, rg)] is whether the period [lo, hi) of key [rg] holds [x]
+   of key [g]. *)
+let holds g x (lo, hi, rg) = same_key rg g && order lo x <= 0 && order x hi < 0
+
+(* A row's period runs from the lesser of its values to the greater. *)
+let periods rows =
+  Array.to_list rows
+  |> List.filter_map (fun r ->
+      match (r.s, r.e) with
+      | Some s, Some e ->
+          Some (if order s e <= 0 then (s, e, r.g) else (e, s, r.g))
+      | _ -> None)
 
 let member c g x =
-  let a = holds c c.a g x and b = holds c c.b g x in
-  match c.op with Merge -> a | Intersect -> a && b | Subtract -> a && not b
+  let a = List.exists (holds g x) (periods c.a) in
+  let b = List.exists (holds g x) (periods c.b) in
+  match c.op with
+  | Merge -> a || b
+  | Intersect -> a && b
+  | Subtract -> a && not b
 
 let floats_of t name =
   let c = Talon.column t name in
@@ -94,81 +135,207 @@ let floats_of t name =
   | Any Int64 -> Array.map (Option.map Float.of_int) (Column.options Kind.int c)
   | _ -> Column.options Kind.float c
 
-(* [normal t ~keyed] is whether [t]'s rows are sorted by group, nulls last,
-   then by start, each holds a positive length, and each stops before the
-   next of its group starts. *)
-let normal t ~keyed =
-  let s = Array.map Option.get (floats_of t "s") in
-  let e = Array.map Option.get (floats_of t "e") in
-  let g = if keyed then Column.options Kind.int (Talon.column t "g") else Array.map (fun _ -> None) s in
-  let group i = match g.(i) with None -> (1, 0) | Some v -> (0, v) in
-  let ok i =
-    order s.(i) e.(i) < 0
-    && (i = 0
-       ||
-       let c = compare (group (i - 1)) (group i) in
-       c < 0 || (c = 0 && order e.(i - 1) s.(i) < 0))
-  in
-  List.for_all ok (List.init (Array.length s) Fun.id)
+(* The result's periods, [None] where a value is null. *)
+let pieces t =
+  let s = floats_of t "s" and e = floats_of t "e" in
+  let keyed = List.mem_assoc "g" (Schema.columns (Talon.schema t)) in
+  let g = if keyed then floats_of t "g" else Array.map (fun _ -> None) s in
+  List.init (Talon.rows t) (fun i ->
+      match (s.(i), e.(i)) with
+      | Some s, Some e -> Some (s, e, g.(i))
+      | _ -> None)
 
-let set_law c =
-  let got = exec (apply c) in
-  let groups = if c.keyed then [ None; Some 0; Some 1 ] else [ None ] in
-  let points = List.concat_map (fun g -> List.map (fun x -> (g, x)) (grid c.floats)) groups in
-  (* A point [x] is in the result where the period [(x, x)] overlaps a row. *)
-  let probes =
-    let col f = Array.of_list (List.map f points) in
-    Talon.v
-      [ ("p", Column.v Type.int64 (Array.init (List.length points) Fun.id));
-        ("pg", Column.of_options Type.int64 (col fst));
-        ("x", column c.floats (col (fun (_, x) -> Some x))) ]
+(* Keys ascending, nulls last, then periods by start, each starting before it
+   stops and stopping before the next of its key starts. *)
+let normal t =
+  let key_order a b =
+    match (a, b) with
+    | None, None -> 0
+    | None, Some _ -> 1
+    | Some _, None -> -1
+    | Some a, Some b -> order a b
   in
-  let on = Join.(overlaps ("x", "x") ("s", "e")) in
-  let on = if c.keyed then Join.(eq "pg" "g" && on) else on in
-  let hits = exec (Query.join ~kind:Semi ~on (Query.of_table got) (Query.of_table probes)) in
-  let hit = Column.options Kind.int (Talon.column hits "p") in
+  let rec ordered = function
+    | Some (s0, e0, g0) :: (Some (s1, _, g1) :: _ as rest) ->
+        let k = key_order g0 g1 in
+        order s0 e0 < 0 && (k < 0 || (k = 0 && order e0 s1 < 0)) && ordered rest
+    | [ Some (s, e, _) ] -> order s e < 0
+    | [] -> true
+    | _ -> false
+  in
+  ordered (pieces t)
+
+let probe_keys c =
+  if c.keys = Unkeyed then [ None ]
+  else None :: List.map Option.some (key_values c.keys)
+
+let cover_case c got =
   let rows = Array.append c.a c.b in
-  let ends f r = match (r.s, r.e) with Some s, Some e -> f (order s e) | _ -> false in
+  let ends f r =
+    match (r.s, r.e) with Some s, Some e -> f (order s e) | _ -> false
+  in
+  let keyed p =
+    Array.exists (fun r -> Option.fold ~none:false ~some:p r.g) rows
+  in
+  let zero neg g = g = 0. && Float.sign_bit g = neg in
   cover (List.assoc c.op ops) true;
   cover "floats" c.floats;
   cover "a reversed period" (Array.exists (ends (fun o -> o > 0)) rows);
   cover "a zero-length period" (Array.exists (ends (fun o -> o = 0)) rows);
   cover "a null value" (Array.exists (fun r -> r.s = None || r.e = None) rows);
+  cover "a -0. and a 0. key" (keyed (zero true) && keyed (zero false));
+  cover "a NaN key" (keyed Float.is_nan);
   cover "an empty result" (Talon.rows got = 0);
-  cover "two pieces or more" (Talon.rows got >= 2);
-  equal ~msg:"normal form" bool true (normal got ~keyed:c.keyed);
-  let pp ppf ((g, x), held) =
-    Format.fprintf ppf "%a %h %b" (Format.pp_print_option Format.pp_print_int) g x held
+  cover "two pieces or more" (Talon.rows got >= 2)
+
+let normal_law c =
+  let got = exec (apply c) in
+  cover_case c got;
+  satisfies table_w ~claim:"in normal form" normal got
+
+let points_law c =
+  let result = exec (apply c) in
+  cover_case c result;
+  let got = List.filter_map Fun.id (pieces result) in
+  let points =
+    List.concat_map
+      (fun g -> List.map (fun x -> (g, x)) (grid c.floats))
+      (probe_keys c)
   in
-  let point = Testable.make ~pp ~equal:(fun a b -> compare a b = 0) in
+  let point =
+    Testable.make
+      ~pp:(fun ppf ((g, x), held) ->
+        Format.fprintf ppf "%a %h %b"
+          (Format.pp_print_option (fun ppf -> Format.fprintf ppf "%h"))
+          g x held)
+      ~equal:(fun a b -> compare a b = 0)
+  in
   equal (list point)
     (List.map (fun (g, x) -> ((g, x), member c g x)) points)
-    (List.mapi (fun i p -> (p, Array.mem (Some i) hit)) points)
+    (List.map (fun (g, x) -> ((g, x), List.exists (holds g x) got)) points)
 
-(* Cases *)
+(* Cases from the definition: a period holds its start, not its stop; a
+   zero-length one adds nothing; a reversed one runs from its lesser value; one
+   with a null holds none. *)
 
-let pieces q =
-  let t = exec q in
-  List.combine (Array.to_list (floats_of t "s")) (Array.to_list (floats_of t "e"))
+let periods_table l =
+  Query.of_table
+    (Talon.v
+       [
+         ("s", Column.of_options Type.float64 (Array.of_list (List.map fst l)));
+         ("e", Column.of_options Type.float64 (Array.of_list (List.map snd l)));
+       ])
 
-let periods l = table true (Array.of_list (List.map (fun (s, e) -> { g = None; s; e }) l))
+let spans t =
+  let t = exec t in
+  List.combine
+    (Array.to_list (floats_of t "s"))
+    (Array.to_list (floats_of t "e"))
 
-let cases () =
-  let span = list (pair (option float_exact) (option float_exact)) in
-  let some = List.map (fun (s, e) -> (Some s, Some e)) in
-  let a = periods ((None, Some 2.) :: some [ (0., 3.); (3., 5.); (7., 7.); (9., 8.) ]) in
-  let b = periods (some [ (1., 2.); (4.5, 8.5) ]) in
-  equal ~msg:"merge" span (some [ (0., 5.); (8., 9.) ]) (pieces (Kit.merge_intervals ("s", "e") a));
-  equal ~msg:"intersect" span (some [ (1., 2.); (4.5, 5.); (8., 8.5) ])
-    (pieces (Kit.intersect_intervals ("s", "e") b a));
-  equal ~msg:"subtract" span (some [ (0., 1.); (2., 4.5); (8.5, 9.) ])
-    (pieces (Kit.subtract_intervals ("s", "e") b a))
+let some = List.map (fun (s, e) -> (Some s, Some e))
+
+let a =
+  periods_table
+    ((None, Some 2.) :: some [ (0., 3.); (3., 5.); (7., 7.); (9., 8.) ])
+
+let b = periods_table (some [ (1., 2.); (4.5, 8.5) ])
+
+let worked =
+  cases "touching, zero-length, reversed and null periods" ~id:fst
+    [
+      ("merge", (Kit.merge_intervals ("s", "e") a, some [ (0., 5.); (8., 9.) ]));
+      ( "intersect",
+        ( Kit.intersect_intervals ("s", "e") b a,
+          some [ (1., 2.); (4.5, 5.); (8., 8.5) ] ) );
+      ( "subtract",
+        ( Kit.subtract_intervals ("s", "e") b a,
+          some [ (0., 1.); (2., 4.5); (8.5, 9.) ] ) );
+    ]
+    (fun (_, (q, want)) ->
+      equal
+        (list (pair (option float_exact) (option float_exact)))
+        want (spans q))
+
+let ints ty xs = Column.v ty xs
 
 let () =
   exit
-    (run "intervals"
+    (run "Intervals"
        [
-         prop ~count:300 "a result is normal and holds the operation's points"
-           (Gen.with_pp pp case) set_law;
-         test "touching, zero-length, reversed and null periods" cases;
+         group "merge_intervals, intersect_intervals, subtract_intervals"
+           [
+             prop ~count:300 "return a set in normal form" drawn normal_law;
+             prop ~count:300 "hold the values the operation keeps" drawn
+               points_law;
+             worked;
+             test "columns are by, s and e at the inputs' common type"
+               (fun () ->
+                 let set ty =
+                   Query.of_table
+                     (Talon.v
+                        [
+                          ("g", ints Type.int64 [| 1 |]);
+                          ("s", ints ty [| 0 |]);
+                          ("e", ints ty [| 5 |]);
+                        ])
+                 in
+                 let got =
+                   Kit.intersect_intervals ~by:[ "g" ] ("s", "e")
+                     (set Type.int64) (set Type.int32)
+                 in
+                 equal
+                   (Testable.make ~pp:Schema.pp ~equal:Schema.equal)
+                   (Schema.v
+                      [
+                        ("g", Type.Any Type.int64);
+                        ("s", Type.Any Type.int64);
+                        ("e", Type.Any Type.int64);
+                      ])
+                   (Talon.schema (exec got)));
+             test
+               "an impulse matches the period that holds it, the Anti join the \
+                others" (fun () ->
+                 let set =
+                   Kit.merge_intervals ("s", "e")
+                     (Query.of_table
+                        (Talon.v
+                           [
+                             ("s", ints Type.int64 [| 0 |]);
+                             ("e", ints Type.int64 [| 5 |]);
+                           ]))
+                 in
+                 let events =
+                   Query.of_table
+                     (Talon.v
+                        [
+                          ( "t",
+                            Column.of_options Type.int64
+                              [| Some (-1); Some 0; Some 3; Some 5; None |] );
+                        ])
+                 in
+                 let on = Join.overlaps ("t", "t") ("s", "e") in
+                 let ts kind =
+                   Column.options Kind.int
+                     (Talon.column (exec (Query.join ~kind ~on set events)) "t")
+                 in
+                 equal (array (option int)) [| Some 0; Some 3 |] (ts Semi);
+                 equal
+                   (array (option int))
+                   [| Some (-1); Some 5; None |]
+                   (ts Anti));
+             (let q = periods_table [] in
+              cases "raise Invalid_argument if by names a column twice" ~id:fst
+                [
+                  ( "Kit.merge_intervals",
+                    fun () -> Kit.merge_intervals ~by:[ "s"; "s" ] ("s", "e") q
+                  );
+                  ( "Kit.intersect_intervals",
+                    fun () ->
+                      Kit.intersect_intervals ~by:[ "s"; "s" ] ("s", "e") q q );
+                  ( "Kit.subtract_intervals",
+                    fun () ->
+                      Kit.subtract_intervals ~by:[ "s"; "s" ] ("s", "e") q q );
+                ]
+                (fun (sub, f) -> raises_match (Exn.invalid_arg ~sub) f));
+           ];
        ])
