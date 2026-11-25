@@ -963,12 +963,13 @@ module Dist : sig
       digits; where the two tails agree within a factor [e^(1/4)] it is the
       density integrated over the window by eight-point Gauss-Legendre
       quadrature. The mass must be positive, a check like a parameter's.
-      The log density is [d]'s less the log mass: where both are large,
-      their difference is within [ε] times their magnitude, as at bounds a
-      million standard deviations out at float32. Draws and the quantile
-      invert [d] at [(1 - p) F(low) + p F(high)], read from the smaller
-      tail, within that inverse's precision, about [ε min (F, 1 - F) / f]
-      in the value: a window narrower than that is not resolved. Its
+      The log density is [d]'s less the log mass, within
+      [64 ε (1 + |log f| + |log m|)] of the exact one, [f] [d]'s density and
+      [m] the mass: at bounds a million standard deviations out at float32,
+      within that of their magnitude. Draws and the quantile invert [d] at
+      [(1 - p) F(low) + p F(high)], read from the smaller tail, within the
+      precision {!quantile} states, [F] and [f] [d]'s: a window narrower
+      than [ε min (F, 1 - F) / f] is not resolved. Its
       coordinates map onto the interval, or the half-line, between the
       bounds and [d]'s support.
 
@@ -1042,7 +1043,10 @@ module Dist : sig
     ((float, 'f, 'd) Nx.t, 'f, 'd) t -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t
   (** [quantile d p] is the value whose CDF is [p], elementwise, read from
       the smaller tail: above [1/2] it inverts the survival at [1 - p], which
-      is exact there. For {!gamma} and {!inverse_gamma} it is [0.] at
+      is exact there. It is within [64 ε (|x| + (1 + |log m|) m / f)] of the
+      exact quantile [x], [m = min (p, 1 - p)] the tail it reads and [f] the
+      density at [x]: [m / f] is the inverse's conditioning, and
+      [1 + |log m|] the error of a tail held as its logarithm. For {!gamma} and {!inverse_gamma} it is [0.] at
       [p = 0.] and [inf] at [p = 1.]; for {!beta},
       {!Nx.betaincinv}, [0.] at [p = 0.] and [1.] at [p = 1.]; for
       {!truncated}, its lower bound at [p = 0.] and its upper at [p = 1.], or
