@@ -2165,6 +2165,10 @@ let () =
                  equal pretokens
                    [ ("\xe2\x82", (0, 2)); ("a\xff", (2, 4)) ]
                    (Pre.pre_tokenize (Pre.fixed_length 2) "\xe2\x82a\xff"));
+             cases ~id:string_of_int
+               "raises Invalid_argument unless n is positive" [ 0; -1 ]
+               (fun n ->
+                 raises_match Exn.invalid_arg (fun () -> Pre.fixed_length n));
            ];
          group "sequence"
            [

@@ -5573,6 +5573,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Pre_tokenizer.fixed_length` raises `Invalid_argument` if its length is not
+  positive. It gave no pretoken, dropping the text.
 - Normalizers keep a byte that opens no character as a character of one byte,
   as `encode` promises: `lowercase`, `strip_accents` and `bert` dropped it, and
   `nfc`, `nfd`, `nfkc`, `nfkd` and `bert ~strip_accents` turned it into U+FFFD.

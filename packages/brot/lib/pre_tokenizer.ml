@@ -81,7 +81,7 @@ let err_regex source msg = strf "invalid regular expression %S: %s" source msg
 let err_metaspace_missing = "requires a non-empty 'replacement'"
 let err_metaspace_scheme = "expected a string for 'prepend_scheme'"
 let err_sequence_missing = "requires 'pretokenizers' list"
-let err_fixed_length = "requires positive length"
+let err_fixed_length = "fixed_length requires a positive length"
 let err_no_walk = "pre-tokenizer is not a span walker"
 let err_range = "range is not within the text"
 let err_replacement = "metaspace replacement must be one character"
@@ -1544,7 +1544,7 @@ let marks_spaces = function
   | _ -> false
 
 let pre_tokenize_fixed_length ~length text =
-  if length <= 0 || String.length text = 0 then []
+  if String.length text = 0 then []
   else
     let pieces = ref [] in
     let stop = String.length text in
@@ -1728,7 +1728,9 @@ let metaspace ?(replacement = "\xe2\x96\x81") ?(prepend_scheme = `Always)
   Metaspace { replacement; prepend_scheme; split }
 
 let unicode_scripts = Unicode_scripts
-let fixed_length n = Fixed_length { length = n }
+let fixed_length n =
+  if n < 1 then invalid_arg err_fixed_length;
+  Fixed_length { length = n }
 let sequence ts = Sequence ts
 
 (* Serialization *)

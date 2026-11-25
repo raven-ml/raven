@@ -616,7 +616,9 @@ module Pre_tokenizer : sig
   val fixed_length : int -> t
   (** [fixed_length n] cuts the text into pretokens of [n] characters.
 
-      The last pretoken may be shorter than [n]. *)
+      The last pretoken may be shorter than [n].
+
+      Raises [Invalid_argument] if [n] is not positive. *)
 
   val sequence : t list -> t
   (** [sequence ts] cuts the text with the first of [ts], then cuts each
