@@ -356,10 +356,17 @@ let gc s =
         (Version.names ~root:s.root)
   in
   let runs = runs_dir s in
+  (* In or below [runs/], a link is never followed: its target may be anything
+     outside the store. *)
+  let is_real_dir d =
+    match Unix.lstat d with
+    | { Unix.st_kind = Unix.S_DIR; _ } -> true
+    | _ | (exception Unix.Unix_error _) -> false
+  in
   let deleted =
     File.entries runs
     |> List.map (Filename.concat runs)
-    |> List.filter Listing.deleted
+    |> List.filter (fun d -> is_real_dir d && Listing.deleted d)
   in
   let dangling =
     List.concat_map
@@ -376,13 +383,6 @@ let gc s =
      exist, so none is in progress: every [.]-named entry there, its [tags/] and
      the tree of its [files/] is work left behind, but the mark a deletion
      renames the log to. *)
-  (* Below a run's directory, a link is never followed: its target may be
-     anything outside the store. *)
-  let is_real_dir d =
-    match Unix.lstat d with
-    | { Unix.st_kind = Unix.S_DIR; _ } -> true
-    | _ | (exception Unix.Unix_error _) -> false
-  in
   let rec dot_tree dir =
     if not (is_real_dir dir) then []
     else

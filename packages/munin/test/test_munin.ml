@@ -3192,21 +3192,25 @@ let maintenance_tests =
           write_file (Filename.concat outside ".config") "x";
           let runs = Filename.concat (Store.root store) "runs" in
           Unix.symlink outside (Filename.concat runs "home");
+          (* A link to a directory that looks like a deletion cut short. *)
+          let marked = temp_dir () in
+          write_file (Filename.concat marked ".deleted") "x";
+          write_file (Filename.concat marked "notes") "x";
+          Unix.symlink marked (Filename.concat runs "marked");
           (* A directory a start has claimed, before its log exists. *)
           let claimed = Filename.concat runs "claimed" in
           mkdir_p claimed;
           write_file (Filename.concat claimed ".tmp-1-0") "x";
           ignore (Store.gc store);
-          equal (list string)
+          let kept =
             [
               Filename.concat outside ".config";
+              Filename.concat marked ".deleted";
+              Filename.concat marked "notes";
               Filename.concat claimed ".tmp-1-0";
             ]
-            (List.filter Sys.file_exists
-               [
-                 Filename.concat outside ".config";
-                 Filename.concat claimed ".tmp-1-0";
-               ]));
+          in
+          equal (list string) kept (List.filter Sys.file_exists kept));
       test "writers and publications work with a lock only its owner may write"
         (fun () ->
           if Sys.win32 then
