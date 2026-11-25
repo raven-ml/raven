@@ -85,6 +85,9 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- `Dist.cauchy`, `Dist.half_cauchy` and `Dist.student_t` give a finite
+  derivative in `scale` far in their tails at scales near the least normal
+  float, as `1e-308`, where it was `inf`.
 - `Dist.mvn` refuses parameters other than float32 and float64 at the call,
   naming itself, where nx's triangular solve raised at the first eliminator.
 - `Norn_model.reparam` and `Norn_model.noncentre` no longer raise on a model
