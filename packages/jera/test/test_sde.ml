@@ -309,9 +309,9 @@ let walk_tests =
             x
         in
         let x = vec [| 1.; 0.5; 2. |] in
-        let eager = f x in
-        equal (Oracle.tensor ~rel:1e-12 ()) eager (Rune.jit' f x);
-        equal (Oracle.tensor ~rel:1e-12 ()) eager (Rune.jit' f x));
+        let eager = f x and compiled = Rune.jit' f in
+        equal (Oracle.tensor ~rel:1e-12 ()) eager (compiled x);
+        equal (Oracle.tensor ~rel:1e-12 ()) eager (compiled x));
   ]
 
 (* Methods *)
@@ -417,6 +417,31 @@ let method_tests =
       (fun () ->
         at_least (float 1e-9) ~than:0.4
           (gbm_order Sde.reversible_heun ~ito:false));
+    cases "a step evaluates the drift and the diffusion as its method states"
+      ~id:(fun (name, _, _) -> name)
+      [
+        ("euler_maruyama", Sde.euler_maruyama, (1, 1));
+        ("milstein", Sde.milstein, (1, 3));
+        ("sra1", Sde.sra1, (2, 3));
+        (* One drift per step, and one at the march's start. *)
+        ("reversible_heun", Sde.reversible_heun, (2, 2));
+      ]
+      (fun (_, m, expected) ->
+        (* One step of one interval runs no loop, so each call is one
+           evaluation. *)
+        let drifts = ref 0 and diffusions = ref 0 in
+        let drift t x =
+          incr drifts;
+          gbm_drift t x
+        and diffusion t x dw =
+          incr diffusions;
+          gbm_diffusion t x dw
+        in
+        ignore
+          (Sde.march tensor m ~steps:1 ~drift ~diffusion (path ~n:3 31)
+             ~at:(vec [| 0.; 1. |])
+             (x0 3));
+        equal (pair int int) expected (!drifts, !diffusions));
   ]
 
 (* March *)
@@ -652,31 +677,6 @@ let march_tests =
            (Kidger, Foster, Li and Lyons, 2021). *)
         let y, dw, _ = live_at_end Sde.reversible_heun in
         equal (Oracle.tensor ()) (Nx.div_s dw 2.) y);
-    cases "a step evaluates the drift and the diffusion as its method states"
-      ~id:(fun (name, _, _) -> name)
-      [
-        ("euler_maruyama", Sde.euler_maruyama, (1, 1));
-        ("milstein", Sde.milstein, (1, 3));
-        ("sra1", Sde.sra1, (2, 3));
-        (* One drift per step, and one at the march's start. *)
-        ("reversible_heun", Sde.reversible_heun, (2, 2));
-      ]
-      (fun (_, m, expected) ->
-        (* One step of one interval runs no loop, so each call is one
-           evaluation. *)
-        let drifts = ref 0 and diffusions = ref 0 in
-        let drift t x =
-          incr drifts;
-          gbm_drift t x
-        and diffusion t x dw =
-          incr diffusions;
-          gbm_diffusion t x dw
-        in
-        ignore
-          (Sde.march tensor m ~steps:1 ~drift ~diffusion w
-             ~at:(vec [| 0.; 1. |])
-             (x0 3));
-        equal (pair int int) expected (!drifts, !diffusions));
     cases "a pair state steps as each leaf alone along one path" ~id:fst methods
       (fun (_, m) ->
         let both = Nx.Ptree.(pair tensor tensor) in
@@ -692,11 +692,14 @@ let march_tests =
         equal (Oracle.structure both) (alone x, alone z) pair);
     cases "an integer leaf is carried unchanged" ~id:fst methods (fun (_, m) ->
         let both = Nx.Ptree.(pair tensor tensor) in
+        (* The drift and the diffusion return other integers, so the leaf shows
+           where a step took it from. *)
         let count = Nx.create Nx.int32 [| 2 |] [| 7l; 9l |] in
         let _, counts =
           Sde.march both m ~steps:3
-            ~drift:(fun t (x, i) -> (gbm_drift t x, i))
-            ~diffusion:(fun t (x, i) dw -> (gbm_diffusion t x dw, i))
+            ~drift:(fun t (x, i) -> (gbm_drift t x, Nx.add_s i 1l))
+            ~diffusion:(fun t (x, i) dw ->
+              (gbm_diffusion t x dw, Nx.add_s i 2l))
             (path ~n:2 31) ~at:three
             (vec [| 1.; 2. |], count)
         in
@@ -793,17 +796,20 @@ let march_tests =
     test "march rejects steps below 1" (fun () ->
         raises_in "Jera.Sde.march" (fun () ->
             gbm_march Sde.euler_maruyama ~steps:0 (vec [| 0.; 1. |]) (x0 3)));
-    test "march rejects at of two axes" (fun () ->
+    cases "march rejects at that is not a vector of times"
+      ~id:(fun at ->
+        Printf.sprintf "shape [%s]"
+          (String.concat "; "
+             (Array.to_list (Array.map string_of_int (Nx.shape at)))))
+      [ vec [||]; Nx.create f64 [| 1; 2 |] [| 0.; 1. |] ]
+      (fun at ->
         raises_in "Jera.Sde.march" (fun () ->
-            gbm_march Sde.euler_maruyama ~steps:1
-              (Nx.create f64 [| 1; 2 |] [| 0.; 1. |])
-              (x0 3)));
+            gbm_march Sde.euler_maruyama ~steps:1 at (x0 3)));
     cases "march rejects times that are not strictly increasing inside the path"
       ~id:(fun at ->
         Printf.sprintf "[%s]"
           (String.concat "; " (Array.to_list (Array.map string_of_float at))))
       [
-        [||];
         [| 1.; 0.5 |];
         [| 0.5; 0.5 |];
         [| 0.; Float.nan |];
