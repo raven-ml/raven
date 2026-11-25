@@ -721,9 +721,13 @@ let test_repeated_values () =
     (Nx.to_array
        (Rune.grad' (fun a -> Nx.sum (Nx.square (Nx.svdvals f64 a))) a))
 
-(* Softplus is smooth, of derivative sigmoid everywhere: at both zeros,
+(* Softplus is smooth, of derivative the logistic function: at both zeros,
    subnormals, the infinities and magnitudes where either arm of its form
-   saturates, each an example. *)
+   saturates, each an example. The reference is [Nx.sigmoid], within 3 ulps
+   of the logistic function, 7u relative. The gradient is within 9u: below
+   0, [Nx.exp]'s 5u and three roundings; from 0, those through [1 - q] with
+   [q <= 1/2], and the subtraction's rounding. So the two lie within 16u, 8
+   epsilon_float, of each other, to first order. *)
 let softplus_specials =
   [
     0.; -0.; 0x1p-1074; -0x1p-1074; 0x1p-1022; -0x1p-1022; Float.infinity;
@@ -755,6 +759,17 @@ let test_kinks () =
     (both
        (Rune.grad (two ()) maximum
           (v [| Float.nan; 1. |], v [| 1.; Float.nan |])));
+  let softplus' dt =
+    Nx.to_array
+      (Nx.cast Nx.float64
+         (Rune.grad'
+            (fun x -> Nx.sum (Nx.softplus x))
+            (Nx.cast dt (v [| 0.; -0. |]))))
+  in
+  equal ~msg:"softplus at both zeros" (array float_exact) [| 0.5; 0.5 |]
+    (softplus' Nx.float64);
+  equal ~msg:"softplus at both zeros, float32" (array float_exact)
+    [| 0.5; 0.5 |] (softplus' Nx.float32);
   equal ~msg:"an infinite logsumexp" floats [| 0.5; 0.5; 0. |]
     (Nx.to_array
        (Rune.grad'
@@ -3033,7 +3048,8 @@ let () =
              test "softmax's and log_softmax's mapped gradients"
                test_normalised_vmap;
              test "values alone at repeated values" test_repeated_values;
-             prop "softplus's gradient is sigmoid" ~examples:softplus_specials
+             prop "softplus's gradient is the logistic function"
+               ~examples:softplus_specials
                softplus_points softplus_law;
              test "selections" test_selections;
              test "signs of zero" test_zeros;

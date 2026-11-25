@@ -103,7 +103,7 @@ let along2 f (x, y) (tx, ty) =
 
 type row = {
   name : string;
-  rel : float; (* The relative tolerance. *)
+  rel : float; (* The relative tolerance, [0.] for exact equality. *)
   expected : float array;
   tangent : unit -> float array;
 }
@@ -111,7 +111,8 @@ type row = {
 let row ?(rel = 1e-12) name expected tangent = { name; rel; expected; tangent }
 
 let check_row r =
-  equal (array (float_rel ~rel:r.rel ~abs:0.)) r.expected (r.tangent ())
+  let elt = if r.rel = 0. then float_exact else float_rel ~rel:r.rel ~abs:0. in
+  equal (array elt) r.expected (r.tangent ())
 
 let nan = Float.nan
 let inf = Float.infinity
@@ -143,6 +144,12 @@ let kinks =
   [
     row "abs at both zeros" [| 1.; 1.; 1.; -1. |] (fun () ->
         along Nx.abs (v [| 0.; -0.; 2.; -2. |]) (v [| 1.; 1.; 1.; 1. |]));
+    row ~rel:0. "softplus at both zeros" [| 0.5; 0.5 |] (fun () ->
+        along Nx.softplus (v [| 0.; -0. |]) (v [| 1.; 1. |]));
+    row ~rel:0. "softplus at both zeros, float32" [| 0.5; 0.5 |] (fun () ->
+        along Nx.softplus
+          (Nx.cast Nx.float32 (v [| 0.; -0. |]))
+          (Nx.ones Nx.float32 [| 2 |]));
     row "maximum's ties and NaNs" [| 2.; 1.; 3.; 0.; 0. |] (fun () ->
         along2
           (fun (a, b) -> Nx.maximum a b)
