@@ -1383,13 +1383,13 @@ module Nuts : sig
       [Nx.Rng.normal ~key:(fold_in (fold_in c 0) 0)], [fold_in] being
       {!Nx.Rng.fold_in}. Doubling [j] of its tree draws
       [u id = Nx.Rng.uniform ~key:(fold_in (fold_in (fold_in c 1) j) id)], [D]
-      the [max_depth]. It runs forward where [u 0 > 0.5]. Node [m] of level
-      [l] of its subtree, counted from [1], takes its later half's proposal
-      where [u (l 2^D + m)] is below that half's share of its weight. The
-      subtree's proposal replaces the trajectory's where its log weight exceeds
-      the trajectory's or [u ((D + 1) 2^D)] is below the ratio of their
-      weights. A step-size search before a warmup transition draws its trial
-      [t]'s momentum as a transition does, from [fold_in (fold_in c 2) t]. *)
+      the [max_depth]. It runs forward where [u 0 > 0.5]. Node [m] of level [l]
+      of its subtree, counted from [1], takes its later half's proposal where
+      [u (l 2^D + m)] is below that half's share of its weight. The subtree's
+      proposal replaces the trajectory's where its log weight exceeds the
+      trajectory's or [u ((D + 1) 2^D)] is below the ratio of their weights. A
+      step-size search before a warmup transition draws its trial [t]'s momentum
+      as a transition does, from [fold_in (fold_in c 2) t]. *)
 
   type ('u, 'f, 'd) state = private {
     position : 'u;  (** Each chain's position. *)
@@ -1433,8 +1433,8 @@ module Nuts : sig
 
       Raises [Invalid_argument] if [max_depth < 1], [accept] is not in [(0, 1)],
       [rank < 0], if a tensor of [start] is not of a float dtype, naming its
-      path, if [lp] is [-inf] at a chain, naming it, or if [lp] does not return
-      one log density per chain, as in
+      path, if [lp] is NaN, [+inf] or [-inf] at a chain, naming it, or if [lp]
+      does not return one log density per chain, as in
       [Norn.Nuts.init: the density returned shape [4; 8] for a position of 4
        chains; a density returns one log density per chain, shape [4]]. With
       several chains it evaluates [lp] again on the chains reversed, and raises
@@ -1462,14 +1462,18 @@ module Nuts : sig
   (** [warmup u lp k ~steps s] is [s] after [steps] transitions that tune each
       chain's step size and geometry, by Stan's schedule scaled to [steps]: an
       initial buffer, windows that double in length, and a final buffer; fewer
-      than [20] steps tune the step size alone. Dual
-      averaging (Nesterov 2009; Hoffman and Gelman 2014) sets each chain's step
-      size for an acceptance of [s.accept], restarting at each window. At each
-      window's end each chain's geometry is refitted to its window's draws and
-      gradients by the Fisher divergence (Seyboldt, Carlson and Carpenter 2026):
-      a diagonal scale [sqrt (sd x / sd score)] per element. Transition [n] of
-      the run, counted by [s.draw], has the key [Nx.Rng.fold_in k n], as in
-      {!sample}, so warmup and sampling may share a key.
+      than [20] steps tune the step size alone. Dual averaging (Nesterov 2009;
+      Hoffman and Gelman 2014) aims each chain's step size at an acceptance of
+      [s.accept], restarting at each window from a search for a step size
+      accepting [0.8]. The step size warmup ends with is the averaging's mean
+      over the final buffer, so a short warmup accepts between [s.accept] and
+      about [0.8]: at [300] steps a target of [0.6] accepts about [0.76] on a
+      Gaussian. At each window's end each chain's geometry is refitted to its
+      window's draws and gradients by the Fisher divergence (Seyboldt, Carlson
+      and Carpenter 2026): a diagonal scale [sqrt (sd x / sd score)] per
+      element, then its directions. Transition [n] of the run, counted by
+      [s.draw], has the key [Nx.Rng.fold_in k n], as in {!sample}, so warmup and
+      sampling may share a key.
 
       Raises [Invalid_argument] if [steps < 0]. *)
 
@@ -1510,9 +1514,10 @@ module Hmc : sig
       density trends across its draws, so its energy changes little from one
       draw to the next against its spread over the run, and its E-BFMI
       ({!Diag.ebfmi}) can fall below [0.3], which {!Summary.v} reports as
-      [Ebfmi_low], with R-hat above [1.01]. {!Nuts} tunes a step size and geometry for
-      each chain and extends each trajectory until it turns, so it suits a
-      posterior whose scale varies, and chains that start far from its bulk.
+      [Ebfmi_low], with R-hat above [1.01]. {!Nuts} tunes a step size and
+      geometry for each chain and extends each trajectory until it turns, so it
+      suits a posterior whose scale varies, and chains that start far from its
+      bulk.
 
       {b Keys.} Transition [n] of a run has the key [k = Nx.Rng.fold_in run n].
       Chain [i] has row [i] of
@@ -1570,13 +1575,13 @@ module Hmc : sig
       diagonal, to [2]; a rank above a chain's number of float elements is that
       number. The geometry is [geometry], or a diagonal centred on the chains'
       mean whose variance is the inverse of the gradient's root mean square over
-      the chains at the start, clipped to [[1e-20, 1e20]]. The step size and
-      the length are [1].
+      the chains at the start, clipped to [[1e-20, 1e20]]. The step size and the
+      length are [1].
 
-      Raises [Invalid_argument] if [accept] is not in [(0, 1)], [rank < 0], if
-      a tensor of [start] is not of a float dtype, naming its path, if [lp] is
-      [-inf] at a chain, naming it, or if [lp] does not return one log density
-      per chain, as in
+      Raises [Invalid_argument] if [accept] is not in [(0, 1)], [rank < 0], if a
+      tensor of [start] is not of a float dtype, naming its path, if [lp] is
+      NaN, [+inf] or [-inf] at a chain, naming it, or if [lp] does not return
+      one log density per chain, as in
       [Norn.Hmc.init: the density returned shape [4; 8] for a position of 4
        chains; a density returns one log density per chain, shape [4]]. With
       several chains it evaluates [lp] again on the chains reversed, and raises
@@ -1605,10 +1610,14 @@ module Hmc : sig
       [steps]: an initial buffer, windows that double in length, and a final
       buffer; fewer than [20] steps tune the step size and the length alone.
 
-      - Dual averaging (Nesterov 2009; Hoffman and Gelman 2014) sets the step
-        size for a harmonic mean acceptance over the chains of [s.accept],
-        restarting at each window. A chain that never accepts drives the mean to
-        [0], so the step shrinks until every chain moves.
+      - Dual averaging (Nesterov 2009; Hoffman and Gelman 2014) aims the step
+        size at a harmonic mean acceptance over the chains of [s.accept],
+        restarting at each window from a search for a step size accepting [0.8].
+        A chain that never accepts drives the mean to [0], so the step shrinks
+        until every chain moves. The step size warmup ends with is the
+        averaging's mean over the final buffer, so a short warmup accepts above
+        [s.accept]: at [300] steps a target of [0.6] accepts about [0.84] on a
+        Gaussian.
       - The length starts at the first step size, whatever [s.length] (Hoffman,
         Radul and Sountsov 2021, Algorithm 1), and climbs the change in the
         chains' expected squared jumped distance (ChEES) in whitened
@@ -1671,13 +1680,13 @@ module Ensemble : sig
       brings close to a Gaussian. Where the posterior's shape changes from
       region to region, as when a hyperparameter sets the scale of other
       elements in a hierarchical model, no such map exists. A move along the
-      line between two walkers then stays where the density is high only when
-      it is short, and the elements whose value shapes the rest, such as the
+      line between two walkers then stays where the density is high only when it
+      is short, and the elements whose value shapes the rest, such as the
       hyperparameters, move slowest. Their effective sizes ({!Diag.ess_bulk})
       grow far slower than the draws, which {!Summary.v} can report as
-      [Ess_low], and their nested R-hat may exceed [1.01]. {!Nuts} follows the gradient, so
-      its trajectories bend with the posterior. Use it when the density has a
-      gradient.
+      [Ess_low], and their nested R-hat may exceed [1.01]. {!Nuts} follows the
+      gradient, so its trajectories bend with the posterior. Use it when the
+      density has a gradient.
 
       {b Keys.} Transition [n] of a run has the key [k = Nx.Rng.fold_in run n],
       and walker [i] row [i] of [Nx.Rng.split_batch ~n:walkers k]; an ensemble's
@@ -1730,9 +1739,9 @@ module Ensemble : sig
       Raises [Invalid_argument] if [ensembles < 1], if the walkers do not split
       into [ensembles] ensembles of equal size, if an ensemble has fewer walkers
       than twice a walker's float elements, if a tensor of [start] is not of a
-      float dtype, naming its path, if [lp] is [-inf] at a walker, naming it,
-      or if [lp] does not return one log density per walker, each read from its
-      own row. *)
+      float dtype, naming its path, if [lp] is NaN, [+inf] or [-inf] at a
+      walker, naming it, or if [lp] does not return one log density per walker,
+      each read from its own row. *)
 
   val step :
     ('u, 'd) Nx.Ptree.t ->
@@ -1742,8 +1751,8 @@ module Ensemble : sig
     ('u, 'f, 'd) state
   (** [step u lp k s] is one transition of every walker from [s].
 
-      Raises [Invalid_argument] if [lp] is NaN or [+inf] at a walker, naming
-      it. *)
+      Raises [Invalid_argument] if [lp] is NaN or [+inf] at a walker, naming it.
+  *)
 
   val warmup :
     ('u, 'd) Nx.Ptree.t ->

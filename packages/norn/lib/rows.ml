@@ -222,8 +222,8 @@ let check_dtypes context u x =
                 context path name at dtype)
     x ()
 
-(* [check_start context l] refuses a start whose log density [l] is [-inf] at
-   a chain: no transition is defined from a point of zero density. *)
+(* [check_start context l] refuses a start whose log density [l] is [-inf] at a
+   chain: no transition is defined from a point of zero density. *)
 let check_start context l =
   let c = (Nx.shape l).(0) in
   let chain = Nx.arange_at (Nx.beside l) Nx.int32 0 c 1 in
