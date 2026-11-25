@@ -3,8 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Complex parts: each function against its parts computed in OCaml, over
-   complex values drawn from bytes, into every float witness. *)
+(* Complex numbers, in nx.mli's order: the parts, against their bits computed in
+   OCaml; magnitude and angle as nx.mli defines them, hypot and atan2 of the
+   parts in the wider format; conjugate; the complex functions at the values C99
+   defines, within nx.mli's normwise bounds. Values are drawn from bytes, into
+   every float witness. *)
 
 open Windtrap
 open Nx_support
@@ -21,7 +24,8 @@ let bits_equal a b =
 let floats =
   Testable.make
     ~pp:(Format.pp_print_list (fun ppf v -> Format.fprintf ppf "%h" v))
-    ~equal:(fun a b -> List.length a = List.length b && List.for_all2 bits_equal a b)
+    ~equal:(fun a b ->
+      List.length a = List.length b && List.for_all2 bits_equal a b)
 
 let equal_floats a b = equal floats (Array.to_list a) (Array.to_list b)
 
@@ -31,18 +35,22 @@ let drawn (type s) (dt : (Complex.t, s) D.t) shape :
   let n = Array.fold_left ( * ) 1 shape in
   let+ data = string_of ~size:(constant (D.bytes dt n)) char in
   Nx.Repr.of_array Nx.Host.v
-    (A.v dt (L.contiguous (Iarray.of_array shape))
+    (A.v dt
+       (L.contiguous (Iarray.of_array shape))
        (Rig.Buffer.of_string (if data = "" then "\000" else data)))
 
 let shape =
   Gen.array ~size:(Gen.int_range 0 2)
-    (Gen.frequency [ (1, Gen.constant 0); (1, Gen.constant 1); (4, Gen.int_range 2 5) ])
+    (Gen.frequency
+       [ (1, Gen.constant 0); (1, Gen.constant 1); (4, Gen.int_range 2 5) ])
 
 type z = Z : (Complex.t, 's) D.t * (Complex.t, 's, Nx.host) Nx.t -> z
 
+let pp_z ppf (Z (dt, x)) =
+  Format.fprintf ppf "%a %a" D.pp dt pp_ints (Nx.shape x)
+
 let complexes =
-  Gen.with_pp
-    (fun ppf (Z (dt, x)) -> Format.fprintf ppf "%a %a" D.pp dt pp_ints (Nx.shape x))
+  Gen.with_pp pp_z
     (let open Gen in
      let* complex128 = bool in
      let* s = shape in
@@ -57,14 +65,25 @@ type f = F : (float, 's) D.t -> f
 
 let witnesses =
   List.filter_map
-    (fun (D.Any dt) -> match D.kind dt with D.Float -> Some (F dt) | _ -> None)
+    (fun (D.Any dt) ->
+      match D.kind dt with D.Float -> Some (F dt) | _ -> None)
     D.all
 
-let witness =
-  Gen.of_list ~pp:(fun ppf (F dt) -> D.pp ppf dt) witnesses
-
+let witness = Gen.of_list ~pp:(fun ppf (F dt) -> D.pp ppf dt) witnesses
 let res z = Array.map (fun c -> c.Complex.re) (Nx.to_array z)
 let ims z = Array.map (fun c -> c.Complex.im) (Nx.to_array z)
+
+let values dt l =
+  Nx.create dt
+    [| List.length l |]
+    (Array.of_list (List.map (fun (re, im) -> { Complex.re; im }) l))
+
+(* An example of each complex dtype with no element. *)
+let empty =
+  [
+    Z (D.Complex64, Nx.zeros D.Complex64 [| 0 |]);
+    Z (D.Complex128, Nx.zeros D.Complex128 [| 2; 0 |]);
+  ]
 
 (* Parts *)
 
@@ -77,14 +96,19 @@ let law_real (Z (_, z), F f) =
 let bit_pattern (type s) (z : (Complex.t, s, Nx.host) Nx.t) =
   match Nx.dtype z with
   | D.Complex64 ->
-      Array.map Int64.of_int32 (Nx.to_array (Nx.bitcast Nx.int32 (Nx.bitcast Nx.float32 z)))
+      Array.map Int64.of_int32
+        (Nx.to_array (Nx.bitcast Nx.int32 (Nx.bitcast Nx.float32 z)))
   | D.Complex128 -> Nx.to_array (Nx.bitcast Nx.int64 (Nx.bitcast Nx.float64 z))
 
 let law_round_trip (Z (dt, z)) =
   let back (type p) (f : (float, p) D.t) =
     Nx.complex dt ~re:(Nx.real f z) ~im:(Nx.imag f z)
   in
-  let y = match dt with D.Complex64 -> back D.Float32 | D.Complex128 -> back D.Float64 in
+  let y =
+    match dt with
+    | D.Complex64 -> back D.Float32
+    | D.Complex128 -> back D.Float64
+  in
   equal (array int64) (bit_pattern z) (bit_pattern y)
 
 let test_complex_broadcast () =
@@ -95,100 +119,66 @@ let test_complex_broadcast () =
   equal_floats [| 1.; 1.; 1.; -0.; -0.; -0. |] (res z);
   equal_floats [| infinity; nan; 0.5; infinity; nan; 0.5 |] (ims z);
   invalid ~by:"Nx.complex" (fun () ->
-      Nx.complex Nx.complex64 ~re:(Nx.zeros Nx.float32 [| 2 |])
+      Nx.complex Nx.complex64
+        ~re:(Nx.zeros Nx.float32 [| 2 |])
         ~im:(Nx.zeros Nx.float32 [| 3 |]))
 
 (* Magnitude and angle *)
 
-let ulp (type s) (dt : (float, s) D.t) r =
-  let r = Float.abs (D.of_float dt r) in
-  match dt with
-  | D.Float32 ->
-      let b = Int32.bits_of_float r in
-      Int32.float_of_bits (Int32.succ b) -. r
-  | _ -> Float.succ r -. r
-
-let close dt k r v =
-  let r' = D.of_float dt r in
-  if Float.is_nan r then Float.is_nan v
-  else if (not (Float.is_finite r')) || r = 0. then bits_equal r' v
-  else Float.abs (v -. r) <= k *. ulp dt r
-
-let law_polar fname
-    (f : 'r 's. (float, 'r) D.t -> (Complex.t, 's, Nx.host) Nx.t -> (float, 'r, Nx.host) Nx.t)
-    libm k (Z (_, z), F w) =
-  match w with
-  | D.Float32 | D.Float64 ->
-      let got = Nx.to_array (f w z) in
-      Array.iteri
-        (fun i c ->
-          let r = libm c.Complex.re c.im in
-          if not (close w k r got.(i)) then
-            failf "%s at %h%+hi: %h, the C library's %h" fname c.re c.im
-              got.(i) r)
-        (Nx.to_array z)
-  | _ -> ()
-
-(* A witness narrower than the parts stores the modulus and argument
-   computed at the parts' format, by the conversion rule: [6 + 8i] of either
-   format, whose modulus [10] every narrow format stores by that rule, and at
-   complex128 [1e300 + 4e300i], whose parts are infinite at float32. Each
-   angle lies away from every narrow format's rounding midpoints, so either
-   precision stores the same bits. *)
-let narrow_witnesses = List.filter (fun (F dt) -> D.bits dt < 32) witnesses
-
-let test_polar_narrow (F w) =
-  let z64 = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 6.; im = 8. } |] in
-  let z128 =
-    Nx.create Nx.complex128 [| 2 |]
-      [| { Complex.re = 6.; im = 8. }; { re = 1e300; im = 4e300 } |]
+(* [f w z] is [g] of [z]'s parts computed in the wider of [w] and the parts'
+   format, then stored in [w], bit for bit, NaN as a class. *)
+let law_polar
+    (f :
+      'r 's.
+      (float, 'r) D.t ->
+      (Complex.t, 's, Nx.host) Nx.t ->
+      (float, 'r, Nx.host) Nx.t)
+    (g :
+      'p.
+      (float, 'p, Nx.host) Nx.t ->
+      (float, 'p, Nx.host) Nx.t ->
+      (float, 'p, Nx.host) Nx.t) (Z (dt, z), F w) =
+  let parts (type p) (p : (float, p) D.t) =
+    Nx.to_array (Nx.cast w (g (Nx.real p z) (Nx.imag p z)))
   in
-  let stored = Array.map (D.of_float w) in
-  equal_floats (stored [| 10. |]) (Nx.to_array (Nx.magnitude w z64));
-  equal_floats (stored [| Float.atan2 8. 6. |]) (Nx.to_array (Nx.angle w z64));
-  equal_floats
-    (stored [| 10.; Float.hypot 1e300 4e300 |])
-    (Nx.to_array (Nx.magnitude w z128));
-  equal_floats
-    (stored [| Float.atan2 8. 6.; Float.atan2 4e300 1e300 |])
-    (Nx.to_array (Nx.angle w z128))
+  let expected =
+    match (dt, D.bits w) with
+    | D.Complex128, _ | D.Complex64, 64 -> parts D.Float64
+    | D.Complex64, _ -> parts D.Float32
+  in
+  equal_floats expected (Nx.to_array (f w z))
 
-let polar =
-  [
-    prop "magnitude is hypot of the parts, within 3 ulps"
-      (Gen.pair complexes witness)
-      (law_polar "magnitude" (fun w z -> Nx.magnitude w z) Float.hypot 3.);
-    prop "angle is atan2 of the parts, within 3 ulps"
-      (Gen.pair complexes witness)
-      (law_polar "angle" (fun w z -> Nx.angle w z) (fun re im -> Float.atan2 im re) 3.);
-    test "the branch cut and zero" (fun () ->
-        let z =
-          Nx.create Nx.complex64 [| 7 |]
-            [|
-              { Complex.re = -1.; im = 0. };
-              { re = -1.; im = -0. };
-              { re = 0.; im = 0. };
-              { re = 3.; im = 4. };
-              { re = -0.; im = 0. };
-              { re = -0.; im = -0. };
-              { re = 0.; im = -0. };
-            |]
-        in
-        equal_floats
-          [|
-            Float.pi; -.Float.pi; 0.; Float.atan2 4. 3.; Float.pi; -.Float.pi; -0.;
-          |]
-          (Nx.to_array (Nx.angle Nx.float64 z));
-        equal_floats [| 1.; 1.; 0.; 5.; 0.; 0.; 0. |]
-          (Nx.to_array (Nx.magnitude Nx.float64 z)));
-    cases "a narrow witness stores the parts' hypot and atan2"
-      ~id:(fun (F w) -> D.name w)
-      narrow_witnesses test_polar_narrow;
-    test "a large modulus does not overflow" (fun () ->
-        let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 3e38; im = 3e38 } |] in
-        equal_floats [| D.of_float D.Float32 (Float.hypot 3e38 3e38) |]
-          [| (Nx.to_array (Nx.magnitude Nx.float32 z)).(0) |]);
-  ]
+(* [6 + 8i] of either dtype, whose modulus [10] every format stores, [1e300 +
+   4e300i], whose parts are infinite at float32, and [3e38 + 3e38i], whose
+   modulus overflows float32. *)
+let polar_examples =
+  List.concat_map
+    (fun w ->
+      [
+        (Z (D.Complex64, values D.Complex64 [ (6., 8.); (3e38, 3e38) ]), w);
+        (Z (D.Complex128, values D.Complex128 [ (6., 8.); (1e300, 4e300) ]), w);
+      ])
+    witnesses
+
+let test_branch_cut () =
+  let z =
+    values Nx.complex64
+      [
+        (-1., 0.);
+        (-1., -0.);
+        (0., 0.);
+        (3., 4.);
+        (-0., 0.);
+        (-0., -0.);
+        (0., -0.);
+      ]
+  in
+  equal_floats
+    [| Float.pi; -.Float.pi; 0.; Float.atan2 4. 3.; Float.pi; -.Float.pi; -0. |]
+    (Nx.to_array (Nx.angle Nx.float64 z));
+  equal_floats
+    [| 1.; 1.; 0.; 5.; 0.; 0.; 0. |]
+    (Nx.to_array (Nx.magnitude Nx.float64 z))
 
 (* Conjugate *)
 
@@ -197,14 +187,20 @@ let law_conjugate (Z (_, z)) =
   equal_floats (res z) (res y);
   equal_floats (Array.map Float.neg (ims z)) (ims y)
 
+let conjugate_examples =
+  [
+    Z (D.Complex64, values D.Complex64 [ (1., 0.); (2., -0.); (nan, 0.) ]);
+    Z (D.Complex128, values D.Complex128 [ (1., 0.); (-0., -0.) ]);
+  ]
+
 let test_conjugate_real () =
   let x = Nx.create Nx.int8 [| 2 |] [| 1; -1 |] in
-  equal bool true (Nx.conjugate x == x)
+  satisfies ~claim:"x itself" pass (fun y -> y == x) (Nx.conjugate x)
 
 (* Functions *)
 
-(* A complex value's elements as pairs of part bits, so that values compare
-   bit for bit, any NaN for a NaN. *)
+(* A complex value's elements as pairs of part bits, so that values compare bit
+   for bit, any NaN for a NaN. *)
 let parts_of (type s) (z : (Complex.t, s, Nx.host) Nx.t) =
   Array.to_list (Array.map (fun c -> [ c.Complex.re; c.im ]) (Nx.to_array z))
   |> List.concat
@@ -212,39 +208,67 @@ let parts_of (type s) (z : (Complex.t, s, Nx.host) Nx.t) =
 let law_rsqrt (Z (_, z)) =
   equal floats (parts_of (Nx.recip (Nx.sqrt z))) (parts_of (Nx.rsqrt z))
 
-(* The modulus of a complex number has one name: magnitude. *)
-let test_abs_declines () =
+(* On the positive real axis, rsqrt's real part is the float rsqrt's. *)
+let law_rsqrt_real xs =
+  let x = Nx.create Nx.float64 [| Array.length xs |] xs in
+  let z = Nx.complex Nx.complex128 ~re:x ~im:(Nx.zeros_like x) in
+  equal_floats (Nx.to_array (Nx.rsqrt x)) (res (Nx.rsqrt z))
+
+let positive =
+  Gen.with_pp
+    (fun ppf xs ->
+      Format.pp_print_list
+        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf " ")
+        (fun ppf v -> Format.fprintf ppf "%h" v)
+        ppf (Array.to_list xs))
+    (Gen.array ~size:(Gen.constant 16)
+       (Gen.map
+          (fun b -> Float.abs (Int64.float_of_bits b))
+          (Gen.such_that
+             (fun b ->
+               let x = Float.abs (Int64.float_of_bits b) in
+               Float.is_finite x && x > 0.)
+             Gen.int64)))
+
+let test_abs_refuses () =
   let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 3.; im = 4. } |] in
-  raises_match (Exn.invalid_arg ~sub:"Nx.magnitude") (fun () -> Nx.abs z)
+  invalid ~by:"Nx.abs" (fun () -> Nx.abs z)
 
-(* Each function the elementwise suite holds to its kind takes complex
-   values; spot values from C99's definitions. *)
-let test_spot_values () =
-  let z =
-    Nx.create Nx.complex128 [| 1 |] [| { Complex.re = 0.; im = Float.pi } |]
+(* C99's values at complex128, each within nx.mli's [k u |f|] of the exact value
+   [f], [u = 2^-53]: [exp (iπ) = -1] (k 4), [log (-4 + 0i) = log 4 + iπ] (4),
+   [asinh 2i = log (2 + √3) + iπ/2] (5); and exactly [sqrt (-4 ± 0i) = ±2i],
+   [sign (inf + 2i) = 1 + 0i] and [rsqrt 0 = NaN + NaN i]. The exact values' own
+   roundings, an ulp of each part, are added. *)
+let test_c99_values () =
+  let u = 0x1p-53 in
+  let near ~msg k (want : Complex.t) (got : Complex.t) =
+    let err = Complex.norm (Complex.sub got want) in
+    let bound =
+      (k *. u *. Complex.norm want) +. (2. *. u *. Complex.norm want)
+    in
+    at_most ~msg float_exact ~than:bound err
   in
-  let e = (Nx.to_array (Nx.exp z)).(0) in
-  equal (float 1e-15) (-1.) e.re;
-  equal (float 1e-15) 0. e.im;
-  let m = Nx.create Nx.complex128 [| 1 |] [| { Complex.re = -4.; im = 0. } |] in
-  equal floats [ 0.; 2. ] (parts_of (Nx.sqrt m));
-  let l = (Nx.to_array (Nx.log m)).(0) in
-  equal (float 1e-15) (Float.log 4.) l.re;
-  equal (float 1e-15) Float.pi l.im;
-  let zero = Nx.create Nx.complex64 [| 1 |] [| Complex.zero |] in
-  equal floats [ Float.nan; Float.nan ] (parts_of (Nx.rsqrt zero));
-  let two_i = Nx.create Nx.complex128 [| 1 |] [| { Complex.re = 0.; im = 2. } |] in
-  let a = (Nx.to_array (Nx.asinh two_i)).(0) in
-  equal (float 1e-15) (Float.log (2. +. Float.sqrt 3.)) a.re;
-  equal (float 1e-15) (Float.pi /. 2.) a.im
+  let one f re im = (Nx.to_array (f (values Nx.complex128 [ (re, im) ]))).(0) in
+  near ~msg:"exp (i pi)" 4. { re = -1.; im = 0. } (one Nx.exp 0. Float.pi);
+  near ~msg:"log (-4 + 0i)" 4.
+    { re = Float.log 4.; im = Float.pi }
+    (one Nx.log (-4.) 0.);
+  near ~msg:"asinh 2i" 5.
+    { re = Float.log (2. +. Float.sqrt 3.); im = Float.pi /. 2. }
+    (one Nx.asinh 0. 2.);
+  let parts f re im = parts_of (f (values Nx.complex128 [ (re, im) ])) in
+  equal ~msg:"sqrt (-4 + 0i)" floats [ 0.; 2. ] (parts Nx.sqrt (-4.) 0.);
+  equal ~msg:"sqrt (-4 - 0i)" floats [ 0.; -2. ] (parts Nx.sqrt (-4.) (-0.));
+  equal ~msg:"sign (inf + 2i)" floats [ 1.; 0. ] (parts Nx.sign infinity 2.);
+  equal ~msg:"rsqrt 0" floats [ Float.nan; Float.nan ]
+    (parts_of (Nx.rsqrt (values Nx.complex64 [ (0., 0.) ])))
 
-(* nx_kinds_complex.h's pow takes a NaN imaginary part of [w log z] as the
-   NaN of positive sign, so that where the real part is [-inf] the result is
-   [+0 + i0], whatever sign the target gives a NaN it computes. Each pair
-   reaches that case: an infinite part of [w] times a zero part of
-   [log z], infinite products of opposite signs summed, or a NaN part of
-   [z] beside an infinite one. nx.cuda's suite holds every kind to these
-   bits. *)
+(* nx_kinds_complex.h's pow takes a NaN imaginary part of [w log z] as the NaN
+   of positive sign, so that where the real part is [-inf] the result is [+0 +
+   i0], whatever sign the target gives a NaN it computes. Each pair reaches that
+   case: an infinite part of [w] times a zero part of [log z], infinite products
+   of opposite signs summed, or a NaN part of [z] beside an infinite one.
+   nx.cuda's suite holds every kind to these bits. *)
 let inf = Float.infinity
 let nan = Float.nan
 let neg_nan = Float.neg Float.nan
@@ -263,8 +287,8 @@ let vanishing_powers =
     ("(-NaN + inf i)^(-1 + 0i)", (neg_nan, inf), (-1., 0.));
   ]
 
-(* One element of [dt] whose parts have the bits of [re] and [im] rounded to
-   the parts' format, a NaN's sign kept. *)
+(* One element of [dt] whose parts have the bits of [re] and [im] rounded to the
+   parts' format, a NaN's sign kept. *)
 let element (type s) (dt : (Complex.t, s) D.t) (re, im) :
     (Complex.t, s, Nx.host) Nx.t =
   match dt with
@@ -292,26 +316,55 @@ let () =
   exit
     (run "nx complex"
        [
-         group "parts"
+         group "real and imag"
            [
-             prop "real and imag are the parts, stored in the witness"
-               (Gen.pair complexes witness) law_real;
-             prop "complex of the parts is the value, bit for bit" complexes
-               law_round_trip;
-             test "complex broadcasts and keeps every part"
-               test_complex_broadcast;
+             prop "are the parts, stored in the witness"
+               ~examples:
+                 (List.concat_map
+                    (fun z -> List.map (fun w -> (z, w)) witnesses)
+                    empty)
+               (Gen.pair complexes witness)
+               law_real;
            ];
-         group "polar" polar;
+         group "magnitude"
+           [
+             prop ~examples:polar_examples
+               "is hypot of the parts in the wider format, stored in dt"
+               (Gen.pair complexes witness)
+               (law_polar
+                  (fun w z -> Nx.magnitude w z)
+                  (fun a b -> Nx.hypot a b));
+           ];
+         group "angle"
+           [
+             prop ~examples:polar_examples
+               "is atan2 of the parts in the wider format, stored in dt"
+               (Gen.pair complexes witness)
+               (law_polar
+                  (fun w z -> Nx.angle w z)
+                  (fun re im -> Nx.atan2 im re));
+             test "takes its branch cut's side from a zero's sign"
+               test_branch_cut;
+           ];
+         group "complex"
+           [
+             prop "of the parts is the value, bit for bit" complexes
+               law_round_trip;
+             test "broadcasts and keeps every part" test_complex_broadcast;
+           ];
          group "conjugate"
            [
-             prop "conjugate negates the imaginary parts" complexes law_conjugate;
+             prop ~examples:conjugate_examples "negates the imaginary parts"
+               complexes law_conjugate;
              test "a value that is not complex is itself" test_conjugate_real;
            ];
          group "functions"
            [
              prop "rsqrt is recip of sqrt" complexes law_rsqrt;
-             test "abs declines, naming magnitude" test_abs_declines;
-             test "exp, sqrt, log, rsqrt and asinh at C99's values" test_spot_values;
+             prop "rsqrt on the positive real axis is the float rsqrt" positive
+               law_rsqrt_real;
+             test "abs refuses a complex value, naming itself" test_abs_refuses;
+             test "C99's values, within nx.mli's bounds" test_c99_values;
              cases "pow is +0 + i0 where w log z is -inf + i NaN"
                ~id:(fun (name, _, _) -> name)
                vanishing_powers test_vanishing_power;
