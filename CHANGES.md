@@ -6117,6 +6117,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Talon_json.file ~format` on a path where no file is gives an `Error` at the
+  call, as without a format, where the error came at the first read. The call
+  opens nothing, so a named pipe is still read once.
 - A JSON value of another type than its column's fails with its text, as the
   `.mli` says: `"\"1.5\"": column "a": a string does not read as float64`. The
   error of `Talon_json.decode`, `source` and `file` gave its place alone.

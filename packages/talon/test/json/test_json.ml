@@ -724,8 +724,12 @@ let files =
             (match Query.run q with
             | Ok _ -> "read"
             | Error e -> error_text e));
-      test "a missing file is an error" (fun () ->
-          is_error (J.file "/nonexistent/talon.ndjson"));
+      test "a missing file is an error at the call, with a format or not"
+        (fun () ->
+          let path = Filename.concat (temp_dir ()) "missing.ndjson" in
+          is_error ~msg:"sniffed" (J.file path);
+          is_error ~msg:"declared"
+            (J.file ~format:(J.format [ ("a", any Type.int64) ]) path));
     ]
 
 (* The corpus: files written by pinned Python tools and what Python reads. *)

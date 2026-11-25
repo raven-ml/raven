@@ -925,7 +925,11 @@ let file ?format path =
     source_of ~name ~file:path f open_
   in
   match format with
-  | Some f -> Ok (source f)
+  | Some f ->
+      (* A format needs no byte at the call, so the file is opened by each read
+         alone, and a named pipe is read once. *)
+      if Sys.file_exists path then Ok (source f)
+      else Error (Error.v ~file:path "No such file or directory")
   | None -> (
       match open_ () with
       | exception Sys_error msg -> Error (Error.v msg)

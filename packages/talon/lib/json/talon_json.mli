@@ -177,9 +177,12 @@ val file :
 (** [file ?format path] is the {!source} of the JSON file [path], named
     [json "path"], whose errors name [path]: as [format] says, or as {!sniff}
     infers from the file when [format] is absent. Each read opens the file
-    again.
+    again. With [format], the call opens nothing, so the source of a named
+    pipe reads it once.
 
-    [Error e] if the file cannot be opened, or as {!sniff}. *)
+    [Error e] if no file is at [path], or, when [format] is absent, if the file
+    cannot be opened or as {!sniff}. With [format], a file that cannot be opened
+    fails the read, naming [path]. *)
 
 (** {1:writing Writing} *)
 
