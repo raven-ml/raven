@@ -687,7 +687,9 @@ let column_types f =
 let sniffing =
   group "sniff"
     [
-      cases "separators"
+      cases
+        "chooses the separator that splits every record alike into the most \
+         fields"
         ~id:(fun (name, _, _) -> name)
         [
           ("a comma", "a,b\n1,2\n", "2 columns, separator ','");
@@ -711,7 +713,7 @@ let sniffing =
             (Printf.sprintf
                "csv (%s, quote '\"', header), types sniffed from 1 row" expected)
             (dialect s));
-      cases "types"
+      cases "infers the first type every value reads as"
         ~id:(fun (name, _, _) -> name)
         [
           ("bool from true and false", "x\ntrue\nfalse\n", [ "x bool" ]);
@@ -777,7 +779,9 @@ let sniffing =
         ]
         (fun (_, s, expected) ->
           equal (list string) expected (column_types (sniffed s)));
-      cases "header"
+      cases
+        "takes the first record as a header unless each typed column's first \
+         field reads as its type"
         ~id:(fun (name, _, _) -> name)
         [
           ( "a header over typed columns",
@@ -1031,7 +1035,9 @@ let paces_collector () =
     at_1.majors
 
 let decoding =
-  let ab = Csv.format [ ("a", any Type.binary); ("b", any Type.binary) ] in
+  let ab_bytes =
+    Csv.format [ ("a", any Type.binary); ("b", any Type.binary) ]
+  in
   group "decode"
     [
       test "reads a large input in batches, every record in order" (fun () ->
@@ -1049,7 +1055,7 @@ let decoding =
             List.map rows
               (batches
                  (Error.get_ok
-                    (Csv.decode_in_batches ~batch:256 ab
+                    (Csv.decode_in_batches ~batch:256 ab_bytes
                        (Reader.of_string ?slice_length s))))
           in
           equal (list int) (sizes None) (sizes (Some slice_length)));
@@ -1128,10 +1134,12 @@ let decoding =
               {| line 1, column 2: the record has 1 field, and the format 2 columns |}
           );
         ]
-        (fun (_, s, baseline) -> expect (failure ab s) baseline);
+        (fun (_, s, baseline) -> expect (failure ab_bytes s) baseline);
       test "fails when reading its reader raises" (fun () ->
           let outcome r =
-            match Csv.decode ab r with Ok _ -> "ok" | Error e -> error_text e
+            match Csv.decode ab_bytes r with
+            | Ok _ -> "ok"
+            | Error e -> error_text e
           in
           expect
             (String.concat "\n"
@@ -1397,9 +1405,14 @@ let written f q =
 (* A table to write: up to four columns of the types CSV reads, named to need
    quoting, cut into batches, and a dialect. One column with a null takes a null
    token. *)
-type writable = { f : Csv.format; t : Talon.t; slice : int }
+type writable = {
+  f : Csv.format;
+  nulls : string list;
+  t : Talon.t;
+  slice : int;
+}
 
-let names = [ "a"; ""; "x,y"; "q\"t"; "NA"; "l\nm"; "s;t" ]
+let names = [ "a"; ""; "x,y"; "q\"t"; "NA"; "l\nm"; "s;t"; "\xEF\xBB\xBFa" ]
 
 let writable =
   let open Gen in
@@ -1428,7 +1441,7 @@ let writable =
   let t = Talon.v ~rows:n columns in
   let* sep = of_list [ ','; ';'; '\t'; '|'; '.'; ' ' ] in
   let* header = bool in
-  let* tokens = of_list [ []; [ "NA" ]; [ "NA"; "-" ] ] in
+  let* tokens = of_list [ []; [ "NA" ]; [ "NA"; "-" ]; [ ""; "NA" ] ] in
   let nulls =
     match columns with
     | [ (_, c) ] when Column.null_count c > 0 && tokens = [] -> [ "NA" ]
@@ -1437,26 +1450,34 @@ let writable =
   let* t = G.split t in
   let+ slice = int_range 1 16 in
   let types = List.map (fun (n, c) -> (n, Column.type_ c)) columns in
-  { f = Csv.format ~sep ~header ~nulls types; t; slice }
+  { f = Csv.format ~sep ~header ~nulls types; nulls; t; slice }
 
 let pp_writable ppf w =
   Format.fprintf ppf "@[<v>%a@,%a@,%S@]" Csv.pp_format w.f Talon.pp w.t
     (written w.f (Query.of_table w.t))
 
-(* Floats whose text holds the separator [.], and a byte order mark that starts
-   the file. *)
+(* Floats whose text holds the separator [.], a byte order mark that starts the
+   file, and a null in one column under an empty null token. *)
 let writable_examples =
   [
     {
       f = Csv.format ~sep:'.' [ ("x", any Type.float64) ];
+      nulls = [];
       t = v [ ("x", Column.v Type.float64 [| 1.5; -0.; 1e21 |]) ];
       slice = 3;
     };
     {
       f = Csv.format ~header:false [ ("b", any Type.binary) ];
+      nulls = [];
       t =
         v [ ("b", Column.v Type.binary [| Binary.of_string "\xEF\xBB\xBFa" |]) ];
       slice = 1;
+    };
+    {
+      f = Csv.format ~nulls:[ ""; "NA" ] [ ("a", any Type.int64) ];
+      nulls = [ ""; "NA" ];
+      t = v [ ("a", Column.of_options Type.int64 [| Some 1; None |]) ];
+      slice = 2;
     };
   ]
 
@@ -1467,10 +1488,19 @@ let reads_back w =
       cover (type_name t)
         (List.exists (fun u -> type_name u = type_name t) types))
     csv_types;
-  cover "one column with a null"
-    (match Schema.columns (schema w.t) with
+  let one_null =
+    match Schema.columns (schema w.t) with
     | [ (n, _) ] -> Column.null_count (column w.t n) > 0
-    | _ -> false);
+    | _ -> false
+  in
+  let empty_token = List.mem "" w.nulls in
+  cover "one column with a null" one_null;
+  cover "an empty null token" empty_token;
+  cover "one column with a null under an empty null token"
+    (one_null && empty_token);
+  cover "a file that starts with a byte order mark"
+    (String.starts_with ~prefix:"\"\xEF\xBB\xBF"
+       (written w.f (Query.of_table w.t)));
   Law.round_trip table string
     (fun t -> written w.f (Query.of_table t))
     (fun s -> Error.get_ok (read ~slice_length:w.slice w.f s))
@@ -1536,11 +1566,15 @@ let writing =
               [
                 ( "y",
                   Column.v Type.binary
-                    [| Binary.of_string (bom ^ "a"); Binary.of_string "b" |] );
+                    [|
+                      Binary.of_string (bom ^ "a");
+                      Binary.of_string "b";
+                      Binary.of_string (bom ^ "c");
+                    |] );
               ]
           in
           equal string
-            ("\"" ^ bom ^ "a\"\nb\n")
+            ("\"" ^ bom ^ "a\"\nb\n\"" ^ bom ^ "c\"\n")
             (written
                (Csv.format ~header:false [ ("y", any Type.binary) ])
                (Query.of_table t)));

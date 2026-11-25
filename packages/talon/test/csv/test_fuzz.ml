@@ -136,15 +136,21 @@ let mutated name mutate (rows, slice) =
 let bits = Gen.(list ~size:(int_range 1 8) (pair nat (int_range 0 7)))
 
 let mutations =
-  group "decode"
+  group "sniff and decode"
     [
-      prop "a file with bits flipped is a table or an error"
+      prop
+        "a file with bits flipped sniffs to a format or an error and decodes \
+         to a table or an error"
         Gen.(triple pick bits (pair rows slice))
         (fun (name, bits, r) -> mutated name (flip bits) r);
-      prop "a file cut short is a table or an error"
+      prop
+        "a file cut short sniffs to a format or an error and decodes to a \
+         table or an error"
         Gen.(triple pick nat (pair rows slice))
         (fun (name, k, r) -> mutated name (fun s -> String.sub s 0 (at s k)) r);
-      prop "a file with syntax inserted is a table or an error"
+      prop
+        "a file with syntax inserted sniffs to a format or an error and \
+         decodes to a table or an error"
         Gen.(
           triple pick
             (list ~size:(int_range 1 4) (pair nat syntax))
@@ -153,17 +159,23 @@ let mutations =
           mutated name
             (fun s -> List.fold_left (fun s (k, p) -> insert k p s) s pieces)
             r);
-      prop "a file with bytes removed is a table or an error"
+      prop
+        "a file with bytes removed sniffs to a format or an error and decodes \
+         to a table or an error"
         Gen.(quad pick nat (int_range 1 16) (pair rows slice))
         (fun (name, k, len, r) -> mutated name (remove k len) r);
-      prop "a file with bytes repeated is a table or an error"
+      prop
+        "a file with bytes repeated sniffs to a format or an error and decodes \
+         to a table or an error"
         Gen.(
           quad pick
             (pair nat (int_range 1 32))
             (int_range 2 64) (pair rows slice))
         (fun (name, (k, len), n, r) -> mutated name (repeat k len n) r);
       (* The example is a file of one line feed, a batch of no record. *)
-      prop "a file spliced with another is a table or an error"
+      prop
+        "a file spliced with another sniffs to a format or an error and \
+         decodes to a table or an error"
         ~examples:[ ("types", "one column", (0, 403), (None, None)) ]
         Gen.(quad pick pick (pair nat nat) (pair rows slice))
         (fun (a, b, (i, j), r) ->
