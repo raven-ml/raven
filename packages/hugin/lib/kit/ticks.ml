@@ -387,6 +387,19 @@ let tick_extent st (l, c) =
   | None -> st.extent l
   | Some c -> Float.max (st.extent l) (st.extent c)
 
+(* The most ticks an axis shows, however long: a reader takes in no more on one
+   axis. The cap also bounds the search: without it, an axis of billions of
+   points would make candidates of billions of ticks. *)
+let most_ticks = 100.
+
+(* The most ticks the density aims for. At half the cap, [ρt <= 49], and every
+   candidate the cap discards, of at least [101] ticks over a span of at most
+   [1], has [ρ >= 100 > 2 ρt] and a negative density: the cap only discards what
+   the score rates as too dense. A target at the cap would favour any candidate
+   of a hundred ticks, such as the odd multiples of [0.005] on \[[0];[1]\], over
+   the multiples of [0.02]. *)
+let most_aimed = most_ticks /. 2.
+
 (* [beats st score n key] is [true] iff a candidate of [n] ticks, [score] and
    order [key] is better than the best so far. *)
 let beats st score n key =
@@ -415,7 +428,8 @@ let score s c d = (w_simplicity *. s) +. (w_coverage *. c) +. (w_density *. d)
 
 (* [worth st s_max n] is [true] iff a candidate of simplicity at most [s_max]
    and at least [n] ticks may be chosen: its coverage is at most [1]. *)
-let worth st s_max n = can_beat st (score s_max 1. (density_bound st n))
+let worth st s_max n =
+  n <= most_ticks && can_beat st (score s_max 1. (density_bound st n))
 
 (* [skips st ~simplest ~last f] calls [f j] for the skips [j] from [1], up to
    [last], while a candidate of simplicity [simplest - j] may be chosen. *)
@@ -454,7 +468,7 @@ let increasing st vs =
    made and measured only for a candidate that would be. *)
 let consider st ~s_term ~key ~minor vs =
   let n = Array.length vs in
-  if n > 0 then begin
+  if n > 0 && Float.of_int n <= most_ticks then begin
     let vs, positions = increasing st vs in
     let p1 = positions.(0) and pn = positions.(n - 1) in
     let c = 1. -. (50. *. (sq (1. -. pn) +. sq p1)) in
@@ -777,13 +791,6 @@ let symlog_reference c a b =
   let vs = signed_powers (a, b) ~pos ~neg (fun i -> i mod k = 0) in
   if Array.length vs < 2 then decimal_reference a b else vs
 
-(* The most ticks [choose] aims for, however long the axis, and the most a band
-   axis shows. A reader takes in no more on one axis, and the cap bounds the
-   search: the density bounds it by the target, and strides start from the least
-   that gives no more ticks. Without the cap, an axis of billions of points
-   would make candidates of billions of ticks. *)
-let most_ticks = 100.
-
 (* [strides st names] chooses the least stride of at most [most_ticks] ticks
    whose labels do not overlap. A reader cannot place a category between two
    labels, so a band axis labels as many categories as have room. *)
@@ -905,7 +912,7 @@ let choose (type d) ?(locale = Locale.default) ?notation ?(spacing = 0.) ~length
         Array.fold_left (fun m l -> m +. tick_extent st l) 0. labels
         /. Float.of_int (Array.length labels)
       in
-      let m = Float.min (length /. (2. *. mean)) most_ticks in
+      let m = Float.min (length /. (2. *. mean)) most_aimed in
       let rho_t = Float.min (m -. 1.) (length /. spacing) in
       let st = { st with rho_t = Float.max 1. rho_t } in
       search st;

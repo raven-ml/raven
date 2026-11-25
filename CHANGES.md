@@ -197,6 +197,9 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- `Ticks.choose` gives a continuous axis at most a hundred ticks, as it does a
+  band axis, and aims for at most fifty. A long log axis from 1 to 403 had
+  202 ticks, and a long linear one from 0 to 1 the 101 multiples of `0.01`.
 - `Stats.histogram` makes each bin at least `min_float` wide. A narrow span
   within about `2^-974` of zero, such as `[2^-1000; succ 2^-1000]`, gave
   infinite densities, and a subnormal one bins of width `0.`.

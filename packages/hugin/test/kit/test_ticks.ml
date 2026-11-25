@@ -795,14 +795,19 @@ let choice =
       prop "major ticks are in the domain, minor ticks between, none at a major"
         (Gen.pair gen_scale gen_length) (fun (Axis s, length) ->
           check_shape (Ticks.choose ~length ~measure s));
-      prop "past room for a hundred ticks, a longer axis only lifts overlaps"
+      prop "an axis has at most a hundred ticks" (Gen.pair gen_scale gen_length)
+        (fun (Axis s, length) ->
+          let n = List.length (Ticks.choose ~length ~measure s).major in
+          cover ~share:0.05 "more than fifty ticks" (n > 50);
+          at_most int ~than:100 n);
+      prop "past room for fifty ticks, a longer axis only lifts overlaps"
         (Gen.pair gen_scale
            (Gen.pair (Gen.float_range 1e6 1e12) (Gen.float_range 1. 1e6)))
         (fun (Axis s, (length, factor)) ->
-          (* From [1e6] on, [m] is a hundred for the labels of these scales, so
-             [ρt] and every score are the same at both lengths, and the longer
-             axis only admits candidates whose labels overlap on the shorter:
-             its choice is the shorter axis's if its labels fit there. *)
+          (* From [1e6] on, [m] is fifty for the labels of these scales, so [ρt]
+             and every score are the same at both lengths, and the longer axis
+             only admits candidates whose labels overlap on the shorter: its
+             choice is the shorter axis's if its labels fit there. *)
           let long = Ticks.choose ~length:(length *. factor) ~measure s in
           let fit = fits length long in
           cover ~share:0.5 "the longer axis's ticks fit the shorter" fit;
@@ -811,29 +816,44 @@ let choice =
               (Testable.make ~pp:Ticks.pp ~equal:Ticks.equal)
               long
               (Ticks.choose ~length ~measure s));
-      test "an axis of billions of points aims for a hundred ticks" (fun () ->
-          (* [m] is [100], so [ρt = 99]: the step [0.01] has [ρ = 100], a
-             density of [2 - 100/99], the tick [0] and full coverage, and beats
-             the steps [0.02] and [0.005] around it. *)
+      test "an axis of billions of points aims for fifty ticks" (fun () ->
+          (* [m] is [50], so [ρt = 49]: the step [0.02] has [ρ = 50], a density
+             of [2 - 50/49], the tick [0] and full coverage. The step [0.01]
+             makes 101 ticks, more than an axis has, and the step [0.025] has a
+             lower simplicity and density. *)
           let t = Ticks.choose ~length:1e10 ~measure (linear 0. 1.) in
           equal (list string)
-            (List.init 101 (fun i ->
-                 Printf.sprintf "%.2f" (Float.of_int i /. 100.)))
+            (List.init 51 (fun i ->
+                 Printf.sprintf "%.2f" (Float.of_int i /. 50.)))
             (labels t));
-      test "a long log axis from 1 to 403 has its odd integers" (fun () ->
-          (* [m] is [100], so [ρt = 99]. The odd integers, the step [1] with the
-             skip [2] from [1], have [1] among them, a simplicity of [0], full
-             coverage and a density of [2 - 201/99], and score [0.18]. Fewer
-             ticks score lower: every other multiple of [2.5] from [2.5], 81
-             ticks, has a simplicity of [-2] and a coverage of [-0.17], and
-             scores [-0.06]; the multiples of [5] leave [1] to [5] uncovered,
-             and every fifth integer from [1] has a simplicity of [-3]. *)
+      test "a long log axis from 1 to 403 has its powers and their multiples"
+        (fun () ->
+          (* [m] is [50], so [ρt = 49]. The odd integers, 202 ticks, are more
+             than an axis has. The powers with their multiples by [2] to [9], 22
+             ticks, have [1] among them, a simplicity of [0], full coverage and
+             a density of [2 - 49/21.03], and score [0.03]. Every other multiple
+             of [2.5] from [2.5] has a simplicity of [-2] and a coverage of
+             [-0.17], and scores [-0.50]; every fifth integer from [1] has a
+             simplicity of [-3] and scores [-0.37]. *)
           let t =
             Ticks.choose ~length:1e6 ~measure (Scale.log ~domain:(1., 403.) ())
           in
           equal (list string)
-            (List.init 202 (fun i -> string_of_int ((2 * i) + 1)))
+            (String.split_on_char ' '
+               "1 2 3 4 5 6 7 8 9 10 20 30 40 50 60 70 80 90 100 200 300 400")
             (labels t));
+      test "a long symlog axis from 0.5 to 5010 has at most a hundred ticks"
+        (fun () ->
+          (* [m] is [50], so [ρt = 49]. Every fifth multiple of [10] from [10],
+             101 ticks, has a simplicity of [-4], a coverage of [-2.01] and a
+             density of [2 - 132.55/49], and scores [-1.756]. It would beat
+             every candidate of at most a hundred ticks, the best of which,
+             every fifth multiple of [20] from [20], scores [-1.768]. *)
+          let t =
+            Ticks.choose ~length:1e6 ~measure
+              (Scale.symlog ~domain:(0.5, 5010.) ())
+          in
+          at_most int ~than:100 (List.length t.major));
       prop "chosen labels never overlap" (Gen.pair gen_scale gen_length)
         (fun (Axis s, length) ->
           check_no_overlap length (Ticks.choose ~length ~measure s));
@@ -1061,7 +1081,7 @@ let choice =
           let measure _ = 0.5 in
           let t = Ticks.choose ~length:1000. ~measure (linear 0. 1.) in
           check_no_overlap ~measure 1000. t;
-          at_least int ~than:100 (List.length t.major));
+          at_least int ~than:50 (List.length t.major));
       test "labels exactly as wide as their gap do not overlap" (fun () ->
           let t =
             Ticks.choose ~length:100. ~measure:(fun _ -> 100.) (linear 0. 1.)

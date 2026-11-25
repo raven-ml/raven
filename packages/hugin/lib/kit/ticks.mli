@@ -127,23 +127,24 @@ val of_values :
     - {b Strides}, on band scales: every [k]th category from the first, for [k]
       in [1], [2], [5], [10], [20], [50], ….
 
-    A candidate is discarded if two adjacent labels, centred on their ticks,
-    overlap: [(p_(k+1) - p_k) × length < (e_k + e_(k+1)) / 2] for their
-    positions [p_k] and extents [e_k]. A candidate of one tick never overlaps,
-    and every family has one on a domain that is not constant and whose values
-    normalise, so a candidate is always chosen.
+    A candidate is discarded if it has more than a hundred ticks, which a reader
+    cannot take in on one axis, however long, or if two adjacent labels, centred
+    on their ticks, overlap: [(p_(k+1) - p_k) × length < (e_k + e_(k+1)) / 2]
+    for their positions [p_k] and extents [e_k]. A candidate of one tick is
+    never discarded, and every family has one on a domain that is not constant
+    and whose values normalise, so a candidate is always chosen.
 
-    On a band scale the candidate is the stride of the least [k] that gives at
-    most a hundred ticks and whose labels do not overlap: a reader cannot place
-    a category between two labels. Otherwise the candidate chosen balances, as
-    Talbot, Lin and Hanrahan score it, its {e simplicity} (a preferred step, a
-    small skip, and [0.] among the ticks, [1.] on a log scale), its {e coverage}
-    of the domain by the span of its ticks, and its {e density}, near the lesser
-    of two numbers of ticks: the number whose labels fill half the axis, but no
-    more than a hundred, which a reader cannot take in on one axis; and the
-    number [spacing] apart from one end of the axis to the other. The labels
-    that fill the axis are those of about ten values of the scale's family
-    inside the domain:
+    On a band scale the candidate is the stride of the least [k] that is not
+    discarded: a reader cannot place a category between two labels. Otherwise
+    the candidate chosen balances, as Talbot, Lin and Hanrahan score it, its
+    {e simplicity} (a preferred step, a small skip, and [0.] among the ticks,
+    [1.] on a log scale), its {e coverage} of the domain by the span of its
+    ticks, and its {e density}, near the lesser of two numbers of ticks: the
+    number whose labels fill half the axis, but no more than fifty, half the
+    most an axis has, so that a candidate discarded for its number of ticks is
+    more than twice as dense as aimed for; and the number [spacing] apart from
+    one end of the axis to the other. The labels that fill the axis are those of
+    about ten values of the scale's family inside the domain:
     - on linear, pow and custom scales, the multiples of the decimal step for a
       tenth of the domain's length, the step its nice domain rounds to
       ({!Scale.section-nice});
