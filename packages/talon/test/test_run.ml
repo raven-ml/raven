@@ -1617,6 +1617,36 @@ let kleene =
       kleene_bits;
   ]
 
+(* Every operand is computed at every row: [cast int8 x] fails at row 1, where
+   no row of the result takes its value. The operands are columns, so the
+   optimizer folds none of them away. *)
+let computed_operands =
+  let c = Col.bool "c" and x = Col.int "x" and y = Col.int "y" in
+  let t =
+    v
+      [
+        ("c", Column.v Type.bool [| true; false |]);
+        ("x", Column.v Type.int64 [| 1; 1000 |]);
+        ("y", Column.v Type.int8 [| 1; 2 |]);
+      ]
+  in
+  let fails_at_row_1 e =
+    let q = Query.select Expr.[ "r" := e ] (Query.of_table t) in
+    contains ~sub:": row 1: cannot cast 1000 to int8."
+      (error (require_error (Query.run q)))
+  in
+  let narrow = Expr.cast Type.int8 x in
+  [
+    test "&& fails where its right fails and its left is false" (fun () ->
+        fails_at_row_1 Expr.(c && is_null narrow));
+    test "|| fails where its right fails and its left is true" (fun () ->
+        fails_at_row_1 Expr.((not c) || is_null narrow));
+    test "if_ fails where its untaken branch fails" (fun () ->
+        fails_at_row_1 Expr.(if_ c narrow (int 0)));
+    test "coalesce fails where an operand after a value fails" (fun () ->
+        fails_at_row_1 Expr.(coalesce [ y; narrow ]));
+  ]
+
 let int64s xs = Column.of_tensor (Nx.create Nx.int64 [| Array.length xs |] xs)
 
 let arithmetic =
@@ -5917,7 +5947,8 @@ let () =
        [
          group "Talon.equal" [ equal_tables ];
          group "Elementwise operations"
-           (arithmetic @ [ widening; float_order ] @ comparing @ kleene @ lifts);
+           (arithmetic @ [ widening; float_order ] @ comparing @ kleene
+          @ computed_operands @ lifts);
          group "Reductions" (reductions @ one_column);
          group "Frames" frames;
          group "OCaml values" ocaml;

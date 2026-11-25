@@ -1190,7 +1190,16 @@ module Expr : sig
   val null : ('a, 's) t
   (** [null] is null, typed by what it meets. *)
 
-  (** {1:elementwise Elementwise operations} *)
+  (** {1:elementwise Elementwise operations}
+
+      An operation computes each of its operands at every row of its frame,
+      including the branch of {!if_} that a row does not take, the operands of
+      {!coalesce} after a value, and the right operand of {!( && )} and
+      {!( || )} where the left decides. A failure of any operand fails the run
+      at its row, unless {!Query.optimize} removes the operand. A guard
+      therefore goes inside the operand that can fail, as in
+      [cast Type.uint8 (if_ (x >= int 0 && x < int 256) x (int 0))], which fails
+      at no row. *)
 
   val ( + ) : (int, 's) t -> (int, 's) t -> (int, 's) t
   (** [a + b] is the sum of [a] and [b], wrapping on overflow as nx's integers
@@ -1252,7 +1261,7 @@ module Expr : sig
 
   val ( && ) : (bool, 's) t -> (bool, 's) t -> (bool, 's) t
   (** [a && b] is Kleene's conjunction: [false] if either is [false], else null
-      if either is null. Both operands are computed. *)
+      if either is null. *)
 
   val ( || ) : (bool, 's) t -> (bool, 's) t -> (bool, 's) t
   (** [a || b] is Kleene's disjunction: [true] if either is [true], else null if
@@ -2976,9 +2985,12 @@ module Query : sig
       {b Results.} The rewrites change no value and no null of a result, and add
       no failure: an operation that can fail meets only rows that [q] shows it.
       They may remove failures: a value that no row and no column of the result
-      reads is not computed, so a failure, or an exception from a user function,
-      that only such a value meets does not happen. Of the failures that remain,
-      a run reports the one at the earliest row of the optimized plan.
+      reads is not computed, and neither is an operand that a simplification
+      below removes, such as [a] in [a || true]. A failure, or an exception from
+      a user function, that only such values meet does not happen. Every other
+      operand is computed as {!Expr.section-elementwise} states. Of the failures
+      that remain, a run reports the one at the earliest row of the optimized
+      plan.
 
       {b Constants.} Arithmetic, comparisons, [not], {!Expr.is_in} and the text
       operations other than {!Expr.Str.split} and {!Expr.Str.concat}, of
