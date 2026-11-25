@@ -479,8 +479,11 @@ static int send_abort(struct rig_remote_link *l,
 
 /* Settles the abort a failure owes [l]: sends it, unless the link sent its
    close or a send of it failed, then ends its stream; nothing while a frame
-   or an abort is being sent, whose sender calls it after. Holds [l]'s lock,
-   which it releases while it sends. */
+   or an abort is being sent, whose sender calls it after. A failure owes
+   each link one abort, so the stream ends once: a second shutdown after the
+   peer acknowledged the first disconnects the socket on FreeBSD
+   (tcp_usrclosed in FIN_WAIT_2), whose receives then end the drain. Holds
+   [l]'s lock, which it releases while it sends. */
 static void abort_link(struct rig_remote_link *l) {
   if (l->sending) return;
   int owed = l->abort_owed;
@@ -495,10 +498,8 @@ static void abort_link(struct rig_remote_link *l) {
     l->sending = 0;
     pthread_cond_signal(&l->wake);
   }
-  if (!l->fd_closed) {
-    shutdown(l->fd, SHUT_SEND);
-    close_if_idle(l);
-  }
+  if (owed && !l->fd_closed) shutdown(l->fd, SHUT_SEND);
+  close_if_idle(l);
 }
 
 /* Marks [j] and its links failed, raises their rails' counts and wakes
