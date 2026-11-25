@@ -764,17 +764,26 @@ let student_terms df scale =
     Nx.sqrt df,
     Nx.mul_s (Nx.add_s df 1.) 0.5 )
 
-(* [log1p (z² / ν)] is [2 log max (w, 1) + log1p (min (w, 1/w)²)] for
-   [w = |z| / √ν]: no square overflows, and both arms are the same
-   expression. At [w = 1] each selection takes the side of [w <= 1], whose
-   derivative is the whole's: a tie split between [max]'s operands would
-   halve it. *)
+(* [log1p_square a s] is [log1p ((a / s)²)] for [a >= 0] and [s > 0], as
+   [2 (log a - log s) + log1p ((s / a)²)] past [a = s]: neither the quotient
+   nor its square overflows, where the Cauchy's log density, about
+   [-2 log (a / s)], is still finite. Each side is its own expression, fed
+   values that keep the other finite, so the side not taken adds nothing to
+   the derivative, not even rounding: at [a = s] it is the near side's. *)
+let log1p_square a s =
+  let beyond = Nx.greater a s in
+  let a_far = Nx.where beyond a s and a_near = Nx.where beyond s a in
+  let far =
+    Nx.add
+      (Nx.mul_s (Nx.sub (Nx.log a_far) (Nx.log s)) 2.)
+      (Nx.log1p (Nx.square (Nx.div s a_far)))
+  in
+  Nx.where beyond far (Nx.log1p (Nx.square (Nx.div a_near s)))
+
+(* [log1p (z² / ν)] is [log1p_square |x - loc| (scale √ν)]: neither [z] nor
+   [z / √ν] is formed where it would overflow. *)
 let student_t_density (c, root, half1) loc scale x =
-  let w = Nx.div (Nx.abs (Nx.div (Nx.sub x loc) scale)) root in
-  let beyond = Nx.greater w (const w 1.) in
-  let big = Nx.where beyond w (const w 1.) in
-  let small = Nx.where beyond (Nx.recip big) w in
-  let l = Nx.add (Nx.mul_s (Nx.log big) 2.) (Nx.log1p (Nx.square small)) in
+  let l = log1p_square (Nx.abs (Nx.sub x loc)) (Nx.mul scale root) in
   Nx.sub c (Nx.mul half1 l)
 
 (* A format narrower than float32 computes a mass at float32 and rounds it
@@ -894,18 +903,6 @@ let cauchy_lower p =
     (Nx.tan (Nx.mul_s (Nx.sub_s hi 0.5) Float.pi))
 
 let cauchy_tails () = mirror cauchy_cdf cauchy_lower
-
-(* [log1p_square a s] is [log1p ((a / s)²)] for [a >= 0] and [s > 0], as
-   [2 (log a - log s) + log1p ((s / a)²)] past [a = s]: neither the quotient
-   nor its square overflows, where the Cauchy's log density, about
-   [-2 log (a / s)], is still finite. At [a = s] it takes the near side,
-   whose derivative is the whole's. *)
-let log1p_square a s =
-  let beyond = Nx.greater a s in
-  let big = Nx.where beyond a s and small = Nx.where beyond s a in
-  Nx.add
-    (Nx.mul_s (Nx.sub (Nx.log big) (Nx.log s)) 2.)
-    (Nx.log1p (Nx.square (Nx.div small big)))
 
 let cauchy ~loc ~scale =
   location_scale "cauchy" ~loc ~scale

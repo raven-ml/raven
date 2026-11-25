@@ -923,6 +923,34 @@ let cauchy_tails =
 
 let cauchy = group "cauchy" [ cauchy_tails ]
 
+(* Far in a Student t's tail, [z = (x - loc) / scale] or [z / √ν] overflows
+   where its log density does not: [c - ((ν + 1) / 2) log1p (z² / ν)], [c]
+   its normaliser less [log scale], is read with [log1p (z² / ν)] as
+   [2 (log d - log s) + log1p ((s / d)²)], [s = scale √ν]. The bound is
+   norn.mli's, [ε (16 |f| + 48 Λ)], [Λ = 1 + |log ν| + |log scale|]. *)
+let student_t_tails =
+  Windtrap.cases "a Student t's log density far past where z overflows"
+    ~id:(fun (df, d, s) -> Printf.sprintf "df %g, x - loc %g, scale %g" df d s)
+    [ (1., 1., 1e-310); (1e-300, 1e160, 1.); (3.5, 1e200, 1e-100) ]
+    (fun (df, d, s) ->
+      let root = Float.sqrt df in
+      let c =
+        lgamma ((df +. 1.) /. 2.) -. lgamma (df /. 2.)
+        -. (0.5 *. (Float.log df +. Float.log Float.pi))
+        -. Float.log s
+      in
+      let s' = s *. root in
+      let l = (2. *. (Float.log d -. Float.log s')) +. Float.log1p ((s' /. d) ** 2.) in
+      let exact = c -. ((df +. 1.) /. 2. *. l) in
+      let logs = 1. +. alog df +. alog s in
+      equal
+        (float (density_bound epsilon_float exact ~logs ~off:0.))
+        exact
+        (item
+           (D.factors
+              (D.student_t ~df:(f64 df) ~loc:(f64 0.) ~scale:(f64 s))
+              (f64 d))))
+
 (* At float16, components of a dirichlet of many small concentrations
    underflowed: a draw then had density [-inf]. *)
 let narrow_dirichlet_draws =
@@ -4119,6 +4147,7 @@ let () =
              compiled_densities;
              normal;
              cauchy;
+             group "student_t" [ student_t_tails ];
              dirichlet;
              mvn;
              von_mises;
