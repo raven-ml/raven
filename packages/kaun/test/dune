@@ -6,6 +6,7 @@
   test_conv
   test_conv_transpose
   test_attention
+  test_attention_cache
   test_cache_index
   test_layer_norm
   test_rms_norm
@@ -21,7 +22,6 @@
   test_data_parallel
   test_jit_state
   test_half
-  test_decoder
   test_structures)
  (modules
   (:standard \ test_cache_index_metal test_decode_devices))

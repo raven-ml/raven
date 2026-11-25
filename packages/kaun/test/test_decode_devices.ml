@@ -30,10 +30,11 @@ type ('a, 'd) model = {
 
 let caches () = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache))
 
-module Four =
-  (val Nx.devices
-         (List.init 4 (fun i ->
-              Result.get_ok (Rig.software (Printf.sprintf "kaun-tp-%d" i)))))
+let four =
+  fixture (fun () ->
+      Nx.devices
+        (List.init 4 (fun i ->
+             Result.get_ok (Rig.software (Printf.sprintf "kaun-tp-%d" i)))))
 
 (* Four query heads and four kv-heads of two features: one of each per
    device. *)
@@ -71,9 +72,9 @@ let model () =
   }
 
 (* The weights where tensor parallelism puts them: into the heads and the hidden
-   features cut along their outputs, out of them along their inputs, the rest
-   a copy on each device. *)
-let parallel m =
+   features cut along their outputs, out of them along their inputs, the rest a
+   copy on each device. *)
+let parallel (type d) (module Four : Nx.Devices with type d = d) m =
   let at p (l : _ Linear.t) = { Linear.w = Nx.place p l.w; b = None } in
   let columns = at (Four.split ~axis:0) and rows = at (Four.split ~axis:1) in
   let norm (n : _ Rms_norm.t) = { Rms_norm.gamma = Nx.place Four.on n.gamma } in
@@ -99,17 +100,15 @@ let parallel m =
     norm = norm m.norm;
   }
 
-let kv_heads = Four.split ~axis:1
-
 let cache dtype ~slots at =
   List.init layers (fun _ ->
       Attention.Cache.make ~slots ~kv_heads:(kv_dim / head_dim) ~head_dim dtype
         at)
 
 (* A projection cut along its inputs asks for its sum, the devices' terms
-   ({!Nx.Placement.partial}): the residual add keeps it, and one [close]
-   after it closes the sublayer. Where no device cuts a projection's
-   inputs, both are the identity. *)
+   ({!Nx.Placement.partial}): the residual add keeps it, and one [close] after
+   it closes the sublayer. Where no device cuts a projection's inputs, both are
+   the identity. *)
 let close x = Nx.place (Nx.Placement.closed (Nx.placement x)) x
 
 let block ~rope b cache index x =
@@ -181,16 +180,14 @@ let generate ~slots ~at ~kv_at m =
   done;
   (List.rev !out, snd !s)
 
-let generations () =
-  let m = model () in
-  let slots = 8 in
-  let one, _ = generate ~slots ~at:Nx.Host.on ~kv_at:Nx.Host.on m in
-  let four, kv = generate ~slots ~at:Four.on ~kv_at:kv_heads (parallel m) in
-  (List.combine one four, kv)
-
 let test_generation_over_four_devices () =
   Compiled.here ();
-  let tokens, kv = generations () in
+  let module Four = (val four ()) in
+  let m = model () and kv_heads = Four.split ~axis:1 in
+  let one, _ = generate ~slots:8 ~at:Nx.Host.on ~kv_at:Nx.Host.on m in
+  let four, kv =
+    generate ~slots:8 ~at:Four.on ~kv_at:kv_heads (parallel (module Four) m)
+  in
   List.iteri
     (fun i ((id, scores), (id', scores')) ->
       let msg what = Printf.sprintf "token %d, %s" i what in
@@ -198,7 +195,7 @@ let test_generation_over_four_devices () =
       equal ~msg:(msg "logits")
         (array (float 1e-5))
         (Nx.to_array scores) (Nx.to_array scores'))
-    tokens;
+    (List.combine one four);
   let placement =
     Testable.make ~pp:Nx.Placement.pp ~equal:(fun a b -> Nx.Placement.equal a b)
   in
@@ -237,47 +234,48 @@ let bfloat16 m =
     norm = norm m.norm;
   }
 
-(* At bfloat16 the prompt's logits over four devices, against one
-   device's: the largest gap, a baseline, printed with [%h] to be exact
-   on every system. The gap is the row projections': each rounds every
-   device's term into bfloat16 and adds the four in bfloat16, which the
-   norms, the attention and the head carry to the logits. Attention adds
-   none of it where nx.cpu computes it, as
+(* At bfloat16 the prompt's logits over four devices, against one device's: the
+   largest gap, a baseline, printed with [%h] to be exact on every system. The
+   gap is the row projections': each rounds every device's term into bfloat16
+   and adds the four in bfloat16, which the norms, the attention and the head
+   carry to the logits. Attention adds none of it where nx.cpu computes it, as
    [test_attention_over_heads] shows. *)
 let test_bfloat16 () =
   Compiled.here ();
+  let module Four = (val four ()) in
   let m = bfloat16 (model ()) in
   let slots = 8 in
   let first ~at ~kv_at m =
     let step = step ~rope:(Rope.place at (rope ())) m in
-    let index =
-      Cache_index.place at (Cache_index.rows ~context:7 [| 3 |])
-    in
+    let index = Cache_index.place at (Cache_index.rows ~context:7 [| 3 |]) in
     let (_, scores), _ =
-      step (int64s at [| 1; 3 |] [| 3; 14; 1 |]) index
+      step
+        (int64s at [| 1; 3 |] [| 3; 14; 1 |])
+        index
         (cache Nx.bfloat16 ~slots kv_at)
     in
     Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on scores))
   in
   let one = first ~at:Nx.Host.on ~kv_at:Nx.Host.on m in
-  let four = first ~at:Four.on ~kv_at:kv_heads (parallel m) in
+  let four =
+    first ~at:Four.on ~kv_at:(Four.split ~axis:1) (parallel (module Four) m)
+  in
   let gap = ref 0. in
-  Array.iteri
-    (fun i w -> gap := Float.max !gap (Float.abs (w -. four.(i))))
-    one;
-  expect (Printf.sprintf "largest gap %h" !gap) @@ __POS_OF__ {|
+  Array.iteri (fun i w -> gap := Float.max !gap (Float.abs (w -. four.(i)))) one;
+  expect (Printf.sprintf "largest gap %h" !gap)
+  @@ __POS_OF__ {|
     largest gap 0x1.9p-5
   |}
 
-(* One row projection at bfloat16: [x] of ones against a column of
-   [1, 2^-8, 2^-8, 2^-8], one entry on each device. Asked for its sum, each
-   device's term is exact in bfloat16, and {!Nx.place} closes the terms
-   from the first, one bfloat16 addition each: [1 + 2^-8] is a tie that
-   rounds to the even [1], and so twice more, giving [1], within
-   [γ(4, u) Σ|term|], [u = 2^-8], of the exact [1 + 3 2^-8]. Closed in
-   float32 and rounded once, the product is the tie [1 + 3 2^-8], which
-   rounds to the even [1 + 2^-6]. *)
+(* One row projection at bfloat16: [x] of ones against a column of [1, 2^-8,
+   2^-8, 2^-8], one entry on each device. Asked for its sum, each device's term
+   is exact in bfloat16, and {!Nx.place} closes the terms from the first, one
+   bfloat16 addition each: [1 + 2^-8] is a tie that rounds to the even [1], and
+   so twice more, giving [1], within [γ(4, u) Σ|term|], [u = 2^-8], of the exact
+   [1 + 3 2^-8]. Closed in float32 and rounded once, the product is the tie [1 +
+   3 2^-8], which rounds to the even [1 + 2^-6]. *)
 let test_row_projection () =
+  let module Four = (val four ()) in
   let tiny = Float.ldexp 1. (-8) in
   let l =
     {
@@ -291,7 +289,8 @@ let test_row_projection () =
   let read y = Nx.item [ 0; 0 ] (Nx.place Nx.Host.on (close y)) in
   equal ~msg:"the sum, closed in bfloat16" float_exact 1.
     (read (Linear.apply ~sum:true l x));
-  equal ~msg:"closed in float32" float_exact (1. +. (4. *. tiny))
+  equal ~msg:"closed in float32" float_exact
+    (1. +. (4. *. tiny))
     (read (Linear.apply l x))
 
 (* Composites over a cut contracting axis *)
@@ -306,20 +305,19 @@ let values seed shape =
 let u32 = Float.ldexp 1. (-24)
 let gamma n = n *. u32 /. (1. -. (n *. u32))
 
+(* One device's result [want] against four's [got]; a NaN equals nothing. *)
 let within ~msg ~tol want got =
-  let want = Nx.to_array want and got = Nx.to_array (Nx.place Nx.Host.on got) in
-  Array.iteri
-    (fun i w ->
-      if Float.abs (w -. got.(i)) > tol then
-        failf "%s: element %d is %.9g over four devices, %.9g on one" msg i
-          got.(i) w)
-    want
+  equal ~msg
+    (array (float tol))
+    (Nx.to_array want)
+    (Nx.to_array (Nx.place Nx.Host.on got))
 
-(* Attention over heads cut across four devices, at bfloat16 under a causal
-   mask with grouped heads: each device computes its heads' rows as one
-   device does (nx.mli's routing, nx_cpu.mli's attention), so the result
-   is one device's, bit for bit. *)
+(* Attention over heads cut across four devices, at bfloat16 under a causal mask
+   with grouped heads: each device computes its heads' rows as one device does
+   (nx.mli's routing, nx_cpu.mli's attention), so the result is one device's,
+   bit for bit. *)
 let test_attention_over_heads () =
+  let module Four = (val four ()) in
   let bf16 x = Nx.cast Nx.bfloat16 x in
   let q = bf16 (values 3 [| 2; 8; 3; 2 |]) in
   let k = bf16 (values 4 [| 2; 4; 5; 2 |]) in
@@ -337,28 +335,91 @@ let test_attention_over_heads () =
   equal ~msg:"one device's bits" (array int64) (bits one) (bits four)
 
 (* Attention reads each query and key whole: with [q] and [k] cut along their
-   [d] features it raises, at the call, naming the placement that reads them
-   whole. *)
+   [d] features it raises at the call. *)
 let test_attention_refuses_a_cut () =
+  let module Four = (val four ()) in
   let q = values 0 [| 2; 3; 8 |] and k = values 1 [| 2; 5; 8 |] in
   let v = values 2 [| 2; 5; 4 |] in
   let cut = Four.split ~axis:2 in
-  raises
-    (Invalid_argument
-       "Nx.attention: operand 0 lies at split ~axis:2 [kaun-tp-0; kaun-tp-1; \
-        kaun-tp-2; kaun-tp-3] and is read at on [kaun-tp-0; kaun-tp-1; \
-        kaun-tp-2; kaun-tp-3]; Nx.place (Placement.on s) x")
-    (fun () ->
+  raises_match (Exn.invalid_arg ~sub:"Nx.attention") (fun () ->
       Attention.scaled_dot_product_attention (Nx.place cut q) (Nx.place cut k)
         (Nx.place Four.on v))
 
+(* An attention layer of 4 heads over 8 features with drawn biases. *)
+let biased_layer seed =
+  let linear i =
+    {
+      Linear.w = values (seed + i) [| dim; dim |];
+      b = Some (values (seed + 10 + i) [| dim |]);
+    }
+  in
+  { Attention.q = linear 0; k = linear 1; v = linear 2; out = linear 3 }
+
+(* The layer where tensor parallelism puts it: q, k and v cut along their
+   outputs, one head on each device, and the output projection along its inputs,
+   its bias whole on every device. *)
+let heads_cut (type d) (module Four : Nx.Devices with type d = d)
+    (p : _ Attention.t) =
+  let outputs (l : _ Linear.t) =
+    {
+      Linear.w = Nx.place (Four.split ~axis:0) l.w;
+      b = Option.map (Nx.place (Four.split ~axis:0)) l.b;
+    }
+  in
+  {
+    Attention.q = outputs p.q;
+    k = outputs p.k;
+    v = outputs p.v;
+    out =
+      {
+        Linear.w = Nx.place (Four.split ~axis:1) p.out.w;
+        b = Option.map (Nx.place Four.on) p.out.b;
+      };
+  }
+
+(* An output projection cut along its inputs and asked for its sum, then closed,
+   sums the same [K + 1 = 9] terms as one device, the bias once, in another
+   order, each device computing its heads as one device does. Both are within
+   [γ(9, u) S] of the exact sum, [S = |b| + K max|o| max|w|] and [o] the heads,
+   so they differ by at most twice that. A bias added on every device would be
+   three biases off. *)
+let sum_bound (p : _ Attention.t) heads =
+  let largest t = Nx.item [] (Nx.max (Nx.abs t)) in
+  2. *. gamma 9.
+  *. (largest (Option.get p.out.b) +. (8. *. largest heads *. largest p.out.w))
+
+let test_apply_sum () =
+  let module Four = (val four ()) in
+  let p = biased_layer 20 and x = values 30 [| 2; 3; dim |] in
+  let one = Attention.apply ~head_dim ~mask:Nx.causal p x in
+  let four =
+    Attention.apply ~head_dim ~mask:Nx.causal ~sum:true
+      (heads_cut (module Four) p)
+      (Nx.place Four.on x)
+  in
+  (* Each head's output averages values, so it is below the largest value. *)
+  within ~msg:"apply"
+    ~tol:(sum_bound p (Attention.split ~head_dim p.v x))
+    one (close four)
+
+let test_merge_sum () =
+  let module Four = (val four ()) in
+  let p = biased_layer 40 and y = values 50 [| 2; 4; 3; head_dim |] in
+  let one = Attention.merge p.out y in
+  let four =
+    Attention.merge ~sum:true (heads_cut (module Four) p).out
+      (Nx.place (Four.split ~axis:1) y)
+  in
+  within ~msg:"merge" ~tol:(sum_bound p y) one (close four)
+
 (* A convolution with [x] and the filters cut along their input channels,
-   channels last: the product closes, so the result is one device's within
-   twice the contraction's bound over its [K = c kh kw] products of entries
-   in [-1, 1], [γ(K + 1, 2u) K], and the bias's rounding on either side. *)
+   channels last: the product closes, so the result is one device's within twice
+   the contraction's bound over its [K = c kh kw] products of entries in [-1,
+   1], [γ(K + 1, 2u) K], and the bias's rounding on either side. *)
 let law_conv (c, seed) =
   cover "4 channels" (c = 4);
   cover "8 channels" (c = 8);
+  let module Four = (val four ()) in
   let kh = 2 and kw = 3 in
   let x = values seed [| 2; 5; 6; c |] in
   let p =
@@ -378,17 +439,19 @@ let law_conv (c, seed) =
   let tol = (2. *. gamma (2. *. (k +. 1.)) *. k) +. (2. *. u32 *. (k +. 1.)) in
   within ~msg:"conv" ~tol one four
 
-(* A cache whose pools are cut along their slots attends as on one device,
-   eager and compiled: each device reads the slots the table names from the
-   devices that hold them. *)
+(* A cache whose pools are cut along their slots attends as on one device, eager
+   and compiled: each device reads the slots the table names from the devices
+   that hold them. *)
 let test_pools_cut_along_slots () =
   Compiled.here ();
+  let module Four = (val four ()) in
   let p =
     Attention.make ~key:(Nx.Rng.key 3) ~bias:false ~kv_dim:8 ~embed_dim:dim
       Nx.float32
   in
-  let x = Nx.Rng.with_key (Nx.Rng.key 4) (fun () ->
-      Nx.Rng.normal Nx.float32 [| 1; 3; dim |])
+  let x =
+    Nx.Rng.with_key (Nx.Rng.key 4) (fun () ->
+        Nx.Rng.normal Nx.float32 [| 1; 3; dim |])
   in
   let run ~jit at at_pools =
     let p = Nx.Ptree.place (module Attention) at p in
@@ -418,7 +481,9 @@ let test_pools_cut_along_slots () =
   let one = run ~jit:false Nx.Host.on Nx.Host.on in
   equal ~msg:"one device's bits" (array float_exact) one
     (run ~jit:false Four.on (Four.split ~axis:0));
-  equal ~msg:"compiled" (array (float 1e-5)) one
+  equal ~msg:"compiled"
+    (array (float 1e-5))
+    one
     (run ~jit:true Four.on (Four.split ~axis:0))
 
 let () =
@@ -443,7 +508,9 @@ let () =
          group "a cut contracting axis"
            [
              test "attention reads q and k whole" test_attention_refuses_a_cut;
-
+             test "an attention layer's sum gives one device's result"
+               test_apply_sum;
+             test "merge's sum gives one device's result" test_merge_sum;
              prop "a convolution gives one device's result within its roundings"
                (Gen.pair
                   (Gen.map (fun b -> if b then 4 else 8) Gen.bool)
