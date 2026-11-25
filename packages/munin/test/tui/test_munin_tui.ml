@@ -2511,6 +2511,48 @@ let ended_between =
         (part (late ~between:false keys))
         (part (late ~between:true keys)))
 
+(* A run's glyph, for each state with and without a sample that is not
+   finite: the facts of a run that logged a NaN, and of one that did not,
+   in each state. *)
+let glyphs =
+  let facts values =
+    let store = Lazy.force laws in
+    let id, _ =
+      write_log store (List.mapi (fun st v -> sample_record (st, v)) values)
+    in
+    let r = Option.get (Store.run store id) in
+    Munin_tui.Facts.of_run ~now:0. ~history:(Some (History.read r))
+      ~hint:None ~watch:None ~pauses:[] r
+  in
+  let row (state, glyph) =
+    let marked =
+      match state with Watch.Failed | Crashed | Killed -> glyph | _ -> "×"
+    in
+    [
+      (Watch.word state, state, false, glyph);
+      (Watch.word state ^ ", NaN", state, true, marked);
+    ]
+  in
+  cases
+    ~id:(fun (name, _, _, _) -> name)
+    "a run's glyph is its state's, or × for a sample that is not finite"
+    (List.concat_map row
+       [
+         (Watch.Starting, "○");
+         (Running, "○");
+         (Live, "●");
+         (Stalled, "◌");
+         (Writing, "●");
+         (Silent, "◌");
+         (Crashed, "✗");
+         (Finished, "✓");
+         (Failed, "✗");
+         (Killed, "■");
+       ])
+    (fun (_, state, nan, expected) ->
+      let f = facts (if nan then [ 1.; Float.nan ] else [ 1.; 2. ]) in
+      equal string expected (Munin_tui.Facts.glyph { f with state }))
+
 (* The state words, against a model of the arrivals a dashboard times. *)
 type arrivals = {
   now : float;
@@ -3757,7 +3799,8 @@ let () =
            ];
          group "runs" [ filter; stars; nav_count ];
          group "run" [ all_orphans; short_of_steps; paired; cut_text; no_sample; no_others; same_names ];
-         group "held" [ held; kept_pane; ended_away; ended_between; watch_test ];
+         group "held"
+           [ held; kept_pane; ended_away; ended_between; glyphs; watch_test ];
          depth_test;
          hidden_filter;
          strips_scroll;

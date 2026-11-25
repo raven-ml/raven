@@ -66,8 +66,8 @@ val best : run -> string -> Munin.Metric.sample option
 val glyph : run -> string
 (** [glyph f] is the run's state glyph: [●] live or writing, [○] running or
     starting, [◌] stalled or silent, [✓] finished, [■] killed, [✗] failed or
-    crashed, and [×] for a run, not failed, with a metric sample that is not
-    finite. *)
+    crashed, and [×] for a run that has not failed, crashed or been killed,
+    with a metric sample that is not finite. *)
 
 val commit : Munin.Provenance.t -> string option
 (** [commit p] is the first seven characters of [p]'s commit. *)

@@ -184,8 +184,8 @@
 
     Its glyph is [●] for [live] and [writing], [○] for [running] and
     [starting], [◌] for [stalled] and [silent], [✓] [finished], [■] [killed],
-    [✗] [failed] and [crashed], and [×] for a run, not failed, with a metric
-    sample that is not finite.
+    [✗] [failed] and [crashed], and [×] for a run that has not failed, crashed
+    or been killed, with a metric sample that is not finite.
 
     The dashboard times each arrival on its own clock. A poll that finds new
     metric samples of a run is an arrival at that poll's time, and a run's
