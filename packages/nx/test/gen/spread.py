@@ -23,7 +23,7 @@ carrier's unit roundoff), for the population variance, scaled by
 `n / (n - ddof) + 1` of the carrier's least subnormal, where the squares
 underflow before the sum. A standard deviation's allowance is that of the
 root of the variance's interval without that low-end term, with 2u more,
-and one carrier subnormal more.
+and half a carrier subnormal more, the rounding of a subnormal root.
 
 The lanes are adversarial for a variance: magnitudes at both ends of the
 dtype's range, at the band edges of the scales (`hi = 2^432`, `2^28`; the
@@ -81,7 +81,7 @@ def spread(fmt, xs, ddof):
     v = s2 / (n - ddof)
     root = fsqrt(pop)
 
-    L = math.ceil(min(n, 1024) / 16) + 3
+    L = math.ceil(min(n, 1024) / 16) + min(3, n - 1)
     D = 0 if n <= 1024 else math.ceil(math.log2(math.ceil(n / 1024)))
     M = sum(abs(t) for t in qs) / n
     E = (L + D) * u * M + u * abs(mu)
@@ -93,7 +93,7 @@ def spread(fmt, xs, ddof):
     sigma = fsqrt(v)
     hi = fsqrt(v + vbound) * (1 + 2 * u)
     lo = fsqrt(max(v - vbound, Fraction(0))) * (1 - 2 * u)
-    stol = max(hi - sigma, sigma - lo) + sub
+    stol = max(hi - sigma, sigma - lo) + sub / 2
 
     top = largest(fmt)
     z_v = "infinity" if v - vtol > top else to_float(v)
@@ -244,6 +244,8 @@ def render():
         for name, xs in hand(fmt):
             ddof = 0 if len(xs) < 2 else rng.choice([0, 1])
             out.append(fmt_case(name, fmt, xs, ddof))
+            if ddof != 0:
+                out.append(fmt_case(name, fmt, xs, 0))
         for name, xs, ddof in lanes(fmt, seed, repeat):
             out.append(fmt_case(name, fmt, xs, ddof))
     return "".join(out)
