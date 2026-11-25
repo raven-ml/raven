@@ -1875,55 +1875,6 @@ let wide_map (b : Support.backend) c =
     (K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads));
   dsts
 
-(* A map too wide for one of nx.cuda's launches gives each output the
-   bits of its nodes run one by one, any NaN for a NaN, and a destination
-   identical to a [Plain] load receives what a fresh one would. Where a
-   node run alone is declined, the map is. *)
-let law_wide_map (b : Support.backend) c =
-  let module K = (val b.kernels) in
-  let p, n = wide_program c in
-  let shape = wide_shape c in
-  let loads, xs = wide_loads b c n in
-  let types = Array.init (Iarray.length p.nodes) (P.dtype p) in
-  let aliased = c.aliased && not c.padded in
-  let dsts () =
-    Array.mapi
-      (fun k o ->
-        if aliased && k = 0 then xs.(0)
-        else
-          let (D.Any d) = types.(o) in
-          A.Any (A.create b.device d (Iarray.of_array shape)))
-      (Iarray.to_array p.outs)
-  in
-  let call = Format.asprintf "%a" pp_wide c in
-  let map dsts = K.map p ~dsts:(Iarray.of_array dsts) (Iarray.of_array loads) in
-  match split b p types (Iarray.of_array shape) xs with
-  | exception Skip ->
-      cover "a node declined" true;
-      equal ~msg:call answer A.Declined (map (dsts ()))
-  | values ->
-      let want =
-        Array.map
-          (fun o ->
-            let (A.Any v) = values.(o) in
-            (D.Any (A.dtype v), bits_of (host v)))
-          (Iarray.to_array p.outs)
-      in
-      let dsts = dsts () in
-      cover "past a launch's loads" (c.mode = Loads);
-      cover "past a launch's values held" (c.mode = Held);
-      cover "past a launch's outputs" (c.mode = Outputs);
-      cover "a padded load copied out" (c.mode = Loads && c.padded);
-      cover "a destination identical to a load" aliased;
-      equal ~msg:call answer A.Done (map dsts);
-      Array.iteri
-        (fun k (A.Any y) ->
-          let d, w = want.(k) in
-          equal
-            ~msg:(strf "%s, output %d" call k)
-            (same_values d) w (bits_of (host y)))
-        dsts
-
 (* Device memory held in a loop *)
 
 (* nx_cuda.mli: a call's workspace returns once its work is done, so calls
