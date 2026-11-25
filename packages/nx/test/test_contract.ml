@@ -3950,8 +3950,9 @@ module Conv = struct
 
   (* golden/ceil_padding.golden: lines "extent kernel stride dilation lo
      hi", the padding JAX 0.12.1's lax.padtype_to_pads gives for "SAME"
-     over the dilated kernel. Each case is one axis, and a convolution
-     under the padding has the ceiling's windows. *)
+     over the dilated kernel, written by gen/ceil_padding.py. Each case is
+     one axis, and a convolution under the padding has the ceiling's
+     windows. *)
   let test_ceil_padding () =
     let lines = In_channel.with_open_text "golden/ceil_padding.golden" In_channel.input_lines in
     let cases =
