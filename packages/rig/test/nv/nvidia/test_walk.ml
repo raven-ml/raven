@@ -7,12 +7,13 @@
    a forked child that alone carries a limit: [k] more files, for [k] from 0 to
    the files the operation takes, so that the open of each file it takes fails
    once; or, for a process's first open, too little address space for the
-   reservation of the GPU's addresses. The child first opens the GPU
-   and runs the operation once, which makes what the process keeps for good.
-   After each failure the outcome is one rig_nv.mli or rig_nv_nvidia.mli states,
-   the process's files and the GPU's mappings are back where they were, the
-   operation succeeds once the limit is lifted, and the GPU opens again. The suite forks
-   before any call to NVIDIA's driver. *)
+   reservation of the GPU's addresses. The child first opens the GPU and runs
+   the operation once, which makes what the process keeps for good. After each
+   failure the outcome is one rig_nv.mli or rig_nv_nvidia.mli states, the
+   process's files and the GPU's mappings are back where they were, the
+   operation succeeds once the limit is lifted, and the GPU opens again. The
+   suite forks before any call to NVIDIA's driver, and a walk's children run a
+   few at a time. *)
 
 open Windtrap
 module N = Rig_nv
@@ -58,10 +59,10 @@ let under lim f =
       checked (set_space (mapped () + n));
       Fun.protect ~finally:(fun () -> checked (set_space (-1))) f
 
-(* [in_child f] is [f ()] in a forked child, its result sent back through a
-   pipe. [f] calls no verb: a failure in the child would end the child's copy of
-   the run. *)
-let in_child (f : unit -> 'a) : ('a, string) result =
+(* [spawn f] is a forked child that runs [f ()] and sends its result back
+   through a pipe, and the pipe's end to read it from. [f] calls no verb: a
+   failure in the child would end the child's copy of the run. *)
+let spawn (f : unit -> 'a) =
   let r, w = Unix.pipe ~cloexec:true () in
   Rig_support.needs_fork ();
   match Unix.fork () with
@@ -74,11 +75,38 @@ let in_child (f : unit -> 'a) : ('a, string) result =
       Unix._exit 0
   | pid ->
       Unix.close w;
-      let ic = Unix.in_channel_of_descr r in
-      let result = Marshal.from_channel ic in
-      close_in ic;
-      ignore (Unix.waitpid [] pid);
-      result
+      (pid, r)
+
+(* [received (pid, r)] is the result the child [pid] sent through [r], once it
+   ended. *)
+let received (pid, r) : ('a, string) result =
+  let ic = Unix.in_channel_of_descr r in
+  let result = Marshal.from_channel ic in
+  close_in ic;
+  ignore (Unix.waitpid [] pid);
+  result
+
+(* [in_child f] is [f ()] in a forked child. *)
+let in_child f = received (spawn f)
+
+(* [in_children k f] is [[f 0; …; f (k - 1)]], each in a forked child, the
+   children run at once. A child left when a fork or a result fails is
+   killed. *)
+let in_children k f =
+  let rec go i children =
+    if i = k then List.rev_map received children
+    else
+      let ((pid, _) as child) = spawn (fun () -> f i) in
+      Rig_support.reaping pid (fun () -> go (i + 1) (child :: children))
+  in
+  go 0 []
+
+(* The children a walk runs at once. A child spends most of its 150 ms or so
+   waiting on the kernel driver, to make the process's client and a GPU's
+   objects and to free them as it exits: on an RTX 5000 Ada, the walk of first
+   opens took 20.7 s one at a time at a load of 10, and 7.3 s four at a time at
+   a load of 14. Other processes may hold the GPU while one opens it. *)
+let at_once = 4
 
 (* Operations *)
 
@@ -216,19 +244,20 @@ let check op lim r =
     (if succeeded r.again then "succeeded" else r.again);
   equal ~msg:(at ^ ": opens again") bool true r.reopened
 
-(* Walks [op] through 0, 1, … more files, up to the first that lets it
-   succeed. *)
+(* Walks [op] through 0, 1, … more files, [at_once] at a time, up to the first
+   that lets it succeed. *)
 let walk_files op () =
   S.needs_gpu ();
   let rec go k =
-    if k > most_files then failf "%s takes more than %d files" (op_name op) k;
-    let lim = Files k in
-    let r =
-      require_ok ~pp:Format.pp_print_string
-        (in_child (fun () -> attempt op lim))
+    let n = Int.min at_once (most_files + 1 - k) in
+    if n <= 0 then failf "%s takes more than %d files" (op_name op) most_files;
+    let reports = in_children n (fun i -> attempt op (Files (k + i))) in
+    let checked i r =
+      let r = require_ok ~pp:Format.pp_print_string r in
+      check op (Files (k + i)) r;
+      succeeded r.got
     in
-    check op lim r;
-    if not (succeeded r.got) then go (k + 1)
+    if not (List.exists Fun.id (List.mapi checked reports)) then go (k + n)
   in
   go 0
 
@@ -316,16 +345,24 @@ let first_open n =
 
 (* A process's first open, interrupted at each allocation that makes what the
    process keeps: the next open answers [Ok], having made it whole. A first
-   usage makes the client and a GPU's base, which a first open makes first,
-   so this walk covers each allocation a usage keeps. *)
+   usage makes the client and a GPU's base, which a first open makes first, so
+   this walk covers each allocation a usage keeps. Each process is a child of
+   its own, [at_once] of them at a time. *)
 let interrupted_first () =
   S.needs_gpu ();
   let rec walk n =
-    let reached, again =
-      require_ok ~pp:Format.pp_print_string (in_child (fun () -> first_open n))
+    let answers = in_children at_once (fun i -> first_open (n + i)) in
+    let checked i answer =
+      let reached, again = require_ok ~pp:Format.pp_print_string answer in
+      equal string
+        ~msg:(strf "from allocation %d, an open after" (n + i))
+        "Ok" again;
+      reached
     in
-    equal string ~msg:(strf "from allocation %d, an open after" n) "Ok" again;
-    if reached then walk (n + 1) else n - 1
+    let reached = List.mapi checked answers in
+    match List.find_index not reached with
+    | Some i -> n + i - 1
+    | None -> walk (n + at_once)
   in
   (* The makes allocate around each of the dozen objects they take. *)
   at_least ~msg:"the allocations walked" int ~than:12 (walk 1)
