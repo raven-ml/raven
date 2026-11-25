@@ -4229,12 +4229,21 @@ val quantile :
     probability, followed by [x]'s axes without [axis].
 
     The quantile [q] of [n] elements interpolates linearly between the order
-    statistics around [h = q (n - 1)] in the sort order: with [a] and [b] the
-    elements at [floor h] and [floor h + 1], it is [a + (h - floor h) (b - a)],
-    and [a] exactly where [h] is an integer or [a] equals [b]. NaN sorts last,
-    so it reaches the upper quantiles. The narrow floats interpolate in float32
-    and round once. One sort serves every probability, and the number of kernels
-    does not grow with the number of probabilities.
+    statistics around [h = q (n - 1)], rounded once to float64, in the sort
+    order: with [a] and [b] the elements at [floor h] and [floor h + 1] and [f]
+    the fraction [h - floor h], it is [a + f (b - a)], and [(1 - f) a + f b]
+    where finite [a] and [b] lie too far apart for [b - a] to be finite. [f]
+    is rounded once to the precision the interpolation computes in, float64
+    for float64 and float32 for the other floats, which round the result once
+    into their dtype. The quantile is [a] exactly where [f], so rounded, is
+    zero or [a] equals [b]. Between finite [a] and [b] it is finite; an
+    infinity beside a finite statistic gives that infinity, and [-∞] beside
+    [+∞] gives NaN. To first order in that precision's unit roundoff [u], and
+    barring underflow, it is within [3u (|a| + |b|)] of [a + f (b - a)] at
+    float64 and within [4u (|a| + |b|)] at float32, [f] the float64
+    fraction. NaN sorts last, so it reaches the upper quantiles. One sort
+    serves every probability, and the number of kernels does not grow with
+    the number of probabilities.
 
     Raises [Invalid_argument] if a probability is outside [[0, 1]] or NaN, if
     [axis] is not an axis of [x], or if there is no element along it. *)

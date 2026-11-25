@@ -3917,6 +3917,11 @@ its lock and from samples the dashboard saw arrive.
 - `Nx_io.load_npy`, `load_npy_rows` and `load_npz` read an npy header of any
   length its version allows, up to 4 GiB in 2.0 and 3.0, where they refused one
   past 1 MiB. A header length past the file still fails as a short file.
+- `Nx.quantile` and `Nx_ragged.quantile` interpolate as `(1 - f) a + f b`
+  where `b - a` overflows, so the median of `[-max_float; max_float]` is `0`
+  where it was `inf`, and give an infinity beside a finite statistic, where
+  it was NaN. Other results keep their bits. The interpolation's accuracy is
+  stated.
 - `Nx.conv`, `Nx.conv_transpose` and `Nx.correlate` refusals name their
   argument (`x`, `w`, `init`, `kernel`) and the `place` of it, where a cut
   the groups or taps cannot read named an internal operand `y` and an axis

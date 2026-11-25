@@ -274,14 +274,21 @@ let elements r =
   else (flat, Nx.mul_s r.offsets (Int64.of_int c))
 
 (* [interpolate a b f] is [a + f (b - a)] between the order statistics [a] and
-   [b], and [a] itself where [f], rounded to their format, is zero or [a] equals
-   [b]: [Nx.quantile]'s interpolation, the narrow floats at float32 and rounded
-   once. *)
+   [b], [(1 - f) a + f b] where finite ends' difference overflows, [a + b]
+   beside an infinity or a NaN, and [a] itself where [f], rounded to their
+   format, is zero or [a] equals [b]: [Nx.quantile]'s interpolation, the narrow
+   floats at float32 and rounded once. *)
 let interpolate (type s d) (a : (float, s, d) Nx.t) b (f : d Nx.float64_t) =
   let lerp a b =
     let f = Nx.cast (Nx.dtype a) f in
     let exact = Nx.logical_or (Nx.equal_s f 0.) (Nx.equal a b) in
-    Nx.where exact a (Nx.add a (Nx.mul f (Nx.sub b a)))
+    let d = Nx.sub b a in
+    let rest = Nx.sub (Nx.ones_like f) f in
+    let apart = Nx.add (Nx.mul rest a) (Nx.mul f b) in
+    let ends = Nx.logical_and (Nx.isfinite a) (Nx.isfinite b) in
+    let apart = Nx.where ends apart (Nx.add a b) in
+    let lerp = Nx.where (Nx.isfinite d) (Nx.add a (Nx.mul f d)) apart in
+    Nx.where exact a lerp
   in
   match Nx.dtype a with
   | Float32 | Float64 -> lerp a b

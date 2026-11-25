@@ -1289,7 +1289,9 @@ let law_quantile (Quantile_case (dt, eps, s, a, qs, vs)) =
             if D.bits dt = 64 then f
             else Int32.float_of_bits (Int32.bits_of_float f)
           in
-          let want = if f = 0. || u = v then u else u +. (f *. (v -. u)) in
+          let want =
+            if f = 0. || u = v then u else ((1. -. f) *. u) +. (f *. v)
+          in
           let r = g.((j * per) + i) in
           if Float.is_nan want then equal ~msg:"NaN" bool true (Float.is_nan r)
           else if f = 0. || u = v || not (Float.is_finite want) then
@@ -1353,6 +1355,27 @@ let test_quantile_cases () =
   invalid ~by:"Nx.quantile" (fun () ->
       Nx.quantile [| 0.5 |] (Nx.zeros Nx.float32 [| 0 |]));
   invalid ~by:"Nx.quantile" (fun () -> Nx.quantile ~axis:2 [| 0.5 |] m)
+
+(* Between finite order statistics the interpolation stays finite, however far
+   apart they lie: the 0.5 quantile of [-max_float; max_float] is their
+   midpoint, 0. An infinite statistic beside a finite one is that infinity. *)
+let test_quantile_finite () =
+  let mid (type s) (dt : (float, s) Nx.dtype) big =
+    Nx.to_array (Nx.quantile [| 0.5 |] (Nx.create dt [| 2 |] [| -.big; big |]))
+  in
+  equal ~msg:"float64" (array float_exact) [| 0. |]
+    (mid Nx.float64 Float.max_float);
+  equal ~msg:"float32" (array float_exact) [| 0. |]
+    (mid Nx.float32 (Int32.float_of_bits 0x7f7fffffl));
+  let x = Nx.create Nx.float64 [| 2 |] [| Float.neg_infinity; 1. |] in
+  equal ~msg:"-inf beside 1" (array float_exact) [| Float.neg_infinity |]
+    (Nx.to_array (Nx.quantile [| 0.5 |] x));
+  (* At float32 the fraction [1 - 2^-30] rounds to 1, where [(1 - f) a] would be
+     [0 × -inf]. *)
+  let x = Nx.create Nx.float32 [| 2 |] [| Float.neg_infinity; 1. |] in
+  equal ~msg:"-inf beside 1, a fraction that rounds to 1" (array float_exact)
+    [| Float.neg_infinity |]
+    (Nx.to_array (Nx.quantile [| 1. -. 0x1p-30 |] x))
 
 (* histogram *)
 
@@ -1558,6 +1581,8 @@ let () =
              prop "each probability as alone, on two devices" quantile_case
                law_quantile_each;
              test "cases" test_quantile_cases;
+             test "between finite statistics the interpolation is finite"
+               test_quantile_finite;
            ];
          group "histogram"
            [

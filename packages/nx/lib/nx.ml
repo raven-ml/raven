@@ -5399,7 +5399,22 @@ let quantile (type s d) ?axis qs (x : (float, s, d) t) : (float, s, d) t =
   let y =
     let lo = at w (operand 0 below) and hi = at w (operand 1 above) in
     let f = operand 2 frac in
-    let r = E.(lo + (f * (hi - lo))) in
+    (* [lo + f (hi - lo)]; each end weighed apart where finite ends' difference
+       overflows, as between -max_float and max_float; and beside an infinity or
+       a NaN [lo + hi], that infinity or NaN, where a fraction rounded to 1
+       would make [(1 - f) lo] [0 × inf]. [v - v] is zero exactly where [v] is
+       finite. *)
+    let finite v = E.(v - v = const w 0.) in
+    let d = E.(hi - lo) in
+    let r =
+      E.(
+        where (finite d)
+          (lo + (f * d))
+          (where
+             (finite lo && finite hi)
+             (((const w 1. - f) * lo) + (f * hi))
+             (lo + hi)))
+    in
     let r = E.(where (f = const w 0. || lo = hi) lo r) in
     elementwise ~by dt [ Any below; Any above; Any frac ] (at dt r)
   in
