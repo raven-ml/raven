@@ -368,7 +368,8 @@ DESCRIPTION
        rig firmware fills.
 
        An image the directory holds with its pinned digest is kept. Any
-       other is downloaded with curl from linux-firmware's tree at commit
+       other is downloaded with curl, which reads no configuration file,
+       from linux-firmware's tree at commit
        0a6871b19abf5d6e024b5d208b101ae53e7fa0de, and checked: a download
        with another digest is refused, and nothing is written for it. An
        image is written to PATH.part beside its place, flushed to the

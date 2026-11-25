@@ -7,12 +7,13 @@
 # curl for the tests, first on PATH. It plays linux-firmware's server from
 # the directory served of the current directory.
 #
-# [curl [OPTION...] URL] writes the file served/PATH on its standard
-# output, PATH the part of URL after the tree's commit, then exits with the
-# status in served/PATH.status if that file exists, as curl does when a
-# transfer breaks. Without served/PATH it fails as [curl -fsS] does on a
-# 404.
+# [curl [OPTION...] URL] writes its arguments to curl.args, one per line,
+# then the file served/PATH on its standard output, PATH the part of URL
+# after the tree's commit, then exits with the status in served/PATH.status
+# if that file exists, as curl does when a transfer breaks. Without
+# served/PATH it fails as [curl -fsS] does on a 404.
 
+printf '%s\n' "$@" >curl.args
 for url; do :; done
 path=${url#*/-/raw/*/}
 

@@ -33,6 +33,12 @@ nothing is written for any of them.
   $ test -e fw
   [1]
 
+curl reads no configuration file, such as ~/.curlrc, whose options would
+change the download: its first argument is -q.
+
+  $ head -n 1 curl.args
+  -q
+
 A file in an image's place with another digest is no image: it is
 fetched again, and left as it was when the download is refused.
 

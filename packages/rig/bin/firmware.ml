@@ -39,11 +39,14 @@ let rec waitpid pid =
 
 (* curl writes the image on a pipe, so that a download with another digest
    reaches no file. A transfer that stalls for 60 s fails, however large the
-   image. *)
+   image. [-q] first: curl reads no ~/.curlrc, whose options, such as [-i] or
+   [-o], would change what reaches the pipe. *)
 let download url =
   let r, w = Proc.pipe () in
   let args =
-    [| "curl"; "-fsSL"; "--speed-limit"; "1"; "--speed-time"; "60"; url |]
+    [|
+      "curl"; "-q"; "-fsSL"; "--speed-limit"; "1"; "--speed-time"; "60"; url;
+    |]
   in
   let pid =
     try
