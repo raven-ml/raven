@@ -2081,7 +2081,7 @@ let immediate =
     (List.map fst stream_decoders)
 
 let stream_tokens =
-  [ "a"; "b"; "ab"; " "; "  "; m; m ^ "a"; "a" ^ m; "##a"; "a</w>"; "</w>";
+  [ ""; "a"; "b"; "ab"; " "; "  "; m; m ^ "a"; "a" ^ m; "##a"; "a</w>"; "</w>";
     "<0x41>"; "<0xC3>"; "<0xA9>"; "<0xE2>"; "<0x82>"; "<0xAC>"; "<0xFF>";
     "<pad>"; "|"; "."; " ."; "do"; " not"; "'"; "n't"; "\xc4\xa0"; "\xc3\x83";
     "\xc2\xa9"; "\xc3\xbf"; "\xc4\xa2"; "\u{e9}" ]
@@ -2185,6 +2185,8 @@ let test_step_law =
       cover ~share:0.05 "a replace after a collapse"
         (after_collapse "replace" names);
       cover ~share:0.2 "text kept for a later token" (kept t ids texts);
+      cover ~share:0.05 "an empty token"
+        (List.exists (fun id -> id_to_token t id = Some "") ids);
       equal string (decode t (Array.of_list ids)) (String.concat "" texts))
 
 let test_step_utf_8 =
