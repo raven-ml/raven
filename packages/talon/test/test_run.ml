@@ -1126,7 +1126,10 @@ let agrees p =
   cover "a kept plan fails at a row" fails;
   cover "a kept plan raises" raises;
   (* The outcomes talon allows differ where an operand that no row reads, or a
-     join's read order, decides the failure. *)
+     join's read order, decides the failure. Talon computes every operand and
+     reads each join in the reference's order today, so no run can agree with
+     another outcome alone; the cover shows the law meets the plans where the
+     choice matters. *)
   cover "another allowed outcome fails otherwise"
     ((fails || raises)
     && List.exists
@@ -5576,6 +5579,13 @@ let closing =
         equal ~msg:"closed" int !opened !closed);
   ]
 
+let values_binds =
+  test "raises a verb's report, named values, where e does not bind" (fun () ->
+      let q = Query.of_table (table_x [| 1 |]) in
+      let report = message (fun () -> Query.values (Col.string "x") q) in
+      starts_with ~prefix:"values: 1 problem" report;
+      contains ~sub:"input (1 column): x int64" report)
+
 let values_reads_its_columns =
   test "asks the source for e's columns alone" (fun () ->
       let both =
@@ -5923,7 +5933,7 @@ let () =
            (run_laws @ [ offset_validities; canonical_validity; tensor_layout ]);
          group "Query.values"
            ((values_law :: values_failures)
-           @ [ values_with_nulls; values_reads_its_columns ]);
+           @ [ values_with_nulls; values_binds; values_reads_its_columns ]);
          group "Query.optimize"
            (filters_over_constants :: extension_cases :: sharing);
          group "Kit.union_all" union_all;
