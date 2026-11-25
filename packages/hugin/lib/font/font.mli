@@ -183,10 +183,12 @@ val subset : t -> glyph list -> string
     has them. Its outlines are in the format of those of [f] ({!outlines}): for
     TrueType outlines, [loca] and [glyf], with the hinting tables [cvt ],
     [fpgm], [prep] and [gasp] of [f] when it has them; for CFF and CFF2
-    outlines, a CID-keyed [CFF ] table whose glyph [i] is CID [i], each
-    outline one charstring without hints or subroutines, which PDF output
-    embeds as an OpenType font program. It depends only on [f] and the set of
-    glyphs [gs]: their order and repetitions do not change a byte.
+    outlines, a CID-keyed [CFF ] table whose glyph [i] is CID [i], each outline
+    one charstring without hints or subroutines, which PDF output embeds as an
+    OpenType font program. The font matrix of that table is [[1/u 0 0 1/u 0 0]]
+    for the [u] units per em of the [head] table, so readers that follow the
+    matrix draw the subset at the size [head] gives. It depends only on [f] and
+    the set of glyphs [gs]: their order and repetitions do not change a byte.
 
     Raises [Invalid_argument] if a glyph of [gs] is not in
     \[[0];[glyph_count f - 1]\]. *)
@@ -237,7 +239,9 @@ val glyph_count : t -> int
 
 val glyph : t -> Uchar.t -> glyph
 (** [glyph f u] is the glyph [f]'s character map gives [u], and [0] if it gives
-    none or gives a glyph [f] does not have. *)
+    none or gives a glyph [f] does not have. The character map is one of the
+    Unicode subtables that {!of_string} reads, chosen by format, 12 before 4,
+    then by platform, Windows (3) before Unicode (0), then by table order. *)
 
 val advance : t -> glyph -> float
 (** [advance f g] is the horizontal distance the pen moves after drawing [g]
@@ -253,16 +257,18 @@ val kerning : t -> glyph -> glyph -> float
     table, uses its [kern] table instead: the values that its horizontal format
     0 subtables give the pair, minimum and cross-stream subtables excluded,
     accumulated in table order, each added to the sum so far or, from a subtable
-    that sets the override bit (bit 3 of its coverage), replacing it. A font
-    with neither has no kerning. *)
+    that sets the override bit (bit 3 of its coverage), replacing it. Only a
+    [kern] table of version 0, the version OpenType defines, is read, so one of
+    another version, such as Apple's, gives no kerning. A font with neither has
+    no kerning. *)
 
 val outline : t -> glyph -> Path.t
 (** [outline f g] is the outline of [g], unhinted, to be filled under the
     nonzero rule. Its quadratic or cubic curves are exact, composite glyphs are
     the union of their transformed components, and a glyph without ink, such as
-    a space, is {!Hugin_gg.Path.empty}. A CFF contour is closed by a line back
-    to its start, and a [moveto] followed by no segment draws nothing. Its ink
-    box is {!ink}. *)
+    a space, is {!Hugin_gg.Path.empty}. A TrueType contour of one point draws
+    nothing. A CFF contour is closed by a line back to its start, and a [moveto]
+    followed by no segment draws nothing. Its ink box is {!ink}. *)
 
 val ink : t -> glyph -> Box2.t option
 (** [ink f g] is [Path.bounds (outline f g)], the smallest box containing the

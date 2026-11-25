@@ -1,7 +1,8 @@
 # /// script
-# dependencies = ["fonttools==4.60.1"]
+# dependencies = ["fonttools==4.60.1", "uharfbuzz==0.51.1"]
 # ///
-"""Writes the CFF and CFF2 fixtures of the font tests and their outlines.
+"""Writes the CFF and CFF2 fixtures of the font tests and their outlines, and
+the character map and kerning of the bundled Inter Regular.
 
     uv run packages/hugin/test/font/gen/gen.py [--check]
 
@@ -27,6 +28,13 @@ decodes it, at the default instance for CFF2: `M`, `L`, `C` and `Z` with
 coordinates in font units, y up, each a multiple of 2^-16 written as that
 multiple's integer so that it reads back exactly.
 
+`cmap.expected` lists every character Inter Regular's best character map
+(fontTools' `getBestCmap`) gives a glyph other than 0, with that glyph's id.
+`kerning.expected` lists every pair of printable ASCII characters whose
+kerning is not 0, in font units: the change HarfBuzz makes to the first
+glyph's advance when it shapes the pair with the `kern` feature and without
+the features that substitute glyphs.
+
 Without --check the files are written; with --check nothing is written and
 the run fails if a file would change.
 """
@@ -43,6 +51,7 @@ from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.t2CharStringPen import T2CharStringPen
 from fontTools.pens.recordingPen import RecordingPen
 from fontTools.ttLib import TTFont
+import uharfbuzz as hb
 
 RELEASE = "https://github.com/adobe-fonts/source-sans/raw/3.052R"
 FACES = {
@@ -200,6 +209,50 @@ def outlines(data):
     return "\n".join(lines) + "\n"
 
 
+def cmap_listing(path):
+    font = TTFont(path)
+    ids = {name: g for g, name in enumerate(font.getGlyphOrder())}
+    lines = [
+        f"U+{c:04X} {ids[name]}"
+        for c, name in sorted(font.getBestCmap().items())
+        if ids[name] != 0
+    ]
+    return "\n".join(lines) + "\n"
+
+
+# Features that would replace the glyphs of a pair, turned off so that the
+# pair kerns as the character map's glyphs.
+UNSUBSTITUTED = {"kern": True, "liga": False, "calt": False, "clig": False,
+                 "ccmp": False, "locl": False, "rlig": False}
+
+
+def kerning_listing(path):
+    font = TTFont(path)
+    cmap = font.getBestCmap()
+    ids = {name: g for g, name in enumerate(font.getGlyphOrder())}
+    face = hb.Face(hb.Blob.from_file_path(path))
+    shaper = hb.Font(face)
+    shaper.scale = (face.upem, face.upem)
+    lines = []
+    for a in range(0x21, 0x7F):
+        for b in range(0x21, 0x7F):
+            pair = chr(a) + chr(b)
+            buf = hb.Buffer()
+            buf.add_str(pair)
+            buf.guess_segment_properties()
+            hb.shape(shaper, buf, UNSUBSTITUTED)
+            glyphs = [i.codepoint for i in buf.glyph_infos]
+            if glyphs != [ids[cmap[a]], ids[cmap[b]]]:
+                sys.exit(f"{pair}: shaped as the glyphs {glyphs}")
+            first, second = buf.glyph_positions
+            if first.x_offset or second.x_offset:
+                sys.exit(f"{pair}: placed, not kerned")
+            k = first.x_advance - font["hmtx"][cmap[a]][0]
+            if k:
+                lines.append(f"{pair} {k}")
+    return "\n".join(lines) + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--check", action="store_true")
@@ -216,6 +269,9 @@ def main():
     data = inter_cff()
     files["cff-2048.otf"] = data
     files["cff-2048.expected"] = outlines(data).encode()
+    inter = os.path.join(FONTS, "Inter-Regular.ttf")
+    files["cmap.expected"] = cmap_listing(inter).encode()
+    files["kerning.expected"] = kerning_listing(inter).encode()
     with open(os.path.join(FONTS, "LICENSE.txt"), "rb") as f:
         files["LICENSE-Inter.txt"] = f.read()
     changed = []

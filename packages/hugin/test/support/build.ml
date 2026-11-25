@@ -43,19 +43,6 @@ let set_bytes data pos s =
   patch data pos (fun b pos -> Bytes.blit_string s 0 b pos (String.length s))
 
 let rename data tag tag' = set_bytes data (fst (table data tag)) tag'
-
-(* [data] with the table of [tag] replaced by [bytes], appended to the file
-   under the tag [tag']. *)
-let replace data tag tag' bytes =
-  let r, _ = table data tag in
-  let padded =
-    data ^ String.make ((4 - (String.length data mod 4)) mod 4) '\000'
-  in
-  let data = set_bytes (padded ^ bytes) r tag' in
-  set_u32
-    (set_u32 data (r + 8) (String.length padded))
-    (r + 12) (String.length bytes)
-
 let head_pos data = snd (table data "head")
 let os2_pos data = snd (table data "OS/2")
 
@@ -406,7 +393,6 @@ let xy_scales = 0x40
 let two_by_two = 0x80
 let scaled_offset = 0x800
 let half = 8192
-let one = 16384
 
 (* A [name] table of [(platform, encoding, language, name id, bytes)]
    records. *)
@@ -569,7 +555,7 @@ let checksum s off len =
    length [maxp] and [hhea] give it, and either [loca] that length too and left
    side bearings at each glyph's [xMin], or a [CFF ] table and [maxp] 0.5 for
    CFF outlines, character map subtables of their stated length, and a [post]
-   table of its version's length. *)
+   table of version 3, without glyph names, as [Font.subset] writes it. *)
 let check_sfnt data =
   let fail fmt = Windtrap.failf ("not an OpenType file: " ^^ fmt) in
   let n = get_u16 data 4 in
@@ -667,5 +653,4 @@ let check_sfnt data =
   let post, post_len = find "post" in
   match get_u32 data post with
   | 0x00030000 when post_len = 32 -> ()
-  | 0x00020000 when post_len >= 34 + (2 * glyphs) -> ()
   | v -> fail "'post' version %x of %d bytes" v post_len

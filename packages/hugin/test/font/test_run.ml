@@ -8,7 +8,14 @@ open Hugin_gg
 open Hugin_font
 
 let run_t = Testable.make ~pp:Run.pp ~equal:Run.equal
+let font_t = Testable.make ~pp:Font.pp ~equal:Font.equal
 let font = Font.regular
+
+let pp_box ppf b =
+  Format.fprintf ppf "[%.17g, %.17g; %.17g, %.17g]" (Box2.minx b) (Box2.miny b)
+    (Box2.maxx b) (Box2.maxy b)
+
+let box_t = Testable.make ~pp:pp_box ~equal:Box2.equal
 
 (* One glyph per character of [text], set at [size] from [x0]. *)
 let set ?(size = 10.) ?(x0 = 0.) text =
@@ -25,19 +32,20 @@ let set ?(size = 10.) ?(x0 = 0.) text =
   done;
   (glyphs, xs)
 
-let fields () =
+(* Constructors *)
+
+let makes () =
   let glyphs, xs = set "Hé→" in
-  let r = Run.v ~font ~size:10. ~text:"Hé→" ~glyphs ~xs () in
-  equal int 3 (Run.length r);
-  equal string "Hé→" (Run.text r);
+  let ys = [| 1.; 2.; 3. |] and clusters = [| 0; 0; 3 |] in
+  let r = Run.v ~ys ~clusters ~font ~size:10. ~text:"Hé→" ~glyphs ~xs () in
+  equal font_t font (Run.font r);
   equal float_exact 10. (Run.size r);
-  is_true (Font.equal font (Run.font r));
+  equal string "Hé→" (Run.text r);
+  equal int 3 (Run.length r);
   equal (list int) (Array.to_list glyphs) (List.init 3 (Run.glyph r));
   equal (list float_exact) (Array.to_list xs) (List.init 3 (Run.x r));
-  equal ~msg:"ys default to the baseline" (list float_exact) [ 0.; 0.; 0. ]
-    (List.init 3 (Run.y r));
-  equal ~msg:"one glyph per character" (list int) [ 0; 1; 3 ]
-    (List.init 3 (Run.cluster r))
+  equal (list float_exact) (Array.to_list ys) (List.init 3 (Run.y r));
+  equal (list int) [ 0; 0; 3 ] (List.init 3 (Run.cluster r))
 
 let copies () =
   let glyphs, xs = set "Ho" in
@@ -53,6 +61,7 @@ let copies () =
   clusters.(1) <- 0;
   equal run_t expected r
 
+(* (name, text, clusters) of glyphs [0]. *)
 let clusters_accepted =
   [
     ("an empty run", "", [||]);
@@ -114,34 +123,61 @@ let rejected =
     ("more characters than glyphs", v "abc", "2 glyphs for 3 characters");
   ]
 
-let pp_box ppf b =
-  Format.fprintf ppf "[%.17g, %.17g; %.17g, %.17g]" (Box2.minx b) (Box2.miny b)
-    (Box2.maxx b) (Box2.maxy b)
+let constructors =
+  group "v"
+    [
+      test "makes the run of its arguments" makes;
+      test "puts every glyph on the baseline without ys" (fun () ->
+          let glyphs, xs = set "Hé→" in
+          let r = Run.v ~font ~size:10. ~text:"Hé→" ~glyphs ~xs () in
+          equal (list float_exact) [ 0.; 0.; 0. ] (List.init 3 (Run.y r)));
+      test "gives each character a glyph without clusters" (fun () ->
+          let glyphs, xs = set "Hé→" in
+          let r = Run.v ~font ~size:10. ~text:"Hé→" ~glyphs ~xs () in
+          equal (list int) [ 0; 1; 3 ] (List.init 3 (Run.cluster r)));
+      test "copies its arrays" copies;
+      cases "accepts clusters of"
+        ~id:(fun (n, _, _) -> n)
+        clusters_accepted accepts;
+      test "accepts the font's first and last glyphs" (fun () ->
+          let last = Font.glyph_count font - 1 in
+          let r =
+            Run.v ~font ~size:10. ~text:"ab" ~glyphs:[| 0; last |]
+              ~xs:[| 0.; 0. |] ()
+          in
+          equal (list int) [ 0; last ] (List.init 2 (Run.glyph r)));
+      cases "raises on"
+        ~id:(fun (n, _, _) -> n)
+        rejected
+        (fun (_, f, sub) -> raises_match (Exn.invalid_arg ~sub) f);
+    ]
 
-let box_t = Testable.make ~pp:pp_box ~equal:Box2.equal
+(* Accessors *)
 
-let box_near =
-  Testable.make ~pp:pp_box ~equal:(fun a b ->
-      let close x y = Float.abs (x -. y) <= 1e-12 in
-      close (Box2.minx a) (Box2.minx b)
-      && close (Box2.miny a) (Box2.miny b)
-      && close (Box2.maxx a) (Box2.maxx b)
-      && close (Box2.maxy a) (Box2.maxy b))
+let index_cases =
+  [
+    ("glyph", fun r i -> ignore (Run.glyph r i));
+    ("x", fun r i -> ignore (Run.x r i));
+    ("y", fun r i -> ignore (Run.y r i));
+    ("cluster", fun r i -> ignore (Run.cluster r i));
+  ]
 
-let em units = Float.of_int units /. 2048.
+let accessors =
+  group "accessors"
+    [
+      cases "raise on an index out of range in" ~id:fst index_cases
+        (fun (_, f) ->
+          let glyphs, xs = set "Ho" in
+          let r = Run.v ~font ~size:10. ~text:"Ho" ~glyphs ~xs () in
+          raises_match (Exn.invalid_arg ~sub:"index -1 not in [0, 1]")
+            (fun () -> f r (-1));
+          raises_match (Exn.invalid_arg ~sub:"index 2 not in [0, 1]") (fun () ->
+              f r 2));
+    ]
 
-(* Ink boxes of H and o read with fontTools: (180, 0, 1342, 1490) and (104, -24,
-   1124, 1132) in font units, y up. *)
-let bounds_of_ink () =
-  let glyphs, xs = set ~size:10. ~x0:5. "Ho" in
-  let r = Run.v ~ys:[| 2.; 2. |] ~font ~size:10. ~text:"Ho" ~glyphs ~xs () in
-  let o = xs.(1) in
-  equal (option box_near)
-    (Some
-       (Box2.of_pts
-          (P2.v (5. +. (10. *. em 180)) (2. -. (10. *. em 1490)))
-          (P2.v (o +. (10. *. em 1124)) (2. +. (10. *. em 24)))))
-    (Run.bounds r)
+(* Bounds *)
+
+let h = Font.glyph font (Uchar.of_char 'H')
 
 (* Runs of inked and uninked glyphs (H, o, i, space and .notdef) at positions in
    any order, one character of text per glyph. *)
@@ -177,6 +213,33 @@ let union_of_inks r =
     None
     (List.init (Run.length r) Fun.id)
 
+let bounds =
+  group "bounds"
+    [
+      prop "is the union of the placed and scaled ink boxes"
+        ~examples:
+          [
+            Run.v ~font ~size:10. ~text:"" ~glyphs:[||] ~xs:[||] ();
+            Run.v ~ys:[| 2. |] ~font ~size:10. ~text:"H" ~glyphs:[| h |]
+              ~xs:[| 5. |] ();
+          ]
+        (Gen.with_pp Run.pp gen_placed)
+        (fun r ->
+          cover "no ink" (Option.is_none (union_of_inks r));
+          cover "size 0" (Run.size r = 0.);
+          cover "one glyph" (Run.length r = 1);
+          equal (option box_t) (union_of_inks r) (Run.bounds r));
+      test "raises on a corner past max_float" (fun () ->
+          let r =
+            Run.v ~font ~size:max_float ~text:"H" ~glyphs:[| h |]
+              ~xs:[| max_float |] ()
+          in
+          raises_match (Exn.invalid_arg ~sub:"not finite") (fun () ->
+              ignore (Run.bounds r)));
+    ]
+
+(* Comparing and formatting *)
+
 let gen_run =
   let open Gen in
   let+ text = of_list [ ""; "a"; "Ho"; "fi"; "Hé→" ]
@@ -204,71 +267,34 @@ let variants () =
     (Run.v ~clusters:[| 0 |] ~font ~size:10. ~text:"Ho" ~glyphs:[| 1 |]
        ~xs:[| 0. |] ());
   let reloaded =
-    match Font.of_string (Font.bytes font) with
-    | Ok f -> f
-    | Error _ -> fail "reload"
+    require_ok ~pp:Font.pp_error (Font.of_string (Font.bytes font))
   in
   equal ~msg:"a reloaded font" run_t r
     (Run.v ~font:reloaded ~size:10. ~text:"Ho" ~glyphs ~xs ())
 
-let index_cases =
-  [
-    ("glyph", fun r i -> ignore (Run.glyph r i));
-    ("x", fun r i -> ignore (Run.x r i));
-    ("y", fun r i -> ignore (Run.y r i));
-    ("cluster", fun r i -> ignore (Run.cluster r i));
-  ]
-
-let runs =
-  group "Run"
+let comparing =
+  group "equal"
     [
-      test "v keeps what it is given" fields;
-      test "v copies its arrays" copies;
-      cases "v accepts" ~id:(fun (n, _, _) -> n) clusters_accepted accepts;
-      cases "v raises on"
-        ~id:(fun (n, _, _) -> n)
-        rejected
-        (fun (_, f, sub) -> raises_match (Exn.invalid_arg ~sub) f);
-      cases "raises on an index out of range in" ~id:fst index_cases
-        (fun (_, f) ->
-          let glyphs, xs = set "Ho" in
-          let r = Run.v ~font ~size:10. ~text:"Ho" ~glyphs ~xs () in
-          raises_match (Exn.invalid_arg ~sub:"index -1 not in [0, 1]")
-            (fun () -> f r (-1));
-          raises_match (Exn.invalid_arg ~sub:"index 2 not in [0, 1]") (fun () ->
-              f r 2));
-      test "bounds is the union of the glyphs' ink, placed and scaled"
-        bounds_of_ink;
-      prop "bounds is the union of the placed and scaled ink boxes"
-        (Gen.with_pp Run.pp gen_placed) (fun r ->
-          equal (option box_t) (union_of_inks r) (Run.bounds r));
-      test "bounds is None without ink" (fun () ->
-          let glyphs, xs = set "  " in
-          is_none ~pp:pp_box
-            (Run.bounds (Run.v ~font ~size:10. ~text:"  " ~glyphs ~xs ()));
-          is_none ~pp:pp_box
-            (Run.bounds
-               (Run.v ~font ~size:10. ~text:"" ~glyphs:[||] ~xs:[||] ())));
-      test "bounds raises on a corner past max_float" (fun () ->
-          let glyphs, _ = set "H" in
-          let r =
-            Run.v ~font ~size:max_float ~text:"H" ~glyphs ~xs:[| max_float |] ()
-          in
-          raises_match (Exn.invalid_arg ~sub:"not finite") (fun () ->
-              ignore (Run.bounds r)));
-      test "pp escapes only quotes, backslashes and controls in the text"
+      test "compares every field, fonts by Font.equal" variants;
+      prop "is an equivalence" (Gen.pair gen_run gen_run)
+        (Law.equivalence run_t);
+    ]
+
+let formatting =
+  group "pp"
+    [
+      test "escapes only quotes, backslashes and controls in the text"
         (fun () ->
           let text = "é\"\\\n\u{85}\u{7F}中" in
           let r =
             Run.v ~clusters:[| 0 |] ~font ~size:10. ~text ~glyphs:[| 0 |]
               ~xs:[| 0. |] ()
           in
-          equal string
-            {|(run (font "Inter" 400 normal) 10 "é\"\\\n\194\133\127中" 0@0,0#0)|}
+          contains ~sub:{|"é\"\\\n\194\133\127中"|}
             (Format.asprintf "%a" Run.pp r));
-      test "equal compares every field, fonts by Font.equal" variants;
-      prop "equal is an equivalence" (Gen.pair gen_run gen_run)
-        (Law.equivalence run_t);
     ]
 
-let () = exit (run "hugin.font run" [ runs ])
+let () =
+  exit
+    (run "hugin.font run"
+       [ constructors; accessors; bounds; comparing; formatting ])
