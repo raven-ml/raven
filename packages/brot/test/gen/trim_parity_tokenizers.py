@@ -90,8 +90,8 @@ COMMITTED = (
 )
 
 # Texts other suites encode with a trimmed copy and expect the full file's ids
-# for: the stride differential of test_tokenization.ml, and
-# test_hf_tokenizers.ml.
+# for: the stride windows of test_encode_decode.ml, and three short texts the
+# trimmed files have always covered.
 EXTRA = (SINGLE, *PAIR, "Hello world!", "Hello world", "A quick test")
 
 # The first code point of the supplementary private use area A.

@@ -957,10 +957,12 @@ type added_token = {
 type pad_length = [ `Batch_longest | `Fixed of int | `To_multiple of int ]
 (** The type for padding length strategies.
 
-    - [`Batch_longest]: pad to the longest sequence in the batch.
-    - [`Fixed n]: pad every sequence to exactly [n] tokens.
+    - [`Batch_longest]: pad to the longest sequence in the batch. {!encode} and
+      {!encode_ids} encode a batch of one, so it adds nothing there.
+    - [`Fixed n]: pad every sequence shorter than [n] tokens to [n]; a longer
+      one is left as it is.
     - [`To_multiple n]: pad to the smallest multiple of [n] that is at least the
-      sequence length. *)
+      sequence length. With [n <= 0] nothing is padded. *)
 
 type padding = {
   length : pad_length;
@@ -971,9 +973,9 @@ type padding = {
 }
 (** The type for padding configurations.
 
-    When [pad_id], [pad_type_id], or [pad_token] are [None], the tokenizer's
-    configured padding token is used. Raises [Invalid_argument] at padding time
-    if no padding token is configured and these fields are [None]. *)
+    [pad_token] defaults to the tokenizer's padding token and [pad_type_id] to
+    [0]. Raises [Invalid_argument] at padding time if [pad_token] is [None] and
+    the tokenizer has no padding token, even when [pad_id] is given. *)
 
 type truncation = { max_length : int; stride : int; direction : direction }
 (** The type for truncation configurations. Sequences exceeding [max_length]
@@ -1033,9 +1035,16 @@ val truncation : ?stride:int -> ?direction:direction -> int -> truncation
     [stride] is the overlap between successive overflow windows: each window in
     {!Encoding.overflowing} opens [stride] tokens before the end of the one
     before it, which is how the sliding-window question-answering workflow keeps
-    context across windows. Defaults to [0]. It must be less than the tokens
-    left for content — on a pair, less than either sequence's share — or
-    {!encode} raises [Invalid_argument]. *)
+    context across windows. Defaults to [0]. When {!encode} truncates a text,
+    [stride] must be less than the tokens left for content (on a pair, less than
+    either sequence's share), or it raises [Invalid_argument].
+
+    Before it truncates, {!encode} keeps only the pretokens that hold the first
+    [max_length] tokens of a text, or the last under [`Left], so the windows of
+    {!Encoding.overflowing} cover those tokens and nothing beyond.
+
+    Raises [Invalid_argument] if [stride] is negative, or if [max_length] is
+    positive and [stride] is not less than it. *)
 
 (** {1:constructors Constructors} *)
 
@@ -1382,7 +1391,8 @@ val encode :
     {!Encoding.offsets} are byte spans of [text] itself, not of the normalized
     form: a token of ["café"] under a normalizer that strips accents reports the
     bytes of the accented text. {!Encoding.word_ids} number the pretokens of
-    [text] from [0], an added token counting as one. Both are worked out when
+    [text] from [0], an added token counting as one; a pretoken the model gives
+    no token keeps its number, so the numbers can skip. Both are worked out when
     they are first read, so a caller that only wants {!Encoding.ids} pays for
     neither; the {!Encoding} module doc says how that first read behaves across
     domains.
@@ -1408,10 +1418,12 @@ type exec = int -> (int -> unit) -> unit
     re-raises it once [exec] returns.
 
     The batch plans the work, since only it knows where a text may be cut and
-    how padding spans the rows; each task takes chunks of it until none is
-    left. A batch calls its executor at most once, so an executor over a pool
-    the program already runs spreads every batch without starting a domain.
-    Over domainslib's [Task] pool, for instance:
+    how padding spans the rows; each task takes chunks of it until none is left.
+    The first chunk that raises ends the handout: each task finishes the chunk
+    it holds and takes no other, and a task that runs after the batch has failed
+    or [exec] has returned takes none. A batch calls its executor at most once,
+    so an executor over a pool the program already runs spreads every batch
+    without starting a domain. Over domainslib's [Task] pool, for instance:
     {[
       let exec pool n task =
         Domainslib.Task.run pool (fun () ->
@@ -1465,11 +1477,12 @@ val encode_batch :
     others: where a program's work runs is its decision.
 
     - [exec]: the executor the batch is spread through, as {!type-exec} says.
-      Default: none, and the batch is encoded on the calling domain. The work
-      is planned in chunks of consecutive texts holding 64 KB to 256 KB,
-      handed out largest first; a batch holding under 64 KB is encoded on the
-      calling domain without calling [exec]. The result does not depend on
-      [exec]. Raises [Invalid_argument] if [exec] returns before every chunk
+      Default: none, and the batch is encoded on the calling domain. The work is
+      planned in chunks of consecutive texts, each closed at the first text that
+      brings it to a target between 64 KB and 256 KB, the last holding what is
+      left, and handed out largest first; a batch holding under 64 KB is encoded
+      on the calling domain without calling [exec]. The result does not depend
+      on [exec]. Raises [Invalid_argument] if [exec] returns before every chunk
       is encoded, and what [exec] raises.
     - Other optional parameters are as in {!encode}. For sentence-pair tasks,
       use {!encode_batch_pairs}. *)
@@ -1531,9 +1544,9 @@ val encode_batch_ids :
     [`Batch_longest] resolved over the whole batch as {!encode_batch} resolves
     it. Overflowing windows produced by [truncation] are dropped, since an [ids]
     buffer has nowhere to put them; {!encode_batch} keeps them. A long text is
-    spread through [exec] too, in pieces cut where the pipeline cannot tell
-    the difference — a pipeline with a normalizer, or one that does not split
-    on spaces, encodes each text in one piece.
+    spread through [exec] too, in pieces cut where the pipeline cannot tell the
+    difference. A pipeline with a normalizer, or one that does not split on
+    spaces, encodes each text in one piece.
 
     Identifiers are narrowed to 32 bits. Every id is below 2{^ 31} ({!bpe},
     {!type-added_token}), so the narrowing changes none.
@@ -1792,6 +1805,12 @@ val save_model_files : ?prefix:string -> t -> folder:string -> string list
 val from_file : string -> (t, string) result
 (** [from_file path] is a tokenizer loaded from a HuggingFace [tokenizer.json]
     file. Errors if the file cannot be read or has invalid format.
+
+    The tokenizer gives the ids and tokens that Hugging Face's tokenizers gives
+    for the same file and text, except on characters whose Unicode data differs
+    from the older versions tokenizers reads, and where a value here says
+    otherwise. A Unigram model's unknown token is the vocabulary's entry, where
+    tokenizers gives the text it stands for.
 
     A Unigram model's scores are read from their text as HuggingFace's
     tokenizers reads them. It rounds the digits, as a 64-bit integer, to a

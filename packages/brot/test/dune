@@ -16,7 +16,6 @@
   test_unigram
   test_unigram_load
   test_wordpiece
-  test_hf_tokenizers
   test_float_text
   test_tiktoken
   test_post_processor
@@ -24,7 +23,8 @@
   test_huggingface
   test_pre_tokenizer
   test_normalizer
-  test_decoder)
+  test_decoder
+  test_encode_decode)
  (modules
   test_tokenization
   test_vocab
@@ -33,7 +33,6 @@
   test_unigram
   test_unigram_load
   test_wordpiece
-  test_hf_tokenizers
   test_float_text
   test_tiktoken
   test_post_processor
@@ -41,7 +40,8 @@
   test_huggingface
   test_pre_tokenizer
   test_normalizer
-  test_decoder)
+  test_decoder
+  test_encode_decode)
  (package brot)
  (deps
   (glob_files support/parity/*)
@@ -87,9 +87,7 @@
   (glob_files support/tokenizers/*)
   (glob_files %{project_root}/packages/brot/bench/data/*.json))
  (action
-  ; Bytecode runs the whole suite ~8x slower; the default slow-test threshold
-  ; would flag tests that are fast natively.
-  (run %{dep:test_parity.bc.exe} --slow-threshold 10)))
+  (run %{dep:test_parity.bc.exe})))
 
 (rule
  (alias runtest)
