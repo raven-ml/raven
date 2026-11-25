@@ -85,6 +85,11 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- **Breaking:** `Nuts.init`, `Hmc.init` and `Ensemble.init` refuse a start
+  where the density is `-inf` at a chain, naming the chain, and a position
+  holding a tensor that is not of a float dtype, naming its path. From a
+  `-inf` start NUTS weighed its first leaves with NaN; an integer tensor was
+  carried unchanged, so every draw held its start value.
 - `Support.pp` prints an empty integer interval as `{}`: one whose upper bound
   lies two or more below its lower raised `Invalid_argument "List.init"`.
 - `Dist.coords` and `Dist.standardize` check the parameters, as the other

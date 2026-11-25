@@ -78,9 +78,9 @@ let reproducible =
 
 (* Transitions *)
 
-(* A walker 10^3 sds from a standard normal whose other walkers lie on it
-   comes back: a stretch toward a partner shrinks its distance by up to half,
-   and every such move raises its density. Over 40 keys it returns in 23 to 62
+(* A walker 10^3 sds from a standard normal whose other walkers lie on it comes
+   back: a stretch toward a partner shrinks its distance by up to half, and
+   every such move raises its density. Over 40 keys it returns in 23 to 62
    transitions. *)
 let straggler =
   test "a walker 10^3 sds from the posterior returns" (fun () ->
@@ -148,6 +148,27 @@ let transitions =
 let refusals =
   group "init"
     [
+      test "a start where the density is -inf is refused, naming the chain"
+        (fun () ->
+          let walled x =
+            let a = Nx.slice [ Nx.A; Nx.I 0 ] x in
+            Nx.where (Nx.greater_s a 50.)
+              (Nx.full_like a Float.neg_infinity)
+              (banana x)
+          in
+          let x =
+            Nx.set [ Nx.I 1; Nx.I 0 ] (Nx.scalar Nx.float64 100.) (start 8)
+          in
+          raises
+            (Invalid_argument
+               "Norn.Ensemble.init: the density is -inf at chain 1; a chain \
+                starts where its density is finite") (fun () ->
+              E.init Nx.Ptree.tensor walled x));
+      test "a tensor that is not a float is refused, naming its path" (fun () ->
+          let u = Nx.Ptree.(pair tensor tensor) in
+          let x = (start 8, Nx.zeros Nx.int32 [| 8 |]) in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Ensemble.init: 1 is int32")
+            (fun () -> E.init u (fun (x, _) -> banana x) x));
       test "an ensemble needs twice as many walkers as coordinates" (fun () ->
           raises
             (Invalid_argument

@@ -402,6 +402,27 @@ let reproducible =
 let refusals =
   group "init"
     [
+      test "a start where the density is -inf is refused, naming the chain"
+        (fun () ->
+          let walled x =
+            let a = Nx.slice [ Nx.A; Nx.I 0 ] x in
+            Nx.where (Nx.greater_s a 50.)
+              (Nx.full_like a Float.neg_infinity)
+              (banana x)
+          in
+          let x =
+            Nx.set [ Nx.I 1; Nx.I 0 ] (Nx.scalar Nx.float64 100.) (start 4)
+          in
+          raises
+            (Invalid_argument
+               "Norn.Nuts.init: the density is -inf at chain 1; a chain starts \
+                where its density is finite") (fun () ->
+              N.init Nx.Ptree.tensor walled x));
+      test "a tensor that is not a float is refused, naming its path" (fun () ->
+          let u = Nx.Ptree.(pair tensor tensor) in
+          let x = (start 4, Nx.zeros Nx.int32 [| 4 |]) in
+          raises_match (Exn.invalid_arg ~sub:"Norn.Nuts.init: 1 is int32")
+            (fun () -> N.init u (fun (x, _) -> banana x) x));
       test "a density not batched over chains is refused" (fun () ->
           raises
             (Invalid_argument

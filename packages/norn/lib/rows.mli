@@ -102,6 +102,14 @@ val check_range : string -> ?index:'d Nx.int32_t -> (float, 'f, 'd) Nx.t -> unit
     log density [l] is NaN or [+inf], naming it. Row [r] of [l] is the chain
     [index.(r)], by default [r]. *)
 
+val check_floats : string -> ('u, 'd) Nx.Ptree.t -> 'u -> unit
+(** [check_floats context u x] raises [Invalid_argument] naming [context] and
+    the path of a tensor of [x] that is not of a float dtype. *)
+
+val check_start : string -> (float, 'f, 'd) Nx.t -> unit
+(** [check_start context l] raises through {!Nx.check} at a chain whose log
+    density [l] is [-inf], naming it. *)
+
 val check_density :
   string ->
   ('u, 'd) Nx.Ptree.t ->

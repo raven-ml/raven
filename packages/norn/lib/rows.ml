@@ -189,6 +189,31 @@ let check_range context ?index l =
         (Printf.sprintf "%s: the density is %s at chain %ld, a finite position"
            context (element v) (Nx.item [] chain)))
 
+(* [check_floats context u x] refuses a position with a tensor of another dtype
+   than a float: a sampler would carry it unchanged, and its draws would hold
+   the start's value. *)
+let check_floats context u x =
+  P.fold u
+    (fun p t () ->
+      if not (float_leaf t) then
+        invalid_argf "%s: %s is %s; a sampler moves float tensors only" context
+          (match P.Path.to_string p with "" -> "the position" | s -> s)
+          (Nx.Dtype.name (Nx.dtype t)))
+    x ()
+
+(* [check_start context l] refuses a start whose log density [l] is [-inf] at
+   a chain: no transition is defined from a point of zero density. *)
+let check_start context l =
+  let c = (Nx.shape l).(0) in
+  let chain = Nx.arange_at (Nx.beside l) Nx.int32 0 c 1 in
+  let ok = Nx.not_equal l (Nx.scalar_like l Float.neg_infinity) in
+  Nx.check P.tensor ok chain (fun _ chain ->
+      Invalid_argument
+        (Printf.sprintf
+           "%s: the density is -inf at chain %ld; a chain starts where its \
+            density is finite"
+           context (Nx.item [] chain)))
+
 (* [check_rows context u lp x l] refuses a density whose rows read each other:
    evaluated on the chains reversed, its result is not reversed. *)
 let check_rows context u lp x l =

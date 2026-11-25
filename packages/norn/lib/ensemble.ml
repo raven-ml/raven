@@ -169,8 +169,10 @@ let init u ?(ensembles = 1) lp position =
       "%s: an ensemble of %d walkers over %d coordinates; an ensemble needs at \
        least twice as many walkers as coordinates"
       context n d;
+  Rows.check_floats context u position;
   let l = lp position in
   Rows.check_density context u lp position l;
+  Rows.check_start context l;
   {
     position;
     lp = l;
