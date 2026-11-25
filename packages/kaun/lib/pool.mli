@@ -18,9 +18,10 @@ val max :
   ?padding:(int * int) array ->
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t
-(** [max ~window x] is the greatest element of each window. Padding holds
-    [-∞], or the dtype's least finite value where it has no infinity, so it
-    is the result only of a window that lies in padding alone.
+(** [max ~window x] is the greatest element of each window, {!Nx.max} over its
+    elements, which states what a NaN and a signed zero give. Padding holds
+    [-∞], or the dtype's least finite value where it has no infinity, so it is
+    the result only of a window that lies in padding alone.
 
     Raises [Invalid_argument] if [window] is empty, [x] does not have [K + 2]
     axes, [stride] or [padding] has other than [K] entries, a window or
@@ -32,7 +33,8 @@ val avg :
   ?padding:(int * int) array ->
   (float, 'b, 'd) Nx.t ->
   (float, 'b, 'd) Nx.t
-(** [avg ~window x] is the mean of each window, padding counted as zeros.
+(** [avg ~window x] is the mean of each window, padding counted as zeros:
+    {!Nx.mean} over its elements, which states its accumulator and rounding.
     Each window's sum is divided by the product of [window]. The mean of a
     window's elements of [x] alone is
     [Nx.div (avg ~padding x) (avg ~padding (Nx.ones_like x))]. Raises as

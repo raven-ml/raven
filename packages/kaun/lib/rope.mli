@@ -117,14 +117,14 @@ val apply :
 
     where [h] is [head_dim / 2] and [a] is [pos * frequency.(i)].
 
-    Position [0] is the identity. At a position in \[[0];[context t]) a rotation
-    keeps norms: [apply] never rescales [x], and a schedule is a choice of
-    angles and nothing else. The cosines and sines are the rows of [t]'s tables
-    at [pos], cast to [x]'s dtype for the rotation, so a float64 [x] is rotated
-    to float32 accuracy. Each position must be below {!context}[ t]: a position
-    outside \[[0];[context t]) reads zero cosines and sines, eagerly and under
-    [Rune.jit] alike, so its features are zero. Differentiable through Rune in
-    [x].
+    Position [0] is the identity on finite [x], up to the sign of a zero. At a
+    position in \[[0];[context t]) a rotation keeps norms: [apply] never
+    rescales [x], and a schedule is a choice of angles and nothing else. The
+    cosines and sines are the rows of [t]'s tables at [pos], cast to [x]'s dtype
+    for the rotation, so a float64 [x] is rotated to float32 accuracy. Each
+    position must be below {!context}[ t]: a position outside \[[0];[context t])
+    reads zero cosines and sines, eagerly and under [Rune.jit] alike, so its
+    features are zero on finite [x]. Differentiable through Rune in [x].
 
     Raises [Invalid_argument] if [x] is not of rank 4, its last axis is not
     twice [t]'s pair count, or [pos] has another shape. *)

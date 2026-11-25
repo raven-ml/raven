@@ -49,16 +49,16 @@
       its block's positions.
     + {b [-1] addresses nothing.} A position of [-1] is padding, a table entry
       of [-1] is an unallocated column, and a lane whose [row] is [-1] is
-      padding throughout. A slot outside the pool and a row outside the table
-      address nothing either. A store at a slot that addresses nothing is
-      dropped and a read of one is zero, as {!Nx.scatter} and {!Nx.take} do at
-      an index outside a tensor, so an eager run and a compiled run agree on
-      every cache index.
+      padding throughout; every negative number reads as [-1] does. A slot
+      outside the pool and a row outside the table address nothing either. A
+      store at a slot that addresses nothing is dropped and a read of one is
+      zero, as {!Nx.scatter} and {!Nx.take} do at an index outside a tensor, so
+      an eager run and a compiled run agree on every cache index.
     + {b A token stores at its own column:} the slot its table names at the
       column that stands at its position, or under a {!draft} the slot the draft
       names. In blocks of [m] positions only a block's last token has one; the
-      others store nothing. A token whose position is past the last column
-      stores nothing.
+      others store nothing. Outside a draft, a token whose position is past the
+      last column stores nothing.
     + {b Write targets are distinct.} Within a call the targets that address a
       slot are distinct, and a slot another sequence's table names is never one
       of them: a shared slot is one an earlier call wrote. Two tokens aimed at
@@ -363,15 +363,15 @@ val store : 'd t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
     takes. *)
 
 val pages : 'd t -> 'd Nx.int64_t option
-(** [pages index] is [Some p] on an index with a table and no selection:
-    [p], of shape [[| batch; context |]], holds at [p.(b).(j)] the slot lane
-    [b] reads at column [j], and [-1] at the columns the laws list as never
-    read. Under a {!draft} its last [seq] columns are the slots the
-    call's tokens store at, [-1] for padding. It is a page table of pages of
-    one slot, as {!Nx.val-attention}'s [Paged] reads a pool, and {!extend}'s
-    [seen] is [Nx.take ~axis:0 p pool']. It is [None] on a whole or packed
-    index, whose columns are the call's tokens, and under a selection, whose
-    tokens each read their own columns. *)
+(** [pages index] is [Some p] on an index with a table and no selection: [p], of
+    shape [[| batch; context |]], holds at [p.(b).(j)] the slot lane [b] reads
+    at column [j], and [-1], or a negative entry of the table, at the columns
+    the laws list as never read. Under a {!draft} its last [seq] columns are the
+    slots the call's tokens store at, [-1] for padding. It is a page table of
+    pages of one slot, as {!Nx.val-attention}'s [Paged] reads a pool, and
+    {!extend}'s [seen] is [Nx.take ~axis:0 p pool']. It is [None] on a whole or
+    packed index, whose columns are the call's tokens, and under a selection,
+    whose tokens each read their own columns. *)
 
 val mask : 'd t -> 'd Nx.bool_t
 (** [mask index], of shape [[| batch; seq; context |]], is which columns of
