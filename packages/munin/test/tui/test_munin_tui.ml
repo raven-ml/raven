@@ -210,6 +210,12 @@ let run_pane screen =
   ^ " / "
   ^ String.trim (from col (T.Screen.row screen (row + 3)))
 
+(* [run_pane_name screen] is the name the run pane's heading gives. *)
+let run_pane_name screen =
+  List.nth_opt
+    (List.filter (( <> ) "") (String.split_on_char ' ' (run_pane screen)))
+    1
+
 let states_test =
   test "states" (fun () ->
       needs_crashed ();
@@ -3312,6 +3318,50 @@ let long_suffixes =
       equal ~msg:"the header's overlay" (list bool) [ true ]
         (List.map (fun r -> before r "b12345" <> None) vs))
 
+(* [Run None] puts the cursor on the newest run without an end that has
+   not crashed. A run written without a writer file and without an end
+   reads silent: it has no end. *)
+let run_none_newest =
+  test "Run None opens on the newest run without an end" (fun () ->
+      with_store ~name:"run-none" [] @@ fun store ->
+      let samples = List.init 20 (fun i -> sample_record (i, Float.of_int i)) in
+      ignore (write_log store ~name:"going" ~started:1 samples);
+      ignore
+        (write_log store ~name:"ended" ~started:2
+           (samples @ [ {|{"type":"end","time":4.0,"status":"finished"}|} ]));
+      let screen = show ~cols:120 ~rows:40 store (Munin_tui.Run None) [] in
+      equal (option string) (Some "going") (run_pane_name screen))
+
+(* With every run ended, [Run None] waits, and takes the first run that
+   starts. *)
+let run_none_waits =
+  test "Run None waits for a run to start" (fun () ->
+      with_store ~name:"run-none-waits" [] @@ fun store ->
+      let samples = List.init 20 (fun i -> sample_record (i, Float.of_int i)) in
+      let ended = {|{"type":"end","time":4.0,"status":"finished"}|} in
+      ignore (write_log store ~name:"ended" ~started:1 (samples @ [ ended ]));
+      let term = T.Terminal.create ~cols:120 ~rows:40 () in
+      (elapsed := fun () -> 0);
+      let app = Munin_tui.app ~clock store (Munin_tui.Run None) in
+      let waiting, started =
+        Mosaic_test.run term app @@ fun s ->
+        (elapsed := fun () -> T.now s);
+        T.advance s second;
+        let waiting = T.Terminal.screen term in
+        ignore (write_log store ~name:"late" ~started:2 samples);
+        T.advance s (2 * second);
+        (waiting, T.Terminal.screen term)
+      in
+      let says screen text =
+        List.map (fun (y, _) -> String.trim (T.Screen.row screen y))
+          (T.Screen.find screen text)
+      in
+      equal ~msg:"before a run starts" (list string)
+        [ "waiting for a run in ~/run-none-waits" ]
+        (says waiting "waiting for a run");
+      equal ~msg:"once one starts" (option string) (Some "late")
+        (run_pane_name started))
+
 (* Cut text *)
 
 (* A run whose texts outgrow their columns: a long name, host, command,
@@ -3798,7 +3848,18 @@ let () =
              matching; cadence;
            ];
          group "runs" [ filter; stars; nav_count ];
-         group "run" [ all_orphans; short_of_steps; paired; cut_text; no_sample; no_others; same_names ];
+         group "run"
+           [
+             run_none_newest;
+             run_none_waits;
+             all_orphans;
+             short_of_steps;
+             paired;
+             cut_text;
+             no_sample;
+             no_others;
+             same_names;
+           ];
          group "held"
            [ held; kept_pane; ended_away; ended_between; glyphs; watch_test ];
          depth_test;

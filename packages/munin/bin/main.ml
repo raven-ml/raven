@@ -558,8 +558,7 @@ let watch_cmd =
   let id = Arg.(value & pos 0 (some string) None & info [] ~docv:"RUN") in
   cmd "watch"
     "Monitor a run in the terminal: $(i,RUN), else the newest run without an \
-     end that has not crashed, else the newest run, else the first run to \
-     start. Esc goes to the store's runs."
+     end that has not crashed, waiting for one to start."
     Term.(const (fun id -> dashboard (Munin_tui.Run id)) $ id)
 
 let check_cmd =
