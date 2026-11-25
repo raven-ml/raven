@@ -1481,7 +1481,10 @@ let lines_over_rules =
       cover "a grey run's line" (role = `Context);
       cover "an overlay's line" (role = `Overlay);
       cover "zoom's cursor rule" zoom;
-      cover ~share:0.1 "the band takes a cell another run's line crosses, on the rule" (!taken > 0))
+      (* About a quarter of the cases: a demand of a share would need 400
+         cases to decide it; presence is reached on every run. *)
+      cover "the band takes a cell another run's line crosses, on the rule"
+        (!taken > 0))
 
 (* The x axis's program labels, the [step] title and zoom's cursor, keep
    clear of each other: the row reads [step] whole or not at all, wherever
