@@ -105,7 +105,12 @@ module Bij : sig
       saturates, it returns the saturated value, the nearest value of the
       support, with a log-determinant of [-inf], so the pulled-back density
       counts no value twice: its mass is the target's mass between the
-      saturation points. *)
+      saturation points. For a vector unit, the dtype's precision is the
+      tolerance {!Dist} reads its supports with: a simplex's [K] components
+      sum to one within [4 K ε], a sum-to-zero vector's [K] components sum to
+      zero within [4 K ε] times their largest magnitude, and each row of a
+      Cholesky factor of [n × n] has a squared norm within [4 n ε] of one,
+      [ε] the epsilon of the dtype. *)
 
   type ('f, 'd) t
   (** The type for bijectors over tensors of element type ['f]. *)
@@ -181,12 +186,13 @@ module Bij : sig
 
   val shape : ('f, 'd) t -> int array -> int array
   (** [shape b s] is the shape of the coordinates of a value of shape [s]: [s]
-      for the elementwise bijectors and {!ordered}, [s] with its last axis one
-      shorter for {!simplex} and {!sum_to_zero}, and [s] with its last two axes
-      of [n] replaced by one of [n (n - 1) / 2] for {!cholesky_corr}.
+      for the elementwise bijectors, {!affine_tril} and {!ordered}, [s] with
+      its last axis one shorter for {!simplex} and {!sum_to_zero}, and [s]
+      with its last two axes of [n] replaced by one of [n (n - 1) / 2] for
+      {!cholesky_corr}. [compose b c]'s is [c]'s shape of [b]'s.
 
-      Raises [Invalid_argument] if [s] has fewer axes than a unit, or a last
-      axis of length [0] where coordinates have one fewer element. *)
+      Raises [Invalid_argument] if [s] has fewer axes than a unit, if a vector
+      unit is empty, or if {!cholesky_corr}'s last two axes are not square. *)
 
   val pp : Format.formatter -> ('f, 'd) t -> unit
   (** [pp ppf b] formats [b]'s name, such as [exp] or [compose(exp, affine)]. *)
@@ -708,7 +714,31 @@ module Dist : sig
       the terms its closed form sums, each a logarithm, a digamma or a ratio of
       the parameters and the point: [log (rate x)] and [ψ(α)] for {!gamma}'s
       concentration, [α / rate] and [x] for its rate. The closed form cancels
-      where a derivative nears [0], so the bound is on its terms. *)
+      where a derivative nears [0], so the bound is on its terms.
+
+      The other continuous families' log densities are closed forms. Each is
+      within [8 ε Σ |t|] of the exact one, and the least subnormal where it
+      underflows, [ε] the epsilon of the parameters' dtype, the [t] the terms
+      of the log density as the family writes it, [z = (x - loc) / scale]:
+      - {!normal}: [z² / 2], [log scale] and [log √(2π)]; {!half_normal} the
+        same and [log 2];
+      - {!lognormal}: the normal's at [log x], [log x], and [z log x / scale],
+        the rounding of [log x] carried through [z];
+      - {!cauchy}: [log1p z²], [log scale] and [log π]; {!half_cauchy} the
+        same and [log 2];
+      - {!laplace}: [z], [log scale] and [log 2];
+      - {!logistic}: [z], [2 log1p (exp (-z))] and [log scale];
+      - {!exponential}: [log rate] and [rate x];
+      - {!uniform}: [log (high - low)];
+      - {!von_mises}: [2κ sin² ((x - loc) / 2)], [log (2π i0e κ)] and
+        [κ (x - loc) sin (x - loc)], the rounding of [x - loc] carried
+        through the sine;
+      - {!mvn}: [|w|² / 2], [log L_ii] and [log √(2π)] per component, and
+        [4 κ |w|²], [w = L⁻¹ (x - loc)] and [κ = ‖ |L⁻¹| |L| ‖∞] the
+        condition number of [L] for its triangular solve.
+      {!lkj_cholesky}'s log density is within [16 ε (|f| + Σ_i |(n - i + 2η
+      - 2) log L_ii|)]. These bounds hold on a faithful device and compiled,
+      as those above. *)
 
   val normal :
     loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
@@ -810,9 +840,9 @@ module Dist : sig
       [-2κ sin² ((x - loc) / 2) - log (2π i0e κ)] ({!Nx.i0e}), finite at
       every finite [κ]. [loc] is finite and may lie off \[[-π], [π]\]: the
       density is periodic in it. Draws are {!Nx.Rng.von_mises}'s, Best and
-      Fisher's rejection, moved by [loc] and wrapped onto \[[-π], [π]\]. The
-      float [Float.pi] lies below π, so the draws' extremes [±Float.pi] lie in
-      its support, [(-π, π)], and have finite density. *)
+      Fisher's rejection, moved by [loc] and wrapped onto \[[-π], [π]\]. Its
+      density is finite on the closed interval, at [±π] rounded to the dtype
+      too, which its draws reach. *)
 
   val lkj_cholesky :
     int -> concentration:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
@@ -856,7 +886,11 @@ module Dist : sig
       {!neg_binomial}'s mean are within [16 ε Σ |t|] of the exact ones, the [t]
       the terms their closed forms sum: [x / rate] and [1] for the rate, [x] and
       [trials sigmoid logits] for the logits, [x / mean] and
-      [(x + r) / (r + mean)] for the mean, [r] the dispersion. *)
+      [(x + r) / (r + mean)] for the mean, [r] the dispersion.
+
+      {!bernoulli}'s log mass [f] is within [8 ε |f|], and the least
+      subnormal where it underflows; {!categorical}'s within
+      [8 ε (|logits_k| + |logsumexp logits| + log K)] at category [k] of [K]. *)
 
   val bernoulli : logits:(float, 'f, 'd) Nx.t -> ('d Nx.bool_t, 'f, 'd) t
   (** [bernoulli ~logits] is [true] with probability [sigmoid logits]. A logit
@@ -896,7 +930,9 @@ module Dist : sig
 
   val iid : int array -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
   (** [iid s d] is [s] independent draws of [d], its value of shape [s] followed
-      by [d]'s. *)
+      by [d]'s.
+
+      Raises [Invalid_argument] if a length of [s] is negative. *)
 
   val sorted : int -> ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [sorted n d] is [n] independent draws of the scalar [d] sorted along a new
@@ -947,8 +983,10 @@ module Dist : sig
       [softmax logits] for the whole value, then the value from [d_k], the slice
       of [d] at [k] on its leading axis: the log density is
       [logsumexp_k (log_softmax logits_k + log_density d_k x)]. A component per
-      point is [iid [| n |] (mixture ~logits d)]. Its coordinates map onto the
-      hull of its components' supports, read on the host.
+      point is [iid [| n |] (mixture ~logits d)]. A logit may be [-inf], a
+      component of probability zero; [inf] is outside its domain. Its
+      coordinates map onto the hull of its components' supports, read on the
+      host.
 
       Raises [Invalid_argument] if [logits] is not a vector or [d]'s leading
       axis is not its length. *)
@@ -1003,7 +1041,9 @@ module Dist : sig
       the smaller tail: above [1/2] it inverts the survival at [1 - p], which
       is exact there. For {!gamma} and {!inverse_gamma} it is [0.] at
       [p = 0.] and [inf] at [p = 1.]; for {!beta},
-      {!Nx.betaincinv}, [0.] at [p = 0.] and [1.] at [p = 1.].
+      {!Nx.betaincinv}, [0.] at [p = 0.] and [1.] at [p = 1.]; for
+      {!truncated}, its lower bound at [p = 0.] and its upper at [p = 1.], or
+      the edge of [d]'s support on a side without one.
 
       {!Rune} differentiates it in [p] and in [d]'s parameters. For {!gamma},
       {!inverse_gamma} and {!beta} the first derivatives are finite wherever
@@ -1044,7 +1084,8 @@ module Dist : sig
 
   val family : ('x, 'f, 'd) t -> string
   (** [family d] is [d]'s family, such as ["normal"]. {!iid} keeps its
-      argument's. *)
+      argument's; the other combinators' are ["sorted"], ["transform"],
+      ["truncated"], ["mixture"] and ["hmm"]. *)
 
   val kind : ('x, 'f, 'd) t -> ('x, 'f, 'd) kind
   (** [kind d] is the type of [d]'s values. *)
