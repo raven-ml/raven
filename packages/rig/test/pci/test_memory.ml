@@ -2437,15 +2437,29 @@ let map_peer_ref m i r =
     (new_region m ~origin:o ?mapping ~system:o.system ~gpu:o.gpu ~owning:false
        ~label:("Peer of " ^ o.label) i)
 
-let map_peer_sys s i (s', o, r) =
-  let released = Function.bus s'.gpus.(o).t_fn ^ " was released" in
+(* The GPU of [s] whose memory [r] is, which a refusal of its map names: for a
+   peer's region, the GPU that gave the region it maps. [None] once that region
+   is freed. *)
+let memory_gpu s r =
+  let o = match Memory.source r with Peer o -> o | _ -> r in
+  List.find_map (fun (i, r') -> if r' == o then Some i else None) s.live
+
+(* Whether [why] is the refusal of [r]'s memory as a released GPU's, naming that
+   GPU. *)
+let released_refusal s r why =
+  match memory_gpu s r with
+  | None -> false
+  | Some o ->
+      let bus = Function.bus s.gpus.(o).t_fn in
+      String.starts_with ~prefix:(bus ^ " was released") why
+
+let map_peer_sys s i (s', _, r) =
   match Memory.map_peer s.gpus.(i).t_memory r with
   | Ok (Some p) -> made s i p
   | Ok None -> fail "no room"
   | Error why when String.starts_with ~prefix:"the GPUs are on different" why ->
       raise Other_machine
-  | Error why when String.starts_with ~prefix:released why ->
-      raise Released_memory
+  | Error why when released_refusal s' r why -> raise Released_memory
   | Error why -> fail why
 
 let free_ref r =
