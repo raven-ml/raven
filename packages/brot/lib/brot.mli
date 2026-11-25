@@ -549,7 +549,8 @@ module Pre_tokenizer : sig
   (** [char_delimiter c] splits on the character [c], removing it from the
       output. Equivalent to [split ~pattern:c ~behavior:`Removed ()].
 
-      Raises [Invalid_argument] if [c] is not exactly one character. *)
+      Raises [Invalid_argument] if [c] is not exactly one well-formed UTF-8
+      character. *)
 
   val digits : ?individual_digits:bool -> unit -> t
   (** [digits ()] isolates each run of digits from the text around it. A digit
@@ -587,7 +588,8 @@ module Pre_tokenizer : sig
       text they were made from. A marker that replaced a space stands at that
       space, and a prepended one at the character it opens.
 
-      Raises [Invalid_argument] if [replacement] is not exactly one character.
+      Raises [Invalid_argument] if [replacement] is not exactly one well-formed
+      UTF-8 character.
   *)
 
   val unicode_scripts : t

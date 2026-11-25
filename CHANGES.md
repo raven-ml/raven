@@ -5573,6 +5573,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Brot
 
+- `Pre_tokenizer.char_delimiter` and `Pre_tokenizer.metaspace` raise
+  `Invalid_argument` for a byte that opens no character, such as `"\x81"`,
+  which cut the text inside other characters.
 - Pre-tokenizers and models read each byte of an overlong form, a surrogate or
   a value above U+10FFFF as a character of one byte, as RFC 3629 asks.
   `whitespace_split` read `"a\xe0\x80\xa0b"` as two words split by a space.

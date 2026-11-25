@@ -2072,7 +2072,8 @@ let () =
                is_split_on_it;
              cases ~id:(Printf.sprintf "%S")
                "raises Invalid_argument unless given one character"
-               [ ""; "ab"; "\u{2581}\u{2581}" ] (fun c ->
+               [ ""; "ab"; "\u{2581}\u{2581}"; "\x81"; "\xc3"; "\xe0\x80\xa0" ]
+               (fun c ->
                  raises_match Exn.invalid_arg (fun () -> Pre.char_delimiter c));
            ];
          group "digits"
@@ -2123,7 +2124,8 @@ let () =
                test_unsplit_token_offsets;
              cases ~id:(Printf.sprintf "%S")
                "raises Invalid_argument unless the replacement is one character"
-               [ ""; "ab"; "__" ] (fun replacement ->
+               [ ""; "ab"; "__"; "\x81"; "\xc3"; "\xe0\x80\xa0" ]
+               (fun replacement ->
                  raises_match Exn.invalid_arg (fun () ->
                      Pre.metaspace ~replacement ()));
            ];

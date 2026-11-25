@@ -1581,9 +1581,14 @@ let walk_pieces t text ~encode ~span =
   done;
   List.rev !pieces
 
+(* Whether [s] is one character: a byte that opens none is a character only
+   within a text. *)
 let is_one_character s =
   let stop = String.length s in
-  stop > 0 && Char_class.at_len (Char_class.at s 0 ~stop) = stop
+  stop > 0
+  &&
+  let d = Char_class.decode s 0 ~stop in
+  d >= 0 && d land 7 = stop
 
 let opening = Lazy.from_val true
 let continuing = Lazy.from_val false
