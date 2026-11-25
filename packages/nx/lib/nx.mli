@@ -5348,6 +5348,15 @@ val associative_scan :
     scope may instead refuse such draws ({!Rng.refusing}), so that a region
     draws only from keys it is given.
 
+    Block [i] of a key is Threefry-2x32 in 20 rounds (Salmon, Moraes, Dror
+    and Shaw, "Parallel Random Numbers: As Easy as 1, 2, 3", 2011) of the
+    counter whose first word is [i]'s low 32 bits and second its high,
+    under the key's two words, first to first; read as an integer, a
+    block's second word is its high half. {!Rng.fold_in}[ k i] encrypts the
+    counter whose words are [i]'s high and low 32 bits: for [0 <= i < 2{^32}]
+    it is block [i 2{^32}] of [k], so [fold_in k 0] is block [0], the first
+    of [k]'s {!Rng.split} keys.
+
     A key's two words lie whole on one device: a placement that cuts the
     words' axis holds no key. {!Rng.val-key} makes a host key, which
     {!Rng.place} moves to a placement that keeps the words whole.
@@ -5399,7 +5408,8 @@ module Rng : sig
   (** {1:keys Keys} *)
 
   val key : int -> host key
-  (** [key seed] is the host key of [seed]. Equal seeds give equal keys. *)
+  (** [key seed] is the host key of [seed], whose words are [seed]'s high
+      and low 32 bits. Equal seeds give equal keys. *)
 
   val of_tensor : 'd int32_t -> 'd key
   (** [of_tensor t] is the key, or batch of keys, whose words are [t], for words
@@ -5564,7 +5574,10 @@ module Rng : sig
       equally likely, [p] the largest such that every multiple of [2{^-p}] in
       [\[0, 1)] is a value of [dt]: [dt]'s significand width, from float64's
       53 down to float8_e5m2's 3; float4_e2m1fn's values below 1 are 0 and
-      0.5, so its [p] is 1.
+      0.5, so its [p] is 1. Draw [j] at float64 is the 53 bits of block [j],
+      its first word's low 21 over its second, scaled by [2{^-53}]; at
+      another dtype it is the low [p] bits of {!bits}' word [j], scaled by
+      [2{^-p}].
 
       Raises [Invalid_argument] if an extent is negative. *)
 
@@ -5596,7 +5609,9 @@ module Rng : sig
   val exponential :
     ?key:host key -> (float, 's) dtype -> int array -> (float, 's, host) t
   (** [exponential dt shape] is exponential draws of rate 1, by inverting the
-      distribution at [1 - u] for a uniform [u]: finite, and never negative.
+      distribution at [1 - u]: draw [j] is [-log (1 - u)], [u] {!uniform}'s
+      draw [j] from the same key at the compute dtype. So a draw is finite,
+      and never negative.
 
       Raises [Invalid_argument] if an extent is negative. *)
 
@@ -5647,8 +5662,8 @@ module Rng : sig
   val bernoulli :
     ?key:'d key -> (float, 's, 'd) t -> 'd bool_t
   (** [bernoulli p] is [true] with probability [p] rounded up to a multiple of
-      [2{^-53}], elementwise: 53 random bits, read as an integer, below
-      [p 2{^53}].
+      [2{^-53}], elementwise: element [j] is [true] where {!uniform}'s
+      float64 draw [j] from the same key is below [p] so rounded.
 
       Raises [Invalid_argument] if an element of [p] is outside [[0, 1]]. *)
 
@@ -5839,8 +5854,9 @@ module Rng : sig
   (** [with_key k f] runs [f] in a scope rooted at [k]: the sampler called
       [n]th in [f] without [~key], counting from [0], draws as it does with
       [~key:(fold_in k n)]. Scopes nest, the inner replacing the outer. A
-      scope is per fiber and per domain. What [f] raises passes on with the
-      backtrace of its raise.
+      scope is per fiber and per domain. A sampler refused for a dead
+      operand takes no key. What [f] raises passes on with the backtrace of
+      its raise.
 
       [k] may be traced, as an interpretation's argument is: the scope's
       keys are then computed from it by the interpretations around each
@@ -5849,8 +5865,7 @@ module Rng : sig
       that no interpretation traces draws at any placement. A scope at any
       other key, traced or on another set, draws only where a draw from
       [~key] at [k] would: a draw elsewhere raises as that draw does, naming
-      the {!place} to write. A traced host key whose draws lie on a device
-      set is placed there first, as [with_key (place p k) f].
+      the {!place} to write.
 
       Raises [Invalid_argument] if [k] is dead or a batch. *)
 
