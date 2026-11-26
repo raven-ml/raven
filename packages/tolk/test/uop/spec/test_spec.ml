@@ -339,6 +339,13 @@ let shared =
         "with check_oob, an index it cannot prove prints its bounds, the index \
          and the gate"
         prints_unproved_index;
+      test "with check_oob, refuses a shrink of more axes than its source"
+        (fun () ->
+          let view =
+            Shape.mop (buffer 4) (Shrink [ (Int 0, Int 2); (Int 0, Int 2) ])
+          in
+          equal verdict (Some false)
+            (checking_bounds (fun () -> judge Spec.shared (Ops.load view []))));
       test
         "with check_oob, a shrink it cannot prove prints its bounds and the \
          gate"
@@ -383,6 +390,30 @@ let looped axis_type =
   let body = Ops.v Op.Linear ~src:[] in
   (Ops.end_ (Ops.call ~precompile:true body [ v ]) [ r ], v, r)
 
+(* Bounds of a loop range, made of two outer loop ranges and a variable. *)
+type bound = Outer | Sum | Product | Variable | Sum_with_variable
+
+let bound_name = function
+  | Outer -> "a loop range"
+  | Sum -> "a weak sum of loop ranges"
+  | Product -> "a weak product of loop ranges"
+  | Variable -> "a variable"
+  | Sum_with_variable -> "a weak sum of a loop range and a variable"
+
+let bounded_range bound =
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ]
+  and s = Ops.range ~axis_type:Loop (Int 4) [ 102 ] in
+  let n = var ~dtype:Weak_int "n" 1 8 in
+  let b =
+    match bound with
+    | Outer -> r
+    | Sum -> Ops.O.(r + s)
+    | Product -> Ops.O.(r * s)
+    | Variable -> n
+    | Sum_with_variable -> Ops.O.(r + n)
+  in
+  Ops.range ~axis_type:Loop (Sym b) [ 101 ]
+
 let axis_name = function
   | Ops.Axis_type.Global -> "Global"
   | Local -> "Local"
@@ -406,6 +437,20 @@ let loops =
       test "accepts a loop range" (fun () ->
           let _, _, r = looped Loop in
           equal verdict (Some true) (judge Spec.kernel_graph r));
+      cases
+        "accepts a loop range iff its bound is constants, loop ranges, and \
+         weak integer sums and products of them"
+        ~id:(fun (b, _) -> bound_name b)
+        [
+          (Outer, true);
+          (Sum, true);
+          (Product, true);
+          (Variable, false);
+          (Sum_with_variable, false);
+        ]
+        (fun (bound, accepted) ->
+          equal verdict (Some accepted)
+            (judge Spec.kernel_graph (bounded_range bound)));
       cases "refuses a loop of a call over a range of any other kind"
         ~id:axis_name
         Ops.Axis_type.[ Global; Local; Warp; Weak; Upcast; Placeholder ]

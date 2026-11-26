@@ -24,8 +24,9 @@ let decide p name f = Pattern_matcher.rule p (fun m -> f (m name))
 
 (* Helpers *)
 
-(* A shrink's run lies within its source when, on each axis, its start is at
-   least 0 and its start and size are at most the axis's size. *)
+(* A shrink's run lies within its source when it has the source's axes and, on
+   each axis, its start is at least 0 and its start and size are at most the
+   axis's size. *)
 let validate_shrink ~gate s =
   let bounds = function
     | Int n -> (Dtype.Value.of_int n, Dtype.Value.of_int n)
@@ -45,7 +46,9 @@ let validate_shrink ~gate s =
     end
   in
   match marg s with
-  | Shrink axes -> List.for_all2 within axes (max_shape (nth s 0))
+  | Shrink axes ->
+      let shape = max_shape (nth s 0) in
+      List.compare_lengths axes shape = 0 && List.for_all2 within axes shape
   | _ -> true
 
 let validate_index ?(gate = bool true) uidx =

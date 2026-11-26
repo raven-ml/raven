@@ -10342,9 +10342,12 @@ D466.
   where, on each axis, the start's least value is at least 0 and the start's
   and size's greatest values add up to at most the source's size; otherwise
   it fails, whatever its gate, and prints the axis's bounds and the gate.
-  Without `CHECK_OOB` nothing changes. Accesses through an index of more than
-  one integer, and at the invalid index, are still not checked, as
-  tinygrad's are not.
+  Without `CHECK_OOB` nothing changes. A run whose size depends on its
+  start, as `x[i:n]` of `n - i` elements, is refused though in bounds: the
+  start's and the size's greatest values are taken apart, as an index's
+  bounds are without a solver. Accesses through an index of more than one
+  integer, and at the invalid index, are still not checked, as tinygrad's
+  are not.
 - **Reason:** (e): coalescing merges a run of accesses into one through a
   shrink, programs keep it and the renderers read it, so a shrink past its
   source is a program reading or writing outside its buffer, which the check
