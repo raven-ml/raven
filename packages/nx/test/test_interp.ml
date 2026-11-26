@@ -1268,8 +1268,7 @@ let law_jvp (xs, vs) =
       let tol = (8. *. epsilon_float *. terms /. h) +. 1e-9 in
       at_most
         ~msg:(Printf.sprintf "tangent %d: %h against %h" k t fd)
-        float_exact ~than:tol
-        (Float.abs (t -. fd)))
+        float_exact ~than:tol (Nx_support.gap t fd))
     (elements t)
 
 (* A staging compiler: an Extent interpretation whose values are nodes of a
