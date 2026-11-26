@@ -66,6 +66,24 @@ let sparse path marks =
 
 let marks = [ (0, 0x0102); (rows / 2, -2); (rows - 1, 0x1234) ]
 
+(* Saves the sparse npy [npy]'s samples as [wav], which must be RF64 and load
+   back. *)
+let round_trip npy wav =
+  sparse npy marks;
+  let x = Nx.unpack Nx.int16 (Nx_io.load_npy npy) in
+  Nx_io.save_wav wav ~rate:16000 x;
+  let head =
+    In_channel.with_open_bin wav (fun ic -> really_input_string ic 12)
+  in
+  equal string "RF64\255\255\255\255WAVE" head;
+  let a = Nx_io.load_audio wav in
+  equal int rows (Audio.length a);
+  List.iter
+    (fun (row, v) ->
+      let w = Nx.unpack Nx.int16 (Audio.window a ~row ~rows:1) in
+      equal (array int) [| v |] (Nx.to_array w))
+    ((1, 0) :: marks)
+
 let rf64 =
   test "a save past 4 GiB writes RF64, which loads back" (fun () ->
       let free = free_kib () in
@@ -73,25 +91,24 @@ let rf64 =
         skip ~reason:(Printf.sprintf "%d KiB free in %s" free dir) ();
       let npy = Filename.concat dir "rf64_source.npy"
       and wav = Filename.concat dir "rf64_save.wav" in
-      Fun.protect
-        ~finally:(fun () ->
-          List.iter
-            (fun p -> try Sys.remove p with Sys_error _ -> ())
-            [ npy; wav ])
-        (fun () ->
-          sparse npy marks;
-          let x = Nx.unpack Nx.int16 (Nx_io.load_npy npy) in
-          Nx_io.save_wav wav ~rate:16000 x;
-          let head =
-            In_channel.with_open_bin wav (fun ic -> really_input_string ic 12)
-          in
-          equal string "RF64\255\255\255\255WAVE" head;
-          let a = Nx_io.load_audio wav in
-          equal int rows (Audio.length a);
-          List.iter
-            (fun (row, v) ->
-              let w = Nx.unpack Nx.int16 (Audio.window a ~row ~rows:1) in
-              equal (array int) [| v |] (Nx.to_array w))
-            ((1, 0) :: marks)))
+      (* A file left behind takes the directory's disk. Both removals run,
+         though Windows refuses the npy's while its pages are mapped; a failure
+         of the round trip comes first, else the test fails naming each file
+         that stays. *)
+      let stays p =
+        match Sys.remove p with
+        | () -> None
+        | exception Sys_error m -> if Sys.file_exists p then Some m else None
+      in
+      let outcome =
+        match round_trip npy wav with
+        | () -> Ok ()
+        | exception e -> Error (e, Printexc.get_raw_backtrace ())
+      in
+      let stayed = List.filter_map stays [ wav; npy ] in
+      (match outcome with
+      | Error (e, bt) -> Printexc.raise_with_backtrace e bt
+      | Ok () -> ());
+      if stayed <> [] then failf "files stay: %s" (String.concat "; " stayed))
 
 let () = exit (run "nx.io RF64 save" [ rf64 ])
