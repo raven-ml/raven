@@ -43,7 +43,10 @@ module Target : sig
       the keys of what is compiled for a target. *)
 end
 
-(** {1:lists Integers and lists} *)
+(** {1:lists Integers and lists}
+
+    A result that [int] cannot hold, as [floordiv min_int (-1)], is unspecified.
+*)
 
 val prod : int list -> int
 (** [prod l] is the product of the elements of [l], [1] if [l] is empty. *)
@@ -300,8 +303,8 @@ val system : ?input:string -> string -> string
     or exits otherwise than with status [0]. *)
 
 val cpu_objdump : string -> unit
-(** [cpu_objdump lib] prints the instructions of the object file [lib], as
-    [objdump -d] prints them.
+(** [cpu_objdump lib] prints the instructions of the object file whose bytes are
+    [lib], as [objdump -d] prints them.
 
     Raises [Failure] as {!system} if [objdump] fails. *)
 
@@ -314,8 +317,9 @@ val find_llvm_objdump : unit -> string
 
 val amdgpu_disassemble : string -> unit
 (** [amdgpu_disassemble lib] prints the instructions of the AMD GPU code object
-    [lib], as {!find_llvm_objdump}'s [llvm-objdump -d] prints them, without the
-    padding instructions that end it ([s_nop 0] and [s_code_end]).
+    whose bytes are [lib], as {!find_llvm_objdump}'s [llvm-objdump -d] prints
+    them, without the padding instructions that end it ([s_nop 0] and
+    [s_code_end]).
 
     Raises [Failure] if there is no [llvm-objdump], or as {!system} if it fails.
 *)

@@ -25,14 +25,14 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_helpers.py::TestContextVars::test_decorator | `Context` as a decorator | Setting › context › binds a setting for the extent of its function (`context` takes the function) |
 | tinygrad: null/test_helpers.py::TestContextVars::test_decorator_recursive | recursive contexts restore | Setting › context › restores recursive bindings |
 | tinygrad: null/test_helpers.py::TestContextVars::test_context_exit_reverts_updated_values | exit restores the value before entry, not the initial one | Setting › context › restores nested bindings in order |
-| tinygrad: null/test_helpers.py::TestAllSame (4 tests) | `all_same` on empty, one, equal, unequal | Helpers › integers › all_same is true iff every element equals the first |
+| tinygrad: null/test_helpers.py::TestAllSame (4 tests) | `all_same` on empty, one, equal, unequal | Helpers › Integers and lists › all_same is true iff every element equals the first |
 | tinygrad: null/test_helpers.py::TestMergeDicts::test_merge_dicts | `merge_dicts` | dropped: not ported, `Map.union` (README exclusions) |
-| tinygrad: null/test_helpers.py::TestStripParens (7 tests) | `strip_parens` on nested, casted, unmatched and one-sided parentheses | Helpers › terminal text › strip_parens strips as tinygrad does (`text.golden`, every input of the class) |
-| tinygrad: null/test_helpers.py::TestProd::test_empty | `prod ()` is 1 | Helpers › integers › prod of nothing is 1 |
-| tinygrad: null/test_helpers.py::TestProd::test_ints | `prod` multiplies | Helpers › integers › prod multiplies; Helpers › integers › prod maps concatenation to multiplication |
+| tinygrad: null/test_helpers.py::TestStripParens (7 tests) | `strip_parens` on nested, casted, unmatched and one-sided parentheses | Helpers › Terminal text › strip_parens strips each text as its golden states (`text.golden`, every input of the class) |
+| tinygrad: null/test_helpers.py::TestProd::test_empty | `prod ()` is 1 | Helpers › Integers and lists › prod is the product of the elements, 1 if there are none (example `[]`) |
+| tinygrad: null/test_helpers.py::TestProd::test_ints | `prod` multiplies | Helpers › Integers and lists › prod is the product of the elements, 1 if there are none (example `[2; 3; 5]`) |
 | tinygrad: null/test_helpers.py::TestProd::test_variable, test_variable_order | `prod` over symbolic integers | dropped: `prod` is on `int`; the product of symbolic integers belongs to `Ops` (README exclusions) |
-| tinygrad: null/test_helpers.py::TestRoundUp::test_round_up | `round_up` on negative and positive numbers | Helpers › integers › round_up keeps a multiple and rounds up a negative number; Helpers › integers › divide as tinygrad does |
-| tinygrad: null/test_helpers.py::TestCeilDiv::test_int | `ceildiv` on integers | Helpers › integers › divide as tinygrad does (`division.golden`) |
+| tinygrad: null/test_helpers.py::TestRoundUp::test_round_up | `round_up` on negative and positive numbers | Helpers › Integers and lists › round_up keeps a multiple and rounds up a negative number; Helpers › Integers and lists › round_up is the least multiple of a positive amt at least num, as its golden states |
+| tinygrad: null/test_helpers.py::TestCeilDiv::test_int | `ceildiv` on integers | Helpers › Integers and lists › ceildiv rounds num / amt up, as its golden states (`division.golden`) |
 | tinygrad: null/test_helpers.py::TestCeilDiv::test_symbolic, test_symbolic_negative_offset | `ceildiv` on UOps | dropped: `ceildiv` on nodes has no reader among the ported files; `Helpers.ceildiv` is on integers |
 | tinygrad: null/test_helpers.py::TestCount (2 tests) | `count` and its pickling | dropped: not ported, a counter reference (README exclusions) |
 | tinygrad: null/test_helpers.py::TestFetch (9 tests) | `fetch` | dropped: url fetch is not ported |
@@ -40,7 +40,7 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_helpers.py::TestMemoryview (3 tests) | `from_mv`, `to_mv`, `mv_address` | dropped: the ctypes helpers are not ported (README exclusions) |
 | tinygrad: null/test_helpers.py::TestGetShape (2 tests) | `get_shape` | dropped: not ported (README exclusions) |
 | tinygrad: null/test_helpers.py::TestPolyN (2 tests) | `polyN` | dropped: it lives with the symbolic integer type in `Ops` (README exclusions) |
-| tinygrad: null/test_helpers.py::TestTimeToStr (7 tests) | `time_to_str` units, boundaries and width | Helpers › terminal text › time_to_str writes a duration as tinygrad does (`durations.golden`, every input of the class) |
+| tinygrad: null/test_helpers.py::TestTimeToStr (7 tests) | `time_to_str` units, boundaries and width | Helpers › Terminal text › time_to_str writes each duration as its golden states (`durations.golden`, every input of the class) |
 | tinygrad: null/test_helpers.py::TestCStyleDivMod (4 tests) | `cdiv` and `cmod` by positive and negative divisors | dropped: `cdiv` and `cmod` are not ported (README); `Ops` divides constants as C does on `Dtype.value`, `O › exec_alu › exec_alu_values.golden` (the `Ops.TRUNCDIV` and `Ops.TRUNCMOD` rows) |
 | tinygrad: null/test_helpers.py::TestGetBits (5 tests) | `getbits` | dropped: not ported, no reader (README exclusions) |
 | tinygrad: null/test_helpers.py::TestArgFix (4 tests) | `argfix` | dropped: not ported (README exclusions) |
@@ -58,7 +58,7 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_disk_cache.py::DiskCache::test_dict_key | keys of several columns | dropped: keys are strings, which callers encode (D8) |
 | tinygrad: null/test_disk_cache.py::DiskCache::test_table_name | a table name with `:` and `-` | Helpers › Diskcache › behaves as a table of entries per table (table `test_gfx1010:xnack-`) |
 | tinygrad: null/test_disk_cache.py::DiskCache::test_clear_cache | clear empties every table, and runs again | Helpers › Diskcache › clear removes the entries of every table |
-| tinygrad: null/test_device.py::TestDevVar::test_parse | DEV parses targets and prints them back | Helpers › Target › of_string reads a target as tinygrad does (`targets.golden`, every input of the test); the DEV setting is dropped (D95): Setting › startup › starts whatever DEV holds |
+| tinygrad: null/test_device.py::TestDevVar::test_parse | DEV parses targets and prints them back | Helpers › Target › of_string reads each target as its golden states; Helpers › Target › pp writes each target as its golden states (`targets.golden`, every input of the test); the DEV setting is dropped (D95): Setting › startup › starts whatever DEV holds |
 | tinygrad: null/test_device.py::TestDevVar::test_target | the target of a device under DEV | dropped: a device's target follows from the device alone (D95) |
 | tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | dropped: the renderer belongs to `Device`'s suite, and there is no DEV (D95) |
 | tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | "did you mean: 'CLANG'" | dropped: `select_by_name` and its suggestion are not ported (README exclusions); the renderer lookup belongs to `Device`'s suite |
