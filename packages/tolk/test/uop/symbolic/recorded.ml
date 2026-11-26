@@ -1,10 +1,10 @@
-(* Replays of tinygrad: each simplification its tests make, and sym on random
-   expressions, as gen/uop/symbolic.py records them, is the one Symbolic makes,
-   with the bounds tinygrad gives its result, and keeps the value. *)
+(* Recorded simplifications: each that a test of the reference makes, and [sym]
+   on random expressions, as gen/uop/symbolic.py records them. A record holds
+   the simplification's kind, the input, the result and, for some, the result's
+   bounds. *)
 
 open Windtrap
 open Tolk
-open Dtypes
 open Simplification
 
 let matcher = function
@@ -20,8 +20,7 @@ let matcher = function
   | "sym+pm_move_where_on_load" ->
       Ops.Pattern_matcher.append Symbolic.sym Symbolic.pm_move_where_on_load
   | "symbolic_simple+pm_commit_weak" ->
-      Ops.Pattern_matcher.append Shape.symbolic_simple
-        Uop_weak.pm_commit_weak
+      Ops.Pattern_matcher.append Shape.symbolic_simple Uop_weak.pm_commit_weak
   | name -> failf "no matcher %s" name
 
 (* [simplification kind] is the simplification a record of [kind] makes. *)
@@ -65,28 +64,62 @@ let record u =
   | [ input ] -> { kind; bounds; input; result = None }
   | _ -> failf "a record of %d nodes" (List.length srcs)
 
-let replay test k r =
-  let msg = Printf.sprintf "%s, record %d (%s)" test k r.kind in
-  equal ~msg (option uop) r.result (simplification r.kind r.input);
-  Option.iter
-    (fun (lo, hi) ->
-      let out = Option.get r.result in
-      equal ~msg (pair value value) (lo, hi) (Ops.vmin out, Ops.vmax out))
-    r.bounds;
-  ignore
-    (keeps_value ~name:msg r.input (Option.value r.result ~default:r.input))
+(* The record's simplification gives its result, within its bounds, and the
+   result keeps the input's value. A record of no result is a simplification
+   that changes nothing. [replay r] is the number of bindings it checked the
+   value at. *)
+let replay r =
+  equal ~msg:r.kind (option uop) r.result (simplification r.kind r.input);
+  match r.result with
+  | None -> 0
+  | Some out ->
+      Option.iter
+        (fun (lo, hi) ->
+          equal ~msg:"bounds"
+            (pair Dtypes.value Dtypes.value)
+            (lo, hi)
+            (Ops.vmin out, Ops.vmax out))
+        r.bounds;
+      keeps_value ~name:r.kind r.input out
 
-let replay_all name =
-  let records = Ops.src (Golden.sink (name ^ ".golden")) in
-  List.iteri (fun k u -> replay name k (record u)) records
-
-let tests =
-  let replays cell =
-    let name = cell "class" ^ "." ^ cell "test" in
-    test name (fun () -> replay_all name)
+(* Whether [u] is integer arithmetic on a variable, whose values a binding
+   draws: no float, and no read of memory or lane of a vector, which the value
+   law leaves out. *)
+let integer_arithmetic u =
+  let nodes = Ops.toposort ~calls:Skip u in
+  let variable n =
+    match Ops.arg n with
+    | Param { vmin_vmax = Some _; addrspace = Alu; dtype; _ } ->
+        not (Dtype.is_float dtype)
+    | _ -> false
   in
-  group "tests.golden" (List.map replays (Golden.rows "tests.golden"))
+  let outside n =
+    Dtype.is_float (Ops.dtype n)
+    || List.mem (Ops.op n) Op.[ Index; Load ]
+    || (Ops.op n = Op.Stack && not (Dtype.equal (Ops.dtype n) Void))
+  in
+  List.exists variable nodes && not (List.exists outside nodes)
+
+(* Each record of the golden [name] as a subtest, so that one record's failure
+   hides no other. A record of integer arithmetic on a variable has its value
+   checked at some binding: the value law cannot pass for want of one. *)
+let replay_all name =
+  let records = List.map record (Ops.src (Golden.sink (name ^ ".golden"))) in
+  List.iteri
+    (fun k r ->
+      subtest (Printf.sprintf "record %d (%s)" k r.kind) (fun () ->
+          let checked = replay r in
+          if Option.is_some r.result && integer_arithmetic r.input then
+            greater ~msg:"bindings checked" int ~than:0 checked))
+    records
+
+let simplifications =
+  group "makes each recorded simplification, within its recorded bounds"
+    [
+      Golden.cases "tests.golden" ~key:[ "class"; "test" ] (fun cell ->
+          replay_all (cell "class" ^ "." ^ cell "test"));
+    ]
 
 let random_expressions =
-  test "sym simplifies random integer expressions as tinygrad does" (fun () ->
+  test "simplifies recorded random integer expressions as recorded" (fun () ->
       replay_all "random_expressions")

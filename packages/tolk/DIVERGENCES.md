@@ -498,12 +498,17 @@ tinygrad's positive `math.nan` (`dtype.py` `fp8_to_float`).
 - **Pinned by:** `Tolk.Symbolic › symbolic_simple › constants › an operation
   reads committed constants at their width`, `Tolk.Symbolic ›
   symbolic_simple › constants › a comparison reads a committed constant at
-  its width`, `Tolk.Symbolic › committed constants hold their type's value`,
-  the law `Tolk.Symbolic › laws › sym keeps the value of an integer
-  expression at a committed width, wrapping included`, and `Tolk.Symbolic ›
-  tinygrad › tests.golden › TestModularWraparound.<test>`; the offset's
-  interaction with D24: `Tolk.Symbolic › integers wrap › an offset crosses a
-  comparison only where neither side wraps` (the committed case).
+  its width`, 
+  `Tolk.Symbolic › sym › values › keeps an integer graph's value at its
+  width, wrapping included` (rows `a weak operand is read at the width of the
+  operation`, `a folded result is written at its width` and `nested maxima
+  fold their constants at the width of the operation`), the law
+  `Tolk.Symbolic › sym › laws › keeps the value of an integer expression at a
+  committed width, wrapping included`, and `Tolk.Symbolic › sym › makes each
+  recorded simplification, within its recorded bounds › tests.golden`, rows
+  `class=TestModularWraparound test=<test>`; the offset's interaction with
+  D24: the same table's row `an offset crosses a comparison only where
+  neither side wraps` (the committed case).
 
 ## D14. Withdrawn
 
@@ -748,17 +753,19 @@ multi-device is out of scope, see README.
     it leaves wraps`, `› a constant table holding a NaN has its type's
     bounds` and the laws `› bounds hold the value a committed integer
     wraps to` and `› bounds hold every value a cast takes`;
-  - wrapping rules: `Tolk.Symbolic › integers wrap` (every test);
-    `Tolk.Symbolic › conditions › uop_given_valid › a clause on a committed
-    sum that wraps keeps the value`;
+  - wrapping rules: `Tolk.Symbolic › sym › values › keeps an integer
+    graph's value at its width, wrapping included` (every row);
+    `Tolk.Symbolic › uop_given_valid › has u's values wherever valid holds`
+    (its example of an int8 sum that wraps);
     `Tolk.Simplify › pm_reduce_collapse`, its comparison tests;
   - float folds, signed zeros, reassociation, maxima, reciprocal and sigmoid
-    forms, pow: `Tolk.Symbolic › floats keep IEEE values`, one test
-    per facet, with `› a Dekker split and product keep their low parts` and
-    `› a float selection that computes a maximum stays`, the structural tests
-    marked D24 in `symbolic_simple`, `symbolic` and `sym`, and the law
-    `Tolk.Symbolic › laws › sym keeps a float expression's value bit for
-    bit at special values`;
+    forms, pow: `Tolk.Symbolic › sym › values › keeps a float graph's value
+    bit for bit`, one row per facet, with `› keeps the low part of a Dekker
+    split`; `Tolk.Shape › values › a float selection that computes a
+    maximum stays`, the structural tests marked D24 in Shape's
+    `symbolic_simple` and `symbolic`, and the law `Tolk.Symbolic › sym ›
+    laws › keeps a float expression's value bit for bit at special
+    values`;
   - Simplify's reductions: `Tolk.Simplify › pm_reduce_collapse › a
     float sum over an empty part of a range is +0., whatever the value`,
     `› a float product by a boolean mask keeps its value` and `› a float sum
@@ -3881,8 +3888,10 @@ supports Windows: `Cstyle.clang_lang` keeps the empty `abi` and plain
   (operands glibc misrounds, logarithms near 1, of subnormals and past the
   greatest double, powers of two that round to a subnormal or to 0, exponents
   near `2^60`, exact powers, one halfway between two doubles:
-  `68718952449 ** 1.5`, `262143^3`); `Tolk.Symbolic › tinygrad › tests.golden
-  › TestWeakConstFolding.test_float_unaries`, which folds `sin 4.0`; and
+  `68718952449 ** 1.5`, `262143^3`); `Tolk.Symbolic › sym › makes each
+  recorded simplification, within its recorded bounds › tests.golden`, row
+  `class=TestWeakConstFolding test=test_float_unaries`, which folds
+  `sin 4.0`; and
   `Tolk.Symbolic › symbolic_simple › powers › c ** x multiplies x by log2 c
   correctly rounded`, at `c = 0.86`.
 

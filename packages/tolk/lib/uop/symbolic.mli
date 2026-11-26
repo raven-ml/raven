@@ -18,13 +18,15 @@
 val uop_given_valid : ?try_simplex:bool -> Ops.t -> Ops.t -> Ops.t
 (** [uop_given_valid valid u] is [u] simplified with {!Shape.val-symbolic},
     knowing that the boolean [valid] holds. Each clause of the conjunction
-    [valid] that bounds an integer expression, [e < c], [c < e] or
-    [not (e < c)], is assumed by replacing [e] with a variable of those bounds.
+    [valid] that bounds an integer expression [e], [e < x] or [not (e < x)] for
+    any integer [x], read at its bounds, and [c < e] or [not (c < e)] for a
+    constant [c], is assumed by replacing [e] with a variable of those bounds.
     With [try_simplex] (default [true]), a clause stating that a sum, which does
-    not wrap, of irreducible terms is at least [1] also tries each term at least
-    [1] in turn, and keeps the result they all agree on. A loop's range stays as
-    it is, its bound included: assumed inside the bound, a clause would make
-    another loop. The result has [u]'s values wherever [valid] holds. *)
+    not wrap, of irreducible terms other than constants is at least [1] also
+    tries each term at least [1] in turn, and keeps the result they all agree
+    on. A loop's range stays as it is, its bound included: assumed inside the
+    bound, a clause would make another loop. The result has [u]'s values
+    wherever [valid] holds. *)
 
 val simplify_valid : Ops.t -> Ops.t option
 (** [simplify_valid valid] is the conjunction [valid] with each clause
@@ -70,7 +72,9 @@ val sym : (unit, Ops.t) Ops.Pattern_matcher.t
     - {b reductions}: the factors of an integer reduced product that do not
       depend on the reduction's ranges move out of a sum, and out of a maximum
       when they are non-negative;
-    - {b terms}: [(x + y) * c] is [x * c + y * c] for weak integers, where
-      each value multiplied {!Shape.fits};
+    - {b terms}: a weak integer [(x + y) * c] is [x * c + y * c]: weak integers
+      do not wrap;
 
-    then cleans up groups and sinks ({!pm_clean_up_group_sink}). *)
+    then cleans up groups and sinks ({!pm_clean_up_group_sink}). Its work on a
+    chain of [n] selections is linear in [n], also where they share one
+    condition, read from memory or not. *)
