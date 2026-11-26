@@ -6,6 +6,11 @@ open Tolk
 let elf = "\x7fELF" ^ String.make 60 '\000'
 let linker_script = "INPUT(-lc)\n"
 
+(* [under root rel] is [rel], a relative path written with [/], under [root],
+   each part joined as the system joins them. *)
+let under root rel =
+  List.fold_left Filename.concat root (String.split_on_char '/' rel)
+
 let rec mkdir_p dir =
   if not (Sys.file_exists dir) then (
     mkdir_p (Filename.dirname dir);
@@ -17,7 +22,7 @@ let write file contents =
 (* [make root (path, kind)] makes [path] under [root] as [kind]: [elf], [text],
    [dir] or [@target], a symbolic link to [target]. *)
 let make root (path, kind) =
-  let file = Filename.concat root path in
+  let file = under root path in
   mkdir_p (Filename.dirname file);
   match kind with
   | "elf" -> write file elf
@@ -51,84 +56,86 @@ let name_path lib =
   String.uppercase_ascii (String.map (function '-' -> '_' | c -> c) lib)
   ^ "_PATH"
 
-(* Libraries named once per process, since a variable's read may be
-   remembered. *)
+(* Names of libraries that no system holds, a new one per call. *)
 let fresh =
   let n = ref 0 in
   fun () ->
     incr n;
     Printf.sprintf "tolktest%d" !n
 
-(* tinygrad's findlib *)
+(* multiarch *)
 
-let finds_as_tinygrad cell =
+(* Debian's multiarch tuple of each machine [uname -m] names, from Debian's
+   table of tuples (wiki.debian.org/Multiarch/Tuples), for the machines OCaml
+   compiles natively for on Linux. *)
+let debian_tuples =
+  [
+    ("x86_64", "x86_64-linux-gnu");
+    ("aarch64", "aarch64-linux-gnu");
+    ("ppc64le", "powerpc64le-linux-gnu");
+    ("riscv64", "riscv64-linux-gnu");
+    ("s390x", "s390x-linux-gnu");
+  ]
+
+let machine () =
+  match Unix.open_process_args_in "uname" [| "uname"; "-m" |] with
+  | exception Unix.Unix_error _ -> skip ~reason:"uname does not run" ()
+  | ic ->
+      let m = String.trim (In_channel.input_all ic) in
+      ignore (Unix.close_process_in ic);
+      m
+
+let multiarch =
+  group "multiarch"
+    [
+      test "is Debian's tuple of the host's machine" (fun () ->
+          on "linux";
+          let m = machine () in
+          match List.assoc_opt m debian_tuples with
+          | None -> skip ~reason:("no Debian tuple listed for " ^ m) ()
+          | Some tuple -> equal string tuple C.multiarch);
+    ]
+
+(* findlib *)
+
+let finds_as_golden cell =
   on (cell "platform");
   let root = temp_dir () and lib = cell "lib" in
   List.iter (fun e -> make root (entry e)) (words (cell "tree"));
-  let under = Filename.concat root in
   setenv (name_path lib)
     (match cell "name_path" with
     | "-" -> None
     | {|""|} -> Some ""
-    | path -> Some (under path));
+    | path -> Some (under root path));
   setenv "LD_LIBRARY_PATH"
     (match cell "ld_library_path" with
     | "-" -> None
     | dirs ->
         String.split_on_char ':' dirs
-        |> List.map (function "" -> "" | d -> under d)
+        |> List.map (function "" -> "" | d -> under root d)
         |> String.concat ":" |> Option.some);
+  (* An absolute path of the golden is one under [root]. *)
   let paths =
     List.map
-      (fun p -> if p.[0] = '/' then root ^ p else p)
+      (fun p ->
+        if p.[0] = '/' then under root (String.sub p 1 (String.length p - 1))
+        else p)
       (words (cell "paths"))
   in
-  let extra_paths = List.map under (words (cell "extra_paths")) in
+  let extra_paths = List.map (under root) (words (cell "extra_paths")) in
   let expected =
-    match cell "found" with "None" -> None | found -> Some (under found)
+    match cell "found" with "None" -> None | found -> Some (under root found)
   in
   equal (option string) expected (C.findlib ~extra_paths lib paths)
 
-let tinygrad =
-  group "as tinygrad"
-    [
-      Golden.cases ~key:[ "platform"; "case" ] "findlib_trees.golden"
-        finds_as_tinygrad;
-    ]
-
-(* Candidates of one directory *)
-
 let first_elf_in_name_order () =
-  on "linux";
+  if platform = "darwin" then skip ~reason:"macOS takes no ELF file" ();
   let root = temp_dir () and lib = fresh () in
   let so v = Printf.sprintf "lib%s.so%s" lib v in
-  List.iter
-    (fun name -> make root ("d/" ^ name, "elf"))
-    [ so ".2"; so ".10"; so ".1.5" ];
+  List.iter (fun v -> make root ("d/" ^ so v, "elf")) [ ".2"; ".10"; ".1.5" ];
   equal (option string)
-    (Some (Filename.concat root ("d/" ^ so ".1.5")))
-    (C.findlib ~extra_paths:[ Filename.concat root "d" ] lib [ lib ])
-
-let first_elf_after_a_linker_script () =
-  on "linux";
-  let root = temp_dir () and lib = fresh () in
-  make root (Printf.sprintf "d/lib%s.so" lib, "text");
-  make root (Printf.sprintf "d/lib%s.so.1" lib, "elf");
-  make root (Printf.sprintf "d/lib%s.so.2" lib, "elf");
-  equal (option string)
-    (Some (Filename.concat root (Printf.sprintf "d/lib%s.so.1" lib)))
-    (C.findlib ~extra_paths:[ Filename.concat root "d" ] lib [ lib ])
-
-let one_directory =
-  group "one directory"
-    [
-      test "the first ELF file in the order of names is found"
-        first_elf_in_name_order;
-      test "a linker script first in the order of names is passed over"
-        first_elf_after_a_linker_script;
-    ]
-
-(* The search is the first of its directories *)
+    (Some (under root ("d/" ^ so ".1.5")))
+    (C.findlib ~extra_paths:[ under root "d" ] lib [ lib ])
 
 (* A tree of directories [d0] to [d3], each holding some of a library's
    candidate names on the platform, as files or directories, and two lists of
@@ -192,6 +199,18 @@ let gen_layout =
    { files; searches })
   |> with_pp pp_layout
 
+(* A library in directory [d]: the platform's first candidate, as its first
+   kind. *)
+let library_in d =
+  let _, _, kinds = List.hd candidates in
+  (d, 0, List.hd kinds)
+
+(* The layouts each cover needs, run whatever the seed. *)
+let found_second_only = { files = [ library_in 1 ]; searches = ([ 0 ], [ 1 ]) }
+
+let found_in_both =
+  { files = [ library_in 0; library_in 1 ]; searches = ([ 0 ], [ 1 ]) }
+
 let first_of_directories l =
   setenv "LD_LIBRARY_PATH" None;
   let root = temp_dir () and lib = fresh () in
@@ -205,38 +224,34 @@ let first_of_directories l =
   let find extra_paths = C.findlib ~extra_paths lib [ lib ] in
   let first f f' = match f with Some _ -> f | None -> f' in
   let a, b = (dirs (fst l.searches), dirs (snd l.searches)) in
-  cover "found in the second search only" (find a = None && find b <> None);
-  cover "found in both searches" (find a <> None && find b <> None);
+  let found_a = find a <> None and found_b = find b <> None in
+  cover "found in the second search only" ((not found_a) && found_b);
+  cover "found in both searches" (found_a && found_b);
   Law.homomorphic (list string) (option string) find ( @ ) first (a, b)
 
-let search_order =
-  group "search order"
+let findlib =
+  group "findlib"
     [
+      group "finds in each tree the file the golden names"
+        [
+          Golden.cases ~key:[ "platform"; "case" ] "findlib_trees.golden"
+            finds_as_golden;
+        ];
+      test "the first ELF file in the order of names is found"
+        first_elf_in_name_order;
       prop "searching two lists of directories finds the first of each search"
+        ~examples:[ found_second_only; found_in_both ]
         gen_layout first_of_directories;
-    ]
-
-(* The absent library *)
-
-let absent =
-  group "absence"
-    [
       test "a name nowhere is not found" (fun () ->
           let lib = fresh () in
-          is_none (C.findlib lib [ lib ]));
+          equal (option string) None (C.findlib lib [ lib ]));
       test "no paths find nothing, even with a directory that holds the name"
         (fun () ->
           let root = temp_dir () and lib = fresh () in
           make root ("d/lib" ^ lib ^ ".dylib", "text");
           make root ("d/lib" ^ lib ^ ".so", "elf");
-          is_none (C.findlib ~extra_paths:[ Filename.concat root "d" ] lib []));
-    ]
-
-(* The system's directories *)
-
-let system =
-  group "the system's directories"
-    [
+          equal (option string) None
+            (C.findlib ~extra_paths:[ under root "d" ] lib []));
       test "MTLCompiler is found among macOS's private frameworks" (fun () ->
           on "darwin";
           equal (option string)
@@ -250,16 +265,6 @@ let system =
           on "linux";
           let file = require_some (C.findlib "c" [ "c" ]) in
           starts_with ~prefix:"libc.so" (Filename.basename file));
-    ]
-
-(* multiarch *)
-
-let multiarch =
-  group "multiarch"
-    [
-      test "names a Linux machine" (fun () ->
-          on "linux";
-          contains ~sub:"-linux-" C.multiarch);
     ]
 
 (* identity *)
@@ -313,15 +318,4 @@ let identity =
           equal string absent (C.identity (Some absent)));
     ]
 
-let () =
-  exit
-    (run "Tolk.C"
-       [
-         tinygrad;
-         one_directory;
-         search_order;
-         absent;
-         system;
-         multiarch;
-         identity;
-       ])
+let () = exit (run "Tolk.C" [ multiarch; findlib; identity ])
