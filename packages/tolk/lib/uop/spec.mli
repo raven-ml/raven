@@ -52,7 +52,9 @@ val shared : t
     greatest values together at most the axis's size ({!Shape.max_shape}). An
     access they do not prove fails, whatever its gate, and its bounds, its index
     if it has one, and the gate are printed on standard error, saying that the
-    bound cannot be proven without a solver. *)
+    bound cannot be proven without a solver. An access through an index of more
+    than one integer, or at {!Ops.invalid}, is not checked: the first is checked
+    once lowered to one index, and the second touches no memory. *)
 
 val tensor : t
 (** [tensor] is {!shared} with the operations of tensor graphs: float-only unary
@@ -81,11 +83,12 @@ val full : t
 val kernel_graph : t
 (** [kernel_graph] accepts the graph of kernel calls: a sink of calls of opaque
     bodies over storage and parameters, with the constants, stacks, casts and
-    bitcasts that make their arguments, and orderings of storage. A call may
-    run in a loop, an {!Op.End} of {!Ops.Axis_type.Loop} ranges around it, and
-    read views of storage ({!Op.Shrink}) that move with those ranges, their
-    bounds constants, loop ranges, and weak integer sums and products of them.
-    *)
+    bitcasts that make their arguments, and orderings of storage. A call may run
+    in a loop, an {!Op.End} of {!Ops.Axis_type.Loop} ranges around it, and read
+    views of storage ({!Op.Shrink}) that move with those ranges. The ranges'
+    bounds and the views' bounds are constants, loop ranges, and weak integer
+    sums and products of them. A call's arguments start where its parameters
+    assume, as {!shared}'s calls do. *)
 
 (** {1:verify Verifying} *)
 

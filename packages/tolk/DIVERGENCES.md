@@ -1586,9 +1586,10 @@ renderer.
   each trip starts` and `› an After state's fixed run under a back edge`, with
   the loop's call inlined, the nested loops and the loop in a body also against
   `Tensors`. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of
-  calls › accepts a loop of a call over a loop range`, `› refuses a loop of a
-  call over a range of any other kind` and `› refuses a weak sum of a weak
-  integer variable`; its `verdicts.tolk`.
+  calls › accepts an end of a call over loop ranges`, `› accepts a view that
+  moves with loop ranges, and its offset`, `› accepts a loop range`, `›
+  refuses a loop of a call over a range of any other kind` and `› refuses a
+  weak sum of a weak integer variable`; `verdicts.tolk`'s D60 rows.
 
 ## D61. Withdrawn
 
@@ -3743,7 +3744,8 @@ values.
   (each recorded program, loop and refusal on Metal, CUDA, NV and AMD where
   the machine has one), `lanes and words` and `runs`; the jit goldens
   (`test/engine/jit/*_lowered.golden`), which `gen/engine/jit.py` makes
-  without batches.
+  without batches; the Spec suite's `verdicts.tolk` rows `a program of a
+  parameter` and `a program of a global buffer after a store`.
 
 ## D147. The x86 and arm64 hosts hold bfloat16 as its bits
 
@@ -4652,8 +4654,9 @@ and 0.4% of compile instructions, which did not pay for the scan.
   expression on two devices of a target is one kernel`, `… › a kernel on
   buffers of two devices is refused` and `create_linear_with_vars › copies
   between devices`; `Tolk.Search › beam_search keeps its choice › a search
-  kept for one device serves another of its target`; `Tolk.Spec › program ›
-  parameters`; rune's `Rune.jit over several devices`, `searches` among them.
+  kept for one device serves another of its target`; the Spec suite's
+  `verdicts.tolk` rows `a named parameter on a device` and `a variable on a
+  device`; rune's `Rune.jit over several devices`, `searches` among them.
 
 ## D171. Withdrawn
 
@@ -5944,9 +5947,9 @@ union, as fast on CUDA, on the host and in compile time.
   on the host and each GPU present (CUDA and NV on fudge), every test. The
   Ops suite: `ranges › a launch knows a bound of constants and variables,
   ...`. The Postrange suite: `loops bounded by an axis`, and `axes.tolk`'s
-  `padto_reduction_bound`. The Spec suite: `verdicts.tolk`'s `an int32 load
-  after a range`, `a range bounded by a load after a range` and `a load after
-  a store`. The Codegen suite: `hand-written kernels on the host › a lane of
+  `padto_reduction_bound`. The Spec suite: `verdicts.tolk`'s `a load after a
+  store`, and `verdicts.golden`'s `an int32 load after a range` and `a range
+  bounded by a load after a range`. The Codegen suite: `hand-written kernels on the host › a lane of
   stored lanes keeps every lane's store` and `a loop whose bound reads memory
   stays a loop of a kernel on threads`.
 
@@ -7762,9 +7765,9 @@ into D342, which holds its rule, its reason and its pins.
   their own`; the Tolk_engine suite's `calls of views` (by a kernel and a
   precompiled call; `› a call writes through a run of storage wherever it
   starts`; the refusals of a loop's column and of rows off 16 bytes with the
-  specification checks on); the Spec suite's `tensor › arguments against
-  their parameters` and its `verdicts` recording, a shrink of storage
-  in the kernel graph; the Rangeify suite's `custom_kernel_of_views`
+  specification checks on); the Spec suite's `tensor › accepts a call
+  whatever its arguments' starts` and `verdicts.tolk`'s shrink rows, a
+  shrink of storage in the kernel graph; the Rangeify suite's `custom_kernel_of_views`
   recordings.
 
 ## D356. A run's binding of a name holds over the value a call binds it to
@@ -10348,5 +10351,7 @@ D466.
   exists to catch and tinygrad's lets through: `bounds.golden`'s `a load of a
   shrink` and `a store to a shrink past the last element`, elements 20 to 23
   of 16, pass tinygrad's check.
-- **Pinned by:** the Spec suite: `bounds › bounds.golden`, through
-  `bounds.tolk`'s two rows.
+- **Pinned by:** the Spec suite: `shared › with check_oob, accepts each
+  recorded access as its golden states`, through `bounds.tolk`'s two rows, and
+  `› with check_oob, an access through a shrink passes iff its run lies within
+  the storage`.
