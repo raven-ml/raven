@@ -2668,7 +2668,7 @@ let repr_shape s = repr_tuple (List.map repr_sint s)
 
 let broadcast_shape shapes =
   match shapes with
-  | [] -> invalid_arg "no shapes to broadcast"
+  | [] -> []
   | s :: rest when List.for_all (equal_shape s) rest -> s
   | _ ->
       List.map

@@ -1128,8 +1128,8 @@ let shapes =
           rejects (fun () ->
               Ops.broadcast_shape
                 [ [ Sym (t_var ()) ]; [ Sym (weak_var "s" 1 10) ] ]));
-      test "broadcast_shape rejects nothing to broadcast" (fun () ->
-          rejects (fun () -> Ops.broadcast_shape []));
+      test "broadcast_shape of no shape is the empty shape" (fun () ->
+          equal shape [] (Ops.broadcast_shape []));
       test "sint_to_uop is the literal, or the node itself" (fun () ->
           equal uop (Ops.int 3) (Ops.sint_to_uop (Int 3));
           equal uop (Ops.int ~dtype:Int32 3)

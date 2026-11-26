@@ -584,7 +584,8 @@ val split_uop : t -> Op.t -> t list
 val broadcast_shape : sint list list -> sint list
 (** [broadcast_shape shapes] is the shape [shapes] broadcast to: aligned to the
     right, each axis is the size of its sources that is not [1], or [1] if all
-    are.
+    are. Of no shape it is [[]], which broadcasts with every shape to that
+    shape.
 
     Raises [Invalid_argument] if an axis has two different sizes other than [1].
 *)
