@@ -10004,8 +10004,9 @@ D466.
   `Prepare.expand_bitcast` (`no unsigned integer of 100 bytes`). Committing
   the pad's zero where the pad becomes a where instead fails 20 of the
   schedule suites' recorded tests.
-- **Pinned by:** the Ops suite's `graph_rewrite › a where rebuilt on an
-  Invalid branch keeps its committed type` (both passes, both orders) and
+- **Pinned by:** the Ops suite's `Tolk.Ops › graph_rewrite › a where
+  rebuilt on an Invalid branch keeps its committed type` (both passes, both
+  orders) and
   the engine suite's `link and run › a bitcast of a float64's outer padding
   reads its bits` (padding of zero and of one).
 

@@ -19,11 +19,6 @@ let axis_type = Testable.make ~pp:Ops.Axis_type.pp ~equal:Ops.Axis_type.equal
    [build] makes the graph golden [file]. *)
 let golden_graph claim file build = group claim [ Golden.graph file build ]
 
-(* [golden value claim file build] is the group [value] › [claim] holding the
-   test that [build] makes the graph golden [file]. *)
-let golden value claim file build =
-  group value [ golden_graph claim file build ]
-
 (* Construction *)
 
 (* [accepted pred rows] is the names of the rows whose node [pred] holds of. *)
@@ -1445,12 +1440,6 @@ let usum_group =
         (fun (_, u, expected) -> equal uop expected u);
     ]
 
-let substitute_goldens =
-  [
-    golden "substitute" "replaces each node as substitution.golden states"
-      "substitution.golden" Goldens.substitution;
-  ]
-
 let groups =
   [
     const_group;
@@ -1527,4 +1516,3 @@ let groups =
       contiguous_group;
       usum_group;
     ]
-  @ substitute_goldens

@@ -1176,17 +1176,6 @@ let simple_pm =
             Some Ops.O.(m "x" + float (value_of (m "c1") +. value_of (m "c2"))));
       ])
 
-let rewrite_to value u =
-  let out =
-    Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
-      (After_sources simple_pm)
-  in
-  equal op Op.Const (Ops.op out);
-  equal float_exact value (value_of out)
-
-(* Rewriting with the substitution of [pairs], after the sources unless [order]
-   is [before], to a fixed point unless [pass] is [Once], and outside call
-   bodies unless [calls] is [Enter]. *)
 let table pairs =
   let t = Ops.Tbl.create 4 in
   List.iter (fun (k, v) -> Ops.Tbl.replace t k v) pairs;
@@ -1195,8 +1184,23 @@ let table pairs =
 let after m = Ops.After_sources m
 let before m = Ops.Before_sources m
 
-let rw ?(order = after) ?(pass = Ops.Fixed_point) ?(calls = Ops.Skip) pairs u =
-  Ops.graph_rewrite ~calls ~pass ~ctx:(table pairs) u (order Ops.pm_substitute)
+(* [substituted rules pass pairs u] is [u] rewritten by [pm_substitute] with the
+   substitution [pairs], at the place [rules] gives it, outside call bodies. *)
+let substituted ?(calls = Ops.Skip) rules pass pairs u =
+  Ops.graph_rewrite ~calls ~pass ~ctx:(table pairs) u (rules Ops.pm_substitute)
+
+(* The four ways a rewrite meets a node: each pass, after or before the
+   sources. *)
+let modes =
+  [
+    ("Fixed_point, after the sources", Ops.Fixed_point, after);
+    ("Fixed_point, before the sources", Ops.Fixed_point, before);
+    ("Once, after the sources", Ops.Once, after);
+    ("Once, before the sources", Ops.Once, before);
+  ]
+
+let directions =
+  [ ("after the sources", after); ("before the sources", before) ]
 
 let sin u = Ops.alu u Op.Sin []
 
@@ -1221,85 +1225,25 @@ let recorder tag =
             None);
       ])
 
-let recorded log = List.rev !log
+(* [visits pass rules u] is the labels of the nodes the rules [rules] see, in
+   the order they see them, rewriting [u]. *)
+let visits pass rules u =
+  let log = ref [] in
+  ignore (Ops.graph_rewrite ~calls:Skip ~pass ~ctx:log u rules);
+  List.rev !log
+
 let gate = Pm.rule (P.op Op.Add) (fun _ -> raise Ops.Bottom_up_gate)
 
 let unreachable o =
   Pm.rule (P.op o) (fun _ -> fail "a gated node's sources were visited")
 
-let rewriting =
+let gates =
   let a = var "a" 0 10 and b = var "b" 0 10 and c = var "c" 0 10 in
-  group "graph_rewrite"
+  group "Bottom_up_gate"
     [
-      test "folds to a fixed point" (fun () ->
-          rewrite_to 3. Ops.O.(c1 + c2);
-          rewrite_to 12. Ops.O.(c1 * c2 * (c3 + c3));
-          rewrite_to 6. Ops.O.(c1 + c2 + c3);
-          rewrite_to 10. Ops.O.(c1 + c2 + c3 + float 4.);
-          rewrite_to 7. Ops.O.(c1 + c2 + (c1 + c3));
-          rewrite_to 3. (Ops.int 4));
-      test "rewrites a node's result in turn" (fun () ->
-          let v = fvar "v" in
-          let out =
-            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-              Ops.O.(v + c1 + c2)
-              (After_sources simple_pm)
-          in
-          equal uop Ops.O.(v + float 3.) out);
-      test "keeps shared nodes shared" (fun () ->
-          let v1 = fvar "v" and v2 = fvar "v" in
-          let out =
-            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-              Ops.O.(v1 + v2)
-              (After_sources (Pm.v (fun () -> [])))
-          in
-          is_true (Ops.nth out 0 == Ops.nth out 1));
-      test "a rule that returns its node declines, whatever the direction"
-        (fun () ->
-          let m =
-            Pm.v (fun () ->
-                [ Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x")) ])
-          in
-          equal uop a
-            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() a
-               (After_sources m));
-          equal uop a
-            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() a
-               (Before_sources m)));
-      test "rejects rules that never settle, whatever the direction" (fun () ->
-          rejects (fun () ->
-              Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-                (Ops.int 3) (After_sources three_to_four));
-          rejects (fun () ->
-              Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-                (Ops.int 3) (Before_sources three_to_four)));
-      test "rejects a replacement that depends on the node it replaces"
-        (fun () ->
-          let s = sin (fvar "a") in
-          rejects (fun () -> rw [ (s, Ops.sqrt s) ] (Ops.sink [ s ]));
-          rejects (fun () ->
-              rw ~order:before [ (s, Ops.sqrt s) ] (Ops.sink [ s ]));
-          let x = fvar "a" and y = fvar "b" in
-          rejects (fun () ->
-              rw ~order:before [ (x, Ops.sqrt y); (y, sin x) ] (Ops.sink [ x ])));
-      test "rejects a call whose argument depends on the call" (fun () ->
-          let staged = Ops.bufferize (fvar "a") [] in
-          let m =
-            Pm.v (fun () ->
-                [
-                  Pm.rule (P.op ~name:"x" Op.Stage) (fun m ->
-                      Some
-                        (Ops.call
-                           (Ops.custom_function "f"
-                              [ Shape.param_like (m "x") 0 ])
-                           [ m "x" ]));
-                ])
-          in
-          rejects (fun () ->
-              Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-                (Ops.sink [ staged ]) (Before_sources m)));
-      test "a gate keeps a bottom-up node and leaves its sources unvisited"
-        (fun () ->
+      test
+        "before the sources under Fixed_point, keeps the node and leaves its \
+         sources unvisited" (fun () ->
           let m = Pm.v (fun () -> [ gate; unreachable Op.Mul ]) in
           let u = Ops.O.((a * a) + (b * c)) in
           equal uop u
@@ -1320,351 +1264,25 @@ let rewriting =
             (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
                Ops.O.(a + a)
                (Before_sources m)));
-      test "a walk lets a gate escape" (fun () ->
+      cases "escapes a rewrite under Once, or from a rule after the sources"
+        ~id:(fun (what, _, _) -> what)
+        (List.filter
+           (fun (what, _, _) -> what <> "Fixed_point, before the sources")
+           modes)
+        (fun (_, pass, rules) ->
           let m = Pm.v (fun () -> [ gate ]) in
           raises Ops.Bottom_up_gate (fun () ->
-              Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:()
+              Ops.graph_rewrite ~calls:Skip ~pass ~ctx:()
                 Ops.O.(a + b)
-                (Before_sources m)));
-      test "a gate from a rule after the sources escapes" (fun () ->
-          let m = Pm.v (fun () -> [ gate ]) in
-          raises Ops.Bottom_up_gate (fun () ->
-              Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-                Ops.O.(a + b)
-                (After_sources m)));
-      test "bpm rewrites before the sources and the matcher after them"
-        (fun () ->
-          let log = ref [] in
-          ignore
-            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:log
-               Ops.O.(int 1 + int 2)
-               (Around_sources
-                  { before = recorder " bpm"; after = recorder " pm" }));
-          equal (list string)
-            [ "Ops.ADD bpm"; "1 bpm"; "1 pm"; "2 bpm"; "2 pm"; "Ops.ADD pm" ]
-            (recorded log));
-      test "a rewrite after one an exception ended rewrites as a fresh domain"
-        (fun () ->
-          let raising =
-            Pm.v (fun () ->
-                [
-                  Pm.rule
-                    (P.op ~arg:(Const (`Float 3.)) Op.Const)
-                    (fun _ -> raise Exit);
-                  Pm.rule
-                    (P.op ~arg:(Const (`Float 1.)) Op.Const)
-                    (fun _ -> Some (fvar "one"));
-                ])
-          in
-          let wide =
-            Ops.sink (List.init 64 (fun k -> fconst (Float.of_int k)))
-          in
-          let u =
-            Ops.sink
-              (Ops.int 0
-               :: List.init 64 (fun k -> fconst (Float.of_int k +. 0.5))
-              @ [ Ops.O.(c1 + c2) ])
-          in
-          let rewrite () =
-            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
-              (Around_sources { before = simple_pm; after = simple_pm })
-          in
-          let expected = Domain.join (Domain.spawn rewrite) in
-          raises Exit (fun () ->
-              Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() wide
-                (After_sources raising));
-          raises Exit (fun () ->
-              Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:() wide
-                (After_sources raising));
-          equal uop expected (rewrite ()));
-      test "a where rebuilt on an Invalid branch keeps its committed type"
-        (fun () ->
-          (* The weak zero takes its width from [x], and Invalid states none:
-             the rebuilt where commits the zero at the where's type. *)
-          let x = fvar ~dtype:Float64 "x" and c = flag "c" in
-          let invalid = Ops.const `Invalid in
-          let where y z = Ops.v Op.Where ~src:[ c; y; z ] in
-          let want = where invalid (Ops.float ~dtype:Float64 0.) in
-          List.iter
-            (fun (order, pass) ->
-              equal uop want
-                (rw ~order ~pass [ (x, invalid) ] (where x (Ops.float 0.))))
-            [
-              (after, Ops.Fixed_point);
-              (after, Ops.Once);
-              (before, Ops.Fixed_point);
-              (before, Ops.Once);
-            ]);
-      test "the work list is bounded by REWRITE_STACK_LIMIT" (fun () ->
-          equal string "REWRITE_STACK_LIMIT"
-            (Setting.key Setting.rewrite_stack_limit);
-          equal int 250000 (Setting.value Setting.rewrite_stack_limit);
-          let wide = Ops.sink (List.init 64 (fun n -> Ops.int n)) in
-          Setting.context
-            [ B (Setting.rewrite_stack_limit, 8) ]
-            (fun () ->
-              rejects (fun () ->
-                  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() wide
-                    (After_sources (Pm.v (fun () -> []))))));
+                (rules m)));
     ]
 
-let substituting =
-  let a = var "a" 0 10
-  and b = var "b" 0 10
-  and c = var "c" 0 10
-  and d = var "d" 0 10 in
-  let x = fvar "x" in
-  group "substitute"
-    [
-      test "replaces a node wherever it is" (fun () ->
-          equal uop
-            Ops.O.(b + int 4)
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point
-               Ops.O.(a + int 4)
-               [ (a, b) ]);
-          equal uop
-            Ops.O.(c + int 4 + c)
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point
-               Ops.O.(a + int 4 + b)
-               [ (a, c); (b, c) ]);
-          equal uop
-            Ops.O.(b + int 4 + (b + int 5))
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point
-               Ops.O.(a + int 4 + (a + int 5))
-               [ (a, b) ]));
-      test "replaces the node nearest the root first" (fun () ->
-          let y = fvar "y" in
-          equal uop (sin y)
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point
-               (sin (sin x))
-               [ (sin x, y) ]);
-          equal uop
-            (sin (Ops.sqrt x))
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point
-               (sin (sin x))
-               [ (sin x, Ops.sqrt x) ]);
-          equal uop
-            (Ops.sqrt (Ops.sqrt x))
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point
-               (sin (sin x))
-               [ (sin x, Ops.sqrt x); (sin (sin x), Ops.sqrt (sin x)) ]));
-      test "ignores nodes paired with themselves" (fun () ->
-          let e = Ops.O.(a + int 4) in
-          is_true
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point e [ (a, a) ] == e);
-          is_true (Ops.substitute ~calls:Skip ~pass:Fixed_point e [] == e));
-      test "rewrites with extra_pm too, never inside a replacement" (fun () ->
-          let three = Ops.int 3 and four = Ops.int 4 in
-          let s = Ops.O.(three + four) in
-          let visit =
-            Pm.v (fun () ->
-                [
-                  Pm.rule (P.op ~name:"c" Op.Const) (fun m ->
-                      let c = m "c" in
-                      if c == three || c == four then
-                        fail "entered the replaced node"
-                      else None);
-                ])
-          in
-          equal uop
-            Ops.O.(int 7 + int 2)
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point
-               ~extra_pm:(Pm.with_ctx visit)
-               Ops.O.(s + int 2)
-               [ (s, Ops.int 7) ]));
-      test "walk does not enter a replacement" (fun () ->
-          equal uop
-            Ops.O.(b + c + int 4)
-            (Ops.substitute ~calls:Skip ~pass:Once
-               Ops.O.(a + int 4)
-               [ (a, Ops.O.(b + c)); (b, d) ]);
-          equal uop
-            Ops.O.(d + c + int 4)
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point
-               Ops.O.(a + int 4)
-               [ (a, Ops.O.(b + c)); (b, d) ]));
-      prop "is idempotent when no replacement holds a replaced node"
-        Nodes.gen_recipe (fun r ->
-          let vars = Nodes.leaves () in
-          let u = Nodes.build vars r in
-          cover "replaces" (List.memq vars.(0) (Ops.toposort ~calls:Enter u));
-          let f u =
-            Ops.substitute ~calls:Skip ~pass:Fixed_point u
-              [ (vars.(0), Ops.O.(vars.(1) + int 1)) ]
-          in
-          equal uop (f u) (f (f u)));
-    ]
-
-let walks =
-  let a = var "a" 0 10
-  and b = var "b" 0 10
-  and c = var "c" 0 10
-  and d = var "d" 0 10 in
-  let x = fvar "x" in
-  group "walk"
-    [
-      test "top-down, substitutes once" (fun () ->
-          equal uop
-            Ops.O.(b + int 4)
-            (rw ~pass:Once [ (a, b) ] Ops.O.(a + int 4));
-          equal uop
-            Ops.O.(c + int 4 + (c + int 5))
-            (rw ~pass:Once [ (a, c); (b, c) ] Ops.O.(a + int 4 + (b + int 5)));
-          equal uop
-            Ops.O.(b + int 4 + (b + int 5))
-            (rw ~pass:Once [ (a, b) ] Ops.O.(a + int 4 + (a + int 5))));
-      test "top-down, does not enter a replacement" (fun () ->
-          equal uop
-            Ops.O.(b + c + int 4)
-            (rw ~pass:Once [ (a, Ops.O.(b + c)); (b, d) ] Ops.O.(a + int 4));
-          equal uop
-            Ops.O.(d + c + int 4)
-            (rw ~order:before [ (a, Ops.O.(b + c)); (b, d) ] Ops.O.(a + int 4)));
-      test "top-down, applies a bouncing rule once" (fun () ->
-          equal uop (Ops.int 4)
-            (Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:() (Ops.int 3)
-               (After_sources three_to_four)));
-      test "top-down, rewrites the sources before the rebuilt node" (fun () ->
-          let n1 = sin x in
-          equal uop
-            (sin (Ops.sqrt x))
-            (rw ~pass:Once
-               [ (sin x, Ops.sqrt x); (sin n1, Ops.sqrt n1) ]
-               (sin n1)));
-      test "top-down, accepts a replacement that holds the replaced node"
-        (fun () ->
-          equal uop
-            Ops.O.(Ops.sqrt (sin x) + int 4)
-            (rw ~pass:Once [ (sin x, Ops.sqrt (sin x)) ] Ops.O.(sin x + int 4)));
-      test "top-down, visits after the sources" (fun () ->
-          let log = ref [] in
-          ignore
-            (Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:log
-               Ops.O.(int 1 + int 2)
-               (After_sources (recorder "")));
-          equal (list string) [ "1"; "2"; "Ops.ADD" ] (recorded log));
-      test "bottom-up, substitutes once and never enters a replacement"
-        (fun () ->
-          equal uop
-            Ops.O.(b + int 4)
-            (rw ~order:before ~pass:Once [ (a, b) ] Ops.O.(a + int 4));
-          equal uop
-            Ops.O.(b + c + int 4)
-            (rw ~order:before ~pass:Once
-               [ (a, Ops.O.(b + c)); (b, d) ]
-               Ops.O.(a + int 4));
-          equal uop
-            Ops.O.(c + int 4 + (c + int 5))
-            (rw ~order:before ~pass:Once
-               [ (a, c); (b, c) ]
-               Ops.O.(a + int 4 + (b + int 5))));
-      test "bottom-up, a matched node's sources are never visited" (fun () ->
-          let n1 = sin x in
-          equal uop
-            (Ops.sqrt (sin x))
-            (rw ~order:before ~pass:Once
-               [ (sin x, Ops.sqrt x); (sin n1, Ops.sqrt n1) ]
-               (sin n1)));
-      test "bottom-up, applies a bouncing rule once" (fun () ->
-          equal uop (Ops.int 4)
-            (Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:() (Ops.int 3)
-               (Before_sources three_to_four)));
-      test "bottom-up, visits before the sources" (fun () ->
-          let log = ref [] in
-          ignore
-            (Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:log
-               Ops.O.(int 1 + int 2)
-               (Before_sources (recorder "")));
-          equal (list string) [ "Ops.ADD"; "1"; "2" ] (recorded log));
-      test "both ways, bpm visits before the sources and the matcher after"
-        (fun () ->
-          let log = ref [] in
-          ignore
-            (Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:log
-               Ops.O.(int 1 + int 2)
-               (Around_sources
-                  { before = recorder " bpm"; after = recorder " pm" }));
-          equal (list string)
-            [ "Ops.ADD bpm"; "1 bpm"; "1 pm"; "2 bpm"; "2 pm"; "Ops.ADD pm" ]
-            (recorded log));
-      test "both ways, a bpm match skips the node's sources and its matcher"
-        (fun () ->
-          let log = ref [] in
-          let one = Ops.int 1 and two = Ops.int 2 in
-          let bpm =
-            Pm.v (fun () ->
-                [
-                  Pm.rule_ctx (P.v ~op:Op.Set.all ~name:"x" ()) (fun log m ->
-                      let x = m "x" in
-                      log := (label x ^ " bpm") :: !log;
-                      if x == one then Some (Ops.int 10) else None);
-                ])
-          in
-          let out =
-            Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:log
-              Ops.O.(one + two)
-              (Around_sources { before = bpm; after = recorder " pm" })
-          in
-          equal uop Ops.O.(int 10 + two) out;
-          is_false (List.mem "1 pm" (recorded log));
-          is_true (List.mem "2 pm" (recorded log)));
-    ]
-
-let call_bodies =
-  let a = Ops.int 3 and b = Ops.int 4 in
-  let modes =
-    [
-      ("fixed point, after", Ops.Fixed_point, after);
-      ("fixed point, before", Ops.Fixed_point, before);
-      ("once, after", Ops.Once, after);
-      ("once, before", Ops.Once, before);
-    ]
+let rewrite_to value u =
+  let out =
+    Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+      (After_sources simple_pm)
   in
-  group "calls"
-    [
-      test "a node can become a call that holds it" (fun () ->
-          let staged = Ops.bufferize (fvar "a") [] in
-          let call = Ops.call (Ops.custom_function "f" [ staged ]) [] in
-          List.iter
-            (fun (mode, pass, order) ->
-              equal ~msg:mode uop (Ops.sink [ call ])
-                (rw ~order ~pass [ (staged, call) ] (Ops.sink [ staged ])))
-            modes);
-      test "a body is rewritten only under Enter, its arguments always"
-        (fun () ->
-          let call = Ops.call (Ops.custom_function "f" [ a ]) [ a ] in
-          List.iter
-            (fun (mode, pass, order) ->
-              List.iter
-                (fun (name, calls, body) ->
-                  equal
-                    ~msg:(Printf.sprintf "%s, %s" mode name)
-                    uop
-                    (Ops.call (Ops.custom_function "f" [ body ]) [ b ])
-                    (rw ~order ~pass ~calls [ (a, b) ] call))
-                [ ("Skip", Ops.Skip, a); ("Enter", Ops.Enter, b) ])
-            modes);
-      test "a body shared with a sibling is left alone, the sibling rewritten"
-        (fun () ->
-          let call = Ops.call (Ops.custom_function "f" [ a ]) [] in
-          List.iter
-            (fun (mode, pass, order) ->
-              equal ~msg:mode uop
-                (Ops.sink [ call; b ])
-                (rw ~order ~pass [ (a, b) ] (Ops.sink [ call; a ]));
-              equal ~msg:mode uop
-                (Ops.sink [ b; call ])
-                (rw ~order ~pass [ (a, b) ] (Ops.sink [ a; call ])))
-            modes);
-      test "substitute leaves call bodies alone unless under Enter" (fun () ->
-          let call = Ops.call (Ops.custom_function "f" [ a ]) [ a ] in
-          equal uop
-            (Ops.call (Ops.custom_function "f" [ a ]) [ b ])
-            (Ops.substitute ~calls:Skip ~pass:Fixed_point call [ (a, b) ]);
-          equal uop
-            (Ops.call (Ops.custom_function "f" [ b ]) [ b ])
-            (Ops.substitute ~calls:Enter ~pass:Fixed_point call [ (a, b) ]));
-    ]
+  equal (pair op float_exact) (Op.Const, value) (Ops.op out, value_of out)
 
 (* Fixed points, over expressions of weak integers *)
 
@@ -1726,64 +1344,488 @@ let rec expr x = function
   | Plus (a, b) -> Ops.v ~src:[ expr x a; expr x b ] Op.Add
   | Times (a, b) -> Ops.v ~src:[ expr x a; expr x b ] Op.Mul
 
-let fixed_points =
+let fixed_point =
   let x = weak_var "x" (-5) 5 in
-  let rewrite u =
+  let a = var "a" 0 10 and b = var "b" 0 10 and c = var "c" 0 10 in
+  let d = var "d" 0 10 in
+  let folded u =
     Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
       (After_sources fold)
   in
-  group "fixed points"
+  group "Fixed_point"
     [
+      test "folds to a fixed point" (fun () ->
+          rewrite_to 3. Ops.O.(c1 + c2);
+          rewrite_to 12. Ops.O.(c1 * c2 * (c3 + c3));
+          rewrite_to 6. Ops.O.(c1 + c2 + c3);
+          rewrite_to 10. Ops.O.(c1 + c2 + c3 + float 4.);
+          rewrite_to 7. Ops.O.(c1 + c2 + (c1 + c3));
+          rewrite_to 3. (Ops.int 4));
+      test "rewrites a node's result in turn" (fun () ->
+          let v = fvar "v" in
+          let out =
+            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+              Ops.O.(v + c1 + c2)
+              (After_sources simple_pm)
+          in
+          equal uop Ops.O.(v + float 3.) out);
+      cases "rewrites a replacement before the sources in turn" ~id:fst
+        [
+          ( "graph_rewrite",
+            fun u pairs -> substituted before Fixed_point pairs u );
+          ( "substitute",
+            fun u pairs -> Ops.substitute ~calls:Skip ~pass:Fixed_point u pairs
+          );
+        ]
+        (fun (_, rewrite) ->
+          equal uop
+            Ops.O.(d + c + int 4)
+            (rewrite Ops.O.(a + int 4) [ (a, Ops.O.(b + c)); (b, d) ]));
       prop "rewriting a rewritten graph changes nothing" gen_expr (fun e ->
           let u = expr x e in
-          cover "folds" (rewrite u != u);
-          equal uop (rewrite u) (rewrite (rewrite u)));
-      prop "a rewrite preserves the value"
+          cover "folds" (folded u != u);
+          equal uop (folded u) (folded (folded u)));
+      prop "a rewrite by rules that keep values keeps the value"
         (Gen.pair gen_expr (Gen.int_range (-5) 5))
         (fun (e, at) ->
           let u = expr x e in
           let env = [ ("x", i at) ] in
-          equal value (Values.eval env u) (Values.eval env (rewrite u)));
-      prop "bottom-up reaches the same fixed point on these rules" gen_expr
-        (fun e ->
+          equal value (Values.eval env u) (Values.eval env (folded u)));
+      prop "before and after the sources reach one fixed point on these rules"
+        gen_expr (fun e ->
           let u = expr x e in
-          equal uop (rewrite u)
+          equal uop (folded u)
             (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
                (Before_sources fold)));
     ]
 
-(* The matchers of the module *)
+let once =
+  let a = var "a" 0 10
+  and b = var "b" 0 10
+  and c = var "c" 0 10
+  and d = var "d" 0 10 in
+  let x = fvar "x" in
+  group "Once"
+    [
+      cases "applies a rule to a node at most once, whatever the direction"
+        ~id:fst directions (fun (_, rules) ->
+          equal uop (Ops.int 4)
+            (Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:() (Ops.int 3)
+               (rules three_to_four)));
+      cases "never rewrites a replacement again, whatever the direction" ~id:fst
+        [
+          ("after the sources", fun u pairs -> substituted after Once pairs u);
+          ("before the sources", fun u pairs -> substituted before Once pairs u);
+          ( "substitute",
+            fun u pairs -> Ops.substitute ~calls:Skip ~pass:Once u pairs );
+        ]
+        (fun (_, rewrite) ->
+          equal uop
+            Ops.O.(b + c + int 4)
+            (rewrite Ops.O.(a + int 4) [ (a, Ops.O.(b + c)); (b, d) ]));
+      test "leaves the sources of a node a rule before the sources replaced"
+        (fun () ->
+          let n1 = sin x in
+          equal uop
+            (Ops.sqrt (sin x))
+            (substituted before Once
+               [ (sin x, Ops.sqrt x); (sin n1, Ops.sqrt n1) ]
+               (sin n1)));
+      test "accepts a replacement that holds the replaced node" (fun () ->
+          equal uop
+            Ops.O.(Ops.sqrt (sin x) + int 4)
+            (substituted after Once
+               [ (sin x, Ops.sqrt (sin x)) ]
+               Ops.O.(sin x + int 4)));
+    ]
+
+let after_sources =
+  let x = fvar "x" in
+  group "After_sources"
+    [
+      test "rewrites the sources before the node rebuilt on them" (fun () ->
+          let n1 = sin x in
+          equal uop
+            (sin (Ops.sqrt x))
+            (substituted after Once
+               [ (sin x, Ops.sqrt x); (sin n1, Ops.sqrt n1) ]
+               (sin n1)));
+      test "visits a node after its sources" (fun () ->
+          equal (list string) [ "1"; "2"; "Ops.ADD" ]
+            (visits Once (After_sources (recorder "")) Ops.O.(int 1 + int 2)));
+    ]
+
+let before_sources =
+  group "Before_sources"
+    [
+      test "visits a node before its sources" (fun () ->
+          equal (list string) [ "Ops.ADD"; "1"; "2" ]
+            (visits Once (Before_sources (recorder "")) Ops.O.(int 1 + int 2)));
+    ]
+
+let around_sources =
+  group "Around_sources"
+    [
+      cases
+        "rewrites with before before the sources and with after once they are \
+         rewritten"
+        ~id:(fun (what, _) -> what)
+        [ ("Fixed_point", Ops.Fixed_point); ("Once", Ops.Once) ]
+        (fun (_, pass) ->
+          equal (list string)
+            [ "Ops.ADD bpm"; "1 bpm"; "1 pm"; "2 bpm"; "2 pm"; "Ops.ADD pm" ]
+            (visits pass
+               (Around_sources
+                  { before = recorder " bpm"; after = recorder " pm" })
+               Ops.O.(int 1 + int 2)));
+      test "a match before the sources skips the node's sources and its after"
+        (fun () ->
+          let one = Ops.int 1 and two = Ops.int 2 in
+          let bpm =
+            Pm.v (fun () ->
+                [
+                  Pm.rule_ctx (P.v ~op:Op.Set.all ~name:"x" ()) (fun log m ->
+                      let x = m "x" in
+                      log := (label x ^ " bpm") :: !log;
+                      if x == one then Some (Ops.int 10) else None);
+                ])
+          in
+          equal (list string)
+            [ "Ops.ADD bpm"; "1 bpm"; "2 bpm"; "2 pm"; "Ops.ADD pm" ]
+            (visits Once
+               (Around_sources { before = bpm; after = recorder " pm" })
+               Ops.O.(one + two)));
+    ]
+
+let rewriting =
+  let a = var "a" 0 10 in
+  let three = Ops.int 3 and four = Ops.int 4 in
+  group "graph_rewrite"
+    [
+      test "keeps shared nodes shared" (fun () ->
+          let v1 = fvar "v" and v2 = fvar "v" in
+          let out =
+            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+              Ops.O.(v1 + v2)
+              (After_sources (Pm.v (fun () -> [])))
+          in
+          equal uop (Ops.nth out 0) (Ops.nth out 1));
+      cases "a rule that returns its node declines, whatever the direction"
+        ~id:fst directions (fun (_, rules) ->
+          let m =
+            Pm.v (fun () ->
+                [ Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x")) ])
+          in
+          equal uop a
+            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() a (rules m)));
+      cases "a node can become a call that holds it"
+        ~id:(fun (what, _, _) -> what)
+        modes
+        (fun (_, pass, rules) ->
+          let staged = Ops.bufferize (fvar "a") [] in
+          let call = Ops.call (Ops.custom_function "f" [ staged ]) [] in
+          equal uop (Ops.sink [ call ])
+            (substituted rules pass [ (staged, call) ] (Ops.sink [ staged ])));
+      cases "a body is rewritten only under Enter, its arguments always"
+        ~id:(fun (what, _, _, _, _) -> what)
+        (List.concat_map
+           (fun (mode, pass, rules) ->
+             [
+               (mode ^ ", Skip", pass, rules, Ops.Skip, three);
+               (mode ^ ", Enter", pass, rules, Ops.Enter, four);
+             ])
+           modes)
+        (fun (_, pass, rules, calls, body) ->
+          let call = Ops.call (Ops.custom_function "f" [ three ]) [ three ] in
+          equal uop
+            (Ops.call (Ops.custom_function "f" [ body ]) [ four ])
+            (substituted ~calls rules pass [ (three, four) ] call));
+      cases "a body shared with a sibling is left alone, the sibling rewritten"
+        ~id:(fun (what, _, _) -> what)
+        modes
+        (fun (_, pass, rules) ->
+          let call = Ops.call (Ops.custom_function "f" [ three ]) [] in
+          equal (pair uop uop)
+            (Ops.sink [ call; four ], Ops.sink [ four; call ])
+            ( substituted rules pass [ (three, four) ] (Ops.sink [ call; three ]),
+              substituted rules pass
+                [ (three, four) ]
+                (Ops.sink [ three; call ]) ));
+      cases "a where rebuilt on an Invalid branch keeps its committed type"
+        ~id:(fun (what, _, _) -> what)
+        modes
+        (fun (_, pass, rules) ->
+          (* The weak zero takes its width from [x], and Invalid states none:
+             the rebuilt where commits the zero at the where's type. *)
+          let x = fvar ~dtype:Float64 "x" and c = flag "c" in
+          let invalid = Ops.const `Invalid in
+          let where y z = Ops.v Op.Where ~src:[ c; y; z ] in
+          equal uop
+            (where invalid (Ops.float ~dtype:Float64 0.))
+            (substituted rules pass [ (x, invalid) ] (where x (Ops.float 0.))));
+      cases "rejects rules that never settle, whatever the direction" ~id:fst
+        directions (fun (_, rules) ->
+          rejects (fun () ->
+              Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() three
+                (rules three_to_four)));
+      cases "rejects a replacement that depends on the node it replaces"
+        ~id:(fun (what, _, _) -> what)
+        (let s = sin (fvar "a") and x = fvar "a" and y = fvar "b" in
+         [
+           ( "after the sources",
+             after,
+             fun () -> ([ (s, Ops.sqrt s) ], Ops.sink [ s ]) );
+           ( "before the sources",
+             before,
+             fun () -> ([ (s, Ops.sqrt s) ], Ops.sink [ s ]) );
+           ( "before the sources, through another replacement",
+             before,
+             fun () -> ([ (x, Ops.sqrt y); (y, sin x) ], Ops.sink [ x ]) );
+         ])
+        (fun (_, rules, input) ->
+          let pairs, u = input () in
+          rejects (fun () -> substituted rules Fixed_point pairs u));
+      test "rejects a call whose argument depends on the call" (fun () ->
+          let staged = Ops.bufferize (fvar "a") [] in
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule (P.op ~name:"x" Op.Stage) (fun m ->
+                      Some
+                        (Ops.call
+                           (Ops.custom_function "f"
+                              [ Shape.param_like (m "x") 0 ])
+                           [ m "x" ]));
+                ])
+          in
+          rejects (fun () ->
+              Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+                (Ops.sink [ staged ]) (Before_sources m)));
+      test "rejects a work list longer than rewrite_stack_limit" (fun () ->
+          let wide = Ops.sink (List.init 64 (fun n -> Ops.int n)) in
+          Setting.context
+            [ B (Setting.rewrite_stack_limit, 8) ]
+            (fun () ->
+              rejects (fun () ->
+                  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() wide
+                    (After_sources (Pm.v (fun () -> []))))));
+      test "a rewrite after one an exception ended rewrites as a fresh domain"
+        (fun () ->
+          let raising =
+            Pm.v (fun () ->
+                [
+                  Pm.rule
+                    (P.op ~arg:(Const (`Float 3.)) Op.Const)
+                    (fun _ -> raise Exit);
+                  Pm.rule
+                    (P.op ~arg:(Const (`Float 1.)) Op.Const)
+                    (fun _ -> Some (fvar "one"));
+                ])
+          in
+          let wide =
+            Ops.sink (List.init 64 (fun k -> fconst (Float.of_int k)))
+          in
+          let u =
+            Ops.sink
+              (Ops.int 0
+               :: List.init 64 (fun k -> fconst (Float.of_int k +. 0.5))
+              @ [ Ops.O.(c1 + c2) ])
+          in
+          let rewrite () =
+            Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
+              (Around_sources { before = simple_pm; after = simple_pm })
+          in
+          let expected = Domain.join (Domain.spawn rewrite) in
+          raises Exit (fun () ->
+              Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() wide
+                (After_sources raising));
+          raises Exit (fun () ->
+              Ops.graph_rewrite ~calls:Skip ~pass:Once ~ctx:() wide
+                (After_sources raising));
+          equal uop expected (rewrite ()));
+    ]
+
+let substituting =
+  let a = var "a" 0 10 and b = var "b" 0 10 and c = var "c" 0 10 in
+  let x = fvar "x" in
+  group "substitute"
+    [
+      group "replaces each node as substitution.golden states"
+        [ Golden.graph "substitution.golden" Goldens.substitution ];
+      cases "replaces a node wherever it is" ~id:fst
+        [ ("Fixed_point", Ops.Fixed_point); ("Once", Ops.Once) ]
+        (fun (_, pass) ->
+          equal uops
+            Ops.O.[ b + int 4; c + int 4 + c; b + int 4 + (b + int 5) ]
+            [
+              Ops.substitute ~calls:Skip ~pass Ops.O.(a + int 4) [ (a, b) ];
+              Ops.substitute ~calls:Skip ~pass
+                Ops.O.(a + int 4 + b)
+                [ (a, c); (b, c) ];
+              Ops.substitute ~calls:Skip ~pass
+                Ops.O.(a + int 4 + (a + int 5))
+                [ (a, b) ];
+            ]);
+      test "replaces the node nearest the root first" (fun () ->
+          let y = fvar "y" in
+          equal uop (sin y)
+            (Ops.substitute ~calls:Skip ~pass:Fixed_point
+               (sin (sin x))
+               [ (sin x, y) ]);
+          equal uop
+            (sin (Ops.sqrt x))
+            (Ops.substitute ~calls:Skip ~pass:Fixed_point
+               (sin (sin x))
+               [ (sin x, Ops.sqrt x) ]);
+          equal uop
+            (Ops.sqrt (Ops.sqrt x))
+            (Ops.substitute ~calls:Skip ~pass:Fixed_point
+               (sin (sin x))
+               [ (sin x, Ops.sqrt x); (sin (sin x), Ops.sqrt (sin x)) ]));
+      test "ignores nodes paired with themselves" (fun () ->
+          let e = Ops.O.(a + int 4) in
+          equal uops [ e; e ]
+            [
+              Ops.substitute ~calls:Skip ~pass:Fixed_point e [ (a, a) ];
+              Ops.substitute ~calls:Skip ~pass:Fixed_point e [];
+            ]);
+      test "rewrites with extra_pm too, never inside a replacement" (fun () ->
+          let three = Ops.int 3 and four = Ops.int 4 in
+          let s = Ops.O.(three + four) in
+          let visit =
+            Pm.v (fun () ->
+                [
+                  Pm.rule (P.op ~name:"c" Op.Const) (fun m ->
+                      let c = m "c" in
+                      if c == three || c == four then
+                        fail "entered the replaced node"
+                      else None);
+                ])
+          in
+          equal uop
+            Ops.O.(int 7 + int 2)
+            (Ops.substitute ~calls:Skip ~pass:Fixed_point
+               ~extra_pm:(Pm.with_ctx visit)
+               Ops.O.(s + int 2)
+               [ (s, Ops.int 7) ]));
+      cases "rewrites a call's body under Enter alone" ~id:fst
+        (let three = Ops.int 3 and four = Ops.int 4 in
+         [
+           ("Skip", (Ops.Skip, three, four)); ("Enter", (Ops.Enter, four, four));
+         ])
+        (fun (_, (calls, body, arg)) ->
+          let three = Ops.int 3 and four = Ops.int 4 in
+          let call = Ops.call (Ops.custom_function "f" [ three ]) [ three ] in
+          equal uop
+            (Ops.call (Ops.custom_function "f" [ body ]) [ arg ])
+            (Ops.substitute ~calls ~pass:Fixed_point call [ (three, four) ]));
+      prop "is idempotent when no replacement holds a replaced node"
+        Nodes.gen_recipe (fun r ->
+          let vars = Nodes.leaves () in
+          let u = Nodes.build vars r in
+          cover "replaces" (List.memq vars.(0) (Ops.toposort ~calls:Enter u));
+          let f u =
+            Ops.substitute ~calls:Skip ~pass:Fixed_point u
+              [ (vars.(0), Ops.O.(vars.(1) + int 1)) ]
+          in
+          equal uop (f u) (f (f u)));
+    ]
+
+let assumings =
+  let n = weak_var "n" 1 8 in
+  let r = Ops.range ~axis_type:Loop (Sym n) [ 0 ] in
+  group "assuming"
+    [
+      test "replaces each node of the pairs, as substitute does" (fun () ->
+          let a = var "a" 0 10 and b = var "b" 0 10 in
+          let u = Ops.O.(a + int 4 + (a * b)) in
+          equal uop
+            (Ops.substitute ~calls:Skip ~pass:Fixed_point u [ (a, b) ])
+            (Ops.assuming u [ (a, b) ]));
+      test "leaves a range it does not replace whole, its bound included"
+        (fun () ->
+          equal uop
+            Ops.O.(r + int 4)
+            (Ops.assuming Ops.O.(r + n) [ (n, Ops.int 4) ]));
+      test "leaves a call's body alone" (fun () ->
+          let call = Ops.call (Ops.custom_function "f" [ n ]) [ n ] in
+          equal uop
+            (Ops.call (Ops.custom_function "f" [ n ]) [ Ops.int 4 ])
+            (Ops.assuming call [ (n, Ops.int 4) ]));
+    ]
+
+let pm_substitutes =
+  let a = var "a" 0 10 and b = var "b" 0 10 and c = var "c" 0 10 in
+  group "pm_substitute"
+    [
+      cases
+        "replaces each node its context maps by its image, whatever the pass \
+         and direction"
+        ~id:(fun (what, _, _) -> what)
+        modes
+        (fun (_, pass, rules) ->
+          equal uops
+            Ops.O.
+              [ b + int 4; c + int 4 + (c + int 5); b + int 4 + (b + int 5) ]
+            [
+              substituted rules pass [ (a, b) ] Ops.O.(a + int 4);
+              substituted rules pass
+                [ (a, c); (b, c) ]
+                Ops.O.(a + int 4 + (b + int 5));
+              substituted rules pass [ (a, b) ] Ops.O.(a + int 4 + (a + int 5));
+            ]);
+    ]
 
 let module_matchers =
   let p = Shape.param ~shape:(ints [ 4 ]) 0 Float32 in
-  group "module matchers"
-    [
-      test "pm_drop_after keeps the first source of each after" (fun () ->
-          let st =
-            Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.float ~dtype:Float32 1.)
-          in
-          equal uop
-            Ops.O.(p + float 1.)
-            (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
-               Ops.O.(Ops.after p [ st ] + float 1.)
-               (After_sources Ops.pm_drop_after)));
-      test "gate_kernel_sink stops at a linear program and a kernel's sink"
-        (fun () ->
-          is_false (Ops.gate_kernel_sink (Ops.v Op.Linear));
-          is_false
-            (Ops.gate_kernel_sink (Ops.sink ~kernel:(Ops.kernel_info ()) []));
-          is_true (Ops.gate_kernel_sink (Ops.sink []));
-          is_true (Ops.gate_kernel_sink p));
-    ]
+  [
+    group "pm_drop_after"
+      [
+        test "replaces each After with its first source" (fun () ->
+            let st =
+              Ops.store
+                (Ops.index p [ Ops.int 0 ])
+                (Ops.float ~dtype:Float32 1.)
+            in
+            equal uop
+              Ops.O.(p + float 1.)
+              (Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:()
+                 Ops.O.(Ops.after p [ st ] + float 1.)
+                 (After_sources Ops.pm_drop_after)));
+      ];
+    group "gate_kernel_sink"
+      [
+        test "is false of a linear program and a kernel's sink alone" (fun () ->
+            let rows =
+              [
+                ("a linear program", Ops.v Op.Linear);
+                ("a kernel's sink", Ops.sink ~kernel:(Ops.kernel_info ()) []);
+                ("a sink", Ops.sink []);
+                ("storage", p);
+              ]
+            in
+            equal (list string)
+              [ "a linear program"; "a kernel's sink" ]
+              (List.filter_map
+                 (fun (what, u) ->
+                   if Ops.gate_kernel_sink u then None else Some what)
+                 rows));
+      ];
+  ]
 
 let groups =
   [
     upat;
     matchers;
+    gates;
+    fixed_point;
+    once;
+    after_sources;
+    before_sources;
+    around_sources;
     rewriting;
     substituting;
-    walks;
-    call_bodies;
-    fixed_points;
-    module_matchers;
+    assumings;
+    pm_substitutes;
   ]
+  @ module_matchers
