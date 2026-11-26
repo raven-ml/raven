@@ -9,9 +9,14 @@
     runs it: a wait that returns before it slept leaves work unrun. A sleep
     first runs the queues of the Polled devices whose words its first queued
     submission waits for and has not seen, as a device runs its own work while
-    the host sleeps on another. Every driver call is logged. A device's lock
-    counts among the locks its thread holds, as a driver's does
-    ({!Rig_edge.section-drivers}).
+    the host sleeps on another. With [runs] [`When_slept], the default, its
+    word moves only in a sleep, its own or one that waits for it, or a
+    {!run}, which a [Host] word ({!Rig_edge.type-completion}) must not need.
+    A GPU whose queue waits on such a word can block in its [submit] until a
+    {!run}, as CUDA's does once its stream fills, so a suite that waits on a
+    Polled device from a GPU makes it with [runs] [`Itself]. Every driver
+    call is logged. A device's lock counts among the locks its thread holds,
+    as a driver's does ({!Rig_edge.section-drivers}).
 
     Polled checks that rig keeps the word promises of {!Rig_edge}: rig frees
     only a word outside its array, which is the driver's own, once, and then
