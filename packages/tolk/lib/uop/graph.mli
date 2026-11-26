@@ -19,12 +19,14 @@ val of_string : string -> Ops.t
     afterwards is greater than each slot of the graph and each number of its
     ranges' axes.
 
-    Raises [Failure] naming the node, by its line's position, and what is wrong
-    with it if [text] is empty, a line does not read, an index is not its line's
-    position, a source or a node in an argument is not an earlier line, an
-    argument does not fit its operation, a node's written data type is not the
-    one its operation, sources and argument derive, or a slot or a number of
-    a range's axes is [max_int], which leaves no greater number. *)
+    A graph of any depth writes and reads.
+
+    Raises [Failure] if [text] is empty, and, naming the node by its line's
+    position and what is wrong with it, if a line does not read, an index is not
+    its line's position, a source or a node in an argument is not an earlier
+    line, an argument does not fit its operation, a node's written data type is
+    not the one its operation, sources and argument derive, or a slot or a
+    number of a range's axes is [max_int], which leaves no greater number. *)
 
 (** {1:disk Disk} *)
 
@@ -38,6 +40,8 @@ val cached :
     holds for [key] in [table], and [true], if its entry reads as a graph that
     [valid] accepts; otherwise it is [make ()], which replaces the entry, and
     [false]. An entry that does not read, or cannot be read, is made anew, as
-    one that is missing.
+    one that is missing. While the disk cache is disabled
+    ({!Setting.cachelevel}), it is [make ()] and [false].
 
-    Raises [Sys_error] if the entry cannot be written. *)
+    Raises [Sys_error] if the entry cannot be written, and [Invalid_argument] if
+    {!Setting.cachesize} is negative. *)

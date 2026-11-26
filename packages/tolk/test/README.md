@@ -177,7 +177,7 @@ The body of a graph golden lists the nodes under a sink, one per line, in
 topological order:
 
 ```
-<index> <op> <dtype> [<sources>] <arg> tag=<tag>
+<index> <op> <dtype> [<sources>] <arg>
 ```
 
 ```
@@ -194,8 +194,7 @@ topological order:
   dtype follows from its op, sources and arg; it is written so that a reader
   can check that it derives the same one.
 - **sources** are indices of earlier lines.
-- **arg** is left out when it is `None`, and so is ` tag=<tag>` when the tag
-  is `None`. Both are values:
+- **arg** is left out when it is `None`. It is a value:
 
 | Value | Written as |
 |---|---|
@@ -265,21 +264,19 @@ The records, with their fields in order:
 | `Estimates` | `ops`, `lds`, `mem`: each an integer or a node |
 | `ProgramInfo` | `global_size` and `local_size` tuples of integers, `params` a tuple of nodes, `globals`, `outs` and `ins` tuples of integers, `target` `Target` |
 | `Target` | `device`, `renderer`, `arch`, `interface`, `indices`: strings |
-| `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile`, `precompile_backward` and `inline` booleans, `aux` (never written), `write` pairs of integers |
+| `CallInfo` | `grad_fxn` (never written), `name` string or none, `precompile`, `precompile_backward` and `inline` booleans, and tolk's own `loop` boolean and `write` pairs of integers; a `CallInfo` carrying `hcq` does not read, and one whose `precompile_backward` is `True` does not read, since tolk does not differentiate |
 | `CustomFunction` | `name` string, `dtype` data type, `fmt` boolean |
 | `BufferizeOpts` | `device` a device or none, `addrspace` `AddrSpace`, `removable`, `broadcast` and `argument` booleans |
 
-A device is a string. The enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`. A tag is a
-boolean, an integer, a string, bytes (Metal's indirect command buffers tag
-with them), a data type, or a tuple of these, such as `(0, dtypes.int)`; it
-never holds a node. `PYLITERAL`, `REWRITE_ERROR` and the operations of
+A device is a string. The enumerations are `Ops`, `AxisType`, `AddrSpace` and `OptOps`.
+`PYLITERAL`, `REWRITE_ERROR` and the operations of
 several devices (`MSELECT`, `MSTACK`, `UNSHARD`, `ALLREDUCE`) are excluded
 operations, and the arg kinds of the excluded ISA path (register
 records, integer instructions) are not part of the format.
 
 The format serves the G-list goldens too, in place of the listing
 `uop/render.py` prints. That listing drops information: it inlines constants
-into their users, leaves out tags, and prints the nodes inside an arg as
+into their users and prints the nodes inside an arg as
 expressions. A golden in the graph format pins the whole graph, and a
 mismatch reads as a diff of nodes. The listing is `Render`'s own output, and
 its goldens test `Render`.
