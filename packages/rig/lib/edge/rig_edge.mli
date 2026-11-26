@@ -126,7 +126,10 @@ type completion =
   | Store  (** A store that the driver places on a queue writes the word. *)
   | Host
       (** The host writes the word, from the driver's handler or before the
-          driver's [submit] or [commit] returns ({!section-calls}). *)
+          driver's [submit] or [commit] returns ({!section-calls}). Once
+          committed work has completed, the word must move with no further
+          call of rig's, since another device's queue may wait on it while
+          rig blocks in that device's driver. *)
 
 (** The type for the producers a device's queues wait for. A {e producer}
     is a device whose value another device's work waits for. rig waits on the
@@ -461,10 +464,11 @@ type grown =
 
 (** Drivers.
 
-    rig counts the calls in flight on each device that is not lost, and
-    calls {!Driver.val-stop} once, when none is. Every call of the driver's
-    OCaml functions is {e counted} except {!Driver.val-facts},
-    {!Driver.locate}, {!Driver.peer} and {!Driver.val-stop}. rig calls
+    rig counts the calls in flight on each device that is not lost, starts
+    no counted call once the device is lost, and calls {!Driver.val-stop}
+    once, when none is in flight. Every call of the driver's OCaml functions
+    is {e counted} except {!Driver.val-facts}, {!Driver.locate},
+    {!Driver.peer}, {!Driver.val-stop} and the calls after [stop]. rig calls
     [locate] and [peer] at any time, and they must call nothing that may
     block or fault. Calls of the C functions are counted where the device
     declares [may_block]. After [stop], rig calls only {!Driver.val-free},
@@ -591,8 +595,9 @@ module type Driver = sig
   val free : t -> region -> unit
   (** [free d r] gives back [r], which is a region {!val-alloc} made, a
       mapping {!val-map_peer} or {!val-map_host} made, or [d]'s word of the
-      driver's own ({!Rig_edge.type-facts}). rig frees [r] once no work of
-      [d] that uses it can run, and may free it after {!val-stop}. *)
+      driver's own ({!Rig_edge.type-facts}). rig frees [r] a single time,
+      when no work of [d] that uses it can run, and may free it after
+      {!val-stop}. *)
 
   val capacity : t -> capacity option
   (** [capacity d] is [d]'s memory as its driver reports it at the call, or
