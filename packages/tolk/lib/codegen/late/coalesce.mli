@@ -77,4 +77,5 @@ val memory_coalescing : Ops.t -> Renderer.t -> Ops.t
     accesses at different depths would make a merged store wait on itself.
 
     Raises [Invalid_argument] if a load or store is gated, is not through an
-    {!Op.Index} of one index, or two stores write one element. *)
+    {!Op.Index} of one index, or two stores write one element, unless
+    {!Setting.dmc} holds: then [sink] is returned before any access is read. *)
