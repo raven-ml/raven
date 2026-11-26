@@ -242,7 +242,7 @@ let test_abs_refuses () =
 let test_c99_values () =
   let u = 0x1p-53 in
   let near ~msg k (want : Complex.t) (got : Complex.t) =
-    let err = Complex.norm (Complex.sub got want) in
+    let err = Float.hypot (gap got.re want.re) (gap got.im want.im) in
     let bound =
       (k *. u *. Complex.norm want) +. (2. *. u *. Complex.norm want)
     in
