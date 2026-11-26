@@ -33,7 +33,7 @@ value nx_gpu_ref_contract(value v_views, value v_dims, value v_l,
   if (Wosize_val(v_views) > 3) in = view_of(Field(v_views, 3)), init = &in;
 #define D(i) ((int64_t)Long_val(Field(v_dims, i)))
 #define L(i) Long_val(Field(v_l, i))
-  /* Float arrays are flat doubles; empty ones give none. */
+  /* Float.Array.t's are flat doubles; empty ones give none. */
   const double *sums = Wosize_val(v_sums) ? (const double *)v_sums : NULL;
   const double *mags = Wosize_val(v_mags) ? (const double *)v_mags : NULL;
   nx_ref_result x = nx_ref_contract(&a, &b, init, &y, D(0), D(1), D(2), D(3),

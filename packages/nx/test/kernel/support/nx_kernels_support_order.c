@@ -132,7 +132,7 @@ static double tree(int f32, const double *a, const double *b, intnat k,
 
 static intnat length(value v) { return (intnat)(Wosize_val(v) / Double_wosize); }
 
-/* Output i's sum of [va]'s and [vb]'s i-th float arrays' products into
+/* Output i's sum of [va]'s and [vb]'s i-th Float.Array.t's products into
    [vout]'s element i, then [vinit]'s added where it has an element i.
    [vflags]: 1 float32, else float64; 2 chain order, else lane order. With
    no term, init as it is, or +0. */

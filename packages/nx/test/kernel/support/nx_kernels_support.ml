@@ -550,17 +550,21 @@ external cap_memory : int -> bool = "nx_kernels_support_cap_memory"
 
 (* Orders of a contraction's sum *)
 
+(* The stub reads flat doubles, which a float array is only under a compiler
+   built with flat float arrays, and a Float.Array.t under every one. *)
 external ordered_into :
-  float array array ->
-  float array array ->
-  float array ->
+  Float.Array.t array ->
+  Float.Array.t array ->
+  Float.Array.t ->
   int ->
-  float array ->
+  Float.Array.t ->
   unit = "nx_kernels_support_ordered"
 [@@noalloc]
 
 let ordered ~chain ~f32 ~init a b =
   let flags = (if f32 then 1 else 0) lor if chain then 2 else 0 in
-  let sums = Array.make (Array.length a) 0. in
-  ordered_into a b (Option.value init ~default:[||]) flags sums;
-  sums
+  let flat = Float.Array.map_from_array Fun.id in
+  let init = flat (Option.value init ~default:[||]) in
+  let sums = Float.Array.make (Array.length a) 0. in
+  ordered_into (Array.map flat a) (Array.map flat b) init flags sums;
+  Float.Array.map_to_array Fun.id sums
