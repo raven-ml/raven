@@ -67,6 +67,9 @@
        and one that may take a lock raises [Invalid_argument], having done
        nothing, when it is made inside a lock ({!section-domains}).}}
 
+    A call said to allocate nothing allocates nothing in native code. In
+    bytecode it may allocate a few words of its own on the OCaml heap.
+
     This copies five bytes to a device and back. The blit back reads [dev],
     so it follows the blit that wrote it.
     {[
@@ -1747,7 +1750,10 @@ module Buffer : sig
   val copy : src:t -> dst:t -> unit
   (** [copy ~src ~dst] copies [src]'s bytes into [dst] and returns once they
       are there: {!submit_copy}[ ~src ~dst [| row (length src) |]], then a
-      wait for its point, holding its read claims until it returns.
+      wait for its point, holding its read claims until it returns. Where the
+      host copies between memory it addresses, after the work the copy
+      follows is done and while no profile is being taken, it allocates
+      nothing.
 
       Raises [Invalid_argument] if they differ in length, and otherwise as
       {!submit_copy} raises. Raises {!Lost} also if the copy is lost during

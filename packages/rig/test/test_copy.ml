@@ -1496,7 +1496,8 @@ let test_copy_shared_byte () =
         ~dst:(B.view b ~first:10 ~length:50))
 
 (* A copy between host buffers allocates nothing, warm: 1,000 copies take no
-   word of the minor heap. *)
+   word of the minor heap. rig.mli promises it in native code, which this
+   suite is compiled to. *)
 let test_host_allocates_nothing () =
   let src = filled 4096 'a' and dst = filled 4096 'b' in
   B.copy ~src ~dst;

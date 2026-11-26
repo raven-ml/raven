@@ -92,8 +92,8 @@ val reading2 :
   'a ->
   'b
 (** [reading2 fn a b f x] is [f a b x] under read claims on [a]'s and
-    [b]'s memory, as {!reading} takes them. It allocates nothing when [f] is
-    a top-level function.
+    [b]'s memory, as {!reading} takes them. In native code it allocates
+    nothing when [f] is a top-level function.
 
     Raises as {!reading} does, for either buffer. *)
 
