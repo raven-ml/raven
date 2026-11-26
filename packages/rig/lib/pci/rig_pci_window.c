@@ -335,6 +335,18 @@ static size_t piece(size_t at, size_t n) {
   return n - at < PIECE ? n - at : PIECE;
 }
 
+static void (*on_release)(void);
+
+void rig_pci_on_release(void (*f)(void)) {
+  __atomic_store_n(&on_release, f, __ATOMIC_RELAXED);
+}
+
+/* Calls the tests' rig_pci_on_release function, with the runtime released. */
+static void released(void) {
+  void (*f)(void) = __atomic_load_n(&on_release, __ATOMIC_RELAXED);
+  if (f) f();
+}
+
 static value read_pieces(const volatile uint8_t *src, size_t n, int width) {
   CAMLparam0();
   CAMLlocal1(s);
@@ -343,6 +355,7 @@ static value read_pieces(const volatile uint8_t *src, size_t n, int width) {
   for (size_t at = 0; at < n; at += PIECE) {
     size_t k = piece(at, n);
     caml_release_runtime_system();
+    released();
     read_bytes(buf, src + at, k, width);
     caml_acquire_runtime_system();
     memcpy(Bytes_val(s) + at, buf, k);
@@ -369,6 +382,7 @@ static void write_pieces(volatile uint8_t *dst, value s, size_t off, size_t n,
     size_t k = piece(at, n);
     memcpy(buf, String_val(s) + off + at, k);
     caml_release_runtime_system();
+    released();
     write_bytes(dst + at, buf, k, width);
     caml_acquire_runtime_system();
   }
@@ -398,6 +412,7 @@ value caml_rig_pci_fill(value a, value n, value c, value width) {
     return Val_unit;
   }
   caml_release_runtime_system();
+  released();
   fill_bytes(p, len, b, Int_val(width));
   caml_acquire_runtime_system();
   return Val_unit;

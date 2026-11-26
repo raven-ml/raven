@@ -23,6 +23,9 @@ external c_write : Window.t -> int -> string -> unit = "rig_pci_test_write"
 external c_failed : Window.t -> string option = "rig_pci_test_failed"
 external c_flush : Window.t -> unit = "rig_pci_test_flush"
 external c_combines : Window.t -> bool = "rig_pci_test_combines"
+external copies_wait : bool -> unit = "rig_pci_test_copies_wait"
+external copies_asked : unit -> int = "rig_pci_test_copies_asked"
+external copies_answer : int -> unit = "rig_pci_test_copies_answer"
 
 (* Far machines put their bytes at [base], away from 0 so that an access sent to
    its offset in place of its address misses them. *)
@@ -279,7 +282,10 @@ let windows =
 (* Long copies
 
    A copy of 8 KiB or more moves in pieces, with the runtime released for each,
-   while another domain compacts the heap and moves the strings it copies. *)
+   and lets other domains collect meanwhile: each piece waits until another
+   domain compacts the heap, which may move the strings the copy reads and
+   writes. The wait ends only with the compaction: a copy that held the runtime
+   would hang, and WINDTRAP_TIMEOUT would name the test. *)
 
 let piece = 8192
 
@@ -292,24 +298,31 @@ let long_place =
   |> with_pp (fun ppf (s, n, off) ->
       Format.fprintf ppf "skew %d, length %d, from %d" s n off)
 
-(* [f ()] while another domain compacts the heap, and whether a compaction ran
-   meanwhile. *)
+(* [f ()] with another domain that compacts the heap inside each piece of a long
+   copy. *)
 let compacting f =
-  let compactions () = (Gc.quick_stat ()).compactions in
   let stop = Atomic.make false in
-  let before = compactions () in
+  let before = copies_asked () in
   let other =
     Domain.spawn (fun () ->
+        let answered = ref before in
         while not (Atomic.get stop) do
-          Gc.compact ()
+          let asked = copies_asked () in
+          if asked > !answered then begin
+            Gc.compact ();
+            copies_answer asked;
+            answered := asked
+          end
+          else Unix.sleepf 20e-6
         done)
   in
+  copies_wait true;
   Fun.protect
     ~finally:(fun () ->
+      copies_wait false;
       Atomic.set stop true;
       Domain.join other)
-    f;
-  compactions () > before
+    f
 
 let long_copies make (skew, n, off) =
   let w = make skew n and k = n - off in
@@ -319,20 +332,29 @@ let long_copies make (skew, n, off) =
   in
   cover "8 KiB or more" (k >= piece);
   cover "a part of a piece at the end" (k > piece && k mod piece <> 0);
-  let moved =
-    compacting (fun () ->
-        Window.write w off s;
-        equal ~msg:"read after write" string s (Window.read w off k);
-        Window.blit_string t 2 w off k;
-        equal ~msg:"read after blit_string" string (String.sub t 2 k)
-          (Window.read w off k);
-        Window.fill w off k 'q';
-        equal ~msg:"read after fill" string (String.make k 'q')
-          (Window.read w off k);
-        equal ~msg:"the bytes before" string (String.make off '\000')
-          (Window.read w 0 off))
+  (* [long name g] is [g ()], which, as a copy of 8 KiB or more, waited for
+     another domain's compaction. *)
+  let long name g =
+    let before = copies_asked () in
+    let x = g () in
+    if k >= piece then
+      greater
+        ~msg:(name ^ ": compactions it waited for")
+        int ~than:before (copies_asked ());
+    x
   in
-  cover "the heap compacted during the copies" moved
+  compacting (fun () ->
+      long "write" (fun () -> Window.write w off s);
+      equal ~msg:"read after write" string s
+        (long "read" (fun () -> Window.read w off k));
+      long "blit_string" (fun () -> Window.blit_string t 2 w off k);
+      equal ~msg:"read after blit_string" string (String.sub t 2 k)
+        (Window.read w off k);
+      long "fill" (fun () -> Window.fill w off k 'q');
+      equal ~msg:"read after fill" string (String.make k 'q')
+        (Window.read w off k);
+      equal ~msg:"the bytes before" string (String.make off '\000')
+        (Window.read w 0 off))
 
 (* Writes and fills on a prefetchable window, whose stores go 64 bytes at a
    time where the processor stores 64 bytes as one write: at each alignment

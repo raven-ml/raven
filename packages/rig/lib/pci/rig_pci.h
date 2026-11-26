@@ -145,4 +145,14 @@ static inline void rig_pci_flush(const struct rig_pci_window *w) {
 RIG_PCI_EXTERN void rig_pci_write(const struct rig_pci_window *w, size_t off,
                                   const void *src, size_t n);
 
+/* For rig's tests
+
+   rig_pci_on_release (f) has each long copy of a mapped window
+   (window.mli's read, blit_string, write and fill) call [f] with the
+   runtime released: once in each piece it moves, and once for a fill.
+   NULL stops the calls of copies that start after it; a copy
+   already running may still call the [f] it read. Unset, the hook costs
+   a copy a load and a branch per piece. */
+RIG_PCI_EXTERN void rig_pci_on_release(void (*f)(void));
+
 #endif

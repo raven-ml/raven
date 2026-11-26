@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* What the suites need from C: process memory to map, a far machine reached
-   through a transport, the accesses of rig_pci.h, the monotonic clock,
-   and the numbers of devices.
+   through a transport, the accesses of rig_pci.h, long copies that wait for
+   collections, the monotonic clock, and the numbers of devices.
 
    A far machine holds [size] bytes at addresses [base, base + size) and
    nothing else. Its transport logs every access, fails on request, and
@@ -262,6 +262,34 @@ value rig_pci_test_failed(value w) {
   const char *why = rig_pci_failed(&v);
   if (why == NULL) CAMLreturn(Val_none);
   CAMLreturn(caml_alloc_some(caml_copy_string(why)));
+}
+
+/* Long copies that wait, with the runtime released, for a collection in
+   another domain: each wait asks for one and returns once the collections
+   answered reach its ask. [asked] and [answered] count from the start. */
+
+static long asked, answered;
+
+static void wait_collection(void) {
+  struct timespec us = {0, 20000};
+  long n = __atomic_add_fetch(&asked, 1, __ATOMIC_ACQ_REL);
+  while (__atomic_load_n(&answered, __ATOMIC_ACQUIRE) < n)
+    nanosleep(&us, NULL);
+}
+
+value rig_pci_test_copies_wait(value on) {
+  rig_pci_on_release(Bool_val(on) ? wait_collection : NULL);
+  return Val_unit;
+}
+
+value rig_pci_test_copies_asked(value unit) {
+  (void)unit;
+  return Val_long(__atomic_load_n(&asked, __ATOMIC_ACQUIRE));
+}
+
+value rig_pci_test_copies_answer(value n) {
+  __atomic_store_n(&answered, Long_val(n), __ATOMIC_RELEASE);
+  return Val_unit;
 }
 
 /* The monotonic clock */
