@@ -1244,22 +1244,24 @@ The suite is `Tolk.Compiler_cpu` (`runtime/support/compiler_cpu/`),
 written `CPU` below. `kernels.golden` holds the kernels it renders with
 `Cstyle.clang`: `add` and `half_add`, the `Tensor` programs of tinygrad's tests,
 and `sqrt`. CC is read once per process, so the tests tagged `no-clang` run in
-a second process, where CC names a program that does not exist. A test that
+a second process, where CC names a program that does not exist, and the test
+tagged `slp-clang` in a third, where CC runs Clang with its straight-line
+vectorizer on. A test that
 compiles for a machine the installed Clang has no backend for, or disassembles
 an object the installed objdump cannot read, skips.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `device/cpu/test_cpu.py::TestCPU::test_arch_feats` | `x86_64,x86-64,avx` puts `vmov` in the add kernel, `-avx` does not | `CPU › as tinygrad › the add kernel moves vectors with vmov iff AVX is on: › x86_64,x86-64,avx`, `› x86_64,x86-64,-avx` |
-| tinygrad: `null/test_compile_failures.py::TestDisassembly::test_float16_alu` | on Apple's processors a half addition has no `fcvt` | `CPU › as tinygrad › a half addition on an Apple processor converts nothing` |
-| tinygrad: `null/test_elf.py::TestElfLoader::test_clang_jit_compiler_external_raise`, `test_load_clang_jit_strtab`, `test_link` | the loader refuses an unresolved symbol, reads `.rela.text`, links libm | dropped: loading is rig's (`Rig.Image`); that the compiled object needs nothing of a library is `CPU › execution on the host › a compiled square root runs without a library` |
-| tinygrad: `runtime/support/compiler_cpu.py` `-fno-math-errno` (no test) | a square root is an instruction, not a call | `CPU › objects › a square root is one instruction on › x86_64,x86-64`, `› arm64,generic`; `CPU › execution on the host › a compiled square root runs without a library` |
-| tinygrad: `runtime/support/compiler_cpu.py` `-ffixed-x18` (no test) | x18 is left alone on arm64 | `CPU › features › arm64 leaves x18 alone` |
-| tinygrad: `runtime/support/compiler_cpu.py` features (no test) | arm64 `f` is `+f` and `-f` is `+nof`; riscv64 joins features as extensions, `native` is `rv64g` | `CPU › features › a half addition on arm64 converts iff fp16 is off:` (2), `arm64 vectorizes with its SIMD registers`, `-simd on arm64 disables them`, `a feature on riscv64 is an extension the processor gains`; `CPU › objects › native on riscv64 is rv64g` |
-| tinygrad: `runtime/support/compiler_cpu.py` the arch assertion and `unsupported arch` | a malformed arch or another machine is refused | `CPU › architectures › an architecture of fewer than two fields is refused, named:` (3), `another machine is refused, named:` (3) |
-| tinygrad: `runtime/support/compiler_cpu.py` `Compiler.__init__` cache key | `compile_clang_obj_` and the arch's fields joined by `_` | `CPU › cache › objects are cached in the table of the architecture` (3), `the table is named with ccache off`; `CPU › without Clang › a cached object is served without running Clang` |
-| tinygrad: `runtime/support/compiler_cpu.py` `disassemble` | `objdump -d` of the object | `CPU › disassembly › prints what objdump prints of the object` |
-| none | determinism | `CPU › objects › one source compiles to the same bytes` |
+| tinygrad: `device/cpu/test_cpu.py::TestCPU::test_arch_feats` | `x86_64,x86-64,avx` puts `vmov` in the add kernel, `-avx` does not | `CPU › arch › the add kernel moves vectors with vmov iff AVX is on: › x86_64,x86-64,avx`, `› x86_64,x86-64,-avx` |
+| tinygrad: `null/test_compile_failures.py::TestDisassembly::test_float16_alu` | on Apple's processors a half addition has no `fcvt` | `CPU › arch › native on an Apple processor adds halves without converting` |
+| tinygrad: `null/test_elf.py::TestElfLoader::test_clang_jit_compiler_external_raise`, `test_load_clang_jit_strtab`, `test_link` | the loader refuses an unresolved symbol, reads `.rela.text`, links libm | dropped: loading is rig's (`Rig.Image`); that the compiled object needs nothing of a library is `CPU › objects › a square root's object runs without a library` |
+| tinygrad: `runtime/support/compiler_cpu.py` `-fno-math-errno` (no test) | a square root is an instruction, not a call | `CPU › objects › a square root is one instruction on › x86_64,x86-64`, `› arm64,generic`; `CPU › objects › a square root's object runs without a library` |
+| tinygrad: `runtime/support/compiler_cpu.py` `-ffixed-x18` (no test) | x18 is left alone on arm64 | `CPU › arm64 › x18 is left alone` |
+| tinygrad: `runtime/support/compiler_cpu.py` features (no test) | arm64 `f` is `+f` and `-f` is `+nof`; riscv64 joins features as extensions, `native` is `rv64g` | `CPU › arch › a half addition on arm64 converts iff fp16 is off:` (2), `a loop on arm64 uses vector registers iff simd is on:` (2), `a feature on riscv64 is an extension the processor gains:` (2), `a feature disabled on riscv64 is refused`, `native on riscv64 is rv64g` |
+| tinygrad: `runtime/support/compiler_cpu.py` the arch assertion and `unsupported arch` | a malformed arch or another machine is refused | `CPU › arch › an arch of fewer than two fields is refused, named:` (3), `another machine is refused, named:` (3) |
+| tinygrad: `runtime/support/compiler_cpu.py` `Compiler.__init__` cache key | `compile_clang_obj_` and the arch's fields joined by `_` | `CPU › cache › objects are cached in the table of the Clang run, the architecture and a digest` (3), `the table is named with ccache off`, `a cached object is served without a Clang that runs` |
+| tinygrad: `runtime/support/compiler_cpu.py` `disassemble` | `objdump -d` of the object | `CPU › disassemble › prints what objdump prints of the object` |
+| none | determinism | `CPU › objects › a source compiles to the same object each time` |
 
 ## Compiler_cuda
 

@@ -34,64 +34,72 @@ val clang : string -> Renderer.Compiler.t
       misses on a virtual Mac;
     - each [FEATURE] is an instruction set extension to enable, or to disable if
       it starts with [-]. On [riscv64] features cannot be disabled: each is an
-      extension that the processor model gains;
+      extension that the processor model gains, and Clang rejects an [arch] with
+      a [-FEATURE];
     - a [FEATURE] [tune=MODEL] instead tunes the code for the processor model
       [MODEL], [native] for the host's, as in ["x86_64,x86-64-v3,tune=native"]:
       it chooses among the instructions [CPU] and the features allow, and never
       allows another.
 
     Objects are ELF, optimized at [-O2] and position independent. Math functions
-    do not set [errno], so that a square root is one instruction. For an x86_64
-    processor without F16C, which converts no half in hardware, each object
-    defines the conversions between halves and floats that Clang calls
-    ([__extendhfsf2] and [__truncsfhf2]): IEEE's, rounding to nearest with ties
-    to even, with subnormals and infinities, and a NaN made quiet with the high
-    bits of its payload, as the processors' conversions make it. On [arm64] the
-    register [x18] is left alone, since macOS and Windows clobber it, and LLVM's
-    interleaved load combine, which reads loads that shuffles put together as
-    one interleaved load, is off: its time grows much faster than the lanes of a
-    vector gathered from loads. Loop idiom recognition, which replaces a loop by
-    the library call or table it computes, is off: the source makes no such
-    call, and under LLVM 22 and 23 its time grows exponentially with a chain of
-    selections that each read the last twice. Under a Clang of LLVM 18, 19 or
-    20, and under Apple's Clang 17 for [x86_64], the straight-line vectorizer,
-    which packs independent scalar operations into vectors, is off, since it
-    writes invalid code or wrong values for some packed integer lanes. Under a
-    Clang before LLVM 23, under Apple's and under one that states no release,
-    AVX-512 is off for [x86_64] ({!flags}). Where Clang keeps it on all the same
-    for [native], as LLVM 21 does on a processor that states AVX10.1, [native]
-    is the processor Clang resolves it to, by name, without AVX-512 and without
-    the features the host has beyond that processor's; where it keeps it on for
-    an AVX10.1 that [arch] names, a compile raises
-    {!Renderer.Compiler.Compile_error} saying so. On x86_64 Windows the stack is
-    not probed, since rig commits a thread's stack before it runs linked code,
-    and nothing is kept below the stack pointer, which Windows may write. A
-    source of more than 400 000 bytes compiles without the loop vectorizer,
-    which packs a loop's iterations into vectors, so that a long source compiles
-    in a fraction of the time.
+    do not set [errno], so that a square root is one instruction. Clang fuses
+    only the multiply-adds the source writes ([-ffp-contract=off]), and rounds
+    each other product and sum to its type. For an x86_64 processor without
+    F16C, which converts no half in hardware, each object defines the
+    conversions between halves and floats that Clang calls ([__extendhfsf2] and
+    [__truncsfhf2]): IEEE's, rounding to nearest with ties to even, with
+    subnormals and infinities, and a NaN made quiet with the high bits of its
+    payload, as the processors' conversions make it. On [arm64] the register
+    [x18] is left alone, since macOS and Windows clobber it, and LLVM's
+    interleaved load combine, which combines loads that shuffles put together
+    into wide loads, is off, since its time grows much faster than the lanes of
+    a vector gathered from loads; the compiler proper receives
+    [-mllvm -disable-interleaved-load-combine]. Loop idiom recognition, which
+    replaces a loop by the library call or table it computes, is off, since the
+    source makes no such call and under LLVM 22 and 23 its time grows
+    exponentially with a chain of selections that each read the last twice; the
+    compiler proper receives [-mllvm -disable-loop-idiom-all]. Under a Clang of
+    LLVM 18, 19 or 20, and under Apple's Clang 17 for [x86_64], the
+    straight-line vectorizer, which packs independent scalar operations into
+    vectors, is off, since it writes invalid code or wrong values for some
+    packed integer lanes. Under a Clang before LLVM 23, under Apple's and under
+    one that states no release, AVX-512 is off for [x86_64] ({!flags}). Where
+    Clang keeps it on all the same for [native], as LLVM 21 does on a processor
+    that states AVX10.1, [native] is the processor Clang resolves it to, by
+    name, without AVX-512 and without the features the host has beyond that
+    processor's; where it keeps it on for an AVX10.1 that [arch] names, a
+    compile raises {!Renderer.Compiler.Compile_error} saying so. On x86_64
+    Windows the stack is not probed, since rig commits a thread's stack before
+    it runs linked code, and nothing is kept below the stack pointer, which
+    Windows may write. A source of more than 400 000 bytes compiles without the
+    loop vectorizer, which packs a loop's iterations into vectors, so that a
+    long source compiles in a fraction of the time.
 
     Clang's compiler proper runs as Clang states it runs for these options
     ([clang -###]), its [-cc1] command, with LLVM's IR verifier on, which a
-    release Clang turns off, and for a source of more than 400 000 bytes
-    without [-vectorize-loops], as Clang's driver runs it under
-    [-fno-vectorize]: code that an optimization makes invalid raises
-    {!Renderer.Compiler.Compile_error} with Clang's diagnostic, which names the
-    function, where it would compile into wrong values or crash Clang. Several
-    sources ({!Renderer.Compiler.compile_all}) compile in one run of it, each
-    source from a file of its own, so that Clang starts once for them; each
-    object is the one Clang makes of its source alone, from standard input.
+    release Clang turns off, and for a source of more than 400 000 bytes without
+    [-vectorize-loops], as Clang's driver runs it under [-fno-vectorize]: code
+    that an optimization makes invalid raises {!Renderer.Compiler.Compile_error}
+    with Clang's diagnostic, which names the function, where it would compile
+    into wrong values or crash Clang. Several sources
+    ({!Renderer.Compiler.compile_all}) compile in one run of it, each source
+    from a file of its own, so that Clang starts once for them; each object is
+    the one Clang makes of its source alone, from standard input. A compile
+    abandoned by an exception, such as one a signal handler raises, ends its
+    Clang and leaves none of its files.
 
-    Objects do not depend on the working directory. With {!Setting.ccache}, they
-    are cached in the table [compile_C_obj_A_D], where [C] is the Clang run, [A]
-    is [arch] with its commas replaced by underscores, and [D] the digest of
-    what that Clang states it runs for these options, which starts with its
-    version and installation, of the commands of its compiler proper that
-    compile a source of at most and of more than 400 000 bytes, of that length,
-    and of the half conversions an object defines: the commands name the
-    processor and features they compile for and every option, or are replaced
-    by why Clang rejects them or does not run. An object is read back only for
-    its source, compiled by the same Clang with the same options and
-    conversions. A source's length counts without the conversions.
+    A source compiles to the same object each time, and objects do not depend on
+    the working directory. With {!Setting.ccache}, they are cached in the table
+    [compile_C_obj_A_D], where [C] is the Clang run, [A] is [arch] with its
+    commas replaced by underscores, and [D] the digest of what that Clang states
+    it runs for these options, which starts with its version and installation,
+    of the commands of its compiler proper that compile a source of at most and
+    of more than 400 000 bytes, of that length, and of the half conversions an
+    object defines: the commands name the processor and features they compile
+    for and every option, or are replaced by why Clang rejects them or does not
+    run. An object is read back only for its source, compiled by the same Clang
+    with the same options and conversions. A source's length counts without the
+    conversions. The table is named whatever {!Setting.ccache} holds.
 
     The options depend on the release of LLVM that Clang states. Once per
     process, when the table or a compile first needs it, Clang's preprocessor
@@ -100,7 +108,8 @@ val clang : string -> Renderer.Compiler.t
     table [clang_llvm] while {!Setting.ccache} holds, or under no release's if
     it rejects those, and again under the options of another release it states,
     unless they only disable AVX10.1 and the macros show none of it on; Clang
-    then states once what it runs for the options of its release.
+    then states once what it runs for the options of its release. A run of the
+    preprocessor that fails is not kept, and the next compile runs it again.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
     Clang's diagnostics if Clang rejects the source or does not run, and before
     it compiles anything: naming the Clang and its version under a Clang before

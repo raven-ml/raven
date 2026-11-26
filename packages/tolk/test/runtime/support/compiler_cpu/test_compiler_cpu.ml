@@ -33,9 +33,9 @@ let add_n_of n =
   let pad = n - String.length add_n - String.length "/**/" in
   add_n ^ "/*" ^ String.make pad ' ' ^ "*/"
 
-(* A loop that exits on its data, as the renderer writes a loop of no bound:
-   it counts a word's set bits by clearing the lowest until none is left, the
-   loop that loop idiom recognition replaces by a population count. *)
+(* A loop that exits on its data, as the renderer writes a loop of no bound: it
+   counts a word's set bits by clearing the lowest until none is left, the loop
+   that loop idiom recognition replaces by a population count. *)
 let bit_count =
   {|void count(unsigned char* restrict args) {
   unsigned long x = *((unsigned long*)args);
@@ -96,9 +96,9 @@ __attribute__((min_vector_width(512))) void r_3_2(unsigned char* restrict data0_
   *(data0_3+2) = (alu17[0]+alu17[1]);
 }|}
 
-(* Part of the kernel rune compiles for casts from float16: in its first row
-   the bits of each half as a double, in the others the half converted to a
-   short, saturated, 0 at NaN. *)
+(* Part of the kernel rune compiles for casts from float16: in its first row the
+   bits of each half as a double, in the others the half converted to a short,
+   saturated, 0 at NaN. *)
 let half_casts =
   {|void casts(unsigned long* restrict out, __fp16* restrict in, int n) {
   for (int row = 0; row < 21; row++) {
@@ -116,14 +116,14 @@ let half_casts =
   }
 }|}
 
+let read_file name = In_channel.with_open_bin name In_channel.input_all
+
 (* The kernels of kernels.golden, each a linear program named after its kernel,
    whose sources are the kernel's nodes in order. *)
 let kernels = lazy (Ops.src (Golden.sink "kernels.golden"))
 
 let kernel name =
-  let named l =
-    match Ops.arg l with Ops.String s -> s = name | _ -> false
-  in
+  let named l = match Ops.arg l with Ops.String s -> s = name | _ -> false in
   Ops.src (List.find named (Lazy.force kernels))
 
 let target arch =
@@ -184,6 +184,8 @@ let has_infix ~affix s =
   in
   at 0
 
+let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
+
 (* [compile arch src] is [src] compiled for [arch], or skips the test where the
    host compiles nothing ([Clang.here]) or the installed Clang has no backend
    for [arch]'s machine. *)
@@ -241,16 +243,38 @@ let words text =
 
 let mentions word text = List.mem word (words text)
 
-let uses_vectors text =
-  List.exists
-    (fun w ->
-      String.length w > 1 && w.[0] = 'v' && w.[1] >= '0' && w.[1] <= '9')
-    (words text)
+(* The words of [ws] that [text] mentions, in [ws]'s order. *)
+let named ws text = List.filter (fun w -> mentions w text) ws
+
+(* The vector registers that [text] names, as [v0] or [v31], each once. *)
+let vector_registers text =
+  List.sort_uniq compare
+    (List.filter
+       (fun w ->
+         String.length w > 1 && w.[0] = 'v' && w.[1] >= '0' && w.[1] <= '9')
+       (words text))
+
+(* The lines of [text] that hold the instruction [i] and a word that [operand]
+   accepts. *)
+let instruction_lines i operand text =
+  List.filter
+    (fun line ->
+      let ws = words line in
+      List.mem i ws && List.exists operand ws)
+    (String.split_on_char '\n' text)
+
+(* What the Clang run states as its version, "" where it does not run. *)
+let cc_version () =
+  try Helpers.system (Setting.value Setting.cc ^ " --version")
+  with Failure _ -> ""
+
+let missing_clang = "/nonexistent/clang"
 
 (* ELF headers *)
 
 let u8 s i = Char.code s.[i]
 let u16 s i = u8 s i lor (u8 s (i + 1) lsl 8)
+let u32 s i = u16 s i lor (u16 s (i + 2) lsl 16)
 
 let is_relocatable_elf64 ~machine lib =
   equal string "\x7fELF" (String.sub lib 0 4);
@@ -265,184 +289,12 @@ let elf_machine = function
   | "riscv64" -> 243
   | m -> invalid_arg ("no ELF machine for " ^ m)
 
-(* Objects *)
+(* The bit EF_RISCV_RVC of a 64-bit ELF header's [e_flags], at byte 48, which
+   marks an object that uses compressed instructions (RISC-V ELF psABI, "File
+   Header"). *)
+let rvc lib = u32 lib 48 land 0x1
 
-let objects =
-  group "objects"
-    [
-      cases "compiles to a relocatable ELF object for" ~id:Fun.id
-        [ "x86_64,x86-64"; "arm64,generic"; "riscv64,rv64g" ] (fun arch ->
-          let machine = List.hd (String.split_on_char ',' arch) in
-          is_relocatable_elf64 ~machine:(elf_machine machine)
-            (compile arch increment));
-      test "native is the host's processor" (fun () ->
-          let arch = native () in
-          is_relocatable_elf64 ~machine:(elf_machine host_machine)
-            (compile arch increment));
-      test "native on riscv64 is rv64g" (fun () ->
-          equal string
-            (compile "riscv64,rv64g" increment)
-            (compile "riscv64,native" increment));
-      test "one source compiles to the same bytes" (fun () ->
-          let arch = native () in
-          equal string (compile arch add) (compile arch add));
-      cases "a square root is one instruction on" ~id:fst
-        [ ("x86_64,x86-64", "sqrtss"); ("arm64,generic", "fsqrt") ]
-        (fun (arch, instruction) ->
-          let text = disassembly arch square_root in
-          is_true ~msg:text (mentions instruction text);
-          not_contains ~sub:"sqrtf" text);
-    ]
-
-(* Several sources at once *)
-
-let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
-
-(* Sources of each length class, the loop vectorizer's on and off. *)
-let pool =
-  [
-    ("increment", increment);
-    ("add", add);
-    ("square_root", square_root);
-    ("add_n", add_n);
-    ("pressure", pressure);
-    ("clamped_gathers", clamped_gathers);
-    ("half_casts", half_casts);
-    ("long", add_n_of (long_source + 1));
-  ]
-
-let alone =
-  lazy
-    (let clang = native_clang () in
-     List.map (fun (name, src) -> (name, ccache_off (fun () -> Compiler.compile clang src))) pool)
-
-let batches =
-  group "several sources"
-    [
-      prop "each object is the one its source compiles to alone" ~count:25
-        Gen.(
-          list ~size:(int_range 2 6)
-            (of_list ~pp:Format.pp_print_string (List.map fst pool)))
-        (fun names ->
-          cover "a source twice" (List.length (List.sort_uniq compare names) < List.length names);
-          cover "a long source among short ones"
-            (List.mem "long" names && List.exists (( <> ) "long") names);
-          let clang = native_clang () in
-          let objs =
-            ccache_off (fun () ->
-                Compiler.compile_all clang
-                  (List.map (fun n -> List.assoc n pool) names))
-          in
-          equal (list string)
-            (List.map (fun n -> List.assoc n (Lazy.force alone)) names)
-            objs);
-      test "a source that names its own file compiles to one object" (fun () ->
-          let clang = native_clang () in
-          let named = "const char *file(void) { return __FILE__; }" in
-          let objs () =
-            ccache_off (fun () -> Compiler.compile_all clang [ add; named ])
-          in
-          let first = List.nth (objs ()) 1 in
-          equal string ~msg:"again" first (List.nth (objs ()) 1);
-          equal string ~msg:"alone" first
-            (ccache_off (fun () -> Compiler.compile clang named)));
-      test "a rejected source among others raises its own diagnostics"
-        (fun () ->
-          let clang = native_clang () in
-          raises_match
-            (function
-              | Compiler.Compile_error msg ->
-                  has_infix ~affix:"undeclared_name" msg
-                  && not (has_infix ~affix:"other_name" msg)
-              | _ -> false)
-            (fun () ->
-              ccache_off (fun () ->
-                  Compiler.compile_all clang
-                    [
-                      increment;
-                      "int f(void) { return undeclared_name; }";
-                      "int g(void) { return other_name; }";
-                    ])));
-    ]
-
-(* A compile abandoned
-
-   A stand-in for Clang: asked its version or what it runs, it states itself as
-   its compiler proper. Run as that, it records its process, leaves a file of its
-   own beside its first input, as Clang leaves its temporary object, signals
-   its parent and sleeps, so that the compile is abandoned while it runs. *)
-let stand_in ~pid_file =
-  Printf.sprintf
-    {|#!/bin/sh
-if [ "$1" != "-cc1" ]; then
-  echo "clang version 19.0.0" >&2
-  printf ' "%%s" "-cc1" "-o" "-" "-"\n' "$0" >&2
-  exit 0
-fi
-for a; do rsp=$a; done
-input=$(head -n 1 "${rsp#@}" | tr -d '"')
-echo $$ > %s
-: > "$(dirname "$input")/-.o-temporary"
-kill -USR1 $PPID
-exec sleep 30
-|}
-    (Filename.quote pid_file)
-
-let abandoned =
-  test "a compile abandoned by an exception leaves its Clang ended and no files"
-    (fun () ->
-      if Sys.win32 then skip ~reason:"a POSIX shell stands in for Clang" ();
-      let dir = Filename.temp_dir "stand_in" "" in
-      let pid_file = Filename.concat dir "pid"
-      and clang = Filename.concat dir "clang"
-      and tmp = Filename.concat dir "tmp" in
-      Out_channel.with_open_gen [ Open_wronly; Open_creat ] 0o755 clang
-        (fun oc -> output_string oc (stand_in ~pid_file));
-      Unix.mkdir tmp 0o700;
-      let saved = Filename.get_temp_dir_name () in
-      let handler = Sys.Signal_handle (fun _ -> raise Exit) in
-      let previous = Sys.signal Sys.sigusr1 handler in
-      Fun.protect
-        ~finally:(fun () ->
-          Sys.set_signal Sys.sigusr1 previous;
-          Filename.set_temp_dir_name saved)
-        (fun () ->
-          Filename.set_temp_dir_name tmp;
-          raises Exit (fun () ->
-              Setting.context
-                [ B (Setting.cc, clang); B (Setting.ccache, false) ]
-                (fun () ->
-                  Compiler.compile_all
-                    (Compiler_cpu.clang "x86_64,x86-64")
-                    [ increment ])));
-      let pid =
-        int_of_string
-          (String.trim (In_channel.with_open_bin pid_file In_channel.input_all))
-      in
-      raises_match
-        (function Unix.Unix_error (ESRCH, _, _) -> true | _ -> false)
-        (fun () -> Unix.kill pid 0);
-      equal (array string) [||] (Sys.readdir tmp);
-      List.iter Sys.remove [ pid_file; clang ];
-      List.iter Sys.rmdir [ tmp; dir ])
-
-(* tinygrad's tests *)
-
-let tinygrad =
-  group "as tinygrad"
-    [
-      cases "the add kernel moves vectors with vmov iff AVX is on:" ~id:fst
-        [ ("x86_64,x86-64,avx", true); ("x86_64,x86-64,-avx", false) ]
-        (fun (arch, vmov) ->
-          let text = disassembly arch (rendered arch "add") in
-          equal ~msg:text bool vmov (has_infix ~affix:"vmov" text));
-      test "a half addition on an Apple processor converts nothing" (fun () ->
-          on_macos_arm64 ();
-          let arch = "arm64,native" in
-          not_contains ~sub:"fcvt" (disassembly arch (rendered arch "half_add")));
-    ]
-
-(* Execution *)
+(* Programs *)
 
 let floats xs = Array.map (fun x -> `Float x) xs
 let values = array Dtypes.value
@@ -465,57 +317,14 @@ let zero_selection () =
   in
   Codegen.to_program sink (Lazy.force host)
 
-let execution =
-  group "execution on the host"
-    [
-      cases "a selection between a value and -0. keeps each zero's sign, at"
-        ~id:(Printf.sprintf "%h") [ 0.; -0.; 1.; -1. ] (fun x ->
-          let expected = if -0. < x then -0. else x in
-          let out = Run.on_host (zero_selection ()) [ (1, floats [| x |]) ] in
-          match List.assoc 0 out with
-          | [| `Float y |] ->
-              equal string
-                (Printf.sprintf "%h" expected)
-                (Printf.sprintf "%h" y)
-          | _ -> fail "not one float");
-      test "a compiled kernel adds two buffers" (fun () ->
-          let a = Array.init 16 Float.of_int
-          and b = Array.init 16 (fun i -> Float.of_int (100 - i)) in
-          let out =
-            Run.on_host (loaded "add") [ (1, floats a); (2, floats b) ]
-          in
-          equal values (floats (Array.make 16 100.)) (List.assoc 0 out));
-      test "a compiled square root runs without a library" (fun () ->
-          let squares = Array.init 16 (fun i -> Float.of_int (i * i)) in
-          let out = Run.on_host (loaded "sqrt") [ (1, floats squares) ] in
-          equal values (floats (Array.init 16 Float.of_int)) (List.assoc 0 out));
-      test "a product and a sum round twice, never fused" (fun () ->
-          (* (1 + 2^-12)^2 rounds to 1 + 2^-11, a tie to even, so the sum with
-             -(1 + 2^-11) is 0; a fused multiply-add keeps the 2^-24. *)
-          let x = 1. +. 0x1p-12 in
-          let out =
-            Run.on_host (loaded "muladd")
-              [
-                (1, floats (Array.make 16 x));
-                (2, floats (Array.make 16 x));
-                (3, floats (Array.make 16 (-.(1. +. 0x1p-11))));
-              ]
-          in
-          equal values (floats (Array.make 16 0.)) (List.assoc 0 out));
-    ]
-
-(* The baseline
-
-   x86-64's baseline processor has neither F16C nor FMA (x86-64 psABI,
-   §3.1.1), so a host program compiled for it converts halves by the
-   conversions each object defines and calls the process's [fmaf]. Every
-   x86-64 host runs such a program. *)
-
 let x86_host () =
   if Rig.instruction_set Rig.host <> "x86_64" then
     skip ~reason:"not an x86-64 host" ()
 
-(* Under Windows the object calls the process's functions by Windows'
+(* x86-64's baseline processor has neither F16C nor FMA (x86-64 psABI, §3.1.1),
+   so a host program compiled for it converts halves by the conversions each
+   object defines and calls the process's [fmaf]. Every x86-64 host runs such a
+   program. Under Windows the object calls the process's functions by Windows'
    convention ([Compiler_cpu.win64]). *)
 let baseline =
   target ((if Sys.win32 then "x86_64-windows" else "x86_64") ^ ",x86-64")
@@ -533,142 +342,15 @@ let elementwise ~name ~n src dst f =
 let ints xs = Array.map (fun x -> `Int (Bigint.of_int x)) xs
 
 let to_ints vs =
-  Array.map (function `Int b -> Bigint.to_int b | _ -> fail "not an integer") vs
+  Array.map
+    (function `Int b -> Bigint.to_int b | _ -> fail "not an integer")
+    vs
 
 (* [prg] run once on [xs], its output read back as integers. *)
-let run_ints prg xs =
-  to_ints (List.assoc 0 (Run.on_host prg [ (1, ints xs) ]))
+let run_ints prg xs = to_ints (List.assoc 0 (Run.on_host prg [ (1, ints xs) ]))
 
-(* IEEE 754's binary16, by its bits: a finite half's value, exact in a
-   double. *)
-let half_value h =
-  let e = (h lsr 10) land 0x1f and m = h land 0x3ff in
-  let v =
-    if e = 0 then Float.ldexp (Float.of_int m) (-24)
-    else Float.ldexp (Float.of_int (m lor 0x400)) (e - 25)
-  in
-  if h land 0x8000 <> 0 then -.v else v
-
-let f32_bits v = Int32.to_int (Int32.bits_of_float v) land 0xffff_ffff
-
-(* The float32 bits of half [h]: its value, exact, and a NaN made quiet with
-   its payload, as compiler_cpu.mli states. *)
-let widened h =
-  let sign = (h land 0x8000) lsl 16 and m = h land 0x3ff in
-  if (h lsr 10) land 0x1f <> 0x1f then f32_bits (half_value h)
-  else sign lor 0x7f800000 lor (m lsl 13) lor if m <> 0 then 0x400000 else 0
-
-(* The half bits of the float32 bits [x], rounded to nearest with ties to
-   even (IEEE 754 §4.3.1): the nearer of the two finite halves around it, the
-   one of even bits at a tie, and an infinity at or past 65520, halfway
-   between the greatest half and the next power of two. *)
-let narrowed x =
-  let sign = (x lsr 16) land 0x8000 and a = x land 0x7fff_ffff in
-  if a > 0x7f800000 then sign lor 0x7e00 lor ((a lsr 13) land 0x3ff)
-  else
-    let v = Int32.float_of_bits (Int32.of_int a) in
-    if v >= 65520. then sign lor 0x7c00
-    else
-      (* The greatest finite half at most [v], by bisection over their bits,
-         which order them. *)
-      let rec below lo hi =
-        if hi - lo <= 1 then lo
-        else
-          let mid = (lo + hi) / 2 in
-          if half_value mid <= v then below mid hi else below lo mid
-      in
-      let lo = below 0 0x7c00 in
-      let hi = lo + 1 in
-      let dlo = v -. half_value lo and dhi = half_value hi -. v in
-      let h = if dlo < dhi || (dlo = dhi && lo land 1 = 0) then lo else hi in
-      sign lor h
-
-let every_half = Array.init 65536 Fun.id
-
-(* Every half widened, the midpoints between finite halves and their float32
-   neighbours, the edges of overflow, and the negatives of all. *)
-let narrowing_inputs =
-  let positive =
-    List.init 0x7c00 (fun h ->
-        let mid = f32_bits ((half_value h +. half_value (h + 1)) /. 2.) in
-        [ widened h; mid; mid - 1; mid + 1 ])
-    |> List.concat
-  in
-  let edges = [ 0x7f800000; 0x7fc00000; 0x7f800001; 0x7fbfffff ] in
-  let all = edges @ positive in
-  Array.of_list (all @ List.map (fun x -> x lor 0x8000_0000) all)
-
-let half_casts_baseline =
-  group "a program for x86-64's baseline runs here"
-    [
-      test "every half widens to its float32" (fun () ->
-          x86_host ();
-          let prg =
-            elementwise ~name:"widen" ~n:65536 Dtype.Uint16 Dtype.Uint32
-              (fun x ->
-                Ops.bitcast
-                  (Ops.cast (Ops.bitcast x Dtype.Float16) Dtype.Float32)
-                  Dtype.Uint32)
-          in
-          equal (array int) (Array.map widened every_half)
-            (run_ints prg every_half));
-      test "float32s narrow to the nearest half, ties to even" (fun () ->
-          x86_host ();
-          let xs = narrowing_inputs in
-          let prg =
-            elementwise ~name:"narrow" ~n:(Array.length xs) Dtype.Uint32
-              Dtype.Uint16 (fun x ->
-                Ops.bitcast
-                  (Ops.cast (Ops.bitcast x Dtype.Float32) Dtype.Float16)
-                  Dtype.Uint16)
-          in
-          equal (array int) (Array.map narrowed xs) (run_ints prg xs));
-      test "a fused multiply-add rounds once" (fun () ->
-          x86_host ();
-          (* (1 + 2^-12)^2 - (1 + 2^-11) is 2^-24, exact in a float; each
-             product and sum rounding on its own gives 0. *)
-          let x = 1. +. 0x1p-12 in
-          let n = 4 in
-          let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-          let at slot = Ops.index (Shape.placeholder ~slot [ n ] Float32) [ i ] in
-          let sink =
-            Ops.sink
-              ~kernel:(Ops.kernel_info ~name:"fused" ())
-              [
-                Ops.end_
-                  (Ops.store (at 0) (Ops.alu (at 1) Op.Mulacc [ at 2; at 3 ]))
-                  [ i ];
-              ]
-          in
-          let prg = program sink baseline in
-          let out =
-            Run.on_host prg
-              [
-                (1, floats (Array.make n x));
-                (2, floats (Array.make n x));
-                (3, floats (Array.make n (-.(1. +. 0x1p-11))));
-              ]
-          in
-          equal values (floats (Array.make n 0x1p-24)) (List.assoc 0 out));
-    ]
-
-(* arm64's half arithmetic
-
-   With fp16, FEAT_FP16, Clang computes a half vector in halves where it
-   computes it in floats otherwise. A half's +, -, *, / and square root
-   rounded in a float32 and then to the half are the half's correctly rounded
-   result, since 24 >= 2 * 11 + 2 (Roux, "Innocuous Double Rounding of Basic
-   Arithmetic Operations", 2014), and a multiply-add rounds once either way,
-   so the two compute the same bits. *)
-
-let arm64_fp16 () =
-  if Rig.instruction_set Rig.host <> "arm64" then
-    skip ~reason:"not an arm64 host" ();
-  if not (List.mem "fp16" (String.split_on_char '+' (Rig.arch Rig.host))) then
-    skip ~reason:"the host has no half arithmetic" ()
-
-(* The program of out[i] = f a[i] b[i] c[i] over [n] halves held as their
-   bits, for [arch], its lanes upcast by [lanes]. *)
+(* The program of out[i] = f a[i] b[i] c[i] over [n] halves held as their bits,
+   for [arch], its lanes upcast by [lanes]. *)
 let halves ~arch ~lanes ~n f =
   let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let bits slot =
@@ -717,475 +399,186 @@ let sign_bits ?(dt = Dtype.Float16) ~arch op mask =
 
 let muladd a b c = Ops.alu a Op.Mulacc [ b; c ]
 
-(* Whether a line of [text] holds the instruction [i] and a word that
-   [operand] accepts. *)
-let has_instruction i operand text =
-  List.exists
-    (fun line ->
-      let ws = words line in
-      List.mem i ws && List.exists operand ws)
-    (String.split_on_char '\n' text)
+(* Halves, by their bits *)
 
-let half_muladds =
-  group "a half multiply-add on arm64"
-    [
-      cases "rounds once as Clang writes it iff fp16 is on, and is rewritten \
-             otherwise:"
-        ~id:fst
-        [
-          ("arm64,generic", false);
-          ("arm64,generic,fp16", true);
-          ("arm64,generic,-fp16", false);
-          ("arm64,generic,fp16,-fp16", false);
-          ("arm64,generic,-fp16,fp16", true);
-          ("arm64,generic,fp16,tune=native", true);
-          ("x86_64,x86-64-v3", false);
-        ]
-        (fun (arch, once) ->
-          equal bool once ((Cstyle.clang (target arch)).fma Dtype.Float16));
-      cases "is one fmla of eight halves iff fp16 is on:" ~id:fst
-        [ ("arm64,generic", false); ("arm64,generic,fp16", true) ]
-        (fun (arch, fused) ->
-          let prg = halves ~arch ~lanes:8 ~n:8 muladd in
-          let text = disassembly arch (source prg) in
-          equal ~msg:text bool fused
-            (has_instruction "fmla" (String.equal "8h") text));
-      cases "of one lane is one fmadd of halves iff fp16 is on:" ~id:fst
-        [ ("arm64,generic", false); ("arm64,generic,fp16", true) ]
-        (fun (arch, fused) ->
-          let prg = halves ~arch ~lanes:1 ~n:1 muladd in
-          let text = disassembly arch (source prg) in
-          let half_register w =
-            String.length w > 1 && w.[0] = 'h' && w.[1] >= '0' && w.[1] <= '9'
-          in
-          equal ~msg:text bool fused
-            (has_instruction "fmadd" half_register text));
-    ]
+(* IEEE 754's binary16, by its bits: a finite half's value, exact in a
+   double. *)
+let half_value h =
+  let e = (h lsr 10) land 0x1f and m = h land 0x3ff in
+  let v =
+    if e = 0 then Float.ldexp (Float.of_int m) (-24)
+    else Float.ldexp (Float.of_int (m lor 0x400)) (e - 25)
+  in
+  if h land 0x8000 <> 0 then -.v else v
 
-(* Halves of every class: zeros, subnormals and the least normal, one and
-   its neighbours, the greatest finite and its neighbour, infinities and
-   NaNs, then any. *)
+let f32_bits v = Int32.to_int (Int32.bits_of_float v) land 0xffff_ffff
+
+(* The float32 bits of half [h]: its value, exact, and a NaN made quiet with its
+   payload, as compiler_cpu.mli states. *)
+let widened h =
+  let sign = (h land 0x8000) lsl 16 and m = h land 0x3ff in
+  if (h lsr 10) land 0x1f <> 0x1f then f32_bits (half_value h)
+  else sign lor 0x7f800000 lor (m lsl 13) lor if m <> 0 then 0x400000 else 0
+
+(* The half bits of the float32 bits [x], rounded to nearest with ties to even
+   (IEEE 754 §4.3.1): the nearer of the two finite halves around it, the one of
+   even bits at a tie, and an infinity at or past 65520, halfway between the
+   greatest half and the next power of two. *)
+let narrowed x =
+  let sign = (x lsr 16) land 0x8000 and a = x land 0x7fff_ffff in
+  if a > 0x7f800000 then sign lor 0x7e00 lor ((a lsr 13) land 0x3ff)
+  else
+    let v = Int32.float_of_bits (Int32.of_int a) in
+    if v >= 65520. then sign lor 0x7c00
+    else
+      (* The greatest finite half at most [v], by bisection over their bits,
+         which order them. *)
+      let rec below lo hi =
+        if hi - lo <= 1 then lo
+        else
+          let mid = (lo + hi) / 2 in
+          if half_value mid <= v then below mid hi else below lo mid
+      in
+      let lo = below 0 0x7c00 in
+      let hi = lo + 1 in
+      let dlo = v -. half_value lo and dhi = half_value hi -. v in
+      let h = if dlo < dhi || (dlo = dhi && lo land 1 = 0) then lo else hi in
+      sign lor h
+
+let every_half = lazy (Array.init 65536 Fun.id)
+
+(* Every half widened, the midpoints between finite halves and their float32
+   neighbours, the edges of overflow, and the negatives of all. *)
+let narrowing_inputs =
+  lazy
+    (let positive =
+       List.init 0x7c00 (fun h ->
+           let mid = f32_bits ((half_value h +. half_value (h + 1)) /. 2.) in
+           [ widened h; mid; mid - 1; mid + 1 ])
+       |> List.concat
+     in
+     let edges = [ 0x7f800000; 0x7fc00000; 0x7f800001; 0x7fbfffff ] in
+     let all = edges @ positive in
+     Array.of_list (all @ List.map (fun x -> x lor 0x8000_0000) all))
+
+(* Halves of every class: zeros, subnormals and the least normal, one and its
+   neighbours, the greatest finite and its neighbour, infinities and NaNs, then
+   any. *)
 let half_bits =
   let edges =
     [
-      0x0000; 0x0001; 0x03ff; 0x0400; 0x3bff; 0x3c00; 0x3c01; 0x7bfe; 0x7bff;
-      0x7c00; 0x7c01; 0x7e00;
+      0x0000;
+      0x0001;
+      0x03ff;
+      0x0400;
+      0x3bff;
+      0x3c00;
+      0x3c01;
+      0x7bfe;
+      0x7bff;
+      0x7c00;
+      0x7c01;
+      0x7e00;
     ]
   in
   let signed (h, negative) = if negative then h lor 0x8000 else h in
   Gen.(
     frequency
-      [
-        (1, map signed (pair (of_list edges) bool));
-        (3, int_range 0 0xffff);
-      ])
+      [ (1, map signed (pair (of_list edges) bool)); (3, int_range 0 0xffff) ])
 
 let is_nan h = h land 0x7c00 = 0x7c00 && h land 0x3ff <> 0
 
 (* The bits of a half, every NaN read as one. *)
 let canonical h = if is_nan h then 0x7e00 else h
 
-let n_halves = 64
+(* Stand-ins for Clang, each a POSIX shell script that a test writes and names
+   in CC. *)
 
-let same_bits (name, f) =
-  let program arch = lazy (halves ~arch ~lanes:8 ~n:n_halves f) in
-  let generic = program "arm64,generic"
-  and fp16 = program "arm64,generic,fp16" in
-  prop ~count:50 name
-    Gen.(array ~size:(constant n_halves) (triple half_bits half_bits half_bits))
-    (fun xs ->
-      arm64_fp16 ();
-      let subnormal h = h land 0x7c00 = 0 && h land 0x3ff <> 0 in
-      cover "a subnormal operand"
-        (Array.exists (fun (a, b, _) -> subnormal a || subnormal b) xs);
-      cover "a NaN or an infinity"
-        (Array.exists (fun (a, _, _) -> a land 0x7c00 = 0x7c00) xs);
-      let column g = ints (Array.map g xs) in
-      let run prg =
-        let prg = Lazy.force prg in
-        Array.map canonical
-          (to_ints
-             (List.assoc 0
-                (Run.on_host prg
-                   [
-                     (1, column (fun (a, _, _) -> a));
-                     (2, column (fun (_, b, _) -> b));
-                     (3, column (fun (_, _, c) -> c));
-                   ])))
-      in
-      equal (array int) (run generic) (run fp16))
+(* [f clang] under the Clang that [script], written as the file [clang] in a
+   directory of the test's own, stands in for. *)
+let under_stand_in script f =
+  if Sys.win32 then skip ~reason:"a POSIX shell stands in for Clang" ();
+  let clang = Filename.concat (temp_dir ()) "clang" in
+  Out_channel.with_open_gen [ Open_wronly; Open_creat ] 0o755 clang (fun oc ->
+      output_string oc script);
+  Setting.context
+    [ B (Setting.cc, clang); B (Setting.ccache, false) ]
+    (fun () -> f clang)
 
-let half_bits_agree =
-  group "a program for arm64 with fp16 gives arm64's bits"
-    (List.map same_bits
-       [
-         ("of an addition", fun a b _ -> Ops.alu a Op.Add [ b ]);
-         ("of a subtraction", fun a b _ -> Ops.alu a Op.Sub [ b ]);
-         ("of a product", fun a b _ -> Ops.alu a Op.Mul [ b ]);
-         ("of a quotient", fun a b _ -> Ops.alu a Op.Fdiv [ b ]);
-         ("of a square root", fun a _ _ -> Ops.alu a Op.Sqrt []);
-         ("of a multiply-add", muladd);
-       ])
-
-(* Features *)
-
-let features =
-  group "features"
-    [
-      cases "a feature is on iff its last mention enables it:"
-        ~id:(fun (arch, f, _) -> arch ^ " " ^ f)
-        [
-          ("arm64,generic", "fp16", false);
-          ("arm64,generic,fp16", "fp16", true);
-          ("arm64,generic,fp16,-fp16", "fp16", false);
-          ("arm64,generic,-fp16,fp16", "fp16", true);
-          ("arm64,generic,fp16,tune=native", "fp16", true);
-          ("arm64,apple-m1", "fp16", false);
-          ("x86_64,x86-64,avx", "avx", true);
-          ("x86_64,x86-64,avx,-avx", "avx", false);
-        ]
-        (fun (arch, f, on) -> equal bool on (Compiler_cpu.has_feature arch f));
-      cases "a half addition on arm64 converts iff fp16 is off:" ~id:fst
-        [ ("arm64,generic", true); ("arm64,generic,fp16", false) ]
-        (fun (arch, fcvt) ->
-          let text = disassembly arch (rendered arch "half_add") in
-          equal ~msg:text bool fcvt (mentions "fcvt" text));
-      test "arm64 vectorizes with its SIMD registers" (fun () ->
-          let text = disassembly "arm64,generic" add_n in
-          is_true ~msg:text (uses_vectors text));
-      test "-simd on arm64 disables them" (fun () ->
-          let text = disassembly "arm64,generic,-simd" add_n in
-          is_false ~msg:text (uses_vectors text));
-      test "a feature on riscv64 is an extension the processor gains" (fun () ->
-          not_equal string
-            (compile "riscv64,rv64g" add)
-            (compile "riscv64,rv64g,c" add));
-      (* Clang 18 crashed splitting a vector of more than 16 halves that it
-         negates, takes the absolute value of or copies a sign to, for these
-         processors, which prefer 256-bit vectors. *)
-      cases "a kernel over more than 16 halves compiles for AVX-512"
-        ~id:(fun (arch, name) -> arch ^ " " ^ name)
-        (List.concat_map
-           (fun arch ->
-             List.map
-               (fun name -> (arch, name))
-               [ "half_neg"; "half_abs"; "half_copysign"; "half_min" ])
-           [
-             "x86_64,skylake-avx512";
-             "x86_64,icelake-server";
-             "x86_64,sapphirerapids";
-           ])
-        (fun (arch, name) ->
-          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
-            (compile arch (rendered arch name)));
-      (* LLVM folds flipping or clearing the sign bit of halves' bits into a
-         negation or an absolute value, on which Clang 18 crashed the same
-         way. *)
-      cases "a sign bit of more than 16 halves compiles for AVX-512"
-        ~id:(fun (arch, (name, _)) -> arch ^ " " ^ name)
-        (List.concat_map
-           (fun arch ->
-             List.map
-               (fun op -> (arch, op))
-               [
-                 ("flipped", (Ops.bitwise_xor, 0x8000));
-                 ("cleared", (Ops.bitwise_and, 0x7fff));
-               ])
-           [
-             "x86_64,skylake-avx512";
-             "x86_64,icelake-server";
-             "x86_64,sapphirerapids";
-           ])
-        (fun (arch, (_, (op, mask))) ->
-          let prg = sign_bits ~arch op mask in
-          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
-            (compile arch (source prg)));
-      (* LLVM folds flipping or clearing the sign bit of a bfloat16 into a
-         negation or an absolute value, which LLVM 18's arm64 backend selects
-         for no processor. *)
-      cases "a sign bit of bfloat16s compiles for arm64"
-        ~id:(fun (arch, (name, _)) -> arch ^ " " ^ name)
-        (List.concat_map
-           (fun arch ->
-             List.map
-               (fun op -> (arch, op))
-               [
-                 ("flipped", (Ops.bitwise_xor, 0x8000));
-                 ("cleared", (Ops.bitwise_and, 0x7fff));
-               ])
-           [ "arm64,generic"; "arm64,neoverse-n2" ])
-        (fun (arch, (_, (op, mask))) ->
-          let prg = sign_bits ~dt:Dtype.Bfloat16 ~arch op mask in
-          is_relocatable_elf64 ~machine:(elf_machine "arm64")
-            (compile arch (source prg)));
-      (* LLVM 18's straight-line vectorizer narrowed the four indices into
-         invalid IR for these processors, and Clang 18 crashed on it. *)
-      cases "four clamped gathers compile for AVX-512 on" ~id:Fun.id
-        [ "x86_64,x86-64-v4"; "x86_64,skylake-avx512"; "x86_64,znver4" ]
-        (fun arch ->
-          knows_cpu arch;
-          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
-            (compile arch clamped_gathers));
-      (* The straight-line vectorizer of LLVM 19 and of Apple's Clang 17
-         narrowed four lanes of rune's binary search into invalid IR for these
-         processors, which the verifier rejects. *)
-      cases "a binary search of four lanes compiles for AVX2 and AVX-512 on"
-        ~id:Fun.id
-        [ "x86_64,x86-64-v3"; "x86_64,x86-64-v4"; "x86_64,znver4" ]
-        (fun arch ->
-          knows_cpu arch;
-          let src =
-            In_channel.with_open_bin "vectorized_search.c" In_channel.input_all
-          in
-          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
-            (ccache_off (fun () -> compile arch src)));
-      (* Clang 18 crashed on this loop for these processors, which have
-         AVX-512's half arithmetic. *)
-      cases "a loop of half casts compiles with AVX-512's half arithmetic on"
-        ~id:Fun.id
-        [ "x86_64,sapphirerapids"; "x86_64,x86-64-v4,avx512fp16" ]
-        (fun arch ->
-          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
-            (compile arch half_casts));
-      (* SSE2 adds four floats with [addps] and one with [addss]: a packed
-         loop adds its last floats one at a time. *)
-      cases
-        "a loop over a count it takes is packed into vectors iff its source \
-         is at most 400000 bytes long:"
-        ~id:(fun (n, _) -> string_of_int n)
-        [
-          (String.length add_n, [ "addps"; "addss" ]);
-          (long_source, [ "addps"; "addss" ]);
-          (long_source + 1, [ "addss" ]);
-          (2 * long_source, [ "addss" ]);
-        ]
-        (fun (n, adds) ->
-          let src = if n = String.length add_n then add_n else add_n_of n in
-          equal int ~msg:"the source's length" n (String.length src);
-          let text = disassembly "x86_64,x86-64" src in
-          equal (list string) adds
-            (List.filter (fun w -> mentions w text) [ "addps"; "addss" ]));
-      test "a loop that exits on its data stays a loop: idioms are off"
-        (fun () ->
-          let text = disassembly "x86_64,x86-64-v3" bit_count in
-          equal (list string) []
-            (List.filter (fun w -> mentions w text) [ "popcnt" ]));
-      test "arm64 leaves x18 alone" (fun () ->
-          let text = disassembly "arm64,generic" pressure in
-          is_false ~msg:"x18" (mentions "x18" text);
-          is_false ~msg:"w18" (mentions "w18" text));
-    ]
-
-(* Flags *)
-
-let llvm18 = "Ubuntu clang version 18.1.3 (1ubuntu1)"
-let x86_64_elf = "--target=x86_64-none-unknown-elf"
-
-let windows =
+(* A stand-in's compiler proper that is the stand-in itself: run as that, it
+   writes its arguments, one per line, to the file [args] beside it, and fails.
+   It is stated as a release Clang states its compiler proper, with
+   [-disable-llvm-verifier], for the [cpu] it compiles for, and with the options
+   the driver is given, as Clang passes each [-mllvm] option on. *)
+let recorded_proper ~cpu =
   [
-    "--target=x86_64-w64-windows-gnu-elf";
-    "-mno-stack-arg-probe";
-    "-mno-red-zone";
+    {|if [ "$1" = "-cc1" ]; then printf '%s\n' "$@" > "$(dirname "$0")/args"; echo 'error: no compiler proper' >&2; exit 1; fi|};
+    Printf.sprintf
+      {|stated() { printf ' "%%s" "-cc1" "-target-cpu" "%s" "-disable-llvm-verifier"' "$0" >&2; for a; do case $a in "-###"|-|-o) ;; *) printf ' "%%s"' "$a" >&2;; esac; done; printf ' "-o" "-" "-"\n' >&2; }|}
+      cpu;
   ]
 
-let avx10_off = [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512f" ]
+(* The arguments the compiler proper of the stand-in [clang] received, or a
+   failure naming [msg], what the compile raised, where it never ran. *)
+let received clang msg =
+  let args = Filename.concat (Filename.dirname clang) "args" in
+  if not (Sys.file_exists args) then
+    failf "the compiler proper did not run: %s" msg;
+  In_channel.with_open_bin args In_channel.input_lines
 
-let flags =
-  group "flags"
-    [
-      cases "under LLVM 18, x86_64 ends by disabling AVX10.1 and AVX-512:"
-        ~id:fst
-        [
-          ("x86_64,native", [ x86_64_elf; "-march=native" ] @ avx10_off);
-          ( "x86_64,graniterapids,avx10.1-256",
-            [ x86_64_elf; "-march=graniterapids"; "-mavx10.1-256" ] @ avx10_off
-          );
-          ( "x86_64,sapphirerapids,avx512fp16,-avx",
-            [ x86_64_elf; "-march=sapphirerapids"; "-mavx512fp16"; "-mno-avx" ]
-            @ avx10_off );
-          ("x86_64-windows,native", windows @ [ "-march=native" ] @ avx10_off);
-        ]
-        (fun (arch, expected) ->
-          equal (list string) expected
-            (Compiler_cpu.flags ~version:llvm18 arch));
-      test "LLVM's own release of 18 is LLVM 18" (fun () ->
-          equal (list string)
-            ([ x86_64_elf; "-march=native" ] @ avx10_off)
-            (Compiler_cpu.flags ~version:"clang version 18.1.8" "x86_64,native"));
-      cases
-        "x86_64,native ends by disabling AVX-512 before LLVM 23 and under a \
-         Clang that names no release:"
-        ~id:fst
-        [
-          ("clang version 17.0.6", [ "-mno-avx512f" ]);
-          ("Debian clang version 19.1.7 (3+b1)", avx10_off);
-          ("Homebrew clang version 20.1.8", avx10_off);
-          ("Homebrew clang version 21.1.8", [ "-mno-avx512f" ]);
-          ("Homebrew clang version 22.1.8", [ "-mno-avx512f" ]);
-          ("Apple clang version 17.0.0 (clang-1700.6.4.2)", avx10_off);
-          ("Apple clang version 18.0.0 (clang-1800.0.31.1)", [ "-mno-avx512f" ]);
-          ("Homebrew clang version 23.1.5", []);
-          ("clang version 24.0.0", []);
-          ( "Intel(R) oneAPI DPC++/C++ Compiler 2025.0.0 (2025.0.0.20241008)",
-            [ "-mno-avx512f" ] );
-          ("", [ "-mno-avx512f" ]);
-        ]
-        (fun (version, off) ->
-          equal (list string)
-            ([ x86_64_elf; "-march=native" ] @ off)
-            (Compiler_cpu.flags ~version "x86_64,native"));
-      cases "another machine under LLVM 18 takes its own arguments alone:"
-        ~id:fst
-        [
-          ( "arm64,generic,fp16",
-            [
-              "--target=arm64-none-unknown-elf";
-              "-ffixed-x18";
-              "-mcpu=generic+fp16";
-            ] );
-          ( "riscv64,rv64g,c",
-            [ "--target=riscv64-none-unknown-elf"; "-march=rv64g_c" ] );
-        ]
-        (fun (arch, expected) ->
-          equal (list string) expected
-            (Compiler_cpu.flags ~version:llvm18 arch));
-      cases "a tune field tunes, after the processor and its features:"
-        ~id:fst
-        [
-          ( "x86_64,x86-64-v3,tune=native",
-            [ x86_64_elf; "-march=x86-64-v3"; "-mtune=native" ] );
-          ( "x86_64,x86-64,avx,tune=znver4",
-            [ x86_64_elf; "-march=x86-64"; "-mavx"; "-mtune=znver4" ] );
-          ( "arm64,generic,tune=native",
-            [
-              "--target=arm64-none-unknown-elf";
-              "-ffixed-x18";
-              "-mcpu=generic";
-              "-mtune=native";
-            ] );
-        ]
-        (fun (arch, expected) ->
-          equal (list string) expected
-            (Compiler_cpu.flags ~version:"clang version 23.1.5" arch));
-      test "tuning for this processor adds none of its instructions"
-        (fun () ->
-          x86_host ();
-          let src =
-            "float f(float a, float b, float c) { return __builtin_fmaf(a, \
-             b, c); }"
-          in
-          let text = disassembly "x86_64,x86-64,tune=native" src in
-          is_false ~msg:text (has_infix ~affix:"vfmadd" text));
-      test "a malformed architecture is refused" (fun () ->
-          raises_match
-            (Exn.invalid_arg ~sub:"'x86_64'")
-            (fun () -> Compiler_cpu.flags ~version:llvm18 "x86_64"));
-    ]
+(* A Clang of LLVM 23 whose compiler proper is itself ({!recorded_proper}). Its
+   preprocessor defines x86_64's, SSE2's and _Float16's macros. *)
+let recording =
+  String.concat "\n"
+    ([ "#!/bin/sh" ]
+    @ recorded_proper ~cpu:"x86-64"
+    @ [
+        {|case " $* " in *" -dM "*)|};
+        "echo '#define __x86_64__ 1'";
+        "echo '#define __SSE2__ 1'";
+        "echo '#define __FLT16_MAX__ 6.5504e+4F16'";
+        "echo 'clang version 23.1.0' >&2";
+        "exit 0;;";
+        "esac";
+        "echo 'clang version 23.1.0' >&2";
+        "echo 'Target: x86_64-unknown-linux-gnu' >&2";
+        {|stated "$@"|};
+        "";
+      ])
 
-(* Architecture strings *)
+(* The arguments that the compiler proper receives for a compile for [arch]
+   under the Clang [recording] stands in for. *)
+let compiler_proper_args arch =
+  under_stand_in recording @@ fun clang ->
+  match Compiler.compile (Compiler_cpu.clang arch) increment with
+  | _ -> fail "a stand-in that compiles nothing compiled"
+  | exception Compiler.Compile_error msg -> received clang msg
 
-let architectures =
-  group "architectures"
-    [
-      cases "an architecture of fewer than two fields is refused, named:"
-        ~id:(Printf.sprintf "%S") [ ""; "x86_64"; "arm64" ] (fun arch ->
-          raises_match
-            (Exn.invalid_arg ~sub:("'" ^ arch ^ "'"))
-            (fun () -> Compiler_cpu.clang arch));
-      cases "another machine is refused, named:" ~id:fst
-        [
-          ("mips,native", "mips");
-          ("aarch64,native", "aarch64");
-          ("X86_64,native", "X86_64");
-        ]
-        (fun (arch, machine) ->
-          raises_match (Exn.invalid_arg ~sub:machine) (fun () ->
-              Compiler_cpu.clang arch));
-    ]
+(* The pairs of adjacent arguments of [args]. *)
+let rec adjacent = function
+  | a :: (b :: _ as rest) -> (a, b) :: adjacent rest
+  | [ _ ] | [] -> []
 
-(* Errors *)
-
-let errors =
-  group "errors"
-    [
-      test "a rejected source raises Compile_error with Clang's diagnostics"
-        (fun () ->
-          match
-            Compiler.compile (native_clang ())
-              "int f(void) { return undeclared_name; }"
-          with
-          | _ -> fail "Clang accepted an undeclared name"
-          | exception Compiler.Compile_error msg ->
-              in_order ~subs:[ "error"; "undeclared_name" ] msg);
-    ]
-
-(* With the straight-line vectorizer on: CC is read once, when the first
-   compile runs, so these tests run in a process of their own, where CC names
-   a script that runs Clang with that vectorizer on, whatever turns it off
-   before. *)
-
-let invalid_ir =
-  tag "slp-clang"
-  @@ group "invalid IR"
-       [
-         test
-           "a source that the straight-line vectorizer of LLVM 19 or Apple's \
-            Clang 17 makes invalid raises Compile_error naming its function"
-           (fun () ->
-             if Sys.win32 then skip ~reason:"CC is a shell script" ();
-             Clang.here "x86_64,x86-64-v3";
-             let stated =
-               Helpers.system (Setting.value Setting.cc ^ " --version")
-             in
-             let apple = has_infix ~affix:"Apple" stated in
-             let llvm_19 =
-               (not apple) && has_infix ~affix:"clang version 19." stated
-             in
-             let apple_17 = has_infix ~affix:"Apple clang version 17." stated in
-             if not (llvm_19 || apple_17) then
-               skip ~reason:"not a Clang of LLVM 19 or Apple's 17" ();
-             let src =
-               In_channel.with_open_bin "vectorized_search.c"
-                 In_channel.input_all
-             in
-             match
-               ccache_off (fun () ->
-                   Compiler.compile (Compiler_cpu.clang "x86_64,x86-64-v3") src)
-             with
-             | _ -> fail "Clang compiled the invalid IR"
-             | exception Compiler.Compile_error msg ->
-                 contains ~sub:"E_16_2_4" msg);
-       ]
-
-(* Compile time *)
-
-(* rune's host kernel of 1024 lanes gathered from 32 loaded rows: LLVM's
-   interleaved load combine took Clang 19 274 s of 293 on it for apple-m1.
-   rune's maximum of 32 float64 lanes in a loop of 32 trips: LLVM 23's loop
-   idiom recognition did not finish it in 300 s. *)
-let compile_time =
-  group "compile time"
-    [
-      test
-        "an arm64 kernel of 1024 lanes gathered from 32 rows compiles within \
-         a minute" (fun () ->
-          let src =
-            In_channel.with_open_bin "gathered_lanes.c" In_channel.input_all
-          in
-          let lib = ccache_off (fun () -> compile "arm64,apple-m1" src) in
-          is_relocatable_elf64 ~machine:(elf_machine "arm64") lib);
-      cases
-        "a host maximum of 32 float64 lanes in a loop of 32 trips compiles \
-         within a minute for"
-        ~id:Fun.id [ "x86_64,x86-64-v3"; "arm64,apple-m1" ]
-        (fun arch ->
-          let src =
-            In_channel.with_open_bin "max_chain.c" In_channel.input_all
-          in
-          let machine = List.hd (String.split_on_char ',' arch) in
-          let lib = ccache_off (fun () -> compile arch src) in
-          is_relocatable_elf64 ~machine:(elf_machine machine) lib);
-    ]
+(* A stand-in for Clang: asked its version or what it runs, it states itself as
+   its compiler proper. Run as that, it records its process, leaves a file of
+   its own beside its first input, as Clang leaves its temporary object, signals
+   its parent and sleeps, so that the compile is abandoned while it runs. *)
+let abandoning ~pid_file =
+  Printf.sprintf
+    {|#!/bin/sh
+if [ "$1" != "-cc1" ]; then
+  echo "clang version 19.0.0" >&2
+  printf ' "%%s" "-cc1" "-o" "-" "-"\n' "$0" >&2
+  exit 0
+fi
+for a; do rsp=$a; done
+input=$(head -n 1 "${rsp#@}" | tr -d '"')
+echo $$ > %s
+: > "$(dirname "$input")/-.o-temporary"
+kill -USR1 $PPID
+exec sleep 30
+|}
+    (Filename.quote pid_file)
 
 (* A Clang that a script stands in for: it states [version], as its preprocessor
    does too, and no compiler proper, and its preprocessor defines [__x86_64__],
@@ -1231,22 +624,6 @@ let stand_in_for ?(gated = false) ?(proper = false) c =
       ]
     @ proper @ [ "" ])
 
-(* [f clang] under the Clang that [script], written as the file [clang], stands
-   in for. *)
-let under_stand_in script f =
-  if Sys.win32 then skip ~reason:"a POSIX shell stands in for Clang" ();
-  let dir = Filename.temp_dir "stand_in" "" in
-  let clang = Filename.concat dir "clang" in
-  Fun.protect ~finally:(fun () ->
-      Sys.remove clang;
-      Sys.rmdir dir)
-  @@ fun () ->
-  Out_channel.with_open_gen [ Open_wronly; Open_creat ] 0o755 clang (fun oc ->
-      output_string oc script);
-  Setting.context
-    [ B (Setting.cc, clang); B (Setting.ccache, false) ]
-    (fun () -> f clang)
-
 (* The stand-in's path and the Compile_error of a compile for its arch under the
    Clang [c] stands in for. *)
 let stand_in_error c =
@@ -1260,139 +637,41 @@ let apple version major arch = { version; major; apple = true; arch }
 let x86 = "x86_64,x86-64"
 let m1 = "arm64,apple-m1"
 
-(* The release the macros name decides, for every machine: LLVM's before 16 and
-   Apple's before 15, whose 15 is built on LLVM 16, choose the wrong zero for
-   some selections. *)
-let wrong_zeros =
-  group "a Clang before LLVM 16"
-    [
-      cases "a compile raises Compile_error naming the Clang and the oldest:"
-        ~id:(fun c -> c.version ^ " for " ^ c.arch)
-        [
-          llvm "Ubuntu clang version 15.0.7" 15 x86;
-          llvm "clang version 15.0.6" 15 m1;
-          apple "Apple clang version 14.0.3 (clang-1403.0.22.14.1)" 14 m1;
-          llvm "Debian clang version 14.0.6" 14 "riscv64,rv64g";
-          llvm "a compiler built on Clang 15.0.7" 15 x86;
-        ]
-        (fun c ->
-          let clang, msg = stand_in_error c in
-          in_order
-            ~subs:[ clang; c.version; "wrong zero"; "57357"; "Clang 16"; "CC" ]
-            msg);
-      cases "a compile is not refused for it under"
-        ~id:(fun c -> c.version)
-        [
-          llvm "clang version 16.0.4" 16 x86;
-          apple "Apple clang version 15.0.0 (clang-1500.3.9.4)" 15 m1;
-          llvm "Ubuntu clang version 18.1.3 (1ubuntu1)" 18 x86;
-        ]
-        (fun c -> not_contains ~sub:"wrong zero" (snd (stand_in_error c)));
-      test "a compile names a preprocessor's failure, and the next asks again"
-        (fun () ->
-          let c = llvm "clang version 15.0.6" 15 x86 in
-          under_stand_in (stand_in_for ~gated:true ~proper:true c)
-          @@ fun clang ->
-          let compiler = Compiler_cpu.clang c.arch in
-          let error () =
-            match Compiler.compile compiler increment with
-            | _ -> fail "a stand-in that compiles nothing compiled"
-            | exception Compiler.Compile_error msg -> msg
-          in
-          let failed = error () in
-          let ready = clang ^ ".ready" in
-          Out_channel.with_open_bin ready ignore;
-          Fun.protect ~finally:(fun () -> Sys.remove ready) @@ fun () ->
-          in_order ~subs:[ clang; "release is unknown"; "exited 1" ] failed;
-          in_order ~subs:[ clang; "wrong zero" ] (error ()));
-    ]
-
-let without_sse2 =
-  group "a Clang without x86_64's _Float16"
-    [
-      test "an arch that turns SSE2 off compiles nothing, naming SSE2"
-        (fun () ->
-          Clang.here "x86_64,x86-64";
-          let arch = "x86_64,x86-64,-sse2" in
-          raises_match
-            (function
-              | Compiler.Compile_error msg ->
-                  has_infix ~affix:"turns SSE2 off" msg
-              | _ -> false)
-            (fun () -> Compiler.compile (Compiler_cpu.clang arch) increment));
-    ]
-
-(* Without Clang: CC is read once, when the first compile runs, so these tests
-   run in a process of their own, where CC names a program that does not
-   exist. *)
-
-let missing_clang = "/nonexistent/clang"
-
-(* What the Clang run states as its version, "" where it does not run. *)
-let cc_version () =
-  try Helpers.system (Setting.value Setting.cc ^ " --version")
-  with Failure _ -> ""
-
-(* The macros of each processor name its features; Clang's statement names the
-   processor alone. *)
-let registers =
-  let file arch =
-    Option.map
-      (fun (r : Renderer.registers) -> (r.count, r.bytes))
-      (Compiler_cpu.registers arch ())
-  in
-  (* The registers of a processor with AVX-512, as the Clang run compiles for
-     it: 32, or SSE's 16 where {!Compiler_cpu.flags} turns AVX-512 off. *)
-  let avx512 () =
-    let version = cc_version () in
-    let flags = Compiler_cpu.flags ~version "x86_64,x86-64-v4" in
-    Some ((if List.mem "-mno-avx512f" flags then 16 else 32), 32)
-  in
-  let fixed v () = v in
-  cases "the vector registers, their number and bytes, of" ~id:fst
-    [
-      ("x86_64,x86-64", fixed (Some (16, 16)));
-      ("x86_64,x86-64-v3", fixed (Some (16, 32)));
-      ("x86_64,x86-64-v4", avx512);
-      ("x86_64,znver4", avx512);
-      ("x86_64-windows,x86-64-v3", fixed (Some (16, 32)));
-      ("arm64,apple-m1", fixed (Some (32, 16)));
-      ("riscv64,rv64g", fixed None);
-    ]
-    (fun (arch, expected) ->
-      (* An x86_64 arch's registers are what its Clang defines. *)
-      if String.starts_with ~prefix:"x86_64" arch then Clang.here arch;
-      knows_cpu arch;
-      equal (option (pair int int)) (expected ()) (file arch))
-
 (* LLVM 21 on a processor that states AVX10.1: a script stands in for it, whose
    preprocessor defines AVX-512F's macro where [native] or AVX10.1 is named,
    whatever follows, whose statement names Granite Rapids as the processor, and
-   whose compiler proper fails at every source. *)
-let llvm21_avx10 =
+   whose compiler proper is itself ({!recorded_proper}). A [gated] preprocessor
+   fails until the file of the stand-in's path with [.ready] after it exists. *)
+let llvm21_avx10 ?(gated = false) () =
+  let gate = if gated then [ {|[ -e "$0.ready" ] || exit 1|} ] else [] in
   String.concat "\n"
-    [
-      "#!/bin/sh";
-      {|if [ "$1" = "-cc1" ]; then echo 'error: no compiler proper' >&2; exit 1; fi|};
-      {|case " $* " in *" -dM "*)|};
-      "echo '#define __x86_64__ 1'";
-      "echo '#define __FLT16_MAX__ 6.5504e+4F16'";
-      "echo '#define __AVX__ 1'";
-      "echo 'clang version 21.1.8' >&2";
-      {|case " $* " in *" -march=native "*|*" -mavx10.1 "*)|};
-      "echo '#define __AVX512F__ 1';;";
-      "esac";
-      "exit 0;;";
-      "esac";
-      "echo 'clang version 21.1.8' >&2";
-      "echo 'Target: x86_64-unknown-linux-gnu' >&2";
-      {|printf ' "%s" "-cc1" "-target-cpu" "graniterapids" "-o" "-" "-"\n' "$0" >&2|};
-      "";
-    ]
+    ([ "#!/bin/sh" ]
+    @ recorded_proper ~cpu:"graniterapids"
+    @ [ {|case " $* " in *" -dM "*)|} ]
+    @ gate
+    @ [
+        "echo '#define __x86_64__ 1'";
+        "echo '#define __FLT16_MAX__ 6.5504e+4F16'";
+        "echo '#define __AVX__ 1'";
+        "echo 'clang version 21.1.8' >&2";
+        {|case " $* " in *" -march=native "*|*" -mavx10.1 "*)|};
+        "echo '#define __AVX512F__ 1';;";
+        "esac";
+        "exit 0;;";
+        "esac";
+        "echo 'clang version 21.1.8' >&2";
+        "echo 'Target: x86_64-unknown-linux-gnu' >&2";
+        {|stated "$@"|};
+        "";
+      ])
 
-(* A Clang whose preprocessor waits for the file [go] beside it, having made the
-   file [asked]: a compile from one domain holds there while another starts its
-   own. Its compiler proper fails at every source. *)
+(* The processors that [args] name, as [-march=graniterapids]. *)
+let marches args = List.filter (String.starts_with ~prefix:"-march=") args
+
+(* A Clang whose preprocessor, the first time it runs, opens the FIFO [asked]
+   beside it to write and then reads a line of the FIFO [go]: a compile from one
+   domain holds there while another starts its own. Its compiler proper fails at
+   every source. *)
 let held_macros =
   String.concat "\n"
     [
@@ -1400,8 +679,7 @@ let held_macros =
       {|dir=$(dirname "$0")|};
       {|if [ "$1" = "-cc1" ]; then echo 'error: no compiler proper' >&2; exit 1; fi|};
       {|case " $* " in *" -dM "*)|};
-      {|: > "$dir/asked"|};
-      {|n=0; while [ ! -e "$dir/go" ] && [ $n -lt 300 ]; do sleep 0.1; n=$((n+1)); done|};
+      {|if mkdir "$dir/held" 2>/dev/null; then : > "$dir/asked"; read line < "$dir/go"; fi|};
       "echo '#define __x86_64__ 1'";
       "echo '#define __SSE2__ 1'";
       "echo '#define __FLT16_MAX__ 6.5504e+4F16'";
@@ -1414,57 +692,501 @@ let held_macros =
       "";
     ]
 
-(* One compiler for [native], made once, compiling from two domains at once
-   before either has learnt what Clang compiles [native] for, which takes
-   Clang's macros: the second starts once the first waits on them, and the
-   macros come once the second waits for the first. Each compile fails with what
-   the compiler proper says. *)
-let first_compiles =
-  test "two domains' first compiles of one compiler each reach Clang" (fun () ->
-      under_stand_in held_macros @@ fun clang ->
-      let dir = Filename.dirname clang in
-      let compiler = Compiler_cpu.clang "x86_64,native" in
-      let outcome () =
-        match Compiler.compile compiler increment with
-        | _ -> "compiled"
-        | exception Compiler.Compile_error msg ->
-            if has_infix ~affix:"no compiler proper" msg then "refused" else msg
-        | exception e -> Printexc.to_string e
+(* The arch *)
+
+let arch =
+  group "arch"
+    [
+      test "another system compiles as no system" (fun () ->
+          equal string
+            (compile "x86_64,x86-64" increment)
+            (compile "x86_64-linux,x86-64" increment));
+      test "native on riscv64 is rv64g" (fun () ->
+          equal string
+            (compile "riscv64,rv64g" increment)
+            (compile "riscv64,native" increment));
+      test "native on an Apple processor adds halves without converting"
+        (fun () ->
+          on_macos_arm64 ();
+          let arch = "arm64,native" in
+          not_contains ~sub:"fcvt" (disassembly arch (rendered arch "half_add")));
+      cases "the add kernel moves vectors with vmov iff AVX is on:" ~id:fst
+        [ ("x86_64,x86-64,avx", [ "vmov" ]); ("x86_64,x86-64,-avx", []) ]
+        (fun (arch, vmov) ->
+          let text = disassembly arch (rendered arch "add") in
+          equal ~msg:text (list string) vmov
+            (List.filter (fun affix -> has_infix ~affix text) [ "vmov" ]));
+      cases "a half addition on arm64 converts iff fp16 is off:" ~id:fst
+        [ ("arm64,generic", [ "fcvt" ]); ("arm64,generic,fp16", []) ]
+        (fun (arch, fcvt) ->
+          let text = disassembly arch (rendered arch "half_add") in
+          equal ~msg:text (list string) fcvt (named [ "fcvt" ] text));
+      cases "a loop on arm64 uses vector registers iff simd is on:" ~id:fst
+        [ ("arm64,generic", true); ("arm64,generic,-simd", false) ]
+        (fun (arch, simd) ->
+          let registers = vector_registers (disassembly arch add_n) in
+          if simd then
+            satisfies ~claim:"some vector register" (list string) (( <> ) [])
+              registers
+          else equal (list string) [] registers);
+      cases "a feature on riscv64 is an extension the processor gains:" ~id:fst
+        [ ("riscv64,rv64g", 0); ("riscv64,rv64g,c", 1) ]
+        (fun (arch, compressed) ->
+          equal int compressed (rvc (compile arch add)));
+      test "a feature disabled on riscv64 is refused" (fun () ->
+          Clang.here "riscv64,rv64g";
+          match
+            Compiler.compile (Compiler_cpu.clang "riscv64,rv64g,-c") add
+          with
+          | _ -> fail "Clang compiled for rv64g_-c"
+          | exception Compiler.Compile_error msg -> contains ~sub:"rv64g_-c" msg);
+      test "tuning for this processor adds none of its instructions" (fun () ->
+          x86_host ();
+          let src =
+            "float f(float a, float b, float c) { return __builtin_fmaf(a, b, \
+             c); }"
+          in
+          not_contains ~sub:"vfmadd"
+            (disassembly "x86_64,x86-64,tune=native" src));
+      cases "an arch of fewer than two fields is refused, named:"
+        ~id:(Printf.sprintf "%S") [ ""; "x86_64"; "arm64" ] (fun arch ->
+          raises_match
+            (Exn.invalid_arg ~sub:("'" ^ arch ^ "'"))
+            (fun () -> Compiler_cpu.clang arch));
+      cases "another machine is refused, named:" ~id:fst
+        [
+          ("mips,native", "mips");
+          ("aarch64,native", "aarch64");
+          ("X86_64,native", "X86_64");
+        ]
+        (fun (arch, machine) ->
+          raises_match (Exn.invalid_arg ~sub:machine) (fun () ->
+              Compiler_cpu.clang arch));
+    ]
+
+(* Objects *)
+
+let objects =
+  group "objects"
+    [
+      cases "compiles to a relocatable ELF object for" ~id:Fun.id
+        [ "x86_64,x86-64"; "arm64,generic"; "riscv64,rv64g" ] (fun arch ->
+          let machine = List.hd (String.split_on_char ',' arch) in
+          is_relocatable_elf64 ~machine:(elf_machine machine)
+            (compile arch increment));
+      test "native compiles for the host's machine" (fun () ->
+          let arch = native () in
+          is_relocatable_elf64 ~machine:(elf_machine host_machine)
+            (compile arch increment));
+      test "the add kernel's object, run as it is, adds two buffers" (fun () ->
+          let a = Array.init 16 Float.of_int
+          and b = Array.init 16 (fun i -> Float.of_int (100 - i)) in
+          let out =
+            Run.on_host (loaded "add") [ (1, floats a); (2, floats b) ]
+          in
+          equal values (floats (Array.make 16 100.)) (List.assoc 0 out));
+      (* (1 + 2^-12)^2 - (1 + 2^-11) is 2^-24, exact in a float; each product
+         and sum rounding on its own gives 0. *)
+      test
+        "a multiply-add for x86-64's baseline calls the process's fmaf, \
+         rounding once" (fun () ->
+          x86_host ();
+          let x = 1. +. 0x1p-12 in
+          let n = 4 in
+          let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+          let at slot =
+            Ops.index (Shape.placeholder ~slot [ n ] Float32) [ i ]
+          in
+          let sink =
+            Ops.sink
+              ~kernel:(Ops.kernel_info ~name:"fused" ())
+              [
+                Ops.end_
+                  (Ops.store (at 0) (Ops.alu (at 1) Op.Mulacc [ at 2; at 3 ]))
+                  [ i ];
+              ]
+          in
+          let prg = program sink baseline in
+          let out =
+            Run.on_host prg
+              [
+                (1, floats (Array.make n x));
+                (2, floats (Array.make n x));
+                (3, floats (Array.make n (-.(1. +. 0x1p-11))));
+              ]
+          in
+          equal values (floats (Array.make n 0x1p-24)) (List.assoc 0 out));
+      cases "a square root is one instruction on" ~id:fst
+        [ ("x86_64,x86-64", "sqrtss"); ("arm64,generic", "fsqrt") ]
+        (fun (arch, instruction) ->
+          let text = disassembly arch square_root in
+          equal ~msg:text (list string) [ instruction ]
+            (named [ instruction ] text);
+          not_contains ~sub:"sqrtf" text);
+      test "a square root's object runs without a library" (fun () ->
+          let squares = Array.init 16 (fun i -> Float.of_int (i * i)) in
+          let out = Run.on_host (loaded "sqrt") [ (1, floats squares) ] in
+          equal values (floats (Array.init 16 Float.of_int)) (List.assoc 0 out));
+      (* (1 + 2^-12)^2 rounds to 1 + 2^-11, a tie to even, so the sum with -(1 +
+         2^-11) is 0; a fused multiply-add keeps the 2^-24. *)
+      test "a product and a sum written apart each round to their type"
+        (fun () ->
+          let x = 1. +. 0x1p-12 in
+          let out =
+            Run.on_host (loaded "muladd")
+              [
+                (1, floats (Array.make 16 x));
+                (2, floats (Array.make 16 x));
+                (3, floats (Array.make 16 (-.(1. +. 0x1p-11))));
+              ]
+          in
+          equal values (floats (Array.make 16 0.)) (List.assoc 0 out));
+      test "a source compiles to the same object each time" (fun () ->
+          let arch = native () in
+          equal string
+            (ccache_off (fun () -> compile arch add))
+            (ccache_off (fun () -> compile arch add)));
+      test "an object does not depend on the working directory" (fun () ->
+          let arch = native () in
+          let here = ccache_off (fun () -> compile arch add) in
+          chdir (temp_dir ());
+          equal string here (ccache_off (fun () -> compile arch add)));
+    ]
+
+(* Half conversions, run from a program for x86-64's baseline, which has no
+   F16C. *)
+
+let half_conversions =
+  group "half conversions"
+    [
+      test "every half widens to its float32" (fun () ->
+          x86_host ();
+          let halves = Lazy.force every_half in
+          let prg =
+            elementwise ~name:"widen" ~n:65536 Dtype.Uint16 Dtype.Uint32
+              (fun x ->
+                Ops.bitcast
+                  (Ops.cast (Ops.bitcast x Dtype.Float16) Dtype.Float32)
+                  Dtype.Uint32)
+          in
+          equal (array int) (Array.map widened halves) (run_ints prg halves));
+      test "float32s narrow to the nearest half, ties to even" (fun () ->
+          x86_host ();
+          let xs = Lazy.force narrowing_inputs in
+          let prg =
+            elementwise ~name:"narrow" ~n:(Array.length xs) Dtype.Uint32
+              Dtype.Uint16 (fun x ->
+                Ops.bitcast
+                  (Ops.cast (Ops.bitcast x Dtype.Float32) Dtype.Float16)
+                  Dtype.Uint16)
+          in
+          equal (array int) (Array.map narrowed xs) (run_ints prg xs));
+    ]
+
+(* arm64 *)
+
+let interleaved_load_combine = ("-mllvm", "-disable-interleaved-load-combine")
+
+let arm64 =
+  group "arm64"
+    [
+      test "x18 is left alone" (fun () ->
+          let text = disassembly "arm64,generic" pressure in
+          equal ~msg:text (list string) [] (named [ "x18"; "w18" ] text));
+      cases
+        "the compiler proper receives -mllvm -disable-interleaved-load-combine \
+         iff the machine is arm64:"
+        ~id:fst
+        [ ("arm64,apple-m1", true); ("x86_64,x86-64", false) ]
+        (fun (arch, received) ->
+          let args = compiler_proper_args arch in
+          if received then
+            satisfies ~claim:"holds -mllvm -disable-interleaved-load-combine"
+              (list string)
+              (fun args -> List.mem interleaved_load_combine (adjacent args))
+              args
+          else
+            equal (list string) []
+              (List.filter (( = ) (snd interleaved_load_combine)) args));
+      (* LLVM folds flipping or clearing the sign bit of a bfloat16 into a
+         negation or an absolute value, which LLVM 18's arm64 backend selects
+         for no processor. *)
+      cases "a sign bit of bfloat16s compiles for"
+        ~id:(fun (arch, (name, _)) -> arch ^ " " ^ name)
+        (List.concat_map
+           (fun arch ->
+             List.map
+               (fun op -> (arch, op))
+               [
+                 ("flipped", (Ops.bitwise_xor, 0x8000));
+                 ("cleared", (Ops.bitwise_and, 0x7fff));
+               ])
+           [ "arm64,generic"; "arm64,neoverse-n2" ])
+        (fun (arch, (_, (op, mask))) ->
+          let prg = sign_bits ~dt:Dtype.Bfloat16 ~arch op mask in
+          is_relocatable_elf64 ~machine:(elf_machine "arm64")
+            (compile arch (source prg)));
+    ]
+
+(* arm64's half arithmetic
+
+   With fp16, FEAT_FP16, Clang computes a half vector in halves where it
+   computes it in floats otherwise. A half's +, -, *, / and square root rounded
+   in a float32 and then to the half are the half's correctly rounded result,
+   since 24 >= 2 * 11 + 2 (Roux, "Innocuous Double Rounding of Basic Arithmetic
+   Operations", 2014), and a multiply-add rounds once either way, so the two
+   compute the same bits. *)
+
+let arm64_fp16 () =
+  if Rig.instruction_set Rig.host <> "arm64" then
+    skip ~reason:"not an arm64 host" ();
+  if not (List.mem "fp16" (String.split_on_char '+' (Rig.arch Rig.host))) then
+    skip ~reason:"the host has no half arithmetic" ()
+
+let half_register w =
+  String.length w > 1 && w.[0] = 'h' && w.[1] >= '0' && w.[1] <= '9'
+
+let half_muladds =
+  group "a half multiply-add on arm64"
+    [
+      cases
+        "rounds once as Clang writes it iff fp16 is on, and is rewritten \
+         otherwise:"
+        ~id:fst
+        [
+          ("arm64,generic", false);
+          ("arm64,generic,fp16", true);
+          ("arm64,generic,-fp16", false);
+          ("arm64,generic,fp16,-fp16", false);
+          ("arm64,generic,-fp16,fp16", true);
+          ("arm64,generic,fp16,tune=native", true);
+          ("x86_64,x86-64-v3", false);
+        ]
+        (fun (arch, once) ->
+          equal bool once ((Cstyle.clang (target arch)).fma Dtype.Float16));
+      cases "is one fmla of eight halves iff fp16 is on:" ~id:fst
+        [ ("arm64,generic", false); ("arm64,generic,fp16", true) ]
+        (fun (arch, fused) ->
+          let prg = halves ~arch ~lanes:8 ~n:8 muladd in
+          let text = disassembly arch (source prg) in
+          let lines = instruction_lines "fmla" (String.equal "8h") text in
+          if fused then
+            satisfies ~msg:text ~claim:"an fmla of 8h" (list string) (( <> ) [])
+              lines
+          else equal ~msg:text (list string) [] lines);
+      cases "of one lane is one fmadd of halves iff fp16 is on:" ~id:fst
+        [ ("arm64,generic", false); ("arm64,generic,fp16", true) ]
+        (fun (arch, fused) ->
+          let prg = halves ~arch ~lanes:1 ~n:1 muladd in
+          let text = disassembly arch (source prg) in
+          let lines = instruction_lines "fmadd" half_register text in
+          if fused then
+            satisfies ~msg:text ~claim:"an fmadd of halves" (list string)
+              (( <> ) []) lines
+          else equal ~msg:text (list string) [] lines);
+    ]
+
+let n_halves = 64
+
+let same_bits (name, f) =
+  let program arch = lazy (halves ~arch ~lanes:8 ~n:n_halves f) in
+  let generic = program "arm64,generic"
+  and fp16 = program "arm64,generic,fp16" in
+  prop ~count:50 name
+    Gen.(array ~size:(constant n_halves) (triple half_bits half_bits half_bits))
+    (fun xs ->
+      arm64_fp16 ();
+      let subnormal h = h land 0x7c00 = 0 && h land 0x3ff <> 0 in
+      cover "a subnormal operand"
+        (Array.exists (fun (a, b, _) -> subnormal a || subnormal b) xs);
+      cover "a NaN or an infinity"
+        (Array.exists (fun (a, _, _) -> a land 0x7c00 = 0x7c00) xs);
+      let column g = ints (Array.map g xs) in
+      let run prg =
+        let prg = Lazy.force prg in
+        Array.map canonical
+          (to_ints
+             (List.assoc 0
+                (Run.on_host prg
+                   [
+                     (1, column (fun (a, _, _) -> a));
+                     (2, column (fun (_, b, _) -> b));
+                     (3, column (fun (_, _, c) -> c));
+                   ])))
       in
-      (* Whether [holds] within [n] hundredths of a second. *)
-      let rec within n holds =
-        if holds () then true
-        else if n = 0 then false
-        else (
-          Unix.sleepf 0.01;
-          within (n - 1) holds)
-      in
-      let asked () = Sys.file_exists (Filename.concat dir "asked") in
-      let first = Domain.spawn outcome in
-      if not (within 1000 asked) then fail "the first compile never asked Clang";
-      let waited = Compiler_cpu.settle_waits () in
-      let second = Domain.spawn outcome in
-      let second_waits =
-        within 1000 (fun () -> Compiler_cpu.settle_waits () > waited)
-      in
-      Out_channel.with_open_bin (Filename.concat dir "go") ignore;
-      let second = Domain.join second and first = Domain.join first in
-      List.iter
-        (fun f ->
-          try Sys.remove (Filename.concat dir f) with Sys_error _ -> ())
-        [ "asked"; "go" ];
-      if not second_waits then
-        fail "the second compile did not wait for the first";
-      equal (pair string string) ("refused", "refused") (first, second))
+      equal (array int) (run generic) (run fp16))
+
+let half_bits_agree =
+  group "a program for arm64 with fp16 gives arm64's bits"
+    (List.map same_bits
+       [
+         ("of an addition", fun a b _ -> Ops.alu a Op.Add [ b ]);
+         ("of a subtraction", fun a b _ -> Ops.alu a Op.Sub [ b ]);
+         ("of a product", fun a b _ -> Ops.alu a Op.Mul [ b ]);
+         ("of a quotient", fun a b _ -> Ops.alu a Op.Fdiv [ b ]);
+         ("of a square root", fun a _ _ -> Ops.alu a Op.Sqrt []);
+         ("of a multiply-add", muladd);
+       ])
+
+(* Loop idiom recognition *)
+
+let loop_idioms =
+  group "loop idiom recognition"
+    [
+      cases "the compiler proper receives -mllvm -disable-loop-idiom-all for"
+        ~id:Fun.id [ "x86_64,x86-64"; "arm64,apple-m1"; "riscv64,rv64g" ]
+        (fun arch ->
+          satisfies ~claim:"holds -mllvm -disable-loop-idiom-all" (list string)
+            (fun args ->
+              List.mem ("-mllvm", "-disable-loop-idiom-all") (adjacent args))
+            (compiler_proper_args arch));
+      (* With the pass, Clang replaces the loop by a population count: popcnt,
+         cnt or cpop. *)
+      cases "a loop that exits on its data stays a loop for" ~id:fst
+        [
+          ("x86_64,x86-64-v3", "popcnt");
+          ("arm64,generic", "cnt");
+          ("riscv64,rv64g,zbb", "cpop");
+        ]
+        (fun (arch, count) ->
+          let text = disassembly arch bit_count in
+          equal ~msg:text (list string) [] (named [ count ] text));
+      (* rune's maximum of 32 float64 lanes in a loop of 32 trips, whose 32
+         maxima each read the last twice: LLVM 22's and 23's loop idiom
+         recognition did not finish it in 300 s. *)
+      cases
+        "a host maximum of 32 float64 lanes in a loop of 32 trips compiles for"
+        ~id:Fun.id [ "x86_64,x86-64-v3"; "arm64,apple-m1" ] (fun arch ->
+          let machine = List.hd (String.split_on_char ',' arch) in
+          let src = read_file "max_chain.c" in
+          let lib = ccache_off (fun () -> compile arch src) in
+          is_relocatable_elf64 ~machine:(elf_machine machine) lib);
+    ]
+
+(* The straight-line vectorizer *)
+
+let straight_line =
+  group "the straight-line vectorizer"
+    [
+      (* LLVM 18's straight-line vectorizer narrowed the four indices into
+         invalid IR for these processors, and Clang 18 crashed on it. *)
+      cases "four clamped gathers compile for AVX-512 on" ~id:Fun.id
+        [ "x86_64,x86-64-v4"; "x86_64,skylake-avx512"; "x86_64,znver4" ]
+        (fun arch ->
+          knows_cpu arch;
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (compile arch clamped_gathers));
+      (* The straight-line vectorizer of LLVM 19 and of Apple's Clang 17
+         narrowed four lanes of rune's binary search into invalid IR for these
+         processors, which the verifier rejects. *)
+      cases "a binary search of four lanes compiles for AVX2 and AVX-512 on"
+        ~id:Fun.id [ "x86_64,x86-64-v3"; "x86_64,x86-64-v4"; "x86_64,znver4" ]
+        (fun arch ->
+          knows_cpu arch;
+          let src = read_file "vectorized_search.c" in
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (ccache_off (fun () -> compile arch src)));
+    ]
+
+(* AVX-512 *)
 
 let refusal = "keeps AVX-512 on"
+
+let avx512 =
+  group "AVX-512"
+    [
+      (* Clang 18 crashed splitting a vector of more than 16 halves that it
+         negates, takes the absolute value of or copies a sign to, for these
+         processors, which prefer 256-bit vectors. *)
+      cases "a kernel over more than 16 halves compiles for"
+        ~id:(fun (arch, name) -> arch ^ " " ^ name)
+        (List.concat_map
+           (fun arch ->
+             List.map
+               (fun name -> (arch, name))
+               [ "half_neg"; "half_abs"; "half_copysign"; "half_min" ])
+           [
+             "x86_64,skylake-avx512";
+             "x86_64,icelake-server";
+             "x86_64,sapphirerapids";
+           ])
+        (fun (arch, name) ->
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (compile arch (rendered arch name)));
+      (* LLVM folds flipping or clearing the sign bit of halves' bits into a
+         negation or an absolute value, on which Clang 18 crashed the same
+         way. *)
+      cases "a sign bit of more than 16 halves compiles for"
+        ~id:(fun (arch, (name, _)) -> arch ^ " " ^ name)
+        (List.concat_map
+           (fun arch ->
+             List.map
+               (fun op -> (arch, op))
+               [
+                 ("flipped", (Ops.bitwise_xor, 0x8000));
+                 ("cleared", (Ops.bitwise_and, 0x7fff));
+               ])
+           [
+             "x86_64,skylake-avx512";
+             "x86_64,icelake-server";
+             "x86_64,sapphirerapids";
+           ])
+        (fun (arch, (_, (op, mask))) ->
+          let prg = sign_bits ~arch op mask in
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (compile arch (source prg)));
+      (* Clang 18 crashed on this loop for these processors, which have
+         AVX-512's half arithmetic. *)
+      cases "a loop of half casts compiles with AVX-512's half arithmetic on"
+        ~id:Fun.id [ "x86_64,sapphirerapids"; "x86_64,x86-64-v4,avx512fp16" ]
+        (fun arch ->
+          is_relocatable_elf64 ~machine:(elf_machine "x86_64")
+            (compile arch half_casts));
+      (* Processors with AVX-512, three naming AVX10.1, which LLVM 21 keeps on
+         with AVX-512 after -mno-avx512f. A compile for one that Clang keeps
+         AVX-512 off for is refused for no such reason; a Clang that rejects a
+         feature's name keeps none on. Under LLVM 21 each that names AVX10.1 is
+         refused, whatever the registers say. *)
+      cases
+        "a Clang that keeps AVX-512 on where flags turn it off compiles \
+         nothing, saying so:"
+        ~id:Fun.id
+        [
+          "x86_64,x86-64-v4";
+          "x86_64,x86-64-v3,avx10.1-512";
+          "x86_64,x86-64-v3,avx10.1";
+          "x86_64,graniterapids,avx10.1-256";
+        ] (fun arch ->
+          Clang.here arch;
+          let refuses () =
+            raises_match
+              (function
+                | Compiler.Compile_error msg -> has_infix ~affix:refusal msg
+                | _ -> false)
+              (fun () -> Compiler.compile (Compiler_cpu.clang arch) "int x;")
+          in
+          let version = cc_version () in
+          let off =
+            List.mem "-mno-avx512f" (Compiler_cpu.flags ~version arch)
+          in
+          let llvm21 = has_infix ~affix:"clang version 21." version in
+          if llvm21 && has_infix ~affix:"avx10.1" arch then refuses ()
+          else
+            match Compiler_cpu.registers arch () with
+            | Some { count = 32; _ } when off -> refuses ()
+            | Some _ | None -> (
+                match Compiler.compile (Compiler_cpu.clang arch) "int x;" with
+                | _ -> ()
+                | exception Compiler.Compile_error msg ->
+                    not_contains ~sub:refusal msg));
+    ]
 
 let native_avx10 =
   group "a Clang that keeps AVX-512 on for native"
     [
       test "native compiles for its processor by name, without AVX-512"
         (fun () ->
-          under_stand_in llvm21_avx10 @@ fun _ ->
+          under_stand_in (llvm21_avx10 ()) @@ fun clang ->
           equal
             (option (pair int int))
             (Some (16, 32))
@@ -1476,19 +1198,23 @@ let native_avx10 =
           with
           | _ -> fail "a stand-in that compiles nothing compiled"
           | exception Compiler.Compile_error msg ->
-              contains ~sub:"no compiler proper" msg);
-      test "an arch that names AVX10.1 compiles nothing, saying so" (fun () ->
-          under_stand_in llvm21_avx10 @@ fun _ ->
-          raises_match
-            (function
-              | Compiler.Compile_error msg -> has_infix ~affix:refusal msg
-              | _ -> false)
-            (fun () ->
-              Compiler.compile
-                (Compiler_cpu.clang "x86_64,x86-64-v3,avx10.1")
-                increment));
+              equal (list string) [ "-march=graniterapids" ]
+                (marches (received clang msg)));
+      test "an arch that names AVX10.1 compiles nothing, saying what to name"
+        (fun () ->
+          under_stand_in (llvm21_avx10 ()) @@ fun _ ->
+          match
+            Compiler.compile
+              (Compiler_cpu.clang "x86_64,x86-64-v3,avx10.1")
+              increment
+          with
+          | _ -> fail "a stand-in that compiles nothing compiled"
+          | exception Compiler.Compile_error msg ->
+              in_order
+                ~subs:[ refusal; "without the avx10.1 feature"; "LLVM 22" ]
+                msg);
       test "a compiler made under it refuses under another CC" (fun () ->
-          under_stand_in llvm21_avx10 @@ fun _ ->
+          under_stand_in (llvm21_avx10 ()) @@ fun _ ->
           let clang = Compiler_cpu.clang "x86_64,x86-64-v3,avx10.1" in
           Setting.context [ B (Setting.cc, missing_clang) ] @@ fun () ->
           raises_match
@@ -1497,7 +1223,7 @@ let native_avx10 =
               | _ -> false)
             (fun () -> Compiler.compile clang increment));
       test "registers made under it answer under another CC" (fun () ->
-          under_stand_in llvm21_avx10 @@ fun _ ->
+          under_stand_in (llvm21_avx10 ()) @@ fun _ ->
           let registers = Compiler_cpu.registers "x86_64,native" in
           Setting.context [ B (Setting.cc, missing_clang) ] @@ fun () ->
           equal
@@ -1508,96 +1234,174 @@ let native_avx10 =
                (registers ())));
     ]
 
-(* Processors with AVX-512, three naming AVX10.1, which LLVM 21 keeps on with
-   AVX-512 after -mno-avx512f. A compile for one that Clang keeps AVX-512 off
-   for is refused for no such reason; a Clang that rejects a feature's name
-   keeps none on. Under LLVM 21 each that names AVX10.1 is refused, whatever the
-   registers say. *)
-let kept_avx512 =
-  let refused = "keeps AVX-512 on" in
-  let refuses arch =
-    raises_match
-      (function
-        | Compiler.Compile_error msg -> has_infix ~affix:refused msg
-        | _ -> false)
-      (fun () -> Compiler.compile (Compiler_cpu.clang arch) "int x;")
-  in
-  cases
-    "a Clang that keeps AVX-512 on where flags turn it off compiles nothing, \
-     saying so:"
-    ~id:Fun.id
-    [
-      "x86_64,x86-64-v4";
-      "x86_64,x86-64-v3,avx10.1-512";
-      "x86_64,x86-64-v3,avx10.1";
-      "x86_64,graniterapids,avx10.1-256";
-    ] (fun arch ->
-      Clang.here arch;
-      let version = cc_version () in
-      let off = List.mem "-mno-avx512f" (Compiler_cpu.flags ~version arch) in
-      let llvm21 = has_infix ~affix:"clang version 21." version in
-      if llvm21 && has_infix ~affix:"avx10.1" arch then refuses arch
-      else
-        match Compiler_cpu.registers arch () with
-        | Some { count = 32; _ } when off -> refuses arch
-      | Some _ | None -> (
-          match Compiler.compile (Compiler_cpu.clang arch) "int x;" with
-          | _ -> ()
-          | exception Compiler.Compile_error msg ->
-              equal bool ~msg:"refused" false (has_infix ~affix:refused msg)))
+(* The loop vectorizer *)
 
-let without_clang =
-  tag "no-clang"
-  @@ group "without Clang"
-       [
-         test "a compile raises Compile_error naming the program CC names"
+(* SSE2 adds four floats with [addps] and one with [addss]: a packed loop adds
+   its last floats one at a time. *)
+let loop_vectorizer =
+  group "the loop vectorizer"
+    [
+      cases
+        "packs a loop over a count it takes iff its source is at most 400000 \
+         bytes long:"
+        ~id:(fun (n, _) -> string_of_int n)
+        [
+          (String.length add_n, [ "addps"; "addss" ]);
+          (long_source, [ "addps"; "addss" ]);
+          (long_source + 1, [ "addss" ]);
+        ]
+        (fun (n, adds) ->
+          let src = if n = String.length add_n then add_n else add_n_of n in
+          let text = disassembly "x86_64,x86-64" src in
+          equal (list string) adds (named [ "addps"; "addss" ] text));
+    ]
+
+(* The compiler proper. CC is read once, when the first compile runs, so the
+   test tagged slp-clang runs in a process of its own, where CC names a script
+   that runs Clang with the straight-line vectorizer on, whatever turns it off
+   before. *)
+
+let compiler_proper =
+  group "the compiler proper"
+    [
+      (* The stand-in states [-disable-llvm-verifier], as a release Clang
+         does. *)
+      test "runs with LLVM's IR verifier on" (fun () ->
+          equal (list string) []
+            (List.filter
+               (( = ) "-disable-llvm-verifier")
+               (compiler_proper_args "x86_64,x86-64")));
+      tag "slp-clang"
+      @@ test
+           "a source that the straight-line vectorizer of LLVM 19 or Apple's \
+            Clang 17 makes invalid raises Compile_error naming its function"
            (fun () ->
-             raises_match
-               (function
-                 | Compiler.Compile_error msg ->
-                     has_infix ~affix:missing_clang msg
-                 | _ -> false)
-               (fun () ->
-                 Compiler.compile (Compiler_cpu.clang (native ())) increment));
-         test "an x86_64 processor has SSE's 16 registers of 16 bytes"
-           (fun () ->
-             equal
-               (option (pair int int))
-               (Some (16, 16))
-               (Option.map
-                  (fun (r : Renderer.registers) -> (r.count, r.bytes))
-                  (Compiler_cpu.registers "x86_64,x86-64-v3" ())));
-         test "a cached object is served without a Clang that runs" (fun () ->
-             let clang = Compiler_cpu.clang (native ()) in
-             let table = Option.get (Compiler.cachekey clang) in
-             Helpers.Diskcache.put ~table increment "cached object";
-             equal string "cached object"
-               (Compiler.compile_cached clang increment));
-         test "an object cached by the default compiler is not served under CC"
-           (fun () ->
-             let cachedb = Helpers.cachedb in
-             let table =
-               match child ~env:[ ("CC", "clang") ] ~cachedb "table" with
-               | Ok table -> table
-               | Error err ->
-                   failf "the default compiler named no table: %s" err
+             if Sys.win32 then skip ~reason:"CC is a shell script" ();
+             Clang.here "x86_64,x86-64-v3";
+             let stated = cc_version () in
+             let apple = has_infix ~affix:"Apple" stated in
+             let llvm_19 =
+               (not apple) && has_infix ~affix:"clang version 19." stated
              in
-             let src = increment ^ "\n/* compiled by clang */\n" in
-             Helpers.Diskcache.put ~table src "clang's object";
-             raises_match
-               (function Compiler.Compile_error _ -> true | _ -> false)
-               (fun () ->
-                 Compiler.compile_cached (Compiler_cpu.clang (native ())) src));
-       ]
+             let apple_17 = has_infix ~affix:"Apple clang version 17." stated in
+             if not (llvm_19 || apple_17) then
+               skip ~reason:"not a Clang of LLVM 19 or Apple's 17" ();
+             let src = read_file "vectorized_search.c" in
+             match
+               ccache_off (fun () ->
+                   Compiler.compile (Compiler_cpu.clang "x86_64,x86-64-v3") src)
+             with
+             | _ -> fail "Clang compiled the invalid IR"
+             | exception Compiler.Compile_error msg ->
+                 contains ~sub:"E_16_2_4" msg);
+    ]
 
-(* Disassembly *)
+(* Several sources *)
 
-let disassembly_ =
-  group "disassembly"
+(* Sources at most 400 000 bytes long, which compile with the loop
+   vectorizer. *)
+let short_sources =
+  [
+    ("increment", increment);
+    ("add", add);
+    ("square_root", square_root);
+    ("add_n", add_n);
+    ("clamped_gathers", clamped_gathers);
+    ("half_casts", half_casts);
+  ]
+
+(* A source past 400 000 bytes, which compiles without it. *)
+let long = ("long", add_n_of (long_source + 1))
+
+let alone =
+  lazy
+    (let clang = native_clang () in
+     List.map
+       (fun (name, src) ->
+         (name, ccache_off (fun () -> Compiler.compile clang src)))
+       (long :: short_sources))
+
+let several_sources =
+  group "several sources"
     [
-      test "prints what objdump prints of the object" (fun () ->
-          let text = disassembly "x86_64,x86-64" increment in
-          in_order ~subs:[ "elf64-x86-64"; "<increment>:" ] text);
+      prop "each object is the one its source compiles to alone" ~count:25
+        ~examples:[ [ "long"; "increment"; "long" ] ]
+        Gen.(
+          list ~size:(int_range 2 6)
+            (of_list ~pp:Format.pp_print_string (List.map fst short_sources)))
+        (fun names ->
+          cover "a source twice"
+            (List.length (List.sort_uniq compare names) < List.length names);
+          cover "a long source among short ones"
+            (List.mem "long" names && List.exists (( <> ) "long") names);
+          let clang = native_clang () in
+          let sources = long :: short_sources in
+          let objs =
+            ccache_off (fun () ->
+                Compiler.compile_all clang
+                  (List.map (fun n -> List.assoc n sources) names))
+          in
+          equal (list string)
+            (List.map (fun n -> List.assoc n (Lazy.force alone)) names)
+            objs);
+      test "a source that names its own file compiles to one object" (fun () ->
+          let clang = native_clang () in
+          let file = "const char *file(void) { return __FILE__; }" in
+          let objs () =
+            ccache_off (fun () -> Compiler.compile_all clang [ add; file ])
+          in
+          let first = List.nth (objs ()) 1 in
+          equal string ~msg:"again" first (List.nth (objs ()) 1);
+          equal string ~msg:"alone" first
+            (ccache_off (fun () -> Compiler.compile clang file)));
+      test "a rejected source among others raises its own diagnostics"
+        (fun () ->
+          let clang = native_clang () in
+          match
+            ccache_off (fun () ->
+                Compiler.compile_all clang
+                  [
+                    increment;
+                    "int f(void) { return undeclared_name; }";
+                    "int g(void) { return other_name; }";
+                  ])
+          with
+          | _ -> fail "Clang accepted an undeclared name"
+          | exception Compiler.Compile_error msg ->
+              contains ~sub:"undeclared_name" msg;
+              not_contains ~sub:"other_name" msg);
+      test
+        "a compile abandoned by an exception ends its Clang and leaves none of \
+         its files" (fun () ->
+          if Sys.win32 then skip ~reason:"a POSIX shell stands in for Clang" ();
+          let dir = temp_dir () in
+          let pid_file = Filename.concat dir "pid"
+          and clang = Filename.concat dir "clang"
+          and tmp = Filename.concat dir "tmp" in
+          Out_channel.with_open_gen [ Open_wronly; Open_creat ] 0o755 clang
+            (fun oc -> output_string oc (abandoning ~pid_file));
+          Unix.mkdir tmp 0o700;
+          let saved = Filename.get_temp_dir_name () in
+          let handler = Sys.Signal_handle (fun _ -> raise Exit) in
+          let previous = Sys.signal Sys.sigusr1 handler in
+          Fun.protect
+            ~finally:(fun () ->
+              Sys.set_signal Sys.sigusr1 previous;
+              Filename.set_temp_dir_name saved)
+            (fun () ->
+              Filename.set_temp_dir_name tmp;
+              raises Exit (fun () ->
+                  Setting.context
+                    [ B (Setting.cc, clang); B (Setting.ccache, false) ]
+                    (fun () ->
+                      Compiler.compile_all
+                        (Compiler_cpu.clang "x86_64,x86-64")
+                        [ increment ])));
+          let pid = int_of_string (String.trim (read_file pid_file)) in
+          raises_match
+            (function Unix.Unix_error (ESRCH, _, _) -> true | _ -> false)
+            (fun () -> Unix.kill pid 0);
+          equal (array string) [||] (Sys.readdir tmp));
     ]
 
 (* The cache *)
@@ -1611,8 +1415,7 @@ let host_table () =
    empty string reads as unset, so an unset [TOLK_TEST_HINT] names the empty
    release. *)
 let hint () =
-  Helpers.Diskcache.put ~table:"clang_llvm"
-    (Setting.value Setting.cc)
+  Helpers.Diskcache.put ~table:"clang_llvm" (Setting.value Setting.cc)
     (Option.value ~default:"" (Sys.getenv_opt "TOLK_TEST_HINT"))
 
 let parts = [ ("table", host_table); ("hint", hint) ]
@@ -1625,8 +1428,8 @@ let table_in () =
 
 let is_hex c = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')
 
-(* [named ~prefix table] checks that [table] is [prefix] then a digest. *)
-let named ~prefix table =
+(* [table_named ~prefix table] checks that [table] is [prefix] then a digest. *)
+let table_named ~prefix table =
   let n = Int.min (String.length prefix) (String.length table) in
   equal string ~msg:"the name" prefix (String.sub table 0 n);
   let digest = String.sub table n (String.length table - n) in
@@ -1650,11 +1453,38 @@ let cache =
           let prefix =
             "compile_" ^ Setting.value Setting.cc ^ "_obj_" ^ named_arch
           in
-          named ~prefix
+          table_named ~prefix
             (Option.get (Compiler.cachekey (Compiler_cpu.clang arch))));
       test "the table does not depend on the working directory" (fun () ->
           let a = table_in () in
           equal Disk_cache.outcome a (table_in ()));
+      test "the table is named with ccache off" (fun () ->
+          let table () =
+            Compiler.cachekey (Compiler_cpu.clang "arm64,native")
+          in
+          equal (option string) (table ()) (ccache_off table));
+      tag "no-clang"
+      @@ test "a cached object is served without a Clang that runs" (fun () ->
+          let clang = Compiler_cpu.clang (native ()) in
+          let table = Option.get (Compiler.cachekey clang) in
+          Helpers.Diskcache.put ~table increment "cached object";
+          equal string "cached object" (Compiler.compile_cached clang increment));
+      tag "no-clang"
+      @@ test "an object cached by the default compiler is not served under CC"
+           (fun () ->
+             let cachedb = Helpers.cachedb in
+             let table =
+               match child ~env:[ ("CC", "clang") ] ~cachedb "table" with
+               | Ok table -> table
+               | Error err ->
+                   failf "the default compiler named no table: %s" err
+             in
+             let src = increment ^ "\n/* compiled by clang */\n" in
+             Helpers.Diskcache.put ~table src "clang's object";
+             raises_match
+               (function Compiler.Compile_error _ -> true | _ -> false)
+               (fun () ->
+                 Compiler.compile_cached (Compiler_cpu.clang (native ())) src));
       test "the table does not depend on the release a process is hinted"
         (fun () ->
           let cachedb = Disk_cache.fresh () in
@@ -1676,39 +1506,349 @@ let cache =
           | Error err -> failf "the table was not named: %s" err);
           equal (list string) []
             (Disk_cache.entries ~table:"clang_llvm" cachedb));
-      test "the table is named with ccache off" (fun () ->
-          let table () =
-            Compiler.cachekey (Compiler_cpu.clang "arm64,native")
-          in
-          equal (option string) (table ()) (ccache_off table));
     ]
+
+(* A Clang before LLVM 16. The release the macros name decides, for every
+   machine: LLVM's before 16 and Apple's before 15, whose 15 is built on LLVM
+   16, choose the wrong zero for some selections. *)
+
+let wrong_zeros =
+  group "a Clang before LLVM 16"
+    [
+      cases "a compile raises Compile_error naming the Clang and the oldest:"
+        ~id:(fun c -> c.version ^ " for " ^ c.arch)
+        [
+          llvm "Ubuntu clang version 15.0.7" 15 x86;
+          llvm "clang version 15.0.6" 15 m1;
+          apple "Apple clang version 14.0.3 (clang-1403.0.22.14.1)" 14 m1;
+          llvm "Debian clang version 14.0.6" 14 "riscv64,rv64g";
+          llvm "a compiler built on Clang 15.0.7" 15 x86;
+        ]
+        (fun c ->
+          let clang, msg = stand_in_error c in
+          in_order
+            ~subs:[ clang; c.version; "wrong zero"; "57357"; "Clang 16"; "CC" ]
+            msg);
+      cases "LLVM 16, Apple's 15 and later are not refused for the wrong zero:"
+        ~id:(fun c -> c.version)
+        [
+          llvm "clang version 16.0.4" 16 x86;
+          apple "Apple clang version 15.0.0 (clang-1500.3.9.4)" 15 m1;
+          llvm "Ubuntu clang version 18.1.3 (1ubuntu1)" 18 x86;
+        ]
+        (fun c -> not_contains ~sub:"wrong zero" (snd (stand_in_error c)));
+      cases "a selection between a value and -0. keeps each zero's sign, at"
+        ~id:(Printf.sprintf "%h") [ 0.; -0.; 1.; -1. ] (fun x ->
+          let expected = if -0. < x then -0. else x in
+          let out = Run.on_host (zero_selection ()) [ (1, floats [| x |]) ] in
+          match List.assoc 0 out with
+          | [| `Float y |] ->
+              equal string
+                (Printf.sprintf "%h" expected)
+                (Printf.sprintf "%h" y)
+          | _ -> fail "not one float");
+      test
+        "a compile names a preprocessor's failure, and the next runs it again"
+        (fun () ->
+          let c = llvm "clang version 15.0.6" 15 x86 in
+          under_stand_in (stand_in_for ~gated:true ~proper:true c)
+          @@ fun clang ->
+          let compiler = Compiler_cpu.clang c.arch in
+          let error () =
+            match Compiler.compile compiler increment with
+            | _ -> fail "a stand-in that compiles nothing compiled"
+            | exception Compiler.Compile_error msg -> msg
+          in
+          let failed = error () in
+          Out_channel.with_open_bin (clang ^ ".ready") ignore;
+          in_order ~subs:[ clang; "release is unknown"; "exited 1" ] failed;
+          in_order ~subs:[ clang; "wrong zero" ] (error ()));
+    ]
+
+(* Compile_error. CC is read once, when the first compile runs, so the test
+   tagged no-clang runs in a process of its own, where CC names a program that
+   does not exist. *)
+
+let compile_error =
+  group "Compile_error"
+    [
+      test "a rejected source raises Compile_error with Clang's diagnostics"
+        (fun () ->
+          match
+            Compiler.compile (native_clang ())
+              "int f(void) { return undeclared_name; }"
+          with
+          | _ -> fail "Clang accepted an undeclared name"
+          | exception Compiler.Compile_error msg ->
+              in_order ~subs:[ "error"; "undeclared_name" ] msg);
+      tag "no-clang"
+      @@ test "a compile without Clang names the program CC names" (fun () ->
+          raises_match
+            (function
+              | Compiler.Compile_error msg -> has_infix ~affix:missing_clang msg
+              | _ -> false)
+            (fun () ->
+              Compiler.compile (Compiler_cpu.clang (native ())) increment));
+      test "an arch that turns SSE2 off compiles nothing, naming SSE2"
+        (fun () ->
+          Clang.here "x86_64,x86-64";
+          let arch = "x86_64,x86-64,-sse2" in
+          raises_match
+            (function
+              | Compiler.Compile_error msg ->
+                  has_infix ~affix:"turns SSE2 off" msg
+              | _ -> false)
+            (fun () -> Compiler.compile (Compiler_cpu.clang arch) increment));
+    ]
+
+(* Disassembly *)
+
+let disassemble =
+  group "disassemble"
+    [
+      test "prints what objdump prints of the object" (fun () ->
+          let text = disassembly "x86_64,x86-64" increment in
+          in_order ~subs:[ "elf64-x86-64"; "<increment>:" ] text);
+    ]
+
+(* Flags *)
+
+let llvm18 = "Ubuntu clang version 18.1.3 (1ubuntu1)"
+let x86_64_elf = "--target=x86_64-none-unknown-elf"
+
+let windows =
+  [
+    "--target=x86_64-w64-windows-gnu-elf";
+    "-mno-stack-arg-probe";
+    "-mno-red-zone";
+  ]
+
+let avx10_off = [ "-mno-avx10.1-512"; "-mno-avx10.1-256"; "-mno-avx512f" ]
+
+let flags =
+  group "flags"
+    [
+      cases "under LLVM 18, x86_64 ends by disabling AVX10.1 and AVX-512:"
+        ~id:fst
+        [
+          ("x86_64,native", [ x86_64_elf; "-march=native" ] @ avx10_off);
+          ( "x86_64,graniterapids,avx10.1-256",
+            [ x86_64_elf; "-march=graniterapids"; "-mavx10.1-256" ] @ avx10_off
+          );
+          ( "x86_64,sapphirerapids,avx512fp16,-avx",
+            [ x86_64_elf; "-march=sapphirerapids"; "-mavx512fp16"; "-mno-avx" ]
+            @ avx10_off );
+          ("x86_64-windows,native", windows @ [ "-march=native" ] @ avx10_off);
+        ]
+        (fun (arch, expected) ->
+          equal (list string) expected (Compiler_cpu.flags ~version:llvm18 arch));
+      cases
+        "x86_64,native ends by disabling AVX-512 before LLVM 23 and under a \
+         Clang that names no release:"
+        ~id:fst
+        [
+          ("clang version 17.0.6", [ "-mno-avx512f" ]);
+          ("clang version 18.1.8", avx10_off);
+          ("Debian clang version 19.1.7 (3+b1)", avx10_off);
+          ("Homebrew clang version 20.1.8", avx10_off);
+          ("Homebrew clang version 21.1.8", [ "-mno-avx512f" ]);
+          ("Homebrew clang version 22.1.8", [ "-mno-avx512f" ]);
+          ("Apple clang version 17.0.0 (clang-1700.6.4.2)", avx10_off);
+          ("Apple clang version 18.0.0 (clang-1800.0.31.1)", [ "-mno-avx512f" ]);
+          ("Homebrew clang version 23.1.5", []);
+          ("clang version 24.0.0", []);
+          ( "Intel(R) oneAPI DPC++/C++ Compiler 2025.0.0 (2025.0.0.20241008)",
+            [ "-mno-avx512f" ] );
+          ("", [ "-mno-avx512f" ]);
+        ]
+        (fun (version, off) ->
+          equal (list string)
+            ([ x86_64_elf; "-march=native" ] @ off)
+            (Compiler_cpu.flags ~version "x86_64,native"));
+      cases "another machine under LLVM 18 takes its own arguments alone:"
+        ~id:fst
+        [
+          ( "arm64,generic,fp16",
+            [
+              "--target=arm64-none-unknown-elf";
+              "-ffixed-x18";
+              "-mcpu=generic+fp16";
+            ] );
+          ( "riscv64,rv64g,c",
+            [ "--target=riscv64-none-unknown-elf"; "-march=rv64g_c" ] );
+        ]
+        (fun (arch, expected) ->
+          equal (list string) expected (Compiler_cpu.flags ~version:llvm18 arch));
+      cases "a tune field tunes, after the processor and its features:" ~id:fst
+        [
+          ( "x86_64,x86-64-v3,tune=native",
+            [ x86_64_elf; "-march=x86-64-v3"; "-mtune=native" ] );
+          ( "x86_64,x86-64,avx,tune=znver4",
+            [ x86_64_elf; "-march=x86-64"; "-mavx"; "-mtune=znver4" ] );
+          ( "arm64,generic,tune=native",
+            [
+              "--target=arm64-none-unknown-elf";
+              "-ffixed-x18";
+              "-mcpu=generic";
+              "-mtune=native";
+            ] );
+        ]
+        (fun (arch, expected) ->
+          equal (list string) expected
+            (Compiler_cpu.flags ~version:"clang version 23.1.5" arch));
+      test "a malformed architecture is refused" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"'x86_64'") (fun () ->
+              Compiler_cpu.flags ~version:llvm18 "x86_64"));
+    ]
+
+(* Registers. The macros of each processor name its features; Clang's statement
+   names the processor alone. *)
+
+let register_file arch =
+  Option.map
+    (fun (r : Renderer.registers) -> (r.count, r.bytes))
+    (Compiler_cpu.registers arch ())
+
+let registers =
+  (* The registers of a processor with AVX-512, as the Clang run compiles for
+     it: 32, or SSE's 16 where {!Compiler_cpu.flags} turns AVX-512 off. *)
+  let avx512 () =
+    let version = cc_version () in
+    let flags = Compiler_cpu.flags ~version "x86_64,x86-64-v4" in
+    Some ((if List.mem "-mno-avx512f" flags then 16 else 32), 32)
+  in
+  let fixed v () = v in
+  group "registers"
+    [
+      cases "the vector registers, their number and bytes, of" ~id:fst
+        [
+          ("x86_64,x86-64", fixed (Some (16, 16)));
+          ("x86_64,x86-64-v3", fixed (Some (16, 32)));
+          ("x86_64,x86-64-v4", avx512);
+          ("x86_64,znver4", avx512);
+          ("x86_64-windows,x86-64-v3", fixed (Some (16, 32)));
+          ("arm64,apple-m1", fixed (Some (32, 16)));
+          ("riscv64,rv64g", fixed None);
+        ]
+        (fun (arch, expected) ->
+          (* An x86_64 arch's registers are what its Clang defines. *)
+          if String.starts_with ~prefix:"x86_64" arch then Clang.here arch;
+          knows_cpu arch;
+          equal (option (pair int int)) (expected ()) (register_file arch));
+      tag "no-clang"
+      @@ test "an x86_64 processor has SSE's 16 registers of 16 bytes"
+           (fun () ->
+             equal
+               (option (pair int int))
+               (Some (16, 16))
+               (register_file "x86_64,x86-64-v3"));
+      cases "an arch is refused as clang refuses it, named:" ~id:fst
+        [ ("x86_64", "'x86_64'"); ("mips,native", "mips") ]
+        (fun (arch, named) ->
+          raises_match (Exn.invalid_arg ~sub:named) (fun () ->
+              Compiler_cpu.registers arch));
+    ]
+
+(* win64 and has_feature *)
+
+let win64 =
+  group "win64"
+    [
+      cases "is true iff the arch is x86_64's under Windows:" ~id:fst
+        [
+          ("x86_64-windows,native", true);
+          ("x86_64-windows,x86-64-v3,avx", true);
+          ("x86_64,native", false);
+          ("x86_64-linux,x86-64", false);
+          ("arm64-windows,generic", false);
+        ]
+        (fun (arch, windows) -> equal bool windows (Compiler_cpu.win64 arch));
+    ]
+
+let has_feature =
+  group "has_feature"
+    [
+      cases "a feature is on iff its last mention enables it:"
+        ~id:(fun (arch, f, _) -> arch ^ " " ^ f)
+        [
+          ("arm64,generic", "fp16", false);
+          ("arm64,generic,fp16", "fp16", true);
+          ("arm64,generic,fp16,-fp16", "fp16", false);
+          ("arm64,generic,-fp16,fp16", "fp16", true);
+          ("arm64,generic,fp16,tune=native", "fp16", true);
+          ("arm64,apple-m1", "fp16", false);
+          ("x86_64,x86-64,avx", "avx", true);
+          ("x86_64,x86-64,avx,-avx", "avx", false);
+        ]
+        (fun (arch, f, on) -> equal bool on (Compiler_cpu.has_feature arch f));
+      test "an arch of fewer than two fields is refused, named" (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"'x86_64'") (fun () ->
+              Compiler_cpu.has_feature "x86_64" "avx"));
+    ]
+
+(* settle_waits *)
+
+(* One compiler for [native], made once, compiling from two domains at once
+   before either has learnt what Clang compiles [native] for, which takes
+   Clang's macros: the second starts once the first is inside Clang's
+   preprocessor, and the preprocessor answers once the second waits for the
+   first. Each compile fails with what the compiler proper says. *)
+let first_compiles =
+  test "two domains' first compiles of one compiler each reach Clang" (fun () ->
+      under_stand_in held_macros @@ fun clang ->
+      let dir = Filename.dirname clang in
+      let asked = Filename.concat dir "asked"
+      and go = Filename.concat dir "go" in
+      Unix.mkfifo asked 0o600;
+      Unix.mkfifo go 0o600;
+      let compiler = Compiler_cpu.clang "x86_64,native" in
+      let outcome () =
+        match Compiler.compile compiler increment with
+        | _ -> "compiled"
+        | exception Compiler.Compile_error msg ->
+            if has_infix ~affix:"no compiler proper" msg then "refused" else msg
+        | exception e -> Printexc.to_string e
+      in
+      let first = Domain.spawn outcome in
+      (* Reading [asked] returns once the first compile's preprocessor has
+         opened it and closed it. *)
+      ignore (read_file asked);
+      let waited = Compiler_cpu.settle_waits () in
+      let second = Domain.spawn outcome in
+      while Compiler_cpu.settle_waits () <= waited do
+        Domain.cpu_relax ()
+      done;
+      Out_channel.with_open_bin go (fun oc -> output_string oc "go\n");
+      let second = Domain.join second and first = Domain.join first in
+      equal (pair string string) ("refused", "refused") (first, second))
+
+let settle_waits = group "settle_waits" [ first_compiles ]
 
 let () =
   Disk_cache.play parts;
   exit
     (run "Tolk.Compiler_cpu"
        [
+         arch;
          objects;
-         batches;
-         abandoned;
-         tinygrad;
-         execution;
-         half_casts_baseline;
+         half_conversions;
+         arm64;
          half_muladds;
          half_bits_agree;
-         features;
+         loop_idioms;
+         straight_line;
+         avx512;
+         native_avx10;
+         loop_vectorizer;
+         compiler_proper;
+         several_sources;
+         cache;
+         wrong_zeros;
+         compile_error;
+         disassemble;
          flags;
          registers;
-         kept_avx512;
-         native_avx10;
-         first_compiles;
-         architectures;
-         errors;
-         wrong_zeros;
-         without_sse2;
-         invalid_ir;
-         compile_time;
-         without_clang;
-         disassembly_;
-         cache;
+         win64;
+         has_feature;
+         settle_waits;
        ])

@@ -14,7 +14,6 @@
   (glob_files *.tolk)
   clang_slp
   vectorized_search.c
-  gathered_lanes.c
   max_chain.c)
  (action
   (setenv

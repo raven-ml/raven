@@ -840,8 +840,8 @@ multi-device is out of scope, see README.
   the tolk bench's `lorenz/r_128_16_3_4_4_3_3_400_400/heuristic` 0.79 ms against
   1.47 ms. A narrow float's `Mulacc` is (e): the bits of one graph differed
   between hosts and between targets.
-- **Pinned by:** `Tolk.Compiler_cpu › execution on the host › a product and a
-  sum round twice, never fused`; `Tolk.Compiler_metal › MTLCompiler › a product
+- **Pinned by:** `Tolk.Compiler_cpu › objects › a product and a sum written
+  apart each round to their type`; `Tolk.Compiler_metal › compiler › a product
   and a sum compile under the no-contraction pragma`. NVRTC and HIP are README's
   hardware checks. `Tolk.Codegen › multiply-adds › a sum of products adds each
   into its running sum rounded once, of 2` and `› of 64` and `› a sum of
@@ -2592,7 +2592,7 @@ gate read a set; merged into D93.
   `Rune.jit on another machine's host › another machine's host compiles for
   its arch` and `› gives eager's bits`; `Tolk_engine › target › the host
   compiles C for Clang at its arch, tuned for its own processor, …`;
-  `Tolk.Compiler_cpu › a program for x86-64's baseline runs here`;
+  `Tolk.Compiler_cpu › half conversions`;
   `Tolk.Device › renderer › picks a device's renderer as tinygrad does`
   (each row renders for the target tinygrad's `DEV` gives the device) and
   `renders for the target it is given`.
@@ -2907,8 +2907,9 @@ encodes its barriers (D146).
   alone share programs. Its search's key names the device kind alone, so a
   search timed on one part answers every part and arch of that kind with what
   was fastest on the first.
-- **Pinned by:** `Tolk.Compiler_cpu › cache`, `Tolk.Compiler_metal › cache`,
-  `Tolk.Compiler_cuda › cache`, `Tolk.Compiler_amd › cache`,
+- **Pinned by:** `Tolk.Compiler_cpu › cache`, `Tolk.Compiler_metal › compiler
+  › the table`, `Tolk.Compiler_cuda › nvrtc › the table`, `Tolk.Compiler_amd ›
+  hip › the table`,
   `Tolk.Renderer › Compiler › the table is asked for once, when first
   needed`, `› ccache is read when compiling` and `› compile_cached compiles
   every time with ccache off`, `Tolk.C › identity`, `Tolk.Codegen › programs
@@ -3771,8 +3772,8 @@ values.
 - **Pinned by:** the `Codegen` suite's `a selection between bfloat16 vectors
   takes each lane's arm` and `a gated bfloat16 load takes its alternative
   where its gate is false`, which run on the host and fail on x86 without
-  AVX512-BF16 under `__bf16`; `Tolk.Compiler_cpu › features › a sign bit of
-  bfloat16s compiles for arm64`, which fails under Clang 18 with `__bf16`.
+  AVX512-BF16 under `__bf16`; `Tolk.Compiler_cpu › arm64 › a sign bit of
+  bfloat16s compiles for`, which fails under Clang 18 with `__bf16`.
   The x86 Clang goldens of bfloat16 kernels (`bf16_clang`, `clang_*_bf16`).
   On rune: the tests above, on an x86 host without AVX512-BF16 and on arm64
   under Clang 18.
@@ -3865,8 +3866,8 @@ supports Windows: `Cstyle.clang_lang` keeps the empty `abi` and plain
   Clang 19 and later compile them without the mark. LLVM folds every other
   rendering of the negation back into the same one. tinygrad computes each
   lane apart and writes no such vector.
-- **Pinned by:** `Tolk.Compiler_cpu › features › a kernel over more than 16
-  halves compiles for AVX-512`, which renders `half_neg`, `half_abs`,
+- **Pinned by:** `Tolk.Compiler_cpu › AVX-512 › a kernel over more than 16
+  halves compiles for`, which renders `half_neg`, `half_abs`,
   `half_copysign` and `half_min` (32 lanes each), and `› a sign bit of more
   than 16 halves compiles for`, which renders 32 halves' sign bit
   flipped and cleared as rune writes them, both for `skylake-avx512`,
@@ -4524,10 +4525,10 @@ its float bound`, hold.
     gfx1201 are the same byte for byte without it. A ROCm built on LLVM 22 or 23
     would carry the walk, so comgr compiles without the pass, from every
     release.
-- **Pinned by:** `Tolk.Compiler_cpu › features › four clamped gathers compile
-  for AVX-512 on` (`x86_64,x86-64-v4`, `x86_64,skylake-avx512`,
-  `x86_64,znver4`), over `r_3_2`'s indices, which fails under Clang 18 without
-  the flag; `Tolk.Compiler_cpu › features › a binary search of four lanes
+- **Pinned by:** `Tolk.Compiler_cpu › the straight-line vectorizer › four
+  clamped gathers compile for AVX-512 on` (`x86_64,x86-64-v4`,
+  `x86_64,skylake-avx512`, `x86_64,znver4`), over `r_3_2`'s indices, which
+  fails under Clang 18 without the flag; `› a binary search of four lanes
   compiles for AVX2 and AVX-512 on` (`x86_64,x86-64-v3`, `x86_64,x86-64-v4`,
   `x86_64,znver4`), over `E_16_2_4` reduced, which fails under Clang 19 and
   Apple's Clang 17 without the flag; rune's `rune jit › classes › a uint4 sort
@@ -4536,19 +4537,23 @@ its float bound`, hold.
   cases › rows of one group in a block at each batch index give eager's values`,
   under Clang 19 on an x86 host with AVX2. LLVM 20: missing (no raven kernel
   meets the defect, and fudge has no Clang 20). The loop vectorizer:
-  `Tolk.Compiler_cpu › features › a loop over a count
-  it takes is packed into vectors iff its source is at most 400000 bytes long:`
-  (rows 400000 and 400001 among them); rune's compile bench
-  `special/betainccinv-grad-f32` (914 KB), whose first call takes 3.88 s on
-  fudge against 6.57 s with the loop vectorizer. The interleaved load combine:
-  `Tolk.Compiler_cpu › compile time › an arm64 kernel of 1024 lanes gathered
-  from 32 rows compiles within a minute`, which times out at 60 s on fudge with
-  the pass; rune's `Lower_reduce` test above, on macOS CI. Loop idiom
-  recognition: `Tolk.Compiler_cpu › features › a loop that exits on its data
-  stays a loop: idioms are off`, which Clang 19 turns into `popcnt` with the
-  pass; `Tolk.Compiler_cpu › compile time › a host maximum of 32 float64 lanes
-  in a loop of 32 trips compiles within a minute for` (`x86_64,x86-64-v3`,
-  `arm64,apple-m1`), over `r_32_32`'s source; rune's `Lower_linalg › eigh ›
+  `Tolk.Compiler_cpu › the loop vectorizer › packs a loop over a count it takes
+  iff its source is at most 400000 bytes long:` (rows 400000 and 400001 among
+  them); rune's compile bench `special/betainccinv-grad-f32` (914 KB), whose
+  first call takes 3.88 s on fudge against 6.57 s with the loop vectorizer. The interleaved load combine:
+  `Tolk.Compiler_cpu › arm64 › the compiler proper receives -mllvm
+  -disable-interleaved-load-combine iff the machine is arm64:`, which reads the
+  arguments a stand-in Clang's compiler proper receives: the objects are the
+  same without the pass, so only its time shows it, and Clang 19 for apple-m1
+  took 293 s on the contraction's kernel of 1024 lanes with the pass and 8 s
+  without it; rune's `Lower_reduce` test above, on macOS CI. Loop idiom
+  recognition: `Tolk.Compiler_cpu › loop idiom recognition › the compiler
+  proper receives -mllvm -disable-loop-idiom-all for` (`x86_64`, `arm64` and
+  `riscv64` rows); `› a loop that exits on its data stays a loop for` (the
+  same machines), which Clang 19 turns into `popcnt`, `cnt` and `cpop` with
+  the pass; `› a host maximum of 32 float64 lanes in a loop of 32 trips
+  compiles for` (`x86_64,x86-64-v3`, `arm64,apple-m1`), over `r_32_32`'s
+  source; rune's `Lower_linalg › eigh ›
   compiled for 32 rows of float64 gives eager's eigenvalues`; rune's compile
   bench `linalg/eigh-f64-32x32`. These three fail without the fix only under a
   Clang of LLVM 22 or 23. comgr: `Tolk.Compiler_amd › comgr › a loop that exits
@@ -5277,8 +5282,8 @@ into D183, which holds its rule, its reason and its pins.
   fill`, over every recorded kernel and lorenz_simple's, on files of 16 × 16,
   16 × 32, 32 × 16 and 32 × 64; `the optimisations chosen are tinygrad's › …
   › the optimised kernel`, the `cpu` (16 × 16) and `avx2` (16 × 32) cases; the
-  Compiler_cpu suite's `the vector registers, their number and bytes, of`
-  (every case) and `without Clang › an x86_64 processor has SSE's 16
+  Compiler_cpu suite's `registers › the vector registers, their number and
+  bytes, of` (every case) and `registers › an x86_64 processor has SSE's 16
   registers of 16 bytes`; the tolk bench's `host/*/heuristic` and
   `lorenz/*/heuristic` rows on fudge.
 
@@ -5532,14 +5537,13 @@ into D183, which holds its rule, its reason and its pins.
   states no release, such as one built on Clang that names itself, could be
   of any release, so AVX-512 is off.
 - **Pinned by:** `Tolk.Compiler_cpu › flags › under LLVM 18, x86_64 ends by
-  disabling AVX10.1 and AVX-512:` (every row), `› LLVM's own release of 18 is
-  LLVM 18`, `› x86_64,native ends by disabling AVX-512 before LLVM 23 and
-  under a Clang that names no release:` (every row) and `› another machine under LLVM 18 takes its own arguments
-  alone:`; `Tolk.Compiler_cpu › registers` at `x86-64-v4` and `znver4`;
-  `Tolk.Compiler_cpu › a Clang that keeps AVX-512 on where flags turn it off
-  compiles nothing, saying so:`, whose AVX10.1 rows Clang 21 refuses;
-  `Tolk.Compiler_cpu › features › a loop of half casts compiles with
-  AVX-512's half arithmetic on`, which crashes Clang 18 without the flags;
+  disabling AVX10.1 and AVX-512:` (every row), `› x86_64,native ends by
+  disabling AVX-512 before LLVM 23 and under a Clang that names no release:`
+  (every row, `clang version 18.1.8` among them) and `› another machine under
+  LLVM 18 takes its own arguments alone:`; `Tolk.Compiler_cpu › registers` at `x86-64-v4` and `znver4`;
+  `Tolk.Compiler_cpu › AVX-512 › a Clang that keeps AVX-512 on where flags turn
+  it off compiles nothing, saying so:`, whose AVX10.1 rows Clang 21 refuses,
+  and `› a loop of half casts compiles with AVX-512's half arithmetic on`, which crashes Clang 18 without the flags;
   rune's `Lower_real` tests above, on an x86 host with AVX-512 under a Clang
   before LLVM 23.
 
@@ -6905,9 +6909,11 @@ rows (1.04-1.18x on `contract/bf16-*` on fudge) is the stated cost.
   19 `E_16_2_4`. tinygrad's own LLVM compiler verifies its input and runs the
   verifier after every pass (`runtime/support/compiler_llvm.py`
   `LLVMCompiler.__init__`, `LLVMCompiler.compile`).
-- **Pinned by:** `Tolk.Compiler_cpu › invalid IR › a source that LLVM 19's
-  straight-line vectorizer makes invalid raises Compile_error naming its
-  function`, under a Clang of LLVM 19 with that vectorizer turned back on.
+- **Pinned by:** `Tolk.Compiler_cpu › the compiler proper › runs with LLVM's IR
+  verifier on`, on every POSIX host, and `› a source that the straight-line
+  vectorizer of LLVM 19 or Apple's Clang 17 makes invalid raises Compile_error
+  naming its function`, under a Clang of LLVM 19 with that vectorizer turned
+  back on.
 
 ## D280. An effect keeps its ranges when its index folds
 
@@ -10259,9 +10265,9 @@ D466.
   (LLVM issue 57357) in August 2022, after LLVM 15 branched. Apple's Clang 15
   (Xcode 15) is built on LLVM 16, its 14.0.3 on LLVM 15.
 - **Pinned by:** `Tolk.Compiler_cpu › a Clang before LLVM 16 › a compile
-  raises Compile_error naming the Clang and the oldest:` (every row) and `› a
-  compile is not refused for it under` (every row) and `› a compile names a
-  preprocessor's failure, and the next asks again`; `Tolk.Compiler_cpu ›
-  execution on the host › a selection between a value and -0. keeps each
-  zero's sign, at` (every row) and rune's test above, under every Clang that
+  raises Compile_error naming the Clang and the oldest:` (every row), `› LLVM
+  16, Apple's 15 and later are not refused for the wrong zero:` (every row),
+  `› a compile names a preprocessor's failure, and the next runs it again` and
+  `› a selection between a value and -0. keeps each zero's sign, at` (every
+  row) and rune's test above, under every Clang that
   compiles.
