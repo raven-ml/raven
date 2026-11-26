@@ -513,6 +513,11 @@ let casts =
       test "a bitcast of a constant to another width stays" (fun () ->
           let widened = Ops.bitcast (int32 1) Int64 in
           folds_to widened widened);
+      (* A boolean is true where its byte is not zero, and a bitcast back reads
+         the byte, which no boolean constant holds. *)
+      test "a bitcast to a boolean of a byte neither 0 nor 1 stays" (fun () ->
+          let byte = Ops.bitcast (Ops.int ~dtype:Uint8 2) Bool in
+          folds_to byte byte);
       test "a cast to a boolean is x <> 0" (fun () ->
           folds_to (Ops.cast a Bool) Ops.O.(a <> int 0));
     ]

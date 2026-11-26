@@ -460,7 +460,9 @@ val from_storage_scalar : t -> value -> value
 val bitcast : t -> t -> value -> value
 (** [bitcast d0 d1 v] is the [d1] value stored by the bits that store [v] as a
     [d0] value. Its bits are kept exactly, a signalling NaN's included, so
-    [bitcast d1 d0 (bitcast d0 d1 c) = c] for every [c] that [d0] stores.
+    [bitcast d1 d0 (bitcast d0 d1 c) = c] for every [c] that [d0] stores, but
+    where [d1] is {!Bool}, which reads a byte as [true] iff it is not zero and
+    stores [true] as [1].
 
     Raises [Invalid_argument] if [d0] and [d1] have different {!itemsize}s, if
     either has no {!storage_fmt}, if [v] is a float and [d0] an integer, or if

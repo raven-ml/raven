@@ -717,9 +717,11 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
     - {b booleans}: a boolean [*] is [land], and a boolean [+] or maximum is
       [lor];
     - {b casts}: a cast or bitcast to its operand's type is its operand; a
-      bitcast of a constant is the constant with the same bits; a cast through a
-      type that holds every value of the result's type, back to that type, is
-      its operand; two bitcasts are one; a cast to a boolean is [x <> 0];
+      bitcast of a constant is the constant with the same bits, but to a boolean
+      from a byte neither [0] nor [1], which no boolean constant holds; a cast
+      through a type that holds every value of the result's type, back to that
+      type, is its operand; two bitcasts are one; a cast to a boolean is
+      [x <> 0];
     - {b powers}: [x ** c], for a constant [c] that is an integer or a half
       integer, [0] or at least [1] in magnitude, is a product of powers of [x],
       its reciprocal and its square root, a float half-integer power being [+0.]

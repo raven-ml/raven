@@ -1875,7 +1875,12 @@ let fold_bitcast root c =
       if Dtype.is_float dt then number (Dtype.const dt (num c))
       else Dtype.truncate dt (num c)
     in
-    Some (const_v root (Dtype.bitcast dt (dtype root) v))
+    (* a Bool constant holds whether its byte is zero, and a bitcast back reads
+       the byte: one neither 0 nor 1 stays a bitcast *)
+    let byte () = Dtype.Value.to_z (Dtype.bitcast dt Dtype.Uint8 v) in
+    if Dtype.equal (dtype root) Dtype.Bool && Bigint.gt (byte ()) Bigint.one
+    then None
+    else Some (const_v root (Dtype.bitcast dt (dtype root) v))
 
 (* A committed integer holds its type's value, so a fold reads a committed
    operand at its width and writes a committed integer result at its width;
