@@ -602,6 +602,76 @@ let zeros () = Nx.zeros Nx.uint8 [| 70_000 |]
 let stored_npz () = saved ".npz" save_npz [ ("w", Nx.P (noise ())) ]
 let stored_bytes = lazy (read (stored_npz ()))
 
+(* Zip entries at the 32-bit boundary *)
+
+let le n v = String.init n (fun i -> Char.chr ((v lsr (8 * i)) land 0xff))
+let size = 0xffffffff
+let name = "big.bin"
+
+(* [archive width] is a file holding the stored entry [name] of [size] zeros and
+   its descriptor with sizes of [width] bytes each. Its central record states
+   the sizes in a ZIP64 field, as both writers do, and a CRC-32 of 0: no load
+   reads the entry, since it is no npy file. *)
+let boundary_archive width =
+  let path = temp_file ~suffix:".npz" () in
+  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_TRUNC ] 0 in
+  let write s =
+    let n = Unix.write_substring fd s 0 (String.length s) in
+    assert (n = String.length s)
+  in
+  let local =
+    "PK\003\004" ^ le 2 20 ^ le 2 0x0008 ^ le 2 0 ^ le 4 0 ^ le 4 0 ^ le 4 0
+    ^ le 4 0
+    ^ le 2 (String.length name)
+    ^ le 2 0 ^ name
+  in
+  write local;
+  let data_end = String.length local + size in
+  ignore (Unix.lseek fd data_end Unix.SEEK_SET);
+  let descriptor = "PK\007\008" ^ le 4 0 ^ le width size ^ le width size in
+  write descriptor;
+  let central_offset = data_end + String.length descriptor in
+  let extra = le 2 0x0001 ^ le 2 16 ^ le 8 size ^ le 8 size in
+  let central =
+    "PK\001\002" ^ le 2 45 ^ le 2 45 ^ le 2 0x0008 ^ le 2 0 ^ le 4 0 ^ le 4 0
+    ^ le 4 0xffffffff ^ le 4 0xffffffff
+    ^ le 2 (String.length name)
+    ^ le 2 (String.length extra)
+    ^ le 2 0 ^ le 2 0 ^ le 2 0 ^ le 4 0 ^ le 4 0 ^ name ^ extra
+  in
+  write central;
+  let zip64_end = central_offset + String.length central in
+  write
+    ("PK\006\006" ^ le 8 44 ^ le 2 45 ^ le 2 45 ^ le 4 0 ^ le 4 0 ^ le 8 1
+   ^ le 8 1
+    ^ le 8 (String.length central)
+    ^ le 8 central_offset);
+  write ("PK\006\007" ^ le 4 0 ^ le 8 zip64_end ^ le 4 1);
+  write
+    ("PK\005\006" ^ le 2 0 ^ le 2 0 ^ le 2 1 ^ le 2 1
+    ^ le 4 (String.length central)
+    ^ le 4 0xffffffff ^ le 2 0);
+  Unix.close fd;
+  path
+
+(* Whether the temporary directory's file system keeps a file's holes unwritten,
+   a byte written 1 MiB into a new file taking less storage than the hole before
+   it, and maps its files, an aligned npy file loading over its pages: else a
+   load copies the 4 GiB file into memory. *)
+let sparse () =
+  let path = temp_file () in
+  let fd = Unix.openfile path [ Unix.O_WRONLY ] 0 in
+  ignore (Unix.lseek fd (1 lsl 20) Unix.SEEK_SET);
+  ignore (Unix.write_substring fd "x" 0 1);
+  Unix.close fd;
+  let n = storage path in
+  let mapped =
+    memory_of
+      (Nx_io.load_npy
+         (saved ".npy" save_npy (Nx.P (Nx.zeros Nx.int32 [| 4 |]))))
+  in
+  n >= 0 && n < 1 lsl 20 && mapped = Over_file
+
 let load_npz =
   group "load_npz"
     [
@@ -711,6 +781,23 @@ let load_npz =
           let y, grew = grown Rig.host load (fun x -> Nx.neg (Nx.donate x)) in
           less ~msg:"no memory of the result's size" int ~than:n grew;
           equal (array int) (Array.make n 0) (Nx.to_array y));
+      (* An entry of 0xFFFFFFFF bytes whose sizes follow its data, at the size
+         where writers disagree on their width: Java writes 8 bytes each from
+         that size on, Go 4 up to it, and neither a ZIP64 field in the local
+         header. Each archive is a sparse file of 4 GiB, which a file system
+         that writes holes would fill, so the test skips there. *)
+      cases "an entry of 0xFFFFFFFF bytes with a data descriptor loads" ~id:fst
+        [
+          ("8-byte sizes, as Java writes", 8); ("4-byte sizes, as Go writes", 4);
+        ]
+        (fun (_, width) ->
+          if not (sparse ()) then
+            skip
+              ~reason:
+                "the temporary directory keeps no sparse file, or maps none"
+              ();
+          equal (list string) []
+            (Archive.names (Nx_io.load_npz (boundary_archive width))));
       cases "an entry whose checksum does not match fails" ~id:fst
         [
           ("deflated", fun () -> read (saved ".npz" save_npz [ ("w", one) ]));

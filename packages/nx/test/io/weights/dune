@@ -13,10 +13,6 @@
 ; descriptors. Run it with
 ;   NX_IO_PT_TEACHER=tessera_v2_2B_teacher.pt \
 ;   dune exec packages/nx/test/io/weights/test_pytorch_teacher.exe
-;
-; Zip entries of 0xFFFFFFFF bytes in sparse 4 GiB files, which take that much
-; address space and no disk. Run it with
-;   dune exec packages/nx/test/io/weights/test_zip_boundary.exe
 
 ;
 ; The IETF FLAC test files whole, 296 MB: every file a decoder must read
@@ -43,7 +39,6 @@
  (names
   test_pytorch_weights
   test_pytorch_teacher
-  test_zip_boundary
   test_flac_corpus
   test_librispeech
   test_rf64)
