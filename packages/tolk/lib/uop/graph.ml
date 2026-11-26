@@ -917,18 +917,21 @@ let of_string text =
     lines;
   (* The graph's numbers are taken: a number {!Ops.unique_num} hands out later
      must not name one of its slots or ranges, or new storage would be the
-     graph's, and a new loop one of its loops. *)
-  let taken =
-    Array.fold_left
-      (fun m u ->
-        match Ops.arg (Option.get u) with
-        | Param p -> max m p.slot
-        | Range r -> List.fold_left max m r.axis_id
-        | _ -> m)
-      (-1) nodes
+     graph's, and a new loop one of its loops. [max_int] leaves no such
+     number. *)
+  let taken = ref (-1) in
+  let take i n =
+    if n = max_int then fail "node %d: slot or axis %d leaves no number" i n;
+    taken := max !taken n
   in
-  if taken = max_int then fail "slot or axis %d leaves no number" taken;
-  Ops.take_unique taken;
+  Array.iteri
+    (fun i u ->
+      match Ops.arg (Option.get u) with
+      | Param p -> take i p.slot
+      | Range r -> List.iter (take i) r.axis_id
+      | _ -> ())
+    nodes;
+  Ops.take_unique !taken;
   Option.get nodes.(Array.length nodes - 1)
 
 (* Disk *)

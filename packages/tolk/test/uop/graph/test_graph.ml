@@ -458,6 +458,21 @@ let errors =
       test "rejects text after the argument" (fun () ->
           rejects "unexpected text at column 32"
             "0 Ops.CONST dtypes.weakint [] 1 2\n");
+      test "rejects a slot of max_int, naming its node" (fun () ->
+          rejects
+            (Printf.sprintf "node 1: slot or axis %d leaves no number" max_int)
+            (Printf.sprintf
+               "0 Ops.CONST dtypes.weakint [] 16\n\
+                1 Ops.BUFFER dtypes.f32 [0] ParamArg(slot=%d, \
+                dtype=dtypes.f32, device=\"CPU\")\n"
+               max_int));
+      test "rejects a range axis of max_int, naming its node" (fun () ->
+          rejects
+            (Printf.sprintf "node 1: slot or axis %d leaves no number" max_int)
+            (Printf.sprintf
+               "0 Ops.CONST dtypes.weakint [] 3\n\
+                1 Ops.RANGE dtypes.weakint [0] (AxisType.LOOP, %d)\n"
+               max_int));
     ]
 
 let () =
