@@ -55,15 +55,14 @@ let allowance ~u ~c ~eps ~points ~n ~norm ~abs =
   c
   *. ((eps *. u *. Float.sqrt points *. norm) +. (reference n *. 0x1p-53 *. abs))
 
-(* [‖got - want‖₂], each part's error a [Nx_support.gap], so that a NaN or a
-   misplaced infinity is infinitely far. *)
+(* [‖got - want‖₂], each element's error a [Nx_support.complex_gap], so that a
+   NaN or a misplaced infinity is infinitely far. *)
 let distance (want : Complex.t array) (got : Complex.t array) =
   let s = ref 0. in
   Array.iteri
-    (fun k (w : Complex.t) ->
-      let re = Nx_support.gap got.(k).re w.re
-      and im = Nx_support.gap got.(k).im w.im in
-      s := !s +. (re *. re) +. (im *. im))
+    (fun k w ->
+      let d = Nx_support.complex_gap got.(k) w in
+      s := !s +. (d *. d))
     want;
   Float.sqrt !s
 
