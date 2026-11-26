@@ -21,6 +21,7 @@
    part gets its own entropy tables (cut). */
 
 #include "checksum.h"
+#include "cpu.h"
 #include "zstd_enc_int.h"
 
 #define MAGIC 0xFD2FB528u
@@ -690,14 +691,16 @@ static enum lz_status step(struct lz_zstd_enc *st, struct ze_work *w,
 
 static const char *const path_names[] = {"generic", "bmi2"};
 
-static size_t path_count(void) {
+/* The CPU is probed once, before main, as the checksums' paths are. */
+static size_t paths = 1;
+
 #if ZE_BMI2
-  if (__builtin_cpu_supports("bmi") && __builtin_cpu_supports("bmi2") &&
-      __builtin_cpu_supports("lzcnt"))
-    return 2;
-#endif
-  return 1;
+__attribute__((constructor)) static void probe_paths(void) {
+  if (lz_cpu_bmi_lzcnt()) paths = 2;
 }
+#endif
+
+static size_t path_count(void) { return paths; }
 
 size_t lz_zstd_enc_paths(const char *const **names) {
   *names = path_names;

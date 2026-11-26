@@ -3891,6 +3891,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Lz (new)
 
+- lz builds with GCC 7 to 10, which know no `"lzcnt"` for
+  `__builtin_cpu_supports`: Zstandard's BMI2 paths read BMI1, BMI2 and LZCNT
+  from CPUID, as the checksums already did.
 - A Zstandard decoder (`Lz.Zstd.decoder`) sizes the block and literals it
   holds outside the OCaml heap to the frame's Block_Maximum_Size, 128 KiB for
   a 64 KiB frame where it took 256 KiB, and tells the collector of them.

@@ -23,6 +23,7 @@
    output: at least a window of history stays readable while the new
    output and its slack overwrite the segment's start. */
 
+#include "cpu.h"
 #include "zstd_dec.h"
 #include "zstd_dec_paths.h"
 
@@ -62,14 +63,16 @@ static size_t prefix(const uint8_t *b, size_t n) {
 
 static const char *const path_names[] = {"generic", "bmi2"};
 
-static size_t path_count(void) {
+/* The CPU is probed once, before main, as the checksums' paths are. */
+static size_t paths = 1;
+
 #if LZ_ZSTD_BMI2
-  if (__builtin_cpu_supports("bmi") && __builtin_cpu_supports("bmi2") &&
-      __builtin_cpu_supports("lzcnt"))
-    return 2;
-#endif
-  return 1;
+__attribute__((constructor)) static void probe_paths(void) {
+  if (lz_cpu_bmi_lzcnt()) paths = 2;
 }
+#endif
+
+static size_t path_count(void) { return paths; }
 
 size_t lz_zstd_dec_paths(const char *const **names) {
   *names = path_names;
