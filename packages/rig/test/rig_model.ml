@@ -132,15 +132,6 @@ let kind_name = function
   | Gpu Nv -> "nv"
   | Gpu Amd -> "amd"
 
-let gpus =
-  List.concat
-    [
-      (if Rig_metal_support.present () then [ Metal ] else []);
-      (if Rig_cuda_support.present () then [ Cuda ] else []);
-      (if Rig_nv_support.present () then [ Nv ] else []);
-      (if Rig_amd_support.present () then [ Amd ] else []);
-    ]
-
 let opened_gpu g =
   let get = function Ok d -> d | Error e -> failwith e in
   match g with
@@ -163,34 +154,41 @@ let gpu_device g =
       gpus_opened := (g, d) :: List.remove_assoc g !gpus_opened;
       d
 
-(* Files *)
+(* The GPUs present, each with whether it makes [Mapped] memory: Metal does,
+   CUDA makes none (rig_cuda.mli), NV and AMD make it where their path offers it
+   (Rig.offers). Probed at the first draw of a device, so that the reference
+   reads facts and opens nothing. *)
+let gpus =
+  lazy
+    (List.concat
+       [
+         (if Rig_metal_support.present () then [ (Metal, true) ] else []);
+         (if Rig_cuda_support.present () then [ (Cuda, false) ] else []);
+         (if Rig_nv_support.present () then
+            [ (Nv, Rig.offers (gpu_device Nv) B.Mapped) ]
+          else []);
+         (if Rig_amd_support.present () then
+            [ (Amd, Rig.offers (gpu_device Amd) B.Mapped) ]
+          else []);
+       ])
 
-(* The model's files, in a fresh temporary directory removed at exit. A forked
-   child leaves by [Unix._exit], which keeps it. *)
-let files =
-  let dir = Filename.temp_dir "rig-model" "" in
-  at_exit (fun () ->
-      Array.iter (fun f -> Sys.remove (Filename.concat dir f)) (Sys.readdir dir);
-      Sys.rmdir dir);
-  dir
+let present () = List.map fst (Lazy.force gpus)
+
+(* Files *)
 
 let file_count = Atomic.make 0
 
-(* A forked child names its files apart from its parent's. *)
-let file_path () =
-  Filename.concat files
-    (strf "f%d-%d" (Unix.getpid ()) (Atomic.fetch_and_add file_count 1))
-
 (* Bytes *)
 
-(* A pattern of period 251, a prime, so that no power-of-two offset repeats
-   it. *)
-let pattern seed n =
+(* A pattern of period 251, a prime, so that no power-of-two offset repeats it;
+   with [from], its bytes from that offset on. *)
+let pattern ?(from = 0) seed n =
   let period = 251 in
   let b = Bytes.create n in
   let k = min n period in
   for i = 0 to k - 1 do
-    Bytes.unsafe_set b i (Char.unsafe_chr (((seed * 131) + (i * 7)) land 255))
+    let j = (from + i) mod period in
+    Bytes.unsafe_set b i (Char.unsafe_chr (((seed * 131) + (j * 7)) land 255))
   done;
   let filled = ref k in
   while !filled < n do
@@ -207,8 +205,8 @@ let pattern seed n =
 type state = Fine | Faulting | Lost
 
 (* Where a buffer's bytes are for a copy: memory the host addresses, an io
-   device's, a window the host writes and a device reads ([Mapped] memory of
-   a device whose memory the host does not address), or none of these. *)
+   device's, a window the host writes and a device reads ([Mapped] memory of a
+   device whose memory the host does not address), or none of these. *)
 type locality = Local | Io | Remote | Window
 
 type rdev = {
@@ -238,11 +236,22 @@ and rstamps = {
 
 and mkind = Heap | Array | Owned of B.kind | File of bool
 
+(* A memory's bytes: whole, as a pattern, one byte or unknown, until a call
+   writes part of them and the reference makes them its own. Two copies of up to
+   68 KiB per memory, made again in each replay of the reference, were most of
+   the two-domain law's time. *)
+and contents =
+  | Pattern of { seed : int; from : int }  (** [pattern ~from seed], known. *)
+  | Filled of char  (** Known bytes, each this one. *)
+  | Unknown
+  | Bytes of { data : Bytes.t; defined : Bytes.t }
+      (** [defined] is ['\001'] where [data] is known. *)
+
 and rmem = {
   owner : rdev;
   mkind : mkind;
-  data : Bytes.t;
-  defined : Bytes.t;  (** ['\001'] where [data] is known. *)
+  size : int;
+  mutable contents : contents;
   stamps : rstamps;
   mutable readers : int;  (** Read claims. *)
   mutable holds : int;  (** Submissions in cells that hold it. *)
@@ -316,13 +325,13 @@ let new_world two forks =
 let host w = List.nth w.devs 0
 let disk w = List.nth w.devs 1
 
-let new_mem owner mkind data defined =
+let new_mem owner mkind size contents =
   let m =
     {
       owner;
       mkind;
-      data;
-      defined;
+      size;
+      contents;
       stamps = empty_stamps ();
       readers = 0;
       holds = 0;
@@ -336,14 +345,13 @@ let new_mem owner mkind data defined =
 
 let whole m local on =
   m.home <- local;
-  { mem = m; first = 0; length = Bytes.length m.data; on; gen = 0; local }
+  { mem = m; first = 0; length = m.size; on; gen = 0; local }
 
 let dead b = b.gen < b.mem.generation
-let spans b = b.first = 0 && b.length = Bytes.length b.mem.data
+let spans b = b.first = 0 && b.length = b.mem.size
 
 (* Memory outside the claims, or [Read] memory, is never taken. *)
 let never_taken m = match m.mkind with Array | File _ -> true | _ -> false
-
 let read_only m = m.mkind = File false
 
 let overlaps a b =
@@ -502,11 +510,11 @@ let maybe_write st d =
 let device_work r = match r.kind with Host | Disk -> false | _ -> true
 
 (* The stamps a copy leaves, by its route (rig.mli, Buffer.copy): the host
-   copies between memory it addresses and through io devices, and from memory
-   it addresses into a window; otherwise the destination's device when only
-   the source is the host's, the source's otherwise, directly or through
-   staging memory, whose legs run on each side's device. A copy out of a
-   window is a device's. *)
+   copies between memory it addresses and through io devices, and from memory it
+   addresses into a window; otherwise the destination's device when only the
+   source is the host's, the source's otherwise, directly or through staging
+   memory, whose legs run on each side's device. A copy out of a window is a
+   device's. *)
 let copy_stamps src dst =
   let sd = src.on and dd = dst.on in
   let st = src.mem.stamps and dt = dst.mem.stamps in
@@ -517,8 +525,7 @@ let copy_stamps src dst =
       on dd (maybe_use st);
       on dd (write dt)
   | Io, Remote -> on dd (write dt)
-  (* Through staging, whose leg into the window the host or the device
-     runs. *)
+  (* Through staging, whose leg into the window the host or the device runs. *)
   | Io, Window -> on dd (maybe_write dt)
   | (Remote | Window), (Local | Io) ->
       on sd (use st);
@@ -529,38 +536,109 @@ let copy_stamps src dst =
       on sd (maybe_write dt);
       on dd (maybe_write dt)
 
+(* [m]'s bytes and which of them are known, made the reference's own. *)
+let bytes m =
+  match m.contents with
+  | Bytes { data; defined } -> (data, defined)
+  | made ->
+      let n = m.size in
+      let data, known =
+        match made with
+        | Pattern { seed; from } -> (pattern ~from seed n, '\001')
+        | Filled c -> (Bytes.make n c, '\001')
+        | Unknown | Bytes _ -> (Bytes.make n '\000', '\000')
+      in
+      let defined = Bytes.make n known in
+      m.contents <- Bytes { data; defined };
+      (data, defined)
+
+(* [src]'s bytes into [dst]'s. Whole bytes stay whole: a copy into all of a
+   memory takes its source's part as it is. *)
 let blit src dst =
-  let sd, sk = (src.mem.data, src.mem.defined)
-  and dd, dk = (dst.mem.data, dst.mem.defined) in
-  Bytes.blit sd src.first dd dst.first src.length;
-  Bytes.blit sk src.first dk dst.first src.length
+  let n = src.length in
+  match src.mem.contents with
+  | Bytes _ ->
+      let sd, sk = bytes src.mem and dd, dk = bytes dst.mem in
+      Bytes.blit sd src.first dd dst.first n;
+      Bytes.blit sk src.first dk dst.first n
+  | whole -> (
+      let part =
+        match whole with
+        | Pattern p -> Pattern { p with from = p.from + src.first }
+        | other -> other
+      in
+      if spans dst then dst.mem.contents <- part
+      else
+        let dd, dk = bytes dst.mem in
+        match part with
+        | Pattern { seed; from } ->
+            Bytes.blit (pattern ~from seed n) 0 dd dst.first n;
+            Bytes.fill dk dst.first n '\001'
+        | Filled c ->
+            Bytes.fill dd dst.first n c;
+            Bytes.fill dk dst.first n '\001'
+        | Unknown | Bytes _ -> Bytes.fill dk dst.first n '\000')
 
 (* Bytes a call may have written in part. *)
 let unknown b =
-  let k = b.mem.defined in
-  Bytes.fill k b.first b.length '\000'
+  if spans b then b.mem.contents <- Unknown
+  else
+    let _, k = bytes b.mem in
+    Bytes.fill k b.first b.length '\000'
 
 let set_pattern b seed =
-  let d = b.mem.data and k = b.mem.defined in
-  Bytes.blit (pattern seed b.length) 0 d b.first b.length;
-  Bytes.fill k b.first b.length '\001'
+  if spans b then b.mem.contents <- Pattern { seed; from = 0 }
+  else
+    let d, k = bytes b.mem in
+    Bytes.blit (pattern seed b.length) 0 d b.first b.length;
+    Bytes.fill k b.first b.length '\001'
 
 let set_byte b c =
-  Bytes.fill b.mem.data b.first b.length c;
-  Bytes.fill b.mem.defined b.first b.length '\001'
+  if spans b then b.mem.contents <- Filled c
+  else
+    let d, k = bytes b.mem in
+    Bytes.fill d b.first b.length c;
+    Bytes.fill k b.first b.length '\001'
+
+(* Whether [s] is [pattern ~from seed (String.length s)], compared a period at a
+   time: the whole pattern would be an allocation as large as [s]. *)
+let is_pattern ?(from = 0) seed s =
+  let period = Bytes.unsafe_to_string (pattern ~from seed 251) in
+  let n = String.length s in
+  let rec same o =
+    o >= n
+    ||
+    let k = min 251 (n - o) in
+    String.equal (String.sub s o k) (String.sub period 0 k) && same (o + k)
+  in
+  same 0
 
 let check_bytes b s =
-  let d = b.mem.data and k = b.mem.defined in
   if String.length s <> b.length then
     failf "read %d bytes of a %d-byte buffer" (String.length s) b.length;
-  if not (String.equal s (Bytes.sub_string d b.first b.length)) then
+  let differs ~known expected =
     for i = 0 to b.length - 1 do
-      let j = b.first + i in
-      if Bytes.get k j = '\001' && Bytes.get d j <> s.[i] then
+      if known i && expected i <> s.[i] then
         failf "byte %d of %d is %#x, the reference's %#x" i b.length
           (Char.code s.[i])
-          (Char.code (Bytes.get d j))
+          (Char.code (expected i))
     done
+  in
+  match b.mem.contents with
+  | Unknown -> ()
+  | Filled c ->
+      if not (String.for_all (Char.equal c) s) then
+        differs ~known:(fun _ -> true) (fun _ -> c)
+  | Pattern { seed; from } ->
+      let from = from + b.first in
+      if not (is_pattern ~from seed s) then
+        let e = pattern ~from seed b.length in
+        differs ~known:(fun _ -> true) (Bytes.get e)
+  | Bytes { data; defined } ->
+      if not (String.equal s (Bytes.sub_string data b.first b.length)) then
+        differs
+          ~known:(fun i -> Bytes.get defined (b.first + i) = '\001')
+          (fun i -> Bytes.get data (b.first + i))
 
 (* Budgets *)
 
@@ -592,16 +670,13 @@ let live_bytes w d =
   in
   List.fold_left
     (fun n m ->
-      if counts m && List.exists (fun b -> b.mem == m) live then
-        n + Bytes.length m.data
+      if counts m && List.exists (fun b -> b.mem == m) live then n + m.size
       else n)
     0 d.made
 
 (* The bytes of [d]'s budget its memories may hold. *)
 let made_bytes d =
-  List.fold_left
-    (fun n m -> if counts m then n + Bytes.length m.data else n)
-    0 d.made
+  List.fold_left (fun n m -> if counts m then n + m.size else n) 0 d.made
 
 (* Staging memory *)
 
@@ -714,8 +789,7 @@ let take_device kind =
    host and the disk run no submitted work, and their copies return done. *)
 let drain d =
   if not (Rig.equal d Rig.host || Rig.equal d Rig_disk.device) then
-    Rig.Point.wait
-      (Rig.submit (Sub.make d [||]) ~buffers:[||] ~args:[||])
+    Rig.Point.wait (Rig.submit (Sub.make d [||]) ~buffers:[||] ~args:[||])
 
 let give_device s =
   match s.skind with
@@ -765,13 +839,13 @@ type sworld = {
   parallel : bool;  (** Calls may run on two domains at once. *)
   home_domain : int;  (** The domain that runs the prefix and the suffix. *)
   calls : scall list Atomic.t;  (** On two domains, the program's calls. *)
+  dir : string;  (** The program's files, removed as it ends. *)
 }
 
 (* A memory as the caller sees it: the lock it takes around host accesses. *)
 and smem = {
   lock : Mutex.t;
   sid : int;
-  driver : bool;  (** A driver's device allocated it. *)
   claims : int Atomic.t;
       (** Read claims the program took from C and has not released: a release
           from C ends one only where the caller holds it. *)
@@ -808,6 +882,16 @@ type skcell = {
   runs : int Atomic.t;  (** Collections of the value. *)
 }
 
+let file_path w =
+  Filename.concat w.dir (strf "f%d" (Atomic.fetch_and_add file_count 1))
+
+(* Windows refuses to delete a file a buffer not yet collected still maps: the
+   runner removes what stays when the test ends. *)
+let remove_files w =
+  let remove f = try Sys.remove f with Sys_error _ -> () in
+  Array.iter (fun f -> remove (Filename.concat w.dir f)) (Sys.readdir w.dir);
+  try Sys.rmdir w.dir with Sys_error _ -> ()
+
 let index w d =
   match List.find_opt (fun (d', _) -> Rig.equal d d') w.sdevs with
   | Some (_, i) -> i
@@ -821,11 +905,10 @@ let guard w f =
       raise (Lost_at (index w d, strf "%s lost: %s" (Rig.name d) why))
   | Rig.Out_of_memory (d, _) -> raise (Oom_at (index w d))
 
-let new_smem ?(driver = false) ?file w =
+let new_smem ?file w =
   {
     lock = Mutex.create ();
     sid = Atomic.fetch_and_add w.mems 1;
-    driver;
     claims = Atomic.make 0;
     file;
   }
@@ -1048,8 +1131,8 @@ let access = Gen.of_list ~pp:pp_access [ Rig.Read; Rig.Read_write ]
    waits on such words then waits until rig's still interval, 200 ms, ends and
    rig sleeps on the producer, and CUDA's hand-over, which may block on that
    work, waits forever: with such a GPU, Polled devices run their own work. *)
-let polled_itself =
-  List.exists (function Cuda | Nv | Amd -> true | Metal -> false) gpus
+let polled_itself () =
+  List.exists (function Cuda | Nv | Amd -> true | Metal -> false) (present ())
 
 (* Polled configurations that run their own work. *)
 let itself configs =
@@ -1069,23 +1152,31 @@ let lagged configs =
 (* The kinds of device a program opens. On two domains each program runs 50
    times, and a GPU whose queue waits on Polled work that only a sleep on Polled
    runs spins rig's still interval, 200 ms, every time: there too Polled devices
-   run their own work. *)
+   run their own work. The GPUs are probed at the first draw. *)
 let kinds ~two =
   let pp ppf k = Format.pp_print_string ppf (kind_name k) in
-  let configs = if two || polled_itself then itself configs else configs in
-  let configs = lagged configs in
-  Gen.frequency
-    ([
-       (1, Gen.of_list ~pp [ Host ]);
-       (2, Gen.of_list ~pp [ Memory; Disk ]);
-       ( 6,
-         Gen.frequency
-           (List.map (fun (k, c) -> (k, Gen.of_list ~pp [ Polled c ])) configs)
-       );
-     ]
-    @
-    if gpus = [] then []
-    else [ (3, Gen.of_list ~pp (List.map (fun g -> Gpu g) gpus)) ])
+  let kinds =
+    lazy
+      (let configs =
+         if two || polled_itself () then itself configs else configs
+       in
+       let configs = lagged configs in
+       Gen.frequency
+         ([
+            (1, Gen.of_list ~pp [ Host ]);
+            (2, Gen.of_list ~pp [ Memory; Disk ]);
+            ( 6,
+              Gen.frequency
+                (List.map
+                   (fun (k, c) -> (k, Gen.of_list ~pp [ Polled c ]))
+                   configs) );
+          ]
+         @
+         match present () with
+         | [] -> []
+         | gpus -> [ (3, Gen.of_list ~pp (List.map (fun g -> Gpu g) gpus)) ]))
+  in
+  Gen.bind Gen.unit (fun () -> Lazy.force kinds)
 
 (* On two domains each program runs 50 times, and an allocation the budget
    refuses runs the out-of-memory ladder, two full collections among its rounds:
@@ -1154,7 +1245,12 @@ let shared w =
          pairs)
   end
 
-let world = abstract ~release:shared "w"
+let world =
+  abstract
+    ~release:(fun w ->
+      shared w;
+      remove_files w)
+    "w"
 
 type rdevv = { dw : rworld; r : rdev }
 
@@ -1175,8 +1271,8 @@ let pairs =
 
 let subs = abstract ~release:(fun c -> Atomic.set c.ss None) "s"
 
-(* A kept value is collected at most once, and only once neither its cell nor
-   a submission that keeps it is reachable. *)
+(* A kept value is collected at most once, and only once neither its cell nor a
+   submission that keeps it is reachable. *)
 let check_kept r s =
   let runs = Atomic.get s.runs in
   seen r.kw "a kept value was collected" (runs = 1);
@@ -1191,8 +1287,7 @@ let check_kept r s =
              | _ -> false)
            r.kw.subs
     in
-    if reachable then
-      fail "a kept value was collected while it was reachable"
+    if reachable then fail "a kept value was collected while it was reachable"
   end
 
 let keeps =
@@ -1242,6 +1337,7 @@ let start_sys parallel () =
       parallel;
       home_domain = (Domain.self () :> int);
       calls = Atomic.make [];
+      dir = temp_dir ~prefix:"rig-model" ();
     }
   in
   w.sdevs <- [ (Rig.host, 0); (Rig_disk.device, 1) ];
@@ -1278,7 +1374,7 @@ let open_sys kind w =
 
 (* A cell starts with a host buffer of [n] bytes of the pattern [seed]. *)
 let new_cell_ref n seed w =
-  let m = new_mem (host w) Heap (pattern seed n) (Bytes.make n '\001') in
+  let m = new_mem (host w) Heap n (Pattern { seed; from = 0 }) in
   let c = { w; rb = Some (whole m Local (host w)) } in
   w.cells <- w.cells @ [ c ];
   c
@@ -1378,14 +1474,10 @@ let addressed_all d =
   | Polled c -> host_addresses c
   | Disk | Gpu (Cuda | Nv | Amd) -> false
 
-(* Whether [d] makes no [Mapped] memory: CUDA makes none (rig_cuda.mli),
-   NV and AMD make it where their path offers it (Rig.offers), and Polled
-   makes it. *)
+(* Whether [d] makes no [Mapped] memory, as the probe of the GPUs found
+   ({!gpus}); every other kind makes it. *)
 let refuses_mapped d =
-  match d.kind with
-  | Gpu Cuda -> true
-  | Gpu ((Nv | Amd) as g) -> not (Rig.offers (gpu_device g) B.Mapped)
-  | _ -> false
+  match d.kind with Gpu g -> not (List.assoc g (Lazy.force gpus)) | _ -> false
 
 let create_ref (v : rdevv) memory n c outcome =
   let d = v.r and w = c.w in
@@ -1412,20 +1504,19 @@ let create_ref (v : rdevv) memory n c outcome =
       if budgeted && (not w.two) && live_bytes w d + n > d.budget then
         failf "%s holds %d bytes and %d more in a budget of %d"
           (kind_name d.kind) (live_bytes w d) n d.budget;
-      let m = new_mem d mkind (Bytes.make n '\000') (Bytes.make n '\000') in
+      let m = new_mem d mkind n Unknown in
       c.rb <- Some (whole m local d))
 
 let create_sys ((s : sdev), w) memory n c =
   on_device (s, w);
   guard w @@ fun () ->
   let b = B.create ~memory s.d n in
-  let driver = match s.skind with Host | Disk -> false | _ -> true in
-  Atomic.set c.cell (Some { b; m = new_smem ~driver w })
+  Atomic.set c.cell (Some { b; m = new_smem w })
 
 let array_ref (v : rdevv) n seed c outcome =
   let w = v.dw in
   judge w (verdict ()) outcome (fun () ->
-      let m = new_mem (host w) Array (pattern seed n) (Bytes.make n '\001') in
+      let m = new_mem (host w) Array n (Pattern { seed; from = 0 }) in
       c.rb <- Some (whole m Local (host w)))
 
 let array_sys (_, w) n seed c =
@@ -1438,12 +1529,14 @@ let array_sys (_, w) n seed c =
 let file_ref (v : rdevv) n seed writable c outcome =
   let w = v.dw in
   judge w (verdict ()) outcome (fun () ->
-      let data = if writable then Bytes.make n '\000' else pattern seed n in
-      let m = new_mem (disk w) (File writable) data (Bytes.make n '\001') in
+      let made =
+        if writable then Filled '\000' else Pattern { seed; from = 0 }
+      in
+      let m = new_mem (disk w) (File writable) n made in
       c.rb <- Some (whole m Io (disk w)))
 
 let file_sys (_, w) n seed writable c =
-  let path = file_path () in
+  let path = file_path w in
   let f =
     if writable then
       match Rig_disk.create_file path n with Ok f -> f | Error e -> failwith e
@@ -1462,12 +1555,12 @@ type borrowed = [ `Some | `None | `Either ]
 (* Whether [d] maps [b]'s memory (rig.mli, Buffer.borrow). *)
 let maps d b : borrowed =
   let m = b.mem in
-  let heap_page = m.mkind = Heap && Bytes.length m.data >= B.paged_from in
+  let heap_page = m.mkind = Heap && m.size >= B.paged_from in
   if b.on == d || m.owner == d then `Some
   else
     match (d.kind, m.mkind) with
     | Disk, _ -> `None
-    | _ when Bytes.length m.data = 0 -> `Either
+    | _ when m.size = 0 -> `Either
     (* The host addresses a window only inside rig's writes. *)
     | (Host | Memory), Owned B.Mapped when m.home = Window -> `None
     | (Host | Memory), (Heap | Array) -> `Some
@@ -1611,8 +1704,8 @@ let fill_sys seed last c =
   end
   else B.copy ~src:(host_pattern seed (B.length b)) ~dst:b
 
-(* A queued fill: the host sets the bytes it addresses, an io device writes
-   its memory, and a copy engine sets any other, staging nothing. *)
+(* A queued fill: the host sets the bytes it addresses, an io device writes its
+   memory, and a copy engine sets any other, staging nothing. *)
 let queued_fill_ref seed last c outcome =
   with_buf c outcome @@ fun b ->
   if read_only b.mem then
@@ -1710,10 +1803,10 @@ let copy_judge ~invalid last src a b outcome =
       if a.length > 0 then begin
         let device_side l = l = Remote || l = Window in
         seen w "a copy the host makes"
-          ((not (device_side a.local)) && b.local <> Remote
+          ((not (device_side a.local))
+          && b.local <> Remote
           && not (a.local = Io && b.local = Io));
-        seen w "a copy a device runs"
-          (device_side a.local || b.local = Remote);
+        seen w "a copy a device runs" (device_side a.local || b.local = Remote);
         seen w "a copy between two devices"
           (device_work a.on && device_work b.on && a.on != b.on);
         seen w "a copy whose source is unreachable during it" last;
@@ -1800,7 +1893,7 @@ let transfer_ref (v : rdevv) (v' : rdevv) n seed outcome =
       seen v.dw "a copy a device runs"
         (n > 0
         && List.exists (fun d -> created d B.Device = Remote) [ v.r; v'.r ]);
-      if not (String.equal s (Bytes.unsafe_to_string (pattern seed n))) then
+      if not (String.length s = n && is_pattern seed s) then
         failf "a transfer from %s to %s read other bytes" (kind_name v.r.kind)
           (kind_name v'.r.kind))
 
@@ -1810,7 +1903,7 @@ let transfer_sys ((s : sdev), w) ((s' : sdev), _) n seed =
   guard w @@ fun () ->
   let make (d : sdev) =
     if d.skind = Disk then
-      match Rig_disk.create_file (file_path ()) n with
+      match Rig_disk.create_file (file_path w) n with
       | Ok f -> Rig_disk.buffer f
       | Error e -> failwith e
     else B.create d.d n
@@ -1904,8 +1997,7 @@ let make_sys ?keep ?at ((s : sdev), w) pair sc =
           | None -> prefixes_sys (get src).b (get dst).b
           | Some at -> within_sys at (get src).b (get dst).b
         in
-        ( (Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))),
-          Copy )
+        (Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)), Copy)
     | None ->
         (match s.skind with Gpu _ -> raise Skipped | _ -> ());
         ( Sub.fill
@@ -1943,9 +2035,7 @@ let make_own_ref (v : rdevv) n sc outcome =
         | _ -> Local
       in
       let part () =
-        let m =
-          new_mem d (Owned B.Device) (Bytes.make n '\000') (Bytes.make n '\000')
-        in
+        let m = new_mem d (Owned B.Device) n Unknown in
         maybe_write m.stamps d;
         whole m local d
       in
@@ -1960,9 +2050,7 @@ let make_own_sys ((s : sdev), w) n sc =
   on_device (s, w);
   guard w @@ fun () ->
   let src = B.create s.d n and dst = B.create s.d n in
-  let part =
-    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
-  in
+  let part = Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) in
   let sub = Sub.make s.d (named s part Copy) in
   let slotted = slotted s.skind in
   Atomic.set sc.ss (Some { s = sub; sd = s.d; work = Copy; slotted })
@@ -2052,9 +2140,18 @@ let submit_ref last rc wc sc outcome =
           drop_if last rc;
           drop_if last wc
       | _ ->
-          let r, wb = if slots then (borrowed d r, borrowed d wb) else (r, wb) in
-          judge ~lost w vd outcome (fun value ->
+          let r, wb =
+            if slots then (borrowed d r, borrowed d wb) else (r, wb)
+          in
+          (* The system reads [submitted] just before its submit: on one domain
+             the value is one more (rig.mli, submit); on two the other domain's
+             submits may come between. *)
+          judge ~lost w vd outcome (fun (before, value) ->
               seen w "a submit whose slots are unreachable during it" last;
+              if not w.two then
+                equal ~msg:"value after submitted d" int (before + 1) value
+              else if value <= before then
+                failf "value %d after submitted %d" value before;
               if value <= d.seen then
                 failf "value %d after the device's %d" value d.seen;
               d.seen <- value;
@@ -2094,9 +2191,9 @@ let submit_sys last rc wc sc =
     if Rig.equal (B.device b) sub.sd then b
     else Option.value (B.borrow sub.sd b) ~default:b
   in
-  (* A copy's values are those of the fill that names its slots, if it has
-     one ({!named}). A fill or a launch, of one thread, takes the count of
-     bytes it copies; its entry refs write the two addresses. *)
+  (* A copy's values are those of the fill that names its slots, if it has one
+     ({!named}). A fill or a launch, of one thread, takes the count of bytes it
+     copies; its entry refs write the two addresses. *)
   let args =
     match sub.work with
     | Copy -> if sub.slotted then S.zeros 1 else [||]
@@ -2108,7 +2205,8 @@ let submit_sys last rc wc sc =
         [| { Sub.groups = one; threads = one; shared = 0; params } |]
   in
   let buffers = if sub.slotted then [| onto r.b; onto wb.b |] else [||] in
-  Rig.Point.value (Rig.submit sub.s ~buffers ~args)
+  let before = Rig.submitted sub.sd in
+  (before, Rig.Point.value (Rig.submit sub.s ~buffers ~args))
 
 (* Kept values *)
 
@@ -2171,8 +2269,8 @@ let rec release_sys c =
     guard c.sw @@ fun () -> S.Reader.release sb.b
   else release_sys c
 
-(* Whether a take finds [b]'s memory free: [b] spans it, and nothing claims
-   or keeps it or puts it outside the claims. *)
+(* Whether a take finds [b]'s memory free: [b] spans it, and nothing claims or
+   keeps it or puts it outside the claims. *)
 let free_to_take b =
   spans b && b.mem.readers = 0 && b.mem.holds = 0 && not (never_taken b.mem)
 
@@ -2391,7 +2489,7 @@ let barrier_ref last c outcome =
   (* A barrier returns at once on a file opened for reading or of no bytes
      (rig_disk.mli). *)
   (match b.mem.mkind with
-  | File true when Bytes.length b.mem.data > 0 -> reads vd b.mem
+  | File true when b.mem.size > 0 -> reads vd b.mem
   | _ -> ());
   judge c.w vd outcome Fun.id;
   drop_if last c
@@ -2421,13 +2519,13 @@ let pp_seen ppf = function
 type forked = {
   cells_seen : seen list;
   devices_lost : bool list;  (** Each device's loss, in the world's order. *)
-  child_file : bool;  (** A long file read in the child read its bytes. *)
-  parent_file : bool;  (** The same in the parent, at the same time. *)
+  parent_file : bool;
+      (** A long file read in the parent while the child runs read its bytes. *)
 }
 
 let forked =
   let pp ppf f =
-    Format.fprintf ppf "@[{ cells = [%a]; lost = [%a]; files %b %b }@]"
+    Format.fprintf ppf "@[{ cells = [%a]; lost = [%a]; parent's file %b }@]"
       (Format.pp_print_list
          ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
          pp_seen)
@@ -2435,26 +2533,33 @@ let forked =
       (Format.pp_print_list
          ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
          Format.pp_print_bool)
-      f.devices_lost f.child_file f.parent_file
+      f.devices_lost f.parent_file
   in
   Testable.make ~pp ~equal:( = )
 
-(* More than one of the disk's long requests on Linux, 2 MiB. *)
-let long_file = (4 lsl 20) + 4096
+(* A run of more than 2 MiB, which the disk cuts into segments that the host
+   pool's blocking workers read (rig_disk.mli, Reading). *)
+let long_file = (2 lsl 20) + 4096
 
-(* Writes and reads back a file longer than one of the disk's long requests. *)
-let file_reads seed =
-  let n = long_file in
+(* Writes and reads back a long file, then removes it. *)
+let file_reads w seed =
+  let n = long_file and path = file_path w in
   let f =
-    match Rig_disk.create_file (file_path ()) n with
+    match Rig_disk.create_file path n with
     | Ok f -> Rig_disk.buffer f
     | Error e -> failwith e
   in
   B.copy ~src:(host_pattern seed n) ~dst:f;
   let h = B.create Rig.host n in
   B.copy ~src:f ~dst:h;
+  (try Sys.remove path with Sys_error _ -> ());
   String.equal (host_bytes h) (Bytes.unsafe_to_string (pattern seed n))
 
+(* In the child every driver's device is lost (rig.mli, Stops and forks), so
+   every use of its memory through any buffer and of a borrow on it raises its
+   loss (rig.mli, Memory after a loss); an io device stays live, and memory no
+   driver met reads its bytes. The parent's files read as before the fork while
+   the child runs (rig_disk.mli). *)
 let fork_ref w outcome =
   match outcome with
   | Error Skipped when Sys.win32 -> ()
@@ -2463,8 +2568,18 @@ let fork_ref w outcome =
       cover "a child sees a device lost" (List.exists Fun.id f.devices_lost);
       cover "a child reads a buffer's bytes"
         (List.exists (function Read s -> s <> "" | _ -> false) f.cells_seen);
-      if not f.child_file then
-        fail "a long file read in the child read other bytes";
+      (* Rare here (0.6% of cases at 1000): test_fork.ml states it on every
+         run. *)
+      classify "a child finds a host buffer over a driver's memory lost"
+        (List.exists2
+           (fun c seen ->
+             match (c.rb, seen) with
+             | Some b, Lost_cell ->
+                 (not (dead b))
+                 && (not (device_work b.on))
+                 && device_work b.mem.owner
+             | _ -> false)
+           w.cells f.cells_seen);
       if not f.parent_file then
         fail "a long file read in the parent beside the child read other bytes";
       List.iter2
@@ -2486,8 +2601,10 @@ let fork_ref w outcome =
           | Some b, Lost_cell when device_work b.on || device_work b.mem.owner
             ->
               ()
-          | Some b, _ when device_work b.on ->
-              failf "a buffer of %s read in the child" (kind_name b.on.kind)
+          | Some b, _ when device_work b.on || device_work b.mem.owner ->
+              failf "a buffer on %s over memory of %s read in the child"
+                (kind_name b.on.kind)
+                (kind_name b.mem.owner.kind)
           | Some b, seen -> (
               let points (st : rstamps) =
                 Option.to_list st.writer @ st.writers @ st.users @ st.maybe
@@ -2502,9 +2619,8 @@ let fork_ref w outcome =
               | Empty_cell -> fail "a full cell empty in the child"))
         w.cells f.cells_seen
 
-(* The child reads every cell on the host, checks its devices' losses and reads
-   a long file while the parent reads one too, then leaves without this
-   process's exit. *)
+(* The child reads every cell on the host and checks its devices' losses while
+   the parent reads a long file, then leaves without this process's exit. *)
 let fork_sys w =
   if Sys.win32 then raise Skipped;
   let r, wr = Unix.pipe () in
@@ -2515,10 +2631,6 @@ let fork_sys w =
       let see c =
         match Atomic.get c.cell with
         | None -> Empty_cell
-        (* A forked child that reads a host borrow of its lost device's memory
-           dies where the memory is not the child's, as Metal's is not on macOS:
-           test_fork.ml holds it as an expected failure. *)
-        | Some sb when sb.m.driver && on_host sb.b -> Lost_cell
         | Some sb -> (
             let b = sb.b in
             match
@@ -2543,7 +2655,6 @@ let fork_sys w =
             {
               cells_seen = List.map see w.scells;
               devices_lost = List.map (fun (d, _) -> Rig.lost d <> None) w.sdevs;
-              child_file = file_reads 1;
               parent_file = true;
             }
         with e -> Error (Printexc.to_string e)
@@ -2554,7 +2665,7 @@ let fork_sys w =
       Unix._exit 0
   | pid -> (
       Unix.close wr;
-      let parent_file = file_reads 2 in
+      let parent_file = file_reads w 2 in
       let ic = Unix.in_channel_of_descr r in
       let f : (forked, string) result =
         match Marshal.from_channel ic with
@@ -2588,10 +2699,10 @@ let exercise ~fork =
     @ List.filter_map
         (fun (_, c) ->
           if List.mem c.label [ "polled"; "polled-hidden"; "polled-copyless" ]
-          then Some (Polled { c with itself = polled_itself })
+          then Some (Polled { c with itself = polled_itself () })
           else None)
         configs
-    @ List.map (fun g -> Gpu g) gpus
+    @ List.map (fun g -> Gpu g) (present ())
   in
   let devs = List.map (fun k -> open_sys k w) kinds in
   (* A copy staged from hidden memory of a Polled device that runs its work only
@@ -2632,7 +2743,8 @@ let exercise ~fork =
   step (fun () -> keep_sys (new_kept_sys w));
   if fork then step (fun () -> ignore (fork_sys w));
   Array.iter (fun c -> Atomic.set c.cell None) cells;
-  List.iter (fun (s, _) -> give_device s) devs
+  List.iter (fun (s, _) -> give_device s) devs;
+  remove_files w
 
 (* Returns what a program left to its devices: four rounds of a full collection,
    then a wait for every device's work and its cache given back, since a chain
@@ -2669,32 +2781,18 @@ let census ~fork n =
 (* Bytes the C heap's own bookkeeping may grow by over eight programs. *)
 let slack = 16 * 1024
 
-(* Runs of eight programs the heap may take to settle. *)
-let warm_runs = 10
-
 (* The process makes what lasts it over its first programs (devices, the staging
-   memory, queues grown to their longest), and its heap settles over up to
-   several runs more, the longer after other tests. A leak grows the heap over
-   every run: the law runs eight programs uncounted, then runs of eight until
-   one leaves the heap within [slack] of the run before, and fails when none of
-   [warm_runs] does. *)
+   memory, queues grown to their longest): the law runs eight programs
+   uncounted, then counts the heap and the descriptors after eight more and
+   again after eight after those. A leak grows the heap over every run. *)
 let leaves_nothing ~fork =
   if fork && Sys.win32 then skip ~reason:"Windows has no fork" ();
   ignore (census ~fork 8);
   let bytes, files = census ~fork 8 in
-  let rec run n before =
-    let bytes, now = census ~fork 8 in
-    equal ~msg:"open descriptors" int files now;
-    let grown = bytes - before in
-    if grown > slack then
-      if n = 1 then
-        failf
-          "the C heap grew over each of %d runs of eight programs, by %d bytes \
-           in the last"
-          warm_runs grown
-      else run (n - 1) bytes
-  in
-  run warm_runs bytes
+  let bytes', files' = census ~fork 8 in
+  equal ~msg:"open descriptors" int files files';
+  at_most ~msg:"bytes the C heap grew by over eight programs" int ~than:slack
+    (bytes' - bytes)
 
 (* Values of two worlds of one program never meet: a call naming both does
    nothing. *)
@@ -2829,6 +2927,17 @@ let commands ~two ~fork =
       (device ^-> cell ^-> cell ^-> judges bool)
       borrow_r borrow_s
   in
+  (* The host's borrows of a device's memory, which only a device the program
+     opened as the host would make otherwise. *)
+  let borrow_host =
+    command "borrow on host"
+      (cell ^-> cell ^-> judges bool)
+      (fun a b o -> borrow_r { dw = a.w; r = host a.w } a b o)
+      (fun a b ->
+        borrow_s
+          ({ d = Rig.host; skind = Host; p = None; spoiled = false }, a.sw)
+          a b)
+  in
   let view =
     command "view"
       (eighth @-> eighth @-> cell ^-> cell ^-> judges unit)
@@ -2950,7 +3059,7 @@ let commands ~two ~fork =
   in
   let submit =
     command "submit"
-      (last @-> cell ^-> cell ^-> subs ^-> judges int)
+      (last @-> cell ^-> cell ^-> subs ^-> judges (pair int int))
       (fun l a b sc o ->
         one_world [ a.w; b.w; sc.subw ] o (fun () -> submit_ref l a b sc o))
       (fun l a b sc ->
@@ -3131,7 +3240,9 @@ let commands ~two ~fork =
       [ start ];
       makes 2 new_kept;
       makes 2 new_sub;
-      makes 2 open_;
+      (* On one domain a borrow of a Polled device's memory on another needs two
+         of them in one program: devices and borrows weigh more there. *)
+      times (if two then 4 else 5) open_;
       makes 3 new_cell;
       (* Two domains' calls reach one memory at once only through two cells that
          hold it, which the prefix rarely leaves as they were made. About half
@@ -3143,9 +3254,10 @@ let commands ~two ~fork =
       (if two then List.concat_map (times 7) sided else []);
       times 8 create;
       times 3 create_host;
+      (if two then [] else times 3 borrow_host);
       times 4 of_bigarray;
       times 4 file;
-      times 5 borrow;
+      times (if two then 5 else 8) borrow;
       times 2 view;
       times 3 fill;
       times 4 read;
@@ -3159,10 +3271,12 @@ let commands ~two ~fork =
       times 3 make_fill;
       times 3 make_launch;
       (* A held copy takes six values, more than two domains' prefix makes. *)
-      (if two then [] else times 2 make_held);
+      (if two then [] else times 6 make_held);
       times 6 submit;
       times 5 keep;
-      List.concat_map (times 2) [ claim; take_two; wait; facts ];
+      List.concat_map (times 2) [ claim; wait; facts ];
+      (* Two memories free to take at once are rare: takes of two weigh more. *)
+      times 4 take_two;
       List.concat_map (times 3) [ release; take; wait_device ];
       times 2 run;
       List.concat_map (times 2) [ fault; fail_; budget; free_cache; barrier ];

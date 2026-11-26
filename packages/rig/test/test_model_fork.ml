@@ -11,13 +11,14 @@ open Windtrap
 
 let tests =
   [
-    group "model"
+    group "stops and forks"
       [
-        stateful ~count:40 ~steps:60
-          "a forked child sees its devices lost and its host's bytes"
+        stateful ~count:80 ~steps:60
+          "a forked child finds its drivers' devices lost, its io devices live \
+           and its host memory's bytes, while its parent reads a file"
           (Rig_model.commands ~two:false ~fork:true);
       ];
-    group "leaks"
+    group "reclamation"
       [
         test "forked programs leave the parent no C memory or descriptor"
           (fun () -> Rig_model.leaves_nothing ~fork:true);

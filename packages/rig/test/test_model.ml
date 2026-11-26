@@ -10,16 +10,16 @@ open Windtrap
 
 let tests =
   [
-    group "model"
+    stateful ~count:300 ~steps:150
+      "every call answers as rig.mli says, on every kind of device"
+      (Rig_model.commands ~two:false ~fork:false);
+    group "domains"
       [
-        stateful ~count:300 ~steps:150
-          "every call answers as rig.mli says, on every kind of device"
-          (Rig_model.commands ~two:false ~fork:false);
-        stateful ~count:60 ~steps:50 ~domains:2
+        stateful ~count:69 ~steps:50 ~domains:2
           "calls on two domains answer as some order of them"
           (Rig_model.commands ~two:true ~fork:false);
       ];
-    group "leaks"
+    group "reclamation"
       [
         test "programs of every call leave no C memory or descriptor behind"
           (fun () -> Rig_model.leaves_nothing ~fork:false);
