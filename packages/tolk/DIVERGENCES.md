@@ -4417,7 +4417,8 @@ its float bound`, hold.
   vectorises scalar minima of a vector minimum's lanes; no tolk kernel is known
   to.
 - **Pinned by:** the `Decomp_op` suite (`test/codegen/decomp/decomp_op`):
-  `late_patterns › late_nests_cmplt.golden`, `› a nest of extremes against one
+  `late_patterns › rewrite each graph as its golden states ›
+  late_nests_cmplt.golden`, `late_patterns › a nest of extremes against one
   value keeps its values › *` and `› a nest of 16-bit extremes through float32
   keeps its values › *`, which also holds the rule back where a narrowing
   rounds; rune's `rune jit › classes › a selection of a minimum against its

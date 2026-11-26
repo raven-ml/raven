@@ -1,6 +1,6 @@
 (* Tests of Tolk.Decomp_op: fast_idiv divides, threefry2x32 is the
-   Threefry-2x32-20 hash, and each pattern rewrites as tinygrad's does and keeps
-   the value of what it rewrites. *)
+   Threefry-2x32-20 hash, and each pattern rewrites a graph as its golden states
+   and keeps the value of what it rewrites. *)
 
 open Windtrap
 open Tolk
@@ -26,6 +26,22 @@ let renderer_named = function
 
 let at ?params vars u = Interpreter.eval ?params ~vars u
 let ops = Op.Set.of_list
+
+(* [nodes op u] is the nodes of operation [op] under [u]. *)
+let nodes op u =
+  List.filter (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
+
+let has op u = nodes op u <> []
+
+(* [keeps rewrite e] checks that [rewrite] leaves [e] as it is. *)
+let keeps rewrite e = equal Uops.uop e (rewrite e)
+
+(* [same ()] compares matchers by identity: an equal argument gives the matcher
+   made for it before. *)
+let same () =
+  Testable.make
+    ~pp:(fun ppf _ -> Format.pp_print_string ppf "<matcher>")
+    ~equal:( == )
 
 (* A golden holds the sink of its inputs and that sink rewritten. *)
 let rewrites file ~rewrite inputs =
@@ -161,10 +177,7 @@ let fast_idiv_divides =
       | None -> cover "declines" true
       | Some u ->
           cover "divides" true;
-          cover "widens"
-            (List.exists
-               (fun u -> Ops.op u = Cast)
-               (Ops.toposort ~calls:Enter u));
+          cover "widens" (has Cast u);
           equal const (`Int (Bigint.div n d)) (at [ ("x", `Int n) ] u))
 
 (* A golden holds the dividend and its quotient. *)
@@ -177,13 +190,16 @@ let fast_idiv =
   let x = v "x" 0 1000 in
   group "fast_idiv"
     [
-      grid;
+      group "renders each quotient as its golden states" [ grid ];
       grid_divides;
       fast_idiv_divides;
-      quotient "fast_idiv_multiplies_and_shifts" x 7;
-      quotient "fast_idiv_shifts_out_powers_of_two" (v "x" 0 (1 lsl 20)) 448;
-      quotient "fast_idiv_widens" (v ~dtype:Int16 "x" 0 1000) 3;
-      quotient "fast_idiv_folds_a_small_dividend" (v "x" 0 6) 7;
+      group "builds each quotient its golden states"
+        [
+          quotient "fast_idiv_multiplies_and_shifts" x 7;
+          quotient "fast_idiv_shifts_out_powers_of_two" (v "x" 0 (1 lsl 20)) 448;
+          quotient "fast_idiv_widens" (v ~dtype:Int16 "x" 0 1000) 3;
+          quotient "fast_idiv_folds_a_small_dividend" (v "x" 0 6) 7;
+        ];
       test "fast_idiv declines a divisor that is not positive" (fun () ->
           is_none (Decomp_op.fast_idiv everything x Bigint.zero);
           is_none (Decomp_op.fast_idiv everything x (Bigint.of_int (-3))));
@@ -257,9 +273,12 @@ let hash_of_constants =
 let threefry =
   group "threefry2x32"
     [
-      Golden.graph "threefry.golden" (fun () ->
-          Ops.sink
-            [ Decomp_op.threefry2x32 (param Uint64) (param ~slot:1 Uint64) ]);
+      group "builds the graph its golden states"
+        [
+          Golden.graph "threefry.golden" (fun () ->
+              Ops.sink
+                [ Decomp_op.threefry2x32 (param Uint64) (param ~slot:1 Uint64) ]);
+        ];
       cases "Random123's known answers"
         ~id:(fun ((c0, c1), (k0, k1), _) ->
           Printf.sprintf "counter %08x %08x key %08x %08x" c0 c1 k0 k1)
@@ -278,8 +297,8 @@ let threefry =
           equal (list Uops.uop) []
             (List.filter alu
                (Ops.toposort ~calls:Enter (Shape.simplify hash_of_constants))));
-      (* Folding reads committed constants at their width, so the fold
-         wraps each 32-bit word as the hash does. *)
+      (* Folding reads committed constants at their width, so the fold wraps
+         each 32-bit word as the hash does. *)
       test "the hash of constants folds to its value" (fun () ->
           equal const
             (`Int (Bigint.of_string "6264663365535751564"))
@@ -359,8 +378,8 @@ let simplifying_graphs =
     ]
 
 (* A floor division or remainder of drawn operands: the dividend's type and
-   range, the divisor a constant or a variable of the same type, and a point in
-   the ranges. *)
+   range, the divisor a constant or a variable of the same type, a power of two
+   one time in two, and a point in the ranges. *)
 let floor_case =
   let open Gen in
   let* dt =
@@ -375,7 +394,16 @@ let floor_case =
   let point = map (fun k -> Bigint.(lo + k)) (below Bigint.(hi - lo)) in
   let* a0 = point in
   let* a1 = point in
-  let* b = such_that (fun b -> not (Bigint.equal b Bigint.zero)) point in
+  let power =
+    map (Bigint.shift_left Bigint.one) (int_range 0 (Bigint.numbits hi - 1))
+  in
+  let* b =
+    frequency
+      [
+        (1, such_that (fun b -> not (Bigint.equal b Bigint.zero)) point);
+        (1, power);
+      ]
+  in
   let* constant = bool in
   let* floor_mod = bool in
   let* shr_and = bool in
@@ -393,7 +421,7 @@ let pp_floor_case ppf (dt, (lo, hi), a, b, constant, floor_mod, shr_and) =
     (if shr_and then " with Shr and And" else "")
 
 let floor_rewrites_keep_values =
-  prop ~count:500 "floor divisions and remainders keep their values"
+  prop ~count:800 "floor divisions and remainders keep their values"
     (Gen.with_pp pp_floor_case floor_case)
     (fun (dt, (lo, hi), a, b, constant, floor_mod, shr_and) ->
       (* the least integer divided by -1 overflows its type *)
@@ -413,17 +441,53 @@ let floor_rewrites_keep_values =
       let q = Bigint.fdiv a b in
       let expected = if floor_mod then Bigint.(a - (b * q)) else q in
       let r = simplify_with set e in
-      cover "rewritten" (not (Ops.equal r e));
+      cover "a shift" (has Shr r);
+      cover "a mask" (has And r);
+      cover "a truncating division or remainder"
+        (has Truncdiv r || has Truncmod r);
+      cover "by a variable" (not constant);
       equal const (`Int expected) (at (("a", `Int a) :: vars) r))
 
+(* A rule that reads a constant divisor reads an integer: a boolean or a float
+   there is declined. The nodes are built as given, without promotion. *)
+let declines_non_integers =
+  let x = v "x" 0 100 in
+  let shr_and = ops [ Shr; And ] in
+  [
+    test "a remainder by True is no mask" (fun () ->
+        equal (list Uops.uop) []
+          (nodes And (simplify_with shr_and (Ops.alu x Mod [ Ops.bool true ]))));
+    test "a division by 2.0 is no shift" (fun () ->
+        equal (list Uops.uop) []
+          (nodes Shr (simplify_with shr_and (Ops.alu x Div [ Ops.float 2. ]))));
+  ]
+
 let simplifying =
+  let shifted set =
+    simplify_with set (Ops.alu (v "x" (-100) 100) Div [ Ops.const (i 8) ])
+  in
   group "simplifying_patterns"
-    (simplifying_graphs
+    ([
+       group "rewrite each graph as its golden states" simplifying_graphs;
+       floor_rewrites_keep_values;
+       test "a target with Threefry keeps it" (fun () ->
+           let t = Ops.sink (threefries ()) in
+           equal Uops.uop t (simplify_with (ops [ Threefry ]) t));
+     ]
+    @ declines_non_integers
     @ [
-        floor_rewrites_keep_values;
-        test "a target with Threefry keeps it" (fun () ->
-            let t = Ops.sink (threefries ()) in
-            equal Uops.uop t (simplify_with (ops [ Threefry ]) t));
+        test "an equal set gives the matcher made for it" (fun () ->
+            equal (same ())
+              (Decomp_op.simplifying_patterns (ops [ Shr; And ]))
+              (Decomp_op.simplifying_patterns (ops [ And; Shr ])));
+        (* A matcher is made once for each argument: one whose argument differs
+           gets its own rules, whichever was made first. *)
+        test "a set gets its own rules after another's" (fun () ->
+            let with_shr = shifted (ops [ Shr ]) in
+            let without = shifted (ops []) in
+            equal Uops.uop with_shr (shifted (ops [ Shr ]));
+            equal Uops.uop without (shifted (ops []));
+            not_equal Uops.uop with_shr without);
       ])
 
 (* Late patterns *)
@@ -545,9 +609,9 @@ let extremes () =
     ]
 
 (* A selection of a value [v] and a constant [c] by their comparison: a minimum,
-   [v < c ? v : c] or [c < v ? c : v], or a maximum, [v < c ? c : v] or
-   [c < v ? v : c]. At a tie or a NaN each picks its second arm, so no two
-   forms of a kind agree at every [v]. *)
+   [v < c ? v : c] or [c < v ? c : v], or a maximum, [v < c ? c : v] or [c < v ?
+   v : c]. At a tie or a NaN each picks its second arm, so no two forms of a
+   kind agree at every [v]. *)
 type form = Min_vc | Min_cv | Max_vc | Max_cv
 
 let forms = [ Min_vc; Min_cv; Max_vc; Max_cv ]
@@ -559,7 +623,8 @@ let select form v c =
   | Max_vc -> Ops.where Ops.O.(v < c) c v
   | Max_cv -> Ops.where Ops.O.(c < v) v c
 
-let nest_forms = List.concat_map (fun i -> List.map (fun o -> (i, o)) forms) forms
+let nest_forms =
+  List.concat_map (fun i -> List.map (fun o -> (i, o)) forms) forms
 
 (* Each nest [(i, o)] of [nest_forms], [select o (select i x c) c], of a float32
    parameter [x], at [c = 0.] and then [c = 1.]. *)
@@ -683,15 +748,19 @@ let truncations_keep_values =
       in
       let renderer = if narrow then nothing else everything in
       let r = late_with ~disable_fast_idiv:false ~renderer (ops [ Shr ]) e in
-      cover "rewritten" (not (Ops.equal r e));
+      cover "a shift alone" (has Shr r && not (has Mul r));
+      cover "a product and a shift" (has Shr r && has Mul r);
+      cover "widened" (has Cast r);
+      cover "kept" (has Truncdiv r || has Truncmod r);
       equal const
         (`Int (if remainder then Bigint.rem a d else Bigint.div a d))
         (at [ ("a", `Int a) ] r))
 
-(* The integer expressions the other late rules rewrite, over x, y and z in
-   [-50, 50]. *)
-let late_expressions =
-  let x = v "x" (-50) 50 and y = v "y" (-50) 50 and z = v "z" (-50) 50 in
+(* The integer expressions the other late rules rewrite, over x, y and z of [dt]
+   in [lo, hi]. *)
+let late_expressions dt (lo, hi) =
+  let var name = var ~dtype:dt name lo hi in
+  let x = var "x" and y = var "y" and z = var "z" in
   let neg u = Ops.alu u Neg [] in
   Ops.O.
     [
@@ -704,35 +773,60 @@ let late_expressions =
       ("not (x <> y)", Ops.logical_not (x <> y));
       ("x <> y", x <> y);
       ("x * y + z", (x * y) + z);
-      ("x << 3 + z", Ops.alu x Shl [ Ops.int ~dtype:Int32 3 ] + z);
+      ("x << 3 + z", Ops.alu x Shl [ Ops.int ~dtype:dt 3 ] + z);
       ("x * 8", x * int 8);
       ("x + neg y", x + neg y);
       ("x * -1", x * int (-1));
     ]
 
 let every_late_op = ops [ Cmplt; Or; Shl; Shr; Neg; Sub; Cmpne; Mulacc; Fdiv ]
+let expression_names = List.map fst (late_expressions Int32 Bigint.(zero, one))
+
+(* An expression of a committed integer type, its variables' range drawn within
+   the type's, its bounds included, and their values in that range. *)
+let late_case =
+  let open Gen in
+  let* dt =
+    of_list ~pp:Dtype.pp
+      Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+  in
+  let lo, hi = int_bounds dt in
+  let point lo hi = map (fun k -> Bigint.(lo + k)) (below Bigint.(hi - lo)) in
+  let* a = point lo hi in
+  let* b = point lo hi in
+  let lo, hi = (Bigint.min a b, Bigint.max a b) in
+  let+ name = of_list ~pp:Format.pp_print_string expression_names
+  and+ x = point lo hi
+  and+ y = point lo hi
+  and+ z = point lo hi in
+  (dt, (lo, hi), name, (x, y, z))
+
+let pp_late_case ppf (dt, (lo, hi), name, (x, y, z)) =
+  Format.fprintf ppf "%s over %a in [%a, %a] at x=%a y=%a z=%a" name Dtype.pp dt
+    Bigint.pp_print lo Bigint.pp_print hi Bigint.pp_print x Bigint.pp_print y
+    Bigint.pp_print z
 
 let late_rules_keep_values =
-  let point = Gen.int_range (-50) 50 in
   prop ~count:300 "the late rules keep the values of integer expressions"
-    Gen.(
-      triple
-        (of_list
-           ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
-           late_expressions)
-        (pair point point) point)
-    (fun ((_, e), (x, y), z) ->
-      let vars = [ ("x", i x); ("y", i y); ("z", i z) ] in
+    (Gen.with_pp pp_late_case late_case) (fun (dt, range, name, (x, y, z)) ->
+      let e = List.assoc name (late_expressions dt range) in
+      let vars = [ ("x", `Int x); ("y", `Int y); ("z", `Int z) ] in
       let r = late_with every_late_op e in
       cover "rewritten" (not (Ops.equal r e));
+      cover "unsigned" (Dtype.is_unsigned dt);
+      cover "at a bound of the type"
+        (List.exists
+           (fun b ->
+             Bigint.equal b (fst (int_bounds dt))
+             || Bigint.equal b (snd (int_bounds dt)))
+           [ x; y; z ]);
       equal const (at vars e) (at vars r))
 
 (* A negated comparison of an unsigned integer with a constant becomes a
-   comparison with the constant's neighbour, except at the type's bounds,
-   where the neighbour wraps: not (u < 0) holds for every u. *)
+   comparison with the constant's neighbour, except at the type's bounds, where
+   the neighbour wraps: not (u < 0) holds for every u. *)
 let unsigned_negations_keep_values =
-  test "a negated unsigned comparison keeps its value at the type's bounds"
-    (fun () ->
+  test "a negated uint8 comparison keeps its value at every uint8" (fun () ->
       let u = v ~dtype:Uint8 "u" 0 255 in
       let c n = Ops.int ~dtype:Uint8 n in
       List.iter
@@ -742,7 +836,7 @@ let unsigned_negations_keep_values =
             (fun n ->
               let vars = [ ("u", i n) ] in
               equal const (at vars e) (at vars r))
-            [ 0; 1; 5; 254; 255 ])
+            (List.init 256 Fun.id))
         Ops.O.
           [
             Ops.logical_not (u < c 0);
@@ -751,11 +845,12 @@ let unsigned_negations_keep_values =
             Ops.logical_not (c 5 < u);
           ])
 
-(* A negated signed integer compared with a constant keeps its negation where
-   it wraps: at int8, -(-128) is -128, which is less than 3. *)
+(* A negated signed integer compared with a constant keeps its negation where it
+   wraps: at int8, -(-128) is -128, which is less than 3. *)
 let signed_negations_keep_values =
-  test "a negated signed comparison keeps its value where the negation wraps"
-    (fun () ->
+  test
+    "a negated int8 comparison keeps its value at every int8, where the \
+     negation wraps too" (fun () ->
       let x = v ~dtype:Int8 "x" (-128) 127 in
       let e = Ops.O.(x * int (-1) < int 3) in
       let r = late_with (ops [ Cmplt ]) e in
@@ -763,21 +858,23 @@ let signed_negations_keep_values =
         (fun n ->
           let vars = [ ("x", i n) ] in
           equal const (at vars e) (at vars r))
-        [ -128; -4; 0; 5 ])
+        (List.init 256 (fun k -> k - 128)))
 
 (* What a nest is against: a float32 constant, a float32 parameter, an int32
    constant or an int32 parameter. *)
 type against = Float_c of float | Float_p | Int_c of int | Int_p
 
-(* A nest of two extremes against one value computes as the nest at every
-   pair of [v] and [c] drawn from the zeros of both signs, a NaN, the
-   infinities and values around them, or small integers, and a nest of two
-   minima or two maxima is one selection. *)
+(* A nest of two extremes against one value computes as the nest at every pair
+   of [v] and [c] drawn from the zeros of both signs, a NaN, the infinities and
+   values around them, or small integers, and a nest of two minima or two maxima
+   is one selection. *)
 let nests_keep_values =
   let floats =
     List.map
       (fun x -> `Float x)
-      [ -0.; 0.; Float.nan; 1.; -1.; 2.; 0.5; Float.infinity; Float.neg_infinity ]
+      [
+        -0.; 0.; Float.nan; 1.; -1.; 2.; 0.5; Float.infinity; Float.neg_infinity;
+      ]
   and ints = List.map i [ -2; -1; 0; 1; 2 ] in
   let kind = function Min_vc | Min_cv -> `Min | Max_vc | Max_cv -> `Max in
   let selections u =
@@ -799,15 +896,23 @@ let nests_keep_values =
   let all =
     List.concat_map
       (fun a -> List.map (fun io -> (a, io)) nest_forms)
-      [ Float_c 0.; Float_c (-0.); Float_c 1.; Float_c Float.nan; Float_p;
-        Int_c 0; Int_p ]
+      [
+        Float_c 0.;
+        Float_c (-0.);
+        Float_c 1.;
+        Float_c Float.nan;
+        Float_p;
+        Int_c 0;
+        Int_p;
+      ]
   in
   cases "a nest of extremes against one value keeps its values"
     ~id:(fun (a, (i, o)) ->
       Printf.sprintf "%s of %s against %s" (n o) (n i) (against_name a))
     all
     (fun (a, (i, o)) ->
-      let dt, values = match a with
+      let dt, values =
+        match a with
         | Float_c _ | Float_p -> (Dtype.Float32, floats)
         | Int_c _ | Int_p -> (Dtype.Int32, ints)
       in
@@ -816,8 +921,7 @@ let nests_keep_values =
         match a with
         | Float_c c -> (Ops.float ~dtype:Float32 c, [ None ])
         | Int_c c -> (Ops.int ~dtype:Int32 c, [ None ])
-        | Float_p | Int_p ->
-            (param ~slot:1 dt, List.map Option.some values)
+        | Float_p | Int_p -> (param ~slot:1 dt, List.map Option.some values)
       in
       let e = select o (select i x c) c in
       let r = late_with (ops [ Cmplt ]) e in
@@ -832,24 +936,24 @@ let nests_keep_values =
               let msg =
                 Format.asprintf "at %a%s" Dtype.pp_const v
                   (match cv with
-                   | Some c -> Format.asprintf ", c %a" Dtype.pp_const c
-                   | None -> "")
+                  | Some c -> Format.asprintf ", c %a" Dtype.pp_const c
+                  | None -> "")
               in
               equal ~msg const (at ~params [] e) (at ~params [] r))
             values)
         cs)
 
 (* Nests of extremes of a 16-bit float computed as rune computes them, each
-   widened to float32, selected there and narrowed back, against a constant:
-   the outer one selects the 16-bit values by the comparison of their
-   widenings. Each computes as the nest at every 16-bit [v] of zeros of both
-   signs, a NaN, the infinities and values around them. Where every value
-   the narrowing sees is a 16-bit value, a widening, a constant the format
-   holds or a selection of such values at any depth, a nest of two minima or
-   two maxima is one selection, as LLVM sees through the casts. Where the
-   narrowing rounds, from a float32 sum, a constant the format does not hold
-   or the other 16-bit format, the nest is kept: the rewrite would give -0. for
-   the narrowed sum [v - 1e-10] at [v = 0]. *)
+   widened to float32, selected there and narrowed back, against a constant: the
+   outer one selects the 16-bit values by the comparison of their widenings.
+   Each computes as the nest at every 16-bit [v] of zeros of both signs, a NaN,
+   the infinities and values around them. Where every value the narrowing sees
+   is a 16-bit value, a widening, a constant the format holds or a selection of
+   such values at any depth, a nest of two minima or two maxima is one
+   selection, as LLVM sees through the casts. Where the narrowing rounds, from a
+   float32 sum, a constant the format does not hold or the other 16-bit format,
+   the nest is kept: the rewrite would give -0. for the narrowed sum [v - 1e-10]
+   at [v = 0]. *)
 type narrowed = Plain | Deep | Sum | Unheld | Across
 
 let narrow_nests_keep_values =
@@ -921,7 +1025,9 @@ let narrow_nests_keep_values =
             let w = wide x in
             Ops.where
               Ops.O.(w < Ops.float ~dtype:f 1.)
-              (Ops.where Ops.O.(w < Ops.float ~dtype:f (-1.)) w
+              (Ops.where
+                 Ops.O.(w < Ops.float ~dtype:f (-1.))
+                 w
                  (wide (Ops.neg x)))
               w
         | Sum -> Ops.O.(wide x + Ops.float ~dtype:f (-1e-10))
@@ -1001,9 +1107,9 @@ let lowered_divisions =
             values)
         divisors)
 
-(* A weak constant on a committed integer is read at its width: [x * 2^k]
-   shifts [x] by [k] only where [2^k] is that power of two at the width, which
-   is below it, and keeps the value wrapping gives. *)
+(* A weak constant on a committed integer is read at its width: [x * 2^k] shifts
+   [x] by [k] only where [2^k] is that power of two at the width, which is below
+   it, and keeps the value wrapping gives. *)
 let powers_at_width =
   test "a product by a power of two shifts by less than its width" (fun () ->
       let shift_counts u =
@@ -1026,9 +1132,7 @@ let powers_at_width =
               let e = Ops.alu x Mul [ c ] in
               let r = late_with (ops [ Shl ]) e in
               let msg = Format.asprintf "%a times 2^%d" Dtype.pp dtype k in
-              List.iter
-                (fun n -> less ~msg int ~than:bits n)
-                (shift_counts r);
+              List.iter (fun n -> less ~msg int ~than:bits n) (shift_counts r);
               List.iter
                 (fun n ->
                   let vars = [ ("x", i n) ] in
@@ -1038,9 +1142,9 @@ let powers_at_width =
         Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ])
 
 (* A quotient or remainder reads a weak divisor in its operand's type, as
-   compiled code commits it: on int8, 2^7 is -128, so 1 // 128 is -1 and
-   1 % 128 is -127, and no shift or mask computes them. The lowering keeps the values at every
-   power. *)
+   compiled code commits it: on int8, 2^7 is -128, so 1 // 128 is -1 and 1 % 128
+   is -127, and no shift or mask computes them. The lowering keeps the values at
+   every power. *)
 let quotients_at_width =
   test "a quotient by a power of two reads it in its operand's type" (fun () ->
       let shr_and = ops [ Shr; And ] in
@@ -1066,12 +1170,7 @@ let quotients_at_width =
               List.iter
                 (fun e ->
                   let r = late_with shr_and (simplify_with shr_and e) in
-                  let shifts =
-                    List.exists
-                      (fun n -> Ops.op n = Shr)
-                      (Ops.toposort ~calls:Enter r)
-                  in
-                  if not power then is_false ~msg shifts;
+                  if not power then equal ~msg (list Uops.uop) [] (nodes Shr r);
                   List.iter
                     (fun n ->
                       let vars = [ ("x", `Int n) ] in
@@ -1087,9 +1186,10 @@ let quotients_at_width =
 
 (* A weak divisor past its operand's width is read in the operand's type, as
    compiled code commits it: on int8, 128 is -128, 200 is -56 and -129 is 127,
-   and on uint8 259 is 3 and -3 is 253. Each lowering, the fast division included, keeps the values over
-   the whole range and over the non-negative half, where the operands' signs
-   seem to agree and the fast division applies. *)
+   and on uint8 259 is 3 and -3 is 253. Each lowering, the fast division
+   included, keeps the values over the whole range and over the non-negative
+   half, where the operands' signs seem to agree and the fast division
+   applies. *)
 let divisors_past_width =
   test "a quotient by a weak divisor past its width reads it in its type"
     (fun () ->
@@ -1108,7 +1208,9 @@ let divisors_past_width =
             if Dtype.is_unsigned dtype then
               Bigint.
                 [
-                  wide + of_int 3; wide + of_int 7; twice - of_int 5;
+                  wide + of_int 3;
+                  wide + of_int 7;
+                  twice - of_int 5;
                   of_int (-3);
                 ]
             else
@@ -1126,8 +1228,15 @@ let divisors_past_width =
               (fun n -> Bigint.(geq n x_lo && leq n hi))
               Bigint.
                 [
-                  lo; succ lo; minus_one; zero; one; of_int 7; of_int 100;
-                  pred hi; hi;
+                  lo;
+                  succ lo;
+                  minus_one;
+                  zero;
+                  one;
+                  of_int 7;
+                  of_int 100;
+                  pred hi;
+                  hi;
                 ]
           in
           List.iter
@@ -1160,102 +1269,55 @@ let divisors_past_width =
         Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ])
 
 let late =
-  group "late_patterns"
-    (late_graphs
-    @ [
-        truncations_keep_values;
-        late_rules_keep_values;
-        unsigned_negations_keep_values;
-        signed_negations_keep_values;
-        nests_keep_values;
-        narrow_nests_keep_values;
-        lowered_divisions;
-        powers_at_width;
-        quotients_at_width;
-        divisors_past_width;
-      ])
-
-(* Constants other than integers *)
-
-(* The rules that read a constant divisor, factor or bound take an integer: a
-   boolean, a float or [`Invalid] there is declined (README, CPython's treatment
-   of constants other than integers). The nodes are built as given, without
-   promotion. *)
-let non_integers =
   let x = v "x" 0 100 in
-  let has op u =
-    List.exists (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
+  let divided disable_fast_idiv =
+    late_with ~disable_fast_idiv (ops [ Shr ])
+      (Ops.alu (v "x" 0 100) Truncdiv [ Ops.const (i 7) ])
   in
-  let keeps rewrite e = equal Uops.uop e (rewrite e) in
-  let shr_and = ops [ Shr; And ] in
-  group "constants other than integers are declined"
+  group "late_patterns"
     [
-      test "the mask rule declines a remainder by True" (fun () ->
-          let r =
-            simplify_with shr_and (Ops.alu x Mod [ Ops.bool true ])
-          in
-          is_false (has And r));
-      test "the shift rules decline 2.0" (fun () ->
-          is_false
-            (has Shr
-               (simplify_with shr_and (Ops.alu x Div [ Ops.float 2. ])));
-          keeps (late_with (ops [ Shl ])) (Ops.alu x Mul [ Ops.float 2. ]);
+      group "rewrite each graph as its golden states" late_graphs;
+      truncations_keep_values;
+      late_rules_keep_values;
+      unsigned_negations_keep_values;
+      signed_negations_keep_values;
+      nests_keep_values;
+      narrow_nests_keep_values;
+      lowered_divisions;
+      powers_at_width;
+      quotients_at_width;
+      divisors_past_width;
+      (* The rules that read a constant factor, divisor or bound read an
+         integer: a boolean, a float or [`Invalid] there is declined. *)
+      test "a product by 2.0 is no shift" (fun () ->
+          keeps (late_with (ops [ Shl ])) (Ops.alu x Mul [ Ops.float 2. ]));
+      test "a truncating division by 2.0 is no shift" (fun () ->
+          keeps (late_with (ops [ Shr ])) (Ops.alu x Truncdiv [ Ops.float 2. ]));
+      cases "fast_idiv's rule declines a divisor that is no integer" ~id:fst
+        [
+          ("True", Ops.bool true);
+          ("7.0", Ops.float 7.);
+          ("Invalid", Ops.invalid);
+        ]
+        (fun (_, d) ->
           keeps
-            (late_with (ops [ Shr ]))
-            (Ops.alu x Truncdiv [ Ops.float 2. ]));
-      test "fast_idiv declines True, a float and Invalid" (fun () ->
-          List.iter
-            (fun d ->
-              keeps
-                (late_with ~disable_fast_idiv:false (ops [ Shr ]))
-                (Ops.alu x Truncdiv [ d ]))
-            [ Ops.bool true; Ops.float 7.; Ops.invalid ]);
+            (late_with ~disable_fast_idiv:false (ops [ Shr ]))
+            (Ops.alu x Truncdiv [ d ]));
       test "the one-integer-between rule declines Invalid" (fun () ->
           keeps
             (late_with (ops [ Cmplt ]))
             Ops.O.(Ops.alu Ops.invalid Cmplt [ x ] land (x < int 5)));
-    ]
-
-(* Matchers by argument *)
-
-(* A matcher is made once for each argument: a call whose arguments equal an
-   earlier one's gets its rules, and one whose arguments differ gets its own,
-   whichever was made first. *)
-let by_argument =
-  let has op u =
-    List.exists (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
-  in
-  let shifted set =
-    has Shr
-      (simplify_with set (Ops.alu (v "x" (-100) 100) Div [ Ops.const (i 8) ]))
-  in
-  let divided disable_fast_idiv =
-    has Truncdiv
-      (late_with ~disable_fast_idiv (ops [ Shr ])
-         (Ops.alu (v "x" 0 100) Truncdiv [ Ops.const (i 7) ]))
-  in
-  group "matchers by argument"
-    [
-      test "equal arguments give one matcher" (fun () ->
-          equal bool true
-            (Decomp_op.simplifying_patterns (ops [ Shr; And ])
-            == Decomp_op.simplifying_patterns (ops [ And; Shr ]));
-          equal bool true
+      test "equal arguments give the matcher made for them" (fun () ->
+          equal (same ())
             (Decomp_op.late_patterns ~disable_fast_idiv:false
-               (ops [ Shr; Cmplt ])
-            == Decomp_op.late_patterns ~disable_fast_idiv:false
-                 (ops [ Cmplt; Shr ])));
-      test "a set gets its own rules after another's" (fun () ->
-          List.iter
-            (fun (set, shifts) -> equal bool shifts (shifted set))
-            [ (ops [ Shr ], true); (ops [], false); (ops [ Shr ], true) ]);
+               (ops [ Shr; Cmplt ]))
+            (Decomp_op.late_patterns ~disable_fast_idiv:false
+               (ops [ Cmplt; Shr ])));
       test "the flag gets its own rules after the other's" (fun () ->
-          List.iter
-            (fun disabled -> equal bool disabled (divided disabled))
-            [ false; true; false ]);
+          let fast = divided false and kept = divided true in
+          equal Uops.uop fast (divided false);
+          equal Uops.uop kept (divided true);
+          not_equal Uops.uop fast kept);
     ]
 
-let () =
-  exit
-    (run "Tolk.Decomp_op"
-       [ fast_idiv; threefry; simplifying; late; non_integers; by_argument ])
+let () = exit (run "Tolk.Decomp_op" [ fast_idiv; threefry; simplifying; late ])
