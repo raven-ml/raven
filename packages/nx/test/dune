@@ -119,10 +119,7 @@
  (package nx)
  (name test_widths)
  (modules test_widths)
- (foreign_stubs
-  (language c)
-  (names test_widths_stubs))
- (libraries nx windtrap)
+ (libraries nx nx_limit_support windtrap)
  (enabled_if
   (or
    (= %{system} linux)

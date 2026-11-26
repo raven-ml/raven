@@ -10,8 +10,6 @@
 
 open Windtrap
 
-external limit_memory : int -> int = "nx_test_limit_memory"
-
 (* Room for the suite past what the process holds at its start: the memory it
    maps on Linux, the memory it commits on Windows. The limit is relative:
    AddressSanitizer maps terabytes of shadow before the program runs. *)
@@ -37,7 +35,7 @@ let extends =
     ]
 
 let () =
-  (match limit_memory room with
+  (match Nx_limit_support.limit_memory room with
   | 0 -> ()
   | e -> failwith (Printf.sprintf "cannot limit the memory: error %d" e));
   exit (run "nx widths" [ extends ])

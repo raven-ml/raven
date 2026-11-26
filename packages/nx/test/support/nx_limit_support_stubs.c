@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The memory limit of test_widths, which runs on Linux and Windows alone:
-   their limits bound allocations, macOS's do not. */
+/* A limit of the process's memory, for suites that run on Linux and Windows
+   alone: their limits bound allocations, macOS's do not. */
 
 #include <caml/mlvalues.h>
 

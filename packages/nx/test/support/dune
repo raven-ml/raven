@@ -40,6 +40,16 @@
   (language c)
   (names nx_stack_support_stubs)))
 
+; A limit of a test process's memory, for test_widths and nx.io's hostile
+; sizes.
+
+(library
+ (name nx_limit_support)
+ (modules nx_limit_support)
+ (foreign_stubs
+  (language c)
+  (names nx_limit_support_stubs)))
+
 ; rig's test agent, beside the suites that start it through Remote_job.
 
 (executable
