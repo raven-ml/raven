@@ -321,10 +321,10 @@ let names =
                  Realize.get_call_name call (Realize.get_call_arg_uops call))));
       test "is in yellow" (fun () ->
           let call = Shape.store_call (storage 4) (storage 4) in
-          equal string
-            (Helpers.colored Yellow "copy       16 B,     CPU <- CPU    ")
-            (in_colour (fun () ->
-                 Realize.get_call_name call (Realize.get_call_arg_uops call))));
+          in_colour (fun () ->
+              equal string
+                (Helpers.colored Yellow "copy       16 B,     CPU <- CPU    ")
+                (Realize.get_call_name call (Realize.get_call_arg_uops call))));
       test "sizes a copy with the variables' values" (fun () ->
           let v =
             Ops.variable "v" (`Int Bigint.one) (`Int (Bigint.of_int 10))
