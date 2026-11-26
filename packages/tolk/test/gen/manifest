@@ -4265,6 +4265,13 @@ uop/shape/storage.golden
 uop/shape/storage_like.golden
 uop/shape/symbolic_outputs.golden
 uop/shape/symbolic_storage.golden
+uop/shape/uncast_a_committed_literal.golden
+uop/shape/uncast_drops_a_cast_that_fits.golden
+uop/shape/uncast_keeps_a_cast_of_an_expression.golden
+uop/shape/uncast_keeps_a_literal_that_widens_a_comparison.golden
+uop/shape/uncast_keeps_a_shifted_literal.golden
+uop/shape/uncast_keeps_a_shifted_literal_of_its_peer_s_type.golden
+uop/shape/uncast_keeps_literals_with_no_committed_peer.golden
 uop/shape/variables_and_binding.golden
 uop/spec/bounds.golden
 uop/spec/bounds_nodes.golden
@@ -4589,12 +4596,5 @@ uop/uop_weak/peer_keeps_a_derivable_literal_bare.golden
 uop/uop_weak/peer_rounds_a_derivable_literal.golden
 uop/uop_weak/shift_commits_its_weak_operand.golden
 uop/uop_weak/store_commits_its_value_at_the_destination.golden
-uop/uop_weak/uncast_a_committed_literal.golden
-uop/uop_weak/uncast_drops_a_cast_that_fits.golden
-uop/uop_weak/uncast_keeps_a_cast_of_an_expression.golden
-uop/uop_weak/uncast_keeps_a_literal_that_widens_a_comparison.golden
-uop/uop_weak/uncast_keeps_a_shifted_literal.golden
-uop/uop_weak/uncast_keeps_a_shifted_literal_of_its_peer_s_type.golden
-uop/uop_weak/uncast_keeps_literals_with_no_committed_peer.golden
 uop/uop_weak/weak_sources_stay_weak_without_a_committed_peer.golden
 uop/uop_weak/where_keeps_a_weak_arm_bare.golden

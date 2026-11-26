@@ -17,6 +17,7 @@ from graph import toposort
 from tinygrad.dtype import AddrSpace, dtypes
 from tinygrad.uop.movement import mop_cleanup
 from tinygrad.uop.ops import AxisType, Ops, UOp, graph_rewrite
+from tinygrad.uop.weak import pm_uncast_const
 
 
 def rewritten(u):
@@ -334,3 +335,54 @@ def symbolic_outputs():
     return UOp.sink(*UOp.call_with_outputs((b + 1.0,), a, b, output_pos=(0,)),
                     UOp.const(1.0).cast(dtypes.float).expand((formal,)).call_with_output(UOp.const(5)),
                     UOp.empty((2, n), dtype=dtypes.int, device="CPU"))
+
+
+# Weak constants: graphs before and after pm_uncast_const
+
+def uncast(u):
+    return UOp.sink(u, graph_rewrite(u, pm_uncast_const))
+
+
+def small(name="x", dtype=dtypes.int8):
+    return UOp.variable(name, 0, 10, dtype)
+
+
+def weak(name="w"):
+    return UOp.variable(name, 0, 4)
+
+
+@graph
+def uncast_a_committed_literal():
+    return uncast(small(dtype=dtypes.int32) + UOp.const(1, dtypes.int32))
+
+
+@graph
+def uncast_keeps_literals_with_no_committed_peer():
+    return uncast(UOp.const(1, dtypes.int32) + UOp.const(2, dtypes.int32))
+
+
+@graph
+def uncast_keeps_a_shifted_literal():
+    count = UOp.variable("s", 0, 31, dtypes.uint32)
+    return uncast(UOp(Ops.SHL, src=(UOp.const(1, dtypes.int32), count)))
+
+
+@graph
+def uncast_keeps_a_cast_of_an_expression():
+    return uncast(small(dtype=dtypes.int32) + (weak() + 1).cast(dtypes.int32))
+
+
+@graph
+def uncast_keeps_a_shifted_literal_of_its_peer_s_type():
+    count = UOp.variable("s", 0, 31, dtypes.int32)
+    return uncast(UOp(Ops.SHL, src=(UOp.const(1, dtypes.int32), count)))
+
+
+@graph
+def uncast_keeps_a_literal_that_widens_a_comparison():
+    return uncast(UOp(Ops.CMPLT, src=(small(dtype=dtypes.int16), UOp.const(1, dtypes.int32))))
+
+
+@graph
+def uncast_drops_a_cast_that_fits():
+    return uncast(small("u", dtypes.uint8) < UOp.cconst(44, dtypes.uint8))

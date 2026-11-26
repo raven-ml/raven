@@ -6,6 +6,8 @@ open Common
 open Ops
 open Shape
 
+let var = Simplification.var
+
 (* [u], a define, named [name]. *)
 let named u name = replace u ~arg:(Param { (param_arg_of u) with name = Some name })
 let pair (lo, hi) : (sint * sint) option = Some (Int lo, Int hi)
@@ -190,7 +192,7 @@ let storage () =
 
 let storage_like () =
   let p = param ~device:"CPU" [ 2; 3 ] 0 Float32 in
-  let v = weak_var "n" 1 8 in
+  let v = var "n" 1 8 in
   sink
     [
       param_like p 5;
@@ -226,16 +228,10 @@ let custom_kernels () =
   sink (custom_kernel [ a; b ] copy)
 
 let variables_and_binding () =
-  let n = weak_var "n" 1 8 and m = weak_var "m" 0 4 in
+  let n = var "n" 1 8 and m = var "m" 0 4 in
   let e = O.((bind n (i 3) * bind m (i 2)) + n) in
   let all_unbound, _ = unbind_all e in
-  sink
-    ([
-       bind n (i 3);
-       unbound (bind n (i 3));
-       all_unbound;
-     ]
-    @ variables e)
+  sink ([ bind n (i 3); unbound (bind n (i 3)); all_unbound ] @ variables e)
 
 let clones () =
   let p = param ~device:"CPU" [ 2; 3 ] 0 Float32 in
@@ -257,7 +253,7 @@ let outputs () =
 (* Symbolic sizes *)
 
 let symbolic_storage () =
-  let n = weak_var "n" 1 8 in
+  let n = var "n" 1 8 in
   sink
     [
       Shape.param ~shape:[ Int 2; Sym n ] 0 Float32;
@@ -267,7 +263,7 @@ let symbolic_storage () =
 
 let symbolic_outputs () =
   let a = param ~device:"CPU" [ 4 ] 0 Float32 in
-  let n = weak_var "n" 1 4 in
+  let n = var "n" 1 4 in
   let b = Shape.param ~device:"CPU" ~shape:[ Sym n ] 1 Float32 in
   let formal =
     Shape.param ~vmin_vmax:(i 1, i 8) ~name:"d" ~addrspace:Alu 0 Int32
@@ -283,7 +279,7 @@ let symbolic_outputs () =
 
 (* Storage made without a slot takes a number no other storage has. [minted]
    renumbers those of [sink] from 1000, in the order the graph lists them, as
-   gen/uop/ops.py numbers tinygrad's. *)
+   gen/uop/shape.py numbers tinygrad's. *)
 let minted sink =
   let slots =
     List.fold_left

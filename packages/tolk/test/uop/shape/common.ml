@@ -36,13 +36,6 @@ let rejects ?__POS__ f = raises_match ?__POS__ (Exn.invalid_arg ?sub:None) f
 let i n = `Int (Bigint.of_int n)
 let f x = `Float x
 let ints l = List.map (fun n : Ops.sint -> Int n) l
-
-(* [var name lo hi] is the variable [name] of type [dtype] (default
-   {!Dtype.Int32}) over the integers from [lo] to [hi]. *)
-let var ?(dtype = Dtype.Int32) name lo hi = Ops.variable ~dtype name (i lo) (i hi)
-
-let weak_var name lo hi = var ~dtype:Dtype.Weak_int name lo hi
-
 let flag name = Ops.variable ~dtype:Dtype.Bool name (`Bool false) (`Bool true)
 let bounds u = (Ops.vmin u, Ops.vmax u)
 let int_bounds lo hi = (i lo, i hi)

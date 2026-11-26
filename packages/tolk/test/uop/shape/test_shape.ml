@@ -8,16 +8,13 @@ let () =
          Values.inference;
          Values.compilation;
          Values.exact_compilation;
-         Construction.graph_goldens;
-         Construction.constants;
-         Construction.kernel_nodes;
+         Construction.construction;
          Construction.movement;
-         Construction.long_aranges;
-         Construction.devices;
          Construction.storage;
          Construction.variables;
          Construction.divisibility;
          Construction.calls;
+         Construction.launches;
          Construction.programs;
          Rules.values;
          Rules.invalid_gate;

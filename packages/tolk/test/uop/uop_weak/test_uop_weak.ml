@@ -787,29 +787,6 @@ let pm_lower_weak =
       lower_integers;
     ]
 
-(* pm_uncast_const *)
-
-let uncast = rewrites Shape.pm_uncast_const
-
-let pm_uncast_const =
-  let u8 = small ~name:"u" Uint8 in
-  group "pm_uncast_const"
-    [
-      uncast "uncast_a_committed_literal" Ops.O.(small Int32 + i32 1);
-      uncast "uncast_keeps_literals_with_no_committed_peer"
-        Ops.O.(i32 1 + i32 2);
-      uncast "uncast_keeps_a_shifted_literal"
-        (Ops.v Op.Shl ~src:[ i32 1; var ~dtype:Uint32 "s" 0 31 ]);
-      uncast "uncast_keeps_a_cast_of_an_expression"
-        Ops.O.(small Int32 + Ops.cast (weak + int 1) Int32);
-      uncast "uncast_keeps_a_shifted_literal_of_its_peer_s_type"
-        (Ops.v Op.Shl ~src:[ i32 1; var ~dtype:Int32 "s" 0 31 ]);
-      uncast "uncast_keeps_a_literal_that_widens_a_comparison"
-        (Ops.v Op.Cmplt ~src:[ small Int16; i32 1 ]);
-      uncast "uncast_drops_a_cast_that_fits"
-        Ops.O.(u8 < Ops.cconst Uint8 (i 44));
-    ]
-
 (* pm_cast_const *)
 
 let cast_consts = rewrites Uop_weak.pm_cast_const
@@ -911,6 +888,5 @@ let () =
          commit_weak_consts;
          pm_commit_weak;
          pm_lower_weak;
-         pm_uncast_const;
          pm_cast_const;
        ])

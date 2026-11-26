@@ -237,7 +237,10 @@ val marg : Ops.t -> Ops.movement
 
 val as_shape : Ops.t -> Ops.sint list
 (** [as_shape u] is the shape the node [u] denotes: its constant, its stack's
-    sources, or [u] itself. *)
+    sources, or [u] itself, each simplified ({!ssimplify}).
+
+    Raises [Invalid_argument] if a constant it reads is neither a boolean nor an
+    integer that fits an [int]. *)
 
 val mop : Ops.t -> Ops.movement -> Ops.t
 (** [mop u m] applies the movement [m] to [u] as one node, its shape arguments
@@ -266,6 +269,8 @@ val permute : Ops.t -> int list -> Ops.t
 val flip : Ops.t -> int list -> Ops.t
 (** [flip u axes] reverses [axes] of [u], negative axes counting from the end.
 
+    It is [u] for no axes.
+
     Raises [Invalid_argument] if an axis is out of range or given twice, or if
     [u] is a scalar and [axes] is not empty. *)
 
@@ -273,30 +278,47 @@ val shrink : Ops.t -> (Ops.sint * Ops.sint) option list -> Ops.t
 (** [shrink u bounds] keeps, on each axis, the elements from its start to its
     end, excluded; [None] keeps the axis whole. It is [u] if it keeps every
     element and each start is an integer: a symbolic start, even one of 0,
-    stays, with the effects it waits on. *)
+    stays, with the effects it waits on.
+
+    Raises [Invalid_argument] if [bounds] does not have one entry per axis of
+    [u]. *)
 
 val shrink_to : Ops.t -> Ops.sint option list -> Ops.t
-(** [shrink_to u shape] keeps the first elements of each axis. *)
+(** [shrink_to u shape] keeps the first elements of each axis.
+
+    Raises [Invalid_argument] if [shape] does not have one entry per axis of
+    [u]. *)
 
 val pad :
   ?value:Dtype.const -> Ops.t -> (Ops.sint * Ops.sint) option list -> Ops.t
 (** [pad ~value u padding] adds, on each axis, the given numbers of elements of
     [value] (default [0]) before and after it; a negative number removes
-    elements. *)
+    elements.
+
+    Raises [Invalid_argument] if [padding] does not have one entry per axis of
+    [u]. *)
 
 val pad_to : ?value:Dtype.const -> Ops.t -> Ops.sint option list -> Ops.t
-(** [pad_to ~value u shape] pads the end of each axis to [shape]. *)
+(** [pad_to ~value u shape] pads the end of each axis to [shape], or is [u],
+    whatever [value], if [shape] is [u]'s.
+
+    Raises [Invalid_argument] if [shape] does not have one entry per axis of
+    [u]. *)
 
 val flatten : ?start:int -> ?stop:int -> Ops.t -> Ops.t
 (** [flatten ~start ~stop u] merges the axes from [start] (default [0]) to
-    [stop] (default [-1]), included. *)
+    [stop] (default [-1]), included.
+
+    Raises [Invalid_argument] if [start] or [stop] is out of range. *)
 
 val unflatten : Ops.t -> int -> Ops.sint list -> Ops.t
 (** [unflatten u axis sizes] splits [axis] into [sizes]. *)
 
 val squeeze : ?axis:int -> Ops.t -> Ops.t
 (** [squeeze ~axis u] removes [axis] if its size is [1], or every axis of size
-    [1]. *)
+    [1].
+
+    Raises [Invalid_argument] if [axis] is out of range. *)
 
 val unsqueeze : Ops.t -> int -> Ops.t
 (** [unsqueeze u axis] is [u] with an axis of size [1] inserted at [axis], which
@@ -336,21 +358,22 @@ val pool : ?stride:int list -> ?dilation:int list -> Ops.t -> int list -> Ops.t
     is longer than its axis. *)
 
 val cat : ?axis:int -> Ops.t -> Ops.t list -> Ops.t
-(** [cat ~axis u rest] concatenates [u :: rest] along [axis] (default [0]). *)
+(** [cat ~axis u rest] concatenates [u :: rest] along [axis] (default [0]).
+
+    Raises [Invalid_argument] if the nodes' shapes differ off [axis]. *)
 
 val cumalu : Ops.t -> int -> Op.t -> Ops.t
 (** [cumalu u axis op] is the inclusive running [op] ({!Op.Add}, {!Op.Mul} or
     {!Op.Max}) of [u] along [axis], at [u]'s type: each element reduces the
-    window of the elements up to it. Past 16 elements it runs within chunks
-    of 16 from the axis's first element, then along the chunks' last
-    elements the same way, and combines each chunk with the result before
-    it: an axis of [n] elements takes [O(n)] operations in about [log₁₆ n]
-    stages. An element's operations and their order depend on its index
-    alone, but for operations with [op]'s identity: the running [op] of a
-    prefix of the axis is the prefix of its running [op], bit for bit, but
-    for a zero sum's sign and a float maximum's result at a NaN, which
-    {!Op.Max} gives in its operands' order. It is [u] if an axis of [u] is
-    empty.
+    window of the elements up to it. Past 16 elements it runs within chunks of
+    16 from the axis's first element, then along the chunks' last elements the
+    same way, and combines each chunk with the result before it: an axis of [n]
+    elements takes [O(n)] operations in about [log₁₆ n] stages. An element's
+    operations and their order depend on its index alone, but for operations
+    with [op]'s identity: the running [op] of a prefix of the axis is the prefix
+    of its running [op], bit for bit, but for a zero sum's sign, a NaN's payload
+    and a float maximum's result at a NaN, which {!Op.Max} gives in its
+    operands' order. It is [u] if an axis of [u] is empty.
 
     Raises [Invalid_argument] if [axis] has a symbolic size. *)
 
@@ -522,7 +545,9 @@ val bind : Ops.t -> Dtype.value -> Ops.t
     of its range. *)
 
 val unbound : Ops.t -> Ops.t
-(** [unbound v] is [v] without its value and tag. *)
+(** [unbound v] is [v] without its value and tag.
+
+    Raises [Invalid_argument] if [v] is not a variable. *)
 
 val unbind : Ops.t -> Ops.t * Dtype.value
 (** [unbind v] is [(unbound v, x)] for [v] bound to [x].
@@ -534,8 +559,8 @@ val unbind_all : Ops.t -> Ops.t * (Ops.t * Dtype.value) list
     with its value. *)
 
 val variables : Ops.t -> Ops.t list
-(** [variables u] is the unbound scalar variables [u] reads, sorted by name and
-    slot. *)
+(** [variables u] is the unbound scalar parameters [u] reads, with or without a
+    range, sorted by name and slot. *)
 
 val known_size : Ops.sint -> Bigint.t option
 (** [known_size s] is [s]'s value when it is an integer: an {!Ops.Int} or a
@@ -641,13 +666,13 @@ val launch_members : Ops.t -> Ops.t list
 
 val program_info_of_sink : ?target:Helpers.Target.t -> Ops.t -> Ops.program_info
 (** [program_info_of_sink ~target sink] reads the program's launch dimensions
-    from its {!Op.Special} nodes, each named variable they read at slot [-1],
-    as a launch binds it by name; its parameters and buffers from its
-    {!Op.Param} nodes; and which buffers it reads and writes from its loads
-    and stores, and those of the bodies of the calls it makes at the
-    arguments they pass. When none is found
-    reading or writing, every buffer is taken to do both. [target] defaults to
-    the empty target. *)
+    from its {!Op.Special} nodes, each named variable they read at slot [-1], as
+    a launch binds it by name; its parameters and buffers from its {!Op.Param}
+    nodes; and which buffers it reads and writes from its loads and stores
+    through an index of a buffer, a cast of such an index or a shrink of a
+    buffer, and those of the bodies of the calls it makes at the arguments they
+    pass. When none is found reading or writing, every buffer is taken to do
+    both. [target] defaults to the empty target. *)
 
 val kernel_params : Ops.t -> Ops.t list
 (** [kernel_params prg] is the parameters of the linearized {!Op.Program}

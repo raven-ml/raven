@@ -9,7 +9,7 @@ from golden import graph
 from tinygrad.dtype import AddrSpace, Invalid, dtypes
 from tinygrad.helpers import Context
 from tinygrad.uop.ops import Ops, ParamArg, UOp, graph_rewrite
-from tinygrad.uop.weak import commit_weak_consts, pm_cast_const, pm_commit_weak, pm_lower_weak, pm_uncast_const
+from tinygrad.uop.weak import commit_weak_consts, pm_cast_const, pm_commit_weak, pm_lower_weak
 
 
 def rewritten(u, pm):
@@ -267,45 +267,6 @@ def lower_a_gated_shrink_to_the_width_its_bounds_need():
 @graph
 def lower_keeps_a_register_buffer_size_bare():
     return rewritten(UOp.placeholder((4,), dtypes.float, 0, addrspace=AddrSpace.REG).sink(), pm_lower_weak)
-
-
-# pm_uncast_const
-
-@graph
-def uncast_a_committed_literal():
-    return rewritten(small(dtype=dtypes.int32) + UOp.const(1, dtypes.int32), pm_uncast_const)
-
-
-@graph
-def uncast_keeps_literals_with_no_committed_peer():
-    return rewritten(UOp.const(1, dtypes.int32) + UOp.const(2, dtypes.int32), pm_uncast_const)
-
-
-@graph
-def uncast_keeps_a_shifted_literal():
-    count = UOp.variable("s", 0, 31, dtypes.uint32)
-    return rewritten(UOp(Ops.SHL, src=(UOp.const(1, dtypes.int32), count)), pm_uncast_const)
-
-
-@graph
-def uncast_keeps_a_cast_of_an_expression():
-    return rewritten(small(dtype=dtypes.int32) + (weak() + 1).cast(dtypes.int32), pm_uncast_const)
-
-
-@graph
-def uncast_keeps_a_shifted_literal_of_its_peer_s_type():
-    count = UOp.variable("s", 0, 31, dtypes.int32)
-    return rewritten(UOp(Ops.SHL, src=(UOp.const(1, dtypes.int32), count)), pm_uncast_const)
-
-
-@graph
-def uncast_keeps_a_literal_that_widens_a_comparison():
-    return rewritten(UOp(Ops.CMPLT, src=(small(dtype=dtypes.int16), UOp.const(1, dtypes.int32))), pm_uncast_const)
-
-
-@graph
-def uncast_drops_a_cast_that_fits():
-    return rewritten(small("u", dtypes.uint8) < UOp.cconst(44, dtypes.uint8), pm_uncast_const)
 
 
 # pm_cast_const

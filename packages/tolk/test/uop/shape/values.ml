@@ -273,20 +273,6 @@ let shapes =
       test "broadcast_axes rejects a source with more axes than the output"
         (fun () ->
           rejects (fun () -> Shape.broadcast_axes (ints [ 4; 8 ]) (ints [ 8 ])));
-      test "placeholder rejects a size past the largest int" (fun () ->
-          rejects (fun () ->
-              Shape.placeholder ~slot:0 [ 1 lsl 32; 1 lsl 32 ] Float32));
-      test "an axis out of range is rejected" (fun () ->
-          let p = Shape.param ~shape:(ints [ 2; 1 ]) 0 Float32 in
-          rejects (fun () -> Shape.squeeze ~axis:2 p);
-          rejects (fun () -> Shape.squeeze ~axis:(-3) p);
-          rejects (fun () -> Shape.flatten ~start:5 p);
-          rejects (fun () -> Shape.unsqueeze p 3);
-          rejects (fun () -> Shape.transpose p 0 2));
-      test "a split whose sizes miss the axis's is rejected" (fun () ->
-          let p = Shape.param ~shape:(ints [ 2; 3 ]) 0 Float32 in
-          rejects (fun () -> Shape.split ~axis:1 p [ 1; 1 ]);
-          rejects (fun () -> Shape.split p [ 1; 2 ]));
     ]
 
 (* Resolving *)

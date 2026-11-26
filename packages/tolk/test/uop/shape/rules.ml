@@ -1641,6 +1641,34 @@ let values_of_constants =
 
 (* Weak constants *)
 
+(* A golden holds a graph and its rewrite by pm_uncast_const, with the setting
+   DEFAULT_FLOAT at float. *)
+let uncast name u =
+  Golden.graph (name ^ ".golden") (fun () ->
+      Setting.context
+        [ B (Setting.default_float, "float") ]
+        (fun () -> Ops.sink [ u; rewrite Shape.pm_uncast_const u ]))
+
+let uncasts_as_goldens =
+  let small ?(name = "x") dtype = var ~dtype name 0 10 in
+  let i32 n = Ops.int ~dtype:Int32 n in
+  group "pm_uncast_const rewrites each recorded graph as its golden states"
+    [
+      uncast "uncast_a_committed_literal" Ops.O.(small Int32 + i32 1);
+      uncast "uncast_keeps_literals_with_no_committed_peer"
+        Ops.O.(i32 1 + i32 2);
+      uncast "uncast_keeps_a_shifted_literal"
+        (Ops.v Op.Shl ~src:[ i32 1; var ~dtype:Uint32 "s" 0 31 ]);
+      uncast "uncast_keeps_a_cast_of_an_expression"
+        Ops.O.(small Int32 + Ops.cast (var "w" 0 4 + int 1) Int32);
+      uncast "uncast_keeps_a_shifted_literal_of_its_peer_s_type"
+        (Ops.v Op.Shl ~src:[ i32 1; var ~dtype:Int32 "s" 0 31 ]);
+      uncast "uncast_keeps_a_literal_that_widens_a_comparison"
+        (Ops.v Op.Cmplt ~src:[ small Int16; i32 1 ]);
+      uncast "uncast_drops_a_cast_that_fits"
+        Ops.O.(small ~name:"u" Uint8 < Ops.cconst Uint8 (i 44));
+    ]
+
 let weak_constants =
   group "weak constants"
     [
@@ -1677,6 +1705,7 @@ let weak_constants =
             (option (pair Dtypes.dtype Dtypes.dtype))
             expected
             (Shape.derived_dtypes u src));
+      uncasts_as_goldens;
       (* Uncasting a committed constant reads it at its width, where tinygrad
          keeps the literal unwrapped. *)
       test "pm_uncast_const reads a committed constant at its width" (fun () ->
