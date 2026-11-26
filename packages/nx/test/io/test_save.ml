@@ -83,19 +83,6 @@ let dead s =
 let permissions =
   Testable.make ~equal:Int.equal ~pp:(fun ppf p -> Format.fprintf ppf "0o%o" p)
 
-(* Traced values *)
-
-type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
-
-(* [traced f] is [f trace] inside an interpretation, [trace x] a value of [x]'s
-   form that the interpretation traces. *)
-let traced f =
-  let mark i ~by op =
-    Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Mark) op
-  in
-  Nx.Prim.interpret ~name:"test.io" Values mark (fun i ->
-      f (fun x -> Nx.Prim.traced i (Nx.Prim.form x) Mark))
-
 (* The loaders, each discarding what it loads. *)
 let loaders =
   [

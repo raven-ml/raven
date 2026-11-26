@@ -1008,17 +1008,6 @@ let ints_of = function
   | Some v -> failf "%a is no unsigned integer tag" (Testable.pp value) v
   | None -> [||]
 
-(* A traced value has no bytes: [traced f] is [f trace] inside an
-   interpretation, [trace x] a value of [x]'s form that it traces. *)
-type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
-
-let traced f =
-  let mark i ~by op =
-    Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Mark) op
-  in
-  Nx.Prim.interpret ~name:"test.io" Values mark (fun i ->
-      f (fun x -> Nx.Prim.traced i (Nx.Prim.form x) Mark))
-
 (* [refused_save save] asserts that [save path] raises Invalid_argument naming
    save_tiff, [naming] among its words, and leaves [path] as it was. *)
 let refused_save ?(naming = "") save =

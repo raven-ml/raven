@@ -713,17 +713,6 @@ let samples_of s =
   | Broadcast -> Nx.P (Nx.reshape [| 2 * sh.(0); sh.(1) |] x)
   | _ -> Nx.P x
 
-(* A traced value has no bytes: [traced f] is [f trace] inside an
-   interpretation, [trace x] a value of [x]'s form that it traces. *)
-type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
-
-let traced f =
-  let mark i ~by op =
-    Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Mark) op
-  in
-  Nx.Prim.interpret ~name:"test.io" Values mark (fun i ->
-      f (fun x -> Nx.Prim.traced i (Nx.Prim.form x) Mark))
-
 (* The fmt chunk's format tag and whether the file holds a fact chunk. *)
 let form_of path =
   let cs = chunks_of (read path) in

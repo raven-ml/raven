@@ -3,9 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Files, values compared bit for bit, and values drawn to break a format: every
-   dtype it holds, no element or one, strided and broadcast views, NaN with a
-   payload and signalling, -0., infinities and the integers' bounds. *)
+(* Files, values compared bit for bit, traced values, and values drawn to break
+   a format: every dtype it holds, no element or one, strided and broadcast
+   views, NaN with a payload and signalling, -0., infinities and the integers'
+   bounds. *)
 
 open Windtrap
 module A = Nx_array
@@ -172,6 +173,19 @@ let pp_packed ppf (Nx.P x) = Nx.pp ppf x
 (* Host values compare by dtype, shape and bytes: every NaN payload counts. *)
 let packed : Nx.host Nx.packed testable =
   Testable.make ~pp:pp_packed ~equal:same_value
+
+(* Traced values *)
+
+type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
+
+(* [traced f] is [f trace] inside an interpretation, [trace x] a value of [x]'s
+   form that the interpretation traces, which has no bytes. *)
+let traced f =
+  let mark i ~by op =
+    Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Mark) op
+  in
+  Nx.Prim.interpret ~name:"test.io" Values mark (fun i ->
+      f (fun x -> Nx.Prim.traced i (Nx.Prim.form x) Mark))
 
 (* Drawn values *)
 
