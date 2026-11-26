@@ -141,8 +141,9 @@ module Value : sig
       by [v1], which lies from [0] toward [v1], [v1] excluded. Of floats it is
       that exact value rounded once to a double, to nearest with ties to even,
       so it can be [v1] itself, and a zero remainder has [v1]'s sign. By an
-      infinite [v1], it is [v0] where the quotient is [0], and [v1] where it is
-      [-1]. An infinite [v0] or a NaN gives NaN.
+      infinite [v1], it is [v0] where the quotient is [0], a zero [v0] taking
+      [v1]'s sign, and [v1] where it is [-1]. An infinite [v0] or a NaN gives
+      NaN.
 
       Raises [Division_by_zero] if [v1] is zero. *)
 end

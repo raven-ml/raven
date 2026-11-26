@@ -502,6 +502,21 @@ let inference =
             (Shape.sym_infer
                (Sym (Ops.bitcast (Ops.cast (Ops.float 1.5) Float32) Uint32))
                []));
+      (* A boolean is true where its byte is not zero, and a bitcast back reads
+         the byte, which no boolean value holds. *)
+      test "sym_infer rejects a bitcast to a boolean of a byte neither 0 nor 1"
+        (fun () ->
+          let byte name = Ops.bitcast (var ~dtype:Uint8 name 0 255) Bool in
+          let picked =
+            Ops.bitcast
+              (Ops.where (Ops.cast (var "c" 0 1) Bool) (byte "x") (byte "y"))
+              Uint8
+          in
+          let at x =
+            Shape.sym_infer (Sym picked) [ ("c", 1); ("x", x); ("y", 0) ]
+          in
+          equal int 1 (at 1);
+          rejects (fun () -> at 2));
       test "sym_infer evaluates an expression nested 200 deep" (fun () ->
           let a = weak_var "a" 1 8192 and b = weak_var "b" 0 8191 in
           let step e =

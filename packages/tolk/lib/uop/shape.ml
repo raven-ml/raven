@@ -1227,6 +1227,13 @@ let int_binary = function
   | Op.Mod -> Some (int_remainder ~toward_zero:false)
   | _ -> None
 
+(* Whether the [dt] value [v] bitcast to [dt'] loses its bits: a Bool holds
+   whether its byte is zero, and a bitcast back reads the byte, so a byte
+   neither 0 nor 1 has no Bool value. *)
+let loses_byte dt dt' v =
+  Dtype.equal dt' Dtype.Bool
+  && Bigint.gt (Dtype.Value.to_z (Dtype.bitcast dt Dtype.Uint8 v)) Bigint.one
+
 (* [s]'s value in an environment, computed exactly, and the same on [int]s,
    which raises [Inexact], if [s] is an integer of integer operations. *)
 let compiled (s : sint) var =
@@ -1261,7 +1268,12 @@ let compiled (s : sint) var =
         | Op.Bitcast ->
             let src = first (op n) (src n) in
             let x = compute src in
-            fun env -> Dtype.bitcast (dtype src) (dtype n) (x env)
+            fun env ->
+              let v = x env in
+              if loses_byte (dtype src) (dtype n) v then
+                invalid_argf "a bitcast of %s to a boolean has no value"
+                  (repr_const v);
+              Dtype.bitcast (dtype src) (dtype n) v
         | op when Op.Set.mem op Op.Set.alu ->
             let xs = List.map compute (src n) in
             fun env -> sym_alu op (dtype n) (List.map (fun x -> x env) xs)
@@ -1875,11 +1887,7 @@ let fold_bitcast root c =
       if Dtype.is_float dt then number (Dtype.const dt (num c))
       else Dtype.truncate dt (num c)
     in
-    (* a Bool constant holds whether its byte is zero, and a bitcast back reads
-       the byte: one neither 0 nor 1 stays a bitcast *)
-    let byte () = Dtype.Value.to_z (Dtype.bitcast dt Dtype.Uint8 v) in
-    if Dtype.equal (dtype root) Dtype.Bool && Bigint.gt (byte ()) Bigint.one
-    then None
+    if loses_byte dt (dtype root) v then None
     else Some (const_v root (Dtype.bitcast dt (dtype root) v))
 
 (* A committed integer holds its type's value, so a fold reads a committed
