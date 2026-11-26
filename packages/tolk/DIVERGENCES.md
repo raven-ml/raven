@@ -1254,12 +1254,13 @@ encodes its own releases (D146).
   a planned buffer a range writes is not placed over one it leaves` and `› a
   buffer a range writes through a view is not placed over another`, each
   failing without its half; the Memory suite (`test/schedule/memory`):
-  `memory_plan_rewrite › the buffers a call takes › a buffer a call views is
-  planned` and `› a buffer viewed after another's life is not placed over it`,
-  `› rules › a copy's buffer is free from the call after its last` and `› a
-  copy's buffer and a call's of one device share bytes once their lives are
-  apart`, the recorded `copy_chain`, `copies_share`, `random_*` plans, and the
-  law over drawn schedules; the Jit suite's `jit_lower › arenas › a device's
+  `memory_plan_rewrite › a buffer a call views is planned` and `› a buffer
+  viewed after another's life is not placed over it`, `› a copy's buffer is
+  free from the call after its last` and `› a copy's buffer and a call's of
+  one device share bytes once their lives are apart`, the recorded
+  `copy_chain`, `copies_share`, `random_*` plans, and the props over drawn
+  schedules (`› each device has one arena of bytes`, `› buffers whose lives
+  meet share no byte`); the Jit suite's `jit_lower › arenas › a device's
   buffers share one arena, a copy's among them` and its recorded
   `weights_copy_lowered`, `held_constant_lowered`,
   `split_multidev_xfer_lowered` and `split_multidev_copy_lowered`; the
@@ -4714,10 +4715,11 @@ the walk of `Rangeify.fix_store_hazard`.
   storage between runs`, `› a run holds its storage whole, no less than its
   buffers live at once`, `› a schedule linked per run does the work it does
   linked` and `› a run keeps none of the buffers it was given`; `Tolk.Memory ›
-  memory_plan_rewrite › rules › a copy's buffer and a call's of one device share
-  bytes once their lives are apart` and the plan law; rune's `fully sharded`
-  tests, whose shares are exact after a step, and `Rune.jit on a GPU › memory ›
-  a split program holds at its return at most its result and its plan`.
+  memory_plan_rewrite › a copy's buffer and a call's of one device share bytes
+  once their lives are apart` and `› each device has one arena of bytes`;
+  rune's `fully sharded` tests, whose shares are exact after a step, and
+  `Rune.jit on a GPU › memory › a split program holds at its return at most
+  its result and its plan`.
 
 ## D174. A kernel's call bodies are functions of its own source on every target
 
@@ -9136,11 +9138,13 @@ D466.
   chunks of a batch of 256 (width 32, hidden 256, on the host), held
   2,441,344 bytes, the sum of a step's buffers, and holds 360,576.
 - **Pinned by:** the Memory suite (`test/schedule/memory`):
-  `memory_plan_rewrite › loops › buffers only one loop's calls take share
-  bytes within a trip`, `› a buffer a loop's calls and a later call take
-  lives the whole loop`, `› a buffer of a nested loop shares bytes within
-  the outer trip` and `› a back edge's flag lives the whole loop`, and the
-  law over drawn schedules, whose calls run in loops nested two deep; the
+  `memory_plan_rewrite › buffers only one loop's calls take share bytes
+  within a trip`, `› a buffer a loop's calls and a later call take lives the
+  whole loop`, `› a buffer of a nested loop shares bytes within the outer
+  trip` and `› a back edge's flag lives the whole loop`, and `› places
+  buffers largest first, each at the start of the smallest gap that holds
+  it` and `› buffers whose lives meet share no byte` over drawn schedules,
+  whose calls run in loops nested two deep; the
   Engine suite's `runs › a run holds its storage whole, no less than its
   buffers live at once`; rune's `rune remat › memory › a step that takes a
   gradient plans each trip`, and, for the precondition, rune's scan law
@@ -9173,11 +9177,13 @@ D466.
   tinygrad's. On random schedules it is no promise: of 1,000, greedy was
   larger than TLSF on 15, by up to 20.6%.
 - **Pinned by:** the Memory suite (`test/schedule/memory`):
-  `memory_plan_rewrite › rules › buffers are placed largest first`; rune's
-  `rune remat › memory › a chain's backward pass computes one block at a
-  time`; the laws (`› laws`), that buffers whose lives meet share no byte
-  and that each recorded plan's arena is at most tinygrad's; the recorded
-  plans whose places differ carry this entry in their `.tolk`.
+  `memory_plan_rewrite › buffers are placed largest first`, `› places
+  buffers largest first, each at the start of the smallest gap that holds
+  it` (exact offsets against a reading of the rule), `› buffers whose lives
+  meet share no byte` and `› a recorded plan's arenas take no more bytes
+  than tinygrad's` (a row per recorded schedule); rune's `rune remat ›
+  memory › a chain's backward pass computes one block at a time`; the
+  recorded plans whose places differ carry this entry in their `.tolk`.
 
 ## D478. An output that stores a stage whole holds it
 

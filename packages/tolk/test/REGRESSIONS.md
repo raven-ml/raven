@@ -1415,29 +1415,35 @@ largest first between those whose lives meet (D477), so tinygrad's
 ## Memory
 
 The suite is `Tolk.Memory` (`schedule/memory/`), written `ME` below.
-`ME › memory_plan_rewrite › recorded` holds tinygrad's plans of schedules and
-their held buffers (`<case>_planned.golden`, its arenas numbered as
-tinygrad's): the schedules of tinygrad's `test_memory_planner.py`, random
-ones, and those `linear_with_vars` plans for `Tensor` programs on CPU devices.
-`ME › memory_plan_rewrite › laws` states, over generated schedules, that a
-planned buffer is the bytes of an arena at a block, viewed as its type; that
-buffers alive at once share no byte, a call that views a buffer taking it;
-that copies and other calls use arenas of their own; and that held buffers
-stay.
+`ME › memory_plan_rewrite › plans each recorded schedule as its golden
+states` holds tinygrad's plans of schedules and their held buffers
+(`<case>_planned.golden`, its arenas numbered as tinygrad's): the schedules
+of tinygrad's `test_memory_planner.py`, random ones, and those
+`linear_with_vars` plans for `Tensor` programs on CPU devices. `ME ›
+memory_plan_rewrite › a recorded plan's arenas take no more bytes than
+tinygrad's` holds each recorded plan to at most tinygrad's arenas (D477).
+Over generated schedules on one or two devices, the props of `ME ›
+memory_plan_rewrite` state that held buffers stay; that each device has one
+arena of bytes, copies' buffers and the others' alike, as large as its
+buffers reach; that buffers are placed where the interface's rule puts them
+(a reference placement, exact offsets); that buffers whose lives meet share
+no byte, a call that views a buffer (a shrink, a bitcast or an after) taking
+it; and that a planned buffer is its arena's bytes from its phase past its
+place, viewed as its type.
 
 ### tinygrad
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_simple_buffer, test_simple_pinned, test_all_pinned | live buffers never overlap; held buffers stay | `ME › memory_plan_rewrite › recorded › simple_planned.golden`, `some_held_planned.golden`, `all_held_planned.golden`; `ME › memory_plan_rewrite › rules › a schedule of held buffers only is itself`; the laws |
-| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_simple_buffer_offset, test_buffer_offset, test_buffer_offset2, test_all_offsets_of_one | buffers passed again by later calls (their `base=` aliases the same buffer) | `ME › memory_plan_rewrite › recorded › reused_planned.golden`; the laws (generated calls pass a buffer again) |
-| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_very_small_buffers | buffers under a block | `ME › memory_plan_rewrite › recorded › very_small_planned.golden` |
-| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_very_big_buffers | buffers of 2^64 and 2^128 bytes | `ME › memory_plan_rewrite › recorded › big_planned.golden` (up to 2^50 elements); sizes past OCaml's `int` are dropped: storage sizes are `int` |
-| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_copy_bufs_separate_from_compute, test_copy_bufs_reuse_among_copies, test_compute_bufs_reuse_among_compute, test_copy_and_compute_no_cross_reuse | copies and other calls use arenas of their own, each shared within its kind | replaced by one arena per device, copies' and kernels' alike (D41): `ME › memory_plan_rewrite › recorded › copy_apart_from_compute_planned.golden`, `copies_share_planned.golden`, `computes_share_planned.golden`, kept as a `.tolk` (D41); `ME › memory_plan_rewrite › rules › a copy's buffer and a call's of one device share bytes once their lives are apart`; the laws |
-| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_multiple_copy_bufs_with_offsets, test_copy_bufs_pinned_mixed | | `ME › memory_plan_rewrite › recorded › copies_held_mixed_planned.golden`; the laws |
-| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_deferred_copy_frees_chain | a copy's buffer lives on after its last call | replaced by a copy's buffer free from the call after its last (D41): `ME › memory_plan_rewrite › recorded › copy_chain_planned.golden`, kept as a `.tolk` (D41); `ME › memory_plan_rewrite › rules › a copy's buffer is free from the call after its last`; the laws |
-| tinygrad: schedule/memory.py `_collect_bufs` (no test) | a call takes the buffers among its sources, so one only views reach is not planned | replaced (D41): a call takes the buffers its sources view too; `ME › memory_plan_rewrite › the buffers a call takes ›` "a buffer a call views is planned", "a buffer viewed after another's life is not placed over it"; the laws; `SC › create_linear_with_vars › recorded › copy_view_linear.golden`, whose call is given a view |
-| tinygrad: schedule/memory.py `_can_plan` on CL and WEBGPU devices | no plan on devices without views | dropped: those devices are excluded (README Exclusions); a disk is `ME › memory_plan_rewrite › recorded › disk_planned.golden` and `ME › memory_plan_rewrite › rules › a schedule on a disk is itself` |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_simple_buffer, test_simple_pinned, test_all_pinned | live buffers never overlap; held buffers stay | `ME › memory_plan_rewrite › plans each recorded schedule as its golden states › simple_planned.golden`, `some_held_planned.golden`, `all_held_planned.golden`; `ME › memory_plan_rewrite › a schedule of held buffers only is itself`; `› a held buffer stays`, `› buffers whose lives meet share no byte` |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_simple_buffer_offset, test_buffer_offset, test_buffer_offset2, test_all_offsets_of_one | buffers passed again by later calls (their `base=` aliases the same buffer) | `ME › memory_plan_rewrite › plans each recorded schedule as its golden states › reused_planned.golden`; the props of `ME › memory_plan_rewrite` (generated calls pass a buffer again) |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_very_small_buffers | buffers under a block | `ME › memory_plan_rewrite › plans each recorded schedule as its golden states › very_small_planned.golden` |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_very_big_buffers | buffers of 2^64 and 2^128 bytes | `ME › memory_plan_rewrite › plans each recorded schedule as its golden states › big_planned.golden` (up to 2^50 elements); sizes past OCaml's `int` are dropped: storage sizes are `int` |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_copy_bufs_separate_from_compute, test_copy_bufs_reuse_among_copies, test_compute_bufs_reuse_among_compute, test_copy_and_compute_no_cross_reuse | copies and other calls use arenas of their own, each shared within its kind | replaced by one arena per device, copies' and kernels' alike (D41): `ME › memory_plan_rewrite › plans each recorded schedule as its golden states › copy_apart_from_compute_planned.golden`, `copies_share_planned.golden`, `computes_share_planned.golden`, kept as a `.tolk` (D41); `ME › memory_plan_rewrite › a copy's buffer and a call's of one device share bytes once their lives are apart`; `› each device has one arena of bytes` |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_multiple_copy_bufs_with_offsets, test_copy_bufs_pinned_mixed | | `ME › memory_plan_rewrite › plans each recorded schedule as its golden states › copies_held_mixed_planned.golden`; the props of `ME › memory_plan_rewrite` |
+| tinygrad: null/test_memory_planner.py::TestMemoryPlanner::test_deferred_copy_frees_chain | a copy's buffer lives on after its last call | replaced by a copy's buffer free from the call after its last (D41): `ME › memory_plan_rewrite › plans each recorded schedule as its golden states › copy_chain_planned.golden`, kept as a `.tolk` (D41); `ME › memory_plan_rewrite › a copy's buffer is free from the call after its last`; `› buffers whose lives meet share no byte` |
+| tinygrad: schedule/memory.py `_collect_bufs` (no test) | a call takes the buffers among its sources, so one only views reach is not planned | replaced (D41): a call takes the buffers its sources view too; `ME › memory_plan_rewrite ›` "a buffer a call views is planned", "a buffer viewed after another's life is not placed over it"; `› buffers whose lives meet share no byte` (cover "a buffer a call shrinks is planned"); `SC › create_linear_with_vars › recorded › copy_view_linear.golden`, whose call is given a view |
+| tinygrad: schedule/memory.py `_can_plan` on CL and WEBGPU devices | no plan on devices without views | dropped: those devices are excluded (README Exclusions); a disk is `ME › memory_plan_rewrite › plans each recorded schedule as its golden states › disk_planned.golden` and `ME › memory_plan_rewrite › a schedule on a disk is itself` |
 
 ## Device
 
