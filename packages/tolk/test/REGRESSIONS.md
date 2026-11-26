@@ -1268,21 +1268,24 @@ an object the installed objdump cannot read, skips.
 The suite is `Tolk.Compiler_cuda` (`runtime/support/compiler_cuda/`),
 written `CUDA` below. Settings are read when the program starts, so the tests
 tagged `no-library` run in a second process, where `NVRTC_PATH` names a file
-that is no library, which the compiler finds, and those tagged `no-spawn` in a
-third; the fork tests,
-`Tolk.Compiler_cuda (fork)`, run in a program that spawns no domain. The tests of NVRTC
-itself are slow and skip without it; they pass against NVRTC 12.8 on Linux
-arm64 and 13.4 on Linux x86_64.
+that is no library, which the compiler finds and whose workers answer each
+compile with the reason: they hold the claims every compiler's workers share,
+on every system. Those tagged `no-spawn` and `unrunnable-memory` run in a
+third and a fourth. The fork tests, `Tolk.Compiler_cuda (fork)`, written
+`CF` below, run in a program that spawns no domain, with NVRTC and with the
+file that is no library. The tests of NVRTC itself skip without it; they pass
+against NVRTC 12.8 on Linux arm64 and 13.4 on Linux x86_64.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.compile` (no test) | PTX and cubins | slow: `CUDA › NVRTC › compiles a kernel to PTX`, `compiles a kernel to a cubin`, `compiles from several domains at once` |
-| tinygrad: `runtime/support/compiler_cuda.py` `nvrtc_check` | `Nvrtc Error`, NVRTC's error string and log | slow: `CUDA › NVRTC › a rejected source raises Compile_error with NVRTC's log` |
-| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` cache key | `compile_<cache_key>_<arch>` | `CUDA › cache` (4 tests) |
-| tinygrad: `runtime/support/compiler_cuda.py` `cuda_disassemble` | `ptxas` then `nvdisasm`, or why they failed | `CUDA › disassembly › a PTX that ptxas cannot assemble prints why`, `a cubin that nvdisasm cannot read prints why` |
-| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` (`nvrtcVersion`) | making the compiler without NVRTC fails | `CUDA › without NVRTC on the machine › making a compiler raises Failure naming nvrtc and NVRTC_PATH` |
-| D5 | compiles in processes of their own, which load the library and serve in turn: a library found that does not load is a `Compile_error` at each compile, a crash is a `Compile_error` naming the signal and fails that compile only, a killed idle process is replaced, NVRTC's cache of binaries stays empty, a process that cannot start is `Failure` | slow: `CUDA › compiles in processes of their own` (6 tests); `CUDA › a library that does not load` (5 tests); `CUDA › a process that cannot start`; `Tolk.Compiler_cuda (fork) › a forked process` (2 tests) |
-| tinygrad: `device/nv/test_renderer_failures.py`, `runtime/test_renderer_failures.py` | kernels that once failed to render | dropped here: rendering is `Cstyle`'s section; slow: `Tolk.Cstyle › every GPU kernel compiles with its target's toolchain` compiles every CUDA kernel |
+| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.compile` (no test) | PTX and cubins | `CUDA › nvrtc › compiles a kernel to PTX for its architecture`, `compiles a kernel to a cubin with ~ptx:false`; `CUDA › compiles in processes of their own › kernels compiled on several domains at once are the bytes they are compiled to in turn` |
+| tinygrad: `runtime/support/compiler_cuda.py` `nvrtc_check` | `Nvrtc Error`, NVRTC's error string and log | `CUDA › nvrtc › a rejected source raises Compile_error with NVRTC's error and log` |
+| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` cache key | `compile_<cache_key>_<arch>` | `CUDA › nvrtc › the table` (6 tests) |
+| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` include paths | `-I` of `CUDA_PATH`'s `include` | `CUDA › nvrtc › searches headers in include of the directory Setting.cuda_path names` |
+| tinygrad: `runtime/support/compiler_cuda.py` `cuda_disassemble` | `ptxas` then `nvdisasm`, or why they failed | `CUDA › nvrtc › disassembling a PTX that ptxas cannot assemble prints why`, `disassembling a cubin that nvdisasm cannot read prints why`; tolk removes the file it gives them: `disassembly leaves no file in the temporary directory` |
+| tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` (`nvrtcVersion`) | making the compiler without NVRTC fails | `CUDA › nvrtc › without NVRTC, making a compiler raises Failure naming NVRTC_PATH` |
+| D5 | compiles in processes of their own, which load the library and serve in turn: a library found that does not load is a `Compile_error` at each compile, a killed or crashing process is a `Compile_error` naming the signal, or saying it ended where `SIGCHLD` is ignored, and fails that compile only, a killed idle process is replaced, with `SIGCHLD` ignored too, a worker starts with every signal at its default and none blocked, ended workers' temporary directories go, NVRTC's cache of binaries stays empty, a process that cannot start is `Failure`, a memory file that cannot run gives way to the cache, a forked process starts its own, a process with closed standard streams compiles alike, and a worker in a compile ends with its parent and removes its directory | `CUDA › compiles in processes of their own` (every test); `CUDA › nvrtc › a library that does not load raises Compile_error naming the file`, `a compile in turn is served by the idle worker, with its answer`, `a process that cannot start raises Failure naming the worker`; `CF › a forked process` (2 tests); `CF › a worker › in a compile whose parent is killed ends and removes its directory, though a process forked from the parent lives` |
+| tinygrad: `device/nv/test_renderer_failures.py`, `runtime/test_renderer_failures.py` | kernels that once failed to render | dropped here: rendering is `Cstyle`'s section; `Tolk.Cstyle › cuda › every recorded kernel compiles with the target's toolchain` compiles every CUDA kernel |
 
 ## Compiler_amd
 

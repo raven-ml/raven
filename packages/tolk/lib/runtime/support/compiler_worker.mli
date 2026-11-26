@@ -66,6 +66,15 @@ val call : t -> string -> string -> (string, string) result
     and serves no other: the next call starts another. An idle worker that has
     ended meanwhile is replaced before the request is sent. A worker that
     replies has what it printed during the request printed on standard error.
+    The reply alone decides the outcome. Where this process ignores [SIGCHLD],
+    the system reaps a worker as it ends and its status is lost; an [Error] then
+    says only that it ended. Elsewhere than on Windows a worker starts with
+    every signal at its default action and none blocked, whatever this process
+    ignores or blocks.
+
+    A process whose standard input, output or error is closed compiles as one
+    whose are open, and nothing it writes to a descriptor that takes their place
+    reaches a worker.
 
     A worker that ends never raises [SIGPIPE] here: requests go to a socket
     sent to without the signal, or on Windows, which has none, to a pipe.

@@ -3,7 +3,9 @@ open Tolk
 module Compiler = Renderer.Compiler
 
 (* Compiles across a fork. This program spawns no domain: a domain forbids a
-   fork for the rest of a process's life. *)
+   fork for the rest of a process's life. It runs with NVRTC and where
+   NVRTC_PATH names a file that is no library, whose workers answer each compile
+   with the reason. *)
 
 let kernel =
   {|extern "C" __global__ void add(float *a, const float *b) {
@@ -17,9 +19,11 @@ let has_infix ~affix s =
   in
   at 0
 
+let cubin src = Compiler.compile (Compiler_cuda.nvrtc ~ptx:false "sm_89") src
+
 (* A compile's outcome as text: the binary's digest, or the error. *)
 let compile () =
-  match Compiler.compile (Compiler_cuda.nvrtc ~ptx:false "sm_89") kernel with
+  match cubin kernel with
   | lib -> "binary " ^ Digest.to_hex (Digest.string lib)
   | exception Compiler.Compile_error msg -> "error " ^ msg
 
@@ -30,11 +34,12 @@ let first_compile () =
   | exception Failure msg when has_infix ~affix:"NVRTC_PATH" msg ->
       skip ~reason:msg ()
 
-(* The pids of this process's children, which pgrep lists, in order; the test
+(* The pids of process [pid]'s children, which pgrep lists, in order; the test
    skips where pgrep does not run. *)
-let children () =
-  let pid = string_of_int (Unix.getpid ()) in
-  match Unix.open_process_args_in "pgrep" [| "pgrep"; "-P"; pid |] with
+let children_of pid =
+  match
+    Unix.open_process_args_in "pgrep" [| "pgrep"; "-P"; string_of_int pid |]
+  with
   | exception Unix.Unix_error _ -> skip ~reason:"pgrep does not run" ()
   | ic -> (
       let listed = In_channel.input_all ic in
@@ -45,32 +50,81 @@ let children () =
                (String.split_on_char '\n' listed))
       | _ -> skip ~reason:"pgrep failed" ())
 
-(* The pids of process [pid]'s children. *)
-let children_of pid =
-  match
-    Unix.open_process_args_in "pgrep" [| "pgrep"; "-P"; string_of_int pid |]
-  with
-  | exception Unix.Unix_error _ -> skip ~reason:"pgrep does not run" ()
-  | ic -> (
-      let listed = In_channel.input_all ic in
-      match Unix.close_process_in ic with
-      | WEXITED (0 | 1) ->
-          List.filter_map int_of_string_opt (String.split_on_char '\n' listed)
-      | _ -> skip ~reason:"pgrep failed" ())
+let children () = children_of (Unix.getpid ())
 
-(* [until ~seconds p] waits until [p ()] holds, asking every 10 ms: false if
-   [seconds] pass first. *)
-let until ~seconds p =
-  let deadline = Unix.gettimeofday () +. seconds in
-  let rec ask () =
-    p ()
-    || Unix.gettimeofday () < deadline
-       && begin
-         Unix.sleepf 0.01;
-         ask ()
-       end
-  in
-  ask ()
+(* [f ()] run in a forked child, which writes it to a pipe and exits: the text,
+   or the exception it raised. The test skips where processes do not fork. *)
+let in_child f =
+  flush_all ();
+  let input, output = Unix.pipe ~cloexec:true () in
+  match Unix.fork () with
+  | exception Invalid_argument _ -> skip ~reason:"no fork here" ()
+  | 0 ->
+      Unix.close input;
+      let text = try f () with e -> "raised " ^ Printexc.to_string e in
+      ignore (Unix.write_substring output text 0 (String.length text));
+      Unix._exit 0
+  | pid ->
+      Unix.close output;
+      let text = In_channel.input_all (Unix.in_channel_of_descr input) in
+      Unix.close input;
+      ignore (Unix.waitpid [] pid);
+      text
+
+let fork =
+  group "a forked process"
+    [
+      test "starts workers of its own, and both compile alike" (fun () ->
+          let first = first_compile () in
+          let workers = children () in
+          not_equal (list int) ~msg:first [] workers;
+          let own = Printf.sprintf "%s, with workers of its own: %b" in
+          equal string (own first true)
+            (in_child (fun () ->
+                 let outcome = compile () in
+                 own outcome (children () <> [])));
+          equal string first (compile ());
+          equal (list int) ~msg:"the parent's workers" workers (children ()));
+      test "with standard input, output and error closed compiles alike"
+        (fun () ->
+          let first = first_compile () in
+          equal string
+            (first ^ "\n" ^ first)
+            (in_child (fun () ->
+                 Unix.close Unix.stdin;
+                 Unix.close Unix.stdout;
+                 Unix.close Unix.stderr;
+                 let a = compile () in
+                 (* Reaches a descriptor that took standard output's place. *)
+                 (try
+                    print_string "not a request";
+                    flush stdout
+                  with Sys_error _ -> ());
+                 a ^ "\n" ^ compile ())));
+    ]
+
+(* A worker whose parent dies *)
+
+(* [kernel] held in its compile, which includes a FIFO in [dir] that no process
+   writes: NVRTC opens an included file, and the open of a FIFO waits for a
+   writer. *)
+let held_in_compile dir =
+  let fifo = Filename.concat dir "held" in
+  match Unix.mkfifo fifo 0o600 with
+  | () -> Printf.sprintf "#include \"%s\"\n%s" fifo kernel
+  | exception (Unix.Unix_error _ | Invalid_argument _) ->
+      skip ~reason:"no FIFOs here" ()
+
+(* The temporary directory of worker [pid], its program's second argument, as
+   Linux's /proc/PID/cmdline lists them. *)
+let temp_of pid =
+  let cmdline = Printf.sprintf "/proc/%d/cmdline" pid in
+  match In_channel.with_open_bin cmdline In_channel.input_all with
+  | s -> (
+      match String.split_on_char '\000' s with
+      | _ :: _ :: temp :: _ -> Some temp
+      | _ -> None)
+  | exception Sys_error _ -> None
 
 (* Whether process [pid] has ended: there is none, or it waits for its parent to
    collect it (Linux's /proc says so). *)
@@ -86,80 +140,70 @@ let ended pid =
           | Some i -> i + 2 < String.length s && s.[i + 2] = 'Z'
           | None -> false))
 
-(* The exit code of [f ()] run in a forked child, which exits with it at
-   once; the test skips where processes do not fork. *)
-let in_child f =
-  flush_all ();
-  match Unix.fork () with
-  | exception Invalid_argument _ -> skip ~reason:"no fork here" ()
-  | 0 -> Unix._exit (try f () with _ -> 99)
-  | pid -> (
-      match snd (Unix.waitpid [] pid) with
-      | WEXITED n -> n
-      | WSIGNALED s | WSTOPPED s -> 128 + s)
+(* The number of the openat system call on the host, as Linux's
+   /proc/PID/syscall writes it first, from each architecture's system call table
+   (unistd.h), where [uname -m] names one. *)
+let openat_number =
+  lazy
+    (match Unix.open_process_args_in "uname" [| "uname"; "-m" |] with
+    | exception Unix.Unix_error _ -> None
+    | ic -> (
+        let machine = String.trim (In_channel.input_all ic) in
+        ignore (Unix.close_process_in ic);
+        match machine with
+        | "x86_64" -> Some "257"
+        | "aarch64" | "riscv64" -> Some "56"
+        | "ppc64" | "ppc64le" -> Some "286"
+        | "s390x" -> Some "288"
+        | _ -> None))
 
-(* The child's exit codes. *)
-let shares_workers = 2
-and differs = 3
+(* Returns once worker [pid] waits inside a compile in the open of a FIFO: its
+   /proc/PID/wchan names the wait for a writer, or its main thread is in openat
+   as /proc/PID/syscall says. Skips where /proc tells neither; fails once
+   [parent], whose compile it serves, has ended, as when the compile returned
+   instead of waiting. Asks every millisecond: no clock decides, and
+   WINDTRAP_TIMEOUT ends a wait that never comes. *)
+let rec until_in_fifo_open ~parent pid =
+  let read file =
+    match
+      In_channel.with_open_bin
+        (Printf.sprintf "/proc/%d/%s" pid file)
+        In_channel.input_all
+    with
+    | s -> Some (String.trim s)
+    | exception Sys_error _ -> None
+  in
+  let in_openat syscall =
+    match (Lazy.force openat_number, String.split_on_char ' ' syscall) with
+    | Some n, first :: _ -> first = n
+    | _ -> false
+  in
+  match (read "wchan", read "syscall") with
+  | Some "wait_for_partner", _ -> ()
+  | _, Some syscall when in_openat syscall -> ()
+  | (None | Some "0"), None ->
+      skip ~reason:"/proc names no wait of the worker" ()
+  | _ -> (
+      match Unix.waitpid [ WNOHANG ] parent with
+      | 0, _ ->
+          Unix.sleepf 0.001;
+          until_in_fifo_open ~parent pid
+      | _ -> fail "the compile returned instead of waiting on the FIFO")
 
-let fork =
-  group "a forked process"
-    [
-      test "starts workers of its own, and both compile alike" (fun () ->
-          let first = first_compile () in
-          let workers = children () in
-          not_equal (list int) ~msg:first [] workers;
-          let code =
-            in_child (fun () ->
-                let outcome = compile () in
-                if children () = [] then shares_workers
-                else if outcome <> first then differs
-                else 0)
-          in
-          equal int ~msg:"the child's exit code" 0 code;
-          equal string first (compile ());
-          equal (list int) workers (children ()));
-      test "with standard input and output closed compiles alike" (fun () ->
-          let first = first_compile () in
-          let code =
-            in_child (fun () ->
-                Unix.close Unix.stdin;
-                Unix.close Unix.stdout;
-                let a = compile () in
-                (* Reaches a descriptor that took standard output's place. *)
-                (try
-                   print_string "not a request";
-                   flush stdout
-                 with Sys_error _ -> ());
-                let b = compile () in
-                if a <> first || b <> first then differs else 0)
-          in
-          equal int ~msg:"the child's exit code" 0 code);
-    ]
+(* Returns once process [pid] has ended, asking every millisecond: no clock
+   decides, and WINDTRAP_TIMEOUT ends a wait for an end that never comes. *)
+let rec until_ended pid =
+  if not (ended pid) then begin
+    Unix.sleepf 0.001;
+    until_ended pid
+  end
 
-(* A worker whose parent dies during a compile *)
-
-(* [kernel] including the FIFO [fifo]: its compile waits in the open of [fifo]
-   until a writer opens it. NVRTC then reads as many bytes as the FIFO's size,
-   none. *)
-let waiting fifo = Printf.sprintf "#include \"%s\"\n%s" fifo kernel
-
-(* The temporary directory of worker [pid], its program's second argument, as
-   Linux's /proc/PID/cmdline lists them. *)
-let temp_of pid =
-  let cmdline = Printf.sprintf "/proc/%d/cmdline" pid in
-  match In_channel.with_open_bin cmdline In_channel.input_all with
-  | s -> (
-      match String.split_on_char '\000' s with
-      | _ :: _ :: temp :: _ -> Some temp
-      | _ -> None)
-  | exception Sys_error _ -> None
-
-(* In a forked process: forks a process that sleeps until killed, holding what
+(* In the forked parent: forks a process that sleeps until killed, holding what
    this one holds, and writes its pid to [out]. *)
 let fork_sleeper out =
   match Unix.fork () with
   | 0 ->
+      Unix.close out;
       Unix.sleepf 60.;
       Unix._exit 0
   | pid ->
@@ -167,44 +211,24 @@ let fork_sleeper out =
       ignore (Unix.write_substring out s 0 (String.length s));
       Unix.close out
 
-(* The pid that [fork_sleeper] writes to [input], if any. *)
+(* The pid that [fork_sleeper] writes to [input], once it has. *)
 let read_sleeper input =
-  let buf = Bytes.create 16 in
-  let n = try Unix.read input buf 0 16 with Unix.Unix_error _ -> 0 in
+  let pid = In_channel.input_all (Unix.in_channel_of_descr input) in
   Unix.close input;
-  int_of_string_opt (Bytes.sub_string buf 0 n)
+  require_some ~msg:"the forked process" (int_of_string_opt pid)
 
-(* Whether process [pid] waits in the open of a FIFO for a writer, as Linux's
-   /proc/PID/wchan names it. *)
-let waits_for_writer pid =
-  let wchan = Printf.sprintf "/proc/%d/wchan" pid in
-  match In_channel.with_open_bin wchan In_channel.input_all with
-  | s -> s = "wait_for_partner"
-  | exception Sys_error _ -> false
-
-(* Lets a compile waiting in the open of [fifo] go on: a writer that opens and
-   closes it. *)
-let release fifo =
-  match Unix.openfile fifo [ O_WRONLY; O_NONBLOCK; O_CLOEXEC ] 0 with
-  | fd -> Unix.close fd
-  | exception Unix.Unix_error (ENXIO, _, _) -> ()
-
+(* The worker serves its parent's compile, which never returns, and is in it
+   when the parent is killed. The forked process holds the parent's end of the
+   worker's input open, so only the parent's death ends it. *)
 let parent_death =
-  group "a parent that dies"
+  group "a worker"
     [
       test
-        "during a compile ends its worker, though a process forked from it \
-         lives" (fun () ->
+        "in a compile whose parent is killed ends and removes its directory, \
+         though a process forked from the parent lives" (fun () ->
           if not (String.starts_with ~prefix:"binary" (first_compile ())) then
             skip ~reason:"NVRTC does not compile here" ();
-          let dir = Filename.temp_dir "tolk-test-fork" "" in
-          let fifo = Filename.concat dir "include.fifo" in
-          Unix.mkfifo fifo 0o600;
-          Fun.protect ~finally:(fun () ->
-              release fifo;
-              Sys.remove fifo;
-              Unix.rmdir dir)
-          @@ fun () ->
+          let held = held_in_compile (temp_dir ()) in
           flush_all ();
           let input, out = Unix.pipe ~cloexec:true () in
           let parent =
@@ -215,37 +239,31 @@ let parent_death =
                 (try
                    ignore (compile ());
                    fork_sleeper out;
-                   ignore
-                     (Compiler.compile
-                        (Compiler_cuda.nvrtc ~ptx:false "sm_89")
-                        (waiting fifo))
+                   ignore (cubin held)
                  with _ -> ());
                 Unix._exit 0
             | pid -> pid
           in
           Unix.close out;
           let sleeper = read_sleeper input in
-          Fun.protect ~finally:(fun () ->
-              Option.iter (fun pid -> Unix.kill pid Sys.sigkill) sleeper)
+          Fun.protect ~finally:(fun () -> Unix.kill sleeper Sys.sigkill)
           @@ fun () ->
-          let workers () =
-            List.filter (fun pid -> Some pid <> sleeper) (children_of parent)
+          let workers =
+            List.filter (fun pid -> pid <> sleeper) (children_of parent)
           in
-          let waits () = List.exists waits_for_writer (workers ()) in
-          let reached = until ~seconds:20. waits in
-          let workers = workers () in
           let temps = List.filter_map temp_of workers in
+          List.iter (until_in_fifo_open ~parent) workers;
+          (* What a compile leaves in its worker's directory goes with it. *)
+          List.iter
+            (fun temp ->
+              Out_channel.with_open_bin
+                (Filename.concat temp "left-by-a-compile") (fun oc ->
+                  output_string oc "x"))
+            temps;
           Unix.kill parent Sys.sigkill;
           ignore (Unix.waitpid [] parent);
-          is_some ~msg:"the forked process" sleeper;
-          equal bool ~msg:"the compile waits on the FIFO" true reached;
-          not_equal (list int) [] workers;
-          let alive =
-            List.filter
-              (fun pid -> not (until ~seconds:3. (fun () -> ended pid)))
-              workers
-          in
-          equal (list int) ~msg:"workers alive" [] alive;
+          not_equal (list int) ~msg:"the parent's workers" [] workers;
+          List.iter until_ended workers;
           not_equal (list string) [] temps;
           equal (list string) ~msg:"their temporary directories" []
             (List.filter Sys.file_exists temps));
