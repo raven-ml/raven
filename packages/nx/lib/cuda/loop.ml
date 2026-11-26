@@ -162,18 +162,19 @@ let cast ws ~d ~a ~from ~into =
 (* A value of the tape: its first plane and its dtype. *)
 type value = { plane : int; dt : D.any }
 
-(* Lowers the nodes of [p] that the outputs [roots] reach into [t]'s
-   prologue, constants, and body: first a load of each operand [k] read
-   where [eager k], then the nodes in order, each other operand loaded
-   before its first reader. [load k] is operand [k]'s load in the launch's
-   table, [axis a] the kernel's axis of the loop's axis [a]. After node [i]
-   computes, [out k v] is called for each output [k] among [roots] that is
-   node [i], with its value. A value's planes are freed after the last
-   node that reads it, a constant's never. An [In] or [Coord] node [n]
-   with [given n = Some q] holds its value in planes from [q] that the
-   kernel fills: no instruction computes it and its planes are never
-   freed. *)
-let lower ?(given = fun _ -> None) t (p : P.t) ~roots ~load ~axis ~out ~eager =
+(* Lowers the nodes of [p] that the outputs [roots] reach into [t]'s prologue,
+   constants, and body: first a load of each operand [k] read where [eager k],
+   then the nodes in order, each other operand loaded before its first reader.
+   [load k] is operand [k]'s load in the launch's table, [axis a] the kernel's
+   axis of the loop's axis [a]. After node [i] computes, [out k v] is called for
+   each output [k] among [roots] that is node [i], with its value. A value's
+   planes are freed after the last node that reads it, a constant's never. An
+   [In] or [Coord] node [n] with [given n = Some q] holds its value in planes
+   from [q] that the kernel fills: no instruction computes it and its planes are
+   never freed. With [most], it raises [Too_wide] once the tape holds more
+   words, which no launch holds. *)
+let lower ?(given = fun _ -> None) ?(most = max_int) t (p : P.t) ~roots ~load
+    ~axis ~out ~eager =
   let n = Iarray.length p.nodes in
   let node i = Iarray.get p.nodes i in
   let dtype i = P.dtype p i in
@@ -390,7 +391,8 @@ let lower ?(given = fun _ -> None) t (p : P.t) ~roots ~load ~axis ~out ~eager =
       in
       List.iter (fun a -> dead root.(a)) (operands i);
       dead root.(i)
-    end
+    end;
+    if t.pro.n + t.body.n + t.epi.n > most then raise Too_wide
   done
 
 (* Walks *)
@@ -831,7 +833,7 @@ let map_launch (p : P.t) ~shape ops outs =
   let n = Array.fold_left ( * ) 1 w.ext in
   let build ~eager =
     let t = tape () in
-    lower t p
+    lower ~most:K.loop_words t p
       ~roots:(List.init (Iarray.length p.outs) Fun.id)
       ~load:Fun.id ~axis:(kernel_axis w) ~eager
       ~out:(fun k v -> ins t.body K.loop_store ~d:0 ~a:v.plane ~b:k ~c:0);
@@ -1010,18 +1012,35 @@ let live_nodes (p : P.t) =
   done;
   live
 
-(* The computed nodes before [c] that a live node from [c] on or an output
-   reads, in order. *)
-let crossing (p : P.t) ~live c =
-  let read = Array.make c false in
-  let mark i =
-    if i < c && computed (Iarray.get p.nodes i) then read.(i) <- true
-  in
-  for j = c to Iarray.length p.nodes - 1 do
-    if live.(j) then List.iter mark (operands_of (Iarray.get p.nodes j))
+(* [p] without the nodes its outputs do not read, the others renumbered in
+   order: a part's rest keeps none of the nodes its temporaries replaced, so
+   that each later part reads the rest's length alone. *)
+let live_only (p : P.t) =
+  let live = live_nodes p in
+  let n = Iarray.length p.nodes in
+  let at = Array.make n (-1) and kept = ref 0 in
+  for i = 0 to n - 1 do
+    if live.(i) then begin
+      at.(i) <- !kept;
+      incr kept
+    end
   done;
-  Iarray.iter mark p.outs;
-  List.filter (fun i -> read.(i)) (List.init c Fun.id)
+  if !kept = n then p
+  else
+    let renumbered = function
+      | P.Op1 (o, d, a) -> P.Op1 (o, d, at.(a))
+      | Op2 (o, a, b) -> Op2 (o, at.(a), at.(b))
+      | Op3 (o, a, b, c) -> Op3 (o, at.(a), at.(b), at.(c))
+      | (In _ | Coord _ | Const _) as nd -> nd
+    in
+    let nodes =
+      List.filter_map
+        (fun i ->
+          if live.(i) then Some (renumbered (Iarray.get p.nodes i)) else None)
+        (List.init n Fun.id)
+    in
+    P.v ~ins:p.ins (Iarray.of_list nodes)
+      ~outs:(Iarray.map (Array.get at) p.outs)
 
 (* The extents of each node of [p] over [ops] on a loop of [shape]: the
    loop's along the axes its leaves vary along, a load's of more than one
@@ -1054,8 +1073,29 @@ let part s (p : P.t) ~shape ops =
   let ext = extents p ops shape in
   let temp i = (P.dtype p i, ext.(i)) in
   let live = live_nodes p in
+  (* The last live node reading each node, [max_int] for an output's, so that
+     [crossing c], the computed nodes before [c] that a live node from [c] on or
+     an output reads, in order, takes the cut's length. *)
+  let n = Iarray.length p.nodes in
+  let last_read = Array.make n (-1) in
+  for j = 0 to n - 1 do
+    if live.(j) then
+      List.iter
+        (fun a -> last_read.(a) <- Int.max last_read.(a) j)
+        (operands_of (Iarray.get p.nodes j))
+  done;
+  Iarray.iter (fun o -> last_read.(o) <- max_int) p.outs;
+  let crossing c =
+    let rec go i acc =
+      if i < 0 then acc
+      else if computed (Iarray.get p.nodes i) && last_read.(i) >= c then
+        go (i - 1) (i :: acc)
+      else go (i - 1) acc
+    in
+    go (c - 1) []
+  in
   let first c =
-    let xs = crossing p ~live c in
+    let xs = crossing c in
     let p1 =
       P.v ~ins:p.ins
         (Iarray.sub p.nodes ~pos:0 ~len:c)
@@ -1080,16 +1120,25 @@ let part s (p : P.t) ~shape ops =
            else None)
          (List.init (Iarray.length p.nodes) Fun.id))
   in
-  (* The last cut that fits, by bisection: the first fits, the last does
-     not. *)
+  (* The last cut that fits, by bisection between a cut that fits and one that
+     does not, or the end. *)
   let rec last lo hi =
     if hi - lo <= 1 then lo
     else
       let m = (lo + hi) / 2 in
       if fits cuts.(m) then last m hi else last lo m
   in
+  (* From a cut that fits, cuts 1, 2, 4, ... further on until one does not, then
+     bisection between: the probes span about a launch's nodes, not the whole
+     rest, so a program's parts cost its width once. *)
+  let rec gallop lo step =
+    let hi = lo + step in
+    if hi >= Array.length cuts then last lo (Array.length cuts)
+    else if fits cuts.(hi) then gallop hi (2 * step)
+    else last lo hi
+  in
   if Array.length cuts > 0 && fits cuts.(0) then begin
-    let c = cuts.(last 0 (Array.length cuts)) in
+    let c = cuts.(gallop 0 1) in
     let p1, xs = first c in
     let ts = fresh s (List.map temp xs) in
     let nins = Iarray.length p.ins in
@@ -1106,7 +1155,7 @@ let part s (p : P.t) ~shape ops =
         ~ins:(Iarray.append p.ins (Iarray.of_list (List.map (P.dtype p) xs)))
         nodes ~outs:p.outs
     in
-    Some (map_launch p1 ~shape ops ts, p2, Array.append ops ts)
+    Some (map_launch p1 ~shape ops ts, live_only p2, Array.append ops ts)
   end
   else
     (* The widest padded operand, by its descriptor's words: a plain one
@@ -1227,7 +1276,8 @@ let fixed ?(state = true) t ~carrier ~center ~result =
 (* Lowers output [k] of [p] into [t]'s body, its value cast into the term
    plane in [carrier], a boolean as true or false. *)
 let lower_term t p k ~carrier ~axis ~eager ~(f : fixed) =
-  lower t p ~roots:[ k ] ~load:Fun.id ~axis ~eager ~out:(fun _ v ->
+  lower ~most:K.loop_words t p ~roots:[ k ] ~load:Fun.id ~axis ~eager
+    ~out:(fun _ v ->
       if boolean carrier then
         ins t.body K.loop_truth ~d:f.term ~a:v.plane ~b:0 ~c:0
       else cast t.body ~d:f.term ~a:v.plane ~from:v.dt ~into:carrier)

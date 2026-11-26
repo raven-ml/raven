@@ -3914,6 +3914,10 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- An eager map, reduction or scan of a program too wide for one launch on
+  nx.cuda, such as an `Nx.Rng.binomial` draw, plans its parts in a launch's
+  width: a warm binomial allocates 18M words in 36 ms where it took 46M in
+  113 ms. The parts and their bits are unchanged.
 - `Nx.combine_patches` and `Nx.istft` add each position's sum from `+0`, as
   nx.mli states, where a sum that was one `-0.` term stayed `-0.`; among
   them `istft`'s samples that no taper holds.
