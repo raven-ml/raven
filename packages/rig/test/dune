@@ -7,7 +7,7 @@
   test_launch
   test_args
   test_loss
-  test_turn
+  test_domains
   test_commit
   test_fork
   test_fail
