@@ -1,5 +1,5 @@
-"""Goldens of tinygrad/helpers.py's settings: their defaults, and how a
-variable's text reads as a number.
+"""Goldens of tinygrad/helpers.py's settings: how a variable's text reads as a
+number.
 
 A column that holds arbitrary text, control characters included, holds it as
 an OCaml string literal, which the suite reads back with Scanf's "%S".
@@ -8,8 +8,7 @@ an OCaml string literal, which the suite reads back with Scanf's "%S".
 import os
 
 from golden import table
-from tinygrad import helpers
-from tinygrad.helpers import DEV, ContextVar, getenv
+from tinygrad.helpers import getenv
 
 
 def literal(s):
@@ -33,21 +32,6 @@ def outcome(fn, *args):
         return fn(*args)
     except Exception as e:
         return type(e).__name__
-
-
-# Settings
-
-# PARALLEL defaults to the number of CPUs of the machine that generates, and
-# generate.py sets NO_COLOR.
-UNRECORDED = {"PARALLEL", "NO_COLOR"}
-
-
-@table
-def settings():
-    # ContextVar's == compares values, so the variables are told apart by id.
-    declared = {id(var) for var in vars(helpers).values() if isinstance(var, ContextVar)}
-    return ["key", "default"], [(var.key, str(var) if var is DEV else var.value) for var in ContextVar._cache.values()
-                                if id(var) in declared and var.key not in UNRECORDED]
 
 
 def parse_env(text, default):

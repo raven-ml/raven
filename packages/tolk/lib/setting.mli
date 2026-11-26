@@ -29,7 +29,10 @@
     Numbers are an optional [+] or [-] followed by [inf], [infinity] or [nan] in
     any case, or by a decimal number: digits with an optional fraction ([1.5],
     [1.] or [.5]) and an optional exponent ([e] or [E], an optional sign, and
-    digits), with digits and white space as for integers. *)
+    digits), with digits and white space as for integers. A number reads as the
+    float nearest it, ties to even, except on Windows, whose C library
+    (mingw-w64's) may read a decimal that no float equals as a neighbour of the
+    nearest float. *)
 
 (** {1:reach Reach} *)
 
@@ -59,7 +62,8 @@ type reach =
     anything is compiled. Every constructor raises [Invalid_argument] if a
     setting named [key] is already declared, or if the variable [key] holds
     something its type does not read, non-ASCII digits and white space included,
-    or an integer out of [int]'s range. *)
+    or an integer out of [int]'s range. A constructor that raises declares
+    nothing. *)
 
 type 'a t
 (** The type for settings of type ['a]. *)
@@ -98,7 +102,8 @@ type binding = B : 'a t * 'a -> binding  (** [B (v, x)] binds [v] to [x]. *)
 val context : binding list -> (unit -> 'a) -> 'a
 (** [context bindings f] is [f ()], run with each setting of [bindings] holding
     its bound value; when a setting is bound twice, the later binding wins. Each
-    setting gets its previous value back when [f] returns or raises.
+    setting gets its previous value back when [f] returns or raises, and the
+    calling domain then keeps no reference to a bound value.
 
     The overrides are seen by what runs meanwhile on the calling domain, and by
     the domains it spawns meanwhile, which start with its values. Other domains
@@ -128,131 +133,142 @@ val shaping : unit -> (string * string) list
 
 val debug : int t
 (** [debug] is the verbosity of diagnostics printed on standard output, from
-    [DEBUG]. [0] prints nothing and each level adds detail. Defaults to [0]. *)
+    [DEBUG]. [0] prints nothing and each level adds detail. Defaults to [0].
+    Reaches {!Process}. *)
 
 val beam : int t
 (** [beam] is the width of the beam search that picks kernel optimizations, from
-    [BEAM]. [0] applies hand-coded optimizations instead. Defaults to [0]. *)
+    [BEAM]. [0] applies hand-coded optimizations instead. Defaults to [0].
+    Reaches {!Output}. *)
 
 val jitbeam : int option t
 (** [jitbeam] is the width of the beam search for the kernels of a captured
     schedule ([Jit]), from [JITBEAM]. [None], the default, stands for {!beam}'s
-    current value. *)
+    current value. Reaches {!Output}. *)
 
 val noopt : bool t
-(** [noopt] disables kernel optimizations, from [NOOPT]. Defaults to [false]. *)
+(** [noopt] disables kernel optimizations, from [NOOPT]. Defaults to [false].
+    Reaches {!Output}. *)
 
 val no_color : bool t
 (** [no_color] makes {!Helpers.colored} leave text unchanged, from [NO_COLOR].
-    Defaults to [false]. *)
+    Defaults to [false]. Reaches {!Process}. *)
 
 val use_tc : int t
 (** [use_tc] is how kernel optimization uses tensor cores, from [TC]. [0] never
     uses them, [1] uses them, [2] shapes the kernel for them without emitting
-    tensor core instructions. Defaults to [1]. *)
+    tensor core instructions. Defaults to [1]. Reaches {!Output}. *)
 
 val tc_select : int t
 (** [tc_select] is the tensor core kernel optimization uses, from [TC_SELECT]:
     [-1] tries the target's tensor cores in order and uses the first that fits,
-    [n] uses only the [n]-th. Defaults to [-1]. *)
+    [n] uses only the [n]-th. Defaults to [-1]. Reaches {!Output}. *)
 
 val tc_opt : int t
 (** [tc_opt] is how hand-coded optimizations ([Heuristic]) fit a kernel to a
     tensor core, from [TC_OPT]: [2] pads the kernel's axes to the core's
     dimensions, within a bound on the work the padding adds, [0] and [1] take
-    only kernels those dimensions divide. Defaults to [2]. *)
+    only kernels those dimensions divide. Defaults to [2]. Reaches {!Output}. *)
 
 val tc_min_globals : int t
 (** [tc_min_globals] is the number of global axes below which tensor core
     optimization does not upcast its N axis, from [TC_MIN_GLOBALS]. Defaults to
-    [0]. *)
+    [0]. Reaches {!Output}. *)
 
 val stage : bool t
 (** [stage] stages a tensor core's operands through shared memory where the
-    target has it, and a decoded operand through a panel on the host
-    ({!Stage}), and gives a staged core its own tile
+    target has it, and a decoded operand through a panel on the host ({!Stage}),
+    and gives a staged core its own tile
     ({!Heuristic.hand_coded_optimizations}), from [STAGE]. Off, no operand is
-    staged and no core takes the staged tile. Defaults to [true]. *)
+    staged and no core takes the staged tile. Defaults to [true]. Reaches
+    {!Output}. *)
 
 val transcendental : int t
 (** [transcendental] is how code generation decomposes transcendental functions
     into polynomial approximations, from [TRANSCENDENTAL]: from [2] on, all of
-    them; below, those the target does not support. Defaults to [1]. *)
+    them; below, those the target does not support. Defaults to [1]. Reaches
+    {!Output}. *)
 
 val split_reduceop : bool t
 (** [split_reduceop] lets scheduling split a large reduction into two kernels to
-    expose more parallelism, from [SPLIT_REDUCEOP]. Defaults to [true]. *)
+    expose more parallelism, from [SPLIT_REDUCEOP]. Defaults to [true]. Reaches
+    {!Output}. *)
 
 val no_memory_planner : bool t
 (** [no_memory_planner] keeps scheduling from reusing the memory of buffers that
-    are no longer needed, from [NO_MEMORY_PLANNER]. Defaults to [false]. *)
+    are no longer needed, from [NO_MEMORY_PLANNER]. Defaults to [false]. Reaches
+    {!Output}. *)
 
 val cachelevel : int t
 (** [cachelevel] enables the {!Helpers.Diskcache} when positive, from
-    [CACHELEVEL]. Defaults to [2]. *)
+    [CACHELEVEL]. Defaults to [2]. Reaches {!Process}. *)
 
 val cachesize : int t
 (** [cachesize] is the most bytes the files of the {!Helpers.Diskcache} hold,
     from [CACHESIZE]; [0] sets no bound. Defaults to 5 GiB ([5368709120]), the
     default of the compiler cache ccache. Raises [Invalid_argument] when the
-    module is initialised if [CACHESIZE] is negative. *)
+    module is initialised if [CACHESIZE] is negative. Reaches {!Process}. *)
 
 val ignore_beam_cache : bool t
 (** [ignore_beam_cache] makes the beam search ignore the results it cached, from
-    [IGNORE_BEAM_CACHE]. Defaults to [false]. *)
+    [IGNORE_BEAM_CACHE]. Defaults to [false]. Reaches {!Process}. *)
 
 val disable_fast_idiv : bool t
 (** [disable_fast_idiv] keeps code generation from replacing integer division by
     a constant with a multiplication and a shift, from [DISABLE_FAST_IDIV].
-    Defaults to [true]. *)
+    Defaults to [true]. Reaches {!Output}. *)
 
 val max_kernel_buffers : int t
 (** [max_kernel_buffers] is the number of buffers one kernel may access, from
-    [MAX_KERNEL_BUFFERS]. [0] uses the device's limit. Defaults to [0]. *)
+    [MAX_KERNEL_BUFFERS]. [0] uses the device's limit. Defaults to [0]. Reaches
+    {!Output}. *)
 
 val emulated_dtypes : string list t
 (** [emulated_dtypes] names the data types code generation emulates with other
     types, as if the target did not support them, from [EMULATED_DTYPES]: a
-    [,]-separated list, empty items dropped. Defaults to [[]]. *)
+    [,]-separated list, empty items dropped. Defaults to [[]]. Reaches
+    {!Output}. *)
 
 val default_float : string t
 (** [default_float] names the data type of floating-point values that do not
-    state one, from [DEFAULT_FLOAT]. Defaults to ["float32"]. *)
+    state one, from [DEFAULT_FLOAT]. Defaults to ["float32"]. Reaches {!Output}.
+*)
 
 val default_int : string t
 (** [default_int] names the data type of integer values that do not state one,
-    from [DEFAULT_INT]. Defaults to ["int32"]. *)
+    from [DEFAULT_INT]. Defaults to ["int32"]. Reaches {!Output}. *)
 
 val parallel : int t
 (** [parallel] is the number of domains compiling kernels and running the beam
     search, from [PARALLEL]. [0] works on the calling domain. Defaults to the
     cores the process may occupy, as rig's host pool counts them, and at most
-    the domains the runtime recommends: on Linux the CPUs of the main
-    thread's affinity mask, at most the CPU quota of its cgroup v2 or any
-    ancestor rounded up; on macOS its physical cores. The count is taken
-    once, when the program starts. *)
+    the domains the runtime recommends: on Linux the CPUs of the main thread's
+    affinity mask, at most the CPU quota of its cgroup v2 or any ancestor
+    rounded up; on macOS its physical cores; and at least [1]. The count is
+    taken once, when the program starts. Reaches {!Process}. *)
 
 val spec : int t
-(** [spec] is whether the graphs passed between stages are checked against
-    their specifications, from [SPEC]: [0] checks nothing, and any other value
-    checks them. Defaults to [1]. *)
+(** [spec] is whether the graphs passed between stages are checked against their
+    specifications, from [SPEC]: [0] checks nothing, and any other value checks
+    them. Defaults to [1]. Reaches {!Process}. *)
 
 val check_oob : bool t
 (** [check_oob] makes specification checks prove that memory accesses stay
-    within their buffers, from [CHECK_OOB]. Defaults to [false]. *)
+    within their buffers, from [CHECK_OOB]. Defaults to [false]. Reaches
+    {!Process}. *)
 
 val tuple_order : bool t
 (** [tuple_order] makes linearization order nodes of equal priority by their
     structure, from [TUPLE_ORDER]. Otherwise they keep their topological order.
-    Defaults to [true]. *)
+    Defaults to [true]. Reaches {!Output}. *)
 
 val ccache : bool t
 (** [ccache] keeps compiled programs and binaries in the {!Helpers.Diskcache},
-    from [CCACHE]. Defaults to [true]. *)
+    from [CCACHE]. Defaults to [true]. Reaches {!Process}. *)
 
 val allow_tf32 : bool t
 (** [allow_tf32] lets float32 matrix multiplications use TF32 tensor cores on
-    NVIDIA devices, from [ALLOW_TF32]. Defaults to [false].
+    NVIDIA devices, from [ALLOW_TF32]. Defaults to [false]. Reaches {!Output}.
 
     A TF32 core rounds each operand to 10 mantissa bits, so a contraction it
     computes may err past the bound [Nx.contract] states: setting it chooses
@@ -260,93 +276,102 @@ val allow_tf32 : bool t
 
 val scache : int t
 (** [scache] is where schedules are cached, from [SCACHE]: [0] nowhere, [1] in
-    memory, [2] or more also in the {!Helpers.Diskcache}, where
-    a compiled schedule is kept whole too. Defaults to [2]. *)
+    memory, [2] or more also in the {!Helpers.Diskcache}, where a compiled
+    schedule is kept whole too. Defaults to [2]. Reaches {!Process}. *)
 
 val disallow_broadcast : bool t
 (** [disallow_broadcast] makes an elementwise operation on operands of different
     shapes fail instead of broadcasting them, from [DISALLOW_BROADCAST].
-    Defaults to [false]. *)
+    Defaults to [false]. Reaches {!Process}. *)
 
 val reduceop_split_threshold : int t
 (** [reduceop_split_threshold] is how many times as many elements as its output
     a reduction's input must have for scheduling to split it, under
-    {!split_reduceop}, from [REDUCEOP_SPLIT_THRESHOLD]. Defaults to [32768]. *)
+    {!split_reduceop}, from [REDUCEOP_SPLIT_THRESHOLD]. Defaults to [32768].
+    Reaches {!Output}. *)
 
 val reduceop_split_size : int t
 (** [reduceop_split_size] is [n] such that the first kernel of a split reduction
     outputs at most [2]{^ [n]} elements, from [REDUCEOP_SPLIT_SIZE]. Defaults to
-    [22]. *)
+    [22]. Reaches {!Output}. *)
 
 val mv : bool t
 (** [mv] lets hand-coded optimizations lay out matrix-vector products
-    ({!Heuristic.hand_coded_optimizations}), from [MV]. Defaults to [true]. *)
+    ({!Heuristic.hand_coded_optimizations}), from [MV]. Defaults to [true].
+    Reaches {!Output}. *)
 
 val dmc : bool t
 (** [dmc] keeps code generation from merging loads, and stores, of consecutive
     elements into vector accesses ({!Coalesce.memory_coalescing}), from [DMC].
-    Defaults to [false]. *)
+    Defaults to [false]. Reaches {!Output}. *)
 
 val expand_ssa : bool t
 (** [expand_ssa] makes C-style code generation ({!Cstyle}) give every value a
     local variable, from [EXPAND_SSA]. Otherwise a value read once is written
-    into the expression that reads it. Defaults to [false]. *)
+    into the expression that reads it. Defaults to [false]. Reaches {!Output}.
+*)
 
 val beam_padto : bool t
 (** [beam_padto] adds pads of axes to the candidates of the beam search
-    ({!Search.val-actions}), from [BEAM_PADTO]. Defaults to [false]. *)
+    ({!Search.val-actions}), from [BEAM_PADTO]. Defaults to [false]. Reaches
+    {!Output}. *)
 
 val beam_uops_max : int t
 (** [beam_uops_max] is the number of instructions from which the beam search
     drops a candidate, none if it is [0] or less, from [BEAM_UOPS_MAX]. Defaults
-    to [3000]. *)
+    to [3000]. Reaches {!Output}. *)
 
 val beam_upcast_max : int t
 (** [beam_upcast_max] is the most upcast and unrolled lanes a candidate of the
     beam search may have ({!Search.get_kernel_actions}), from [BEAM_UPCAST_MAX].
-    Defaults to [256]. *)
+    Defaults to [256]. Reaches {!Output}. *)
 
 val beam_local_max : int t
 (** [beam_local_max] is the most warp and local threads a candidate of the beam
-    search may have, from [BEAM_LOCAL_MAX]. Defaults to [1024]. *)
+    search may have, from [BEAM_LOCAL_MAX]. Defaults to [1024]. Reaches
+    {!Output}. *)
 
 val beam_min_progress : float t
 (** [beam_min_progress] is the microseconds a round of the beam search must gain
-    for the search to go on, from [BEAM_MIN_PROGRESS]. Defaults to [0.01]. *)
+    for the search to go on, from [BEAM_MIN_PROGRESS]. Defaults to [0.01].
+    Reaches {!Output}. *)
 
 val beam_estimate : bool t
 (** [beam_estimate] lets the beam search time a program that launches more than
     [65536] workgroups launching fewer, and scale its time up, from
-    [BEAM_ESTIMATE]. Defaults to [true]. *)
+    [BEAM_ESTIMATE]. Defaults to [true]. Reaches {!Output}. *)
 
 val beam_strict_mode : bool t
 (** [beam_strict_mode] makes the beam search raise what the compilation of a
     candidate raises, but [Failure], instead of dropping the candidate, from
-    [BEAM_STRICT_MODE]. Defaults to [false]. *)
+    [BEAM_STRICT_MODE]. Defaults to [false]. Reaches {!Process}. *)
 
 val beam_log_surpass_max : bool t
 (** [beam_log_surpass_max] prints the candidates the beam search drops for
     exceeding {!beam_upcast_max}, {!beam_local_max} or {!beam_uops_max}, from
-    [BEAM_LOG_SURPASS_MAX]. Defaults to [false]. *)
+    [BEAM_LOG_SURPASS_MAX]. Defaults to [false]. Reaches {!Process}. *)
 
 val beam_debug : int t
 (** [beam_debug] is the verbosity of the beam search's diagnostics, from
     [BEAM_DEBUG]: from [1], the kernel searched, the candidates whose timing
-    failed and the result; from [2], every candidate timed. Defaults to [0]. *)
+    failed and the result; from [2], every candidate timed. Defaults to [0].
+    Reaches {!Process}. *)
 
 val cc : string t
 (** [cc] is the program {!Compiler_cpu.clang} and {!Compiler_cpu.registers} run,
     from [CC], read when the compiler or the register file is made. Defaults to
-    ["clang"]. *)
+    ["clang"]. Reaches {!Process}. *)
 
 val cuda_path : string t
 (** [cuda_path] is the directory of the CUDA toolkit whose headers
     {!Compiler_cuda.nvrtc} includes, from [CUDA_PATH], read when the compiler is
-    made. [""], the default, searches the usual directories. *)
+    made. [""], the default, searches the usual directories. Reaches {!Process}.
+*)
 
 val rocm_path : string t
 (** [rocm_path] is the directory of the ROCm installation whose comgr library
-    {!Compiler_amd.hip} loads, from [ROCM_PATH]. Defaults to ["/opt/rocm"]. *)
+    {!Compiler_amd.hip} loads, from [ROCM_PATH]. Defaults to ["/opt/rocm"].
+    Reaches {!Process}. *)
 
 val assert_compile : bool t
 (** [assert_compile] makes compiling a source whose binary no disk cache table
@@ -354,21 +379,21 @@ val assert_compile : bool t
     beam search's candidates compile through that table too, so a candidate
     whose binary is not kept raises, which drops it unless
     {!Setting.beam_strict_mode} holds ({!Search.beam_search}). Defaults to
-    [false]. *)
+    [false]. Reaches {!Process}. *)
 
 val rewrite_stack_limit : int t
 (** [rewrite_stack_limit] bounds the work list of {!Ops.graph_rewrite}, from
-    [REWRITE_STACK_LIMIT]. Defaults to [250000]. *)
+    [REWRITE_STACK_LIMIT]. Defaults to [250000]. Reaches {!Process}. *)
 
 val debug_linearize : bool t
 (** [debug_linearize] prints each node linearization places, with its position,
     operation, ranges and priority ({!Linearizer.linearize}), from
-    [DEBUG_LINEARIZE]. Defaults to [false]. *)
+    [DEBUG_LINEARIZE]. Defaults to [false]. Reaches {!Process}. *)
 
 val dbgtv : string t
 (** [dbgtv], when not empty, makes code generation print the instructions of a
     program that fails its specification check ({!Codegen}), from [DBGTV].
-    Defaults to [""]. *)
+    Defaults to [""]. Reaches {!Process}. *)
 
 (**/**)
 

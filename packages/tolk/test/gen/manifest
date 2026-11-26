@@ -3995,7 +3995,6 @@ schedule/schedule/variable_unused_kernels.golden
 schedule/schedule/variable_unused_linear.golden
 schedule/schedule/variable_unused_schedule.golden
 setting/env.golden
-setting/settings.golden
 support/matmul.golden
 support/programs/adam_mlp.golden
 support/programs/attention.golden

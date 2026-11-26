@@ -1,20 +1,10 @@
 open Windtrap
 open Tolk
 
-(* Goldens hold arbitrary text as OCaml string literals. *)
-let literal cell = Scanf.sscanf cell "%S%!" Fun.id
-
-(* [claim] checked on each row of a golden. *)
-let as_tinygrad ?key claim file check =
-  group claim [ Golden.cases ?key file check ]
-
-(* The golden's text for an exception tinygrad raised. *)
-let raised cell =
-  List.mem cell [ "ValueError"; "ZeroDivisionError"; "RuntimeError" ]
-
-let refuses f = raises_match (fun e -> Exn.invalid_arg e) f
 let context = Setting.context
 let shaping = Setting.shaping
+let value = Setting.value
+let refuses f = raises_match (fun e -> Exn.invalid_arg e) f
 
 (* Fresh variable names: a setting is declared once per process. *)
 let fresh =
@@ -33,18 +23,80 @@ let declared_with value make =
 let int_setting key = Setting.int ~reach:Process key 0
 let float_setting key = Setting.float ~reach:Process key 0.
 
+(* A library setting with its testable and a value. *)
+type row = D : 'a Setting.t * 'a testable * 'a -> row
+
+let key (D (v, _, _)) = Setting.key v
+let shown (D (_, t, x)) = Testable.to_string t x
+let current (D (v, t, _)) = Testable.to_string t (value v)
+
+(* Each library setting with the default its documentation states, but
+   [parallel], whose default depends on the host. *)
+let defaults =
+  [
+    D (Setting.debug, int, 0);
+    D (Setting.beam, int, 0);
+    D (Setting.jitbeam, option int, None);
+    D (Setting.noopt, bool, false);
+    D (Setting.no_color, bool, false);
+    D (Setting.use_tc, int, 1);
+    D (Setting.tc_select, int, -1);
+    D (Setting.tc_opt, int, 2);
+    D (Setting.tc_min_globals, int, 0);
+    D (Setting.stage, bool, true);
+    D (Setting.transcendental, int, 1);
+    D (Setting.split_reduceop, bool, true);
+    D (Setting.no_memory_planner, bool, false);
+    D (Setting.cachelevel, int, 2);
+    D (Setting.cachesize, int, 5368709120);
+    D (Setting.ignore_beam_cache, bool, false);
+    D (Setting.disable_fast_idiv, bool, true);
+    D (Setting.max_kernel_buffers, int, 0);
+    D (Setting.emulated_dtypes, list string, []);
+    D (Setting.default_float, string, "float32");
+    D (Setting.default_int, string, "int32");
+    D (Setting.spec, int, 1);
+    D (Setting.check_oob, bool, false);
+    D (Setting.tuple_order, bool, true);
+    D (Setting.ccache, bool, true);
+    D (Setting.allow_tf32, bool, false);
+    D (Setting.scache, int, 2);
+    D (Setting.disallow_broadcast, bool, false);
+    D (Setting.reduceop_split_threshold, int, 32768);
+    D (Setting.reduceop_split_size, int, 22);
+    D (Setting.mv, bool, true);
+    D (Setting.dmc, bool, false);
+    D (Setting.expand_ssa, bool, false);
+    D (Setting.beam_padto, bool, false);
+    D (Setting.beam_uops_max, int, 3000);
+    D (Setting.beam_upcast_max, int, 256);
+    D (Setting.beam_local_max, int, 1024);
+    D (Setting.beam_min_progress, float_exact, 0.01);
+    D (Setting.beam_estimate, bool, true);
+    D (Setting.beam_strict_mode, bool, false);
+    D (Setting.beam_log_surpass_max, bool, false);
+    D (Setting.beam_debug, int, 0);
+    D (Setting.cc, string, "clang");
+    D (Setting.cuda_path, string, "");
+    D (Setting.rocm_path, string, "/opt/rocm");
+    D (Setting.assert_compile, bool, false);
+    D (Setting.rewrite_stack_limit, int, 250000);
+    D (Setting.debug_linearize, bool, false);
+    D (Setting.dbgtv, string, "");
+  ]
+
 (* Children
 
-   A child is this suite started again with [role] set: it plays that role and
-   exits. *)
+   What a program reads when it starts is observed in a child: this suite
+   started again with [role] set, which plays that role and exits. *)
 
 let role = "TOLK_TEST_SETTING_ROLE"
 
 type ended = { status : Unix.process_status; out : string; err : string }
 
-(* [start ~env part args] starts playing [part] with [args] in an environment
-   where each [(name, Some v)] of [env] is set and each [(name, None)] unset. *)
-let start ?(env = []) part args =
+(* [child ~env part args] plays [part] with [args] in an environment where each
+   [(name, Some v)] of [env] is set and each [(name, None)] unset. *)
+let child ?(env = []) part args =
   let unchanged binding =
     match String.index_opt binding '=' with
     | Some i -> not (List.mem_assoc (String.sub binding 0 i) env)
@@ -69,15 +121,10 @@ let start ?(env = []) part args =
   in
   Unix.close out_fd;
   Unix.close err_fd;
-  (pid, out, err)
-
-let finish (pid, out, err) =
   let _, status = Unix.waitpid [] pid in
   (* in text mode: on Windows a child's lines end in CRLF *)
   let read file = In_channel.with_open_text file In_channel.input_all in
   { status; out = read out; err = read err }
-
-let child ?env part args = finish (start ?env part args)
 
 let status =
   Testable.make
@@ -88,12 +135,44 @@ let status =
       | Unix.WSTOPPED n -> Format.fprintf ppf "stopped by signal %d" n)
     ~equal:( = )
 
-let succeeds ended =
+(* The library settings' values a child started with [env] holds, each as
+   [defaults] prints it, and [PARALLEL]'s. *)
+let values_at_start env =
+  let ended = child ~env "values" [] in
   equal ~msg:ended.err status (Unix.WEXITED 0) ended.status;
-  ended.out
+  let entry line =
+    match String.index_opt line '\t' with
+    | Some i ->
+        Some
+          ( String.sub line 0 i,
+            String.sub line (i + 1) (String.length line - i - 1) )
+    | None -> None
+  in
+  List.filter_map entry (String.split_on_char '\n' ended.out)
+
+let read_at_start env expected =
+  let read = values_at_start env in
+  equal
+    (list (pair string (option string)))
+    (List.map (fun d -> (key d, Some (shown d))) expected)
+    (List.map (fun d -> (key d, List.assoc_opt (key d) read)) expected)
+
+(* A program that raises at start-up exits 2, as OCaml's runtime does on an
+   uncaught exception. *)
+let fails_at_start ~sub env =
+  let ended = child ~env "values" [] in
+  equal status (Unix.WEXITED 2) ended.status;
+  contains ~sub:"Invalid_argument" ended.err;
+  contains ~sub ended.err
+
+(* The values of a child started with every library variable unset. *)
+let at_defaults =
+  lazy
+    (values_at_start
+       (("PARALLEL", None) :: List.map (fun d -> (key d, None)) defaults))
 
 (* Settings of each kind, declared from a variable by name, each value shown as
-   tinygrad prints it. *)
+   the golden writes it. *)
 let kinds =
   [
     ("int", fun key -> string_of_int (Setting.value (int_setting key)));
@@ -123,31 +202,62 @@ let refuses_empty kind =
   contains ~sub:"Invalid_argument"
     (require_error ~pp:Format.pp_print_string (read_empty kind))
 
+let play = function
+  | "values" ->
+      List.iter (fun d -> Printf.printf "%s\t%s\n" (key d) (current d)) defaults;
+      Printf.printf "PARALLEL\t%d\n" (value Setting.parallel)
+  | "declare" -> print_string (List.assoc Sys.argv.(1) kinds empty)
+  | role -> failwith ("unknown role " ^ role)
+
 (* The environment *)
 
-let parses_like_tinygrad ~kind make w of_cell column cell =
-  let input = literal (cell "input") and expected = cell column in
-  if input = "" then
-    if raised expected then refuses_empty kind
-    else
-      equal string expected
-        (require_ok ~pp:Format.pp_print_string (read_empty kind))
-  else if raised expected then
-    refuses (fun () -> declared_with (Some input) make)
-  else equal w (of_cell expected) (declared_with (Some input) make)
-
 let environment =
-  group "Environment"
+  group "environment"
     [
-      as_tinygrad "an int setting reads an integer as tinygrad does"
-        "env.golden"
-        (parses_like_tinygrad ~kind:"int" int_setting int int_of_string "int");
-      as_tinygrad "a float setting reads a number as tinygrad does" "env.golden"
-        (parses_like_tinygrad ~kind:"float" float_setting float_exact
-           float_of_string "float");
-      (* Python accepts these, but tolk does not port CPython's Unicode leniency
-         in int() and float() (README, Exclusions). *)
-      cases "int and float settings refuse non-ASCII digits and white space"
+      test "DEV is read by no setting: a program starts whatever it holds"
+        (fun () ->
+          read_at_start
+            [ ("DEV", Some "PCI+NV+CUDA"); ("DEBUG", Some "3") ]
+            [ D (Setting.debug, int, 3) ]);
+    ]
+
+let initial_value =
+  group "initial value"
+    [
+      test "is read from the variable once, when the setting is declared"
+        (fun () ->
+          let key = fresh () in
+          setenv key (Some "1");
+          let v = int_setting key in
+          setenv key (Some "2");
+          equal int 1 (Setting.value v));
+    ]
+
+(* Settings *)
+
+let constructors =
+  group "constructors"
+    [
+      test
+        "raise on a name declared before, whatever the setting's type and reach"
+        (fun () ->
+          let key = fresh () in
+          ignore (Setting.int ~reach:Output key 0);
+          refuses (fun () -> Setting.int ~reach:Output key 0);
+          refuses (fun () -> Setting.bool ~reach:Process key false);
+          refuses (fun () -> Setting.float ~reach:Output key 0.);
+          refuses (fun () -> Setting.string ~reach:Process key "");
+          refuses (fun () -> Setting.int_option ~reach:Output key));
+      test "raise on the name of a library setting" (fun () ->
+          refuses (fun () -> Setting.int ~reach:Process "DEBUG" 0));
+      test "raise on a name declared inside a context that has ended" (fun () ->
+          let key = fresh () in
+          context [ B (Setting.debug, 1) ] (fun () -> ignore (int_setting key));
+          refuses (fun () -> int_setting key));
+      (* Python's int() and float() also read Unicode digits and white space; a
+         setting refuses them, as the constructors state, rather than carry
+         Unicode's tables of digits and spaces. *)
+      cases "raise on non-ASCII digits and white space"
         ~id:(Printf.sprintf "%S")
         [
           "\u{0665}";
@@ -159,25 +269,65 @@ let environment =
         ] (fun value ->
           refuses (fun () -> declared_with (Some value) int_setting);
           refuses (fun () -> declared_with (Some value) float_setting));
-      test "an int setting refuses an integer beyond int's range" (fun () ->
+      cases "raise on an integer out of int's range" ~id:Fun.id
+        [
+          (* max_int + 1 and min_int - 1 *)
+          "4611686018427387904";
+          "-4611686018427387905";
+          "9223372036854775807";
+        ] (fun value ->
+          refuses (fun () -> declared_with (Some value) int_setting);
           refuses (fun () ->
-              declared_with (Some "9223372036854775807") int_setting));
-      test "an int setting starts from its default when its variable is unset"
-        (fun () ->
+              declared_with (Some value) (fun key ->
+                  Setting.bool ~reach:Process key false));
+          refuses (fun () ->
+              declared_with (Some value) (fun key ->
+                  Setting.int_option ~reach:Process key)));
+      test "declare nothing when they raise" (fun () ->
+          let key = fresh () in
+          setenv key (Some "abc");
+          refuses (fun () -> int_setting key);
+          setenv key (Some "4");
+          equal int 4 (Setting.value (int_setting key)));
+    ]
+
+(* The golden's text for an exception tinygrad raised. *)
+let raised cell =
+  List.mem cell [ "ValueError"; "ZeroDivisionError"; "RuntimeError" ]
+
+(* Goldens hold arbitrary text as OCaml string literals. *)
+let literal cell = Scanf.sscanf cell "%S%!" Fun.id
+
+(* [reads ~kind make w of_cell column cell] checks the row [cell] of env.golden:
+   a setting made by [make] from a variable holding the row's input holds the
+   value of [column], or refuses the input where the golden raised. *)
+let reads ~kind make w of_cell column cell =
+  let input = literal (cell "input") and expected = cell column in
+  match (input, raised expected) with
+  | "", true -> refuses_empty kind
+  | "", false ->
+      equal string expected
+        (require_ok ~pp:Format.pp_print_string (read_empty kind))
+  | _, true -> refuses (fun () -> declared_with (Some input) make)
+  | _, false -> equal w (of_cell expected) (declared_with (Some input) make)
+
+let int_ =
+  group "int"
+    [
+      group "reads a variable as its golden states"
+        [
+          Golden.cases "env.golden"
+            (reads ~kind:"int" int_setting int int_of_string "int");
+        ];
+      test "starts from its default when its variable is unset" (fun () ->
           equal int 5
             (declared_with None (fun key -> Setting.int ~reach:Process key 5)));
-      test "an int setting starts from its variable when set" (fun () ->
-          equal int 12
-            (declared_with (Some " 12 ") (fun key ->
-                 Setting.int ~reach:Process key 5)));
-      test "an int setting refuses a variable that is no integer" (fun () ->
-          refuses (fun () -> declared_with (Some "abc") int_setting));
-      test "a float setting starts from its default when its variable is unset"
-        (fun () ->
-          equal float_exact 0.5
-            (declared_with None (fun key ->
-                 Setting.float ~reach:Process key 0.5)));
-      cases "a switch is on iff its variable holds a nonzero integer"
+    ]
+
+let bool_ =
+  group "bool"
+    [
+      cases "is true iff its variable holds a nonzero integer"
         ~id:(fun (value, _) -> Printf.sprintf "%S" value)
         [
           ("0", false);
@@ -186,76 +336,101 @@ let environment =
           ("-1", true);
           (" 0 ", false);
           ("00", false);
+          (" -0 ", false);
+          ("+1", true);
+          ("1_0", true);
         ]
         (fun (value, on) ->
           equal bool on
             (declared_with (Some value) (fun key ->
                  Setting.bool ~reach:Process key (not on))));
-      test "a switch starts from its default when its variable is unset"
-        (fun () ->
-          let switch default key = Setting.bool ~reach:Process key default in
-          equal bool true (declared_with None (switch true));
-          equal bool false (declared_with None (switch false)));
-      test "a switch refuses a variable that is no integer" (fun () ->
+      cases "starts from its default when its variable is unset"
+        ~id:string_of_bool [ true; false ] (fun default ->
+          equal bool default
+            (declared_with None (fun key ->
+                 Setting.bool ~reach:Process key default)));
+      test "refuses a variable that is no integer" (fun () ->
           refuses (fun () ->
               declared_with (Some "true") (fun key ->
                   Setting.bool ~reach:Process key false)));
-      test "a string setting starts from its variable as written" (fun () ->
-          let word key = Setting.string ~reach:Process key "d" in
-          equal string " x " (declared_with (Some " x ") word);
-          equal string ""
-            (require_ok ~pp:Format.pp_print_string (read_empty "string"));
-          equal string "d" (declared_with None word));
-      test "an optional setting holds its variable's integer, if set" (fun () ->
-          let opt key = Setting.int_option ~reach:Process key in
-          equal (option int) (Some (-3)) (declared_with (Some " -3 ") opt);
-          equal (option int) None (declared_with None opt);
-          refuses_empty "int_option");
     ]
 
-(* Declarations *)
+(* The float a decimal reads as: the nearest, but on Windows, whose C library
+   may read a decimal that no float equals as a neighbour of the nearest, that
+   or a neighbour. *)
+let as_read =
+  let near x y =
+    Float.equal x y
+    || Float.equal (Float.succ x) y
+    || Float.equal (Float.pred x) y
+  in
+  if Sys.win32 then Testable.make ~pp:(Testable.pp float_exact) ~equal:near
+  else float_exact
 
-let declaration =
-  group "declarations"
+let float_ =
+  group "float"
     [
-      test "a setting reads its variable once, when declared" (fun () ->
-          let key = fresh () in
-          setenv key (Some "1");
-          let v = int_setting key in
-          setenv key (Some "2");
-          equal int 1 (Setting.value v));
-      test "a setting whose variable is refused is not declared" (fun () ->
-          let key = fresh () in
-          setenv key (Some "abc");
-          refuses (fun () -> int_setting key);
-          setenv key (Some "4");
-          equal int 4 (Setting.value (int_setting key)));
-      test "key is the name of the setting's variable" (fun () ->
+      group "reads a variable as its golden states"
+        [
+          Golden.cases "env.golden"
+            (reads ~kind:"float" float_setting as_read float_of_string "float");
+        ];
+      cases "reads a decimal that a float equals as that float"
+        ~id:(fun (input, _) -> Printf.sprintf "%S" input)
+        [
+          ("0.5", 0.5);
+          ("-0.0", -0.);
+          ("10.5", 10.5);
+          ("1e3", 1000.);
+          ("2.5e-1", 0.25);
+          ("0.125e3", 125.);
+          ("1e22", 1e22);
+          ("9007199254740992", 9007199254740992.);
+        ]
+        (fun (input, x) ->
+          equal float_exact x (declared_with (Some input) float_setting));
+      test "starts from its default when its variable is unset" (fun () ->
+          equal float_exact 0.5
+            (declared_with None (fun key ->
+                 Setting.float ~reach:Process key 0.5)));
+    ]
+
+let string_ =
+  let word key = Setting.string ~reach:Process key "d" in
+  group "string"
+    [
+      test "is its variable as written" (fun () ->
+          equal string " x " (declared_with (Some " x ") word));
+      test "is \"\" for a variable set to the empty string" (fun () ->
+          equal string ""
+            (require_ok ~pp:Format.pp_print_string (read_empty "string")));
+      test "starts from its default when its variable is unset" (fun () ->
+          equal string "d" (declared_with None word));
+    ]
+
+let int_option =
+  let opt key = Setting.int_option ~reach:Process key in
+  group "int_option"
+    [
+      test "is Some n for a variable that holds the integer n" (fun () ->
+          equal (option int) (Some (-3)) (declared_with (Some " -3 ") opt));
+      test "is None for an unset variable" (fun () ->
+          equal (option int) None (declared_with None opt));
+      test "refuses an empty variable" (fun () -> refuses_empty "int_option");
+    ]
+
+let key_ =
+  group "key"
+    [
+      test "is the name of the setting's variable" (fun () ->
           let key = fresh () in
           equal string key (Setting.key (Setting.bool ~reach:Process key false)));
-      test "a name is declared once, whatever the setting's type and reach"
-        (fun () ->
-          let key = fresh () in
-          ignore (Setting.int ~reach:Output key 0);
-          refuses (fun () -> Setting.int ~reach:Output key 0);
-          refuses (fun () -> Setting.bool ~reach:Process key false);
-          refuses (fun () -> Setting.float ~reach:Output key 0.);
-          refuses (fun () -> Setting.string ~reach:Process key "");
-          refuses (fun () -> Setting.int_option ~reach:Output key));
-      test "a library setting's name cannot be declared again" (fun () ->
-          refuses (fun () -> Setting.int ~reach:Process "DEBUG" 0));
-      test "a setting declared inside a context stays declared after it"
-        (fun () ->
-          let key = fresh () in
-          context [ B (Setting.debug, 1) ] (fun () -> ignore (int_setting key));
-          refuses (fun () -> int_setting key));
     ]
 
 (* Contexts *)
 
-let level = Setting.int ~reach:Output "TOLK_TEST_LEVEL" 0
-let label = Setting.string ~reach:Output "TOLK_TEST_LABEL" "default"
-let value = Setting.value
+let level = Setting.int ~reach:Output (fresh ()) 0
+let label = Setting.string ~reach:Output (fresh ()) "default"
 
 type scope = { bound : int; raises : bool; inner : scope list }
 
@@ -290,7 +465,25 @@ let rec enter outer s =
    with Exit -> ());
   equal int outer (value level)
 
-let seen_on_another_domain v = Domain.join (Domain.spawn (fun () -> value v))
+let spin_until flag =
+  while not (Atomic.get flag) do
+    Domain.cpu_relax ()
+  done
+
+(* [f ()] on a domain spawned inside a context that binds [v] to [x], run once
+   that context has ended. *)
+let spawned_within v x f =
+  let ended = Atomic.make false in
+  let d =
+    context
+      [ B (v, x) ]
+      (fun () ->
+        Domain.spawn (fun () ->
+            spin_until ended;
+            f ()))
+  in
+  Atomic.set ended true;
+  Domain.join d
 
 let unseen_while_another_domain_binds () =
   let bound = Atomic.make false and released = Atomic.make false in
@@ -300,19 +493,15 @@ let unseen_while_another_domain_binds () =
           [ B (level, 7) ]
           (fun () ->
             Atomic.set bound true;
-            while not (Atomic.get released) do
-              Domain.cpu_relax ()
-            done))
+            spin_until released))
   in
-  while not (Atomic.get bound) do
-    Domain.cpu_relax ()
-  done;
+  spin_until bound;
   let seen = value level in
   Atomic.set released true;
   Domain.join binder;
   equal int 0 seen
 
-let exited_contexts_release_values () =
+let releases_bound_values () =
   let weak = Weak.create 1 in
   let bind () =
     let bound = String.make 16 'x' in
@@ -321,8 +510,7 @@ let exited_contexts_release_values () =
   in
   bind ();
   Gc.full_major ();
-  is_true ~msg:"the bound value was collected"
-    (Option.is_none (Weak.get weak 0))
+  is_none ~pp:Format.pp_print_string (Weak.get weak 0)
 
 let contexts =
   group "context"
@@ -374,10 +562,10 @@ let contexts =
       prop "binds within its extent and restores after it, returned or raised"
         (Gen.list ~size:(Gen.int_range 1 3) (gen_scope 3))
         (List.iter (enter 0));
-      test "binds for the domains spawned while it runs" (fun () ->
-          context
-            [ B (level, 7) ]
-            (fun () -> equal int 7 (seen_on_another_domain level)));
+      test
+        "binds for the domains spawned while it runs, which keep the value \
+         they started with" (fun () ->
+          equal int 7 (spawned_within level 7 (fun () -> value level)));
       test "is not seen by the other domains" unseen_while_another_domain_binds;
       test "binds and restores on the domain that runs it" (fun () ->
           equal int 7
@@ -385,221 +573,79 @@ let contexts =
                (Domain.spawn (fun () ->
                     context [ B (level, 7) ] (fun () -> value level))));
           equal int 0 (value level));
-      test "keeps no bound value once it returns" exited_contexts_release_values;
+      test "leaves the calling domain holding none of the bound values"
+        releases_bound_values;
     ]
-
-(* Library settings *)
-
-type setting = S : 'a Setting.t * ('a -> string) -> setting
-
-let key (S (v, _)) = Setting.key v
-let shown (S (v, show)) = show (value v)
-
-(* A setting as tinygrad prints its value: switches are integers. *)
-let number v = S (v, string_of_int)
-let switch v = S (v, fun on -> if on then "1" else "0")
-let word v = S (v, Fun.id)
-let optional v = S (v, Option.fold ~none:"" ~some:string_of_int)
-
-let settings =
-  [
-    number Setting.debug;
-    number Setting.beam;
-    optional Setting.jitbeam;
-    switch Setting.noopt;
-    switch Setting.no_color;
-    number Setting.use_tc;
-    number Setting.tc_select;
-    number Setting.tc_opt;
-    number Setting.tc_min_globals;
-    number Setting.transcendental;
-    switch Setting.split_reduceop;
-    switch Setting.no_memory_planner;
-    number Setting.cachelevel;
-    switch Setting.ignore_beam_cache;
-    switch Setting.disable_fast_idiv;
-    number Setting.max_kernel_buffers;
-    S (Setting.emulated_dtypes, String.concat ",");
-    word Setting.default_float;
-    word Setting.default_int;
-    number Setting.parallel;
-    number Setting.spec;
-    switch Setting.check_oob;
-    switch Setting.tuple_order;
-    switch Setting.ccache;
-    switch Setting.allow_tf32;
-    number Setting.scache;
-    switch Setting.disallow_broadcast;
-    number Setting.reduceop_split_threshold;
-    number Setting.reduceop_split_size;
-    switch Setting.mv;
-    switch Setting.dmc;
-    switch Setting.expand_ssa;
-    switch Setting.beam_padto;
-    number Setting.beam_uops_max;
-    number Setting.beam_upcast_max;
-    number Setting.beam_local_max;
-    S (Setting.beam_min_progress, string_of_float);
-    switch Setting.beam_estimate;
-    switch Setting.beam_strict_mode;
-    switch Setting.beam_log_surpass_max;
-    number Setting.beam_debug;
-    word Setting.cc;
-    word Setting.cuda_path;
-    word Setting.rocm_path;
-    switch Setting.assert_compile;
-    number Setting.rewrite_stack_limit;
-    switch Setting.debug_linearize;
-    word Setting.dbgtv;
-  ]
-
-(* The settings whose readers tolk does not port, as its README lists them. *)
-let not_ported =
-  (* They gate openpilot's pass and image paths. *)
-  [ "OPENPILOT_HACKS"; "FLOAT16" ]
-  (* Jit capture, kernel runs and allocation are rune's. *)
-  @ [ "CAPTURING"; "MAX_BUFFER_SIZE"; "VALIDATE_WITH_CPU" ]
-  (* tolk cannot open a device. *)
-  @ [ "ALLOW_DEVICE_USAGE" ]
-  (* The multi-device rewrite is out of scope. *)
-  @ [ "RING"; "ALL2ALL"; "ALLREDUCE_CAST"; "ALLREDUCE_NODE_NDEVS" ]
-  (* A device's target follows from the device alone. *)
-  @ [ "DEV" ]
-  (* Their other readers are not ported. *)
-  @ [
-      "IMAGE";
-      "JIT";
-      "WINO";
-      "TRAINING";
-      "LRU";
-      "FUSE_OPTIM";
-      "USE_ATOMICS";
-      "CAPTURE_PROCESS_REPLAY";
-      "NULL_ALLOW_COPYOUT";
-      "VIZ";
-      "PROFILE";
-      "HCQ_RUNTIME_DEV";
-    ]
-
-(* The golden leaves out the settings whose default it cannot record, and
-   tinygrad's helpers do not declare those that tinygrad reads with [getenv]
-   where it uses them, which hold the defaults [Setting] states: [JITBEAM]'s
-   stands for [BEAM]'s value. *)
-let unrecorded = [ "PARALLEL"; "NO_COLOR" ]
-
-let getenv_defaults =
-  [
-    ("JITBEAM", "");
-    ("REDUCEOP_SPLIT_THRESHOLD", "32768");
-    ("REDUCEOP_SPLIT_SIZE", "22");
-    ("MV", "1");
-    ("DMC", "0");
-    ("EXPAND_SSA", "0");
-    ("BEAM_PADTO", "0");
-    ("BEAM_UOPS_MAX", "3000");
-    ("BEAM_UPCAST_MAX", "256");
-    ("BEAM_LOCAL_MAX", "1024");
-    ("BEAM_MIN_PROGRESS", "0.01");
-    ("BEAM_ESTIMATE", "1");
-    ("BEAM_STRICT_MODE", "0");
-    ("BEAM_LOG_SURPASS_MAX", "0");
-    ("BEAM_DEBUG", "0");
-    ("CC", "clang");
-    ("CUDA_PATH", "");
-    ("ROCM_PATH", "/opt/rocm");
-    ("ASSERT_COMPILE", "0");
-    ("REWRITE_STACK_LIMIT", "250000");
-    ("DEBUG_LINEARIZE", "0");
-    ("DBGTV", "");
-  ]
-
-let tinygrad_settings = Golden.rows "settings.golden"
-let tinygrad_keys = List.map (fun cell -> cell "key") tinygrad_settings
-let ported s = List.mem (key s) tinygrad_keys
-
-let unless_set key =
-  if Option.is_some (Sys.getenv_opt key) then
-    skip ~reason:(key ^ " is set in the environment") ()
-
-(* Defaults that are not tinygrad's: schedules are kept on disk, and the
-   hand-coded optimisations pad a tensor core's extents (D491). *)
-let diverging = [ ("SCACHE", "2"); ("TC_OPT", "2") ]
-
-let holds_tinygrad_default s =
-  unless_set (key s);
-  let cell =
-    List.find (fun cell -> String.equal (cell "key") (key s)) tinygrad_settings
-  in
-  let default =
-    Option.value (List.assoc_opt (key s) diverging) ~default:(cell "default")
-  in
-  equal string default (shown s)
 
 (* What the caches key on *)
 
-(* The library's settings whose change can change what a compilation returns:
-   the caches key on them. The others print, check, keep, look up, work in
-   parallel or raise; among them [CC], [CUDA_PATH] and [ROCM_PATH], read when a
-   compiler is made, whose cache key names its tools. *)
-let output_settings =
-  [
-    "ALLOW_TF32";
-    "BEAM";
-    "BEAM_ESTIMATE";
-    "BEAM_LOCAL_MAX";
-    "BEAM_MIN_PROGRESS";
-    "BEAM_PADTO";
-    "BEAM_UOPS_MAX";
-    "BEAM_UPCAST_MAX";
-    "DEFAULT_FLOAT";
-    "DEFAULT_INT";
-    "DISABLE_FAST_IDIV";
-    "DMC";
-    "EMULATED_DTYPES";
-    "EXPAND_SSA";
-    "JITBEAM";
-    "MAX_KERNEL_BUFFERS";
-    "MV";
-    "NOOPT";
-    "NO_MEMORY_PLANNER";
-    "REDUCEOP_SPLIT_SIZE";
-    "REDUCEOP_SPLIT_THRESHOLD";
-    "SPLIT_REDUCEOP";
-    "STAGE";
-    "TC";
-    "TC_MIN_GLOBALS";
-    "TC_OPT";
-    "TC_SELECT";
-    "TRANSCENDENTAL";
-    "TUPLE_ORDER";
-  ]
-
-(* Each exported setting of output bound to a value other than its default. *)
-let other_outputs =
-  Setting.
-    [
-      B (beam, 1);
-      B (jitbeam, Some 0);
-      B (noopt, true);
-      B (use_tc, 2);
-      B (tc_select, 0);
-      B (tc_opt, 1);
-      B (tc_min_globals, 1);
-      B (transcendental, 2);
-      B (split_reduceop, false);
-      B (no_memory_planner, true);
-      B (disable_fast_idiv, false);
-      B (max_kernel_buffers, 8);
-      B (emulated_dtypes, [ "half" ]);
-      B (default_float, "half");
-      B (default_int, "long");
-      B (tuple_order, false);
-      B (allow_tf32, true);
-      B (stage, false);
-    ]
-
 let keyed key = List.assoc_opt key (shaping ())
 let entries = list (pair string string)
+
+(* The text [shaping] gives [v] bound to [x]. *)
+let text v x = List.assoc (Setting.key v) (Setting.shaping_under [ B (v, x) ])
+
+(* [shaping ()] read again after [f] is the list read before it. *)
+let unchanged_by f =
+  let before = shaping () in
+  f ();
+  satisfies ~claim:"the list read before" entries
+    (fun l -> l == before)
+    (shaping ())
+
+let shaping_under =
+  group "shaping_under"
+    [
+      test "is shaping in the context of its bindings" (fun () ->
+          let v = Setting.int ~reach:Output (fresh ()) 1 in
+          let p = Setting.int ~reach:Process (fresh ()) 1 in
+          let bs = Setting.[ B (v, 4); B (p, 3); B (v, 5) ] in
+          equal entries (context bs shaping) (Setting.shaping_under bs));
+      test "binds nothing" (fun () ->
+          let v = Setting.int ~reach:Output (fresh ()) 1 in
+          unchanged_by (fun () -> ignore (Setting.shaping_under [ B (v, 4) ]));
+          equal int 1 (Setting.value v));
+    ]
+
+let float_out = Setting.float ~reach:Output (fresh ()) 0.
+let int_out = Setting.int ~reach:Output (fresh ()) 0
+let int_option_out = Setting.int_option ~reach:Output (fresh ())
+let bool_out = Setting.bool ~reach:Output (fresh ()) false
+let string_out = Setting.string ~reach:Output (fresh ()) ""
+
+(* [x] and [y] have the same text only if [eq x y]. *)
+let only_if_equal eq v (x, y) =
+  let unequal = not (eq x y) in
+  cover "unequal values" unequal;
+  if unequal then not_equal string (text v x) (text v y)
+
+let pp_pair t ppf (x, y) =
+  Format.fprintf ppf "(%a, %a)" (Testable.pp t) x (Testable.pp t) y
+
+(* Pairs of floats drawn as bits, the second often a neighbour of the first or
+   its negation. *)
+let float_pairs =
+  let open Gen in
+  let any = map Int64.float_of_bits int64 in
+  (let* x = any in
+   let+ y =
+     one_of
+       [
+         constant (Float.succ x);
+         constant (Float.pred x);
+         constant (Float.neg x);
+         any;
+       ]
+   in
+   (x, y))
+  |> with_pp (pp_pair float_exact)
+
+let int_pairs =
+  let open Gen in
+  (let* x = int in
+   let+ y = one_of [ constant (x + 1); constant (-x); int ] in
+   (x, y))
+  |> with_pp (pp_pair Windtrap.int)
 
 (* The fewest words one of ten calls of [f] allocates on the minor heap. *)
 let words f =
@@ -611,216 +657,265 @@ let words f =
   done;
   !fewest
 
-(* [shaping ()] read again after [f] is the list read before it. *)
-let unchanged_by f =
-  let before = shaping () in
-  f ();
-  satisfies ~claim:"the list read before" entries
-    (fun l -> l == before)
-    (shaping ())
-
-let shown_as value make =
-  let key = fresh () in
-  setenv key value;
-  ignore (make key);
-  keyed key
-
-let cache_keys =
+let shaping_ =
   group "shaping"
     [
-      test "under bindings is shaping in their context, and binds nothing"
-        (fun () ->
-          let v = Setting.int ~reach:Output (fresh ()) 1 in
-          let p = Setting.int ~reach:Process (fresh ()) 1 in
-          let bs = Setting.[ B (v, 4); B (p, 3); B (v, 5) ] in
-          equal entries (context bs shaping) (Setting.shaping_under bs);
-          unchanged_by (fun () -> ignore (Setting.shaping_under bs));
-          equal int ~msg:"the value" 1 (Setting.value v));
       test "holds a setting's current value on the calling domain" (fun () ->
           let key = fresh () in
           let v = Setting.int ~reach:Output key 1 in
-          equal (option string) ~msg:"declared" (Some "1") (keyed key);
-          equal (option string) ~msg:"in a context" (Some "4")
+          equal (option string)
+            (Some (text v 4))
             (context [ B (v, 4) ] (fun () -> keyed key)));
-      test "holds a setting's value again once a context ends" (fun () ->
-          let key = fresh () in
-          let v = Setting.int ~reach:Output key 1 in
-          ignore (keyed key);
-          context [ B (v, 4) ] (fun () -> ignore (keyed key));
-          equal (option string) (Some "1") (keyed key));
       test "holds a setting declared after it was read" (fun () ->
           ignore (shaping ());
           let key = fresh () in
-          ignore (Setting.bool ~reach:Output key true);
-          equal (option string) (Some "true") (keyed key));
-      test "shows each type's value as text" (fun () ->
-          let shown value make = shown_as (Some value) make in
-          equal (option string) ~msg:"int" (Some "6")
-            (shown " 6 " (fun key -> Setting.int ~reach:Output key 2));
-          equal (option string) ~msg:"switch" (Some "false")
-            (shown "0" (fun key -> Setting.bool ~reach:Output key true));
-          equal (option string) ~msg:"float" (Some "0x1.4p+1")
-            (shown " 2.5 " (fun key -> Setting.float ~reach:Output key 0.));
-          equal (option string) ~msg:"string" (Some " a,b ")
-            (shown " a,b " (fun key -> Setting.string ~reach:Output key ""));
-          equal (option string) ~msg:"optional" (Some "3")
-            (shown "3" (fun key -> Setting.int_option ~reach:Output key));
-          equal (option string) ~msg:"unset optional" (Some "")
-            (shown_as None (fun key -> Setting.int_option ~reach:Output key)));
-      test "tells apart floats one ulp apart" (fun () ->
-          let float key = Setting.float ~reach:Output key 0. in
-          not_equal (option string)
-            (shown_as (Some "0.1") float)
-            (shown_as (Some "0.10000000000000002") float));
-      test "a domain spawned in a context holds the values it spawned with"
+          let v = Setting.bool ~reach:Output key true in
+          equal (option string) (Some (text v true)) (keyed key));
+      test "leaves out a setting that reaches Process" (fun () ->
+          let key = fresh () in
+          ignore (Setting.bool ~reach:Process key false);
+          equal (option string) None (keyed key));
+      test "is sorted by name" (fun () ->
+          let names = List.map fst (shaping ()) in
+          equal (list string) (List.sort compare names) names);
+      test "writes a number in hexadecimal" (fun () ->
+          equal string "0x1.4p+1" (text float_out 2.5));
+      test "writes None as \"\"" (fun () ->
+          equal string "" (text int_option_out None));
+      prop
+        "gives two floats the same text only if they are equal, any two NaNs \
+         counting as equal"
+        ~examples:
+          [
+            (0.1, 0.10000000000000002);
+            (max_float, infinity);
+            (-.max_float, neg_infinity);
+            (0., 5e-324);
+            (Float.nan, infinity);
+            (Float.nan, 0.);
+            (-0., 0.);
+            (Float.nan, Int64.float_of_bits 0x7ff8000000000001L);
+            (Float.nan, -.Float.nan);
+          ]
+        float_pairs
+        (fun (x, y) ->
+          cover "neighbours" (Float.equal (Float.succ x) y);
+          only_if_equal Float.equal float_out (x, y));
+      prop "gives two integers the same text only if they are equal"
+        ~examples:[ (max_int, min_int); (-1, 1) ]
+        int_pairs
+        (only_if_equal Int.equal int_out);
+      prop "gives two optional integers the same text only if they are equal"
+        ~examples:[ (None, Some 0) ]
+        (Gen.pair (Gen.option Gen.int) (Gen.option Gen.int)
+        |> Gen.with_pp (pp_pair (option int)))
+        (only_if_equal (Option.equal Int.equal) int_option_out);
+      test "gives true and false different texts" (fun () ->
+          not_equal string (text bool_out true) (text bool_out false));
+      prop "gives two strings the same text only if they are equal"
+        ~examples:[ ("", {|""|}); ("a", {|"a"|}) ]
+        (Gen.pair Gen.string Gen.string |> Gen.with_pp (pp_pair string))
+        (only_if_equal String.equal string_out);
+      test "holds the values a domain spawned in a context started with"
         (fun () ->
           let key = fresh () in
           let v = Setting.int ~reach:Output key 1 in
           ignore (keyed key);
-          let inside =
-            context
-              [ B (v, 4) ]
-              (fun () ->
-                ignore (keyed key);
-                Domain.spawn (fun () -> keyed key))
-          in
-          let after = Domain.spawn (fun () -> keyed key) in
-          equal (option string) ~msg:"spawned in the context" (Some "4")
-            (Domain.join inside);
-          equal (option string) ~msg:"spawned after it" (Some "1")
-            (Domain.join after));
-      test "leaves out a setting that reaches only the process" (fun () ->
-          equal (option string) None
-            (shown_as (Some "1") (fun key ->
-                 Setting.bool ~reach:Process key false)));
-      test "holds the library's settings of output, and those alone" (fun () ->
-          let library k = not (String.starts_with ~prefix:"TOLK_TEST_" k) in
-          equal (list string) output_settings
-            (List.filter library (List.map fst (shaping ()))));
-      cases "changes a library setting's entry when the setting changes"
-        ~id:(fun (Setting.B (v, _)) -> Setting.key v)
-        other_outputs
-        (fun (B (v, x)) ->
-          let before = keyed (Setting.key v) in
-          not_equal (option string) before
-            (context [ B (v, x) ] (fun () -> keyed (Setting.key v))));
-      test "is sorted by name" (fun () ->
-          let names = List.map fst (shaping ()) in
-          equal (list string) (List.sort compare names) names);
-      test "is the same list while no setting that reaches output changes, \
-            and once a context ends"
+          equal (option string)
+            (Some (text v 4))
+            (spawned_within v 4 (fun () -> keyed key)));
+      test "holds the restored values in a domain spawned after a context ends"
         (fun () ->
-          let v = Setting.int ~reach:Output (fresh ()) 1 in
-          unchanged_by (fun () -> ignore (shaping ()));
-          unchanged_by (fun () -> context [ B (Setting.debug, 3) ] ignore);
+          let key = fresh () in
+          let v = Setting.int ~reach:Output key 1 in
+          context [ B (v, 4) ] (fun () -> ignore (keyed key));
+          equal (option string)
+            (Some (text v 1))
+            (Domain.join (Domain.spawn (fun () -> keyed key))));
+      test "is the same list across a context that binds no setting of Output"
+        (fun () ->
+          unchanged_by (fun () -> context [ B (Setting.debug, 3) ] ignore));
+      test "is the same list across the declaration of a setting of Process"
+        (fun () ->
           unchanged_by (fun () ->
-              ignore (Setting.int ~reach:Process (fresh ()) 0));
+              ignore (Setting.int ~reach:Process (fresh ()) 0)));
+      test "is the same list while another domain binds a setting" (fun () ->
+          let v = Setting.int ~reach:Output (fresh ()) 1 in
           unchanged_by (fun () ->
               ignore
                 (Domain.join
-                   (Domain.spawn (fun () -> context [ B (v, 2) ] shaping))));
-          unchanged_by (fun () -> context [ B (v, 1) ] ignore);
+                   (Domain.spawn (fun () -> context [ B (v, 2) ] shaping)))));
+      test "is the same list inside a context that binds a setting to its value"
+        (fun () ->
+          let v = Setting.int ~reach:Output (fresh ()) 1 in
           let before = shaping () in
-          satisfies
-            ~claim:
-              "the list read before, inside a context that binds a \
-               setting to its value"
-            entries
+          satisfies ~claim:"the list read before" entries
             (fun l -> l == before)
-            (context [ B (v, 1) ] shaping);
+            (context [ B (v, 1) ] shaping));
+      test "is the list a context found once it returns" (fun () ->
+          let v = Setting.int ~reach:Output (fresh ()) 1 in
           unchanged_by (fun () ->
-              try context [ B (v, 2) ] (fun () -> raise Exit) with Exit -> ());
+              context [ B (v, 2) ] (fun () -> ignore (shaping ()))));
+      test "is the list a context found once it raises" (fun () ->
+          let v = Setting.int ~reach:Output (fresh ()) 1 in
           unchanged_by (fun () ->
-              context [ B (v, 2) ] (fun () -> ignore (shaping ())));
+              try context [ B (v, 2) ] (fun () -> raise Exit) with Exit -> ()));
+      test "is the list nested contexts found once they end" (fun () ->
+          let v = Setting.int ~reach:Output (fresh ()) 1 in
           unchanged_by (fun () ->
-              context [ B (v, 2); B (Setting.beam, 3) ] (fun () ->
-                  context [ B (v, 1) ] (fun () -> ignore (shaping ())))));
-      test "is read without allocating while nothing changes" (fun () ->
+              context
+                [ B (v, 2); B (Setting.beam, 3) ]
+                (fun () -> context [ B (v, 1) ] (fun () -> ignore (shaping ())))));
+      test "holds a setting declared in a context once the context ends"
+        (fun () ->
+          let key = fresh () in
+          ignore (shaping ());
+          let v =
+            context [ B (level, 5) ] (fun () -> Setting.int ~reach:Output key 2)
+          in
+          equal (option string) (Some (text v 2)) (keyed key));
+      test "allocates nothing while no setting changes" (fun () ->
           ignore (shaping ());
           equal int (words (fun () -> [])) (words shaping));
     ]
 
-let library_settings =
-  group "settings"
+(* Tolk's settings *)
+
+(* Each library setting whose documentation says it reaches Output, bound to a
+   value other than its default. *)
+let outputs =
+  Setting.
     [
-      test "are tinygrad's, except those tolk does not port" (fun () ->
-          equal
-            (slist string String.compare)
-            not_ported
-            (List.filter
-               (fun k -> not (List.exists (fun s -> key s = k) settings))
-               tinygrad_keys));
-      test "missing from the golden are those whose default it cannot record"
-        (fun () ->
-          equal
-            (slist string String.compare)
-            (unrecorded @ List.map fst getenv_defaults)
-            (List.filter_map
-               (fun s -> if ported s then None else Some (key s))
-               settings));
-      cases
-        "hold tinygrad's default when their variable is unset, but SCACHE \
-         and TC_OPT"
-        ~id:key
-        (List.filter ported settings)
-        holds_tinygrad_default;
-      cases
-        "read by tinygrad where it uses them hold the default Setting states \
-         when their variable is unset"
-        ~id:fst getenv_defaults (fun (k, default) ->
-          unless_set k;
-          equal string default
-            (shown (List.find (fun s -> String.equal (key s) k) settings)));
-      test "no_color is off when NO_COLOR is unset" (fun () ->
-          unless_set "NO_COLOR";
-          equal bool false (value Setting.no_color));
-      test "parallel is between one and the domains the runtime recommends"
-        (fun () ->
-          unless_set "PARALLEL";
-          at_least int ~than:1 (value Setting.parallel);
-          at_most int
-            ~than:(Domain.recommended_domain_count ())
-            (value Setting.parallel));
+      B (allow_tf32, true);
+      B (beam, 1);
+      B (beam_estimate, false);
+      B (beam_local_max, 512);
+      B (beam_min_progress, 0.5);
+      B (beam_padto, true);
+      B (beam_uops_max, 100);
+      B (beam_upcast_max, 16);
+      B (default_float, "half");
+      B (default_int, "long");
+      B (disable_fast_idiv, false);
+      B (dmc, true);
+      B (emulated_dtypes, [ "half" ]);
+      B (expand_ssa, true);
+      B (jitbeam, Some 0);
+      B (max_kernel_buffers, 8);
+      B (mv, false);
+      B (noopt, true);
+      B (no_memory_planner, true);
+      B (reduceop_split_size, 10);
+      B (reduceop_split_threshold, 4);
+      B (split_reduceop, false);
+      B (stage, false);
+      B (use_tc, 2);
+      B (tc_min_globals, 1);
+      B (tc_opt, 1);
+      B (tc_select, 0);
+      B (transcendental, 2);
+      B (tuple_order, false);
     ]
 
-(* Processes
+let bound_key (Setting.B (v, _)) = Setting.key v
 
-   What a process reads when it starts is observed in a child. *)
+(* A caller's environment may hold the value bound: then the entry has no other
+   value to change to. *)
+let changes_its_entry (Setting.B (v, x)) =
+  if Setting.value v = x then
+    skip ~reason:(Setting.key v ^ " holds the value bound") ();
+  let before = keyed (Setting.key v) in
+  not_equal (option string) before
+    (context [ B (v, x) ] (fun () -> keyed (Setting.key v)))
 
-let play = function
-  | "settings" ->
-      List.iter (fun s -> Printf.printf "%s=%s\n" (key s) (shown s)) settings
-  | "declare" -> print_string (List.assoc Sys.argv.(1) kinds empty)
-  | role -> failwith ("unknown role " ^ role)
-
-let settings_read env =
-  let pair line =
-    match String.index_opt line '=' with
-    | Some i ->
-        Some
-          ( String.sub line 0 i,
-            String.sub line (i + 1) (String.length line - i - 1) )
-    | None -> None
-  in
-  List.filter_map pair
-    (String.split_on_char '\n' (succeeds (child ~env "settings" [])))
-
-let read_at_start env expected =
-  let read = settings_read env in
-  equal
-    (list (pair string (option string)))
-    (List.map (fun (k, v) -> (k, Some v)) expected)
-    (List.map (fun (k, _) -> (k, List.assoc_opt k read)) expected)
-
-let fails_at_start env =
-  let ended = child ~env "settings" [] in
-  not_equal status (Unix.WEXITED 0) ended.status;
-  contains ~sub:"Invalid_argument" ended.err
-
-let startup =
-  group "startup"
+(* Each library setting's variable as its documentation names it. *)
+let variables =
+  Setting.
     [
-      test "reads each setting from its variable" (fun () ->
+      ("DEBUG", key debug);
+      ("BEAM", key beam);
+      ("JITBEAM", key jitbeam);
+      ("NOOPT", key noopt);
+      ("NO_COLOR", key no_color);
+      ("TC", key use_tc);
+      ("TC_SELECT", key tc_select);
+      ("TC_OPT", key tc_opt);
+      ("TC_MIN_GLOBALS", key tc_min_globals);
+      ("STAGE", key stage);
+      ("TRANSCENDENTAL", key transcendental);
+      ("SPLIT_REDUCEOP", key split_reduceop);
+      ("NO_MEMORY_PLANNER", key no_memory_planner);
+      ("CACHELEVEL", key cachelevel);
+      ("CACHESIZE", key cachesize);
+      ("IGNORE_BEAM_CACHE", key ignore_beam_cache);
+      ("DISABLE_FAST_IDIV", key disable_fast_idiv);
+      ("MAX_KERNEL_BUFFERS", key max_kernel_buffers);
+      ("EMULATED_DTYPES", key emulated_dtypes);
+      ("DEFAULT_FLOAT", key default_float);
+      ("DEFAULT_INT", key default_int);
+      ("PARALLEL", key parallel);
+      ("SPEC", key spec);
+      ("CHECK_OOB", key check_oob);
+      ("TUPLE_ORDER", key tuple_order);
+      ("CCACHE", key ccache);
+      ("ALLOW_TF32", key allow_tf32);
+      ("SCACHE", key scache);
+      ("DISALLOW_BROADCAST", key disallow_broadcast);
+      ("REDUCEOP_SPLIT_THRESHOLD", key reduceop_split_threshold);
+      ("REDUCEOP_SPLIT_SIZE", key reduceop_split_size);
+      ("MV", key mv);
+      ("DMC", key dmc);
+      ("EXPAND_SSA", key expand_ssa);
+      ("BEAM_PADTO", key beam_padto);
+      ("BEAM_UOPS_MAX", key beam_uops_max);
+      ("BEAM_UPCAST_MAX", key beam_upcast_max);
+      ("BEAM_LOCAL_MAX", key beam_local_max);
+      ("BEAM_MIN_PROGRESS", key beam_min_progress);
+      ("BEAM_ESTIMATE", key beam_estimate);
+      ("BEAM_STRICT_MODE", key beam_strict_mode);
+      ("BEAM_LOG_SURPASS_MAX", key beam_log_surpass_max);
+      ("BEAM_DEBUG", key beam_debug);
+      ("CC", key cc);
+      ("CUDA_PATH", key cuda_path);
+      ("ROCM_PATH", key rocm_path);
+      ("ASSERT_COMPILE", key assert_compile);
+      ("REWRITE_STACK_LIMIT", key rewrite_stack_limit);
+      ("DEBUG_LINEARIZE", key debug_linearize);
+      ("DBGTV", key dbgtv);
+    ]
+
+let library_settings =
+  group "tolk's settings"
+    [
+      cases "read the variable their documentation names" ~id:fst variables
+        (fun (documented, key) -> equal string documented key);
+      cases
+        "hold the default their documentation states when their variable is \
+         unset"
+        ~id:key defaults (fun d ->
+          equal (option string)
+            (Some (shown d))
+            (List.assoc_opt (key d) (Lazy.force at_defaults)));
+      test
+        "parallel is between 1 and the domains the runtime recommends when \
+         PARALLEL is unset" (fun () ->
+          let n =
+            int_of_string
+              (require_some
+                 (List.assoc_opt "PARALLEL" (Lazy.force at_defaults)))
+          in
+          at_least int ~than:1 n;
+          at_most int ~than:(Domain.recommended_domain_count ()) n);
+      test "those that reach Output are the library's entries of shaping"
+        (fun () ->
+          let library k = not (String.starts_with ~prefix:"TOLK_TEST_" k) in
+          equal (list string)
+            (List.sort compare (List.map bound_key outputs))
+            (List.filter library (List.map fst (shaping ()))));
+      cases
+        "those that reach Output change their entry of shaping as they change"
+        ~id:bound_key outputs changes_its_entry;
+      test "read their variables when the program starts" (fun () ->
           read_at_start
             [
               ("DEBUG", Some "3");
@@ -828,28 +923,32 @@ let startup =
               ("CCACHE", Some "0");
               ("TC", Some "2");
               ("DEFAULT_FLOAT", Some "half");
-              ("PARALLEL", Some "0");
             ]
             [
-              ("DEBUG", "3");
-              ("NOOPT", "1");
-              ("CCACHE", "0");
-              ("TC", "2");
-              ("DEFAULT_FLOAT", "half");
-              ("PARALLEL", "0");
+              D (Setting.debug, int, 3);
+              D (Setting.noopt, bool, true);
+              D (Setting.ccache, bool, false);
+              D (Setting.use_tc, int, 2);
+              D (Setting.default_float, string, "half");
             ]);
-      test
-        "reads EMULATED_DTYPES as names separated by commas, dropping empty \
-         ones" (fun () ->
+      test "parallel reads PARALLEL when the program starts" (fun () ->
+          equal (option string) (Some "0")
+            (List.assoc_opt "PARALLEL"
+               (values_at_start [ ("PARALLEL", Some "0") ])));
+      test "emulated_dtypes reads names separated by ',', dropping empty ones"
+        (fun () ->
           read_at_start
             [ ("EMULATED_DTYPES", Some ",half,,bfloat16, ") ]
-            [ ("EMULATED_DTYPES", "half,bfloat16, ") ]);
-      test "starts whatever DEV holds" (fun () ->
-          read_at_start
-            [ ("DEV", Some "PCI+NV+CUDA"); ("DEBUG", Some "3") ]
-            [ ("DEBUG", "3") ]);
-      test "fails on a setting that is no integer" (fun () ->
-          fails_at_start [ ("DEBUG", Some "two") ]);
+            [
+              D
+                ( Setting.emulated_dtypes,
+                  list string,
+                  [ "half"; "bfloat16"; " " ] );
+            ]);
+      test "a program fails when it starts if a setting's variable is refused"
+        (fun () -> fails_at_start ~sub:"DEBUG" [ ("DEBUG", Some "two") ]);
+      test "cachesize refuses a negative CACHESIZE when the program starts"
+        (fun () -> fails_at_start ~sub:"CACHESIZE" [ ("CACHESIZE", Some "-1") ]);
     ]
 
 let () =
@@ -860,9 +959,16 @@ let () =
         (run "Tolk.Setting"
            [
              environment;
-             declaration;
+             initial_value;
+             constructors;
+             int_;
+             bool_;
+             float_;
+             string_;
+             int_option;
+             key_;
              contexts;
-             cache_keys;
+             shaping_under;
+             shaping_;
              library_settings;
-             startup;
            ])

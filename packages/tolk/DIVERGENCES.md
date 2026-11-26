@@ -263,7 +263,8 @@ a source (`uop/upat.py` `_get_clause`).
   serve tolk a binary built under other options or against other headers;
   comgr's cache served no measurable time over a cold table.
 - **Pinned by:** `Tolk.Setting › context › is not seen by the other domains` and
-  `Tolk.Setting › context › binds for the domains spawned while it runs`;
+  `Tolk.Setting › context › binds for the domains spawned while it runs, which
+  keep the value they started with`;
   `Tolk.Worker` (every test); `Tolk.Codegen › programs are kept › calls from
   two domains at once make each program once, compiled once`; `Tolk
   decompositions, compiled in parallel › targets lowered on several domains at
@@ -2601,7 +2602,8 @@ gate read a set; merged into D93.
   records the arch it was compiled for, which `Rig_program.load` checks
   against the device's, and `native` would use instructions beyond the level
   it records; tuning adds none.
-- **Pinned by:** `Tolk.Setting › startup › starts whatever DEV holds`;
+- **Pinned by:** `Tolk.Setting › environment › DEV is read by no setting: a
+  program starts whatever it holds`;
   `Rune.jit on another machine's host › another machine's host compiles for
   its arch` and `› gives eager's bits`; `Tolk_engine › target › the host
   compiles C for Clang at its arch, tuned for its own processor, …`;
@@ -2992,7 +2994,7 @@ encodes its barriers (D146).
   keeps what it compiles, as rune's jit did for `BEAM`, `JITBEAM` and
   `DEBUG`; `DEBUG` read by
   `compile_linear` would reach output and key every cache on verbosity.
-- **Pinned by:** `Tolk.Setting › declarations` and `› shaping` (every test,
+- **Pinned by:** `Tolk.Setting › constructors`, `› shaping` (every test,
   among them `› holds the library's settings of output, and those alone` and `›
   changes a library setting's entry when the setting changes`); `Tolk.Search ›
   actions › asks for the tensor cores' levels whatever TC_OPT` and `›
@@ -4032,8 +4034,9 @@ rule, its reason and its pins.
   the lowering's rule by repeating it.
 - **Pinned by:** the `Jit JITBEAM` suite (`test/engine/jit`): `JITBEAM unset ›
   a width given and BEAM's alike compile alike` and `JITBEAM=3 › a width given
-  and JITBEAM's alike compile alike`; and the `Tolk.Setting` suite: `shaping ›
-  under bindings is shaping in their context, and binds nothing`.
+  and JITBEAM's alike compile alike`; and the `Tolk.Setting` suite:
+  `shaping_under › is shaping in the context of its bindings` and `› binds
+  nothing`.
 
 ## D160. A read no order keeps reads a copy of its state
 

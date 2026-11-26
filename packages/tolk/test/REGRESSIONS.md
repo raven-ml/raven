@@ -14,10 +14,10 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: null/test_helpers.py::TestContextVars::test_initial_value_is_set | a setting starts from its default | Setting › declarations › an int setting starts from its default when its variable is unset |
-| tinygrad: null/test_helpers.py::TestContextVars::test_cannot_recreate | a name is declared once | Setting › declarations › a name is declared once, whatever the setting's type |
-| tinygrad: null/test_helpers.py::TestContextVars::test_new_var_inside_context | a declaration inside a context outlives it | Setting › declarations › a setting declared inside a context stays declared after it |
-| tinygrad: null/test_helpers.py::TestContextVars::test_value_across_modules | the registry is one per process, whatever module declares | Setting › declarations › a library setting's name cannot be declared again |
+| tinygrad: null/test_helpers.py::TestContextVars::test_initial_value_is_set | a setting starts from its default | Setting › int › starts from its default when its variable is unset |
+| tinygrad: null/test_helpers.py::TestContextVars::test_cannot_recreate | a name is declared once | Setting › constructors › raise on a name declared before, whatever the setting's type and reach |
+| tinygrad: null/test_helpers.py::TestContextVars::test_new_var_inside_context | a declaration inside a context outlives it | Setting › constructors › raise on a name declared inside a context that has ended |
+| tinygrad: null/test_helpers.py::TestContextVars::test_value_across_modules | the registry is one per process, whatever module declares | Setting › constructors › raise on the name of a library setting |
 | tinygrad: null/test_helpers.py::TestContextVars::test_assignment_across_modules | assigning `.value` directly | dropped: a setting has no assignment; only `context` changes its value |
 | tinygrad: null/test_helpers.py::TestContextVars::test_context_assignment | a context binds for its extent | Setting › context › binds a setting for the extent of its function |
 | tinygrad: null/test_helpers.py::TestContextVars::test_unknown_param_to_context | `Context` refuses an unknown name | dropped: a binding holds the setting itself, so an unknown setting cannot be named |
@@ -58,7 +58,7 @@ below, and that of the settings, which tinygrad keeps in `helpers.py`, is
 | tinygrad: null/test_disk_cache.py::DiskCache::test_dict_key | keys of several columns | dropped: keys are strings, which callers encode (D8) |
 | tinygrad: null/test_disk_cache.py::DiskCache::test_table_name | a table name with `:` and `-` | Helpers › Diskcache › behaves as a table of entries per table (table `test_gfx1010:xnack-`) |
 | tinygrad: null/test_disk_cache.py::DiskCache::test_clear_cache | clear empties every table, and runs again | Helpers › Diskcache › clear removes the entries of every table |
-| tinygrad: null/test_device.py::TestDevVar::test_parse | DEV parses targets and prints them back | Helpers › Target › of_string reads each target as its golden states; Helpers › Target › pp writes each target as its golden states (`targets.golden`, every input of the test); the DEV setting is dropped (D95): Setting › startup › starts whatever DEV holds |
+| tinygrad: null/test_device.py::TestDevVar::test_parse | DEV parses targets and prints them back | Helpers › Target › of_string reads each target as its golden states; Helpers › Target › pp writes each target as its golden states (`targets.golden`, every input of the test); the DEV setting is dropped (D95): Setting › environment › DEV is read by no setting: a program starts whatever it holds |
 | tinygrad: null/test_device.py::TestDevVar::test_target | the target of a device under DEV | dropped: a device's target follows from the device alone (D95) |
 | tinygrad: null/test_device.py::TestDevVar::test_dev_arch_override | an arch in DEV reaches the renderer | dropped: the renderer belongs to `Device`'s suite, and there is no DEV (D95) |
 | tinygrad: null/test_device.py::TestDevice::test_nonexistent_renderer | "did you mean: 'CLANG'" | dropped: `select_by_name` and its suggestion are not ported (README exclusions); the renderer lookup belongs to `Device`'s suite |
