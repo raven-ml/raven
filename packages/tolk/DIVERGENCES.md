@@ -1660,8 +1660,8 @@ rule, its reason and its pins.
   number is the same body` and `› a body that hits under other numbers keeps
   its own loops`, and `› cache › storage numbered in another counter state is
   the same body`; the `Helpers` suite's `shaping ›` tests; the `Compiler_cpu`
-  suite's `without Clang › an object cached by the default compiler is not
-  served under CC`; the `Codegen` suite's `programs are kept › read waits for
+  suite's `cache › an object cached by the default compiler is not served
+  under CC`; the `Codegen` suite's `programs are kept › read waits for
   no program being made`, and the `Realize` suite's `lower_and_compile in
   parallel › reads the programs the disk keeps without spawning a domain`.
 
