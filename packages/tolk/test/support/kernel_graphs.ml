@@ -29,15 +29,19 @@ let untouched dtype : Dtype.value =
   else if Dtype.equal dtype Bool then `Bool false
   else Dtype.min dtype
 
-(* A state of storage: its elements, the indices written to reach it, and the
-   kernels that wrote them, each once: a state after a kernel the state under
-   it already follows is that state. *)
+(* A state of storage: its elements, the indices written to reach it, the
+   kernels that wrote them, each once (a state after a kernel the state under it
+   already follows is that state), and the nodes that name it or a state it
+   follows, its own first. A join names the state of its first source. *)
 type state = {
   values : Dtype.value array;
   written : int list;
   applied : Ops.t list;
+  chain : Ops.t list;
 }
 
+(* Whether [s] is [t] or follows it. *)
+let follows s t = s == t || List.memq (List.hd t.chain) s.chain
 let is_kernel_call u = Ops.op u = Call && Ops.op (Ops.nth u 0) = Sink
 
 let initial buffers (scratch, (p : Ops.param_arg), size) =
@@ -63,8 +67,9 @@ let kernel_writes ~vars ~params:enclosing values_of call =
         | Int n -> (buffers, (k, Dtype.Value.of_int n) :: params)
         | Sym _ -> fail "a call's argument is a %a of no value" Op.pp (Ops.op a))
     | None, _ ->
-        fail "a call's argument is a %a, not storage on one device" Op.pp
-          (Ops.op a)
+        fail
+          "a call's argument is a %a, neither storage nor a scalar of a value"
+          Op.pp (Ops.op a)
   in
   let buffers, params =
     List.fold_left bind ([], [])
@@ -78,7 +83,9 @@ let sorted_writes written =
   |> List.sort (fun (s0, i0, _) (s1, i1, _) -> compare (s0, i0) (s1, i1))
 
 let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
-  let initial st = { values = initial buffers st; written = []; applied = [] } in
+  let initial u st =
+    { values = initial buffers st; written = []; applied = []; chain = [ u ] }
+  in
   let states = Ops.Tbl.create 16 and results = Ops.Tbl.create 16 in
   let rec state u =
     match Ops.Tbl.find_opt states u with
@@ -91,17 +98,25 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
               fail "a call's argument is a %a, not storage" Op.pp (Ops.op u)
         in
         let s =
-          if Ops.op u = After then
-            List.fold_left (apply st)
-              (state (Ops.nth u 0))
-              (List.tl (Ops.src u))
-          else initial st
+          if Ops.is_join u then state (Ops.nth u 0)
+          else if Ops.op u = After then
+            let s =
+              List.fold_left (apply st)
+                (state (Ops.nth u 0))
+                (List.tl (Ops.src u))
+            in
+            { s with chain = u :: s.chain }
+          else initial u st
         in
         Ops.Tbl.replace states u s;
         s
-  (* [apply st s dep] is the state [dep] leaves storage [st] in, from [s]. *)
+  (* [apply st s dep] is the state [dep] leaves storage [st] in, from [s]. A
+     state of other storage listed orders, and writes nothing. *)
   and apply st s dep =
-    if not (is_kernel_call dep) || List.memq dep s.applied then s
+    if Ops.op dep = After || List.memq dep s.applied then s
+    else if not (is_kernel_call dep) then
+      fail "a state lists a %a, neither a call of a kernel nor a state" Op.pp
+        (Ops.op dep)
     else
       let args = List.tl (Ops.src dep) in
       let values = Array.copy s.values and written = ref s.written in
@@ -113,7 +128,7 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
               written := i :: !written
           | _ -> ())
         (run dep);
-      { values; written = !written; applied = dep :: s.applied }
+      { s with values; written = !written; applied = dep :: s.applied }
   and run call =
     match Ops.Tbl.find_opt results call with
     | Some w -> w
@@ -122,17 +137,37 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) sink =
         Ops.Tbl.replace results call w;
         w
   in
-  let final = Hashtbl.create 64 in
+  (* Of the states the sink names of each memory, those no other follows. Two of
+     them agree on each element both wrote, so their writes join. *)
+  let latest = Hashtbl.create 16 in
   List.iter
     (fun u ->
       match storage_of u with
       | Some (false, p, _) ->
           let s = state u in
-          List.iter
-            (fun i -> Hashtbl.replace final (p.slot, i) s.values.(i))
-            s.written
+          let kept =
+            Option.value (Hashtbl.find_opt latest p.slot) ~default:[]
+          in
+          if not (List.exists (fun t -> follows t s) kept) then
+            Hashtbl.replace latest p.slot
+              (s :: List.filter (fun t -> not (follows s t)) kept)
       | Some (true, _, _) | None -> ())
     (Ops.src sink);
+  let final = Hashtbl.create 64 in
+  let join slot s i =
+    let v = s.values.(i) in
+    match Hashtbl.find_opt final (slot, i) with
+    | Some w when Dtype.Value.compare v w <> 0 ->
+        fail
+          "the sink names two states of memory %d, neither after the other, \
+           that differ at element %d"
+          slot i
+    | _ -> Hashtbl.replace final (slot, i) v
+  in
+  Hashtbl.iter
+    (fun slot states ->
+      List.iter (fun s -> List.iter (join slot s) s.written) states)
+    latest;
   sorted_writes final
 
 let linear_writes ?(vars = []) ?(params = []) ?(buffers = []) linear =

@@ -3,14 +3,15 @@
     A kernel graph holds storage and calls ({!Tolk.Op.Call}) of kernels, each a
     {!Tolk.Op.Sink} whose storage is its parameters. A call's argument names
     storage in a state: the storage as it is given, or, through an
-    {!Tolk.Op.After}, as the calls it lists leave it, each call once: an
-    after of a call the state under it already follows is that state. A
-    kernel's storage
-    parameter of slot [k] stands for the storage of the call's [k]th argument in
-    the state that argument names, and a scalar parameter of slot [k] for the
-    value a variable passed as that argument is bound to. A graph that is the
-    body of a call reads a scalar argument of that call as a scalar parameter
-    its kernels hold without passing it. The kernel writes what its stores write
+    {!Tolk.Op.After}, as the calls it lists leave it, each call once: an after
+    of a call the state under it already follows is that state. A join
+    ({!Tolk.Ops.is_join}) names the state of its first source, and the states an
+    after lists write nothing into its storage. A kernel's storage parameter of
+    slot [k] stands for the storage of the call's [k]th argument in the state
+    that argument names, and a scalar parameter of slot [k] for the value a
+    variable passed as that argument is bound to. A graph that is the body of a
+    call reads a scalar argument of that call as a scalar parameter its kernels
+    hold without passing it. The kernel writes what its stores write
     ({!Interpreter.writes}) into the storage of the arguments it stores into. So
     a kernel reads what its arguments name, and the order the kernels would run
     in is the scheduler's concern. *)
@@ -36,8 +37,15 @@ val writes :
     computation on small integers gives: NaN, the type's least integer, or
     [false].
 
-    Raises [Invalid_argument] if a call's argument is neither storage on one
-    device, possibly after effects, nor a variable with a value, or as
+    Of the states the sink names of one memory, one that another follows leaves
+    nothing of its own; the others leave what each wrote.
+
+    Raises [Invalid_argument] if a call's argument is neither storage, possibly
+    after effects, nor a scalar with a value (a bound variable, one that [vars]
+    gives, or a constant), or is a run of storage's elements, which
+    {!linear_writes} takes; if a state lists something other than a call of a
+    kernel or a state; if the sink names two states of one memory, neither of
+    which follows the other, that leave one element different values; or as
     {!Interpreter.writes} does. *)
 
 val linear_writes :
@@ -57,5 +65,5 @@ val linear_writes :
     them once for each value of its ranges, from [0], each range replaced by
     its value, and a scalar argument that is then constant passes its value.
 
-    Raises [Invalid_argument] if a call is not of a kernel, or as {!writes}
-    does. *)
+    Raises [Invalid_argument] if a call is not of a kernel, or as {!writes} does
+    for an argument other than a run of storage's elements. *)
