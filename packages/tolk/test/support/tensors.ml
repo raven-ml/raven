@@ -170,11 +170,14 @@ let reduce u op axes t =
   in
   { shape; cells = Array.init (size shape) cell }
 
+(* A group's empty stack holds no cells: nothing reads a group's value. *)
 let stack u ts =
-  let shape = concrete u in
-  let tail = List.tl shape in
-  let cells = List.map (fun t -> (broadcast tail t).cells) ts in
-  { shape; cells = Array.concat cells }
+  match (concrete u, ts) with
+  | shape, [] -> { shape; cells = [||] }
+  | shape, ts ->
+      let tail = List.tl shape in
+      let cells = List.map (fun t -> (broadcast tail t).cells) ts in
+      { shape; cells = Array.concat cells }
 
 (* Bit reinterpretation between types of different sizes: the bytes of each row
    of the last axis, little-endian, read as the other type. *)

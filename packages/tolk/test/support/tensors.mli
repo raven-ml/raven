@@ -22,7 +22,12 @@
       leading [k] axes of its source, from its identity, the last of them
       varying fastest;
     - a data {!Tolk.Op.Stack} stacks its sources along a new leading axis, and a
-      {!Tolk.Op.Stage} or a {!Tolk.Op.Copy} copies its source to new storage.
+      {!Tolk.Op.Stage} or a {!Tolk.Op.Copy} copies its source to new storage;
+    - an index ({!Tolk.Op.Index}) of a tensor by integer tensors [i1], ..., [im]
+      is a gather: its shape is the shapes of [i1] to [im] in turn, then the
+      source's axes past the [m]th, and its element at [(c1, ..., cm, rest)] is
+      the source's at [(i1[c1], ..., im[cm], rest)]. An element at an [`Invalid]
+      index is [`Invalid], and a store through it writes nothing.
 
     Graphs have effects on memory. A {!Tolk.Op.Store} writes its value,
     broadcast to its destination's shape, into the memory its destination
@@ -60,10 +65,12 @@ val eval :
     memory [s] holds the array that [buffers] (default [[]]) gives [s], and
     memory that [buffers] does not give holds [`Invalid].
 
-    Raises [Invalid_argument] if [u] reads memory outside its array, has a
-    shape that is not concrete, reads a variable, or holds an operation other
-    than those above, a constant, and the operations that only order or name their first source
-    ({!Tolk.Op.Detach}, {!Tolk.Op.Contiguous_backward}). *)
+    Raises [Invalid_argument] if [u] reads memory outside its array or a source
+    outside its shape through an index, has a shape that is not concrete, reads
+    an unbound variable, orders an effect after a state whose value needs that
+    effect, or holds an operation other than those above, a constant, and the
+    operations that only order or name their first source ({!Tolk.Op.Detach},
+    {!Tolk.Op.Contiguous_backward}). *)
 
 val writes :
   ?buffers:(int * Dtype.value array) list ->
