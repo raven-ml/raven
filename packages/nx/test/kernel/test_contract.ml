@@ -1785,7 +1785,9 @@ let metal_decline_cases =
 
 (* nx.metal's laws: those of the calls it computes, its bound that of its flush
    (nx_metal.mli), a dst through any view. Its examples are nx.cpu's regimes of
-   the dtypes it computes, made when it is declared. *)
+   the dtypes it computes and, for its bound, complex64 outputs with a part not
+   finite beside a finite one, which draws reach in 1 to 8 % of cases, made when
+   it is declared. *)
 let metal_laws (d : Support.declared) =
   let run f x =
     let b = Support.opened d in
@@ -1795,7 +1797,10 @@ let metal_laws (d : Support.declared) =
     List.filter staged
       (regimes ~draw:finite_value f32 @ regimes ~draw:finite_value c64)
   in
-  let bound_examples = List.filter (fun c -> c.out = c.acc) staged_examples in
+  let bound_examples =
+    List.filter (fun c -> c.out = c.acc) staged_examples
+    @ [ Lazy.force (infinite_part c64) ]
+  in
   group d.label
     [
       prop ~examples:bound_examples
