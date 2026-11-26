@@ -2513,9 +2513,9 @@ host's accumulators in its vector registers.
   decodes of products of 1 to 512 rows on four register files and on a host
   without registers, blocks of 16 to 128 rows on four files, and a larger
   file decoding no more times; `streaming › a product of ReLU of bfloat16
-  values is not streamed`; the Stage suite's `decoded panels › a decoded
-  operand converts integer codes it loads`; `the hand-coded optimisations
-  keep a kernel's writes › large kernels › routed_blocks_*` (slow); on fudge,
+  values is not streamed`; the Stage suite's `decoded › an operand that
+  converts integer codes it loads is decoded`; `hand_coded_optimizations ›
+  keeps a kernel's writes › routed_blocks`; on fudge,
   kaun's `Quant/host/mxfp4-product-of-1024-*` and
   `Quant/host/routed-product-64-tokens`, and rune's
   `Jit/experts-mxfp4-512x4of32-256`.
@@ -5362,7 +5362,7 @@ into D183, which holds its rule, its reason and its pins.
   consecutive loads of bytes fill registers of` (every case), `› without known
   registers, byte loads stay apart, on` (every case) and `› without vectors of
   eight halves or known registers, eight halves are two loads of four`, and its
-  kernels' goldens for SSE's 16 bytes; the Stage suite's `decoded panels › on
+  kernels' goldens for SSE's 16 bytes; the Stage suite's `decodes › on
   the host a decoded product loads its codes a register at a time` and `› on the
   host a decoded product computes the product of the decoded codes`; the tolk
   bench's `host/*/heuristic` rows and kaun's `Quant/host/mxfp4-product-1-token`
@@ -6575,8 +6575,8 @@ against 2.77).
   (gfx1201), float16 and bfloat16 products of 2048 cubed, weights in either
   layout, staged and unstaged, compile to the same HIP source and the same
   comgr instructions with every access merged to 16 bytes. RDNA3 and CDNA are unmeasured.
-- **Pinned by:** the Stage suite's `values › a staged dense MXFP4 product
-  …` (its codes copied as `uint4`); the Coalesce suite's `vectors of eight
+- **Pinned by:** the Stage suite's `operands › decoded › a staged dense MXFP4
+  product …` (its codes copied 16 bytes at a time); the Coalesce suite's `vectors of eight
   16-bit floats` group (`the runs of eight 16-bit floats' loads and stores`,
   of `float16` and `bfloat16`; `half_cuda`, `half8_cuda` and
   `accesses_cuda`, generated from tinygrad with this rule); the Stage
@@ -6737,21 +6737,23 @@ against 2.77).
   AMD gfx1201 and Metal stage in one stage of register copies with CUDA's
   bank constants, gathered rows included, and state no `units` or
   `in_flight`; correct, unmeasured.
-- **Pinned by:** the Stage suite: `values › a staged kernel computes the bits
-  of the same optimisations unstaged`, `values › a staged product of
-  gathered rows …`, `values › a staged dense MXFP4 product …`, `a dense
-  MXFP4 product's staged rows cover a sector a trip`, `values › a staged
-  computed operand …`, `values › a staged core's plans at two counts of
-  units compute the same bits`, `values › a staged core's plans under
-  another sum at any units …`, `kernels the race checker runs › a product
-  over a nest of loops …`, `a core under another sum whose tile takes its K
-  whole …`, `a core reading gathered rows keeps the unstaged splits`,
-  `gathered rows each warp reads alone stay unstaged`, `serial ranges › …`,
-  `barriers › …` (on CUDA and on HIP's RDNA3 and RDNA4), `races`
+- **Pinned by:** the Stage suite: `staging › a staged kernel computes the bits
+  of the same optimisations unstaged`, `operands › gathered rows › a staged
+  product of gathered rows …`, `operands › decoded › a staged dense MXFP4
+  product …`, `steps › a dense MXFP4 product's staged rows cover a sector a
+  trip`, `operands › computed › a staged computed operand …`, `tile › a
+  staged core's plans at two counts of units compute the same bits`, `tile ›
+  a staged core's plans under another sum at any units …`, `staging › a
+  nest of loops is staged in two stages …`, `staging › a core whose K its
+  tile takes whole …`, `tile › a core reading gathered rows keeps the
+  unstaged splits`, `operands › gathered rows › gathered rows each warp reads
+  alone stay unstaged`, `staging › a core staged under a serial range …`,
+  `staging › a staged kernel separates each store …` (on CUDA and on HIP's
+  RDNA3 and RDNA4), `staging › races`
   (`compute-sanitizer`'s race checker in hazard mode on a kernel of each
   depth, one of gathered rows, one of a computed operand, one over a nest of
   loops, and a dense and a routed MXFP4 product whose scales are held, each
-  also exact in `kernels the race checker runs`), `stages`
+  also exact in its own group), `depth`
   (`Stage.depth`), `a staged core's workgroups, threads and trips`, `a
   staged warp holds a block's rows of one matrix`, `the layout` and
   `sources`; the tolk bench's `contract/bf16-*` rows, `bf16-512x4096x2880`
@@ -6778,8 +6780,8 @@ against 2.77).
 - **Reason:** (d): the second stage of D262 overlaps the next trip's copy
   with this trip's cores only where the copy does not wait; its rows are
   D262's.
-- **Pinned by:** the Stage suite's `barriers` (its second clause), `races`
-  and `sources`.
+- **Pinned by:** the Stage suite's `staging › CUDA's source`, `staging ›
+  races` and `sources`.
 
 ## D264. Withdrawn
 
@@ -7622,11 +7624,11 @@ C's undefined behaviour.
   operand reads the rows' blocks, keep their kernels. Files of 32 registers
   (NEON, AVX-512) take 16 rows a tile (D92), so 64 rows take 4 tiles and share
   one panel: unmeasured, fudge has neither.
-- **Pinned by:** the Stage suite's `decoded panels`: `on the host a staged
+- **Pinned by:** the Stage suite's `decodes`: `on the host a staged
   decoded product computes the bits of the same optimisations unstaged`
   (panels staged, refused at one row tile and past 64 KiB), `on the host a
   decoded operand read by several row tiles is decoded once` (on files of 16
-  and 32 registers) and `staging off decodes once a row tile`; on fudge,
+  and 32 registers) and `with staging off, each row tile decodes the codes again`; on fudge,
   kaun's `Quant/host/mxfp4-product-of-1024-*-bfloat16-tokens`.
 
 ## D345. A store through a broadcast is refused
@@ -8749,8 +8751,9 @@ one reads what the other left, and then they form a chain (D474).
   tinygrad-shaped convolution are unmeasured.
 - **Pinned by:** the Heuristic suite's `projection_two_axes_{metal,cuda,amd}`,
   `q8_0_partial_{metal,cuda,amd}` and `conv_half_{metal,cuda,amd}`,
-  `conv_metal`; kaun's `GptOss/prefill-512`; the Stage suite's `a core under
-  another sum whose tile does not read it is the exact product` (D262); the
+  `conv_metal`; kaun's `GptOss/prefill-512`; the Stage suite's `operands ›
+  computed › a computed operand whose loads step through another loop …`
+  (D262); the
   Codegen suite's `tensor cores on CUDA › a convolution of three reduce axes
   takes a core and is the exact result`.
 
@@ -9366,8 +9369,8 @@ D466.
   uniform gate › a sum of 2880 terms a row runs in blocks, the gate bounding
   their loop`, `› a padded trip of a sum of 2900 terms reads nothing past
   the buffer` and `› on the host` and `› on CUDA, equal the reference ...
-  k = 2900` (blocks padded under the gate); the Stage suite's `a
-  staged core's padded trips read no global memory`, over a staged core's
+  k = 2900` (blocks padded under the gate); the Stage suite's `operands ›
+  gathered rows › a staged core's padded trips read no global memory`, over a staged core's
   copies; the `codegen` goldens `readout_*`, `sum_all_clang`, `matvec_clang`
   and `linearizer_fail_1_clang`, whose `.tolk` hold the blocked loops.
 
@@ -10018,10 +10021,10 @@ D466.
 - **Pinned by:** `Tolk.Heuristic`'s `a product laid out along its reduce`
   (`is staged where the renderer copies asynchronously`, `is not staged
   laid out along its columns, or on sm_75`) and `a contraction laid out
-  along its reduce` on sm_75; the Stage suite's `kernels the race checker
-  runs › products in registers in trips of several steps …` (over 110 in
-  copies of 8 bytes too) and `a product summed over heads of 110 in copies
-  of 8 bytes …`, and their race checks, and the Stage suite's `sources`
+  along its reduce` on sm_75; the Stage suite's `stages_product ›
+  products in registers in trips of several steps …` (over 110 in
+  copies of 8 bytes too) and `a product summed over heads of 110 copies
+  runs of 8 bytes …`, and their race checks, and the Stage suite's `sources`
   (`bf16_2048.cu`, `f16_padded.cu`,
   merged reads); `Tolk.Coalesce › memory_coalescing › loads at indices ordered
   after a store merge as at their values, at` (every row); the tolk bench's

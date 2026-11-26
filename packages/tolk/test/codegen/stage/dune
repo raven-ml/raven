@@ -4,7 +4,7 @@
 
 (executable
  (name test_stage)
- (libraries windtrap tolk tolk_test tolk_run tolk.engine rig rig.cuda unix))
+ (libraries windtrap tolk tolk_test tolk_run tolk_gpus tolk.engine rig unix))
 
 (rule
  (alias runtest)
