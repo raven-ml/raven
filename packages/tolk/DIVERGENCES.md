@@ -2369,8 +2369,9 @@ Withdrawn: multi-device is out of scope, see README.
   the router, where float32's interleave, about 12 in flight. Untimed: the
   decoded operands (Q8_0 and MXFP4 products of few outputs, routed
   experts), float16, AMD and Metal.
-- **Pinned by:** the Heuristic suite: `the optimisations chosen are tinygrad's ›
-  <environment> › the optimised kernel`, cases `matvec_*`, `vecmat_*`,
+- **Pinned by:** the Heuristic suite: `hand_coded_optimizations ›
+  optimises each recorded case as its golden states`, cases `matvec_*`,
+  `vecmat_*`,
   `gpt_oss_*`, `experts_down_*`, `routed_blocks_*`, `routed_own_*`,
   `routed_shared_*`, `routed_at_bound_*` and `routed_past_bound_*`,
   `shared_keys_*`, `rows_m{4,12,32}_*`, `q8_0_blocks_*`, `gguf_mxfp4_*`,
@@ -2383,16 +2384,15 @@ Withdrawn: multi-device is out of scope, see README.
   reuse of 32, before a tensor core`, `› a contraction of several passes
   streams unless a two-stage core takes it` and `› a recorded contraction
   streams before a tensor core up to 64 multiply-adds per byte of its
-  streamed operand`, `› each renderer streams
-  before a core up to 64 multiply-adds a byte` and `› a contraction streams
+  streamed operand` and `› a contraction streams
   before a core up to the renderer's bound a byte`, `› a product's workgroups
   hold at most a block's threads on every GPU`, `› a product streamed by
   its rows reduces over a SIMD group's threads`, `› a product streamed by
   its columns splits its reduce into threads` and `› a product streamed by
   its columns pads what its threads do not divide`, and the cases
   `vecmat_1000_{cuda,metal,amd}`; the Cstyle suite's
-  `declarations › simd_threads and local_threads_max are each target's`; `the
-  hand-coded optimisations keep a kernel's writes › small kernels ›
+  `declarations › simd_threads and local_threads_max are each target's`;
+  `hand_coded_optimizations › keeps a kernel's writes › experts_down ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's
   cases `double_sum_group`, `double_sum_group_twice` and
   `double_sum_unrolled_group`; on fudge, tolk's bench `stream/*`
@@ -2507,8 +2507,8 @@ host's accumulators in its vector registers.
   rows took 2.27 and 12.05 ms against 2.6 and 8.5 ms for the decode stored
   and the 4-row product, a gap D348's panel closes. Files of 32 registers (NEON, AVX-512) take 16 rows
   unmeasured.
-- **Pinned by:** the Heuristic suite: `the optimisations chosen are
-  tinygrad's › in the default environment › the optimised kernel`, cases
+- **Pinned by:** the Heuristic suite: `hand_coded_optimizations ›
+  optimises each recorded case as its golden states`, cases
   `routed_*_cpu` and `routed_*_avx2`; `the host's decodes`: the
   decodes of products of 1 to 512 rows on four register files and on a host
   without registers, blocks of 16 to 128 rows on four files, and a larger
@@ -4818,9 +4818,10 @@ the walk of `Rangeify.fix_store_hazard`.
 - **Pinned by:** `Tolk.Heuristic`'s cases, on CUDA: `matmul_half_1024`,
   `matmul_half_512`, `matmul_half_256`, `attention_values` and
   `matmul_half_variable` (a variable counts the workgroups), with the layouts in
-  the suite's `.tolk` files; its `the tensor core's floor › the splits after a
-  tensor core are those that leave its floor of workgroups`, over every recorded
-  core kernel, CDNA's included, with the local split's floor of 256 workgroups;
+  the suite's `.tolk` files; its `tensor cores › the tensor core's floor ›
+  the splits after a tensor core are those that leave its floor of
+  workgroups`, over every recorded core kernel, CDNA's included, with the
+  local split's floor of 256 workgroups;
   the `routed_run` cases of D200 on CUDA, whose local split by 2 the floor of
   256 admits; its `Metal's renderer floors its cores at 32768 threads`, where
   `matmul_1000` and `scores` split otherwise at 16384; the tolk bench's
@@ -5302,10 +5303,11 @@ into D183, which holds its rule, its reason and its pins.
   lanes` and `› on the host a reduce of doubles over a stored axis of a
   multiple of 32 takes half the lanes of floats, in the registers floats
   fill`, over every recorded kernel and lorenz_simple's, on files of 16 × 16,
-  16 × 32, 32 × 16 and 32 × 64; `the optimisations chosen are tinygrad's › …
-  › the optimised kernel`, the `cpu` (16 × 16) and `avx2` (16 × 32) cases; the
-  Compiler_cpu suite's `registers › the vector registers, their number and
-  bytes, of` (every case) and `registers › an x86_64 processor has SSE's 16
+  16 × 32, 32 × 16 and 32 × 64; `hand_coded_optimizations ›
+  optimises each recorded case as its golden states`, the `cpu` (16 × 16)
+  and `avx2` (16 × 32) cases; the Compiler_cpu suite's `registers › the
+  vector registers, their number and bytes, of` (every case) and `registers ›
+  an x86_64 processor has SSE's 16
   registers of 16 bytes`; the tolk bench's `host/*/heuristic` and
   `lorenz/*/heuristic` rows on fudge.
 
@@ -5463,8 +5465,9 @@ into D183, which holds its rule, its reason and its pins.
   the tolk bench's `host/sin_nested_8/heuristic` and
   `host/select_zero/heuristic` the elementwise kernels, and rune's compile
   bench `trig/sin-nested-8` their compile.
-- **Pinned by:** the Heuristic suite's `the optimisations chosen are tinygrad's
-  › … › the optimised kernel`: the host cases `exp_float`, `exp_double`,
+- **Pinned by:** the Heuristic suite's `hand_coded_optimizations ›
+  optimises each recorded case as its golden states`: the host cases
+  `exp_float`, `exp_double`,
   `add_half`, `add_uchar`, `cast_to_double`, `compare`, `add_24`, `add_17`,
   `wide_tree`, `long_chain` and every host case without a reduce, and
   `vecmat_decoded`, `gpt_oss_gate_up`, `routed_blocks`, `routed_tiles` and
@@ -5996,15 +5999,15 @@ union, as fast on CUDA, on the host and in compile time.
   read at one index at most ceil(R / 16) times its core's copies` (1 to 512
   rows of bfloat16, half and float32 on the CUDA, RDNA3, RDNA4, CDNA and
   Metal renderers), `a decoded product's optimisations keep its writes`
-  (17 and 19 rows on a core, 64 float32 rows streamed), `core_fits names
-  the decoded products the heuristic takes a core of` and `core_fits names
+  (17 and 19 rows on a core, 64 float32 rows streamed), `core_fits › names
+  the decoded products the heuristic takes a core of` and `core_fits › names
   the products of stored and decoded factors the heuristic takes a core of`
   (both factor orders, ties, one and two decoded factors); the Rangeify
   suite's `get_kernel_graph › products a core takes`, `products of 24 rows
   by codes of 64 run a kernel each` to `products of codes of 17 by codes of
   64 share one kernel`; the Heuristic suite's `a decoded operand of up to
   16 rows takes a core that holds them` (12 and 16 rows on five
-  renderers), `core_fits names the decoded products the heuristic takes a
+  renderers), `core_fits › names the decoded products the heuristic takes a
   core of` (1 to 512 rows, 7-8 on CUDA streamed where it names a core) and `a contraction streams before a core up to the
   renderer's bound a byte` (decoded blocks of 16 on a core at bounds of
   63 and 72); rune's GPU suite's `a
@@ -6432,9 +6435,9 @@ against 2.77).
   compiler's own passes allocate 1.3-2.9 times the words on the tolk bench's
   `linearize`, `render` and `warm` rows of its recorded programs.
 - **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
-  recorded host kernel of few outputs takes its lanes` and `the
-  optimisations chosen are tinygrad's › … › the optimised kernel`, the
-  `cpu` and `avx2` cases, among them `matvec_tall`, `vecmat_long` and
+  recorded host kernel of few outputs takes its lanes` and
+  `hand_coded_optimizations › optimises each recorded case as its golden
+  states`, the `cpu` and `avx2` cases, among them `matvec_tall`, `vecmat_long` and
   `column_sums`; the tolk bench's `host/gpt_oss_kv/heuristic`,
   `host/vecmat_1000/heuristic`, `host/matvec_tall/heuristic` and
   `lorenz/r_32_3_2_4_3_400/heuristic`, their fudge baselines pending the
@@ -6489,8 +6492,9 @@ against 2.77).
 - **Pinned by:** the Heuristic suite's `the host's lanes › on AVX2 a
   recorded host kernel's conversions take their lanes` and `› on the host a
   conversion computes at most 64 lanes`, over every recorded kernel and
-  lorenz_simple's on four register files, and the host cases of `the
-  optimisations chosen are tinygrad's`; rune's compile bench row
+  lorenz_simple's on four register files, and the host cases of
+  `hand_coded_optimizations › optimises each recorded case as its golden
+  states`; rune's compile bench row
   `products/vecmat-bf16` and the tolk bench's `host/gpt_oss_kv/heuristic`,
   their fudge baselines pending the scheduled re-record. The iteration: the
   Heuristic suite's `the host's lanes › on the host an iteration computes at
@@ -6501,7 +6505,7 @@ against 2.77).
   Contracting contraction of 8 groups works in blocks`; rune's compile bench
   row `products/segments-grad` and the tolk bench's `host/conv/heuristic`,
   their baselines pending the scheduled re-record. The vectors: the Heuristic
-  suite's `the host's lanes › on AVX2 a recorded host kernel's program
+  suite's `the host's lanes › on AVX2 rune's contraction of 8 groups
   declares vectors of at most 64 lanes`, and the Codegen suite's `vectors in
   programs › a host operation of any lanes computes vectors of at most 64 and
   writes what its kernel writes` (each of its four laws).
@@ -8962,7 +8966,8 @@ D466.
   and Metal take the same unroll unmeasured.
 - **Pinned by:** the Heuristic suite's `routed_{tiles,shared,past_bound}`
   and `routed_run_{16,32,64,128}` on `metal`, `cuda` and `amd` (the recorded
-  opts and kernels), and `the tensor core's floor`, whose model states the
+  opts and kernels), and `tensor cores › the tensor core's floor`, whose
+  model states the
   unroll and covers it; the Codegen suite's `tensor cores on each GPU › CUDA ›
   a product by 4-bit codes, the core on their bytes and a byte's two codes
   unrolled, is the exact result`; kaun's `GptOss/prefill-512`.
@@ -9793,10 +9798,10 @@ D466.
   tile, beside 32.8 at 128 tokens, which pads nothing. A stream the staged
   tile now sends to a core of two stages, 48 rows by 4096 by 20, takes
   16.4 us against 16.3 streamed. AMD and Metal take the default unmeasured.
-- **Pinned by:** the Heuristic suite's `streaming › a core pads what its tile
-  does not divide, within a bound`, `core_fits names the contractions a core
-  takes`, `core_fits reads the core settings`, `core_rows names the fewest
-  rows a core takes`, the cases `heads_projection_metal`,
+- **Pinned by:** the Heuristic suite's `tensor cores › a core pads what its
+  tile does not divide, within a bound`, `core_fits › names the contractions a
+  core takes`, `core_fits › reads the core settings`, `core_rows › names the
+  fewest rows a core takes`, the cases `heads_projection_metal`,
   `heads_projection_biased_metal` and
   `matmul_half_ragged_{metal,cuda,amd}_tc_opt_2` (refused past the bound),
   the Heuristic suite's `a core of one tile of N is optimised without a pad
@@ -9852,7 +9857,7 @@ D466.
 - **Reason:** (d). Each trip of the blocks waits on its own loads: on
   fudge's RTX 5000 Ada, gpt-oss-20b's Q8_0 prefill takes 18.5 ms a step at
   64 tokens where it took 20.3, and 46.3 at 512 where it took 49.8.
-- **Pinned by:** the Heuristic suite's `streaming › a partial form's trip
+- **Pinned by:** the Heuristic suite's `tensor cores › a partial form's trip
   takes its block whole` (sm_89, sm_80, gfx1100, Apple9), the cases
   `q8_0_partial_{cuda,amd,metal}` (`q8_0_partial_*.tolk`, `cases.tolk`),
   the tensor core floor's stated splits, tolk's bench row
@@ -10253,7 +10258,7 @@ D466.
   no register budget its specification states. AMD's 8-bit VGPR field
   bounds 256 on RDNA3, RDNA4 and CDNA, but the count is unmeasured against
   its compiler.
-- **Pinned by:** the heuristic suite's `live registers` and `a split makes
+- **Pinned by:** the heuristic suite's `live_registers` and `a split makes
   lanes only while they fit the thread registers`, its table's
   `thread_registers` and the cases `pad_7x7_cuda` and
   `scores_masked_1536_cuda` (`.tolk`, D503); rune's bench rows

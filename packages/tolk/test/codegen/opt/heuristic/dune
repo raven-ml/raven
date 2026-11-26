@@ -1,6 +1,3 @@
-; MV is read once per process, so the cases under it run in a process of
-; their own, with the variable set.
-
 (test
  (name test_heuristic)
  (package tolk)
@@ -10,11 +7,4 @@
   (glob_files *.tolk)
   (glob_files *.graph)
   (glob_files ../../../../bench/r_*.graph)
-  (glob_files ../../../../bench/stream/*.graph))
- (action
-  (progn
-   (run %{test} --exclude-tag mv_0)
-   (setenv
-    MV
-    0
-    (run %{test} --tag mv_0)))))
+  (glob_files ../../../../bench/stream/*.graph)))

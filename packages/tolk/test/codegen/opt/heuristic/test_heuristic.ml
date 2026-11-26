@@ -34,15 +34,17 @@ type case = {
   kernel : string;
   renderer : string;
   settings : Setting.binding list;
-  environment : string;
-      (** The switch of the matrix-vector layouts, [MV], which is read once from
-          the environment: a case under it runs in a process of its own (see
-          dune), tagged by {!process}. *)
+      (** The row's context: its core settings, and [MV] ({!Setting.mv}), which
+          turns off the matrix-vector layouts at [MV=0]. *)
   opts : Opt.t list;  (** The optimisations the table records for this case. *)
 }
 
 let case_of_row cell =
-  let is_environment pair = String.starts_with ~prefix:"MV" pair in
+  let mv pair =
+    match String.split_on_char '=' pair with
+    | [ "MV"; v ] -> Some (Setting.B (Setting.mv, int_of_string v <> 0))
+    | _ -> None
+  in
   let pairs = String.split_on_char ' ' (cell "context") in
   {
     name = cell "case";
@@ -50,40 +52,12 @@ let case_of_row cell =
     renderer = cell "renderer";
     settings =
       Kernel_opts.settings_of_cell
-        (String.concat " "
-           (List.filter (fun p -> not (is_environment p)) pairs));
-    environment = String.concat " " (List.filter is_environment pairs);
+        (String.concat " " (List.filter (fun p -> mv p = None) pairs))
+      @ List.filter_map mv pairs;
     opts = Kernel_opts.opts_of_cell (cell "opts");
   }
 
 let recorded_cases = List.map case_of_row (Golden.rows "cases.golden")
-let processes = [ ("", ""); ("MV=0", "mv_0") ]
-
-(* The cases of the process that runs with [environment], in a group tagged
-   after it, which first checks that the process has it. *)
-let in_process environment tests =
-  let in_environment =
-    List.filter (fun c -> c.environment = environment) recorded_cases
-  in
-  match List.assoc environment processes with
-  | "" -> group "in the default environment" (tests in_environment)
-  | tag ->
-      let has_environment () =
-        List.iter
-          (fun pair ->
-            match String.split_on_char '=' pair with
-            | [ name; value ] ->
-                equal ~msg:name (option string) (Some value)
-                  (Sys.getenv_opt name)
-            | _ -> failf "no variable %s" pair)
-          (String.split_on_char ' ' environment)
-      in
-      Windtrap.tag tag
-      @@ group environment
-           (test
-              ("the suite runs this group with " ^ environment)
-              has_environment
-           :: tests in_environment)
 
 (* The goldens were recorded without colours, by a tinygrad that stages no
    tensor core's operands. *)
@@ -101,41 +75,38 @@ let size r =
 
 (* Choosing *)
 
+(* Each recorded case's optimised kernel is its golden, which states the
+   optimisations applied in its kernel information. *)
+let chosen =
+  group "optimises each recorded case as its golden states"
+    (List.map
+       (fun c -> Golden.graph (c.name ^ ".golden") (fun () -> optimize c))
+       recorded_cases)
+
 (* The optimisations [optimize] records in its kernel's information. *)
 let applied c =
   match Ops.arg (optimize c) with
   | Ops.Kernel info -> info.applied_opts
   | _ -> failf "%s: the optimised sink has no kernel information" c.name
 
-(* A golden's kernel information holds the optimisations applied, so the
-   optimised kernel states them too, and the table's cell states the same. *)
-let chosen =
-  let tests rows =
-    [
-      group "the optimised kernel"
-        (List.map
-           (fun c -> Golden.graph (c.name ^ ".golden") (fun () -> optimize c))
-           rows);
-      cases "the table's optimisations are the optimised kernel's"
-        ~id:(fun c -> c.name)
-        rows
-        (fun c -> equal (list Kernel_opts.opt) c.opts (applied c));
-    ]
-  in
-  group "the optimisations chosen are as recorded"
-    (List.map (fun (environment, _) -> in_process environment tests) processes)
+(* The table states each case's optimisations, which choose the rows of the
+   writes law below; a cell left behind by its graph would move a row out of
+   it. *)
+let table =
+  cases "the table's optimisations are the optimised kernel's"
+    ~id:(fun c -> c.name)
+    recorded_cases
+    (fun c -> equal (list Kernel_opts.opt) c.opts (applied c))
 
 let leaves_its_argument =
   let kernels =
     List.sort_uniq String.compare (List.map (fun c -> c.kernel) recorded_cases)
   in
-  cases "hand_coded_optimizations leaves the scheduler it is given as it was"
-    ~id:Fun.id kernels (fun name ->
+  cases "leaves the scheduler it is given as it was" ~id:Fun.id kernels
+    (fun name ->
       (* Metal's case, or the host's for a kernel only the host optimises. *)
       let plain =
-        List.filter
-          (fun c -> c.kernel = name && c.settings = [] && c.environment = "")
-          recorded_cases
+        List.filter (fun c -> c.kernel = name && c.settings = []) recorded_cases
       in
       let c =
         match List.find_opt (fun c -> c.renderer = "metal") plain with
@@ -145,93 +116,234 @@ let leaves_its_argument =
       let k = K.v (kernel name) (renderer c.renderer) in
       K.convert_loop_to_global k;
       let ast = K.ast k in
-      let optimized =
-        Setting.context
-          [ Setting.B (Setting.stage, false) ]
-          (fun () -> Heuristic.hand_coded_optimizations k)
-      in
+      Setting.context
+        [ Setting.B (Setting.stage, false) ]
+        (fun () -> ignore (Heuristic.hand_coded_optimizations k));
       equal Uops.uop ast (K.ast k);
-      equal (list Kernel_opts.opt) [] (K.applied_opts k);
-      equal (list Kernel_opts.opt) c.opts (K.applied_opts optimized))
+      equal (list Kernel_opts.opt) [] (K.applied_opts k))
+
+(* [out[i] = a[i] + sum over k < [depth] of x[k]] over [rows] [i]: a sum that
+   runs no trip at a depth of 0, a map of no output at 0 rows. *)
+let ranged rows depth =
+  let param slot size =
+    Shape.param ~shape:[ Ops.Int size ] slot Dtype.Float32
+  in
+  let out = param 0 (max rows 1)
+  and a = param 1 (max rows 1)
+  and x = param 2 1 in
+  let i = Ops.range ~axis_type:Weak (Ops.Int rows) [ 0 ]
+  and k = Ops.range ~axis_type:Weak (Ops.Int depth) [ 1 ] in
+  let sum = Ops.reduce (Ops.index x [ k ]) Op.Add [ k ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.end_
+        (Ops.store (Ops.index out [ i ]) Ops.O.(Ops.index a [ i ] + sum))
+        [ i ];
+    ]
+
+let empty_range =
+  cases "a kernel holding a range of size 0 takes no optimisation"
+    ~id:(fun (ren, (rows, depth)) ->
+      Printf.sprintf "%d rows of %d terms on %s" rows depth ren)
+    (List.concat_map
+       (fun ren -> [ (ren, (64, 0)); (ren, (0, 64)) ])
+       [ "cpu"; "avx2"; "cuda"; "metal" ])
+    (fun (ren, (rows, depth)) ->
+      let k = K.v (ranged rows depth) (renderer ren) in
+      K.convert_loop_to_global k;
+      equal (list Kernel_opts.opt) []
+        (K.applied_opts (Heuristic.hand_coded_optimizations k)))
+
+let core = Testable.make ~pp:Tc.pp ~equal:Tc.equal
+
+(* [cores ren]'s tensor cores, under the core settings: [ren]'s that
+   {!Renderer.takes_core} takes at [TC=1], the one [TC_SELECT] names, none at
+   [TC] other than 1 or where [ren] lacks the one named. *)
+let cores_cases =
+  let tensor settings ren =
+    Setting.context settings (fun () -> (Heuristic.cores (renderer ren)).tensor)
+  in
+  let taken ren =
+    let r = renderer ren in
+    List.filter (Renderer.takes_core r) r.Renderer.tensor_cores
+  in
+  group "cores"
+    [
+      cases "states the cores the renderer takes" ~id:Fun.id
+        [ "cpu"; "cuda"; "amd"; "metal" ] (fun ren ->
+          equal (list core) (taken ren) (tensor [] ren));
+      cases "states the one core TC_SELECT names" ~id:Fun.id
+        [ "cuda"; "amd"; "metal" ] (fun ren ->
+          let r = renderer ren in
+          equal (list core)
+            (List.filter (Renderer.takes_core r) [ List.hd r.tensor_cores ])
+            (tensor [ Setting.B (Setting.tc_select, 0) ] ren));
+      cases "states no core at TC=0 and TC=2" ~id:string_of_int [ 0; 2 ]
+        (fun use_tc ->
+          equal (list core) []
+            (tensor [ Setting.B (Setting.use_tc, use_tc) ] "cuda"));
+      test "states no core where the renderer lacks the one named" (fun () ->
+          equal (list core) []
+            (tensor [ Setting.B (Setting.tc_select, 99) ] "cuda"));
+      cases
+        "states that a device runs a kernel's points at once where it has \
+         local indices"
+        ~id:fst renderers (fun (_, ren) ->
+          equal bool ren.Renderer.has_local (Heuristic.cores ren).at_once);
+    ]
 
 (* Laws *)
 
-(* The interpreter cannot evaluate a matrix multiply-accumulate, which a tensor
-   core used in full makes. The cases of the default process are enough, and
-   of AVX2's those whose optimisations differ from SSE's. *)
-let evaluable c =
-  let as_sse c' =
-    c'.kernel = c.kernel && c'.renderer = "cpu" && c'.settings = c.settings
-    && c'.opts = c.opts
-  in
-  c.environment = ""
-  && (c.renderer <> "avx2" || not (List.exists as_sse recorded_cases))
-  && not
-       (List.exists
-          (function Opt.Tc { use_tc = 1; _ } -> true | _ -> false)
-          c.opts)
-
-let iterations c =
-  let k = K.v (kernel c.kernel) (renderer c.renderer) in
-  List.fold_left (fun n r -> Bigint.mul n (size r)) Bigint.one (K.rngs k)
-
-(* A kernel's writes, kept: the rows of a kernel compare against the same
-   writes, and renderers that choose the same optimisations make the same
-   kernel. *)
+(* What [k] writes, kept by its stores, which alone decide it: a kernel's cases
+   compare against one reference, and renderers that choose the same
+   optimisations make the same stores. *)
 let writes =
   let known = Ops.Tbl.create 64 in
   fun k ->
-    match Ops.Tbl.find_opt known k with
+    let stores = Ops.sink (Ops.src k) in
+    match Ops.Tbl.find_opt known stores with
     | Some w -> w
     | None ->
-        let w = Kernel_opts.writes k in
-        Ops.Tbl.add known k w;
+        let w = Kernel_opts.writes stores in
+        Ops.Tbl.add known stores w;
         w
 
-(* Kernels of more than 2^18 iterations are pinned by their goldens alone. *)
+(* The interpreter cannot evaluate a matrix multiply-accumulate, which a tensor
+   core used in full makes. *)
+let evaluable c =
+  not
+    (List.exists
+       (function Opt.Tc { use_tc = 1; _ } -> true | _ -> false)
+       c.opts)
+
+(* Kernels pinned by their goldens alone: their table would take past 0.7 s on
+   fudge (2026-11-26). The interpreter takes 200 to 1800 ns a step of a kernel's
+   ranges, and a table evaluates the kernel and each distinct optimised kernel,
+   two to four. The first are named with their steps and the seconds one
+   evaluation took, or their table. The rest each close one reduce inside nested
+   ranges, so their steps are the product of their ranges, past 2^21: at 200 ns
+   a step, two evaluations take past 0.8 s. *)
+let unevaluated =
+  [
+    ("paired_products", "524288 steps, 0.39 s");
+    ("tangent_products", "819200 steps, 0.77 s");
+    ("sum_rows_240", "983040 steps, the table 0.72 s");
+    ("add_large", "1048576 steps, 0.53 s");
+    ("batched_matmul_half", "1048576 steps, 0.63 s");
+    ("q8_0_partial", "1048576 steps, 0.48 s");
+    ("routed_own", "1048576 steps, 1.00 s");
+    ("routed_tiles", "1048576 steps, 1.02 s");
+    ("gpt_oss_kv", "1474560 steps, 0.87 s");
+    ("matmul", "2097152 steps, 0.77 s");
+    ("matmul_half", "2097152 steps, 0.99 s");
+    ("scores", "2097152 steps, 0.99 s");
+    ("vecmat_long", "2097152 steps, 0.95 s");
+    ("sum_rows_eight", "eight sums of 2^16 values, the table 24 s");
+  ]
+  @ List.map
+      (fun name -> (name, "past 2^21 iterations"))
+      [
+        "routed_at_bound";
+        "routed_past_bound";
+        "matmul_48";
+        "vecmat_1000";
+        "attention_values";
+        "matmul_256";
+        "matmul_256_kt";
+        "matmul_long";
+        "matvec";
+        "routed_shared";
+        "scores_masked";
+        "sum_rows_16384";
+        "sum_rows_long";
+        "vecmat";
+        "vecmat_decoded";
+        "vecmat_normed";
+        "vecmat_of_cast";
+        "vecmat_of_exp";
+        "conv";
+        "conv_half";
+        "matmul_440";
+        "column_sums";
+        "matmul_256_kt_128";
+        "matvec_tall";
+        "gpt_oss_qkv";
+        "matmul_1000";
+        "matmul_half_256";
+        "routed_by_argmax";
+        "vecmat_wide";
+        "routed_run_128";
+        "routed_run_16";
+        "routed_run_32";
+        "routed_run_64";
+        "batched_768";
+        "batched_768_biased";
+        "matmul_768";
+        "two_batches_768";
+        "two_batches_768_biased";
+        "gpt_oss_down";
+        "readout";
+        "gpt_oss_gate_up";
+        "heads_projection";
+        "heads_projection_biased";
+        "matmul_half_512";
+        "matmul_half_variable";
+        "scores_masked_1536";
+        "matmul_half_1280x2560";
+        "scores_biased";
+        "scores_biased_first";
+        "matmul_half_1024";
+        "matmul_bf16_5760";
+      ]
+
+(* Each kernel's cases, a test each: the optimised kernel writes what the kernel
+   writes. *)
 let keeps_kernel_writes =
-  let evaluable = List.filter evaluable recorded_cases in
-  let within lo hi =
-    List.filter
-      (fun c ->
-        let n = iterations c in
-        Bigint.(of_int lo < n && n <= of_int hi))
-      evaluable
+  let kernels =
+    List.sort_uniq String.compare
+      (List.filter_map
+         (fun c ->
+           if evaluable c && not (List.mem_assoc c.kernel unevaluated) then
+             Some c.kernel
+           else None)
+         recorded_cases)
   in
   let keeps c =
-    equal (list Kernel_opts.write)
-      (writes (kernel c.kernel))
-      (writes (optimize c))
+    test c.name (fun () ->
+        equal (list Kernel_opts.write)
+          (writes (kernel c.kernel))
+          (writes (optimize c)))
   in
-  group "the hand-coded optimisations keep a kernel's writes"
-    [
-      cases "small kernels" ~id:(fun c -> c.name) (within 0 (1 lsl 12)) keeps;
-      slow
-      @@ cases "large kernels"
-           ~id:(fun c -> c.name)
-           (within (1 lsl 12) (1 lsl 18))
-           keeps;
-    ]
+  group "keeps a kernel's writes"
+    (List.map
+       (fun name ->
+         group name
+           (List.map keeps
+              (List.filter
+                 (fun c -> c.kernel = name && evaluable c)
+                 recorded_cases)))
+       kernels)
 
 (* Streaming *)
 
-let bigint = Testable.make ~pp:Bigint.pp_print ~equal:Bigint.equal
+let bigint =
+  Testable.with_compare Bigint.compare
+    (Testable.make ~pp:Bigint.pp_print ~equal:Bigint.equal)
 
-(* The cases of a GPU renderer in the default process, their kernel as the
-   heuristic receives it and as it leaves it. *)
+(* The cases of a GPU renderer under no setting, their kernel as the heuristic
+   receives it and as it leaves it. A worker makes them when a test first reads
+   them; the process that runs no test does not. *)
 let gpu_cases =
-  List.filter_map
-    (fun c ->
-      if
-        c.renderer = "cpu" || c.renderer = "avx2" || c.settings <> []
-        || c.environment <> ""
-      then
-        None
-      else
-        let k = K.v (kernel c.kernel) (renderer c.renderer) in
-        K.convert_loop_to_global k;
-        Some (c, k, Heuristic.hand_coded_optimizations k))
-    recorded_cases
+  lazy
+    (List.filter_map
+       (fun c ->
+         if c.renderer = "cpu" || c.renderer = "avx2" || c.settings <> [] then
+           None
+         else
+           let k = K.v (kernel c.kernel) (renderer c.renderer) in
+           K.convert_loop_to_global k;
+           Some (c, k, Heuristic.hand_coded_optimizations k))
+       recorded_cases)
 
 let ranges_at k ~reduce types =
   List.map (List.nth (K.rngs k)) (K.axes_of ~reduce k types)
@@ -325,6 +437,19 @@ let streams o =
             | Opt.Tc _ | Opt.Split { top = true; _ } -> true | _ -> false)
           (K.applied_opts o))
 
+(* An optimised kernel, printed as the optimisations it took. *)
+let optimised = Testable.contramap K.applied_opts (list Kernel_opts.opt)
+
+(* [o] is [claim]: [p o] holds. *)
+let shows ?msg claim p o = satisfies ?msg ~claim optimised p o
+
+(* [o] is not [claim]: [p o] does not hold. *)
+let lacks ?msg claim p o =
+  satisfies ?msg ~claim:("not " ^ claim) optimised (fun o -> not (p o)) o
+
+let cored o =
+  List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)
+
 (* The main access of the streamed operand [w] of [o]: the one with a range of
    unit stride whose ranges of unit or constant stride that a contraction
    closes span the most bytes. *)
@@ -390,25 +515,38 @@ let rec largest_divisor n at_most =
   else largest_divisor n (at_most - 1)
 
 let streamed_cases_all =
-  List.filter_map
-    (fun (c, k, o) ->
-      if streams o then Option.map (fun s -> (c, k, o, s)) (streamed k o)
-      else None)
-    gpu_cases
+  lazy
+    (List.filter_map
+       (fun (c, k, o) ->
+         if streams o then Option.map (fun s -> (c, k, o, s)) (streamed k o)
+         else None)
+       (Lazy.force gpu_cases))
 
 (* The cases streamed along the reduce, the rows layout, whose lanes and
    unroll the laws below state. *)
 let streamed_cases =
-  List.filter (fun (_, k, _, (w, _, _)) -> along_reduce k w) streamed_cases_all
+  lazy
+    (List.filter
+       (fun (_, k, _, (w, _, _)) -> along_reduce k w)
+       (Lazy.force streamed_cases_all))
 
 let id (c, _, _, _) = c.name
+
+(* The test [name] that [law] holds of each case of [l], the cases the optimised
+   kernels pick, made when it runs: a subtest each, named by [id]. *)
+let each name ~id l law =
+  test name (fun () ->
+      let rows = Lazy.force l in
+      greater int ~msg:"rows" ~than:0 (List.length rows);
+      List.iter (fun c -> subtest (id c) (fun () -> law c)) rows)
 
 (* Each element of the streamed operand feeds [r] outputs, and a thread holds
    the largest share of them up to 16 that divides [r]: what is left of its
    reuse, outside the thread's lanes, is [r] divided by that share, each of
    them a pass over it. *)
 let loads_once_a_tile =
-  cases "the streamed operand's reuse outside a thread is its reuse over its tile"
+  each
+    "the streamed operand's reuse outside a thread is its reuse over its tile"
     ~id streamed_cases_all (fun (_, _, o, (_, r, w')) ->
       let tile = largest_divisor r 16 in
       equal bigint
@@ -505,11 +643,10 @@ let group_bytes o w =
 let sector = 32
 
 let coalesces =
-  cases
+  each
     "a SIMD group's load of an operand streamed along the reduce reads whole \
      sectors"
-    ~id streamed_cases
-    (fun (_, _, o, (_, _, w')) ->
+    ~id streamed_cases (fun (_, _, o, (_, _, w')) ->
       let bytes = List.sort_uniq Int.compare (group_bytes o w') in
       let sectors =
         List.sort_uniq Int.compare (List.map (fun b -> b / sector) bytes)
@@ -526,79 +663,92 @@ let coalesces =
    of rows not held that runs [t] threads, fewer than its renderer's
    [stream_threads] [S], takes up to [ceil (8 S / t)], at most 32. *)
 let unrolls_in_flight =
-  prop
-    "the unroll is the largest divisor of its loop up to 8, 4 with reuse, \
-     more in fewer threads"
-    (Gen.with_pp
-       (fun ppf c -> Format.pp_print_string ppf (id c))
-       (Gen.of_list streamed_cases))
-    (fun (_, k, o, (_, r, w')) ->
-      let threads =
-        List.fold_left
-          (fun n r ->
-            match (n, Shape.known_size (Ops.Sym (Ops.nth r 0))) with
-            | Some n, Some s -> Some (n * Bigint.to_int s)
-            | _ -> None)
-          (Some 1)
-          (ranges_at o ~reduce:false [ Global; Local; Warp ]
-          @ ranges_at o ~reduce:true [ Global; Local; Warp ])
-      in
-      let most = (K.ren o).stream_threads in
-      let cap =
-        match threads with
-        | _ when not Bigint.(equal r one) -> 4
-        | Some t -> max 8 (min 32 (((8 * most) + t - 1) / t))
-        | None -> 8
-      in
-      cover "a kernel of fewer threads than stream_threads"
-        (Bigint.(equal r one)
-        && match threads with Some t -> t < most | None -> false);
-      let ids = List.map Ops.axis_id (K.rngs k) in
-      let a =
-        match main_access o w' with
-        | Some a -> a
-        | None -> failf "the streamed operand has no access of a unit stride"
-      in
-      let i = Ops.get_idx (Ops.nth a 1) in
-      let unrolled =
-        List.filter
-          (fun u ->
-            (not (List.mem (Ops.axis_id u) ids)) && Option.is_some (stride u i))
-          (ranges_at o ~reduce:true [ Upcast ])
-      in
-      let contracted =
-        match contraction o with Some r -> List.tl (Ops.src r) | None -> []
-      in
-      let loops =
-        List.filter_map
-          (fun l ->
-            if List.memq l contracted then
-              Option.map (fun s -> (s, l)) (stride l i)
-            else None)
-          (ranges_at o ~reduce:true [ Weak; Loop ])
-      in
-      (* Where the lanes take the reduce whole, nothing is left to unroll: a
-         loop left behind the unroll is what the law weighs. *)
-      cover "a contracted loop is left" (loops <> []);
-      cover "a loop left beside an unroll"
-        (loops <> [] && unrolled <> []);
-      match unrolled with
-      | [] -> (
-          match List.sort (fun (s, _) (t, _) -> Bigint.compare s t) loops with
-          | [] -> ()
-          | (_, l) :: _ -> equal Testable.int 1 (largest_divisor (size l) cap))
-      | u :: _ ->
-          let n = size u in
-          let s = Option.get (stride u i) in
-          let left =
-            List.fold_left
-              (fun m (t, l) ->
-                if Bigint.equal t (Bigint.mul n s) then size l else m)
-              Bigint.one loops
-          in
-          equal Testable.int
-            (largest_divisor (Bigint.mul n left) cap)
-            (Bigint.to_int n))
+  (* The cases the law weighs, each of which some row reaches. *)
+  let labels =
+    [
+      "a kernel of fewer threads than stream_threads";
+      "a contracted loop is left";
+      "a loop left beside an unroll";
+    ]
+  in
+  let law reaches =
+   fun (_, k, o, (_, r, w')) ->
+    let threads =
+      List.fold_left
+        (fun n r ->
+          match (n, Shape.known_size (Ops.Sym (Ops.nth r 0))) with
+          | Some n, Some s -> Some (n * Bigint.to_int s)
+          | _ -> None)
+        (Some 1)
+        (ranges_at o ~reduce:false [ Global; Local; Warp ]
+        @ ranges_at o ~reduce:true [ Global; Local; Warp ])
+    in
+    let most = (K.ren o).stream_threads in
+    let cap =
+      match threads with
+      | _ when not Bigint.(equal r one) -> 4
+      | Some t -> max 8 (min 32 (((8 * most) + t - 1) / t))
+      | None -> 8
+    in
+    reaches "a kernel of fewer threads than stream_threads"
+      (Bigint.(equal r one)
+      && match threads with Some t -> t < most | None -> false);
+    let ids = List.map Ops.axis_id (K.rngs k) in
+    let a =
+      match main_access o w' with
+      | Some a -> a
+      | None -> failf "the streamed operand has no access of a unit stride"
+    in
+    let i = Ops.get_idx (Ops.nth a 1) in
+    let unrolled =
+      List.filter
+        (fun u ->
+          (not (List.mem (Ops.axis_id u) ids)) && Option.is_some (stride u i))
+        (ranges_at o ~reduce:true [ Upcast ])
+    in
+    let contracted =
+      match contraction o with Some r -> List.tl (Ops.src r) | None -> []
+    in
+    let loops =
+      List.filter_map
+        (fun l ->
+          if List.memq l contracted then
+            Option.map (fun s -> (s, l)) (stride l i)
+          else None)
+        (ranges_at o ~reduce:true [ Weak; Loop ])
+    in
+    (* Where the lanes take the reduce whole, nothing is left to unroll: a loop
+       left behind the unroll is what the law weighs. *)
+    reaches "a contracted loop is left" (loops <> []);
+    reaches "a loop left beside an unroll" (loops <> [] && unrolled <> []);
+    match unrolled with
+    | [] -> (
+        match List.sort (fun (s, _) (t, _) -> Bigint.compare s t) loops with
+        | [] -> ()
+        | (_, l) :: _ -> equal Testable.int 1 (largest_divisor (size l) cap))
+    | u :: _ ->
+        let n = size u in
+        let s = Option.get (stride u i) in
+        let left =
+          List.fold_left
+            (fun m (t, l) ->
+              if Bigint.equal t (Bigint.mul n s) then size l else m)
+            Bigint.one loops
+        in
+        equal Testable.int
+          (largest_divisor (Bigint.mul n left) cap)
+          (Bigint.to_int n)
+  in
+  test
+    "the unroll is the largest divisor of its loop up to 8, 4 with reuse, more \
+     in fewer threads" (fun () ->
+      let reached = ref [] in
+      let reaches label cond = if cond then reached := label :: !reached in
+      List.iter
+        (fun c -> subtest (id c) (fun () -> law reaches c))
+        (Lazy.force streamed_cases);
+      equal ~msg:"the cases reached" (list string) labels
+        (List.filter (fun l -> List.mem l !reached) labels))
 
 (* A thread loads at once the values of its other operand along a contracted
    range that the lanes leave and along which the other operand is laid out
@@ -608,50 +758,61 @@ let unrolls_in_flight =
    reads as [2 byte + v], is unrolled whole, so that no loop over it is
    left. *)
 let loads_together =
-  prop "no loop is left over the other operand's values of one load"
-    ~count:0 ~examples:streamed_cases
-    (Gen.with_pp
-       (fun ppf c -> Format.pp_print_string ppf (id c))
-       (Gen.of_list streamed_cases))
-    (fun (_, _, o, (_, _, w')) ->
-      let x' =
-        match operands o with
-        | Some (a, b) -> if a == w' then b else a
-        | None -> failf "the streamed kernel sums no product"
+  (* The cases the law weighs, each of which some row reaches. *)
+  let labels = [ "a byte's values unrolled" ] in
+  let law reaches =
+   fun (_, _, o, (_, _, w')) ->
+    let x' =
+      match operands o with
+      | Some (a, b) -> if a == w' then b else a
+      | None -> failf "the streamed kernel sums no product"
+    in
+    let locals = ranges_at o ~reduce:true [ Local ] in
+    let lanes = List.map Ops.axis_id locals in
+    (* the bytes a SIMD group's lanes span loading one value of [a], each lane a
+       step of the fastest of them along [a] *)
+    let span a =
+      let i = Ops.get_idx (Ops.nth a 1) in
+      let width = Bigint.of_int (simd_lanes * Dtype.itemsize (Ops.dtype a)) in
+      match List.filter_map (fun l -> stride l i) locals with
+      | [] -> Bigint.zero
+      | s :: rest ->
+          Bigint.mul width
+            (List.fold_left
+               (fun m s -> if Bigint.compare s m < 0 then s else m)
+               s rest)
+    in
+    let together l a =
+      let bytes =
+        Bigint.(mul (size l) (of_int (Dtype.itemsize (Ops.dtype a))))
       in
-      let locals = ranges_at o ~reduce:true [ Local ] in
-      let lanes = List.map Ops.axis_id locals in
-      (* the bytes a SIMD group's lanes span loading one value of [a], each
-         lane a step of the fastest of them along [a] *)
-      let span a =
-        let i = Ops.get_idx (Ops.nth a 1) in
-        let width = Bigint.of_int (simd_lanes * Dtype.itemsize (Ops.dtype a)) in
-        match List.filter_map (fun l -> stride l i) locals with
-        | [] -> Bigint.zero
-        | s :: rest ->
-            Bigint.mul width
-              (List.fold_left (fun m s -> if Bigint.compare s m < 0 then s else m) s rest)
-      in
-      let together l a =
-        let bytes = Bigint.(mul (size l) (of_int (Dtype.itemsize (Ops.dtype a)))) in
-        stride l (Ops.get_idx (Ops.nth a 1)) = Some Bigint.one
-        && Bigint.(leq bytes (of_int 16))
-        && Bigint.(gt (span a) (of_int 128))
-      in
-      let left =
-        List.filter
-          (fun l ->
-            (not (List.mem (Ops.axis_id l) lanes))
-            && List.exists (together l) (accesses x'))
-          (ranges_at o ~reduce:true [ Weak; Loop ])
-      in
-      cover "a byte's values unrolled"
-        (List.exists
-           (fun l ->
-             (not (List.mem (Ops.axis_id l) lanes))
-             && List.exists (together l) (accesses x'))
-           (ranges_at o ~reduce:true [ Upcast ]));
-      equal (list Testable.string) [] (List.map Ops.range_str left))
+      stride l (Ops.get_idx (Ops.nth a 1)) = Some Bigint.one
+      && Bigint.(leq bytes (of_int 16))
+      && Bigint.(gt (span a) (of_int 128))
+    in
+    let left =
+      List.filter
+        (fun l ->
+          (not (List.mem (Ops.axis_id l) lanes))
+          && List.exists (together l) (accesses x'))
+        (ranges_at o ~reduce:true [ Weak; Loop ])
+    in
+    reaches "a byte's values unrolled"
+      (List.exists
+         (fun l ->
+           (not (List.mem (Ops.axis_id l) lanes))
+           && List.exists (together l) (accesses x'))
+         (ranges_at o ~reduce:true [ Upcast ]));
+    equal (list Testable.string) [] (List.map Ops.range_str left)
+  in
+  test "no loop is left over the other operand's values of one load" (fun () ->
+      let reached = ref [] in
+      let reaches label cond = if cond then reached := label :: !reached in
+      List.iter
+        (fun c -> subtest (id c) (fun () -> law reaches c))
+        (Lazy.force streamed_cases);
+      equal ~msg:"the cases reached" (list string) labels
+        (List.filter (fun l -> List.mem l !reached) labels))
 
 (* A contraction of little reuse streams, the quantised matrices of a block
    range of unit stride among them, before a tensor core up to a reuse of 32
@@ -673,8 +834,10 @@ let applies =
   ] in
   cases "a contraction streams up to a reuse of 32, before a tensor core"
     ~id:fst expect (fun (name, streamed) ->
-      let _, _, o = List.find (fun (c, _, _) -> c.name = name) gpu_cases in
-      equal Testable.bool streamed (streams o))
+      let _, _, o =
+        List.find (fun (c, _, _) -> c.name = name) (Lazy.force gpu_cases)
+      in
+      (if streamed then shows else lacks) "streamed" streams o)
 
 (* What a product reads of [x]: its element, the element divided by one of
    [i]'s, or ReLU of the element as nx computes it on a bfloat16, its bits
@@ -813,7 +976,7 @@ let rows_take_simd =
       let s = K.v (dense 1 512 4096) ren in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      equal ~msg:"streams" Testable.bool true (streams o);
+      shows "streamed" streams o;
       equal int simd
         (List.fold_left
            (fun n r -> n * Bigint.to_int (size r))
@@ -851,7 +1014,7 @@ let rows_in_flight =
       let s = K.v (dense 1 cols depth) ren in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      equal ~msg:"streams" Testable.bool true (streams o);
+      shows "streamed" streams o;
       equal int unroll
         (List.fold_left
            (fun n r -> n * Bigint.to_int (size r))
@@ -893,7 +1056,7 @@ let columns_split =
       let s = K.v (dense ~by_columns:true rows cols depth) ren in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      equal ~msg:"streams" Testable.bool true (streams o);
+      shows "streamed" streams o;
       equal ~msg:"threads along the reduce" int threads
         (List.fold_left
            (fun n r -> n * Bigint.to_int (size r))
@@ -923,17 +1086,31 @@ let columns_pad =
       let s = K.v (dense ~by_columns:true rows cols depth) ren in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      if padded then equal ~msg:"streams" Testable.bool true (streams o);
-      equal ~msg:"columns padded" Testable.bool padded
-        (List.exists
-           (function Opt.Padto { amount = 16; _ } -> true | _ -> false)
-           (K.applied_opts o)))
+      if padded then shows "streamed" streams o;
+      (if padded then shows else lacks)
+        "padded by 16"
+        (fun o ->
+          List.exists
+            (function Opt.Padto { amount = 16; _ } -> true | _ -> false)
+            (K.applied_opts o))
+        o)
 
 (* A product's workgroups hold at most a block's threads on every GPU target,
    whatever the threads of its SIMD groups. *)
 let within_block =
   prop "a product's workgroups hold at most a block's threads on every GPU"
     ~count:400
+    ~examples:
+      [
+        (* gfx942's 1024 threads, a rare draw *)
+        {
+          b_ren = List.nth block_targets 3;
+          b_by_columns = true;
+          b_rows = 1;
+          b_cols = 512;
+          b_depth = 4096;
+        };
+      ]
     (Gen.with_pp pp_block_case block_case)
     (fun c ->
       let s =
@@ -996,8 +1173,8 @@ let passes_or_core =
       let s = K.v (dense ~operand rows cols depth) ren in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      equal Testable.bool streamed (streams o);
-      equal Testable.bool (not streamed) (takes_core o))
+      (if streamed then shows else lacks) "streamed" streams o;
+      (if streamed then lacks else shows) "on a tensor core" takes_core o)
 
 (* A staged core's workgroups start in groups of up to 16 tiles along the
    slower of its two workgroup axes, the one of the lesser id ({!Stage}):
@@ -1031,12 +1208,12 @@ let grouped_tiles =
       let s = K.v (dense ~ids rows cols 4096) ren in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      let grouped =
+      let grouped o =
         List.exists
           (function Opt.Split { target = Global; _ } -> true | _ -> false)
           (K.applied_opts o)
       in
-      equal Testable.bool (Option.is_some grid) grouped;
+      (if Option.is_some grid then shows else lacks) "grouped" grouped o;
       Option.iter
         (fun grid ->
           let shape = K.full_shape o in
@@ -1059,11 +1236,10 @@ let passes_unstaged =
                interface = ""; indices = "" })
       in
       K.convert_loop_to_global s;
-      equal Testable.bool true
-        (streams
-           (Setting.context
-              [ Setting.B (Setting.stage, false) ]
-              (fun () -> Heuristic.hand_coded_optimizations s))))
+      shows "streamed" streams
+        (Setting.context
+           [ Setting.B (Setting.stage, false) ]
+           (fun () -> Heuristic.hand_coded_optimizations s)))
 
 (* ReLU of a bfloat16 is a float's bits, no integer codes: a feed-forward
    layer's second product, of [T] rows of 1792 hidden values by a matrix of
@@ -1083,8 +1259,11 @@ let relu_product =
       let s = K.v (dense ~operand:Relu ~matrix 68608 440 1792) ren in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      equal Testable.bool false (streams o);
-      equal Testable.bool cored (List.exists core (K.applied_opts o)))
+      lacks "streamed" streams o;
+      (if cored then shows else lacks)
+        "on a tensor core"
+        (fun o -> List.exists core (K.applied_opts o))
+        o)
 
 (* A norm's affine output read by a projection over 440 terms, as a
    LayerNorm hands it a model's 440 features, takes the staged core: K pads
@@ -1101,15 +1280,17 @@ let affine_staged =
          { Helpers.Target.device = "CUDA"; renderer = "CUDA"; arch = "sm_89";
            interface = ""; indices = "" })
   in
-  let copies dt prg =
-    List.exists
+  (* The types of the workgroup's copies [prg] allocates. *)
+  let copies prg =
+    List.filter_map
       (fun u ->
-        (Op.equal (Ops.op u) Op.Alloc || Op.equal (Ops.op u) Op.Buffer)
-        && Ops.addrspace u = Some Dtype.Local
-        && Dtype.equal (Ops.dtype u) dt)
+        if
+          (Op.equal (Ops.op u) Op.Alloc || Op.equal (Ops.op u) Op.Buffer)
+          && Ops.addrspace u = Some Dtype.Local
+        then Some (Dtype.name (Ops.dtype u))
+        else None)
       (Ops.toposort ~calls:Skip (Ops.nth prg 1))
   in
-  let core = function Opt.Tc _ -> true | _ -> false in
   cases "a product of a norm's affine output takes a staged core"
     ~id:(fun (name, _, _, _, _) -> name)
     [
@@ -1126,13 +1307,12 @@ let affine_staged =
           1
           (List.map (List.nth (K.rngs o)) (K.axes_of o [ Warp; Local ]))
       in
-      equal ~msg:"a core" Testable.bool true
-        (List.exists core (K.applied_opts o));
-      equal ~msg:"staged" Testable.bool true (Stage.admits sm_89 (K.ast o));
+      shows "on a tensor core" cored o;
+      shows "staged" (fun o -> Stage.admits sm_89 (K.ast o)) o;
       greater ~msg:"threads" int ~than:32 threads;
-      equal ~msg:"x copied" Testable.bool true
-        (copies Dtype.Float32
-           (Codegen.to_program (dense ~operand rows cols depth) sm_89)))
+      satisfies ~claim:"a float32 copy, x's" (list string)
+        (List.mem (Dtype.name Dtype.Float32))
+        (copies (Codegen.to_program (dense ~operand rows cols depth) sm_89)))
 
 (* A core pads the extents its tile does not divide, by [TC_OPT=2], the
    default, while the padding adds at most [Heuristic]'s bound to the work:
@@ -1163,7 +1343,10 @@ let padded_cores =
           [ Setting.B (Setting.tc_opt, level) ]
           (fun () -> Heuristic.hand_coded_optimizations s)
       in
-      equal Testable.bool cored (List.exists core (K.applied_opts o)))
+      (if cored then shows else lacks)
+        "on a tensor core"
+        (fun o -> List.exists core (K.applied_opts o))
+        o)
 
 (* A core whose N is one of its tiles, 8 columns on CUDA's m16n8k16 and 16 on
    RDNA4's, leaves N a range of one trip, which no pad can take: the
@@ -1189,7 +1372,7 @@ let one_tile_of_n =
       let s = K.v (dense rows cols depth) ren in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      equal Testable.bool false (List.exists pads (K.applied_opts o)))
+      equal (list Kernel_opts.opt) [] (List.filter pads (K.applied_opts o)))
 
 (* [k]'s kernel with a call beside its stores, of [f(&y[r0], &y[r1], ...)]
    for its output axes [r0], [r1], ... *)
@@ -1244,15 +1427,23 @@ let no_threads_beside_call =
              else None)
            (K.rngs o)))
 
-(* A contraction the heuristic would stream, beside a call that reads its
-   output axes, is optimised without a lane of any axis the call reads. *)
+(* A contraction the heuristic would stream, beside a call that reads its output
+   axes: the kernel the heuristic makes of it. *)
+let beside_call (c, k, _, _) =
+  let s = K.v (with_call k) (renderer c.renderer) in
+  K.convert_loop_to_global s;
+  Heuristic.hand_coded_optimizations s
+
 let streams_no_call =
-  cases "a kernel whose call reads its output axes is not streamed" ~id
-    streamed_cases_all (fun (c, k, _, _) ->
-      let s = K.v (with_call k) (renderer c.renderer) in
-      K.convert_loop_to_global s;
-      let o = Heuristic.hand_coded_optimizations s in
-      equal Testable.bool false (streams o);
+  each "a kernel whose call reads its output axes is not streamed" ~id
+    streamed_cases_all (fun c -> lacks "streamed" streams (beside_call c))
+
+(* A call takes one value of each argument, so no lane splits an axis it reads
+   ({!Postrange.Scheduler.read_by_opaque}). *)
+let lanes_no_call =
+  each "a kernel whose call reads its output axes splits none into lanes" ~id
+    streamed_cases_all (fun c ->
+      let o = beside_call c in
       equal (list Testable.string) []
         (List.filter_map
            (fun r ->
@@ -1260,6 +1451,33 @@ let streams_no_call =
                Some (Ops.range_str r)
              else None)
            (K.read_by_opaque o)))
+
+(* Threads that stream a contraction sum their partials through shared memory: a
+   renderer of CUDA's table row without it, of no shared bytes, streams none of
+   the kernels it streams with it. *)
+let no_shared =
+  let row =
+    List.find
+      (fun cell -> cell "renderer" = "cuda")
+      (Golden.rows "renderers.golden")
+  in
+  let unshared =
+    lazy
+      (Kernel_opts.renderer_of_row (fun column ->
+           match column with
+           | "has_shared" -> "False"
+           | "shared_max" -> "0"
+           | _ -> row column))
+  in
+  each "a kernel is not streamed on a renderer without shared memory" ~id
+    (lazy
+      (List.filter
+         (fun (c, _, _, _) -> c.renderer = "cuda")
+         (Lazy.force streamed_cases_all)))
+    (fun (_, k, _, _) ->
+      let s = K.v (K.ast k) (Lazy.force unshared) in
+      K.convert_loop_to_global s;
+      lacks "streamed" streams (Heuristic.hand_coded_optimizations s))
 
 (* [out[i] = sum over k < 1 of a[i + k] * b[k]], over 64 [i]: a sum of a
    product whose only range is of one trip, no axis of the kernel, is no
@@ -1280,14 +1498,7 @@ let one_trip_product =
       in
       let s = K.v ast (renderer "cuda") in
       K.convert_loop_to_global s;
-      equal Testable.bool false (streams (Heuristic.hand_coded_optimizations s)))
-
-(* A target's bound of multiply-adds per byte: 64 on every renderer, sm_89's
-   measured crossover, which the others take until they measure their own. *)
-let per_byte_bounds =
-  cases "each renderer streams before a core up to 64 multiply-adds a byte"
-    ~id:fst renderers (fun (_, ren) ->
-      equal int 64 ren.Renderer.per_byte_first)
+      lacks "streamed" streams (Heuristic.hand_coded_optimizations s))
 
 (* The order reads the renderer's bound: 32 bfloat16 rows by a matrix of 32
    outputs over 256 values, the rows streamed, do 16 multiply-adds a byte of
@@ -1320,7 +1531,8 @@ let per_byte_order =
       let s = K.v (kernel name) (at bound) in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      equal Testable.bool (per_byte <= Float.of_int bound) (streams o))
+      (if per_byte <= Float.of_int bound then shows else lacks)
+        "streamed" streams o)
 
 (* Runs of rows
 
@@ -1352,14 +1564,15 @@ let core_upcasts = [ 2; 3; 4; 5 ]
 
 let warps_within_runs =
   let cored =
-    List.filter_map
-      (fun (c, k, o) ->
-        List.find_map
-          (function Opt.Tc _ as t -> Some (c, k, o, t) | _ -> None)
-          (K.applied_opts o))
-      gpu_cases
+    lazy
+      (List.filter_map
+         (fun (c, k, o) ->
+           List.find_map
+             (function Opt.Tc _ as t -> Some (c, k, o, t) | _ -> None)
+             (K.applied_opts o))
+         (Lazy.force gpu_cases))
   in
-  cases
+  each
     "a core's warp holds rows of one run where an upcast of the core's rows \
      keeps it in one"
     ~id:(fun (c, _, _, _) -> c.name)
@@ -1461,11 +1674,8 @@ let recorded_order =
         Heuristic.hand_coded_optimizations
           (handed (Lazy.force k) (renderer "cuda"))
       in
-      let cored =
-        List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)
-      in
-      equal Testable.bool streamed (streams o);
-      equal Testable.bool (not streamed) cored)
+      (if streamed then shows else lacks) "streamed" streams o;
+      (if streamed then lacks else shows) "on a tensor core" cored o)
 
 (* A computed operand's loads with no tile of their own. [a] is a norm's
    affine output over [depth] terms, [bf16(x[i, k] γ[k] + β[k])], times a
@@ -1535,10 +1745,11 @@ let untiled_loads =
       let s = K.v (untiled_kernel ~scaled b 4096 512 depth) sm_89 in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      equal ~msg:"a core" Testable.bool true
-        (List.exists (function Opt.Tc _ -> true | _ -> false)
-           (K.applied_opts o));
-      equal ~msg:"staged" Testable.bool staged (Stage.admits sm_89 (K.ast o)))
+      shows "on a tensor core" cored o;
+      (if staged then shows else lacks)
+        "staged"
+        (fun o -> Stage.admits sm_89 (K.ast o))
+        o)
 
 (* gpt-oss's prefill products read their rows of bfloat16 values gathered
    through a map of row indices. Under the core's splits the map's tile, 16
@@ -1566,7 +1777,7 @@ let prefill_unstaged =
           (fun () -> Heuristic.hand_coded_optimizations s)
       in
       let o = chosen true in
-      equal ~msg:"admits" Testable.bool false (Stage.admits sm_89 (K.ast o));
+      lacks "staged" (fun o -> Stage.admits sm_89 (K.ast o)) o;
       equal (list opt) (K.applied_opts (chosen false)) (K.applied_opts o))
 
 (* Partial forms *)
@@ -1961,7 +2172,7 @@ let optimised_opts build c =
 let typed_kernels =
   cases "a kernel indexed in a typed integer is optimised as in the weak one"
     ~id:(fun c -> c.name)
-    (List.filter (fun c -> c.environment = "") recorded_cases)
+    recorded_cases
     (fun c ->
       equal (list Kernel_opts.opt)
         (optimised_opts Fun.id c)
@@ -2238,8 +2449,9 @@ let blocks =
         (fun () ->
           let o = paired_on (Lazy.force sm_89) (6128, 2048, 768) in
           equal ~msg:"outputs" int 32 (lane_outputs_of o);
-          equal ~msg:"every product staged" bool true
-            (Stage.stages_every_product (K.ren o) (K.ast o)));
+          shows "staged in every product"
+            (fun o -> Stage.stages_every_product (K.ren o) (K.ast o))
+            o);
       (* One AION-1 object's 858 rows, 48 rows and 580 rows over 2048 fall
          short of core_threads; the staged tile takes them, 4 by 4 a thread
          in 128 threads. 8 columns pad past four times the work in the tile,
@@ -2307,12 +2519,21 @@ let units_keep_order =
     List.sort_uniq String.compare
       (List.filter_map
          (fun c ->
-           if c.renderer = name && c.settings = [] && c.environment = "" then
-             Some c.kernel
-           else None)
+           if c.renderer = name && c.settings = [] then Some c.kernel else None)
          recorded_cases)
   in
   let units = [ 1; 100; 1 lsl 20 ] in
+  (* The order at no units, once a kernel and renderer. *)
+  let unstated = Hashtbl.create 64 in
+  let at_none row name =
+    let key = (row "renderer", name) in
+    match Hashtbl.find_opt unstated key with
+    | Some order -> order
+    | None ->
+        let order = sum_order (optimised_on (with_units row 0) name) in
+        Hashtbl.add unstated key order;
+        order
+  in
   let rows =
     List.concat_map
       (fun row ->
@@ -2328,7 +2549,7 @@ let units_keep_order =
     (fun (row, name, n) ->
       equal
         (list (list string))
-        (sum_order (optimised_on (with_units row 0) name))
+        (at_none row name)
         (sum_order (optimised_on (with_units row n) name)))
 
 (* The staged tile takes a product short of core_threads whatever units a
@@ -2365,19 +2586,24 @@ let staged_keep_order =
 
 (* Groups past 2048 outputs *)
 
-(* Whether [c]'s optimised kernel groups a reduce. *)
+(* [c]'s optimised kernel. *)
 let grouped c =
   Setting.context (Setting.B (Setting.stage, false) :: c.settings) (fun () ->
       let k = K.v (kernel c.kernel) (renderer c.renderer) in
       K.convert_loop_to_global k;
-      K.group_for_reduces (Heuristic.hand_coded_optimizations k) > 0)
+      Heuristic.hand_coded_optimizations k)
 
 (* Past 2048 outputs a GPU kernel groups its reduce where its outputs are
    fewer than its renderer's [stream_threads], 16384 on Metal and 32768 on
    CUDA and AMD, each of its reduces sums at least 256 values an output, and
    the kernel contracts no two operands. *)
 let starved =
-  let groups want name = equal ~msg:"grouped" bool want (grouped (recorded name)) in
+  let groups want name =
+    (if want then shows else lacks)
+      "grouped"
+      (fun o -> K.group_for_reduces o > 0)
+      (grouped (recorded name))
+  in
   group "past 2048 outputs"
     [
       cases "a reduce of at least 256 values an output groups below \
@@ -2573,22 +2799,26 @@ let vector_types src =
   in
   go [] 0
 
-(* Recorded host kernels for AVX2, their lanes as the hand-coded optimisations
-   choose them, up to 512 an iteration: Clang computes at most 64 lanes of a
-   vector at once, so their sources declare no wider vector. *)
+(* rune's contraction of 8 groups, whose iteration the hand-coded optimisations
+   give 512 lanes on AVX2, its rows gathered at an index read from memory: Clang
+   computes at most 64 lanes of a vector at once ({!Renderer.t.vector_lanes}),
+   and its program declares no wider vector. Codegen's suite holds the law for
+   every operation; this is the recorded kernel it was found on. *)
 let vectors_bounded =
-  cases "on AVX2 a recorded host kernel's program declares vectors of at most \
-         64 lanes"
-    ~id:fst host_kernels
-    (fun (name, k) ->
-      let prg = Codegen.to_program (Lazy.force k) (Lazy.force clang_avx2) in
+  test
+    "on AVX2 rune's contraction of 8 groups declares vectors of at most 64 \
+     lanes" (fun () ->
+      let prg =
+        Codegen.to_program
+          (Lazy.force (snd contracting_groups))
+          (Lazy.force clang_avx2)
+      in
       let src =
         match Ops.arg (Ops.nth prg 2) with
         | Ops.String s -> s
         | _ -> failf "a program's third source is its source"
       in
-      equal ~msg:name (list int) []
-        (List.filter (fun l -> l > 64) (vector_types src)))
+      equal (list int) [] (List.filter (fun l -> l > 64) (vector_types src)))
 
 (* rune's contraction of 8 groups on AVX2's file: its stores' axis takes 16
    lanes, an upcast by 4 of its other output axis would leave 64 lanes for
@@ -2656,7 +2886,13 @@ let received k ren =
   | _ -> None
 
 let gpu_kernel_names =
-  List.sort_uniq String.compare (List.map (fun (c, _, _) -> c.kernel) gpu_cases)
+  List.sort_uniq String.compare
+    (List.filter_map
+       (fun c ->
+         if c.renderer = "cpu" || c.renderer = "avx2" || c.settings <> [] then
+           None
+         else Some c.kernel)
+       recorded_cases)
 
 (* Each GPU kernel on [ren], named with [suffix]. *)
 let on_renderer suffix ren =
@@ -2669,15 +2905,14 @@ let on_renderer suffix ren =
    heuristic receives them, on their renderer and on CDNA's, with the core it
    applies. *)
 let core_kernels =
-  let own =
-    List.filter_map
-      (fun (c, k, _) ->
-        Option.map
-          (fun r -> (c.name, r))
-          (received (K.ast k) (renderer c.renderer)))
-      gpu_cases
-  in
-  Array.of_list (own @ on_renderer "_cdna" (Lazy.force cdna))
+  lazy
+    (List.filter_map
+       (fun (c, k, o) ->
+         match K.applied_opts o with
+         | (Opt.Tc _ as tc) :: _ -> Some (c.name, (k, tc))
+         | _ -> None)
+       (Lazy.force gpu_cases)
+    @ on_renderer "_cdna" (Lazy.force cdna))
 
 let product s types =
   Shape.Sint.prod (List.map (List.nth (K.full_shape s)) (K.axes_of s types))
@@ -2856,28 +3091,36 @@ let core_threads =
 (* A kernel, half of the draws one whose count of workgroups is not known,
    which few kernels have. *)
 let case_and_floor =
-  let symbolic i =
-    match workgroups (fst (snd core_kernels.(i))) with
-    | Sym _ -> true
-    | Int _ -> false
-  in
-  let known, unknown =
-    List.partition (fun i -> not (symbolic i))
-      (List.init (Array.length core_kernels) Fun.id)
-  in
-  Gen.pair (Gen.one_of [ Gen.of_list known; Gen.of_list unknown ]) core_threads
+  Gen.bind (Gen.constant ()) (fun () ->
+      let known, unknown =
+        List.partition
+          (fun (_, (s, _)) ->
+            match workgroups s with Int _ -> true | Sym _ -> false)
+          (Lazy.force core_kernels)
+      in
+      Gen.pair
+        (Gen.one_of
+           [
+             Gen.of_list (List.map fst known);
+             Gen.of_list (List.map fst unknown);
+           ])
+        core_threads)
 
 (* The floor governs a core whose operands are not staged; a staged core
    takes its own tile. *)
 let unstaged f = Setting.context [ Setting.B (Setting.stage, false) ] f
 
+(* Matmul on Metal at a floor of 2^20 threads takes no split, and routed_tiles
+   on CUDA unrolls a byte's two codes beside its core: rare draws, kept. *)
+let floor_examples =
+  [ ("matmul_metal", 1 lsl 20); ("routed_tiles_cuda", 16384) ]
+
 let floored =
   prop
     "the splits after a tensor core are those that leave its floor of \
      workgroups, unstaged"
-    case_and_floor
-    (fun (i, core_threads) ->
-      let name, (s, tc) = core_kernels.(i) in
+    ~examples:floor_examples case_and_floor (fun (name, core_threads) ->
+      let s, tc = List.assoc name (Lazy.force core_kernels) in
       let o = unstaged (fun () -> Heuristic.hand_coded_with ~core_threads s) in
       let expected = stated ~core_threads s tc (K.applied_opts o) in
       (* The unrolls beside the core split whole, the floor's splits by a
@@ -3324,15 +3567,6 @@ let host_decodes_monotone =
    the same axis and level: the rows' pad and an unstaged core's splits are
    evaluated, a staged core's tile is not. *)
 let decoded_writes =
-  let rows =
-    List.concat_map
-      (fun name -> List.map (fun g -> (name, g)) gpus)
-      [
-        "decoded_small_17_bfloat16";
-        "decoded_small_19_half";
-        "decoded_small_64_float";
-      ]
-  in
   let core opts =
     List.find_map
       (function
@@ -3341,31 +3575,40 @@ let decoded_writes =
         | _ -> None)
       opts
   in
-  cases "a decoded product's optimisations keep its writes"
-    ~id:(fun (name, (gpu, _)) -> name ^ " on " ^ gpu)
-    rows
-    (fun (name, (_, ren)) ->
-      let ren = Lazy.force ren in
-      let chosen use_tc =
-        let s = K.v (kernel name) ren in
-        K.convert_loop_to_global s;
-        Setting.context
-          [ Setting.B (Setting.use_tc, use_tc) ]
-          (fun () -> K.applied_opts (Heuristic.hand_coded_optimizations s))
-      in
-      let applied = core (chosen 1) in
-      if name <> "decoded_small_64_float" then
-        equal Testable.bool ~msg:"rows on a core" true (applied <> None);
-      equal (option Kernel_opts.opt) ~msg:"the core laid out alike" applied
-        (core (chosen 2));
-      let o =
-        Setting.context
-          [ Setting.B (Setting.no_color, true); B (Setting.use_tc, 2) ]
-          (fun () ->
-            Postrange.apply_opts ~hand_coded:Heuristic.hand_coded_optimizations
-              (kernel name) ren)
-      in
-      equal (list Kernel_opts.write) (writes (kernel name)) (writes o))
+  let keeps name (_, ren) =
+    let ren = Lazy.force ren in
+    let chosen use_tc =
+      let s = K.v (kernel name) ren in
+      K.convert_loop_to_global s;
+      Setting.context
+        [ Setting.B (Setting.use_tc, use_tc) ]
+        (fun () -> K.applied_opts (Heuristic.hand_coded_optimizations s))
+    in
+    let applied = core (chosen 1) in
+    if name <> "decoded_small_64_float" then
+      satisfies ~msg:"rows on a core" (option Kernel_opts.opt) Option.is_some
+        applied;
+    equal (option Kernel_opts.opt) ~msg:"the core laid out alike" applied
+      (core (chosen 2));
+    let o =
+      Setting.context
+        [ Setting.B (Setting.no_color, true); B (Setting.use_tc, 2) ]
+        (fun () ->
+          Postrange.apply_opts ~hand_coded:Heuristic.hand_coded_optimizations
+            (kernel name) ren)
+    in
+    equal (list Kernel_opts.write) (writes (kernel name)) (writes o)
+  in
+  group "a decoded product's optimisations keep its writes"
+    (List.map
+       (fun name ->
+         group name
+           (List.map (fun g -> test (fst g) (fun () -> keeps name g)) gpus))
+       [
+         "decoded_small_17_bfloat16";
+         "decoded_small_19_half";
+         "decoded_small_64_float";
+       ])
 
 (* Grouping *)
 
@@ -3407,16 +3650,19 @@ let fastest o =
    the recorded cases has an output axis whose split leaves no group, where the
    group's threads read as the kernel allows. *)
 let grouped_cases =
-  List.filter
-    (fun (_, k, o) ->
-      let reduce =
-        List.filteri (fun i _ -> i < 3) (ranges_at k ~reduce:true [ Weak ])
-      in
-      let outputs = ranges_at k ~reduce:false [ Global; Weak ] in
-      K.group_for_reduces o > 0
-      && (List.exists (fun r -> divides_16 r && unit_in k r) outputs
-         || List.exists (fun r -> (divides_16 r || long_ r) && unit_in k r) reduce))
-    gpu_cases
+  lazy
+    (List.filter
+       (fun (_, k, o) ->
+         let reduce =
+           List.filteri (fun i _ -> i < 3) (ranges_at k ~reduce:true [ Weak ])
+         in
+         let outputs = ranges_at k ~reduce:false [ Global; Weak ] in
+         K.group_for_reduces o > 0
+         && (List.exists (fun r -> divides_16 r && unit_in k r) outputs
+            || List.exists
+                 (fun r -> (divides_16 r || long_ r) && unit_in k r)
+                 reduce))
+       (Lazy.force gpu_cases))
 
 (* A group's width
 
@@ -3498,7 +3744,7 @@ let run_of o b =
     (ranges_at o ~reduce:true [ Upcast ] @ ranges_at o ~reduce:false [ Upcast ])
 
 let fastest_threads_coalesce =
-  cases
+  each
     "a group's fastest threads read consecutive runs where a load reads a \
      reduce or output axis at unit stride"
     ~id:(fun (c, _, _) -> c.name)
@@ -3510,8 +3756,11 @@ let fastest_threads_coalesce =
           let adjacent b =
             stride r (Ops.get_idx (Ops.nth b 1)) = Some (run_of o b)
           in
-          is_true ~msg:"a load reads runs adjacent along it"
-            (List.exists adjacent (loads o)))
+          satisfies
+            ~claim:"a load reading runs adjacent along the fastest thread"
+            optimised
+            (fun o -> List.exists adjacent (loads o))
+            o)
 
 (* [out[c] = sum_r x[r, c]] over [rows] rows of [cols] columns of [dt], summed
    in float32: a gradient's sum over its tokens. *)
@@ -3557,7 +3806,7 @@ let across_threads =
       let k = K.v (column_sum dt rows cols) ren in
       K.convert_loop_to_global k;
       let o = Heuristic.hand_coded_optimizations k in
-      is_true ~msg:"grouped" (K.group_for_reduces o > 0);
+      shows "grouped" (fun o -> K.group_for_reduces o > 0) o;
       let r = Option.get (fastest o) in
       let along b = stride r (Ops.get_idx (Ops.nth b 1)) = Some Bigint.one in
       equal (option int) threads
@@ -3617,11 +3866,9 @@ let innermost_first =
           let run = run_of o a in
           equal ~msg:"the next thread stores the next run" (option bigint)
             (Some run) (stride r (Ops.get_idx (Ops.nth a 1)));
-          is_true ~msg:"the threads' runs span 16 bytes"
-            Bigint.(
-              geq
-                (mul (mul (size r) run) (of_int (Dtype.itemsize dt)))
-                (of_int 16)))
+          at_least ~msg:"the bytes of the threads' runs" bigint
+            ~than:(Bigint.of_int 16)
+            Bigint.(mul (mul (size r) run) (of_int (Dtype.itemsize dt))))
         (stores o))
 
 (* [out[r, c] = x[r, c] s[r] g[c]] over [rows] by [cols] of [dt]: a norm's
@@ -3705,9 +3952,9 @@ let wide n x =
    selection. Reading [x[2 i]], the weak range [i] and [2 i] hold one each at
    the product, and the loaded value, which only the store reads, none. *)
 let live_registers =
-  group "live registers"
+  group "live_registers"
     [
-      cases "they are the most that values hold at once"
+      cases "is the most registers values hold at once"
         ~id:(fun (name, _, _) -> name)
         [
           ( "x (x + 1) of float32",
@@ -3738,7 +3985,7 @@ let live_registers =
         ]
         (fun (_, sink, expected) ->
           equal int expected (Heuristic.live_registers (sink ())));
-      test "they refuse an upcast range of a variable bound" (fun () ->
+      test "refuses an upcast range of a variable bound" (fun () ->
           let n = Ops.variable "n" (`Int Bigint.one) (`Int (Bigint.of_int 8)) in
           let i = Ops.range ~axis_type:Upcast (Ops.Sym n) [ 0 ] in
           let param slot =
@@ -3905,7 +4152,7 @@ let along_reduce_threads =
         ]
         (fun (_, o) ->
           let o = Lazy.force o in
-          is_true ~msg:"the fastest thread splits the reduce" (reduce_thread o);
+          shows "split along the reduce by its fastest thread" reduce_thread o;
           let r = Option.get (fastest o) in
           List.iter
             (fun b ->
@@ -3929,19 +4176,21 @@ let along_reduce_threads =
           ("matmul_440 on cuda", golden "matmul_440" "cuda");
         ]
         (fun (_, o) ->
-          is_false ~msg:"the fastest thread splits the reduce"
-            (reduce_thread (Lazy.force o)));
+          lacks "split along the reduce by its fastest thread" reduce_thread
+            (Lazy.force o));
     ]
 
 (* A product of [rows] by [cols] over 4 terms whose operands both lie along its
    reduce keeps its writes on every GPU target. Where the two output axes take
    upcasts by 4, the reduce's unroll by 4 takes it whole, blocked or short of
-   the target's units, and leaves no part of it to split into threads. *)
+   the target's units, and leaves no part of it to split into threads. The
+   shapes span the failure's: 64 rows by 64 or 256 columns, which failed on
+   every GPU target, to the batches of 192 rows a GRU failed at on gfx1201. *)
 let short_reduce_case =
   let open Gen in
   let* ren = of_list block_targets in
-  let* rows = of_list [ 32; 64; 128; 192 ] in
-  let+ cols = of_list [ 32; 64; 256 ] in
+  let* rows = of_list [ 64; 128; 192 ] in
+  let+ cols = of_list [ 64; 256 ] in
   (ren, rows, cols)
 
 let pp_short_reduce ppf (ren, rows, cols) =
@@ -4135,7 +4384,7 @@ let batched_heads =
       cases "is staged on sm_89" ~id:fst shapes (fun (_, sink) ->
           let ren = Lazy.force sm_89 in
           let o = optimised ren (Lazy.force sink) in
-          is_true ~msg:"staged" (Stage.stages_product ren (K.ast o)));
+          shows "staged" (fun o -> Stage.stages_product ren (K.ast o)) o);
       cases "holds 8 by 8 outputs a thread on sm_75" ~id:fst shapes
         (fun (_, sink) ->
           let o = optimised (Lazy.force sm_75) (Lazy.force sink) in
@@ -4198,8 +4447,8 @@ let staged_products =
         (fun (_, sink) ->
           let sink = Lazy.force sink and ren = Lazy.force sm_89 in
           let o = optimised ren sink in
-          is_false ~msg:"a thread splits the reduce" (reduce_thread o);
-          is_true ~msg:"staged" (Stage.stages_product ren (K.ast o));
+          lacks "split along the reduce by a thread" reduce_thread o;
+          shows "staged" (fun o -> Stage.stages_product ren (K.ast o)) o;
           equal ~msg:"copies" int 2
             (local_f32 (Codegen.to_program sink ren)));
       cases "is not staged laid out along its columns, or on sm_75" ~id:fst
@@ -4211,7 +4460,7 @@ let staged_products =
         (fun (_, (ren, sink)) ->
           let ren = Lazy.force ren in
           let o = optimised ren (Lazy.force sink) in
-          is_false ~msg:"staged" (Stage.stages_product ren (K.ast o)));
+          lacks "staged" (fun o -> Stage.stages_product ren (K.ast o)) o);
     ]
 
 (* A contraction on a GPU whose upcast loop finds no axis that 3 or 4
@@ -4251,7 +4500,7 @@ let core_fits_cases =
     Heuristic.core_fits (renderer ren) ~decoded ~dtype_in ~dtype_out ~rows
       ~outputs ~block
   in
-  cases "core_fits names the contractions a core takes" ~id:fst
+  cases "names the contractions a core takes" ~id:fst
     [
       ("bfloat16 past 32 outputs", (fits (), true));
       ("rows at the reuse that streams", (fits ~rows:32 (), false));
@@ -4320,7 +4569,7 @@ let core_fits_cases =
     (fun (_, (actual, want)) -> equal bool want actual)
 
 let core_fits_settings =
-  test "core_fits reads the core settings" (fun () ->
+  test "reads the core settings" (fun () ->
       let fits () =
         Heuristic.core_fits (renderer "cuda") ~decoded:(false, false)
           ~dtype_in:Dtype.Bfloat16 ~dtype_out:Dtype.Float32 ~rows:64
@@ -4373,8 +4622,9 @@ let core_fits_decoded =
   let pp ppf ((rows, dtype), (gpu, _)) =
     Format.fprintf ppf "%d %s rows on %s" rows dtype gpu
   in
-  prop "core_fits names the decoded products the heuristic takes a core of"
-    ~count:0 ~examples:rows (Gen.with_pp pp (Gen.of_list rows))
+  prop "names the decoded products the heuristic takes a core of" ~count:0
+    ~examples:rows
+    (Gen.with_pp pp (Gen.of_list rows))
     (fun ((rows, dtype), (gpu, ren)) ->
       let ren = Lazy.force ren in
       let s =
@@ -4382,19 +4632,17 @@ let core_fits_decoded =
       in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      let cored =
-        List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)
-      in
-      cover "a core" cored;
-      cover "a core of 17 to 32 rows" (cored && rows > 16 && rows <= 32);
-      cover "a core of up to 16 rows" (cored && rows <= 16);
-      cover "no core" (not cored);
+      let core = cored o in
+      cover "a core" core;
+      cover "a core of 17 to 32 rows" (core && rows > 16 && rows <= 32);
+      cover "a core of up to 16 rows" (core && rows <= 16);
+      cover "no core" (not core);
       let on_n = gpu = "cuda" && dtype <> "float" && (rows = 7 || rows = 8) in
       cover "rows on N's tile alone" on_n;
-      if on_n then equal bool ~msg:"7 and 8 rows stream" false cored;
+      if on_n then lacks ~msg:"7 and 8 rows stream" "on a tensor core" cored o;
       equal bool
         ~msg:(Printf.sprintf "%d %s on %s" rows dtype gpu)
-        (cored || on_n)
+        (core || on_n)
         (Heuristic.core_fits ren ~decoded:(false, true)
            ~dtype_in:(dtype_of dtype) ~dtype_out:Dtype.Float32 ~rows ~outputs:16384 ~block:16384))
 
@@ -4423,10 +4671,7 @@ let decoded_cores =
       in
       K.convert_loop_to_global s;
       let o = Heuristic.hand_coded_optimizations s in
-      equal bool
-        ~msg:(Format.asprintf "%a" (Format.pp_print_list Opt.pp) (K.applied_opts o))
-        (rows = 16)
-        (List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts o)))
+      (if rows = 16 then shows else lacks) "on a tensor core" cored o)
 
 (* [out[i, j] = sum_k a[i, k] b[j, k]] over [rows] rows, [outputs] outputs
    and [depth] terms, summed in float32: each factor [dtype] widened to
@@ -4511,9 +4756,25 @@ let factors_case =
 
 let core_fits_factors =
   prop
-    "core_fits names the products of stored and decoded factors the \
-     heuristic takes a core of"
-    ~count:300 (Gen.with_pp pp_factors factors_case) (fun c ->
+    "names the products of stored and decoded factors the heuristic takes a \
+     core of"
+    ~count:300
+    ~examples:
+      (* A tie of 32 rows, the codes first, on each GPU: 1 draw in 24. *)
+      (List.map
+         (fun gpu ->
+           {
+             gpu;
+             dtype = Dtype.Bfloat16;
+             decoded = (true, false);
+             by_columns = false;
+             rows = 32;
+             outputs = 32;
+             depth = 512;
+           })
+         gpus)
+    (Gen.with_pp pp_factors factors_case)
+    (fun c ->
       let ren = Lazy.force (snd c.gpu) in
       let s =
         K.v
@@ -4556,7 +4817,7 @@ let core_rows ?(ren = "cuda") ?(decoded = (false, false)) ?(outputs = 256)
     ~block
 
 let core_rows_cases =
-  cases "core_rows names the fewest rows a core takes" ~id:fst
+  cases "names the fewest rows a core takes" ~id:fst
     [
       ("CUDA's 16-row tile", (core_rows (), Some 48));
       ("RDNA3's 16-row tile", (core_rows ~ren:"amd" (), Some 48));
@@ -4608,7 +4869,7 @@ let core_rows_fit =
     Format.fprintf ppf "%s, %a, %s by %s, %d outputs, block %d" ren Dtype.pp dt
       (fact (fst decoded)) (fact (snd decoded)) outputs block
   in
-  prop "core_fits holds of core_rows' rows" (Gen.with_pp pp gen)
+  prop "names rows core_fits holds of" (Gen.with_pp pp gen)
     (fun (ren, dtype_in, decoded, outputs, block) ->
       let ren = renderer ren and dtype_out = Dtype.Float32 in
       match
@@ -4618,12 +4879,14 @@ let core_rows_fit =
       | Some rows ->
           cover "a core" true;
           cover "a decoded operand's core" (fst decoded || snd decoded);
-          equal bool true
-            (Heuristic.core_fits ren ~decoded ~dtype_in ~dtype_out ~rows
-               ~outputs ~block))
+          satisfies ~claim:"rows core_fits takes" int
+            (fun rows ->
+              Heuristic.core_fits ren ~decoded ~dtype_in ~dtype_out ~rows
+                ~outputs ~block)
+            rows)
 
 let core_rows_settings =
-  test "core_rows reads the core settings" (fun () ->
+  test "reads the core settings" (fun () ->
       equal (option int) ~msg:"cores off" None
         (Setting.context [ Setting.B (Setting.use_tc, 0) ] core_rows);
       equal (option int) ~msg:"a core's shape without its instruction" None
@@ -4658,100 +4921,119 @@ let longest_padded =
           (K.rngs o)
       in
       equal ~msg:"the 35 stay a loop" (list bigint) [ Bigint.of_int 35 ] (rest 1);
-      is_true ~msg:"the 1501 are split"
-        (List.for_all (fun n -> Bigint.(lt n (of_int 1501))) (rest 2));
+      satisfies ~claim:"parts of the 1501, each shorter" (list bigint)
+        (List.for_all (fun n -> Bigint.(lt n (of_int 1501))))
+        (rest 2);
       equal ~msg:"grouped" int 1 (K.group_for_reduces o))
 
 let () =
   exit
     (Windtrap.run "Tolk.Heuristic"
        [
-         chosen;
-         core_fits_cases;
-         core_fits_settings;
-         core_fits_decoded;
-         decoded_cores;
-         core_fits_factors;
-         core_rows_cases;
-         core_rows_fit;
-         core_rows_settings;
-         leaves_its_argument;
-         blocks;
-         units_keep_order;
-         staged_keep_order;
-         starved;
-         keeps_kernel_writes;
-         fastest_threads_coalesce;
-         across_threads;
-         innermost_first;
-         maps_four_first;
-         live_registers;
-         lanes_within_registers;
-         along_reduce_threads;
-         short_reduce;
-         staged_products;
-         batched_heads;
-         padded_upcast;
-         widths;
-         longest_padded;
+         group "hand_coded_optimizations"
+           [
+             chosen;
+             table;
+             leaves_its_argument;
+             keeps_kernel_writes;
+             empty_range;
+             range_types;
+             typed_kernels;
+           ];
          group "streaming"
            [
-             loads_once_a_tile;
-             coalesces;
-             unrolls_in_flight;
-             loads_together;
+             no_shared;
+             streams_no_call;
+             lanes_no_call;
+             one_trip_product;
              applies;
-             passes_or_core;
-             grouped_tiles;
-             passes_unstaged;
-             relu_product;
-             affine_staged;
-             padded_cores;
-             one_tile_of_n;
-             per_byte_bounds;
              per_byte_order;
              recorded_order;
-             prefill_unstaged;
-             partial_trips;
-             untiled_loads;
-             streams_no_call;
-             one_trip_product;
-             within_block;
+             passes_or_core;
+             passes_unstaged;
+             relu_product;
+             loads_once_a_tile;
              rows_take_simd;
+             coalesces;
+             unrolls_in_flight;
              rows_in_flight;
+             loads_together;
              columns_split;
              columns_pad;
+             within_block;
            ];
-         no_threads_beside_call;
-         warps_within_runs;
-         group "the host's budget"
-           [ held_cases; budget; more_registers; doubles ];
-         group "the host's lanes"
+         group "tensor cores"
            [
-             lane_cases;
-             conversion_cases;
-             conversions_bounded;
-             iterations_bounded;
-             room_for_unroll;
-             room_past_32;
-             vectors_bounded;
+             padded_cores;
+             one_tile_of_n;
+             group "the tensor core's floor"
+               [ floored; metal_floor; min_globals_unroll ];
+             partial_trips;
+             affine_staged;
+             untiled_loads;
+             prefill_unstaged;
+             grouped_tiles;
+             warps_within_runs;
+             decode_bound;
+             decoded_cores;
+             decoded_writes;
            ];
-         group "the tensor core's floor"
-           [ floored; metal_floor; min_globals_unroll ];
-         decode_bound;
-         group "the host's decodes"
+         group "the general rules"
            [
-             tile_rows_cases;
-             tile_outputs_cases;
-             tile_outputs_bound;
-             copy_entries_cases;
-             host_decode_cases;
-             host_rows_padded;
-             unbudgeted_decodes;
-             routed_rows;
-             host_decodes_monotone;
+             lanes_within_registers;
+             starved;
+             widths;
+             fastest_threads_coalesce;
+             across_threads;
+             longest_padded;
+             maps_four_first;
+             blocks;
+             units_keep_order;
+             staged_keep_order;
+             along_reduce_threads;
+             short_reduce;
+             staged_products;
+             batched_heads;
+             padded_upcast;
+             innermost_first;
+             no_threads_beside_call;
            ];
-         decoded_writes;
-         range_types;
-         typed_kernels;
+         group "the host"
+           [
+             group "the host's decodes"
+               [
+                 host_decode_cases;
+                 host_rows_padded;
+                 unbudgeted_decodes;
+                 routed_rows;
+                 host_decodes_monotone;
+               ];
+             group "the host's budget"
+               [ budget; more_registers; doubles; tile_outputs_bound ];
+             group "the host's lanes"
+               [
+                 lane_cases;
+                 conversion_cases;
+                 conversions_bounded;
+                 iterations_bounded;
+                 room_for_unroll;
+                 room_past_32;
+                 vectors_bounded;
+               ];
+           ];
+         cores_cases;
+         group "core_fits"
+           [
+             core_fits_cases;
+             core_fits_settings;
+             core_fits_decoded;
+             core_fits_factors;
+           ];
+         group "core_rows"
+           [ core_rows_cases; core_rows_fit; core_rows_settings ];
+         tile_rows_cases;
+         tile_outputs_cases;
+         copy_entries_cases;
+         group "held_registers" [ held_cases ];
+         live_registers;
        ])
