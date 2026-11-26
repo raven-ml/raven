@@ -36,8 +36,8 @@ let get b =
   Bytes.to_string s
 
 (* [ids] into slot 0 over 4 groups of 64 threads, [a = 5], [b = 3], [f = 2.5]:
-   word [k] is [5 + 3k + 2]. Then [twice] from slot 0 into slot 1, [c = 1],
-   its parameters padded to 24 bytes, the size of Metal's struct of them. *)
+   word [k] is [5 + 3k + 2]. Then [twice] from slot 0 into slot 1, [c = 1], its
+   parameters padded to 24 bytes, the size of Metal's struct of them. *)
 let ids_params =
   le64 0 ^ le64 5 ^ le32 3 ^ le32 (Int32.to_int (Int32.bits_of_float 2.5))
 
@@ -128,13 +128,10 @@ let same_bytes (module Gpu : Gpu) () =
   let x = B.create d (4 * words) and y = B.create d (4 * words) in
   by_hand d image x y;
   let p =
-    require_ok ~pp:Format.pp_print_string
-      (G.load (described d binary) [| d |])
+    require_ok ~pp:Format.pp_print_string (G.load (described d binary) [| d |])
   in
   let x' = B.create d (4 * words) and y' = B.create d (4 * words) in
-  ignore
-    (G.run p
-       { inputs = [| x'; y' |]; ints = [||] });
+  ignore (G.run p { inputs = [| x'; y' |]; ints = [||] });
   let le32s f = String.concat "" (List.init words (fun k -> le32 (f k))) in
   equal string ~msg:"ids, by hand" (le32s (fun k -> 7 + (3 * k))) (get x);
   equal string ~msg:"twice, by hand" (le32s (fun k -> 15 + (6 * k))) (get y);
@@ -143,33 +140,30 @@ let same_bytes (module Gpu : Gpu) () =
 
 (* A time of the described program has its step's duration, which lies within
    the host's times around the call up to the error its driver states
-   (Gpu.clock_error), or [-1] where the driver timed none of the step's work.
-   Of four times, at least one has the step timed. *)
+   (Gpu.clock_error). Each of these drivers times every value rig times, as the
+   times sections of rig_cuda.mli, rig_nv.mli, rig_metal.mli and rig_amd.mli
+   state, so no time is [-1]. *)
 let timed (module Gpu : Gpu) () =
   let opened = Rig.Profile.now () in
   Gpu.with_ @@ fun t ->
   let d = t.d in
   let binary = launches (module Gpu) in
   let p =
-    require_ok ~pp:Format.pp_print_string
-      (G.load (described d binary) [| d |])
+    require_ok ~pp:Format.pp_print_string (G.load (described d binary) [| d |])
   in
   let time () =
     let inputs = Array.init 2 (fun _ -> B.create d (4 * words)) in
     let t0 = Rig.Profile.now () in
-    let times =
-      G.time p { inputs; ints = [||] }
-    in
+    let times = G.time p { inputs; ints = [||] } in
     let t1 = Rig.Profile.now () in
     let error = Gpu.clock_error ~since:(t1 - opened) in
     equal int ~msg:"one per step" 1 (Array.length times);
-    at_least int ~msg:"the step's time" ~than:(-1) times.(0);
-    at_most int ~msg:"the step's time" ~than:(t1 - t0 + (2 * error)) times.(0);
-    times.(0)
+    at_least int ~msg:"the step's time" ~than:0 times.(0);
+    at_most int ~msg:"the step's time" ~than:(t1 - t0 + (2 * error)) times.(0)
   in
-  let times = List.init 4 (fun _ -> time ()) in
-  at_least int ~msg:"the most of four times" ~than:0
-    (List.fold_left max (-1) times)
+  for _ = 1 to 4 do
+    time ()
+  done
 
 let gpus : (module Gpu) list =
   [
@@ -182,18 +176,15 @@ let gpus : (module Gpu) list =
 let () =
   exit
     (run "rig.program.gpu"
-       (List.concat_map
+       (List.map
           (fun (module Gpu : Gpu) ->
-            [
-              test
-                (Gpu.class_
-               ^ ": a description leaves the bytes of its submission made by \
-                  hand")
-                (same_bytes (module Gpu));
-              test
-                (Gpu.class_
-               ^ ": a time has its step's duration, within the host's times \
-                  around it")
-                (timed (module Gpu));
-            ])
+            group Gpu.class_
+              [
+                test "a run leaves the bytes of its submission made by hand"
+                  (same_bytes (module Gpu));
+                test
+                  "a time's step is timed, at least 0 and within the host's \
+                   window around the call up to the driver's clock error"
+                  (timed (module Gpu));
+              ])
           gpus))
