@@ -2043,26 +2043,6 @@ let node_sets =
             nodes);
     ]
 
-(* Integer literals *)
-
-let fits =
-  group "fits_no_int"
-    [
-      test "fits_no_int is true only of known bounds no 64-bit integer holds"
-        (fun () ->
-          let bounded lo hi = Ops.variable "b" (`Int lo) (`Int hi) in
-          let two n = Bigint.shift_left Bigint.one n in
-          let held lo hi = equal bool false (Ops.fits_no_int (bounded lo hi)) in
-          held Bigint.zero (Bigint.pred (two 64));
-          held (Bigint.neg (two 63)) (Bigint.pred (two 63));
-          equal bool true (Ops.fits_no_int (bounded Bigint.minus_one (two 63)));
-          equal bool true (Ops.fits_no_int (bounded Bigint.zero (two 64)));
-          let r = Ops.range ~axis_type:Weak (Ops.Int 4) [ 0 ] in
-          let unknown = Ops.reduce (bounded Bigint.zero (two 3)) Op.Add [ r ] in
-          equal bool false (Ops.fits_no_int unknown);
-          equal bool false (Ops.fits_no_int Ops.O.(unknown + int 1)));
-    ]
-
 let groups =
   [
     axis_type_group;
@@ -2112,5 +2092,4 @@ let groups =
     range_args;
     range_strs;
     multirange_strs;
-    fits;
   ]

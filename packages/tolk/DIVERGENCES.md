@@ -748,11 +748,11 @@ multi-device is out of scope, see README.
   wrapping maximum against eager nx.
 - **Pinned by:** each facet by value tests, which evaluate a graph with the
   reference interpreter before and after the rewrite:
-  - integer bounds: `Tolk.Ops › bounds › a committed integer that can
-    leave its type has its bounds`, `› an integer cast to a signed type
-    it leaves wraps`, `› a constant table holding a NaN has its type's
-    bounds` and the laws `› bounds hold the value a committed integer
-    wraps to` and `› bounds hold every value a cast takes`;
+  - integer bounds: `Tolk.Ops › vmin and vmax › of a committed integer
+    that may leave its type are its type's`, `› of an integer cast to a
+    signed type it leaves wrap`, `› of a constant table holding a NaN are
+    its type's` and the laws `› hold the value a committed integer wraps
+    to` and `› hold every value a cast takes`;
   - wrapping rules: `Tolk.Symbolic › sym › values › keeps an integer
     graph's value at its width, wrapping included` (every row);
     `Tolk.Symbolic › uop_given_valid › has u's values wherever valid holds`
@@ -1876,15 +1876,15 @@ view of any value, as `uop/ops.py` `UOp.contiguous_view` does.
   float without infinities is unbounded) has no rune consumer, since rune stores
   the 8-bit floats as `uint8` (D62); with the type's finite greatest value, a
   compiled sine, cosine or tangent of an 8-bit NaN gave -1, 0 and -452.
-- **Pinned by:** the Ops suite (`test/uop/ops`): `bounds › bounds hold every
-  value a float operation rounds to`, sums, differences, products and
-  selections, `› a float operation of bounded operands is bounded`, `› a float
-  operation of an operand within the subnormals bounds a flushed operand too`,
-  `› a float operation of an unbounded operand, or that can overflow, has its
-  type's bounds`, `› a float selection by a comparison narrows what it selects`,
-  `› a float truncation and negation map their operand's bounds`, `› a value of
-  a float type without infinities, which may be NaN, has no finite bounds` and
-  `› bounds hold every value a cast takes`; the Transcendental suite: `xsin ›
+- **Pinned by:** the Ops suite (`test/uop/ops`): `vmin and vmax › of a
+  float sum, difference, product or selection hold every value it rounds to,
+  within the interval ops.mli states`, `› of a float operation of an operand
+  within the subnormals hold the operand flushed`, `› of a float operation of
+  an unbounded operand, or that may overflow, are its type's`, `› of a float
+  selection by a < b narrow the branch it picks to where that holds`, `› of a
+  float truncation and negation map their operand's`, `› of a value of a float
+  type without infinities, which may be NaN, are infinite` and `› hold every
+  value a cast takes`; the Transcendental suite: `xsin ›
   an angle whose bounds lie below the switch-over takes the fast form`; rune's
   `Lower_real` suite: `bounded arguments › cos of an argument bounded below the
   switch-over` and `› tan of an argument bounded below the switch-over`. On
@@ -3257,8 +3257,9 @@ selection's own type, as `codegen/late/gater.py` `move_where_load` does.
 - **Reason:** (b). rune's `Nx.pad ~value:5e-324` of a float32 tensor compiled
   to `where c x 5e-324`, bounded away from 0, so `== 0` folded to false where
   eager compares 0 with 0.
-- **Pinned by:** the Ops suite (`test/uop/ops`): `bounds › a committed float
-  selection holds a weak constant at its type, where it may round to zero`.
+- **Pinned by:** the Ops suite (`test/uop/ops`): `vmin and vmax › of a
+  committed float selection hold a weak constant at its type, where it may
+  round to zero`.
   On rune: missing (the old rune's `a compiled program › computes eager's
   bits`, whose examples held the pad, went with its rewrite).
 
@@ -3882,7 +3883,8 @@ supports Windows: `Cstyle.clang_lang` keeps the empty `abi` and plain
   wrong sign. For the logarithm and the powers, (e): a C library's value one
   unit off is the wrong value, and differs between hosts (glibc 2.41's `log2
   0.86`, `2^-0.338`, `5.4 ** 0.8`).
-- **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, compared
+- **Pinned by:** `Tolk.Ops › exec_alu › computes each operation as
+  exec_alu_values.golden states › exec_alu_values.golden`, compared
   exactly: its `SIN` rows (`1e300`, `3.4e38`, pi, floats near multiples of pi
   and floats glibc misrounds) and its float64 `LOG2`, `EXP2` and `POW` rows
   (operands glibc misrounds, logarithms near 1, of subnormals and past the
@@ -7622,8 +7624,8 @@ C's undefined behaviour.
   quotient by 0 is 0` and its neighbours; rune's `jit › integer arithmetic at its type's
   edges gives eager's values`, its GPU suite's `integers ›` the same law,
   and `Lower_arith › divisions by constants give eager's bits`; the
-  Symbolic suite's `bounds › a gated load of a constant table may read its
-  alternative`; the Tolk_engine suite's `a pad of integer divisions writes
+  Ops suite's `vmin and vmax › of a gated load of a constant table take in
+  its alternative`; the Tolk_engine suite's `a pad of integer divisions writes
   what its tensors compute`, `a pad of a quotient by a constant table writes
   what it computes` on the host and on each GPU, and the Codegen suite's
   `padto_idiv_upcast`.
@@ -8021,7 +8023,8 @@ reason and its pins.
 - **Reason:** (e). A quotient the folder could not compute would differ from
   the one compiled code computes for the same constants, or stop the compile
   with a host-language exception.
-- **Pinned by:** `Tolk.Ops › exec_alu › exec_alu_values.golden`, whose `.tolk`
+- **Pinned by:** `Tolk.Ops › exec_alu › computes each operation as
+  exec_alu_values.golden states › exec_alu_values.golden`, whose `.tolk`
   holds each `op=Ops.FDIV` row's quotient.
 
 ## D417. A round's stop compares two kernels timed again in turn

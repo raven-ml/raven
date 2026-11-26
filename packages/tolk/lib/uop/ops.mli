@@ -567,8 +567,8 @@ val toposort : ?gate:(t -> bool) -> calls:calls -> t -> t list
 val topovisit : t -> (t -> 'a) -> 'a Tbl.t -> 'a
 (** [topovisit u f cache] is [f u], after [f] has been applied to each node [u]
     reaches, each after its sources, and stored in [cache]. A node already in
-    [cache] is not visited again, and the walk does not pass through it to
-    its sources. *)
+    [cache] is not visited again, and the walk does not pass through it to its
+    sources. *)
 
 val backward_slice : calls:calls -> t -> Nodes.t
 (** [backward_slice ~calls u] is the nodes [u] reaches, without [u], in
@@ -679,15 +679,31 @@ val vmin : t -> Dtype.value
 (** [vmin u] is a lower bound of every value [u] can take. *)
 
 val vmax : t -> Dtype.value
-(** [vmax u] is an upper bound of every value [u] can take. Bounds follow
-    interval arithmetic through the integer operations, the less-than and
-    equality comparisons, selections, casts and loads from constant tables, a
-    gated load's alternative included; elsewhere they are the bounds of [u]'s
-    type. A committed integer wraps at
-    its width, and so does a weak integer operand of an operation on one
-    ({!operand_bounds}): an interval that leaves its type is one value wrapped,
-    or the type's bounds. A table holding a NaN has its type's bounds. A
-    comparison of floats is never bounded to [true]: a NaN compares false. *)
+(** [vmax u] is an upper bound of every value [u] can take. A node that takes no
+    value, such as a range or hardware index whose end is [0], may have [vmin u]
+    above [vmax u].
+
+    Bounds follow interval arithmetic through the integer operations, the
+    less-than and equality comparisons, selections, casts and loads from
+    constant tables, a gated load's alternative included; elsewhere they are the
+    bounds of [u]'s type. A constant is its own bounds, but a NaN, which no
+    bounds hold, and [`Invalid], which has no value, have their type's. A
+    stack's bounds span its elements', its [`Invalid] ones left out. A committed
+    integer wraps at its width, and so does a weak integer operand of an
+    operation on one ({!operand_bounds}): an interval that leaves its type is
+    one value wrapped, or the type's bounds. A table holding a NaN has its
+    type's bounds. A comparison of floats is never bounded to [true]: a NaN
+    compares false.
+
+    A sum, difference or product of committed floats with finite bounds has
+    bounds that hold every rounded result and lie within the exact interval of
+    its operands' bounds widened by a relative 2{^ -m} and its type's least
+    normal, [m] its mantissa bits, a target that flushes subnormals to zero
+    included; one that may overflow its type has its type's bounds. A float
+    truncation and negation map their operand's bounds, and a selection by
+    [a < b] bounds the branch it picks to where that holds. Finite float bounds
+    state that a value is not NaN, so a float nothing bounds has infinite
+    bounds, in a type without infinities too. *)
 
 val operand_bounds : t -> t -> Dtype.value * Dtype.value
 (** [operand_bounds u s] is the bounds of [u]'s source [s] as [u] reads it: an
@@ -728,25 +744,27 @@ val exec_alu :
     an infinity is NaN, and an overflowing [exp2] or [pow] is the infinity IEEE
     gives. A float [log2], [exp2] and [pow] are correctly rounded to a double,
     ties to even, and [sin] is but where rounding it needs more than 192 bits
-    past its argument's reduction; each is the same on every host. The NaN of
-    an operation none of whose operands is NaN is {!Dtype.nan}, whatever the
-    host gives. {!Op.Fdiv} is
-    IEEE division: a zero divisor gives an infinity of the quotient's sign, and
-    [0. /. 0.] is NaN. {!Op.Trunc} of a float is IEEE's, a float of its
-    operand's sign: [trunc (-0.5)] is [-0.]. {!Op.Max} is [y] if [x < y] and
-    [x] otherwise, as compiled code computes it, so a NaN wins only as the first
-    operand. A binary operation on [`Invalid] is [`Invalid]. {!Op.Where} is the
-    branch it picks, [`Invalid] included; its condition must not be [`Invalid].
-    {!Op.Where} and {!Op.Neg} convert nothing: truncated, a float NaN they give
-    is {!Dtype.val-const} of [dt], which keeps the operand's sign, flipped by
-    {!Op.Neg}, and its payload, a signalling NaN staying one, in a float of 16
-    bits or more.
+    past its argument's reduction; each is the same on every host. The NaN of an
+    operation none of whose operands is NaN is {!Dtype.nan}, whatever the host
+    gives. {!Op.Fdiv} is IEEE division: a zero divisor gives an infinity of the
+    quotient's sign, and [0. /. 0.] is NaN. {!Op.Trunc} of a float is IEEE's, a
+    float of its operand's sign: [trunc (-0.5)] is [-0.]. {!Op.Max} is [y] if
+    [x < y] and [x] otherwise, as compiled code computes it, so a NaN wins only
+    as the first operand. A binary operation on [`Invalid] is [`Invalid].
+    {!Op.Where} is the branch it picks, [`Invalid] included; its condition must
+    not be [`Invalid]. {!Op.Where} and {!Op.Neg} convert nothing: truncated, a
+    float NaN they give is {!Dtype.val-const} of [dt], which keeps the operand's
+    sign, flipped by {!Op.Neg}, and its payload, a signalling NaN staying one,
+    in a float of 16 bits or more. An integer division or remainder of floats,
+    which no checked graph holds ({!Spec}), has an unspecified value.
 
-    Raises [Invalid_argument] if [op] is not an arithmetic operation or the
-    arguments do not fit it, as for a shift by a negative count, which has no
-    value, a left shift of a non-zero integer by more than {!max_exact_shift}
-    bits that nothing truncates, or a power that nothing truncates and
-    {!exact_power} leaves out: at a weak [dt], or without [truncate_output]. *)
+    Raises [Invalid_argument] if [op] is not an arithmetic operation or is
+    {!Op.Threefry}, which it does not compute, if [args] are not as many as
+    [op]'s operands, for a shift by a negative count, which has no value, for a
+    left shift of a non-zero integer by more than {!max_exact_shift} bits that
+    nothing truncates, and for a power that nothing truncates and {!exact_power}
+    leaves out. Nothing truncates at a weak [dt], or without [truncate_output].
+*)
 
 val is_number : t -> int -> bool
 (** [is_number u i] is [true] iff source [i] of [u] is a number and no value of
@@ -757,7 +775,9 @@ val is_number : t -> int -> bool
 val exact_power : Dtype.value -> Dtype.value -> bool
 (** [exact_power b e] is [true] iff [b ** e], for integers [b] and [e], can be
     computed exactly in {!exec_alu} when nothing truncates: a base of [0], [1]
-    or [-1], a negative [e], or a power of at most {!max_exact_shift} bits. *)
+    or [-1], a negative [e], or [e] times the bits of [|b|] at most
+    {!max_exact_shift}, a bound of the power's bits that needs no power
+    computed. *)
 
 val max_exact_shift : int
 (** [max_exact_shift] is the most bits a left shift that nothing truncates
