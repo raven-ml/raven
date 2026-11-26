@@ -741,7 +741,7 @@ multi-device is out of scope, see README.
     bounds` and the laws `› bounds hold the value a committed integer
     wraps to` and `› bounds hold every value a cast takes`;
   - wrapping rules: `Tolk.Symbolic › integers wrap` (every test);
-    `Tolk.Simplify › keeping values`, its comparison tests;
+    `Tolk.Simplify › pm_reduce_collapse`, its comparison tests;
   - float folds, signed zeros, reassociation, maxima, reciprocal and sigmoid
     forms, pow: `Tolk.Symbolic › floats keep IEEE values`, one test
     per facet, with `› a Dekker split and product keep their low parts` and
@@ -749,12 +749,12 @@ multi-device is out of scope, see README.
     marked D24 in `symbolic_simple`, `symbolic` and `sym`, and the law
     `Tolk.Symbolic › laws › sym keeps a float expression's value bit for
     bit at special values`;
-  - Simplify's reductions: `Tolk.Simplify › keeping values › a
+  - Simplify's reductions: `Tolk.Simplify › pm_reduce_collapse › a
     float sum over an empty part of a range is +0., whatever the value`,
     `› a float product by a boolean mask keeps its value` and `› a float sum
     lifted past a parameter is +0. where it is false`, and
     `Tolk.Simplify › pm_reduce_collapse › a float product by a comparison
-    cast from a boolean stays`;
+    cast from a boolean is no selection`;
   - transcendental polynomials: the `Tolk.Transcendental` goldens;
   - tensor-core accumulators: the sources of every tensor core,
     `Tolk.Cstyle › render › writes each recorded kernel as its golden states › metal_tc_*`, `hip_tc_*` and
@@ -6855,7 +6855,7 @@ rows (1.04-1.18x on `contract/bf16-*` on fudge) is the stated cost.
   range of a typed integer as a weak one`, and the golden case
   `split_int32_axis`, which applies. The Simplify suite: `pm_split_ranges ›
   a range of a typed integer splits as a weak one` and `pm_simplify_ranges ›
-  shrinking › a range of a typed integer shrinks to its guard as a weak
+  a range of a typed integer shrinks to its guard as a weak
   one`. The Coalesce suite: `memory_coalescing › lengths › loads at typed
   offsets merge as at weak ones, for`.
 
@@ -7214,9 +7214,8 @@ rule, its reason and its pins.
   write what they compute node by node` and `› on CUDA, ...`, against the
   interpreter, with and without the heuristic, their indices in the weak
   integer or `Int32`; the Simplify suite's
-  `pm_reduce_simplify › a sum over a range of size 1 is its value where the
-  range is 0` and `› a sum over a typed range of size 1 is its value where
-  it is 0`.
+  `pm_reduce_simplify › a sum over a range of size 1 is its value where it
+  is 0, of` (the weak integer and each typed one).
 
 ## D332. A call's arguments lose their indices once ranges are applied
 
