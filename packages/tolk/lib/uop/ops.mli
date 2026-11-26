@@ -260,10 +260,7 @@ type keep =
       (** As {!Removable}, for a value its readers would compute again for
           some of its elements: one read where it is broadcast, or a
           gather's source its gathers read at more positions than it holds.
-          It is not inlined back where computing it runs a transcendental
-          operation or, at a read outside a sum that selects one trip, does
-          at least the work of tolk's float32 exponential inside its ranges,
-          nor where it reads more than three buffers. *)
+          {!Rangeify.get_kernel_graph} states where it is inlined back. *)
   | Whole
       (** Nothing: a value the user materialises is stored as it is. *)
   | Argument
