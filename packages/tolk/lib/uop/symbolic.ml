@@ -66,12 +66,19 @@ let uop_given_valid ?(try_simplex = true) valid u =
     let irreducible t =
       Op.Set.mem (op t) Op.Set.irreducible && op t <> Op.Const
     in
+    (* A sum at least 1 has a term at least 1 only where it does not wrap: at
+       int8, -128 + -127 is 1. *)
+    let wraps () =
+      let sum f = List.fold_left (fun s t -> V.(s + f t)) zero terms in
+      not (exact (dtype e) [ sum vmin; sum vmax ])
+    in
     if
       not
         (try_simplex
         && op e = Op.Add
         && V.(lo = one)
-        && List.for_all irreducible terms)
+        && List.for_all irreducible terms
+        && not (wraps ()))
     then u
     else
       (* For X0 + X1 + ... > 0, check whether every Xi > 0 gives the same

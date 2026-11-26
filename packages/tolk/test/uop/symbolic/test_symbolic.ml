@@ -642,6 +642,15 @@ let given_valid =
           let valid = Ops.O.(lnot (a + b < int 1)) in
           let e = Ops.O.((a < int 1) lor (b < int 1)) in
           equal uop e (Symbolic.uop_given_valid valid e));
+      test "a clause on a committed sum that wraps keeps the value" (fun () ->
+          (* At int8, -128 + -127 wraps to 1, though no term is at least 1. *)
+          let a = Ops.variable ~dtype:Int8 "a" (i (-128)) (i (-128))
+          and b = Ops.variable ~dtype:Int8 "b" (i (-128)) (i (-127)) in
+          let u = Ops.O.(((a + b) % int 2) + a + a) in
+          let valid = Ops.O.(lnot (a + b < int 1)) in
+          let vars = [ ("a", i (-128)); ("b", i (-127)) ] in
+          equal Dtypes.const (Interpreter.eval ~vars u)
+            (Interpreter.eval ~vars (Symbolic.uop_given_valid valid u)));
       test "a clause that bounds nothing leaves the expression" (fun () ->
           let e = Ops.O.(c + a) in
           equal uop e (Symbolic.uop_given_valid Ops.O.(cond lor other) e));

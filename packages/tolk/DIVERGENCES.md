@@ -638,12 +638,14 @@ multi-device is out of scope, see README.
     0` for `y` in `[0, 50]` to `false`, which is `true` at 40.
   - **Wrapping rules.** tinygrad: `uop/symbolic.py` `symbolic` (`(x // c1) //
     c2`, `c0 + x < c1`, `-x < -y`, `-x < c`, the maximum from a selection),
-    `reduce_mul_chain` (a factor out of a maximum), `fits`;
+    `reduce_mul_chain` (a factor out of a maximum), `fits`, `uop_given_valid`
+    (the simplex, :383);
     `codegen/simplify.py` `pm_reduce_collapse` (`x + y < c`, `x * y < c`)
     and `pm_reduce_load_collapse` (`x + y = c` under a cast). tolk:
     `Shape.symbolic_simple`, `Shape.symbolic`, `Simplify.solves_sum`,
     `Simplify.pm_reduce_collapse`, `Simplify.pm_reduce_load_collapse`,
-    `Symbolic.reduce_mul_chain`. tinygrad keeps `c0 + x < c1`, the
+    `Symbolic.reduce_mul_chain`, `Symbolic.uop_given_valid`. tinygrad
+    keeps `c0 + x < c1`, the
     comparisons of `Simplify` but the last, and a factor out of a maximum
     from unsigned integers, and applies them to signed ones, taking signed
     overflow to be undefined and checking only that the constants it makes
@@ -654,7 +656,9 @@ multi-device is out of scope, see README.
     float term rounds, and `x + y = c` only under a cast that does not
     narrow, where tinygrad takes any cast whose operand's bounds fit its type.
     `where (a < b) c (a + (c - b))` is a maximum for a signed `a` only where
-    `a + (c - b)` does not wrap.
+    `a + (c - b)` does not wrap. tolk tries the terms of a sum at least 1 in
+    turn only where the sum cannot wrap: at int8, `-128 + -127` is 1 with no
+    term at least 1.
   - **Float folds.** tinygrad: `uop/symbolic.py` `symbolic_simple` (`x + 0`,
     `x / x`, `x * 0`). tolk: `Shape.symbolic_simple`. A float `x + 0` is `x`
     only for `-0.`; `x * 0` is `0` for integers and booleans only; `x / x`
@@ -745,6 +749,8 @@ multi-device is out of scope, see README.
     bounds` and the laws `› bounds hold the value a committed integer
     wraps to` and `› bounds hold every value a cast takes`;
   - wrapping rules: `Tolk.Symbolic › integers wrap` (every test);
+    `Tolk.Symbolic › conditions › uop_given_valid › a clause on a committed
+    sum that wraps keeps the value`;
     `Tolk.Simplify › pm_reduce_collapse`, its comparison tests;
   - float folds, signed zeros, reassociation, maxima, reciprocal and sigmoid
     forms, pow: `Tolk.Symbolic › floats keep IEEE values`, one test
