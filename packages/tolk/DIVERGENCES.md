@@ -342,7 +342,7 @@ stamps nothing (D146).
   clear`, `› a put and a get in another process come before or after a
   clear` and `Tolk.Helpers › Diskcache on two domains › behaves as a table
   of entries, whatever the order of the calls`, which run with `CACHEDB`
-  set, as dune runs them, and `Graph › a damaged entry
+  set, as dune runs them, and `Tolk.Graph › a damaged entry
   reads back as its graph, or misses`.
 
 ## D9. Narrow float conversions are IEEE conversions
@@ -465,7 +465,7 @@ tinygrad's positive `math.nan` (`dtype.py` `fp8_to_float`).
   ways.
 - **Pinned by:** `Tolk.Ops › key › tells arguments apart`, `› two nodes of one
   key are one node, but for a call's marks`, `› tells apart arguments a repr
-  prints alike`; `Graph › a graph of any argument reads back as itself`.
+  prints alike`; `Tolk.Graph › a graph of any argument reads back as itself`.
 
 ## D13. Folding reads and writes committed constants at their width
 
@@ -8623,7 +8623,7 @@ a view names its storage again (D426).
 - **Pinned by:** `Tolk_engine › calls of views › a store through a run a call
   reads lands`, `› a store through a reshape of a run a call reads lands`, `› a
   loop reading a run of the state under a store through it keeps the store`;
-  `Graph › a graph of any argument reads back as itself`; `Tolk.Ops › key ›
+  `Tolk.Graph › a graph of any argument reads back as itself`; `Tolk.Ops › key ›
   tells apart arguments a repr prints alike`; `Tolk.Indexing › run_rangeify ›
   rangeifies each recorded graph as its golden states ›
   custom_kernel_rangeified.golden`, whose `.tolk` writes

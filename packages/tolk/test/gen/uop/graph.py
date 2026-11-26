@@ -1,4 +1,5 @@
-"""Goldens of the test-support library: sample graphs in the graph format."""
+"""Goldens of the graph format: graphs of tinygrad programs, which the suite of
+Tolk.Graph reads and writes back."""
 
 from golden import graph
 from graph import boundary

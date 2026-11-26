@@ -13,10 +13,9 @@
   `tolk_gpus` (the GPUs), `tolk_spawn` (a process that cannot start
   another) and `tolk_simplification` (the value law of rewrites, for Shape's
   and Symbolic's suites) sit beside it, for the suites that need them. Its goldens
-  `differs`, `kept_diff`, `lattice`, `listing`, `stale` and `stale_table`
-  are fixtures of `Golden`'s suite; the others are tinygrad output
-  (`gen/support.py`, `gen/support/programs.py`), and `programs/` feeds the
-  bench.
+  `differs`, `kept_diff`, `kept_graph`, `lattice`, `listing`, `stale` and
+  `stale_table` are fixtures of `Golden`'s suite; `programs/` holds tinygrad
+  output (`gen/support/programs.py`) and feeds the bench.
 - `compiles/` holds the executable CI runs before the tests. It fails where
   the host's programs cannot compile, so that a job with a Clang fails
   instead of skipping the compiling tests.

@@ -69,21 +69,3 @@
   (glob_files *.tolk)
   ../schedule/schedule/chained_functions.golden
   (glob_files ../schedule/schedule/chained_functions.tolk)))
-
-; The cache's directory is read when the program starts, so CACHEDB is set
-; here, to a directory of the sandbox, for the graphs the suite keeps on disk.
-
-(test
- (name test_graph)
- (modules test_graph)
- (package tolk)
- (libraries windtrap tolk tolk_test unix)
- (deps
-  (sandbox always)
-  (glob_files *.golden)
-  (glob_files *.tolk))
- (action
-  (setenv
-   CACHEDB
-   cache
-   (run %{test}))))

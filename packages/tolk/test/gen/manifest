@@ -3994,7 +3994,6 @@ schedule/schedule/variable_unused_kernels.golden
 schedule/schedule/variable_unused_linear.golden
 schedule/schedule/variable_unused_schedule.golden
 setting/env.golden
-support/matmul.golden
 support/programs/adam_mlp.golden
 support/programs/attention.golden
 support/programs/conv.golden
@@ -4006,8 +4005,9 @@ support/programs/matmul.golden
 support/programs/softmax.golden
 support/programs/sort.golden
 support/programs/split_sum.golden
-support/sum_of_cast.golden
-support/sum_of_cast_kernels.golden
+uop/graph/matmul.golden
+uop/graph/sum_of_cast.golden
+uop/graph/sum_of_cast_kernels.golden
 uop/op/ops.golden
 uop/ops/axis_types.golden
 uop/ops/binary_bounds.golden

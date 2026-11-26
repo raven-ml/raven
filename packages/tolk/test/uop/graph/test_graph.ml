@@ -462,7 +462,7 @@ let errors =
 
 let () =
   exit
-    (run "Graph"
+    (run "Tolk.Graph"
        [
          goldens;
          round_trip;

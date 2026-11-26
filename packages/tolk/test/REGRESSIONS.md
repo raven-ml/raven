@@ -715,7 +715,7 @@ it check that each result is the machine's value instead, and name D13.
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_divide_exact_not | `divide_exact` gives up | `Tolk.Shape › divisibility › divide_exact gives up on what does not divide` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_div_mod_zero | a division or remainder by 0 raises | `DM › zero divisors` (Divandmod's section) |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_variable_divmod | a variable bounded by another | dropped: a variable's bounds are numbers |
-| tinygrad: null/test_uop_symbolic.py::TestSymbolicPickle (2 tests) | a variable survives pickling | dropped: pickling is Python's; a graph's text form round-trips in the graph format (test support's `Graph` suite) |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolicPickle (2 tests) | a variable survives pickling | dropped: pickling is Python's; a graph's text form round-trips in the graph format (`Tolk.Graph`'s suite) |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicNumeric (9 tests) | a rewrite of a constant is its value, and bounds hold every value | `S › tinygrad › tests.golden › TestSymbolicNumeric.<test>`; `S › laws › sym keeps the value of an integer expression where nothing wraps` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicVariables::test_simple, test_compound, test_dedup | `variables` lists each variable once, sorted | `Tolk.Shape › variables › variables lists each variable once, sorted by name` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicVariables::test_variable_min_eq_max_bind_folds | a bound variable of one value folds | `S › tinygrad › tests.golden › TestSymbolicVariables.test_variable_min_eq_max_bind_folds` |
