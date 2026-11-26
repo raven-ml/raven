@@ -1167,9 +1167,10 @@ per trip of each submission under it (D146).
   since every compiled sine or cosine of an unbounded angle builds the
   reduction: rune's compile bench row `trig/sin` makes its first call in
   0.14 s of CPU against 0.17 s (fudge).
-- **Pinned by:** `Tolk.Transcendental › reductions ›
-  payne_hanek_near_multiples.golden`, float32 and float64 angles near
-  multiples of `pi/2`; `› payne_hanek_reduction removes quarter turns`; the
+- **Pinned by:** `Tolk.Transcendental › payne_hanek_reduction › is within an
+  ulp of the remainder its golden states › payne_hanek_near_multiples.golden`,
+  float32 and float64 angles near multiples of `pi/2`; `› removes quarter
+  turns from 12 pi and its neighbours`; the
   `payne_hanek_*`, `xsin_*` and `values` goldens; rune's compile bench row
   `trig/sin`.
 
@@ -1504,8 +1505,8 @@ A selection or a pad by `-0.` keeps `-0.`: tinygrad's tests for 0 take
   `lse`, the logarithm of a positive sum (rune's `Lower_attention.lse_of`),
   so no raven call site reaches the rule.
 - **Pinned by:** the `Transcendental` suite
-  (`test/codegen/decomp/transcendental`): `special values › xlog2 of a
-  negative number whose reciprocal overflows is NaN, and of -0. is -inf`, and
+  (`test/codegen/decomp/transcendental`): `xlog2 › xlog2 of a negative number
+  whose reciprocal overflows is NaN` and `› xlog2 of -0. is -inf`, and
   the negative float16 rows of `values.tolk` of magnitude below `2^-16`.
 
 ## D58. Withdrawn
@@ -1842,8 +1843,8 @@ view of any value, as `uop/ops.py` `UOp.contiguous_view` does.
   type's bounds`, `› a float selection by a comparison narrows what it selects`,
   `› a float truncation and negation map their operand's bounds`, `› a value of
   a float type without infinities, which may be NaN, has no finite bounds` and
-  `› bounds hold every value a cast takes`; the Transcendental suite: `graphs ›
-  a sine of an angle bounded below the switch-over is its fast form`; rune's
+  `› bounds hold every value a cast takes`; the Transcendental suite: `xsin ›
+  an angle whose bounds lie below the switch-over takes the fast form`; rune's
   `Lower_real` suite: `bounded arguments › cos of an argument bounded below the
   switch-over` and `› tan of an argument bounded below the switch-over`. On
   rune: missing for the count of long reductions a normal draw builds, and the
@@ -3187,13 +3188,15 @@ launch descriptors (D146).
   `Lower_attention.lse_of`) within the bound rune states, where tinygrad's
   `xlog2` is 5 units off; no test shows the bound failing at 5 units.
 - **Pinned by:** the Transcendental suite
-  (`test/codegen/decomp/transcendental`): `accuracy › accuracy.golden`
+  (`test/codegen/decomp/transcendental`): `accuracy › exp2, log2 and sin are
+  within an ulp of the values their golden states › accuracy.golden`
   (mpmath's correctly rounded values,
   `test/gen/codegen/decomp/transcendental.py`), and `xsin ~fast` below 30,
-  within an ulp of them; `special values › sin <type> -0x0p+0 is -0x0p+0` and
-  the subnormal rows; `types › <function> refuses a node of another type ›
-  half`; the graph goldens and `values.tolk`; and rune's `rune attention ›
-  jit within the bounds of eager`, on the host.
+  within an ulp of them; `special values › sin is NaN at the infinities and
+  NaN, and a zero or a subnormal itself › <type> -0x0p+0` and the subnormal
+  rows; `errors › <function> refuses a node of another type › f16`; the graph
+  goldens and `values.tolk`; and rune's `rune attention › jit within the
+  bounds of eager`, on the host.
 
 ## D127. Withdrawn
 
