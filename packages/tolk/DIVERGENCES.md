@@ -4315,9 +4315,10 @@ A divisor past its operand's width was read in its operand's type
   is inlined`, `› a view of storage read past the budget is inlined`, `› a
   gather at loaded positions read past the budget is stored`, `› a mask of
   positions read past the budget is stored` and `› stores through a stage of
-  their destination write the destination`; the Launch suite's `launches › on
-  the host, the stores of one state write each piece's values` and `› on CUDA,
-  the stores of one state write each piece's values`, up to 160 stores; `an
+  their destination write the destination`; the Launch suite's
+  `create_linear_with_vars › launches › on the host, the stores of one state
+  write each piece's values` and `GPUs › CUDA › the stores of one state write
+  each piece's values`, up to 101 stores on the host and 512 on each GPU; `an
   inlinable stage › is stored when its copies beyond the first pass 360 nodes`,
   over values read once, twice, in windows and by routed rows, its examples read
   twice and in windows of 16 either side of the budget; the `dropped digits`
@@ -8157,16 +8158,20 @@ reason and its pins.
   launches write what its graph states, in either order of their members` and
   `› an assembly's columns run as one launch only where their write is marked
   disjoint`; the `Tolk.Launch` suite
-  (`test/schedule/schedule/test_launch.ml`): `launches › on the host, …` and
-  `› on CUDA, the stores of one state run as one launch and write what their
-  kernels apart write`, `cases › … alike members compile one body`, `› on the
-  host, a launch's bodies are out of line`, `› on CUDA, a launch's bodies are
-  out of line`, `› on CUDA, sixteen products on tensor cores run as one launch`,
-  `› on the host, a launch's blocks split its members`, `› on CUDA, members of
-  fewer threads run gated`, `› on CUDA, a state past a launch's members runs as
-  several`, `› a launch holds no more values at once than the schedule` and
-  `› a launch is split by what its target can run`; the `Tolk.Schedule`
-  suite's
+  (`test/schedule/schedule/test_launch.ml`): `create_linear_with_vars ›
+  launches › on the host, the stores of one state write what their kernels
+  apart write`, `› on the host, the stores of one write of kernels that reduce
+  nothing run as one launch`, `› on the host, a launch's members write what
+  they write apart across the blocks the engine splits it into` and `› a launch
+  holds no more values at once than the schedule`; `to_program › launches ›
+  on the host, members of one kernel are one body`, `› on CUDA, members of one
+  kernel are one body`, `› on the host, each member's body is out of line` and
+  `› on CUDA, each member's body is out of line`; `lower_and_compile ›
+  launches › a launch splits past each limit of its target`; `GPUs › CUDA ›
+  the stores of one state write what their kernels apart write`, `› sixteen
+  products of one kernel run as one launch, writing what they write apart` and
+  `› a state past the members a launch holds runs as two launches`; the
+  `Tolk.Schedule` suite's
   `create_linear_with_vars › launches`; `Tolk_engine › a scan's merged calls
   carry in place as its calls apart do` and the custom-kernel cases of two
   values of one name, on each GPU present; `Jit › variables › merged custom
@@ -8314,10 +8319,11 @@ reason and its pins.
   unsound on a cache hit; the relation is over whole states. tinygrad makes the
   same lift without the link. Cost: `*/schedule` words +1.7% on tolk's bench;
   rune's suite makes the same kernels and copies as without the link.
-- **Pinned by:** `Tolk.Launch › states read as they were`, among them `a reader
-  through the view a write stores into reads it as it was`, `a chain of stores
-  through views of one buffer, its first run read`, `a loop reading an older
-  run of its storage reads a copy of the run`; `Tolk.Schedule › rules`.
+- **Pinned by:** `Tolk.Launch › create_schedule › states`, among them `a
+  reader through the view a write stores into reads it as it was, in either
+  listing`, `a reader of the first run of a chain of stores through views reads
+  it as it was, in either listing`, `a loop reading an older run of its storage
+  reads a copy of the run`; `Tolk.Schedule › rules`.
 
 ## D427. An unmarked After lands its stores in the order listed
 
@@ -8342,8 +8348,8 @@ reason and its pins.
   `g(f(x))` at 2..6. rune and jera emit no unmarked `AFTER` of several stores,
   so only programs that list overlapping stores pay a copy or a kernel; the
   pass that orders them is D473's cost.
-- **Pinned by:** `Tolk.Launch › an After lists its stores in the order they
-  land`, among them `› a store listed twice lands at its first place`;
+- **Pinned by:** `Tolk.Launch › create_schedule › an After's stores`, among
+  them `› a store listed twice lands at its first place`;
   `Tolk.Launch_law › create_linear_with_vars › launches › a schedule's
   launches write what its graph states, in either order of their members`.
 
@@ -9054,8 +9060,8 @@ D466.
   the `Tolk_engine` suite's `calls of views › a call given an older state to
   write and a later to read reads it before the call`, `› a kernel listed over
   two storages names the later state in either listing` and `› runs of one other
-  storage land as listed in an after`; `Tolk.Launch › an After lists its stores
-  in the order they land › a store listed twice lands at its first place`; the
+  storage land as listed in an after`; `Tolk.Launch › create_schedule › an
+  After's stores › a store listed twice lands at its first place`; the
   `Tolk.Prepare` suite's recorded `*_prepared` graphs that `sequence` changes,
   whose `.tolk` files name this entry.
 
@@ -9096,9 +9102,9 @@ D466.
   no result`,
   which covers refused and computed programs; the program
   `write_over_written`, tinygrad's test, whose linear and values tolk
-  computes; `Tolk.Launch › an After lists its stores in the order they land ›
-  an After of a state and one of a view of it raise, whole first` and `› …
-  view first`; the `Tolk_engine` suite's `calls of views › a whole state
+  computes; `Tolk.Launch › create_schedule › an After's stores › an After of
+  a state and one of a view of it raise, in either listing`; the `Tolk_engine`
+  suite's `calls of views › a whole state
   holds the sibling store its own store reads`, and the refusals beside it:
   `› a read of a whole state beside a sibling After is refused`, `› a value
   reading a join of sibling writes is refused`, `› a loop reading a join of
