@@ -31,8 +31,9 @@ module Tiny_elf : sig
   val iter_sig : ?offset:int -> param list -> (int * Dtype.t) list
   (** [iter_sig ~offset signature] is where the value of each parameter of
       [signature] lies when their values are packed in order from byte [offset],
-      each aligned to its size: its byte offset and its type, a scalar's own
-      and a buffer's address's {!Dtype.Uint64}. [offset] defaults to [0]. *)
+      each aligned to its size: its byte offset and its type, a scalar's own and
+      a buffer's address's {!Dtype.Uint64}. [offset] must be non-negative and
+      defaults to [0]. *)
 
   val layout : Ops.t list -> (int * Dtype.t) list
   (** [layout params] is {!iter_sig} of the parameters [params], in their
@@ -63,12 +64,13 @@ val renderer : Helpers.Target.t -> (Renderer.t, string) result
     - ["AMD"]: ["HIP"], {!Cstyle.hip}.
 
     A renderer is made once for each name and target, and later calls return
-    that one.
+    that one, on every domain: calls made concurrently from several domains
+    return one renderer.
 
     The error is ["D has no renderer 'R'"] if the target names a renderer [R]
     other than its device [D]'s, and the renderer's own message if it raises
     [Invalid_argument] for the target.
 
-    Raises [Invalid_argument] if [t]'s device is not one of these devices, and
-    [Failure] as the renderer does if its compiler's library is missing, keeping
-    no renderer for [t]. *)
+    Raises [Invalid_argument] naming [t]'s device if it is not one of these
+    devices, and [Failure] as the renderer does if its compiler's library is
+    missing, keeping no renderer for [t]. *)

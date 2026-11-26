@@ -4,18 +4,39 @@
  (libraries windtrap tolk tolk_test)
  (deps
   comgr_stand_in
+  nvrtc_stand_in
+  mtlcompiler_stand_in
   (glob_files *.golden)
   (glob_files *.tolk))
  (action
   (setenv
    COMGR_PATH
    ./comgr_stand_in
-   (run %{test}))))
+   (setenv
+    NVRTC_PATH
+    ./nvrtc_stand_in
+    (setenv
+     MTLCOMPILER_PATH
+     ./mtlcompiler_stand_in
+     (run %{test}))))))
 
-; No machine here has comgr, which making a HIP renderer finds: COMGR_PATH
-; names a file that stands in for it, so that HIP's renders run everywhere.
+; Making a HIP, CUDA or Metal renderer makes its compiler, which only finds its
+; library's file: COMGR_PATH, NVRTC_PATH and MTLCOMPILER_PATH name files that
+; stand in for comgr, NVRTC and MTLCompiler, so that every renderer is made on
+; every machine. They apply to the whole executable: a test there that compiled
+; would get Compile_error.
 
 (rule
  (target comgr_stand_in)
  (action
   (write-file %{target} "This file stands in for comgr.\n")))
+
+(rule
+ (target nvrtc_stand_in)
+ (action
+  (write-file %{target} "This file stands in for NVRTC.\n")))
+
+(rule
+ (target mtlcompiler_stand_in)
+ (action
+  (write-file %{target} "This file stands in for MTLCompiler.\n")))
