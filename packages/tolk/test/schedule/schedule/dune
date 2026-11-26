@@ -5,7 +5,7 @@
  (name test_schedule)
  (modules test_schedule)
  (package tolk)
- (libraries windtrap tolk tolk_test str unix)
+ (libraries windtrap tolk tolk_test unix)
  (deps
   (sandbox always)
   (glob_files *.golden)

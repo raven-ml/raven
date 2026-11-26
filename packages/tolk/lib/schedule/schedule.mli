@@ -34,10 +34,13 @@ val create_schedule : Ops.t -> Ops.t
     pieces of one value are each read before the next is made. The order is
     this rule, and no promise of the least storage. Each call's arguments
     are the storage of its reads and writes, or the views of it that move with
-    the loops the call runs in. A loop of a call, an {!Op.End} of the call over {!Ops.Axis_type.Loop} ranges,
-    stays such an end around the call, or around an {!Op.Linear} of the copies
-    it makes as each trip starts and the call, and a back edge of a call
-    ({!Ops.backedge}) stays a back edge, its condition the storage it reads.
+    the loops the call runs in, and the scalar arguments of a precompiled
+    call, such as an expression of a loop's trip. A bound variable leaves its
+    call. A loop of a call, an {!Op.End} of the call over
+    {!Ops.Axis_type.Loop} ranges, stays such an end around the call, or around
+    an {!Op.Linear} of the copies it makes as each trip starts and the call,
+    and a back edge of a call ({!Ops.backedge}) stays a back edge, its
+    condition the storage it reads.
 
     Each storage's states form a chain: an {!Op.After} of a state lists the
     kernels of the one write over it, which make the next state; a kernel
@@ -49,12 +52,12 @@ val create_schedule : Ops.t -> Ops.t
     the storage and no state. It runs after the kernels that write the states
     it reads and those the joins it reads through wait for, after the kernels
     of the write that made the state it writes over, and before every other
-    kernel of each write over a state it reads, whichever elements each
-    touches. A call that writes a state through an argument its body writes
-    ({!Shape.written_params}) and reads it through another reads it as it was
-    before the call. The kernels of a write marked disjoint
-    ({!Ops.after_disjoint}) run in any order, whichever {!Op.After}s list
-    each, none ordered before another by reading the state they write.
+    kernel of each write over a state it reads,
+    whichever elements each touches. A call that writes a state through an
+    argument its body writes ({!Shape.written_params}) and reads it through
+    another reads it as it was before the call. The kernels of a write marked
+    disjoint ({!Ops.after_disjoint}) run in any order, whichever {!Op.After}s
+    list each, none ordered before another by reading the state they write.
 
     Where these orders form a cycle, one read on the cycle reads instead a copy
     of its whole state, or of its own run for a view of the state, into
@@ -76,8 +79,10 @@ val create_schedule : Ops.t -> Ops.t
     Raises [Invalid_argument] if two {!Op.After}s of one state list different
     kernels (two writes over one state), if a call whose body does not show
     its writes takes one state at two arguments and writes it, if a cut graph
-    still has a cycle, or if an effect is not a call, a loop of a call, a store
-    or an {!Op.After}. *)
+    still has a cycle, if an effect is not a call, a loop of a call, a store
+    or an {!Op.After}, or if a kernel's argument, scalars and bound variables
+    aside, leads through its first sources to a leaf other than storage, such
+    as a constant. *)
 
 val pm_flatten_linear : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_flatten_linear] inlines each {!Op.Linear} among the sources of an
@@ -96,7 +101,9 @@ val contiguous_mops_to_view : Ops.t -> Ops.t -> Ops.t option
     store's [src] views the buffer through whichever of its states it names:
     the states order the store, and the store writes the buffer as it runs.
     The view is the buffer shrunk to the elements and bitcast to [src]'s type,
-    reshaped to [c]'s shape. *)
+    reshaped to [c]'s shape. A stage's view lies at an alignment at least the
+    stage's ({!Shape.storage_phase}), at the stage's phase modulo that
+    alignment. *)
 
 val is_store_after : Ops.t -> bool
 (** [is_store_after u] is [true] iff [u] is an {!Op.After} that orders a store
@@ -140,7 +147,8 @@ val create_linear_with_vars :
     they run their points at once ({!Rangeify.get_kernel_graph}), a device it
     does not list taking no core and running them in turn:
 
-    + the stores of [big_sink] become the body of a call compiled on its own,
+    + the stores of [big_sink], their effects sequenced
+      ({!Prepare.sequence}), become the body of a call compiled on its own,
       whose arguments are the buffers, the contiguous views of buffers that
       copies read and stores store into ({!contiguous_mops_to_view}), and the
       bound variables, each replaced in the body by a parameter; call-local
@@ -163,14 +171,17 @@ val create_linear_with_vars :
       its tensor cores, and whether it runs points at once), and the same
       sources of this library; a body
       scheduled under other values is scheduled again, in memory too; an
-      entry that does not read as a schedule is made anew and replaced;
+      entry that does not read as a schedule is made anew and replaced. One
+      schedule serves every numbering of a body ({!numbered}): each call gets
+      it back in its own ranges and storage, binding its own variables;
     + the schedule's parameters are bound to the call's arguments, and each
       call-local storage to a new buffer on its device. A kernel reads a
       variable by its name, a run binding it, except where [big_sink] binds
       variables of that name to several values: each kernel that reads one
       then takes it as a nameless parameter, its own call passing the bound
       variable, so that kernels which differ in that value alone are one
-      program;
+      program. A call's other scalar arguments, such as an expression of a
+      loop's trip, reach its kernels the same way;
     + a kernel that only copies a buffer between devices, or to or from a disk,
       becomes a call of a store, between views of its arguments where it
       copies a run of one into a run of the other;
@@ -185,24 +196,29 @@ val create_linear_with_vars :
       whole. Only where its order lets them, kernels of one write whose
       regions no byte test shows apart, as an assembly's columns are, join
       when their write is marked disjoint ({!Ops.after_disjoint}), which
-      exempts them on the state they write, and only there. At the top level a
-      call of one element, or one joining a launch that writes storage it
-      writes, moves up only where no storage's life grows: past the first use
-      of each storage it takes, unless it is [held] or holds one element. A
-      call of many elements that joins no such launch may join the launch of
-      the call just before it, as a call in a loop's body joins the earliest
-      launch: where no step from the launch's start up to the call would hold
-      more bytes of the entries' own storage ({!Memory.bytes}), from each
-      buffer's first use to its last, than they held at their peak before any
-      call joined, the storage of one element a call makes left out. Storage
+      exempts them on the state they write, and only there. So at the top
+      level the kernels of one write marked disjoint that take only storage
+      the schedule is given run as one launch, unless a call between them
+      interferes with one. At the top level a call of one element, or one
+      joining a launch that writes storage it writes, moves up only where no
+      storage's life grows: past the first use of each storage it takes,
+      unless it is [held] or holds one element. A call of many elements that
+      joins no such launch joins the launch of the call just before it where
+      that launch is its device's latest and no step from the launch's start
+      up to the call would hold more bytes of the entries' own storage
+      ({!Memory.bytes}), from each buffer's first use to its last, than they
+      held at their peak before any call joined, with the storage of more than
+      one element the call makes. A call in a loop's body joins the earliest
+      launch at whose start the same holds. Storage
       that is [held], that entries outside a loop's body take, or that one
       loop alone takes, which it places within a trip, counts at no step, and
-      where the peak decides a call joins no launch before a loop. The peak
-      bounds the bytes live at once, not the plan's arenas
-      ({!Memory.memory_plan_rewrite}). A run of [k] calls each joining the
-      launch of the one before checks about [k²/2] steps. A member is a
-      call of a kernel whose ranges have constant sizes and whose storage
-      lies on one device that is no disk.
+      where the peak decides a call joins no launch before a loop. On each
+      device, the peak, storage of one element included, bounds the bytes of
+      the entries' own storage ({!Memory.bytes}) of more than one element live
+      at any step. A run of [k] calls each joining the launch of the one
+      before checks about [k²/2] steps. A member is a call of a kernel whose
+      ranges have constant sizes and whose storage lies on one device that is
+      no disk.
       Limits of the target ({!Realize.lower_and_compile}) split a launch
       after;
     + unless [capturing] (default [false]), the schedule's buffers are placed in
@@ -225,10 +241,9 @@ val create_linear_with_vars :
 
     Raises [Invalid_argument] if a kernel that is not a copy accesses buffers
     on several devices, on two writes over one state, an effect listed over a
-    state that needs it or a loop that runs anything but one call
-    ({!Prepare.sequence}), on a store through a bitcast into bytes that are
-    no run of its storage ({!Prepare.prepare_rangeify}), or as
-    {!create_schedule} does. *)
+    state that needs it or a loop as {!Prepare.sequence} refuses, on a store
+    through a bitcast into bytes that are no run of its storage
+    ({!Prepare.prepare_rangeify}), or as {!create_schedule} does. *)
 
 (**/**)
 
@@ -240,3 +255,8 @@ val launches : held:Ops.t list -> Ops.t -> Ops.t
 val copies : unit -> int
 (** [copies ()] is the number of copies of states {!create_schedule} has
     made, in every domain, since the program started. *)
+
+val schedules : unit -> int
+(** [schedules ()] is the number of bodies {!create_linear_with_vars} has
+    scheduled anew, in every domain, since the program started. A body it
+    finds kept in memory or on disk adds none. *)

@@ -168,6 +168,10 @@ let aliases c s =
 let made = Atomic.make 0
 let copies () = Atomic.get made
 
+(* The bodies scheduled anew, for tests. *)
+let bodies_made = Atomic.make 0
+let schedules () = Atomic.get bodies_made
+
 (* The next free slot of the graph's storage. *)
 let next_slot sink =
   let slot u =
@@ -1117,9 +1121,13 @@ let lower_sink_to_linear ~cores call =
         if setting Setting.spec <> 0 then (
           ignore (Prepare.sequence fn);
           Spec.type_verify ~calls:Skip Spec.tensor fn);
-        numbering.place
-          (schedule ~loop ~copies:true
-             (Rangeify.get_kernel_graph ~cores (Prepare.prepare_rangeify fn)))
+        let linear =
+          numbering.place
+            (schedule ~loop ~copies:true
+               (Rangeify.get_kernel_graph ~cores (Prepare.prepare_rangeify fn)))
+        in
+        Atomic.incr bodies_made;
+        linear
       in
       let read_or_make () =
         if setting Setting.scache < 2 then make ()

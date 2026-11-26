@@ -1562,14 +1562,15 @@ renderer.
   `get_kernel_graph › loops of calls › a loop of a precompiled call is no
   kernel`, `› a loop of a call ends over the loop's range` and `› a loop's
   call reads views that move with its range`; the
-  `Schedule` suite (`test/schedule/schedule`): `create_schedule › rules › an
-  end of a call over a loop schedules the call in its loop`, `› a loop runs
-  after the call that writes what it reads`, `› a loop runs before the call
-  that overwrites what it reads`, and `create_linear_with_vars › loops of
-  calls › a loop of a precompiled call is a loop of its body's calls`, `› a
-  loop inside a loop's body keeps its own end`, and `› an end of a back edge
-  is refused, naming what it runs` with the seven refusals beside it, each at
-  the top level and in a precompiled and an inlined body; the `Tolk_engine`
+  `Schedule` suite (`test/schedule/schedule`): `create_schedule › an end of
+  a call over a loop schedules the call in its loop`, `› a loop runs after
+  the call that writes what it reads`, `› a loop runs before the call that
+  overwrites what it reads`, and `create_linear_with_vars › loops of calls ›
+  a loop of a precompiled call is a loop of its body's calls`, `› a loop
+  inside a loop's body keeps its own end`, `› a loop outside a kernel that
+  runs anything but one call is refused` and `› a loop
+  of a call over a range of another axis type than Loop is refused`, each row
+  at the top level and in a precompiled and an inlined body; the `Tolk_engine`
   suite (`test/engine/tolk_engine`): `link and run › a scan runs its body once
   per trip, carrying in place` and `› a scan's merged calls carry in place as
   its calls apart do` (D404), on the host and each GPU present; `calls of
@@ -1655,18 +1656,19 @@ rule, its reason and its pins.
   truncated` and `› holding no program`, `› an entry of another build of the
   library is not read back`, and `› processes making one program at once all
   get it`; the `Schedule` suite (`test/schedule/schedule`):
-  `create_linear_with_vars › cache › a body scheduled under one setting misses
-  under another ›` each setting, a setting its caller declares among them,
-  `create_linear_with_vars › schedules are kept on disk ›` the same as
-  programs' for schedules, `› with SCACHE at 1, nothing is kept on disk`,
-  `create_linear_with_vars › loops of calls › a loop whose range has another
-  number is the same body` and `› a body that hits under other numbers keeps
-  its own loops`, and `› cache › storage numbered in another counter state is
-  the same body`; the `Helpers` suite's `shaping ›` tests; the `Compiler_cpu`
-  suite's `cache › an object cached by the default compiler is not served
-  under CC`; the `Codegen` suite's `programs are kept › read waits for
-  no program being made`, and the `Realize` suite's `lower_and_compile in
-  parallel › reads the programs the disk keeps without spawning a domain`.
+  `create_linear_with_vars › schedules a body once › a body scheduled under
+  one setting is scheduled again under another ›` each setting, a setting its
+  caller declares among them, `create_linear_with_vars › keeps schedules on
+  disk ›` the same as programs' for schedules, `› with SCACHE at 1, nothing is
+  kept on disk`, `create_linear_with_vars › loops of calls › a loop whose
+  range has another number is the same body` and `› a body that hits under
+  other numbers keeps its own loops`, and `› schedules a body once › storage
+  numbered in another counter state is the same body`; the `Helpers` suite's
+  `shaping ›` tests; the `Compiler_cpu` suite's `cache › an object cached by
+  the default compiler is not served under CC`; the `Codegen` suite's
+  `programs are kept › read waits for no program being made`, and the
+  `Realize` suite's `lower_and_compile in parallel › reads the programs the
+  disk keeps without spawning a domain`.
 
 ## D64. A cast to a narrow float through a float32 rounds once
 
@@ -2986,21 +2988,20 @@ encodes its barriers (D146).
   keeps what it compiles, as rune's jit did for `BEAM`, `JITBEAM` and
   `DEBUG`; `DEBUG` read by
   `compile_linear` would reach output and key every cache on verbosity.
-- **Pinned by:** `Tolk.Setting › declarations` and `› shaping` (every
-  test, among them `› holds the library's settings of output, and those
-  alone` and `› changes a library setting's entry when the setting
-  changes`); `Tolk.Search › the tensor cores' actions ›` every test and `›
-  a search kept under one value of a setting declared by its caller
-  measures again under another`; `Tolk.Codegen › programs are kept › a
-  program is made again under another value of ›` each setting, a setting
-  its caller declares among them; `Tolk.Schedule › create_linear_with_vars
-  › cache › a body scheduled under one setting misses under another › a
-  setting its caller declares`; rune's `search.t`, a function given a
-  width that compiles once under another `BEAM` or `JITBEAM`. On rune:
-  missing (the old rune's `Rune.jit › keys › a setting that shapes
-  compilation ›` each setting, `› a call under DEBUG=2, which reports kernel
-  times, retraces once` and `› a call under DEBUG=1 replays the program` went
-  with its rewrite).
+- **Pinned by:** `Tolk.Setting › declarations` and `› shaping` (every test,
+  among them `› holds the library's settings of output, and those alone` and `›
+  changes a library setting's entry when the setting changes`); `Tolk.Search ›
+  the tensor cores' actions ›` every test and `› a search kept under one value
+  of a setting declared by its caller measures again under another`;
+  `Tolk.Codegen › programs are kept › a program is made again under another
+  value of ›` each setting, a setting its caller declares among them;
+  `Tolk.Schedule › create_linear_with_vars › schedules a body once › a body
+  scheduled under one setting is scheduled again under another › a setting
+  its caller declares`; rune's `search.t`, a function given a width that compiles once
+  under another `BEAM` or `JITBEAM`. On rune: missing (the old rune's `Rune.jit
+  › keys › a setting that shapes compilation ›` each setting, `› a call under
+  DEBUG=2, which reports kernel times, retraces once` and `› a call under
+  DEBUG=1 replays the program` went with its rewrite).
 
 ## D115. A search linearizes a candidate before it compiles it
 
@@ -4090,19 +4091,21 @@ rule, its reason and its pins.
   costs allocation in every schedule: on fudge `matmul/schedule` allocates
   738 words against 613 without it, and `gpt_oss_decode/schedule` about 13.1
   thousand against 11.6.
-- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › laws › a
-  schedule copies a state iff its kernels form a cycle` and
-  `create_linear_with_vars › laws › a schedule writes what its tensors
-  compute`; `create_linear_with_vars › orders and copies`, `› writes` and `›
-  calls given one state twice`; `create_schedule › rules › kernels that
-  overwrite each other's inputs read one copy`, `› a kernel that waits for the
+- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › a schedule
+  copies a state iff its kernels form a cycle` and `create_linear_with_vars ›
+  a schedule writes what its tensors compute`; `create_linear_with_vars ›
+  writes what a program reading a state across its overwrite computes, with
+  the copies it makes`, `› writes over states` and `› calls given one state
+  twice`; `create_schedule › kernels that overwrite each other's inputs read
+  one copy`, `› a kernel that waits for the
   overwrite of a state it reads reads it` and the rules beside it, for a copy
   two kernels share, a kernel with two copies, a copy of a state a rebuilt
   kernel writes and the copy's phase; the programs `read_overwritten_through`,
   `read_beside_overwrite`, `swap_through_values`, `call_given_one_state_twice`,
   `after_older_write`, `readers_after_older_write` and
   `after_older_and_new_write`, whose recorded schedules and linears and whose
-  values (`create_linear_with_vars › values`); `write_over_written`'s linear
+  values (`create_linear_with_vars › writes what each recorded program's
+  tensors compute`); `write_over_written`'s linear
   and values; the kernel graph of `after_part_of_older_write`, whose schedule
   and linear differ by D184; and the `Tolk.Rangeify` suite's `get_kernel_graph
   › buffer states`.
@@ -4633,9 +4636,10 @@ and 0.4% of compile instructions, which did not pay for the scan.
   16 software devices compiled each kernel 16 times; with one program per target
   it compiles each once. A device kept in the kernel and erased for the key
   would hold one fact in two places.
-- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › one
-  expression on two devices of a target is one kernel`, `… › a kernel on buffers
-  of two devices is refused` and `copies into runs`; `Tolk.Search › a search
+- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › devices › one
+  expression on two devices of a target is one kernel`, `… › a kernel on
+  buffers of two devices is refused` and `create_linear_with_vars › copies
+  between devices`; `Tolk.Search › a search
   kept for one device serves another of its target`; `Tolk.Spec › program ›
   parameters`; rune's `Rune.jit over several devices`, `searches` among them.
 
@@ -4668,7 +4672,8 @@ the walk of `Rangeify.fix_store_hazard`.
 - **Pinned by:** `Tolk.Indexing › run_rangeify › rangeifies each recorded
   graph as its golden states › select_no_lane_rangeified.golden` and
   `select_no_lane_rows_rangeified.golden`;
-  `Tolk.Schedule › create_schedule › recorded › select_no_lane_schedule.golden`,
+  `Tolk.Schedule › create_schedule › orders each recorded kernel graph as its
+  golden states › select_no_lane_schedule.golden`,
   `select_one_lane_schedule.golden`, `select_no_lane_rows_schedule.golden`; and
   `Tolk_engine › link and run › each recorded program writes what its
   tensors compute › select_no_lane` and its `select_one_lane` and
@@ -4870,13 +4875,13 @@ its rule, its reason and its pins.
   (`Compile.region`), which binds one name to each piece's start; named in
   the body, two stores or calls
   of a trip that one kernel joined passed the name one value.
-- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › two
+- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › variables › two
   variables of one name bound to two values are passed by the calls that read
   them`, `› kernels that read two names bound to several values alike are one
   program, whatever order the schedule met the values in` and `› loops of
   calls › loops whose calls read one name at two values each pass their own`
   and `› a loop inside a loop's body passes the values of one name it binds
-  apart`; `› merged calls › calls that bind one name to two values run as
+  apart`; `› launches › calls that bind one name to two values run as
   one`, `› loop bodies that differ in their bound values alone are one` and
   its law `calls and stores of a loop that bind one name to several values
   join, and no kernel binds a name to two`; `Tolk_engine › link and run › a
@@ -4985,8 +4990,8 @@ its rule, its reason and its pins.
   a sub-byte bitcast, `Compile.unpack`, `Lower_arith`'s bitcast, or an
   `exp2` of an arange) was stored on the first device and read by the others'
   kernels, which `Schedule` refuses, so the call evaluated.
-- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › rules › a stored
-  value of no device lives on each device whose kernels read it`; rune's
+- **Pinned by:** `Tolk.Schedule › create_linear_with_vars › devices › a
+  stored value of no device lives on each device whose kernels read it`; rune's
   `Rune.jit over several devices › values computed from constants`.
 
 ## D181. Withdrawn
@@ -5026,8 +5031,9 @@ and an initial value is added after it (D260).
   software devices, against RFC 0005's bound of 1.875, 1.562 and 1.406, where
   each piece copied apart held 2.062, 1.594 and 1.422 (`rune jit › fully
   sharded`).
-- **Pinned by:** the Schedule suite (`test/schedule/schedule`): `copies into
-  runs › a copy stored into rows of storage on its device copies into them`,
+- **Pinned by:** the Schedule suite (`test/schedule/schedule`):
+  `create_linear_with_vars › copies between devices › a copy stored into rows
+  of storage on its device copies into them`,
   `› a copy stored into a first row copies into it`, `› a copy stored
   into columns lands in storage of its own`, `› a copy stored into a run of
   a bitcast copies into a view of it` and `› a copy of one element stored
@@ -5095,10 +5101,12 @@ and an initial value is added after it (D260).
   it through other storage stores into a view` and `› a store into columns of
   storage has no view`; `Tolk_engine › link and run › a store into rows of a
   buffer of a value read through other storage writes what it computes`;
-  `Tolk.Schedule › create_linear_with_vars › merged calls › the work on a
-  schedule of many outputs is linear in their number` and `› views of written
+  `Tolk.Schedule › create_linear_with_vars › launches › twice the outputs of
+  two chains allocate at most 2.2 times the words to schedule` and `› views of written
   buffers › a stage of a run of a buffer the call overwrites reads it as it was`
-  and `› halves of a buffer swapped through stages swap`, and the programs
+  and `› writes what a program reading a state across its overwrite computes,
+  with the copies it makes › x's halves swapped through stages`, and the
+  programs
   `stage_of_overwritten` and `copy_of_overwritten`; rune's `Rune.jit over
   several devices › programs` and `› maps over a cut axis › partials give
   eager's bits, their programs do not grow`, and `rune jit › fully sharded`.
@@ -5169,13 +5177,13 @@ and an initial value is added after it (D260).
   GPU-faithful critical path under rig's one point per submission. On a GPU, the launches of one device's work the order groups are
   unmeasured on fudge.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
-  `create_schedule › order › a kernel that frees storage runs before one
-  that only makes it`, `› pieces of one value are each read before the
+  `create_schedule › a kernel that frees storage runs before one that only
+  makes it`, `› pieces of one value are each read before the
   next is made` and `› chains the walk reaches whole run one after the
   other`; `create_linear_with_vars › loops of calls › a loop's body makes
   and frees its own storage`, `› a loop's body and the body called once are
-  scheduled apart`, `› a carry's read keeps its region's store after it` and
-  `› a carry's read through storage keeps its region's store after it`;
+  scheduled apart` and `› a carry's read keeps its region's store after it,
+  read directly or through storage`;
   rune's `fully sharded` tests,
   `rune remat › memory › independent chains are computed one at a time`
   and, for a loop body's parameters, `› stacks read by rows hold what
@@ -5204,8 +5212,8 @@ and an initial value is added after it (D260).
   against this order's 1.812, 1.531 and 1.391 and the bound of 1.875, 1.562
   and 1.406.
 - **Pinned by:** the Schedule suite (`test/schedule/schedule`):
-  `create_schedule › order by storage › a kernel that only frees runs before
-  one that also makes storage`.
+  `create_schedule › a kernel that only frees runs before one that also makes
+  storage`.
 
 ## D184. Withdrawn
 
@@ -6131,7 +6139,8 @@ union, as fast on CUDA, on the host and in compile time.
   two writes` and `› a store reading its destination through a join takes it
   once`; and the programs `read_join_of_assigned` and
   `read_join_of_overwritten`, their recorded schedules, linears and values
-  (`create_linear_with_vars › values`).
+  (`create_linear_with_vars › writes what each recorded program's tensors
+  compute`).
 
 ## D250. Two stores of one value into one storage are two states
 
@@ -6157,11 +6166,11 @@ union, as fast on CUDA, on the host and in compile time.
   the first state as it was: tolk computed `[24, -8, 48, 16]` for `[18, -6,
   36, 12]`.
 - **Pinned by:** the `Tolk.Schedule` suite: `create_linear_with_vars › writes
-  › a loop given two states of one value reads the older as it was`, and `›
-  laws › a schedule writes what its tensors compute`, whose programs repeat
+  over states › a loop given two states of one value reads the older as it was`,
+  and `› a schedule writes what its tensors compute`, whose programs repeat
   their statements, constants included; the `Tolk.Prepare` suite:
-  `prepare_rangeify › from the leaves up › two equal stores into one storage
-  are two states`.
+  `prepare_rangeify › from the leaves up › two equal stores into one storage are
+  two states`.
 
 ## D255. A kernel whose loop's bound reads memory is not searched
 
@@ -7165,11 +7174,10 @@ rule, its reason and its pins.
   other, and no copy cuts the cycle, since each read is the kernel's own
   store; the program was declined, and over a set without kernels it
   raises.
-- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › laws › a
-  schedule copies a state iff its kernels form a cycle`, and
-  `create_linear_with_vars › writes › stores crossed into two buffers write
-  both`; rune's `Jit_devices › assemblies give eager's bits › crossed
-  assemblies of computed pieces`.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › a schedule copies
+  a state iff its kernels form a cycle`, and `create_linear_with_vars › writes
+  over states › stores crossed into two buffers write both`; rune's `Jit_devices
+  › assemblies give eager's bits › crossed assemblies of computed pieces`.
 
 ## D331. A reduce of one trip or none, and a range of no trip, compile
 
@@ -8225,8 +8233,8 @@ reason and its pins.
   marked disjoint runs its columns as one launch`, `› a schedule read back
   keeps a marked write's launch`, `› marked writes of two calls run in turn`
   and `› a marked write of no stores marks nothing`, and the
-  `create_linear_with_vars › writes › stores crossed into two buffers write
-  both` pin of D330.
+  `create_linear_with_vars › writes over states › stores crossed into two
+  buffers write both` pin of D330.
 
 ## D418. A slot given to storage is taken
 
@@ -9030,21 +9038,21 @@ D466.
   order of the sink's two items, and `after x1 [store (x 2..4) …]` and
   `after x [store y v]`, which `Ops.after` gives a meaning, raised internal
   errors.
-- **Pinned by:** the `Tolk.Schedule` suite: `create_linear_with_vars › laws ›
-  the order of a sink's items changes no result` and `› a schedule writes
-  what its tensors compute`; `create_linear_with_vars › two writes over one
-  state › an effect listed after another lands after it, whichever the sink
-  reaches first`; `create_linear_with_vars › joins › a store
-  naming an older state, listed over a later one`, `› a store through a run
-  of a join`, `› an after listing only a store into other storage is that
-  state` and `› stores into one other storage land as listed`; the
-  `Tolk_engine` suite's `calls of views › a call given an older state to
-  write and a later to read reads it before the call`, `› a kernel listed
-  over two storages names the later state in either listing` and `› runs of
-  one other storage land as listed in an after`; `Tolk.Launch › an After
-  lists its stores in the order they land › a store listed twice lands at
-  its first place`; the `Tolk.Prepare` suite's recorded `*_prepared` graphs
-  that `sequence` changes, whose `.tolk` files name this entry.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_linear_with_vars › the order
+  of a sink's items changes no result` and `› a schedule writes what its tensors
+  compute`; `create_linear_with_vars › two writes over one state › an effect
+  listed after another lands after it, whichever the sink reaches first`;
+  `create_linear_with_vars › joins › a store naming an older state, listed over
+  a later one, writes the later state`, `› a store through a run of a join
+  stores into the state it holds`, `› an after listing only a store into other
+  storage is that state` and `› stores into one other storage land as listed`;
+  the `Tolk_engine` suite's `calls of views › a call given an older state to
+  write and a later to read reads it before the call`, `› a kernel listed over
+  two storages names the later state in either listing` and `› runs of one other
+  storage land as listed in an after`; `Tolk.Launch › an After lists its stores
+  in the order they land › a store listed twice lands at its first place`; the
+  `Tolk.Prepare` suite's recorded `*_prepared` graphs that `sequence` changes,
+  whose `.tolk` files name this entry.
 
 ## D474. Two writes over one state are refused unless one runs after the other
 
@@ -9079,7 +9087,8 @@ D466.
   beside another write, the message, the same writes listed in one `After`, a
   write over a state beside one it reads the result of, writes no `After`
   lists refused, a write no `After` lists over the state its destination
-  names, a kernel graph refused), and `› laws › the order of a sink's items changes no result`,
+  names, a kernel graph refused), and `› the order of a sink's items changes
+  no result`,
   which covers refused and computed programs; the program
   `write_over_written`, tinygrad's test, whose linear and values tolk
   computes; `Tolk.Launch › an After lists its stores in the order they land ›
@@ -9108,11 +9117,11 @@ D466.
   (D474). `UOp.const(1).after(c[0].store(5))` is `1`, and the store runs.
 - **Reason:** (e), as D473: `Ops.after` gives the program a meaning, and
   tinygrad refuses it. No raven consumer emits it.
-- **Pinned by:** the `Tolk.Schedule` suite's `create_linear_with_vars ›
-  boundaries › a constant ordered after a store is the constant, and the
-  store runs`; the `Tolk_engine` suite's `calls of views › a value ordered
-  after effects is the value` and `› a state over a view a loop moves,
-  ordered after effects, is read each trip`.
+- **Pinned by:** the `Tolk.Schedule` suite's `create_linear_with_vars › values
+  ordered after effects › a constant ordered after a store is the constant, and
+  the store runs`; the `Tolk_engine` suite's `calls of views › a value ordered
+  after effects is the value` and `› a state over a view a loop moves, ordered
+  after effects, is read each trip`.
 
 ## D476. A buffer only one loop's calls take lives within a trip
 
