@@ -1586,13 +1586,21 @@ let cuda_source =
 
 let race = "race"
 
-(* A run of the race checker: its exit status, its output, the summary of each
-   log, the function each launch was made from, and for each hazard the function
-   of its own backtrace, else of the launch before it, since the sanitizer
-   reports a kernel's hazards when the kernel ends. *)
+(* The counts a windtrap run reports: its selected tests, those that passed and
+   its failures, fixture releases included. *)
+type counts = { tests : int; passed : int; failed : int }
+
+(* A run of the race checker: its exit status, its output, the counts the run
+   under it reports, its logs' records other than launches and hazards (the
+   sanitizer's own messages, summaries included), the summary of each log, the
+   function each launch was made from, and for each hazard the function of its
+   own backtrace, else of the launch before it, since the sanitizer reports a
+   kernel's hazards when the kernel ends. *)
 type race_run = {
   status : Unix.process_status;
   output : string;
+  counts : counts option;
+  messages : string list;
   summaries : string list;
   launches : string list;
   hazards : (string * string option) list;
@@ -1628,6 +1636,19 @@ let find sub s =
   in
   at 0
 
+(* The count [name] of the counts that close windtrap's JSON report [r]. *)
+let report_count r name =
+  let key = Printf.sprintf "\"%s\": " name in
+  let after i s = String.sub s i (String.length s - i) in
+  match find "\"counts\": " r with
+  | None -> None
+  | Some i -> (
+      let counts = after i r in
+      match find key counts with
+      | None -> None
+      | Some j ->
+          Scanf.sscanf_opt (after (j + String.length key) counts) "%d" Fun.id)
+
 (* The function of this suite that a record's host backtrace names first,
    without the number the compiler appends to its name. *)
 let launcher r =
@@ -1654,6 +1675,7 @@ let race_run =
       if not (Sys.file_exists tool) then skip ~reason:(tool ^ " is missing") ();
       let dir = temp_dir ~prefix:"racecheck" () in
       let output = Filename.concat dir "output" in
+      let report = Filename.concat dir "report.json" in
       let args =
         [|
           tool;
@@ -1671,6 +1693,8 @@ let race_run =
           Sys.executable_name;
           "--tag";
           race;
+          "--json";
+          report;
         |]
       in
       (* The run's own reports would overwrite this run's. *)
@@ -1702,6 +1726,7 @@ let race_run =
         List.map (fun f -> records (read (Filename.concat dir f))) logs
       in
       let summary r = find "RACECHECK SUMMARY" r <> None in
+      let launch r = String.starts_with ~prefix:"========= Launch #" r in
       let hazard r =
         let header =
           match String.index_opt r '\n' with
@@ -1724,9 +1749,24 @@ let race_run =
             | None -> attribute launch acc rest)
       in
       let records = List.concat logs in
+      let counts =
+        if not (Sys.file_exists report) then None
+        else
+          let r = read report in
+          match
+            ( report_count r "tests",
+              report_count r "passed",
+              report_count r "failed" )
+          with
+          | Some tests, Some passed, Some failed ->
+              Some { tests; passed; failed }
+          | _ -> None
+      in
       {
         status;
         output = read output;
+        counts;
+        messages = List.filter (fun r -> not (launch r || hazard r)) records;
         summaries = List.filter summary records;
         launches =
           List.filter_map
@@ -1734,6 +1774,18 @@ let race_run =
             records;
         hazards = List.concat_map (fun l -> List.rev (attribute None [] l)) logs;
       })
+
+(* compute-sanitizer gives the exit code of the process it started a second to
+   reach it once that process ends. When a loaded machine delays it longer, the
+   sanitizer writes this record and exits 1, and the verdict of the run under it
+   comes from the run's own report alone. *)
+let lost_exit_code = "========= Error: couldn't find exit code."
+
+(* A process's status, as [Unix] names it. *)
+let status_text = function
+  | Unix.WEXITED n -> Printf.sprintf "WEXITED %d" n
+  | Unix.WSIGNALED s -> "WSIGNALED " ^ Sys.signal_to_string s
+  | Unix.WSTOPPED s -> "WSTOPPED " ^ Sys.signal_to_string s
 
 let race_free (what, f) =
   test ("the race checker finds no hazard in " ^ what) (fun () ->
@@ -1756,12 +1808,45 @@ let race_summary () =
          find "(0 errors, 0 warnings)" r <> None))
     run.summaries
 
+(* Whether every test of the run under the race checker passed, as its report
+   says. *)
+let passed_whole run =
+  match run.counts with
+  | Some c -> c.tests > 0 && c.passed = c.tests && c.failed = 0
+  | None -> false
+
+(* What the race checker said and the run under it reported. *)
+let race_text run =
+  Printf.sprintf
+    "the race checker ended %s.\nIts messages:\n%s\nThe run under it:\n%s"
+    (status_text run.status)
+    (String.concat "\n" run.messages)
+    run.output
+
+(* The sanitizer's status is the code of the run it started, unless it failed
+   itself, and its own errors are records of its logs. A run that did not pass
+   whole explains its status and its end, and the first claim reports it. *)
+let race_ended () =
+  let run = race_run () in
+  if not (passed_whole run) then
+    skip ~reason:"the run under the race checker failed" ();
+  let lost =
+    List.exists (String.starts_with ~prefix:lost_exit_code) run.messages
+  and error r =
+    String.starts_with ~prefix:"========= Error" r
+    && not (String.starts_with ~prefix:lost_exit_code r)
+  in
+  match (run.status, List.exists error run.messages) with
+  | Unix.WEXITED 0, false -> ()
+  | Unix.WEXITED 1, false when lost -> ()
+  | _ -> failf "%s" (race_text run)
+
 let races =
   group "races"
     (test "the kernels the race checker runs pass under it" (fun () ->
-         match (race_run ()).status with
-         | Unix.WEXITED 0 -> ()
-         | _ -> failf "the run under the race checker:\n%s" (race_run ()).output)
+         let run = race_run () in
+         if not (passed_whole run) then failf "%s" (race_text run))
+    :: test "the race checker ends without an error of its own" race_ended
     :: test "the race checker reports no error or warning" race_summary
     :: List.map race_free
          [
