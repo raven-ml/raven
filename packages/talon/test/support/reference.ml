@@ -538,8 +538,11 @@ let float_order x y =
       | 0 -> Bool.compare (Float.sign_bit y) (Float.sign_bit x)
       | c -> c)
 
-(* [quantile p xs] rounds each operation once. On arm64 the compiler fuses a
-   product and a sum into one rounding, so each product is made opaque. *)
+(* [quantile p xs] is [a + f (b - a)] between the ranks [a] and [b], [(1 - f) a
+   + f b] where finite ranks' difference overflows, and [a + b] beside an
+   infinity or a NaN, which is that infinity, or NaN for [-inf] beside [inf] or
+   a NaN. It rounds each operation once. On arm64 the compiler fuses a product
+   and a sum into one rounding, so each product is made opaque. *)
 let quantile p xs =
   let s = List.sort float_order xs |> Array.of_list in
   let n = Array.length s in
@@ -547,7 +550,12 @@ let quantile p xs =
   let lo = int_of_float h in
   let a = s.(lo) and b = s.(Int.min (lo + 1) (n - 1)) in
   let f = h -. Float.of_int lo in
-  if f = 0. || a = b then a else a +. Sys.opaque_identity (f *. (b -. a))
+  let d = b -. a in
+  if f = 0. || a = b then a
+  else if Float.is_finite d then a +. Sys.opaque_identity (f *. d)
+  else if Float.is_finite a && Float.is_finite b then
+    Sys.opaque_identity ((1. -. f) *. a) +. Sys.opaque_identity (f *. b)
+  else a +. b
 
 let to_float : type a. a Type.t -> a -> float =
  fun ty v ->

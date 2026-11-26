@@ -1427,8 +1427,9 @@ module Expr : sig
   (** [median a] is [quantile 0.5 a]. *)
 
   val quantile : float -> ('a, row) t -> (float, agg) t
-  (** [quantile p a] is the [p]-quantile of [a]'s values, interpolating linearly
-      between the two nearest ranks.
+  (** [quantile p a] is the [p]-quantile of [a]'s values as [float64],
+      interpolating linearly between the two nearest order statistics as
+      {!Nx.quantile} does.
 
       Raises [Invalid_argument] if [p] is not in \[[0];[1]\]. *)
 

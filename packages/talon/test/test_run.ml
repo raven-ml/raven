@@ -2495,6 +2495,22 @@ let reductions =
             (aggregate [] Expr.[ "q" := quantile 0.75 x ] t)
         in
         rows_are Type.float64 [| Some (-0x1.984a95b4668dp-138) |] (floats q "q"));
+    cases "a median beside an infinity is that infinity, or NaN between both"
+      ~id:(fun (name, _, _) -> name)
+      Float.
+        [
+          ("-inf and 0", [| 0.; neg_infinity |], neg_infinity);
+          ("0 and inf", [| infinity; 0. |], infinity);
+          ("-inf and inf", [| infinity; neg_infinity |], nan);
+          ("0 and nan", [| nan; 0. |], nan);
+          ("-max_float and max_float", [| max_float; -.max_float |], 0.);
+        ]
+      (fun (_, xs, expected) ->
+        let t = v [ ("x", Column.v Type.float64 xs) ] in
+        let m =
+          require_ok ~pp:Error.pp (aggregate [] Expr.[ "m" := median x ] t)
+        in
+        rows_are Type.float64 [| Some expected |] (floats m "m"));
     (* The float64 sum in row order: 2^53 + 1 rounds to 2^53, ties to even. *)
     test "a float64 mean sums its values in row order" (fun () ->
         let p = 0x1p53 in

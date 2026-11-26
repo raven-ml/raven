@@ -6468,6 +6468,9 @@ its lock and from samples the dashboard saw arrive.
 
 ### Talon
 
+- `Expr.median` and `Expr.quantile` interpolate as `Nx.quantile` does. Between
+  an infinite and a finite value they give the infinity, where they gave NaN,
+  and the median of `[-max_float; max_float]` is `0`, where it was `inf`.
 - `Column.parse` and `Expr.Temporal.parse`'s `%Y` refuse a signed year in
   `0000` to `9999`, such as `+2024-02-29` or `-0000-01-01`, as their grammar
   excludes. They read them.
