@@ -142,16 +142,18 @@ its input cells, such as `D › truncate › truncation.golden › dtype=dtypes.
 
 ## Op
 
+The suite is `Tolk.Op` (`uop/op/test_op.ml`).
+
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `uop/__init__.py` (no test file targets it) | `str` and `repr` of an operation are `Ops.<NAME>` | `Tolk.Op › Op › pp is Ops. followed by the name` and the golden's `op` column |
-| tinygrad: `uop/__init__.py` (no test file targets it) | the enum's integer values order the toposort | `Tolk.Op › Op order › compare agrees with tinygrad's integer order` |
+| tinygrad: `uop/__init__.py` (no test file targets it) | `str` and `repr` of an operation are `Ops.<NAME>` | `Tolk.Op › pp › is Ops. followed by the name` and the golden's `op` column |
+| tinygrad: `uop/__init__.py` (no test file targets it) | the enum's integer values order the toposort | `Tolk.Op › t › declares the golden's operations in the order of their values` |
 | tinygrad: `uop/__init__.py` (no test file targets it) | `auto()` values are unique across every `FastEnum` subclass | dropped: OCaml variants of distinct types never compare equal; `X86Ops` belongs to the renderer's section |
-| tinygrad: `null/test_upat_compile.py::TestUPatCompile::test_const_folding` | `GroupOp.ALU - {Ops.THREEFRY}` | `Tolk.Op › Set.diff › removes Threefry from alu and keeps the rest`; its compilation of the pattern is dropped with the other seven below |
+| tinygrad: `null/test_upat_compile.py::TestUPatCompile::test_const_folding` | `GroupOp.ALU - {Ops.THREEFRY}` | `Tolk.Op › Set.diff › holds the operations of the first set not in the second` (its example `diff alu {Ops.THREEFRY}`); its compilation of the pattern is dropped with the other seven below |
 | tinygrad: `null/test_upat_compile.py::TestUPatCompile` (7 other tests: `test_double`, `test_single`, `test_xpx`, `test_xp0`, `test_bool`, `test_single_c`, `test_range_named`) | the pattern compiler generates code for these patterns | dropped: the pattern compiler is excluded (README); patterns match directly, which the `O › patterns` group tests |
-| tinygrad: `null/test_linearizer.py`, `runtime/test_linearizer.py`, `null/test_schedule.py`, `null/test_const_folding.py`, `null/test_dtype_weak.py`, `null/test_pattern_matcher.py` | `u.op in GroupOp.ALU` counts arithmetic | `Tolk.Op › Named sets › hold tinygrad's members` (the ALU column); each test belongs to its own module's section |
-| tinygrad: `null/test_graph_rewrite.py`, `null/test_uop_graph.py` | `UPat(GroupOp.All)` matches every operation | `Tolk.Op › Set.mem › of all always holds`; each test belongs to its own module's section |
-| tinygrad: `null/test_viz.py::TestViz::test_colored_label`, `test_colored_label_multiline`, `test_inf_loop`, `TestVizGC::test_gc_uop_in_arg` | PYLITERAL and REWRITE_ERROR nodes in the graph viewer | dropped: viz is excluded; `Tolk.Op › Op › has no counterpart for exactly REWRITE_ERROR and PYLITERAL` |
+| tinygrad: `null/test_linearizer.py`, `runtime/test_linearizer.py`, `null/test_schedule.py`, `null/test_const_folding.py`, `null/test_dtype_weak.py`, `null/test_pattern_matcher.py` | `u.op in GroupOp.ALU` counts arithmetic | `Tolk.Op › Named sets › each holds the operations its column of the golden marks › ops.golden` (the ALU column); each test belongs to its own module's section |
+| tinygrad: `null/test_graph_rewrite.py`, `null/test_uop_graph.py` | `UPat(GroupOp.All)` matches every operation | `Tolk.Op › Named sets › all is every operation`; each test belongs to its own module's section |
+| tinygrad: `null/test_viz.py::TestViz::test_colored_label`, `test_colored_label_multiline`, `test_inf_loop`, `TestVizGC::test_gc_uop_in_arg` | PYLITERAL and REWRITE_ERROR nodes in the graph viewer | dropped: viz is excluded; `Tolk.Op › t › lacks only the golden's operations the README leaves out` |
 
 ## Ops
 

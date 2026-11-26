@@ -180,7 +180,8 @@ val pp : Format.formatter -> t -> unit
 
     The named sets are the families that rewrites and checks match on, such as
     {!Set.alu} or {!Set.movement}; the set operations combine them into new
-    sets. *)
+    sets. In the laws of the named sets, a NaN equals every NaN, whatever its
+    bits. *)
 module Set : sig
   type op := t
 
@@ -207,7 +208,9 @@ module Set : sig
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats a set as its operations in declaration order, between braces
-      and separated by commas: [{Ops.ADD, Ops.MUL}]. The empty set is [{}]. *)
+      and separated by commas and break hints: [{Ops.ADD, Ops.MUL}] on one line,
+      and a set wider than the margin breaks lines only after a comma. The empty
+      set is [{}]. *)
 
   (** {1:named Named sets} *)
 
@@ -263,16 +266,20 @@ module Set : sig
 
   val associative : t
   (** [associative] is the binary operations that rewrites may regroup, each
-      satisfying [f (f x y) z = f x (f y z)]: {!Add}, {!Mul}, {!And}, {!Or},
-      {!Max} and {!Xor}. *)
+      satisfying [f (f x y) z = f x (f y z)] on integers and booleans, and
+      {!Max} on floats up to which of two values neither less than the other it
+      gives: {!Add}, {!Mul}, {!And}, {!Or}, {!Max} and {!Xor}. {!Add} and {!Mul}
+      round a float at each step, so regrouping one can change its value. *)
 
   val idempotent : t
   (** [idempotent] is the binary operations [f] with [f x x = x]: {!Or}, {!And}
       and {!Max}. *)
 
   val reduce : t
-  (** [reduce] is the operations a {!Reduce} can reduce with: {!Add}, {!Mul}
-      and {!Max}. *)
+  (** [reduce] is the operations a {!Reduce} can reduce with: {!Add}, {!Mul} and
+      {!Max}. Each is in {!commutative} and {!associative}: a {!Reduce} combines
+      elements in an order the compiler chooses, which gives one result on
+      integers and booleans; on floats the result depends on that order. *)
 
   val comparison : t
   (** [comparison] is the operations whose result is a boolean whatever the type
