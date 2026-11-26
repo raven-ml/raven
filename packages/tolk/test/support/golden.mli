@@ -32,9 +32,10 @@
     its body equals the golden's. Under windtrap's [-u], {!text} and {!graph}
     write an output that differs from its golden as [<name>.tolk], keeping the
     entries of the file it replaces; a new file names none and fails until a
-    person adds one. [-u] writes nothing for an output equal to its golden. A
-    table or an input has no output to write: when its golden moves, the failure
-    prints the new hash, for the header. *)
+    person adds one. [-u] writes nothing for an output equal to its golden, and
+    fails if a [.tolk] is there, which it does not delete. A table or an input
+    has no output to write: when its golden moves, the failure prints the new
+    hash, for the header. *)
 
 val updating : bool
 (** [updating] is whether this run has windtrap's [-u], which writes each
@@ -47,7 +48,8 @@ val body : string -> string
 
 val text : string -> (unit -> string) -> Windtrap.test
 (** [text file actual] is the test, named [file], that [actual ()] is the body
-    of the golden [file]. Its failure prints their diff. *)
+    of the golden [file]. Its failure is {!Windtrap.equal}'s on
+    {!Windtrap.text}. *)
 
 (** {1:graphs Graphs}
 
@@ -69,9 +71,10 @@ val upstream : string -> Tolk.Ops.t
 
 (** {1:tables Tables}
 
-    The body of a table golden is lines of cells separated by tabs: the column
-    names, then one line per row, and at least one row. A cell is the text
-    tinygrad prints for its value, such as [dtypes.f32], [True] or [inf].
+    The body of a table golden is lines of cells separated by tabs, one cell per
+    column: the column names, then one line per row, and at least one row. A
+    cell is the text tinygrad prints for its value, such as [dtypes.f32], [True]
+    or [inf].
 
     A row is given as its [cell] function: [cell column] is the row's cell in
     [column], and raises [Invalid_argument] if the table has no column [column].
@@ -85,9 +88,10 @@ val cases :
   Windtrap.test
 (** [cases file check] is the table, named [file], that runs [check cell] on
     each row of the table golden [file]. A row is identified by its cells in
-    [key], as [a=dtypes.f16 b=dtypes.i8]; [key] defaults to the first column.
-    A table that cannot be read as a golden is one failing test named [file],
-    so a stale [.tolk] does not stop the suite.
+    [key], as [a=dtypes.f16 b=dtypes.i8]; [key] defaults to the first column. A
+    table that cannot be read as a golden is one failing test named [file], so a
+    stale [.tolk] does not stop the suite. A file that cannot be read raises
+    [Sys_error] when [cases] is applied.
 
     [differs] states which rows of [file]'s {{!tolk}[.tolk]} differ from the
     golden, as [("D24", ["op=Ops.ADD dtype=dtypes.f32"])]. A pattern is pairs
@@ -95,13 +99,27 @@ val cases :
     without [=] extends the value before it, as in [name=kernel with opts]. The
     [fst] is an entry of the [.tolk]'s header. [check] runs on the rows of the
     [.tolk] as usual, so a listed row is held to tolk's value. The list must be
-    exact: the table is one failing test if a row that differs is not listed,
-    if a listed row equals the golden, if a pattern holds on no row, if an
-    entry is not in the header, if the two tables have different numbers of
-    rows, or if the [.tolk] or the golden is missing. *)
+    exact: the table is one failing test if a row that differs is not listed, if
+    a listed row equals the golden, if a pattern holds on no row, if an entry is
+    not in the header, if the two tables have different numbers of rows, or if
+    the [.tolk] or the golden is missing. Its failure names each row, pattern,
+    entry or file at fault. *)
 
 val columns : string -> string list
 (** [columns file] is the column names of the table golden [file], in order. *)
 
 val rows : string -> (string -> string) list
 (** [rows file] is the rows of the table golden [file], in order. *)
+
+(**/**)
+
+val problem :
+  ?key:string list ->
+  ?differs:(string * string list) list ->
+  string ->
+  string option
+(** [problem ?key ?differs file] is the message of the one failing test that
+    [cases ?key ?differs file] is, or [None] if that is a table of rows. Raises
+    as [cases] does. *)
+
+(**/**)

@@ -312,11 +312,11 @@ let differs_problem file name rows differs =
   end
 
 (* A table is read when the suite is declared: a stale [.tolk] fails one test,
-   and the rest of the suite runs. *)
-let cases ?key ?(differs = []) file check =
+   and the rest of the suite runs. [read_cases] is the table's columns, rows and
+   row names, or the message of that failing test. *)
+let read_cases ?key ~differs file =
   match table file with
-  | exception Failure message ->
-      Windtrap.test file (fun () -> Windtrap.fail message)
+  | exception Failure message -> Error message
   | columns, rows -> (
       let key = Option.value key ~default:[ List.hd columns ] in
       let name row =
@@ -332,7 +332,17 @@ let cases ?key ?(differs = []) file check =
           with Failure message -> Some message
       in
       match problem with
-      | Some message -> Windtrap.test file (fun () -> Windtrap.fail message)
-      | None ->
-          Windtrap.cases file ~id:name rows (fun row ->
-              check (cell file columns row)))
+      | Some message -> Error message
+      | None -> Ok (columns, rows, name))
+
+let problem ?key ?(differs = []) file =
+  match read_cases ?key ~differs file with
+  | Error message -> Some message
+  | Ok _ -> None
+
+let cases ?key ?(differs = []) file check =
+  match read_cases ?key ~differs file with
+  | Error message -> Windtrap.test file (fun () -> Windtrap.fail message)
+  | Ok (columns, rows, name) ->
+      Windtrap.cases file ~id:name rows (fun row ->
+          check (cell file columns row))
