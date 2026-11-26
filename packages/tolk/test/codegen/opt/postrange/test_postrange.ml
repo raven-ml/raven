@@ -1,6 +1,6 @@
 (* Tests of Tolk.Postrange: a kernel optimised by a sequence of optimisations is
-   the kernel recorded for it, a refused optimisation leaves the scheduler as it
-   was, and optimising keeps what the kernel writes. *)
+   the kernel its golden records, a refused optimisation leaves the scheduler as
+   it was, and optimising keeps what the kernel writes. *)
 
 open Windtrap
 open Tolk
@@ -52,6 +52,14 @@ let case_of_row cell =
 
 let recorded_cases = List.map case_of_row (Golden.rows "cases.golden")
 let case name = List.find (fun c -> c.name = name) recorded_cases
+let accepted = List.filter (fun c -> c.refused = None) recorded_cases
+
+(* The names of the recorded kernels, each once, in the table's order. *)
+let recorded_kernels =
+  List.fold_left
+    (fun acc c -> if List.mem c.kernel acc then acc else c.kernel :: acc)
+    [] recorded_cases
+  |> List.rev
 
 (* The goldens were recorded without colours. *)
 let recorded ?(settings = []) f =
@@ -79,11 +87,8 @@ let scheduler c =
 
 let axis_type = Testable.make ~pp:Ops.Axis_type.pp ~equal:Ops.Axis_type.equal
 
-let keeps_writes before after =
-  equal (list Kernel_opts.write)
-    (Kernel_opts.writes before)
-    (Kernel_opts.writes after)
-
+(* A range's identity, ordered as the integers it lists. *)
+let axis_id = Testable.with_compare (List.compare Int.compare) (list int)
 let raises_invalid_arg f = raises_match (fun e -> Exn.invalid_arg e) f
 
 (* [apply k o] applies [o], which must apply. *)
@@ -97,12 +102,38 @@ let apply ?append_opt k o =
    decided, and the port Invalid_argument. *)
 let refuses_as error f =
   match error with
-  | "KernelOptError" -> is_true ~msg:"refused" (Result.is_error (f ()))
+  | "KernelOptError" ->
+      is_error ~msg:"refused" ~pp:(Testable.pp (list Uops.uop)) (f ())
   | "ValueError" -> raises_invalid_arg f
   | error -> failf "no refusal %s" error
 
 let split ?(top = false) axis amount target =
   Opt.Split { axis; amount; target; top }
+
+let flattened ast =
+  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
+    (After_sources Simplify.pm_flatten_range)
+
+(* Writes
+
+   What a kernel writes is a function of its stores: the sink's argument, which
+   get_optimized_ast sets, takes no part. So each set of stores is evaluated
+   once, and a kernel that optimising left as it was reuses its reference's
+   writes. *)
+
+let evaluated = Ops.Tbl.create 64
+
+let writes ast =
+  let stores = Ops.sink (Ops.src ast) in
+  match Ops.Tbl.find_opt evaluated stores with
+  | Some w -> w
+  | None ->
+      let w = Kernel_opts.writes stores in
+      Ops.Tbl.add evaluated stores w;
+      w
+
+let keeps_writes before after =
+  equal (list Kernel_opts.write) (writes before) (writes after)
 
 (* Printing as tinygrad's tables do *)
 
@@ -136,42 +167,130 @@ let made_cell rngs =
 
 let escaped s = String.concat "\\e" (String.split_on_char '\027' s)
 
-(* Optimising *)
+(* Kernels built for a claim *)
 
-let optimised =
-  group "apply_opts optimises a kernel as recorded"
-    (List.map
-       (fun c ->
-         match c.refused with
-         | None -> Golden.graph (c.name ^ ".golden") (fun () -> optimize c)
-         | Some _ ->
-             (* apply_opts raises Invalid_argument where apply_opt refuses *)
-             test (c.name ^ " is refused") (fun () ->
-                 raises_invalid_arg (fun () -> optimize c)))
-       recorded_cases)
+let sum_rows_64 () = K.v (kernel "sum_rows_64") (renderer "cpu")
+let upcast_4 = split 0 4 Upcast
 
-let leaves_as_it_was c (error, refused) =
-  recorded ~settings:c.settings (fun () ->
-      let k = scheduler c in
-      List.iteri (fun i o -> if i < refused then ignore (apply k o)) c.opts;
-      let ast = K.ast k and applied = K.applied_opts k in
-      refuses_as error (fun () -> K.apply_opt k (List.nth c.opts refused));
-      equal Uops.uop ast (K.ast k);
-      equal (list Kernel_opts.opt) applied (K.applied_opts k))
+(* [out[i] = a[i]] over 3 [i]. *)
+let copied_rows () =
+  let i = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
+  let out = Shape.param ~shape:[ Int 3 ] 0 Int32
+  and a = Shape.param ~shape:[ Int 3 ] 1 Int32 in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.index a [ i ])) [ i ] ]
 
-let refusals =
-  let refused =
-    List.filter_map
-      (fun c -> Option.map (fun n -> (c, n)) c.refused)
-      recorded_cases
+let position r k =
+  match List.find_index (fun u -> u == r) (K.rngs k) with
+  | Some i -> i
+  | None -> failf "%s is not an axis" (Ops.range_str r)
+
+(* Schedulers *)
+
+(* Kernels over [a[r0 * 8 + r1]] whose reduction, or end, closes [closes r0
+   r1]. *)
+let closing ~by_end closes =
+  let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and r1 = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
+  let out = Shape.param ~shape:[ Int 32 ] 0 Float32
+  and a = Shape.param ~shape:[ Int 32 ] 1 Float32 in
+  let i = Ops.O.((r0 * Ops.int 8) + r1) in
+  let x = Ops.index a [ i ] in
+  let closer =
+    if by_end then Ops.end_ (Ops.store (Ops.index out [ i ]) x) (closes r0 r1)
+    else
+      Ops.store
+        (Ops.index out [ Ops.int 0 ])
+        (Ops.reduce x Op.Add (closes r0 r1))
   in
-  cases "a refused optimisation leaves the scheduler as it was"
-    ~id:(fun (c, _) -> c.name)
-    refused
-    (fun (c, n) -> leaves_as_it_was c n)
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ closer ]
 
-let axes =
-  group "the scheduler's axes after optimising are as recorded"
+let closings =
+  List.concat_map
+    (fun (what, closes) ->
+      [
+        ("a reduction closing " ^ what, closing ~by_end:false closes);
+        ("an end closing " ^ what, closing ~by_end:true closes);
+      ])
+    [
+      ("distinct ranges", fun r0 r1 -> [ r0; r1 ]);
+      ("an expression of ranges", fun r0 r1 -> [ Ops.O.((r0 * Ops.int 8) + r1) ]);
+      ("a range twice", fun r0 r1 -> [ r0; r1; r0 ]);
+    ]
+
+let copies =
+  cases "a copy of an optimised scheduler holds its kernel"
+    ~id:(fun c -> c.name)
+    accepted
+    (fun c ->
+      recorded ~settings:c.settings (fun () ->
+          let k = scheduler c in
+          List.iter (fun o -> ignore (apply k o)) c.opts;
+          equal Uops.uop (K.ast k) (K.ast (K.copy k))))
+
+let schedulers =
+  group "Scheduler"
+    [
+      cases "v's kernel has the ranges its reductions and ends close flattened"
+        ~id:fst closings (fun (_, ast) ->
+          equal Uops.uop (flattened ast) (K.ast (K.v ast (renderer "cpu"))));
+      cases "v's kernel of a recorded kernel is it flattened" ~id:Fun.id
+        recorded_kernels (fun name ->
+          let ast = kernel name in
+          equal Uops.uop (flattened ast) (K.ast (K.v ast (renderer "cpu"))));
+      test "v reads the optimisations its kernel's argument lists" (fun () ->
+          let k = K.v (Golden.sink "matmul_0.golden") (renderer "metal") in
+          equal (list Kernel_opts.opt) [ split 1 32 Local ] (K.applied_opts k));
+      test "an optimisation applied to a copy leaves the original as it was"
+        (fun () ->
+          let k = sum_rows_64 () in
+          let ast = K.ast k and copy = K.copy k in
+          ignore (apply copy upcast_4);
+          equal Uops.uop ast (K.ast k);
+          equal (list Kernel_opts.opt) [] (K.applied_opts k));
+      test "an optimisation applied to the original leaves its copy as it was"
+        (fun () ->
+          let k = sum_rows_64 () in
+          let copy = K.copy k in
+          ignore (apply k upcast_4);
+          equal Uops.uop (K.ast (sum_rows_64 ())) (K.ast copy);
+          equal (list Kernel_opts.opt) [] (K.applied_opts copy));
+      copies;
+      test "apply_opt records each optimisation it applies, in order" (fun () ->
+          let k = sum_rows_64 () in
+          ignore (apply k upcast_4);
+          ignore (apply k (split 2 4 Upcast));
+          equal (list Kernel_opts.opt)
+            [ upcast_4; split 2 4 Upcast ]
+            (K.applied_opts k));
+      test "apply_opt ~append_opt:false leaves the optimisation unrecorded"
+        (fun () ->
+          let k = sum_rows_64 () in
+          ignore (apply ~append_opt:false k upcast_4);
+          equal (list Kernel_opts.opt) [] (K.applied_opts k));
+    ]
+
+(* Axes *)
+
+(* [uncoloured s] is the escaped text [s] without its colour codes. *)
+let uncoloured s =
+  let b = Buffer.create (String.length s) in
+  let n = String.length s in
+  let rec go i =
+    if i < n then
+      if i + 2 < n && String.sub s i 3 = "\\e[" then
+        go (String.index_from s i 'm' + 1)
+      else (
+        Buffer.add_char b s.[i];
+        go (i + 1))
+  in
+  go 0;
+  Buffer.contents b
+
+let recorded_axes =
+  group
+    "the axis queries after each recorded case's optimisations answer as its \
+     golden states"
     [
       Golden.cases "axes.golden" (fun cell ->
           let c = case (cell "case") in
@@ -203,25 +322,10 @@ let axes =
               equal ~msg:"made" string (cell "made") (made_cell made)));
     ]
 
-(* [uncoloured s] is the escaped text [s] without its colour codes. *)
-let uncoloured s =
-  let b = Buffer.create (String.length s) in
-  let n = String.length s in
-  let rec go i =
-    if i < n then
-      if i + 2 < n && String.sub s i 3 = "\\e[" then
-        go (String.index_from s i 'm' + 1)
-      else (
-        Buffer.add_char b s.[i];
-        go (i + 1))
-  in
-  go 0;
-  Buffer.contents b
-
 let colors =
   group
-    "the shape of a kernel is coloured by the roles of its axes, and its name \
-     is not"
+    "colored_shape colours each axis by its role, and get_optimized_ast's name \
+     holds no colour"
     [
       Golden.cases "colors.golden" (fun cell ->
           Setting.context
@@ -240,111 +344,66 @@ let colors =
                 (escaped (info (K.get_optimized_ast k)).name)));
     ]
 
-(* Schedulers *)
-
-let sum_rows_64 () = K.v (kernel "sum_rows_64") (renderer "cpu")
-let upcast_4 = split 0 4 Upcast
-
-(* Kernels over [a[r0 * 8 + r1]] whose reduction, or end, closes
-   [closes r0 r1]. *)
-let closing ~by_end closes =
-  let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
-  and r1 = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
-  let out = Shape.param ~shape:[ Int 32 ] 0 Float32
-  and a = Shape.param ~shape:[ Int 32 ] 1 Float32 in
-  let i = Ops.O.((r0 * Ops.int 8) + r1) in
-  let x = Ops.index a [ i ] in
-  let closer =
-    if by_end then Ops.end_ (Ops.store (Ops.index out [ i ]) x) (closes r0 r1)
-    else
-      Ops.store
-        (Ops.index out [ Ops.int 0 ])
-        (Ops.reduce x Op.Add (closes r0 r1))
+(* A scheduler's axis queries, between optimisations and copies, answer as those
+   of a fresh copy of it, which has computed nothing yet. *)
+let queries =
+  let sched = abstract "k" in
+  let kernels = [| "sum_rows_64"; "matmul_0"; "custom_gemm" |] in
+  let opt i =
+    let amount = List.nth [ 2; 4; 8 ] (i / 4 mod 3) in
+    split (i mod 4) amount (if i >= 12 then Opt.Local else Upcast)
   in
-  Ops.sink ~kernel:(Ops.kernel_info ()) [ closer ]
-
-let closings =
-  List.concat_map
-    (fun (what, closes) ->
-      [
-        ("a reduction closing " ^ what, closing ~by_end:false closes);
-        ("an end closing " ^ what, closing ~by_end:true closes);
-      ])
+  let make i = K.v (kernel kernels.(i)) (renderer "metal") in
+  let fresh f k = f (K.copy k) in
+  let ok k o = Result.is_ok (K.apply_opt k o) in
+  let applies o k =
+    let r = ok k o in
+    cover "an optimisation applies" r;
+    r
+  in
+  let copy k =
+    cover "an optimised scheduler is copied" (K.applied_opts k <> []);
+    K.copy k
+  in
+  let shape k = repr_list sint (K.full_shape k) in
+  let ints = list int and uops = list Uops.uop in
+  let query name w f = command name (sched ^-> returns w) (fresh f) f in
+  let apply_opt =
+    command "apply_opt"
+      (Gen.map opt (Gen.int_range 0 23) @-> sched ^-> returns bool)
+      (fun o k -> ok k o)
+      applies
+  in
+  (* apply_opt is listed twice, so that it runs as often as the queries need
+     kernels to have changed. *)
+  stateful ~count:60 ~steps:12
+    "a scheduler's axes answer as a fresh copy's, whatever came before"
     [
-      ("distinct ranges", fun r0 r1 -> [ r0; r1 ]);
-      ( "an expression of ranges",
-        fun r0 r1 -> [ Ops.O.((r0 * Ops.int 8) + r1) ] );
-      ("a range twice", fun r0 r1 -> [ r0; r1; r0 ]);
+      command "v"
+        (Gen.int_range 0 (Array.length kernels - 1) @-> makes sched)
+        make make;
+      command "copy" (sched ^-> makes sched) K.copy copy;
+      apply_opt;
+      apply_opt;
+      query "rngs" uops K.rngs;
+      query "full_shape" string shape;
+      query "reduce_ranges" uops K.reduce_ranges;
+      query "reduceops" uops K.reduceops;
+      query "reduce axes" ints (fun k -> K.axes_of ~reduce:true k []);
+      query "upcastable_dims" ints (fun k -> K.upcastable_dims k);
+      query "read_by_bounds" uops K.read_by_bounds;
+      query "upcast axes" ints (fun k -> K.axes_of k [ Upcast ]);
     ]
 
-let flattened ast =
-  Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() ast
-    (After_sources Simplify.pm_flatten_range)
+let reduceops =
+  test "reduceop is a kernel's first reduction, and None without one" (fun () ->
+      let k = K.v (kernel "sum_and_max") (renderer "cpu") in
+      equal int 2 (List.length (K.reduceops k));
+      equal (option Uops.uop) (List.nth_opt (K.reduceops k) 0) (K.reduceop k);
+      equal (option Uops.uop) None
+        (K.reduceop (K.v (copied_rows ()) (renderer "cpu"))))
 
-let schedulers =
-  group "Scheduler"
-    [
-      cases "v's kernel has the ranges its reductions and ends close flattened"
-        ~id:fst closings (fun (_, ast) ->
-          equal Uops.uop (flattened ast) (K.ast (K.v ast (renderer "cpu"))));
-      cases "v's kernel of a recorded kernel is it flattened"
-        ~id:(fun c -> c.name) recorded_cases (fun c ->
-          let ast = kernel c.kernel in
-          equal Uops.uop (flattened ast)
-            (K.ast (K.v ast (renderer c.renderer))));
-      cases "a copy's kernel after optimising is the kernel flattened"
-        ~id:(fun c -> c.name)
-        (List.filter (fun c -> c.refused = None) recorded_cases)
-        (fun c ->
-          recorded ~settings:c.settings (fun () ->
-              let k = scheduler c in
-              List.iter (fun o -> ignore (apply k o)) c.opts;
-              equal Uops.uop (flattened (K.ast k)) (K.ast (K.copy k))));
-      test "v reads the optimisations its kernel's argument lists" (fun () ->
-          let k = K.v (Golden.sink "matmul_0.golden") (renderer "metal") in
-          equal (list Kernel_opts.opt) [ split 1 32 Local ] (K.applied_opts k));
-      test "an optimisation applied to a copy leaves the original as it was"
-        (fun () ->
-          let k = sum_rows_64 () in
-          let ast = K.ast k and copy = K.copy k in
-          ignore (apply copy upcast_4);
-          equal Uops.uop ast (K.ast k);
-          equal (list Kernel_opts.opt) [] (K.applied_opts k));
-      test "an optimisation applied to the original leaves its copy as it was"
-        (fun () ->
-          let k = sum_rows_64 () in
-          let copy = K.copy k in
-          ignore (apply k upcast_4);
-          equal Uops.uop (K.ast (sum_rows_64 ())) (K.ast copy);
-          equal (list Kernel_opts.opt) [] (K.applied_opts copy));
-      test "apply_opt records each optimisation it applies, in order" (fun () ->
-          let k = sum_rows_64 () in
-          ignore (apply k upcast_4);
-          ignore (apply k (split 2 4 Upcast));
-          equal (list Kernel_opts.opt)
-            [ upcast_4; split 2 4 Upcast ]
-            (K.applied_opts k));
-      test "apply_opt ~append_opt:false leaves the optimisation unrecorded"
-        (fun () ->
-          let k = sum_rows_64 () in
-          ignore (apply ~append_opt:false k upcast_4);
-          equal (list Kernel_opts.opt) [] (K.applied_opts k));
-      test "get_optimized_ast names the kernel name_override, optimised"
-        (fun () ->
-          let k = sum_rows_64 () in
-          ignore (apply k upcast_4);
-          let ast = K.get_optimized_ast ~name_override:"fused" k in
-          equal string "fused" (info ast).name;
-          equal (list Kernel_opts.opt) [ upcast_4 ] (info ast).applied_opts;
-          equal bool true (info ast).optimized);
-      test
-        "convert_loop_to_global leaves a kernel for a renderer without locals"
-        (fun () ->
-          let k = sum_rows_64 () in
-          let ast = K.ast k in
-          K.convert_loop_to_global k;
-          equal Uops.uop ast (K.ast k));
-    ]
+let axes = group "axes" [ recorded_axes; colors; queries; reduceops ]
 
 (* Loops bounded by an axis
 
@@ -363,13 +422,8 @@ let bounded_rows () =
   let st = Ops.end_ (Ops.store at Ops.O.(j * j)) [ j ] in
   (i, n, Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ st [ i; n ] ])
 
-let position r k =
-  match List.find_index (fun u -> u == r) (K.rngs k) with
-  | Some i -> i
-  | None -> failf "%s is not an axis" (Ops.range_str r)
-
-(* [ast] with a loop beside its stores, over [j < x[r]] for its first axis
-   [r], storing [j] at [r]. *)
+(* [ast] with a loop beside its stores, over [j < x[r]] for its first axis [r],
+   storing [j] at [r]. *)
 let with_bounded_loop k =
   let ast = K.ast k in
   let r = List.hd (K.rngs k) in
@@ -394,7 +448,8 @@ let bounded_loops =
       test "upcastable_dims leaves out an axis a loop's bound reads" (fun () ->
           let i, n, ast = bounded_rows () in
           let k = K.v ast (renderer "cpu") in
-          equal (list int) [ position n k ]
+          equal (list int)
+            [ position n k ]
             (List.filter
                (fun a -> a = position i k || a = position n k)
                (K.upcastable_dims k)));
@@ -443,40 +498,18 @@ let bounded_loops =
             (K.apply_opt bounded tc));
     ]
 
-(* A range's integer type *)
-
-(* [out[i] = i] over 3 [i] of type [dt]. *)
-let typed_rows dt =
-  let i = Ops.range ~axis_type:Weak ~dtype:dt (Int 3) [ 0 ] in
-  let out = Shape.param ~shape:[ Int 4 ] 0 Int32 in
-  Ops.sink ~kernel:(Ops.kernel_info ())
-    [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.cast i Int32)) [ i ] ]
-
-let range_types =
-  cases "apply_opt pads a range of a typed integer as a weak one"
-    ~id:(Format.asprintf "%a" Dtype.pp)
-    Dtype.[ Int32; Int64; Uint32 ]
-    (fun dt ->
-      let k = K.v (typed_rows dt) (renderer "cpu") in
-      is_ok ~pp:Format.pp_print_string
-        (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 }));
-      equal (list (option int)) [ Some 4 ]
-        (List.map
-           (function Ops.Int n -> Some n | Sym _ -> None)
-           (K.full_shape k)))
-
 (* Axes a call or custom code reads
 
    A call, of a body or of code in the target's language, a statement or an
    expression, takes one pointer or value for each source, so an axis it reads
-   cannot become a thread's lanes, nor take padding. It runs once for each
-   point of the axes it reads, so an axis it does not read cannot take
-   threads. *)
+   cannot become a thread's lanes, nor take padding. It runs once for each point
+   of the axes it reads, so an axis it does not read cannot take threads. *)
 
-type opaque = Body | Statement | Expression
+type opaque = Body | Calling_body | Statement | Expression
 
-(* A call of kind [o] on [&x[r]]: [f(&x[r])] of a body, the code
-   [{0}[0] = 1;], or [z[0] = {0}[0]] of the expression [{0}[0]]. *)
+(* A call of kind [o] on [&x[r]]: [f(&x[r])] of a body, [g(&x[r])] of a body
+   that runs the code [{0}[0] = 1;] on its argument, that code, or [z[0] =
+   {0}[0]] of the expression [{0}[0]]. *)
 let opaque o x r =
   match o with
   | Body ->
@@ -486,6 +519,11 @@ let opaque o x r =
           [ Ops.store (Ops.index p [ Ops.int 0 ]) (Ops.int ~dtype:Int32 1) ]
       in
       Ops.call ~name:"f" f [ Ops.index x [ r ] ]
+  | Calling_body ->
+      let p = Shape.param ~shape:[ Int 1 ] 0 Int32 in
+      let code = Ops.custom_function ~fmt:true "{0}[0] = 1;" [] in
+      let g = Ops.sink [ Ops.call code [ Ops.index p [ Ops.int 0 ] ] ] in
+      Ops.call ~name:"g" g [ Ops.index x [ r ] ]
   | Expression ->
       let z = Shape.param ~shape:[ Int 1 ] 12 Int32 in
       let code = Ops.custom_function ~dtype:Int32 ~fmt:true "{0}[0]" [] in
@@ -497,26 +535,31 @@ let opaque o x r =
         (Ops.custom_function ~fmt:true "{0}[0] = 1;" [])
         [ Ops.index x [ r ] ]
 
-let opaques = [ Body; Statement; Expression ]
+(* The call itself: an expression's is the value of its store. *)
+let call_of o x r =
+  match o with Expression -> Ops.nth (opaque o x r) 1 | _ -> opaque o x r
+
+let opaques = [ Body; Calling_body; Statement; Expression ]
 
 let opaque_id = function
   | Body -> "a body"
+  | Calling_body -> "a body that calls code"
   | Statement -> "a statement"
   | Expression -> "an expression"
 
+let called_x = Shape.param ~shape:[ Int 4 ] 1 Int32
 
 (* [o] on [&x[i]] and [out[i * 8 + n] = n], for four [i] and eight [n]. *)
 let called_rows o =
   let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
   and n = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
-  let x = Shape.param ~shape:[ Int 4 ] 1 Int32
-  and out = Shape.param ~shape:[ Int 32 ] 0 Int32 in
+  let out = Shape.param ~shape:[ Int 32 ] 0 Int32 in
   let at = Ops.index out [ Ops.O.((i * Ops.int 8) + n) ] in
   let st = Ops.store at (Ops.cast n Int32) in
   ( i,
     n,
     Ops.sink ~kernel:(Ops.kernel_info ())
-      [ Ops.end_ (Ops.group [ opaque o x i; st ]) [ i; n ] ] )
+      [ Ops.end_ (Ops.group [ opaque o called_x i; st ]) [ i; n ] ] )
 
 (* [ast] with [o] beside its stores, on [&y[r]] for its first axis [r]. *)
 let with_opaque o k =
@@ -525,14 +568,20 @@ let with_opaque o k =
   let y = Shape.param ~shape:[ Int 4096 ] 11 Int32 in
   Ops.replace ast ~src:(Ops.src ast @ [ Ops.end_ (opaque o y r) [ r ] ])
 
-let refused axis = Error (Printf.sprintf "a call or custom code reads axis %d" axis)
+let refused axis =
+  Error (Printf.sprintf "a call or custom code reads axis %d" axis)
+
 let ungated = Error "cannot gate Ops.CALL in a padded range"
 
 let called_axes =
   let opaque_cases name f = cases name ~id:opaque_id opaques f in
-  let effect_cases name f = cases name ~id:opaque_id opaques f in
   group "axes a call or custom code reads"
     [
+      opaque_cases "opaque is the kernel's call" (fun o ->
+          let i, _, ast = called_rows o in
+          equal (list Uops.uop)
+            [ call_of o called_x i ]
+            (K.opaque (K.v ast (renderer "cpu"))));
       opaque_cases "read_by_opaque is the axes its sources read" (fun o ->
           let i, _, ast = called_rows o in
           equal (list Uops.uop) [ i ]
@@ -582,29 +631,31 @@ let called_axes =
           let k = K.v ast (renderer "cuda") in
           is_ok ~pp:Format.pp_print_string
             (K.apply_opt k (split (position i k) 2 Local)));
-      effect_cases "unread_by_opaque is the axes its sources do not read"
+      opaque_cases "unread_by_opaque is the axes its sources do not read"
         (fun o ->
           let _, n, ast = called_rows o in
           equal (list Uops.uop) [ n ]
             (K.unread_by_opaque (K.v ast (renderer "cuda"))));
-      effect_cases
+      opaque_cases
         "convert_loop_to_global gives workgroups only to an axis its sources \
          read" (fun o ->
           let _, _, ast = called_rows o in
           let k = K.v ast (renderer "cuda") in
           K.convert_loop_to_global k;
-          equal string "[AxisType.GLOBAL, AxisType.WEAK]"
-            (repr_list Ops.Axis_type.pp (K.axis_types k)));
-      effect_cases "apply_opt refuses a local split of an axis its sources do not \
-                    read" (fun o ->
+          equal (list axis_type) [ Global; Weak ] (K.axis_types k));
+      opaque_cases
+        "apply_opt refuses a local split of an axis its sources do not read"
+        (fun o ->
           let _, n, ast = called_rows o in
           let k = K.v ast (renderer "cuda") in
           equal
             (result (list Uops.uop) string)
-            (Error (Printf.sprintf "a call or custom code does not read axis %d"
-                      (position n k)))
+            (Error
+               (Printf.sprintf "a call or custom code does not read axis %d"
+                  (position n k)))
             (K.apply_opt k (split (position n k) 2 Local)));
-      effect_cases "a group is refused over a reduce axis its sources do not read"
+      opaque_cases
+        "a group is refused over a reduce axis its sources do not read"
         (fun o ->
           let k = K.v (kernel "sum_rows_64") (renderer "cuda") in
           let group k =
@@ -615,9 +666,11 @@ let called_axes =
           let axis = List.hd (K.axes_of ~reduce:true k []) in
           equal
             (result (list Uops.uop) string)
-            (Error (Printf.sprintf "a call or custom code does not read axis %d" axis))
+            (Error
+               (Printf.sprintf "a call or custom code does not read axis %d"
+                  axis))
             (group (K.v (with_opaque o k) (renderer "cuda"))));
-      effect_cases "a tensor core is refused in a kernel with one" (fun o ->
+      opaque_cases "a tensor core is refused in a kernel with one" (fun o ->
           let k = K.v (kernel "tc_metal_0") (renderer "metal") in
           is_ok ~pp:Format.pp_print_string (K.apply_opt (K.copy k) tc);
           let refused o' =
@@ -630,198 +683,11 @@ let called_axes =
           (* one that reads no axis *)
           let y = Shape.param ~shape:[ Int 1 ] 11 Int32 in
           let ast = K.ast k in
-          refused (Ops.replace ast ~src:(Ops.src ast @ [ opaque o y (Ops.int 0) ])));
+          refused
+            (Ops.replace ast ~src:(Ops.src ast @ [ opaque o y (Ops.int 0) ])));
     ]
 
-(* Splitting *)
-
-let shifts =
-  let axis n = List.nth (K.rngs (sum_rows_64 ())) n in
-  let shifted ?top ?new_rng n amount target =
-    let k = sum_rows_64 () in
-    let made = K.shift_to ?top ?new_rng k (axis n) amount target in
-    (k, made)
-  in
-  let targets = [ (0, Opt.Upcast); (0, Local); (1, Upcast); (1, Local) ] in
-  let splits =
-    List.concat_map
-      (fun (n, target) ->
-        List.concat_map
-          (fun amount ->
-            [ (n, target, amount, false); (n, target, amount, true) ])
-          [ 2; 4; 8; 16; 32; 64 ])
-      targets
-  in
-  let name (n, target, amount, top) =
-    Printf.sprintf "axis %d by %d to %s%s" n amount
-      (match target with
-      | Opt.Upcast -> "upcast"
-      | Local -> "local"
-      | Global -> "global")
-      (if top then " from the top" else "")
-  in
-  group "shift_to"
-    [
-      test "splits an axis into its quotient and a new axis of the amount"
-        (fun () ->
-          let k, (quotient, amount) = shifted 0 4 Upcast in
-          equal Dtypes.z (Bigint.of_int 16) (size quotient);
-          equal Dtypes.z (Bigint.of_int 4) (size amount);
-          equal axis_type Weak (Ops.axis_type quotient);
-          equal axis_type Upcast (Ops.axis_type amount);
-          let slice = Ops.backward_slice ~calls:Skip (K.ast k) in
-          equal ~msg:"the axis is gone" bool false
-            (Ops.Nodes.mem (axis 0) slice);
-          equal ~msg:"its quotient is used" bool true
-            (Ops.Nodes.mem quotient slice);
-          equal ~msg:"the new axis is used" bool true
-            (Ops.Nodes.mem amount slice));
-      test "makes the new axis of the range it is given" (fun () ->
-          let new_rng = Ops.range ~axis_type:Upcast (Int 4) [ 99 ] in
-          let _, (_, made) = shifted ~new_rng 0 4 Upcast in
-          equal Uops.uop new_rng made);
-      test "raises Invalid_argument on a target its axis's role cannot split to"
-        (fun () ->
-          let k = K.v (kernel "custom_gemm") (renderer "cpu") in
-          let loop =
-            List.find
-              (fun r -> Ops.op r = Range && Ops.axis_type r = Loop)
-              (Ops.toposort ~calls:Skip (K.ast k))
-          in
-          raises_invalid_arg (fun () -> K.shift_to k loop 4 Upcast));
-      test "raises Invalid_argument on an amount of 1" (fun () ->
-          raises_invalid_arg (fun () -> shifted 0 1 Upcast));
-      test "raises Invalid_argument on an amount that does not divide the axis"
-        (fun () -> raises_invalid_arg (fun () -> shifted 0 3 Upcast));
-      cases "keeps the kernel's writes, once flattened" ~id:name splits
-        (fun (n, target, amount, top) ->
-          let k, _ = shifted ~top n amount target in
-          keeps_writes (kernel "sum_rows_64") (K.get_optimized_ast k));
-    ]
-
-(* Padding
-
-   A pad's steps are no-ops: an effect along its axis is guarded, and one that
-   cannot be is refused. *)
-
-(* [C = [r + 1]] over three [r], a store of the whole of [C] rather than
-   through an index. *)
-let whole_store () =
-  let r = Ops.range ~axis_type:Loop (Int 3) [ 0 ] in
-  let c = Shape.param ~shape:[ Int 1 ] 0 Int32 in
-  let v =
-    Shape.reshape Ops.O.(Ops.cast r Int32 + Ops.int ~dtype:Int32 1) [ Int 1 ]
-  in
-  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ (Ops.store c v) [ r ] ]
-
-(* [out[i] = a[i]] over 3 [i]. *)
-let copied_rows () =
-  let i = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
-  let out = Shape.param ~shape:[ Int 3 ] 0 Int32
-  and a = Shape.param ~shape:[ Int 3 ] 1 Int32 in
-  Ops.sink ~kernel:(Ops.kernel_info ())
-    [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.index a [ i ])) [ i ] ]
-
-(* [out[i] = sum over r < i + 1 of a[i * 4 + r]] over 4 [i]: a loop whose
-   bound reads [i]. *)
-let bounded_sums () =
-  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-  let r = Ops.range ~axis_type:Loop (Sym Ops.O.(i + Ops.int 1)) [ 1 ] in
-  let out = Shape.param ~shape:[ Int 4 ] 0 Int32
-  and a = Shape.param ~shape:[ Int 16 ] 1 Int32 in
-  let sum =
-    Ops.reduce (Ops.index a [ Ops.O.((i * Ops.int 4) + r) ]) Op.Add [ r ]
-  in
-  Ops.sink ~kernel:(Ops.kernel_info ())
-    [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
-
-(* The accesses of [ast] gated by a validity other than [true]. *)
-let gated ast =
-  List.length
-    (List.filter
-       (fun u ->
-         Ops.op u = Op.Index
-         &&
-         let v = Ops.get_valid (Ops.nth u 1) in
-         not (Ops.op v = Op.Const && Ops.value v = `Bool true))
-       (Ops.toposort ~calls:Skip ast))
-
-let padding =
-  group "padding"
-    [
-      test
-        "on the host a padded range no reduce sums is loaded at its last \
-         index, ungated, and stored under its gate"
-        (fun () ->
-          let k = K.v (copied_rows ()) (renderer "cpu") in
-          is_ok ~pp:Format.pp_print_string
-            (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 }));
-          equal int 1 (gated (K.ast k)));
-      test
-        "on the host a padded range a loop's bound reads keeps its loads \
-         gated, and one loop"
-        (fun () ->
-          let k = K.v (bounded_sums ()) (renderer "cpu") in
-          is_ok ~pp:Format.pp_print_string
-            (K.apply_opt k (Opt.Padto { axis = 0; amount = 8 }));
-          let loops =
-            List.filter
-              (fun u -> Ops.op u = Op.Range && Ops.axis_id u = [ 1 ])
-              (Ops.toposort ~calls:Skip (K.ast k))
-          in
-          equal int 1 (List.length loops);
-          equal int 2 (gated (K.ast k)));
-      test "on a GPU a padded range's loads and stores are gated" (fun () ->
-          let k = K.v (copied_rows ()) (renderer "cuda") in
-          is_ok ~pp:Format.pp_print_string
-            (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 }));
-          equal int 2 (gated (K.ast k)));
-      test "apply_opt refuses a pad of an axis a whole store runs along"
-        (fun () ->
-          let k = K.v (whole_store ()) (renderer "cpu") in
-          equal
-            (result (list Uops.uop) string)
-            (Error "cannot gate Ops.STORE in a padded range")
-            (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 })));
-    ]
-
-let split_targets =
-  group "split_targets"
-    [
-      test "upcasts come from global, local and weak axes" (fun () ->
-          equal (list axis_type) [ Global; Local; Weak ]
-            (Postrange.split_targets Upcast));
-      test "locals come from global and weak axes" (fun () ->
-          equal (list axis_type) [ Global; Weak ]
-            (Postrange.split_targets Local));
-      test "globals come from global axes" (fun () ->
-          equal (list axis_type) [ Global ] (Postrange.split_targets Global));
-      (* gpudims gives the hardware's first axis to the global axis of the
-         greatest id: a split to a global axis makes its steps the launch's
-         first. *)
-      test "a split to a global axis numbers it after every other axis"
-        (fun () ->
-          let k = K.v (kernel "sum_rows_64") (renderer "cuda") in
-          K.convert_loop_to_global k;
-          let g = List.hd (K.axes_of ~reduce:false k [ Global ]) in
-          let others = List.map Ops.axis_id (K.rngs k) in
-          let made = List.nth (Result.get_ok (K.apply_opt k (split g 2 Global))) 1 in
-          equal axis_type Global (Ops.axis_type made);
-          is_true
-            (List.for_all (fun id -> compare (Ops.axis_id made) id > 0) others));
-    ]
-
-(* Choosing optimisations *)
-
-let applied ast = (info ast).applied_opts
-let never_searched _ = fail "apply_opts searched a kernel it must not optimise"
-
-let upcasting k =
-  ignore (apply k upcast_4);
-  k
-
-let without_opts ast =
-  Ops.replace ~arg:(Kernel { (info ast) with opts_to_apply = None }) ast
+(* Rewriting *)
 
 (* [out[i] = inp[i]] over 256 elements [i], through what its builder chose for
    its threads: workgroup memory, a register, a barrier after its store, a
@@ -854,10 +720,7 @@ let fixed_by reason =
         store (Ops.index d [ Ops.int ~dtype:Int32 0 ])
     | "custom code" ->
         Ops.group
-          [
-            store value;
-            Ops.call (Ops.custom_function ~fmt:true "f();" []) [];
-          ]
+          [ store value; Ops.call (Ops.custom_function ~fmt:true "f();" []) [] ]
     | "a call whose body holds a barrier" ->
         let p = Shape.param ~shape:[ Int 1 ] 0 Float32 in
         let fence =
@@ -879,127 +742,566 @@ let fixing =
     "a call whose body holds a barrier";
   ]
 
-let dispatch =
-  let cpu = renderer "cpu" and metal = renderer "metal" in
-  group "apply_opts"
+(* [out[r] = r] over a weak [r < 4], beside [out[0] = 7], which runs once for
+   all of [r]'s steps and writes a cell they write. *)
+let shared_with_outside () =
+  let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+  let out = Shape.param ~shape:[ Int 4 ] 0 Int32 in
+  let inside = Ops.store (Ops.index out [ r ]) (Ops.cast r Int32)
+  and outside =
+    Ops.store (Ops.index out [ Ops.int 0 ]) (Ops.int ~dtype:Int32 7)
+  in
+  (r, Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ inside [ r ]; outside ])
+
+let rewriting =
+  group "rewriting"
     [
-      test "returns a kernel already optimised as it is" (fun () ->
-          let optimized = Golden.sink "matmul_0.golden" in
-          equal Uops.uop optimized
-            (Postrange.apply_opts ~hand_coded:never_hand_coded optimized metal));
-      test
-        "hand-optimises a kernel that asks for nothing, after making its weak \
-         outputs global" (fun () ->
-          let calls = ref 0 in
-          let hand_coded k =
-            incr calls;
-            equal (list axis_type) [ Global; Weak ] (K.axis_types k);
-            equal (list int) [ 1 ] (K.axes_of ~reduce:true k []);
-            upcasting k
-          in
-          let ast =
-            Postrange.apply_opts ~hand_coded (kernel "sum_rows_64") metal
-          in
-          equal int 1 !calls;
-          equal (list Kernel_opts.opt) [ upcast_4 ] (applied ast));
-      test "hand-optimises a kernel without kernel information" (fun () ->
-          let bare = Ops.replace ~arg:No_arg (kernel "sum_rows_64") in
-          let ast =
-            recorded (fun () ->
-                Postrange.apply_opts ~hand_coded:upcasting bare cpu)
-          in
-          equal (list Kernel_opts.opt) [ upcast_4 ] (applied ast);
-          equal string "r_16_4_64" (info ast).name);
-      test "searches with beam instead, when given" (fun () ->
-          let ast =
-            Postrange.apply_opts ~beam:upcasting ~hand_coded:never_hand_coded
-              (kernel "sum_rows_64") cpu
-          in
-          equal (list Kernel_opts.opt) [ upcast_4 ] (applied ast));
-      test "applies nothing to a kernel that asks for no optimisation"
+      test "upcastable_dims leaves out an axis a register store's value reads"
         (fun () ->
-          let ast =
-            Postrange.apply_opts ~beam:never_searched
-              ~hand_coded:never_hand_coded
-              (asking [] (kernel "sum_rows_64"))
-              cpu
+          let dims reason =
+            K.upcastable_dims (K.v (fixed_by reason) (renderer "cpu"))
           in
-          equal (list Kernel_opts.opt) [] (applied ast));
-      test "noopt turns the hand-coded optimisations off" (fun () ->
-          let ast =
-            Setting.context
-              [ B (Setting.noopt, true) ]
-              (fun () ->
-                Postrange.apply_opts ~hand_coded:never_hand_coded
-                  (kernel "sum_rows_64") cpu)
-          in
-          equal (list Kernel_opts.opt) [] (applied ast));
-      test "does not hand-optimise a kernel optimised before" (fun () ->
-          let ast = kernel "sum_rows_64" in
-          let optimized =
-            Ops.replace
-              ~arg:(Kernel { (info ast) with applied_opts = [ upcast_4 ] })
-              ast
-          in
-          equal (list Kernel_opts.opt) [ upcast_4 ]
-            (applied
-               (Postrange.apply_opts ~hand_coded:never_hand_coded optimized cpu)));
-      test "does not hand-optimise a kernel that buffers values" (fun () ->
-          let ast = without_opts (kernel "stage_then_reduce") in
-          equal (list Kernel_opts.opt) []
-            (applied
-               (Postrange.apply_opts ~hand_coded:never_hand_coded ast metal)));
-      cases
-        "neither hand-optimises nor searches a kernel whose builder fixed its \
-         threads with"
-        ~id:Fun.id fixing (fun reason ->
-          let k = fixed_by reason and cuda = renderer "cuda" in
-          let optimise ?beam () =
-            applied
-              (Postrange.apply_opts ?beam ~hand_coded:never_hand_coded k cuda)
-          in
-          equal (list Kernel_opts.opt) [] (optimise ());
-          equal (list Kernel_opts.opt) [] (optimise ~beam:never_searched ()));
-      test "hand-optimises the same kernel through none of them" (fun () ->
-          let calls = ref 0 in
-          let hand_coded k =
-            incr calls;
-            k
-          in
-          let cuda = renderer "cuda" in
-          ignore (Postrange.apply_opts ~hand_coded (fixed_by "none") cuda);
-          equal int 1 !calls);
+          equal
+            (list (list int))
+            [ [ 0 ]; [] ]
+            (List.map dims [ "none"; "a register" ]));
       test
-        "applies the optimisations a kernel whose builder fixed its threads \
-         asks for" (fun () ->
-          let c = case "loop_counter_upcast" in
-          equal (list Kernel_opts.opt) c.opts (applied (optimize c)));
-      test "keeps a kernel's name other than test" (fun () ->
-          let ast = kernel "sum_rows_64" in
-          let named =
-            Ops.replace
-              ~arg:
-                (Kernel
-                   { (info ast) with name = "fused"; opts_to_apply = Some [] })
-              ast
-          in
-          equal string "fused"
-            (info (Postrange.apply_opts ~hand_coded:never_hand_coded named cpu))
-              .name);
-      test "names a kernel named test after its reduction and its axes"
-        (fun () ->
-          let ast =
-            recorded (fun () ->
-                Postrange.apply_opts ~hand_coded:never_hand_coded
-                  (asking [] (kernel "sum_rows_64"))
-                  cpu)
-          in
-          equal string "r_64_64" (info ast).name);
+        "threadless holds a weak range whose steps write storage the code \
+         outside it writes" (fun () ->
+          let r, ast = shared_with_outside () in
+          equal (list Uops.uop) [ r ] (K.threadless (K.v ast (renderer "cuda"))));
     ]
 
-(* Laws *)
+let converting =
+  test "convert_loop_to_global leaves a kernel for a renderer without locals"
+    (fun () ->
+      let k = sum_rows_64 () in
+      let ast = K.ast k in
+      K.convert_loop_to_global k;
+      equal Uops.uop ast (K.ast k))
 
-(* The interpreter evaluates neither a matrix multiply-accumulate, which a
+(* Splitting *)
+
+(* [out[i * 8 + j] = 1] over [i < 4] and a weak [j < x[i]], whose trips are read
+   from memory. *)
+let loaded_bound () =
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+  let x = Shape.param ~shape:[ Int 4 ] 1 Int32
+  and out = Shape.param ~shape:[ Int 32 ] 0 Int32 in
+  let j =
+    Ops.range ~axis_type:Weak ~dtype:Int32
+      (Sym (Ops.load (Ops.index x [ i ]) []))
+      [ 1 ]
+  in
+  let at = Ops.index out [ Ops.O.((i * Ops.int 8) + Ops.cast j Weak_int) ] in
+  ( j,
+    Ops.sink ~kernel:(Ops.kernel_info ())
+      [ Ops.end_ (Ops.store at (Ops.int ~dtype:Int32 1)) [ i; j ] ] )
+
+let shifts =
+  let axis n = List.nth (K.rngs (sum_rows_64 ())) n in
+  let shifted ?top ?new_rng n amount target =
+    let k = sum_rows_64 () in
+    let made = K.shift_to ?top ?new_rng k (axis n) amount target in
+    (k, made)
+  in
+  let targets = [ (0, Opt.Upcast); (0, Local); (1, Upcast); (1, Local) ] in
+  let splits =
+    List.concat_map
+      (fun (n, target) ->
+        List.concat_map
+          (fun amount ->
+            [ (n, target, amount, false); (n, target, amount, true) ])
+          [ 2; 4; 8; 16; 32; 64 ])
+      targets
+  in
+  let name (n, target, amount, top) =
+    Printf.sprintf "axis %d by %d to %s%s" n amount
+      (match target with
+      | Opt.Upcast -> "upcast"
+      | Local -> "local"
+      | Global -> "global")
+      (if top then " from the top" else "")
+  in
+  group "shift_to"
+    [
+      test "replaces an axis by its quotient and a new axis of the amount"
+        (fun () ->
+          let k, (quotient, amount) = shifted 0 4 Upcast in
+          equal Dtypes.z (Bigint.of_int 16) (size quotient);
+          equal Dtypes.z (Bigint.of_int 4) (size amount);
+          equal axis_type Weak (Ops.axis_type quotient);
+          equal axis_type Upcast (Ops.axis_type amount);
+          equal (list Uops.uop) [ quotient; amount; axis 1 ] (K.rngs k));
+      test "makes the new axis of the range it is given" (fun () ->
+          let new_rng = Ops.range ~axis_type:Upcast (Int 4) [ 99 ] in
+          let _, (_, made) = shifted ~new_rng 0 4 Upcast in
+          equal Uops.uop new_rng made);
+      test "numbers the new axis after every other range" (fun () ->
+          let k = K.v (kernel "loop_counter") (renderer "cpu") in
+          let ids =
+            List.filter_map
+              (fun u ->
+                if Ops.op u = Op.Range then Some (Ops.axis_id u) else None)
+              (Ops.toposort ~calls:Skip (K.ast k))
+          in
+          let _, made = K.shift_to k (List.hd (K.rngs k)) 2 Upcast in
+          List.iter (fun id -> greater axis_id ~than:id (Ops.axis_id made)) ids);
+      test "raises Invalid_argument on a target its axis's role cannot split to"
+        (fun () ->
+          let k = K.v (kernel "custom_gemm") (renderer "cpu") in
+          let loop =
+            List.find
+              (fun r -> Ops.op r = Range && Ops.axis_type r = Loop)
+              (Ops.toposort ~calls:Skip (K.ast k))
+          in
+          raises_invalid_arg (fun () -> K.shift_to k loop 4 Upcast));
+      test "raises Invalid_argument on an amount of 1" (fun () ->
+          raises_invalid_arg (fun () -> shifted 0 1 Upcast));
+      test "raises Invalid_argument on an amount that does not divide the axis"
+        (fun () -> raises_invalid_arg (fun () -> shifted 0 3 Upcast));
+      test "raises Invalid_argument on an axis whose trips are read from memory"
+        (fun () ->
+          let j, ast = loaded_bound () in
+          let k = K.v ast (renderer "cpu") in
+          raises_invalid_arg (fun () -> K.shift_to k j 2 Upcast));
+      test
+        "raises Invalid_argument on an upcast of an axis a loop's bound reads"
+        (fun () ->
+          let i, _, ast = bounded_rows () in
+          let k = K.v ast (renderer "cpu") in
+          raises_invalid_arg (fun () -> K.shift_to k i 2 Upcast));
+      test
+        "raises Invalid_argument on a local split of an axis a call does not \
+         read" (fun () ->
+          let _, n, ast = called_rows Body in
+          let k = K.v ast (renderer "cuda") in
+          raises_invalid_arg (fun () -> K.shift_to k n 2 Local));
+      cases "keeps the kernel's writes, once flattened" ~id:name splits
+        (fun (n, target, amount, top) ->
+          let k, _ = shifted ~top n amount target in
+          keeps_writes (kernel "sum_rows_64") (K.get_optimized_ast k));
+    ]
+
+(* Applying an optimisation *)
+
+let leaves_as_it_was c (error, refused) =
+  recorded ~settings:c.settings (fun () ->
+      let k = scheduler c in
+      List.iteri (fun i o -> if i < refused then ignore (apply k o)) c.opts;
+      let ast = K.ast k and applied = K.applied_opts k in
+      refuses_as error (fun () -> K.apply_opt k (List.nth c.opts refused));
+      equal Uops.uop ast (K.ast k);
+      equal (list Kernel_opts.opt) applied (K.applied_opts k))
+
+let refusals =
+  let refused =
+    List.filter_map
+      (fun c -> Option.map (fun n -> (c, n)) c.refused)
+      recorded_cases
+  in
+  cases "a refused optimisation leaves the scheduler as it was"
+    ~id:(fun (c, _) -> c.name)
+    refused
+    (fun (c, n) -> leaves_as_it_was c n)
+
+let stays_flat =
+  cases "the ranges reductions and ends close stay flat"
+    ~id:(fun c -> c.name)
+    accepted
+    (fun c ->
+      recorded ~settings:c.settings (fun () ->
+          let k = scheduler c in
+          List.iter (fun o -> ignore (apply k o)) c.opts;
+          equal Uops.uop (flattened (K.ast k)) (K.ast k)))
+
+(* [out[i] = i] over 3 [i] of type [dt]. *)
+let typed_rows dt =
+  let i = Ops.range ~axis_type:Weak ~dtype:dt (Int 3) [ 0 ] in
+  let out = Shape.param ~shape:[ Int 4 ] 0 Int32 in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) (Ops.cast i Int32)) [ i ] ]
+
+let range_types =
+  cases "pads a range of a typed integer as a weak one"
+    ~id:(Format.asprintf "%a" Dtype.pp)
+    Dtype.[ Int32; Int64; Uint32 ]
+    (fun dt ->
+      let k = K.v (typed_rows dt) (renderer "cpu") in
+      is_ok ~pp:Format.pp_print_string
+        (K.apply_opt k (Opt.Padto { axis = 0; amount = 4 }));
+      equal
+        (list (option int))
+        [ Some 4 ]
+        (List.map
+           (function Ops.Int n -> Some n | Sym _ -> None)
+           (K.full_shape k)))
+
+(* Padding
+
+   A pad's steps are no-ops: an effect along its axis is guarded, and one that
+   cannot be is refused. On the host, a load whose padded steps reach only
+   padded outputs reads the axis's last real index instead of under a guard. *)
+
+(* [C = [r + 1]] over three [r], a store of the whole of [C] rather than through
+   an index. *)
+let whole_store () =
+  let r = Ops.range ~axis_type:Loop (Int 3) [ 0 ] in
+  let c = Shape.param ~shape:[ Int 1 ] 0 Int32 in
+  let v =
+    Shape.reshape Ops.O.(Ops.cast r Int32 + Ops.int ~dtype:Int32 1) [ Int 1 ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ (Ops.store c v) [ r ] ]
+
+(* [out[i] = sum over r < i + 1 of a[i * 4 + r]] over 4 [i]: a loop whose bound
+   reads [i]. *)
+let bounded_sums () =
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+  let r = Ops.range ~axis_type:Loop (Sym Ops.O.(i + Ops.int 1)) [ 1 ] in
+  let out = Shape.param ~shape:[ Int 4 ] 0 Int32
+  and a = Shape.param ~shape:[ Int 16 ] 1 Int32 in
+  let sum =
+    Ops.reduce (Ops.index a [ Ops.O.((i * Ops.int 4) + r) ]) Op.Add [ r ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
+
+(* The accesses of [ast] gated by a validity other than [true]. *)
+let gated ast =
+  List.length
+    (List.filter
+       (fun u ->
+         Ops.op u = Op.Index
+         &&
+         let v = Ops.get_valid (Ops.nth u 1) in
+         not (Ops.op v = Op.Const && Ops.value v = `Bool true))
+       (Ops.toposort ~calls:Skip ast))
+
+let pad_4 = Opt.Padto { axis = 0; amount = 4 }
+
+let padding =
+  group "padding"
+    [
+      test
+        "on the host a padded range no reduce sums is loaded at its last \
+         index, ungated, and stored under its gate" (fun () ->
+          let k = K.v (copied_rows ()) (renderer "cpu") in
+          is_ok ~pp:Format.pp_print_string (K.apply_opt k pad_4);
+          equal int 1 (gated (K.ast k)));
+      test "on the host a padded range keeps the kernel's writes" (fun () ->
+          let k = K.v (copied_rows ()) (renderer "cpu") in
+          ignore (apply k pad_4);
+          keeps_writes (copied_rows ()) (K.get_optimized_ast k));
+      test
+        "on the host a padded range a loop's bound reads keeps its loads \
+         gated, and one loop" (fun () ->
+          let k = K.v (bounded_sums ()) (renderer "cpu") in
+          is_ok ~pp:Format.pp_print_string
+            (K.apply_opt k (Opt.Padto { axis = 0; amount = 8 }));
+          let loops =
+            List.filter
+              (fun u -> Ops.op u = Op.Range && Ops.axis_id u = [ 1 ])
+              (Ops.toposort ~calls:Skip (K.ast k))
+          in
+          equal int 1 (List.length loops);
+          equal int 2 (gated (K.ast k)));
+      test "on a GPU a padded range's loads and stores are gated" (fun () ->
+          let k = K.v (copied_rows ()) (renderer "cuda") in
+          is_ok ~pp:Format.pp_print_string (K.apply_opt k pad_4);
+          equal int 2 (gated (K.ast k)));
+      test "a pad of an axis a whole store runs along is refused" (fun () ->
+          let k = K.v (whole_store ()) (renderer "cpu") in
+          equal
+            (result (list Uops.uop) string)
+            (Error "cannot gate Ops.STORE in a padded range")
+            (K.apply_opt k pad_4));
+    ]
+
+(* Workgroups
+
+   A workgroup's threads are its warp and local axes' product, which a target
+   launches up to a bound: a CUDA block's 1024 (the CUDA guide's "Maximum number
+   of threads per block"), a CDNA workgroup's 1024, an Apple threadgroup's 512
+   before family 4 (Metal's feature set tables). A group adds its threads'
+   partials of a float sum into one running sum, which [Nx_kernel]'s error
+   bounds admit up to 256 terms. *)
+
+let sm_89 = "CUDA:CUDA:sm_89"
+let gfx90a = "AMD:HIP:gfx90a"
+let apple2 = "METAL:METAL:Apple2"
+
+let target_renderer t =
+  Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
+
+(* [out[0] = op x[j]] over [n] values of [dt]. *)
+let reduction ?(dt = Dtype.Float32) ?(op = Op.Add) n =
+  let j = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let x = Shape.param ~shape:[ Int n ] 1 dt
+  and out = Shape.param ~shape:[ Int 1 ] 0 dt in
+  let r = Ops.reduce (Ops.load (Ops.index x [ j ]) []) op [ j ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.store (Ops.index out [ Ops.int 0 ]) r ]
+
+(* [out[i] = sum x[i * n + j]] over [m] rows of [n] float32. *)
+let row_sums m n =
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+  let x = Shape.param ~shape:[ Int (m * n) ] 1 Float32
+  and out = Shape.param ~shape:[ Int m ] 0 Float32 in
+  let r =
+    Ops.reduce
+      (Ops.load (Ops.index x [ Ops.O.((i * Ops.int n) + j) ]) [])
+      Op.Add [ j ]
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ i ]) r) [ i ] ]
+
+(* [out[i * n + j] = x[i * n + j]] over [m] by [n]. *)
+let copy_of m n =
+  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
+  let at = Ops.O.((i * Ops.int n) + j) in
+  let x = Shape.param ~shape:[ Int (m * n) ] 1 Float32
+  and out = Shape.param ~shape:[ Int (m * n) ] 0 Float32 in
+  let st =
+    Ops.store (Ops.index out [ at ]) (Ops.load (Ops.index x [ at ]) [])
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ st [ i; j ] ]
+
+(* How the float sum of [sums] meets the int32 sum. *)
+type meeting = Apart | Reads_int | Read_by_int
+
+(* An int32 sum of [n] values and a float32 sum of [m], over two ranges, apart
+   or one reading the other: a group of the first takes the second as a sibling
+   only when they are apart. *)
+let sums ?(meeting = Apart) ?(m = 0) n =
+  let m = if m = 0 then n else m in
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int m) [ 1 ] in
+  let a = Shape.param ~shape:[ Int n ] 2 Int32
+  and b = Shape.param ~shape:[ Int m ] 3 Float32
+  and out0 = Shape.param ~shape:[ Int 1 ] 0 Int32
+  and out1 = Shape.param ~shape:[ Int 1 ] 1 Float32 in
+  let load x r = Ops.load (Ops.index x [ r ]) [] in
+  let sum v r = Ops.reduce v Op.Add [ r ] in
+  let float_sum = sum (load b j) j in
+  let int_value =
+    match meeting with
+    | Read_by_int -> Ops.O.(load a i + Ops.cast float_sum Int32)
+    | Apart | Reads_int -> load a i
+  in
+  let int_sum = sum int_value i in
+  let float_sum =
+    match meeting with
+    | Reads_int -> sum Ops.O.(load b j + Ops.cast int_sum Float32) j
+    | Apart | Read_by_int -> float_sum
+  in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [
+      Ops.store (Ops.index out0 [ Ops.int 0 ]) int_sum;
+      Ops.store (Ops.index out1 [ Ops.int 0 ]) float_sum;
+    ]
+
+let int_and_float_sums n = sums n
+
+(* [out[l, i, j] = sum_k a[l, i, k] * b[l, k, j]] of float16 [a] and [b] summed
+   in float32, [l] a local axis of [threads] that both read, and [i], [j] and
+   [k] of 32: a core takes [i], [j] and [k], and its threads join [l]'s. *)
+let local_batched_product threads =
+  let n = 32 in
+  let l = Ops.range ~axis_type:Local (Int threads) [ 0 ]
+  and i = Ops.range ~axis_type:Weak (Int n) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Int n) [ 2 ]
+  and k = Ops.range ~axis_type:Weak (Int n) [ 3 ] in
+  let at x y = Ops.O.((((l * Ops.int n) + x) * Ops.int n) + y) in
+  let size = threads * n * n in
+  let a = Shape.param ~shape:[ Int size ] 1 Float16
+  and b = Shape.param ~shape:[ Int size ] 2 Float16
+  and out = Shape.param ~shape:[ Int size ] 0 Float32 in
+  let load x idx = Ops.cast (Ops.load (Ops.index x [ idx ]) []) Float32 in
+  let r = Ops.reduce Ops.O.(load a (at i k) * load b (at k j)) Op.Add [ k ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store (Ops.index out [ at i j ]) r) [ l; i; j ] ]
+
+(* Steps: each is the optimisation it makes of the kernel it is given. *)
+
+(* A group of [n] threads of the first reduce axis, of the reduction of type
+   [dt] if given. *)
+let grouped ?dt n k =
+  let closes a =
+    let r = List.nth (K.rngs k) a in
+    List.exists
+      (fun u ->
+        List.memq r (List.tl (Ops.src u))
+        && Option.fold ~none:true ~some:(Dtype.equal (Ops.dtype u)) dt)
+      (K.reduceops k)
+  in
+  split (List.find closes (K.axes_of ~reduce:true k [ Weak ])) n Local
+
+let across n k = split (List.hd (K.axes_of ~reduce:false k [ Global ])) n Local
+
+(* A pad to a multiple of [n] of the first local axis of [s] threads. *)
+let pad s n k =
+  let sized a = List.nth (K.full_shape k) a = Ops.Int s in
+  Opt.Padto { axis = List.find sized (K.axes_of k [ Local ]); amount = n }
+
+let threads_past most n =
+  Printf.sprintf "a workgroup holds at most %d threads, not %d" most n
+
+let partials_past = "a group adds at most 256 partials into a sum"
+
+(* [stepped k steps] applies [steps] in order up to the first refused one, and
+   is its position and reason, checking that it leaves [k] as it was. *)
+let stepped k steps =
+  let rec go i = function
+    | [] -> None
+    | step :: rest -> (
+        let opt = step k in
+        let ast = K.ast k and applied = K.applied_opts k in
+        match K.apply_opt k opt with
+        | Ok _ -> go (i + 1) rest
+        | Error msg ->
+            equal ~msg:"the kernel after a refusal" Uops.uop ast (K.ast k);
+            equal (list Kernel_opts.opt) applied (K.applied_opts k);
+            Some (i, msg))
+  in
+  go 0 steps
+
+(* Each case: its kernel, its steps and, on each target, the step refused and
+   why, [None] where every step applies. *)
+let workgroup_cases =
+  let all r = [ (sm_89, r); (gfx90a, r); (apple2, r) ] in
+  let wide r ~apple = [ (sm_89, r); (gfx90a, r); (apple2, apple) ] in
+  (* Apple2 has no tensor core. *)
+  let cored r = [ (sm_89, r); (gfx90a, r) ] in
+  [
+    ( "a group of 256 threads of a float sum",
+      reduction 4096,
+      [ grouped 256 ],
+      all None );
+    ( "two groups of 16 threads of a float sum",
+      reduction 4096,
+      [ grouped 16; grouped 16 ],
+      all None );
+    ( "a group of 1024 threads of a float sum",
+      reduction 4096,
+      [ grouped 1024 ],
+      wide (Some (0, partials_past)) ~apple:(Some (0, threads_past 512 1024)) );
+    ( "a group of 1024 threads of an int32 sum",
+      reduction ~dt:Int32 4096,
+      [ grouped 1024 ],
+      wide None ~apple:(Some (0, threads_past 512 1024)) );
+    ( "a group of 1024 threads of a float maximum",
+      reduction ~op:Op.Max 4096,
+      [ grouped 1024 ],
+      wide None ~apple:(Some (0, threads_past 512 1024)) );
+    ( "a group of 1024 threads of an int32 sum beside a float sum",
+      int_and_float_sums 1024,
+      [ grouped ~dt:Int32 1024 ],
+      wide (Some (0, partials_past)) ~apple:(Some (0, threads_past 512 1024)) );
+    ( "a group's axis of 256 padded to 768",
+      reduction 4096,
+      [ grouped 256; pad 256 768 ],
+      wide (Some (1, partials_past)) ~apple:(Some (1, threads_past 512 768)) );
+    ( "one of two group axes of 16 padded to 48",
+      reduction 4096,
+      [ grouped 16; grouped 16; pad 16 48 ],
+      wide (Some (2, partials_past)) ~apple:(Some (2, threads_past 512 768)) );
+    ( "an output's local axis of 2 padded to 3 beside a group of 256",
+      row_sums 64 4096,
+      [ grouped 256; across 2; pad 2 3 ],
+      wide None ~apple:(Some (2, threads_past 512 768)) );
+    ( "local splits of 32 and 16 threads",
+      copy_of 4096 4096,
+      [ across 32; across 16 ],
+      all None );
+    ( "local splits of 32 and 64 threads",
+      copy_of 4096 4096,
+      [ across 32; across 64 ],
+      wide
+        (Some (1, threads_past 1024 2048))
+        ~apple:(Some (1, threads_past 512 2048)) );
+    ( "a tensor core of 32 threads beside 32 local threads",
+      local_batched_product 32,
+      [ (fun _ -> tc) ],
+      cored None );
+    ( "a tensor core of 32 threads beside 64 local threads",
+      local_batched_product 64,
+      [ (fun _ -> tc) ],
+      cored (Some (0, threads_past 1024 2048)) );
+  ]
+
+let workgroups =
+  let on_targets (name, ast, steps, outcomes) =
+    List.map
+      (fun (t, outcome) -> (name ^ " on " ^ t, ast, steps, t, outcome))
+      outcomes
+  in
+  group "workgroups"
+    [
+      cases
+        "apply_opt keeps a workgroup's threads within its target's and a \
+         group's float sum within 256 partials, a pad's included"
+        ~id:(fun (name, _, _, _, _) -> name)
+        (List.concat_map on_targets workgroup_cases)
+        (fun (_, ast, steps, t, outcome) ->
+          let k = K.v ast (target_renderer t) in
+          K.convert_loop_to_global k;
+          equal (option (pair int string)) outcome (stepped k steps));
+      test "apply_opt refuses a pad of a group's axis past the shared memory"
+        (fun () ->
+          (* A group of 8 float32 threads takes 32 bytes of the renderer's 64,
+             padded to 24 threads 96. *)
+          let k = K.v (reduction 4096) (renderer "small_shared") in
+          K.convert_loop_to_global k;
+          let reason = "exceeds maximum shared memory size" in
+          let cut (i, msg) =
+            let n = min (String.length reason) (String.length msg) in
+            (i, String.sub msg 0 n)
+          in
+          equal
+            (option (pair int string))
+            (Some (1, reason))
+            (Option.map cut (stepped k [ grouped 8; pad 8 24 ])));
+      cases
+        "a group of an int32 sum splits the float sum beside it into its \
+         threads, unless one reads the other, the amount does not divide it or \
+         its buffer does not fit"
+        ~id:fst
+        (let on_sm_89 ast split = (ast, target_renderer sm_89, 256, split) in
+         [
+           ("apart", on_sm_89 (sums 1024) true);
+           ( "the float sum reads the int32 sum",
+             on_sm_89 (sums ~meeting:Reads_int 1024) false );
+           ( "the int32 sum reads the float sum",
+             on_sm_89 (sums ~meeting:Read_by_int 1024) false );
+           ("the float sum of 1000 values", on_sm_89 (sums ~m:1000 1024) false);
+           (* A group of 16 takes 64 bytes for the int32 sum's buffer, all of
+              the renderer's 64, and 128 with the float sum's. *)
+           ( "a float sum whose buffer exceeds the shared memory",
+             (sums 1024, renderer "small_shared", 16, false) );
+         ])
+        (fun (_, (ast, ren, amount, split)) ->
+          let k = K.v ast ren in
+          ignore (apply k (grouped ~dt:Int32 amount k));
+          let closing dt =
+            let r =
+              List.find (fun u -> Dtype.equal (Ops.dtype u) dt) (K.reduceops k)
+            in
+            List.tl (Ops.src r)
+          in
+          let threads dt =
+            List.filter (fun r -> Ops.axis_type r = Local) (closing dt)
+          in
+          equal (list axis_type)
+            (if split then [ Weak; Local ] else [ Weak ])
+            (List.map Ops.axis_type (closing Float32));
+          if split then equal (list Uops.uop) (threads Int32) (threads Float32));
+    ]
+
+(* Optimising keeps a kernel's writes
+
+   The interpreter evaluates neither a matrix multiply-accumulate, which a
    tensor core used in full makes, nor buffered values, loops or hardware
    indices. *)
 let evaluable c =
@@ -1012,32 +1314,28 @@ let evaluable c =
        (Ops.op_in_backward_slice_with_self ~calls:Skip (kernel c.kernel)
           [ Op.Stage; Op.Backedge; Op.Special ])
 
-let iterations c =
-  List.fold_left
-    (fun n r -> Bigint.mul n (size r))
-    Bigint.one
-    (K.rngs (scheduler c))
+(* matmul's writes take the interpreter 0.77 s and each of its 15 rows 0.75 to
+   1.08 s more (2^21 steps), double_reduce's 0.32 s and each of its 14 rows 0.31
+   to 0.43 s (2^20 steps), on fudge: their graphs are pinned by their goldens
+   alone. *)
+let unevaluated = [ "matmul"; "double_reduce" ]
 
-(* Kernels of more than 2^18 iterations are pinned by their goldens alone. *)
 let keeps_kernel_writes =
-  let evaluable = List.filter evaluable recorded_cases in
-  let within lo hi =
-    List.filter
-      (fun c ->
-        let n = iterations c in
-        Bigint.(of_int lo < n && n <= of_int hi))
-      evaluable
+  let rows name =
+    List.filter (fun c -> c.kernel = name && evaluable c) recorded_cases
   in
   let keeps c = keeps_writes (kernel c.kernel) (optimize c) in
   group "optimising keeps a kernel's writes"
-    [
-      cases "small kernels" ~id:(fun c -> c.name) (within 0 (1 lsl 12)) keeps;
-      slow
-      @@ cases "large kernels"
-           ~id:(fun c -> c.name)
-           (within (1 lsl 12) (1 lsl 18))
-           keeps;
-    ]
+    (List.filter_map
+       (fun name ->
+         match rows name with
+         | [] -> None
+         | _ when List.mem name unevaluated -> None
+         | rows ->
+             Some
+               (group name
+                  (List.map (fun c -> test c.name (fun () -> keeps c)) rows)))
+       recorded_kernels)
 
 (* The optimisation fuzzer: random optimisations of small kernels, each either
    refused, leaving the kernel as it was, or applied, keeping its writes. A
@@ -1104,305 +1402,343 @@ let fuzz (name, ren, opts) =
           equal Uops.uop ast (K.ast k);
           equal (list Kernel_opts.opt) applied (K.applied_opts k))
     opts;
+  let applied kind = List.exists kind (K.applied_opts k) in
   cover "an optimisation applies" (K.applied_opts k <> []);
   cover "a tensor core applies"
-    (List.exists (function Opt.Tc _ -> true | _ -> false) (K.applied_opts k));
+    (applied (function Opt.Tc _ -> true | _ -> false));
+  cover "a swap applies" (applied (function Opt.Swap _ -> true | _ -> false));
   keeps_writes (kernel name) (K.get_optimized_ast k)
 
+(* A tensor core applies to 3% of the drawn programs and a swap to 1.5%: one
+   example of each reaches its cover on every run. *)
 let fuzzer =
-  slow
-  @@ prop ~count:400
-       "each random optimisation is refused as a whole or keeps the kernel's \
-        writes"
-       fuzzed_program fuzz
+  prop ~count:400
+    ~examples:
+      [
+        ( "tc_metal_0",
+          "metal",
+          [ Opt.Tc { axis = 0; tc_select = -1; tc_opt = 0; use_tc = 2 } ] );
+        ("matmul_4x4", "metal", [ Opt.Swap { axis = 0; with_axis = 1 } ]);
+      ]
+    "each random optimisation is refused as a whole or keeps the kernel's \
+     writes"
+    fuzzed_program fuzz
 
-(* A scheduler's axis queries, between optimisations and copies, answer as
-   those of a fresh copy of it, which has computed nothing yet. *)
-let queries =
-  let sched = abstract "k" in
-  let kernels = [| "sum_rows_64"; "matmul_0"; "custom_gemm" |] in
-  let opt i =
-    let amount = List.nth [ 2; 4; 8 ] (i / 4 mod 3) in
-    split (i mod 4) amount (if i >= 12 then Opt.Local else Upcast)
-  in
-  let make i = K.v (kernel kernels.(i)) (renderer "metal") in
-  let fresh f k = f (K.copy k) in
-  let ok k o = Result.is_ok (K.apply_opt k o) in
-  let applies o k =
-    let r = ok k o in
-    cover "an optimisation applies" r;
-    r
-  in
-  let copy k =
-    cover "an optimised scheduler is copied" (K.applied_opts k <> []);
-    K.copy k
-  in
-  let shape k = repr_list sint (K.full_shape k) in
-  let ints = list int and uops = list Uops.uop in
-  let query name w f =
-    command name (sched ^-> returns w) (fresh f) f
-  in
-  stateful ~count:60 ~steps:12
-    "a scheduler's axes answer as a fresh copy's, whatever came before"
+let applying =
+  group "apply_opt"
     [
-      command "v"
-        (Gen.int_range 0 (Array.length kernels - 1) @-> makes sched)
-        make make;
-      command "copy" (sched ^-> makes sched) K.copy copy;
-      command "apply_opt"
-        (Gen.map opt (Gen.int_range 0 23) @-> sched ^-> returns bool)
-        (fun o k -> ok k o)
-        applies;
-      command "apply_opt"
-        (Gen.map opt (Gen.int_range 0 23) @-> sched ^-> returns bool)
-        (fun o k -> ok k o)
-        applies;
-      query "rngs" uops K.rngs;
-      query "full_shape" string shape;
-      query "reduce_ranges" uops K.reduce_ranges;
-      query "reduceops" uops K.reduceops;
-      query "reduce axes" ints (fun k -> K.axes_of ~reduce:true k []);
-      query "upcastable_dims" ints (fun k -> K.upcastable_dims k);
-      query "read_by_bounds" uops K.read_by_bounds;
-      query "upcast axes" ints (fun k -> K.axes_of k [ Upcast ]);
+      refusals;
+      range_types;
+      padding;
+      workgroups;
+      stays_flat;
+      keeps_kernel_writes;
+      fuzzer;
     ]
 
-(* Workgroups
+(* The optimised kernel *)
 
-   A workgroup's threads are its warp and local axes' product, which a target
-   launches up to a bound: a CUDA block's 1024 (the CUDA guide's "Maximum
-   number of threads per block"), a CDNA workgroup's 1024, an Apple
-   threadgroup's 512 before family 4 (Metal's feature set tables). A group
-   adds its threads' partials of a float sum into one running sum, which
-   [Nx_kernel]'s error bounds admit up to 256 terms. *)
-
-let sm_89 = "CUDA:CUDA:sm_89"
-let gfx90a = "AMD:HIP:gfx90a"
-let apple2 = "METAL:METAL:Apple2"
-
-let target_renderer t =
-  Cstyle.without_compiler (Result.get_ok (Helpers.Target.of_string t))
-
-(* [out[0] = op x[j]] over [n] values of [dt]. *)
-let reduction ?(dt = Dtype.Float32) ?(op = Op.Add) n =
-  let j = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let x = Shape.param ~shape:[ Int n ] 1 dt
-  and out = Shape.param ~shape:[ Int 1 ] 0 dt in
-  let r = Ops.reduce (Ops.load (Ops.index x [ j ]) []) op [ j ] in
-  Ops.sink ~kernel:(Ops.kernel_info ())
-    [ Ops.store (Ops.index out [ Ops.int 0 ]) r ]
-
-(* [out[i] = sum x[i * n + j]] over [m] rows of [n] float32. *)
-let row_sums m n =
-  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
-  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
-  let x = Shape.param ~shape:[ Int (m * n) ] 1 Float32
-  and out = Shape.param ~shape:[ Int m ] 0 Float32 in
-  let r =
-    Ops.reduce
-      (Ops.load (Ops.index x [ Ops.O.((i * Ops.int n) + j) ]) [])
-      Op.Add [ j ]
-  in
-  Ops.sink ~kernel:(Ops.kernel_info ())
-    [ Ops.end_ (Ops.store (Ops.index out [ i ]) r) [ i ] ]
-
-(* [out[i * n + j] = x[i * n + j]] over [m] by [n]. *)
-let copy_of m n =
-  let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
-  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
-  let at = Ops.O.((i * Ops.int n) + j) in
-  let x = Shape.param ~shape:[ Int (m * n) ] 1 Float32
-  and out = Shape.param ~shape:[ Int (m * n) ] 0 Float32 in
-  let st =
-    Ops.store (Ops.index out [ at ]) (Ops.load (Ops.index x [ at ]) [])
-  in
-  Ops.sink ~kernel:(Ops.kernel_info ()) [ Ops.end_ st [ i; j ] ]
-
-(* An int32 sum and a float32 sum of [n] values each, over two ranges: a
-   group of the first takes the second as a sibling. *)
-let int_and_float_sums n =
-  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ]
-  and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
-  let a = Shape.param ~shape:[ Int n ] 2 Int32
-  and b = Shape.param ~shape:[ Int n ] 3 Float32
-  and out0 = Shape.param ~shape:[ Int 1 ] 0 Int32
-  and out1 = Shape.param ~shape:[ Int 1 ] 1 Float32 in
-  let sum x r = Ops.reduce (Ops.load (Ops.index x [ r ]) []) Op.Add [ r ] in
-  Ops.sink ~kernel:(Ops.kernel_info ())
+let optimised_ast =
+  group "get_optimized_ast"
     [
-      Ops.store (Ops.index out0 [ Ops.int 0 ]) (sum a i);
-      Ops.store (Ops.index out1 [ Ops.int 0 ]) (sum b j);
+      test
+        "is the kernel with its optimisations listed, named name_override, \
+         optimised" (fun () ->
+          let k = sum_rows_64 () in
+          ignore (apply k upcast_4);
+          let expected =
+            Ops.replace (K.ast k)
+              ~arg:
+                (Kernel
+                   (Ops.kernel_info ~name:"fused" ~applied_opts:[ upcast_4 ]
+                      ~optimized:true ()))
+          in
+          equal Uops.uop expected (K.get_optimized_ast ~name_override:"fused" k));
     ]
 
-(* [out[l, i, j] = sum_k a[l, i, k] * b[l, k, j]] of float16 [a] and [b]
-   summed in float32, [l] a local axis of [threads] that both read, and [i],
-   [j] and [k] of 32: a core takes [i], [j] and [k], and its threads join
-   [l]'s. *)
-let local_batched_product threads =
-  let n = 32 in
-  let l = Ops.range ~axis_type:Local (Int threads) [ 0 ]
-  and i = Ops.range ~axis_type:Weak (Int n) [ 1 ]
-  and j = Ops.range ~axis_type:Weak (Int n) [ 2 ]
-  and k = Ops.range ~axis_type:Weak (Int n) [ 3 ] in
-  let at x y = Ops.O.((((l * Ops.int n) + x) * Ops.int n) + y) in
-  let size = threads * n * n in
-  let a = Shape.param ~shape:[ Int size ] 1 Float16
-  and b = Shape.param ~shape:[ Int size ] 2 Float16
-  and out = Shape.param ~shape:[ Int size ] 0 Float32 in
-  let load x idx = Ops.cast (Ops.load (Ops.index x [ idx ]) []) Float32 in
-  let r = Ops.reduce Ops.O.(load a (at i k) * load b (at k j)) Op.Add [ k ] in
-  Ops.sink ~kernel:(Ops.kernel_info ())
-    [ Ops.end_ (Ops.store (Ops.index out [ at i j ]) r) [ l; i; j ] ]
+let split_targets =
+  group "split_targets"
+    [
+      test "upcasts come from global, local and weak axes" (fun () ->
+          equal (list axis_type) [ Global; Local; Weak ]
+            (Postrange.split_targets Upcast));
+      test "locals come from global and weak axes" (fun () ->
+          equal (list axis_type) [ Global; Weak ]
+            (Postrange.split_targets Local));
+      test "globals come from global axes" (fun () ->
+          equal (list axis_type) [ Global ] (Postrange.split_targets Global));
+      (* gpudims gives the hardware's first axis to the global axis of the
+         greatest id: a split to a global axis makes its steps the launch's
+         first. *)
+      test "a split to a global axis numbers it after every other axis"
+        (fun () ->
+          let k = K.v (kernel "sum_rows_64") (renderer "cuda") in
+          K.convert_loop_to_global k;
+          let g = List.hd (K.axes_of ~reduce:false k [ Global ]) in
+          let others = List.map Ops.axis_id (K.rngs k) in
+          let made =
+            List.nth (require_ok (K.apply_opt k (split g 2 Global))) 1
+          in
+          equal axis_type Global (Ops.axis_type made);
+          List.iter
+            (fun id -> greater axis_id ~than:id (Ops.axis_id made))
+            others);
+    ]
 
-(* Steps: each is the optimisation it makes of the kernel it is given. *)
+let threads_fixed =
+  test
+    "threads_fixed holds a kernel with workgroup or register storage, a \
+     barrier, a matrix multiply-accumulate or custom code, and no other"
+    (fun () ->
+      equal (list string) fixing
+        (List.filter
+           (fun reason -> Postrange.threads_fixed (fixed_by reason))
+           (fixing @ [ "none" ])))
 
-(* A group of [n] threads of the first reduce axis, of the reduction of type
-   [dt] if given. *)
-let grouped ?dt n k =
-  let closes a =
-    let r = List.nth (K.rngs k) a in
-    List.exists
-      (fun u ->
-        List.memq r (List.tl (Ops.src u))
-        && Option.fold ~none:true ~some:(Dtype.equal (Ops.dtype u)) dt)
-      (K.reduceops k)
+let misses =
+  let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
+  and n = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
+  let out = Shape.param ~shape:[ Int 32 ] 0 Int32 in
+  let effects =
+    [
+      ( "a store whose index reads i and n",
+        Ops.store
+          (Ops.index out [ Ops.O.((i * Ops.int 8) + n) ])
+          (Ops.cast n Int32),
+        [] );
+      ( "a store whose value alone reads i",
+        Ops.store (Ops.index out [ Ops.int 0 ]) (Ops.cast i Int32),
+        [ i; n ] );
+      ("a call whose source reads i", opaque Body called_x i, [ n ]);
+    ]
   in
-  split (List.find closes (K.axes_of ~reduce:true k [ Weak ])) n Local
+  cases "misses holds the ranges an effect's index or sources do not read"
+    ~id:(fun (name, _, _) -> name)
+    effects
+    (fun (_, e, missed) ->
+      equal (list Uops.uop) missed
+        (List.filter (fun r -> Postrange.misses r e) [ i; n ]))
 
-let across n k = split (List.hd (K.axes_of ~reduce:false k [ Global ])) n Local
+(* Optimising *)
 
-(* A pad to a multiple of [n] of the first local axis of [s] threads. *)
-let pad s n k =
-  let sized a = List.nth (K.full_shape k) a = Ops.Int s in
-  Opt.Padto { axis = List.find sized (K.axes_of k [ Local ]); amount = n }
-
-let threads_past most n =
-  Printf.sprintf "a workgroup holds at most %d threads, not %d" most n
-
-let partials_past = "a group adds at most 256 partials into a sum"
-
-(* [stepped k steps] applies [steps] in order up to the first refused one,
-   and is its position and reason, checking that it leaves [k] as it was. *)
-let stepped k steps =
-  let rec go i = function
-    | [] -> None
-    | step :: rest -> (
-        let opt = step k in
-        let ast = K.ast k and applied = K.applied_opts k in
-        match K.apply_opt k opt with
-        | Ok _ -> go (i + 1) rest
-        | Error msg ->
-            equal ~msg:"the kernel after a refusal" Uops.uop ast (K.ast k);
-            equal (list Kernel_opts.opt) applied (K.applied_opts k);
-            Some (i, msg))
-  in
-  go 0 steps
-
-(* Each case: its kernel, its steps and, on each target, the step refused
-   and why, [None] where every step applies. *)
-let workgroup_cases =
-  let all r = [ (sm_89, r); (gfx90a, r); (apple2, r) ] in
-  let wide r ~apple = [ (sm_89, r); (gfx90a, r); (apple2, apple) ] in
-  (* Apple2 has no tensor core. *)
-  let cored r = [ (sm_89, r); (gfx90a, r) ] in
+let optimised =
   [
-    ( "a group of 256 threads of a float sum",
-      reduction 4096, [ grouped 256 ], all None );
-    ( "two groups of 16 threads of a float sum",
-      reduction 4096, [ grouped 16; grouped 16 ], all None );
-    ( "a group of 1024 threads of a float sum",
-      reduction 4096, [ grouped 1024 ],
-      wide (Some (0, partials_past)) ~apple:(Some (0, threads_past 512 1024)) );
-    ( "a group of 1024 threads of an int32 sum",
-      reduction ~dt:Int32 4096, [ grouped 1024 ],
-      wide None ~apple:(Some (0, threads_past 512 1024)) );
-    ( "a group of 1024 threads of a float maximum",
-      reduction ~op:Op.Max 4096, [ grouped 1024 ],
-      wide None ~apple:(Some (0, threads_past 512 1024)) );
-    ( "a group of 1024 threads of an int32 sum beside a float sum",
-      int_and_float_sums 1024, [ grouped ~dt:Int32 1024 ],
-      wide (Some (0, partials_past)) ~apple:(Some (0, threads_past 512 1024)) );
-    ( "a group's axis of 256 padded to 768",
-      reduction 4096, [ grouped 256; pad 256 768 ],
-      wide (Some (1, partials_past)) ~apple:(Some (1, threads_past 512 768)) );
-    ( "one of two group axes of 16 padded to 48",
-      reduction 4096, [ grouped 16; grouped 16; pad 16 48 ],
-      wide (Some (2, partials_past)) ~apple:(Some (2, threads_past 512 768)) );
-    ( "an output's local axis of 2 padded to 3 beside a group of 256",
-      row_sums 64 4096, [ grouped 256; across 2; pad 2 3 ],
-      wide None ~apple:(Some (2, threads_past 512 768)) );
-    ( "local splits of 32 and 16 threads",
-      copy_of 4096 4096, [ across 32; across 16 ], all None );
-    ( "local splits of 32 and 64 threads",
-      copy_of 4096 4096, [ across 32; across 64 ],
-      wide (Some (1, threads_past 1024 2048))
-        ~apple:(Some (1, threads_past 512 2048)) );
-    ( "a tensor core of 32 threads beside 32 local threads",
-      local_batched_product 32, [ (fun _ -> tc) ], cored None );
-    ( "a tensor core of 32 threads beside 64 local threads",
-      local_batched_product 64, [ (fun _ -> tc) ],
-      cored (Some (0, threads_past 1024 2048)) );
+    group "optimises each recorded kernel as its golden states"
+      (List.map
+         (fun c -> Golden.graph (c.name ^ ".golden") (fun () -> optimize c))
+         accepted);
+    cases
+      "raises Invalid_argument on a recorded kernel whose optimisation does \
+       not apply"
+      ~id:(fun c -> c.name)
+      (List.filter (fun c -> c.refused <> None) recorded_cases)
+      (fun c -> raises_invalid_arg (fun () -> optimize c));
   ]
 
-let workgroups =
-  let on_targets (name, ast, steps, outcomes) =
-    List.map (fun (t, outcome) -> (name ^ " on " ^ t, ast, steps, t, outcome))
-      outcomes
-  in
-  group "workgroups"
-    [
-      cases
-        "apply_opt keeps a workgroup's threads within its target's and a \
-         group's float sum within 256 partials, a pad's included"
-        ~id:(fun (name, _, _, _, _) -> name)
-        (List.concat_map on_targets workgroup_cases)
-        (fun (_, ast, steps, t, outcome) ->
-          let k = K.v ast (target_renderer t) in
-          K.convert_loop_to_global k;
-          equal (option (pair int string)) outcome (stepped k steps));
-      test "apply_opt refuses a pad of a group's axis past the shared memory"
-        (fun () ->
-          (* A group of 8 float32 threads takes 32 bytes of the renderer's
-             64, padded to 24 threads 96. *)
-          let k = K.v (reduction 4096) (renderer "small_shared") in
-          K.convert_loop_to_global k;
-          let reason = "exceeds maximum shared memory size" in
-          let cut (i, msg) =
-            let n = min (String.length reason) (String.length msg) in
-            (i, String.sub msg 0 n)
-          in
-          equal
-            (option (pair int string))
-            (Some (1, reason))
-            (Option.map cut (stepped k [ grouped 8; pad 8 24 ])));
-      test "a group of an int32 sum takes the float sum beside it" (fun () ->
-          let k = K.v (int_and_float_sums 1024) (target_renderer sm_89) in
-          ignore (apply k (grouped ~dt:Int32 256 k));
-          let local x = Ops.axis_type x = Local in
-          equal (list bool) [ true; true ]
-            (List.map
-               (fun r -> List.exists local (List.tl (Ops.src r)))
-               (K.reduceops k)));
-    ]
+let applied ast = (info ast).applied_opts
+let never_searched _ = fail "apply_opts searched a kernel it must not optimise"
+
+let upcasting k =
+  ignore (apply k upcast_4);
+  k
+
+let without_opts ast =
+  Ops.replace ~arg:(Kernel { (info ast) with opts_to_apply = None }) ast
+
+(* [C[cell] += 1] over [ranges], [C] of [n] int32, under [gate] if given. *)
+let counter ?gate n cell ranges =
+  let c = Shape.param ~shape:[ Int n ] 0 Int32 in
+  let at = Ops.index c [ cell ] in
+  Ops.sink ~kernel:(Ops.kernel_info ())
+    [ Ops.end_ (Ops.store ?gate at Ops.O.(at + Ops.int ~dtype:Int32 1)) ranges ]
+
+(* The two stores postrange.mli names: [C[r // 8] += 1] over [r < 16], and [C[r
+   + s] += 1] over [r, s < 4], of ranges of [axis_type]. *)
+let counters axis_type =
+  let r16 = Ops.range ~axis_type (Int 16) [ 0 ]
+  and r = Ops.range ~axis_type (Int 4) [ 0 ]
+  and s = Ops.range ~axis_type (Int 4) [ 1 ] in
+  [
+    ("C[r // 8] += 1", counter 2 Ops.O.(r16 // Ops.int 8) [ r16 ]);
+    ("C[r + s] += 1", counter 7 Ops.O.(r + s) [ r; s ]);
+  ]
+
+(* [C[r // 8] += 1] over a weak [r < 16] where the promise counts no point:
+   gated to [r % 8 = 0], and inside a weak [j] of no trip. *)
+let uncounted =
+  let r = Ops.range ~axis_type:Weak (Int 16) [ 0 ]
+  and j = Ops.range ~axis_type:Weak (Int 0) [ 1 ] in
+  let cell = Ops.O.(r // Ops.int 8) in
+  let first = Ops.eq Ops.O.(r % Ops.int 8) (Ops.int 0) in
+  [
+    ("C[r // 8] += 1 where r % 8 = 0", counter ~gate:first 2 cell [ r ]);
+    ("C[r // 8 + j] += 1 over j of no trip", counter 2 Ops.O.(cell + j) [ r; j ]);
+  ]
+
+let dispatch =
+  let cpu = renderer "cpu" and metal = renderer "metal" in
+  group "apply_opts"
+    (optimised
+    @ [
+        test "returns a kernel already optimised as it is" (fun () ->
+            let optimized = Golden.sink "matmul_0.golden" in
+            equal Uops.uop optimized
+              (Postrange.apply_opts ~hand_coded:never_hand_coded optimized metal));
+        test
+          "hand-optimises a kernel that asks for nothing, after making its \
+           weak outputs global" (fun () ->
+            let calls = ref 0 in
+            let hand_coded k =
+              incr calls;
+              equal (list axis_type) [ Global; Weak ] (K.axis_types k);
+              equal (list int) [ 1 ] (K.axes_of ~reduce:true k []);
+              upcasting k
+            in
+            let ast =
+              Postrange.apply_opts ~hand_coded (kernel "sum_rows_64") metal
+            in
+            equal int 1 !calls;
+            equal (list Kernel_opts.opt) [ upcast_4 ] (applied ast));
+        test "hand-optimises a kernel without kernel information" (fun () ->
+            let bare = Ops.replace ~arg:No_arg (kernel "sum_rows_64") in
+            let ast =
+              recorded (fun () ->
+                  Postrange.apply_opts ~hand_coded:upcasting bare cpu)
+            in
+            equal (list Kernel_opts.opt) [ upcast_4 ] (applied ast);
+            equal string "r_16_4_64" (info ast).name);
+        test "searches with beam instead, when given" (fun () ->
+            let ast =
+              Postrange.apply_opts ~beam:upcasting ~hand_coded:never_hand_coded
+                (kernel "sum_rows_64") cpu
+            in
+            equal (list Kernel_opts.opt) [ upcast_4 ] (applied ast));
+        test
+          "hand-optimises instead of searching a kernel whose loop's bound \
+           reads memory" (fun () ->
+            let calls = ref 0 in
+            let hand_coded k =
+              incr calls;
+              k
+            in
+            let _, _, ast = bounded_rows () in
+            ignore
+              (Postrange.apply_opts ~beam:never_searched ~hand_coded ast cpu);
+            equal int 1 !calls);
+        test "applies nothing to a kernel that asks for no optimisation"
+          (fun () ->
+            let ast =
+              Postrange.apply_opts ~beam:never_searched
+                ~hand_coded:never_hand_coded
+                (asking [] (kernel "sum_rows_64"))
+                cpu
+            in
+            equal (list Kernel_opts.opt) [] (applied ast));
+        test "noopt turns the hand-coded optimisations off" (fun () ->
+            let ast =
+              Setting.context
+                [ B (Setting.noopt, true) ]
+                (fun () ->
+                  Postrange.apply_opts ~hand_coded:never_hand_coded
+                    (kernel "sum_rows_64") cpu)
+            in
+            equal (list Kernel_opts.opt) [] (applied ast));
+        test "does not hand-optimise a kernel optimised before" (fun () ->
+            let ast = kernel "sum_rows_64" in
+            let optimized =
+              Ops.replace
+                ~arg:(Kernel { (info ast) with applied_opts = [ upcast_4 ] })
+                ast
+            in
+            equal (list Kernel_opts.opt) [ upcast_4 ]
+              (applied
+                 (Postrange.apply_opts ~hand_coded:never_hand_coded optimized
+                    cpu)));
+        test "does not hand-optimise a kernel that buffers values" (fun () ->
+            let ast = without_opts (kernel "stage_then_reduce") in
+            equal (list Kernel_opts.opt) []
+              (applied
+                 (Postrange.apply_opts ~hand_coded:never_hand_coded ast metal)));
+        cases
+          "neither hand-optimises nor searches a kernel whose builder fixed \
+           its threads with"
+          ~id:Fun.id fixing (fun reason ->
+            let k = fixed_by reason and cuda = renderer "cuda" in
+            let optimise ?beam () =
+              applied
+                (Postrange.apply_opts ?beam ~hand_coded:never_hand_coded k cuda)
+            in
+            equal (list Kernel_opts.opt) [] (optimise ());
+            equal (list Kernel_opts.opt) [] (optimise ~beam:never_searched ()));
+        test "hand-optimises the same kernel through none of them" (fun () ->
+            let calls = ref 0 in
+            let hand_coded k =
+              incr calls;
+              k
+            in
+            let cuda = renderer "cuda" in
+            ignore (Postrange.apply_opts ~hand_coded (fixed_by "none") cuda);
+            equal int 1 !calls);
+        test
+          "applies the optimisations a kernel whose builder fixed its threads \
+           asks for" (fun () ->
+            let c = case "loop_counter_upcast" in
+            equal (list Kernel_opts.opt) c.opts (applied (optimize c)));
+        test "keeps a kernel's name other than test" (fun () ->
+            let ast = kernel "sum_rows_64" in
+            let named =
+              Ops.replace
+                ~arg:
+                  (Kernel
+                     { (info ast) with name = "fused"; opts_to_apply = Some [] })
+                ast
+            in
+            equal string "fused"
+              (info
+                 (Postrange.apply_opts ~hand_coded:never_hand_coded named cpu))
+                .name);
+        test "names a kernel named test after its reduction and its axes"
+          (fun () ->
+            let ast =
+              recorded (fun () ->
+                  Postrange.apply_opts ~hand_coded:never_hand_coded
+                    (asking [] (kernel "sum_rows_64"))
+                    cpu)
+            in
+            equal string "r_64_64" (info ast).name);
+        cases
+          "raises Invalid_argument on a store that breaks a weak range's \
+           promise"
+          ~id:fst (counters Weak) (fun (_, ast) ->
+            raises_invalid_arg (fun () ->
+                Postrange.apply_opts ~hand_coded:Fun.id ast cpu));
+        cases
+          "optimises a weak store whose gate reads its ranges or that never \
+           runs"
+          ~id:fst uncounted (fun (_, ast) ->
+            equal (list Kernel_opts.opt) []
+              (applied (Postrange.apply_opts ~hand_coded:Fun.id ast cpu)));
+        cases "optimises the same stores along serial loops" ~id:fst
+          (counters Loop) (fun (_, ast) ->
+            equal (list Kernel_opts.opt) []
+              (applied (Postrange.apply_opts ~hand_coded:Fun.id ast cpu)));
+      ])
 
 let () =
   exit
     (Windtrap.run "Tolk.Postrange"
        [
-         optimised;
-         refusals;
-         axes;
-         colors;
          schedulers;
+         axes;
          bounded_loops;
-         range_types;
          called_axes;
-         padding;
-         queries;
+         rewriting;
+         converting;
          shifts;
+         applying;
+         optimised_ast;
          split_targets;
+         threads_fixed;
+         misses;
          dispatch;
-         keeps_kernel_writes;
-         workgroups;
-         fuzzer;
        ])

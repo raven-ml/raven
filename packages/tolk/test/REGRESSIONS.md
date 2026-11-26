@@ -908,18 +908,19 @@ below. A kernel golden is the sink that compiling a real kernel hands to
 (`renderers.golden`: CPU, Metal, CUDA sm_89 and AMD gfx1100, the last three
 with their tensor cores), the optimisations asked for, the settings, and
 tinygrad's outcome. An accepted case's graph golden is what `apply_opts`
-returns (`PR › apply_opts optimises a kernel as recorded`). A refused
-case also checks that the refused optimisation leaves the scheduler as it
-was (`PR › a refused optimisation leaves the scheduler as it was`), and
-`axes.golden` is the scheduler's view after the optimisations: every axis
-query, the coloured shape, and the axes the last one made (`PR › the
-scheduler's axes after optimising are as recorded`). tinygrad's runtime tests
-compare the outputs of a kernel run with and without the optimisations. Here
-the interpreter compares the writes, before and after, of every accepted
-case up to 2^18 iterations that it can evaluate (`PR › optimising keeps a
-kernel's writes`, slow above 2^12). The slow fuzzer applies 400 random
-sequences to ten small kernels (`PR › each random optimisation is refused as
-a whole or keeps the kernel's writes`).
+returns (`PR › apply_opts › optimises each recorded kernel as its golden
+states`). A refused case also checks that the refused optimisation leaves the
+scheduler as it was (`PR › apply_opt › a refused optimisation leaves the
+scheduler as it was`), and `axes.golden` is the scheduler's view after the
+optimisations: every axis query, the coloured shape, and the axes the last one
+made (`PR › axes › the axis queries after each recorded case's optimisations
+answer as its golden states`). tinygrad's runtime tests compare the outputs of
+a kernel run with and without the optimisations. Here the interpreter compares
+the writes, before and after, of every accepted case it can evaluate but those
+of matmul and double_reduce, a group per kernel and a test per case (`PR ›
+apply_opt › optimising keeps a kernel's writes`). The fuzzer applies 400
+random sequences to ten small kernels (`PR › apply_opt › each random
+optimisation is refused as a whole or keeps the kernel's writes`).
 
 Cases are named in the table below by their `cases.golden` row. tinygrad's
 `Tensor.rand(...).realize()` inputs become `Tensor.empty`, which schedules
@@ -941,7 +942,7 @@ the same kernels.
 | tinygrad: `runtime/test_kernel_opts.py::test_padto_unindexed_reduce`, `test_padto_reduce_identity`, `test_padto_masked_reduce` | | `padto_unindexed_*`, `padto_twice`, `padto_all`, `padto_masked_*`, `padto_prefix_masked_sum` |
 | tinygrad: `runtime/test_kernel_opts.py::test_padto_cmpeq_sum` | a padded sum of an equality counts no padding lane, where both sides read 0 | dropped: a device run; the pad gates its loads as `padto_*` record |
 | tinygrad: `runtime/test_kernel_opts.py::test_padto_arg` | a multiple of at most 1 | `padto_arg_0` to `_2` |
-| tinygrad: `runtime/test_kernel_opts.py::test_color_shapes_with_local` | the colour of each axis | `color_shapes_*`; `PR › the shape and name of a kernel are coloured by the roles of its axes › colors.golden` |
+| tinygrad: `runtime/test_kernel_opts.py::test_color_shapes_with_local` | the colour of each axis | `color_shapes_*`; `PR › axes › colored_shape colours each axis by its role, and get_optimized_ast's name holds no colour › colors.golden` |
 | tinygrad: `runtime/test_kernel_opts.py::test_arange_opts`, `test_top_split_non_reduce_axis`, `test_double_sum_group` | | `arange_local*`, `top_split_upcast`, `double_sum_*` (a group inside a serial reduction, D89; `double_sum_unroll_group` and `double_sum_unrolled_group`, inside an unrolled one, refused) |
 | tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores`, `test_tensor_cores_codegen` | each tensor core of each renderer, on its own dimensions | `tc_<renderer>_<n>_basic` for every tensor core; the rendered instructions are the renderers' (L5) |
 | tinygrad: `runtime/test_tensor_cores.py::test_tensor_cores_padded_uops`, `test_tensor_cores_padded` | a pad only from `tc_opt=2`, never a pad of more than four times the work | `tc_<renderer>_0_padded_*`, `_small_n`, `_small_m`, `_small_k`, on each renderer's first tensor core |
@@ -960,7 +961,7 @@ the same kernels.
 | tinygrad: `null/test_postrange.py::TestReductionAxes::test_upcast_limits_follow_reduction_role` | 16 lanes of an output axis, 32 of a reduce axis | `upcast_16`, `upcast_over_16`, `unroll_32`, `unroll_over_32` |
 | tinygrad: `null/test_postrange.py::TestReductionAxes::test_group_shared_memory_excludes_reduction_upcasts` | a group's shared memory counts the output's lanes, not the reduction's | `group_beside_unrolled_reduce` on a renderer of 16 shared bytes |
 | tinygrad: `null/test_postrange.py::TestReductionAxes::test_nested_reduction_group_refused` | a group inside another reduction is refused | `double_sum_unrolled_group` (refused); inside a serial one tolk groups (D89): `double_sum_group`, `double_sum_group_twice` |
-| tinygrad: `null/test_postrange.py::TestReductionAxes::test_execute_upcast_reduction` | an output and a reduce axis upcast compute the sums | `PR › optimising keeps a kernel's writes` (`upcast_both_roles` among them) |
+| tinygrad: `null/test_postrange.py::TestReductionAxes::test_execute_upcast_reduction` | an output and a reduce axis upcast compute the sums | `PR › apply_opt › optimising keeps a kernel's writes` (`upcast_both_roles` among them) |
 | tinygrad: `runtime/test_custom_kernel.py::test_local_reduce` | reduced local and warp axes | `local_sum_axes`, `warp_sum_axes` (`axes.golden`) |
 | tinygrad: `runtime/test_custom_kernel.py::test_split_range_id_free_of_loop` | a split's new axis takes an identity after a loop's | `loop_counter_upcast` (`made`: `2:2:UPCAST`) |
 | tinygrad: `runtime/test_custom_kernel.py::test_stage_then_reduce` | weak axes outside a buffered value stay weak | `stage_then_reduce_globals`, `stage_outside_an_output_globals` |
@@ -1160,7 +1161,7 @@ engine (`support/run.ml`), which compiles each kernel with rig's host entry
 | tinygrad: `runtime/test_effect.py::TestEffectOrder::test_range_merge_keeps_reduce_order`, `test_range_merge_keeps_loop_order`; `runtime/test_custom_kernel.py::TestCallInKernel::test_reduce_over_call_keeps_loop_order` | merged ranges keep the order a reduction with effects, or an end, loops in | `CG › effects run as often as written › a reduction whose value stores loops in its ranges' order`, `› a reduction over a call loops in its ranges' order`, `› an end's loops nest by axis, whatever order it lists them in` |
 | tinygrad: `runtime/test_effect.py::TestEffectFrequency::test_range_merge_keeps_after_domain`, `test_range_merge_keeps_index_domain`, `test_range_merge_then_shrink`; `runtime/test_custom_kernel.py::TestCustomKernel::test_range_merge_keeps_inner_reduce` | two ranges merge only where every effect runs as often as before | `CG › effects run as often as written › a store ordered after a range runs once per step` (3 rows), `› a store indexed by one of two merged ranges counts its own` (2 rows), `› a merged range shrinks once`, `› a reduction closing one range keeps it apart from the others` |
 | tinygrad: `runtime/test_effect.py::TestEffectFrequency::test_padto_gates_store` | a padded range's padding stores nothing: a store ordered after the range, one read before it is stored, and a register counted by a loop | `CG › weak ranges` (the padded counters); `CG › hand-written kernels on the host › a padded range's padding stores nothing` (2 rows) |
-| tinygrad: `runtime/test_effect.py::TestEffectFrequency::test_padto_refuses_ungatable` | a pad of an axis custom code or a store of a whole buffer runs along is refused | `Postrange › axes a call or custom code reads › apply_opt refuses a pad of an axis its sources read` (the statement's row); `Postrange › padding › apply_opt refuses a pad of an axis a whole store runs along` |
+| tinygrad: `runtime/test_effect.py::TestEffectFrequency::test_padto_refuses_ungatable` | a pad of an axis custom code or a store of a whole buffer runs along is refused | `Postrange › axes a call or custom code reads › apply_opt refuses a pad of an axis its sources read` (the statement's row); `Postrange › apply_opt › padding › a pad of an axis a whole store runs along is refused` |
 | tinygrad: `runtime/test_effect.py::TestEffectOrder::test_snapshot_before_overwrite`, `test_snapshot_before_loop_bound` | a loop that waits on a load, through its ranges or its bound, stores after the load | `CG › hand-written kernels on the host › a loop waiting on a load stores after it`, `› a loop whose bound waits on a load stores after it` |
 | tinygrad: `runtime/test_effect.py::TestEffectRetention::test_store_before_empty_loop` | a store ordered before a loop of no trip runs | `CG › hand-written kernels on the host › a store before a loop of no trip runs` |
 | tinygrad: `runtime/test_custom_kernel.py::TestCustomKernel::test_reduce_as_index`, `test_reduce_over_singleton_range` | a sum read as an index, and a sum over a range of one trip | `CG › hand-written kernels on the host › a sum is the index of a load`, `› a sum over a range of one trip is its source` |
