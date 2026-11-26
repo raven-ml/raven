@@ -9596,11 +9596,12 @@ let pp_looped ppf c =
 (* Up to 3 axes of up to 2^34 elements in all, broadcast, under the library's
    budget or, up to 2^26 elements, a smaller one, past a group's least work for
    some; and sums of rows of 2 to 64 groups under the least budget they plan
-   under. Some pad their first load, some hold more values than a launch holds,
-   so that they run in parts, and some scans' results step by one along the
-   slice, which a chunk's 16 threads scan, their last axis then of at most 2^16
-   elements. A seventh are maps of 130 values held, of up to 2^18 elements under
-   the library's budget, which plan, so that every run reaches one in parts. *)
+   under. Some pad their first load, some of up to 2^26 elements hold more
+   values than a launch holds, so that they run in parts, and some scans'
+   results step by one along the slice, which a chunk's 16 threads scan, their
+   last axis then of at most 2^16 elements. A seventh are maps of 130 values
+   held, of up to 2^18 elements under the library's budget, which plan, so that
+   every run reaches one in parts. *)
 let looped =
   let open Gen in
   let held =
@@ -9667,9 +9668,15 @@ let looped =
     and+ lheld = frequency [ (3, constant false); (1, constant true) ]
     and+ lstep = bool in
     (* A budget of 2e-5 s splits 2^34 elements of a costly kind into some 10^6
-       launches, each holding its parameters. *)
+       launches, each holding its parameters. A program of 130 values held takes
+       some 2 * 10^5 launches of the library's budget at 2^34 elements, so a
+       draw holds them only up to 2^26 elements, and up to 2^16 under a smaller
+       budget: some 2000 launches at most. *)
     let n = Array.fold_left ( * ) 1 lshape in
-    let lbudget = if n > 1 lsl 26 then Library else lbudget in
+    let lheld = lheld && n <= 1 lsl 26 in
+    let lbudget =
+      if n > 1 lsl 26 || (lheld && n > 1 lsl 16) then Library else lbudget
+    in
     let lstep = lstep && family = 2 in
     let lshape =
       if not lstep then lshape
