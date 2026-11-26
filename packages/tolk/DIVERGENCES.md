@@ -298,9 +298,10 @@ a source (`uop/upat.py` `_get_clause`).
   with `DISK` is a disk, as tinygrad reserves it and rig names its disk
   device (`Ops.on_disk`, `is_disk_device`, `copy_to_device`, `clone`).
 - **Reason:** (c).
-- **Pinned by:** for targets, `Tolk.Device › renderer takes a device's
-  name as it is` and `Tolk.Device › renderer › picks a device's renderer as
-  tinygrad does`; for the disk, `Tolk.Ops › on_disk › is true of a node on a
+- **Pinned by:** for targets, `Tolk.Device › renderer › raises on a name
+  that is no device, naming it` and `Tolk.Device › renderer › is each
+  target's renderer or error as its golden states › renderers.golden`; for
+  the disk, `Tolk.Ops › on_disk › is true of a node on a
   disk device`, `Tolk.Ops › copy_to_device › raises for a disk or a weak
   type` and `Tolk.Shape › storage › clone raises for a disk, named in any
   case`.
@@ -342,8 +343,8 @@ stamps nothing (D146).
   value put`, `Tolk.Helpers › Diskcache › behaves as a table of entries per
   table`, `› a put and a get on another domain come before or after a
   clear`, `› a put and a get in another process come before or after a
-  clear` and `Tolk.Helpers › Diskcache on two domains › behaves as a table
-  of entries, whatever the order of the calls`, which run with `CACHEDB`
+  clear` and `Tolk.Helpers › Diskcache › behaves as a table of entries on
+  two domains, whatever the order of the calls`, which run with `CACHEDB`
   set, as dune runs them, and `Tolk.Graph › cached › an entry
   that does not read is made anew`.
 
@@ -2645,9 +2646,9 @@ gate read a set; merged into D93.
   its arch` and `› gives eager's bits`; `Tolk_engine › target › the host
   compiles C for Clang at its arch, tuned for its own processor, …`;
   `Tolk.Compiler_cpu › half conversions`;
-  `Tolk.Device › renderer › picks a device's renderer as tinygrad does`
-  (each row renders for the target tinygrad's `DEV` gives the device) and
-  `renders for the target it is given`.
+  `Tolk.Device › renderer › is each target's renderer or error as its golden
+  states › renderers.golden` (each row renders for the target tinygrad's
+  `DEV` gives the device) and `is made for the target it is given`.
 
 ## D96. Withdrawn
 
@@ -3160,13 +3161,13 @@ held only on another machine is no reason.
   schedule tinygrad makes can run.
 - **Pinned by:** the Engine suite: `link and run › a loop runs its call while
   its flag holds, at most its trips`, `› a loop of one trip passes its call the
-  trip as a scalar argument`, and `Tolk.Shape › symbolic › ordering › an end
-  drops the ranges that became constants`, `› a loop's flag that views wider
-  storage is refused`, `› a planned buffer a loop writes is not placed over
-  one it leaves`, `› a loop's planned flag is not placed under a buffer before
-  it`, `› a back edge whose flag is bound storage reads that storage` and
-  `GPUs › Metal › a loop runs its call while its flag holds, at most its
-  trips`; rune's `rune jit › constructs › an iterate stops at the program's
+  trip as a scalar argument`, `› a loop's flag that views wider storage is
+  refused`, `› a planned buffer a loop writes is not placed over one it
+  leaves`, `› a loop's planned flag is not placed under a buffer before it`,
+  `› a back edge whose flag is bound storage reads that storage` and `GPUs ›
+  Metal › a loop runs its call while its flag holds, at most its trips`;
+  `Tolk.Shape › symbolic › ordering › an end drops the ranges that became
+  constants`; rune's `rune jit › constructs › an iterate stops at the program's
   first failure` and the `rune iterate` suite.
 
 ## D124. A search times no compilation
@@ -3702,7 +3703,7 @@ driver signals its own (D146).
   by a comparison of integers takes each lane's arm` (every table and case), `› a weak constant stored into four
   lanes of half on the host converts them` and `multiply-adds` (every test);
   `Tolk.Uop_weak › pm_commit_weak › a cast of a stack of weak constants
-  commits them at its type, signalling NaN bits kept`; rune's `Lower › padded
+  commits each at the cast's type`; rune's `Lower › padded
   loads give eager's bits` (a complex128 signalling NaN fill); rune's `rune
   jit › classes › a uint4 sort along the last axis of every other row and
   column, flipped, gives eager's codes` and `› nx.quant's decodes compile`;
@@ -3976,8 +3977,9 @@ supports Windows: `Cstyle.clang_lang` keeps the empty `abi` and plain
   of the tables`, `› a put replaces an entry that a read holds open`, `› clear
   keeps another process's write in progress`, `› processes putting in turn
   keep the cache within cachesize`, `› a cachesize of 0 keeps every entry` and
-  `› a negative cachesize is refused`; `Tolk.Helpers › Diskcache on two
-  domains › behaves as a table of entries, whatever the order of the calls`.
+  `› a put under a negative cachesize raises Invalid_argument`;
+  `Tolk.Helpers › Diskcache › behaves as a table of entries on two domains,
+  whatever the order of the calls`.
 
 ## D154. A maximum over a range whose size may be 0 is its identity
 
