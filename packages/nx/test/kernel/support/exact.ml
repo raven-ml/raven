@@ -74,10 +74,12 @@ let exact_div (ar, ai) (br, bi) =
   ( dd_div (dd_add (two_prod ar br) (two_prod ai bi)) den,
     dd_div (dd_add (two_prod ai br) (dd_neg (two_prod ar bi))) den )
 
-(* |z' - z| / |z| in units of [u]. *)
+(* |z' - z| / |z| in units of [u], infinite where a part of either is NaN, so
+   that no bound passes a NaN. *)
 let normwise u (re, im) ((zr, _) as r, ((zi, _) as i)) =
   let d x z = fst (dd_add (x, 0.) (dd_neg z)) in
-  Float.hypot (d re r) (d im i) /. Float.hypot zr zi /. u
+  if List.exists Float.is_nan [ re; im; zr; zi ] then Float.infinity
+  else Float.hypot (d re r) (d im i) /. Float.hypot zr zi /. u
 
 let round_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 

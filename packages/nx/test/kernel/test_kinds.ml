@@ -908,6 +908,20 @@ let test_complex_mul =
       at_most float_exact ~than:2. ~msg:"c64"
         (normwise 0x1p-24 (c64_call "mul" [ a; b ]) (exact_mul a b)))
 
+(* A result with a NaN part, or a reference with one, is past every complex
+   bound. *)
+let test_normwise_nan =
+  let want = exact_mul (1.5, -0.25) (0.75, 2.) in
+  cases "a NaN part is past every normwise bound"
+    ~id:(fun (g, _) -> strf "%h %h" (fst g) (snd g))
+    [
+      ((nan, nan), want);
+      ((nan, 1.625), want);
+      ((1.625, nan), want);
+      ((1.625, 2.8125), ((nan, 0.), (2.8125, 0.)));
+    ]
+    (fun (g, want) -> equal float_exact inf (normwise 0x1p-53 g want))
+
 let test_complex_fdiv =
   prop "fdiv is within 4u" ~count:20000
     Gen.(pair parts parts)
@@ -1990,7 +2004,12 @@ let () =
             [ test_float_compare; test_complex_compare; test_complex_maximum ];
           group "results" [ test_annex_f; test_quiet ];
           group "complex numbers"
-            ([ test_complex_parts; test_complex_mul; test_complex_fdiv ]
+            ([
+               test_complex_parts;
+               test_complex_mul;
+               test_normwise_nan;
+               test_complex_fdiv;
+             ]
             @ test_complex_subnormal
             @ [
                 test_complex_large;
