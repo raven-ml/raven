@@ -3,14 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Polled loads "code:N": N bytes of code in its memory, its one function "main"
-   at their start. *)
+(* Polled loads "code:N": N bytes of code ('c' each) in its memory, its function
+   "main" at their start; and "functions", which it places nowhere. Its "fill"
+   reads 16 bytes of parameters, its "copy" 24, its "main" states none, and each
+   runs at most 1024 threads per group (rig_support.mli). *)
 
 open Windtrap
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module Image = Rig.Image
-module Prof = Rig.Profile
 module P = Rig_support.Polled
 module Support = Rig_support
 
@@ -18,131 +19,90 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
   Rig.submit ?waits s ~buffers ~args
 
 let count call p = List.length (List.filter (( = ) call) (P.log p))
-
-let load d binary =
-  require_ok ~pp:Format.pp_print_string (Image.load d binary)
-
+let load d binary = require_ok ~pp:Format.pp_print_string (Image.load d binary)
+let fn image f = require_some (Image.resolve image f)
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
+let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
 
-let placement_name (copies, host_visible) =
-  Printf.sprintf "copies=%b host_visible=%b" copies host_visible
-
-let test_load (copies, host_visible) =
-  let name = "image:load-" ^ placement_name (copies, host_visible) in
-  let d, pd = P.open_ ~copies ~host_visible name in
-  let previous = submit (Sub.make d [||]) in
-  if copies || host_visible then begin
-    let p = load d "code:64" in
-    (* A copy takes a value after the previous work's, and the load returns
-       without waiting for either; the host writes the code once the previous
-       work completed. Work after the load sees the code. *)
-    if copies then begin
-      less ~msg:"the copy's value follows the previous work's" int
-        ~than:(Rig.submitted d) (Rig.Point.value previous);
-      less ~msg:"the load returns before the copy ran" int
-        ~than:(Rig.submitted d) (Rig.signaled d)
-    end
-    else
-      at_least ~msg:"previous work completed" int
-        ~than:(Rig.Point.value previous) (Rig.signaled d);
-    Rig.Point.wait (submit (Sub.make d [||]));
-    equal ~msg:"no work left queued" int 0 (P.queued pd);
-    equal bool true (Rig.equal d (Image.device p));
-    is_none (Image.resolve p "other");
-    let main = Image.entry (require_some (Image.resolve p "main")) in
-    equal ~msg:"the code placed" int 0x6363636363636363 (Support.load main)
-  end
-  else begin
-    raises_match Exn.invalid_arg (fun () -> Image.load d "code:64");
-    let later = submit (Sub.make d [||]) in
-    Rig.Point.wait later;
-    equal ~msg:"later work completed" int (Rig.Point.value later)
-      (Rig.signaled d);
-    equal ~msg:"no work left queued" int 0 (P.queued pd)
-  end
-
-let test_refused () =
-  let d, _ = P.open_ "image:refused" in
-  let base = Rig.submitted d in
-  match Image.load d "not code" with
-  | Ok _ -> failf "a refused binary loaded"
-  | Error why ->
-      equal bool true (String.starts_with ~prefix:"image:refused" why);
-      equal int (base + 1) (Rig.Point.value (submit (Sub.make d [||])))
-
-let test_no_code () =
-  raises_match Exn.invalid_arg (fun () ->
-      Image.load (Rig_support.io "image:no-code") "code:64")
-
-(* An unreachable image is unloaded once the work its device was handed until
-   then is done, and its code's memory then returns to its device. *)
-let test_unload () =
-  let d, pd = P.open_ "image:unload" in
-  let code =
-    (fun () ->
-      let p = load d "code:64" in
-      ignore (submit (Sub.make d [||]));
-      Image.entry (require_some (Image.resolve p "main")))
-      ()
+(* Images are told apart by identity. One prints as its device and the entry of
+   its [main], which every Polled binary has and each load places anew ("Each
+   call loads [binary] again"), so two images of one device print apart. *)
+let image =
+  let pp ppf i =
+    let main =
+      match Image.resolve i "main" with
+      | Some f -> Printf.sprintf ", main at %#x" (Image.entry f)
+      | None | (exception _) -> ""
+    in
+    Format.fprintf ppf "an image on %a%s" Rig.pp (Image.device i) main
   in
-  let drain () =
-    Gc.full_major ();
-    Gc.full_major ();
-    ignore (B.create d 0)
-  in
-  drain ();
-  equal ~msg:"while its work is unrun" int 0 (count "unload" pd);
-  ignore (P.run pd);
-  drain ();
-  equal ~msg:"once it ran" int 1 (count "unload" pd);
-  Rig.free_cache d;
-  equal ~msg:"its code's memory" bool true
-    (List.exists (fun (a, _) -> a = code) (P.frees pd))
+  Testable.make ~equal:( == ) ~pp
 
-(* An entry keeps its image loaded until it returns: a collection and a drain at
-   the start of the driver's entry call, the image's last use, unload
-   nothing. *)
-let test_entry_keeps () =
-  let d, pd = P.open_ "image:entry-keeps" in
-  let unloads = ref (-1) in
-  P.before pd "entry" (fun () ->
-      Gc.full_major ();
-      Gc.full_major ();
-      ignore (B.create d 0);
-      unloads := count "unload" pd);
-  ignore (Image.resolve (load d "code:64") "main");
-  equal ~msg:"unloads during the entry" int 0 !unloads
-
-let test_entry_lost () =
-  let d, p = P.open_ "image:entry-lost" in
-  let i = load d "code:64" in
+(* Loses [d] by a submit its driver fails to take. *)
+let lose d p =
   P.fail p;
-  raises_match (lost d) (fun () -> submit (Sub.make d [||]));
-  raises_match (lost d) (fun () -> Image.resolve i "main")
+  raises_match (lost d) (fun () -> submit (Sub.make d [||]))
 
-(* A function the device has no memory for is asked for again after each round
-   of reclamation, and raises Out_of_memory for the bytes its launches need
-   after the last. *)
-let test_entry_no_memory () =
-  let d, pd = P.open_ "image:entry-no-memory" in
-  let i = load d "code:64" in
-  P.fail_at pd 1 (`Refuse max_int);
-  raises_match
-    (function
-      | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n = P.entry_scratch
-      | _ -> false)
-    (fun () -> Image.resolve i "main");
-  P.fail_at pd 1 (`Refuse 0);
-  at_least ~msg:"times asked" int ~than:2 (count "entry" pd)
+(* The bytes at the start of "code:N" once placed: eight 'c's. *)
+let placed_code = 0x6363636363636363
 
-(* A function the device had no memory for at first is found once a round of
-   reclamation is done. *)
-let test_entry_reclaims () =
-  let d, pd = P.open_ "image:entry-reclaims" in
+(* Work submitted after a load sees its code at [main]'s entry. *)
+let sees_code d pd image =
+  Rig.Point.wait (submit (Sub.make d [||]));
+  equal ~msg:"no work left queued" int 0 (P.queued pd);
+  equal ~msg:"the code placed" int placed_code
+    (Support.load (Image.entry (fn image "main")))
+
+(* Image.load *)
+
+(* A copy takes a value after the previous work's, and the load returns before
+   it ran, whether the copy reads device memory the host addresses or pinned
+   memory. *)
+let test_load_copied host_visible =
+  let d, pd =
+    P.open_ ~host_visible (Printf.sprintf "image:copied-%b" host_visible)
+  in
+  let previous = submit (Sub.make d [||]) in
   let i = load d "code:64" in
-  P.before pd "entry" (fun () -> P.fail_at pd 1 (`Refuse 1));
-  is_some (Image.resolve i "main");
-  equal ~msg:"times asked" int 2 (count "entry" pd)
+  less ~msg:"the copy's value follows the previous work's" int
+    ~than:(Rig.submitted d) (Rig.Point.value previous);
+  less ~msg:"the load returns before the copy ran" int ~than:(Rig.submitted d)
+    (Rig.signaled d);
+  sees_code d pd i
+
+(* With no copy engine the host writes the code once the previous work is
+   done. *)
+let test_load_after_work () =
+  let d, pd = P.open_ ~copies:false "image:after-work" in
+  let previous = submit (Sub.make d [||]) in
+  let i = load d "code:64" in
+  at_least ~msg:"previous work completed" int ~than:(Rig.Point.value previous)
+    (Rig.signaled d);
+  sees_code d pd i
+
+let test_load_unreached () =
+  let d, pd = P.open_ ~copies:false ~host_visible:false "image:unreached" in
+  ignore (submit (Sub.make d [||]));
+  raises_match Exn.invalid_arg (fun () -> Image.load d "code:64");
+  let later = submit (Sub.make d [||]) in
+  Rig.Point.wait later;
+  equal ~msg:"later work completed" int (Rig.Point.value later) (Rig.signaled d);
+  equal ~msg:"no work left queued" int 0 (P.queued pd)
+
+(* "Each call loads [binary] again": on Polled, which places code in its memory,
+   two loads are two images with two copies of the code. Host images of one
+   object share their code instead (host/test_host.ml). *)
+let test_load_again () =
+  let d, p = P.open_ "image:again" in
+  let a = load d "code:64" and b = load d "code:64" in
+  equal ~msg:"images loaded" int 2 (P.images p);
+  not_equal ~msg:"main's entries" int
+    (Image.entry (fn a "main"))
+    (Image.entry (fn b "main"))
+
+let test_device () =
+  let d, _ = P.open_ "image:device" in
+  equal device d (Image.device (load d "functions"))
 
 let test_budget () =
   let d, _ = P.open_ "image:budget" in
@@ -151,6 +111,25 @@ let test_budget () =
     (function
       | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n >= 8192 | _ -> false)
     (fun () -> Image.load d "code:8192")
+
+(* Polled's reason is "not a polled binary". *)
+let test_refused () =
+  let d, _ = P.open_ "image:refused" in
+  let base = Rig.submitted d in
+  let why = require_error (Image.load d "not code") in
+  starts_with ~msg:"the device's name first" ~prefix:"image:refused" why;
+  ends_with ~msg:"the driver's reason last" ~suffix:"not a polled binary" why;
+  equal ~msg:"the device's next value" int (base + 1)
+    (Rig.Point.value (submit (Sub.make d [||])))
+
+let test_no_code () =
+  raises_match Exn.invalid_arg (fun () ->
+      Image.load (Rig_support.io "image:no-code") "code:64")
+
+let test_load_lost () =
+  let d, p = P.open_ "image:load-lost" in
+  lose d p;
+  raises_match (lost d) (fun () -> Image.load d "functions")
 
 (* A load whose upload fails loses the device. *)
 let test_upload_fails () =
@@ -166,8 +145,8 @@ let collect d =
 
 (* A load whose upload loses the device gives its code memory back only once the
    device counts as stopped: its work may still run until then. The upload's
-   staging memory is pinned on a device whose memory the host does not
-   address, so the device memory held is the code's. *)
+   staging memory is pinned on a device whose memory the host does not address,
+   so the device memory held is the code's. *)
 let test_upload_frees_after_stop () =
   let d, p =
     P.open_ ~host_visible:false ~answer:`Unknown "image:upload-unknown"
@@ -181,6 +160,32 @@ let test_upload_frees_after_stop () =
   collect d;
   equal ~msg:"once it did" int 0 (P.allocated p Device)
 
+(* Unloading *)
+
+(* An unreachable image is unloaded once the work its device was handed until
+   then is done, and its code's memory then returns to its device. *)
+let test_unload () =
+  let d, pd = P.open_ "image:unload" in
+  let code =
+    (fun () ->
+      let p = load d "code:64" in
+      ignore (submit (Sub.make d [||]));
+      Image.entry (fn p "main"))
+      ()
+  in
+  let drain () =
+    Gc.full_major ();
+    Gc.full_major ();
+    ignore (B.create d 0)
+  in
+  drain ();
+  equal ~msg:"while its work is unrun" int 0 (count "unload" pd);
+  ignore (P.run pd);
+  drain ();
+  equal ~msg:"once it ran" int 1 (count "unload" pd);
+  Rig.free_cache d;
+  mem ~msg:"its code's memory is freed" int code (List.map fst (P.frees pd))
+
 let rec after_stop = function
   | "stop" :: rest -> rest
   | _ :: rest -> after_stop rest
@@ -191,11 +196,8 @@ let rec after_stop = function
 let test_unload_after_stop () =
   let d, p = P.open_ "image:unload-after-stop" in
   let i = ref (Some (load d "code:64")) in
-  let code =
-    Image.entry (require_some (Image.resolve (Option.get !i) "main"))
-  in
-  P.fail p;
-  raises_match (lost d) (fun () -> submit (Sub.make d [||]));
+  let code = Image.entry (fn (Option.get !i) "main") in
+  lose d p;
   raises_match (lost d) (fun () -> Image.resolve (Option.get !i) "main");
   Rig.close d;
   equal ~msg:"by the stop" int 0 (count "unload" p);
@@ -203,8 +205,7 @@ let test_unload_after_stop () =
   collect d;
   equal ~msg:"after the stop" (list string) [ "unload" ]
     (List.filter (( = ) "unload") (after_stop (P.log p)));
-  equal ~msg:"its code's memory" bool true
-    (List.exists (fun (a, _) -> a = code) (P.frees p))
+  mem ~msg:"its code's memory is freed" int code (List.map fst (P.frees p))
 
 (* A lost device whose work may still run unloads nothing until its word reads
    its last value. *)
@@ -212,8 +213,7 @@ let test_unload_after_unknown () =
   let d, p = P.open_ ~answer:`Unknown "image:unload-unknown" in
   let i = ref (Some (load d "code:64")) in
   ignore (submit (Sub.make d [||]));
-  P.fail p;
-  raises_match (lost d) (fun () -> submit (Sub.make d [||]));
+  lose d p;
   Rig.close d;
   i := None;
   collect d;
@@ -229,6 +229,19 @@ let collect_on d =
     Gc.full_major ();
     drain d
   done
+
+(* A function alone keeps its image loaded; once it goes too, the image
+   unloads. *)
+let test_func_keeps () =
+  let d, p = P.open_ "image:func-keeps" in
+  let main = ref (Some (fn (load d "functions") "main")) in
+  ignore (P.run p);
+  collect_on d;
+  equal ~msg:"while its function is held" int 0 (count "unload" p);
+  ignore (Sys.opaque_identity !main);
+  main := None;
+  collect_on d;
+  equal ~msg:"once it goes" int 1 (count "unload" p)
 
 (* Code can follow an image with no code in the release queue. Pressure must
    find those bytes and finish the work that holds them before allocating. *)
@@ -303,11 +316,11 @@ let test_unloads_beside_loss () =
 (* Two domains drop images and drain their device while its work waits to run:
    no drain unloads an image.
 
-   Every collection stops each domain, and on a loaded machine waits for each
-   to be scheduled, and each program runs 50 times, so the test collects
-   little. A program's images stay on its own device, which no later program
-   uses, so a release collects nothing. A drop of a live image ends one major
-   cycle, which may finalise it while the other domain drains. *)
+   Every collection stops each domain, and on a loaded machine waits for each to
+   be scheduled, and each program runs 50 times, so the test collects little. A
+   program's images stay on its own device, which no later program uses, so a
+   release collects nothing. A drop of a live image ends one major cycle, which
+   may finalise it while the other domain drains. *)
 type images = {
   d : Rig.t;
   p : P.t;
@@ -374,52 +387,208 @@ let image_commands =
         count "unload" t.p - t.unloaded);
   ]
 
-let test_profiled () =
-  let d, _ = P.open_ "image:profiled" in
-  let p, events = Prof.take (fun () -> load d "code:64") in
-  let loads =
-    List.filter_map
-      (function Prof.Load l -> Some (l.image == p, l.binary) | _ -> None)
-      events
-  in
-  equal (list (pair bool string)) [ (true, "code:64") ] loads
+(* Image.resolve *)
+
+let test_resolve_absent () =
+  let d, _ = P.open_ "image:absent" in
+  is_none
+    ~pp:(fun ppf f -> Format.pp_print_string ppf (Image.name f))
+    (Image.resolve (load d "functions") "other")
+
+(* An image stays loaded while its driver makes one of its functions: a
+   collection and a drain at the start of the driver's entry call, the image's
+   last use, unload nothing. *)
+let test_entry_keeps () =
+  let d, pd = P.open_ "image:entry-keeps" in
+  let unloads = ref (-1) in
+  P.before pd "entry" (fun () ->
+      Gc.full_major ();
+      Gc.full_major ();
+      ignore (B.create d 0);
+      unloads := count "unload" pd);
+  ignore (Image.resolve (load d "code:64") "main");
+  equal ~msg:"unloads during the entry" int 0 !unloads
+
+let test_entry_lost () =
+  let d, p = P.open_ "image:entry-lost" in
+  let i = load d "code:64" in
+  lose d p;
+  raises_match (lost d) (fun () -> Image.resolve i "main")
+
+(* A function the device has no memory for is asked for again after each round
+   of reclamation, and raises Out_of_memory for the bytes its launches need
+   after the last, the device live. *)
+let test_entry_no_memory () =
+  let d, pd = P.open_ "image:entry-no-memory" in
+  let i = load d "code:64" in
+  P.fail_at pd 1 (`Refuse max_int);
+  raises_match
+    (function
+      | Rig.Out_of_memory (d', n) -> Rig.equal d d' && n = P.entry_scratch
+      | _ -> false)
+    (fun () -> Image.resolve i "main");
+  P.fail_at pd 1 (`Refuse 0);
+  at_least ~msg:"times asked" int ~than:2 (count "entry" pd);
+  equal ~msg:"the device's loss" (option string) None (Rig.lost d)
+
+(* A function the device had no memory for at first is found once a round of
+   reclamation is done. *)
+let test_entry_reclaims () =
+  let d, pd = P.open_ "image:entry-reclaims" in
+  let i = load d "code:64" in
+  P.before pd "entry" (fun () -> P.fail_at pd 1 (`Refuse 1));
+  equal ~msg:"the function found" (option string) (Some "main")
+    (Option.map Image.name (Image.resolve i "main"));
+  equal ~msg:"times asked" int 2 (count "entry" pd)
+
+(* The driver finds the function needs more than the device offers. *)
+let test_entry_refused () =
+  let d, p = P.open_ "image:entry-refused" in
+  let i = load d "functions" in
+  P.before p "entry" (fun () -> invalid_arg "main needs more than 1 TiB");
+  raises_match (Exn.invalid_arg ~sub:"main needs more than 1 TiB") (fun () ->
+      Image.resolve i "main");
+  equal ~msg:"the device's loss" (option string) None (Rig.lost d)
+
+(* The fault lands at the device's next fallible call: parts of a function
+   already resolved ask the driver nothing, so it is the resolve's. *)
+let test_entry_faults () =
+  let d, p = P.open_ "image:entry-faults" in
+  let main = fn (load d "functions") "main" and i = load d "functions" in
+  P.fail_at p 1 (`Fault "the engine hung");
+  ignore
+    (Sub.make d
+       [|
+         Sub.launch main ~params:8;
+         Sub.fill ~refs:[| Sub.entry main ~at:0 |] Rig_support.noop ~params:8;
+       |]);
+  raises_match
+    (function
+      | Rig.Lost (d', why) -> Rig.equal d d' && why = "the engine hung"
+      | _ -> false)
+    (fun () -> Image.resolve i "main")
+
+(* Image.prepare *)
+
+(* Polled makes nothing slowly: its prepare answers at once. *)
+let test_prepare () =
+  let d, p = P.open_ "image:prepare" in
+  let i = load d "functions" in
+  Image.prepare i "fill";
+  equal ~msg:"asked before the resolve" int 0 (count "entry" p);
+  equal ~msg:"fill's parameters" (option int) (Some 16)
+    (Image.params (fn i "fill"));
+  equal ~msg:"times asked" int 1 (count "entry" p)
+
+let test_prepare_absent () =
+  let d, _ = P.open_ "image:prepare-absent" in
+  let i = load d "functions" in
+  Image.prepare i "other";
+  is_none
+    ~pp:(fun ppf f -> Format.pp_print_string ppf (Image.name f))
+    (Image.resolve i "other");
+  equal ~msg:"the device's loss" (option string) None (Rig.lost d)
+
+let test_prepare_lost () =
+  let d, p = P.open_ "image:prepare-lost" in
+  let i = load d "functions" in
+  lose d p;
+  raises_match (lost d) (fun () -> Image.prepare i "main")
+
+(* Image.func *)
+
+let test_func_names () =
+  let d, _ = P.open_ "image:func-names" in
+  let i = load d "functions" in
+  let main = fn i "main" in
+  equal ~msg:"its name" string "main" (Image.name main);
+  equal ~msg:"its image" image i (Image.image main)
+
+(* Polled states fill's 16 bytes, copy's 24 and none for main, and 1024 threads
+   for each. *)
+let test_func_facts () =
+  let d, _ = P.open_ "image:func-facts" in
+  let i = load d "functions" in
+  let params f = Image.params (fn i f) and threads f = Image.threads (fn i f) in
+  equal (option int) ~msg:"fill's parameters" (Some 16) (params "fill");
+  equal (option int) ~msg:"copy's parameters" (Some 24) (params "copy");
+  equal (option int) ~msg:"main's parameters" None (params "main");
+  equal (option int) ~msg:"main's threads" (Some 1024) (threads "main")
 
 let tests =
   [
-    group "images"
+    group "Image.load"
       [
-        cases "code placement" ~id:placement_name
-          [ (true, true); (true, false); (false, true); (false, false) ]
-          test_load;
-        test "a lost device's image names no function" test_entry_lost;
-        test "an entry keeps its image loaded until it returns" test_entry_keeps;
-        test "an entry with no memory raises Out_of_memory after reclaiming"
-          test_entry_no_memory;
-        test "an entry with no memory is found once reclaiming frees some"
-          test_entry_reclaims;
+        cases "a load returns before its code's copy runs"
+          ~id:(fun host_visible ->
+            if host_visible then "from memory the host addresses"
+            else "from pinned memory")
+          [ true; false ] test_load_copied;
+        test "a load places code after earlier work" test_load_after_work;
+        test "a load raises where neither copies nor the host reach the code"
+          test_load_unreached;
+        test "each load on a device that places code loads the binary again"
+          test_load_again;
+        test "code counts in its device's budget" test_budget;
         test "a binary its driver refuses is an error naming the device"
           test_refused;
         test "an io device refuses a binary" test_no_code;
-        test "an unreachable image unloads once its device's work is done"
-          test_unload;
-        test "code counts in its device's budget" test_budget;
+        test "a load on a lost device raises Lost" test_load_lost;
         test "a load whose upload fails loses the device" test_upload_fails;
         test "a failed upload frees its code once the device counts as stopped"
           test_upload_frees_after_stop;
+      ];
+    group "unloading"
+      [
+        test "an unreachable image unloads once its device's work is done"
+          test_unload;
+        test "a function keeps its image loaded" test_func_keeps;
         test "a lost device's image is unloaded after its stop"
           test_unload_after_stop;
         test "a lost device's image waits for its word to drain"
           test_unload_after_unknown;
         test "allocation pressure waits for queued code memory"
           test_pending_code_pressure;
-        test "a release can be appended while an image unloads"
+        test
+          "an image collected while another unloads unloads once its own work \
+           is done"
           test_append_during_unload;
-        test "releases taken before loss wait again for an unknown stop"
+        test "images collected before a loss unload once the device has stopped"
           test_unloads_beside_loss;
         stateful ~count:10 ~domains:2
           "parallel drops and drains keep images until work completes"
           image_commands;
-        test "a load is an event of the profiles taken" test_profiled;
+      ];
+    group "Image.device"
+      [ test "an image is on the device it was loaded on" test_device ];
+    group "Image.resolve"
+      [
+        test "an image has no function it does not define" test_resolve_absent;
+        test "an image stays loaded while its driver makes a function"
+          test_entry_keeps;
+        test "a resolve on a lost device raises Lost" test_entry_lost;
+        test "a function with no memory raises Out_of_memory after reclaiming"
+          test_entry_no_memory;
+        test "a function with no memory is found once reclaiming frees some"
+          test_entry_reclaims;
+        test "a function the device cannot run raises Invalid_argument"
+          test_entry_refused;
+        test "a fault while asking for a function loses the device"
+          test_entry_faults;
+      ];
+    group "Image.prepare"
+      [
+        test "on a device that makes nothing slowly, the first resolve asks"
+          test_prepare;
+        test "prepare of a function the image lacks does nothing"
+          test_prepare_absent;
+        test "prepare on a lost device raises Lost" test_prepare_lost;
+      ];
+    group "Image.func"
+      [
+        test "a function has its name and image" test_func_names;
+        test "a function's parameters and threads are what its driver states"
+          test_func_facts;
       ];
   ]
 
