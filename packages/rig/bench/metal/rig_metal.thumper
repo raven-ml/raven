@@ -46,7 +46,7 @@ release/after-idle-20ms	wall_time	batch=2	n=20	2.110e-02	2.071e-02 2.084e-02 2.0
 release/driver	alloc_words	exact	0
 release/driver	wall_time	batch=256	n=20	2.223e-05	1.790e-05 1.955e-05 2.026e-05 2.058e-05 2.059e-05 2.166e-05 2.172e-05 2.180e-05 2.200e-05 2.205e-05 2.242e-05 2.297e-05 2.302e-05 2.323e-05 2.566e-05 2.577e-05 2.590e-05 2.759e-05 2.776e-05 2.864e-05
 release/pipelined-256	alloc_words	exact	0
-release/pipelined-256	wall_time	batch=128	n=20	6.700e-05	6.250e-05 6.318e-05 6.384e-05 6.459e-05 6.482e-05 6.569e-05 6.582e-05 6.593e-05 6.609e-05 6.690e-05 6.710e-05 6.718e-05 6.736e-05 6.750e-05 6.756e-05 6.764e-05 6.781e-05 6.920e-05 7.045e-05 7.091e-05
+release/pipelined-256	wall_time	batch=128	n=20	9.213e-05	8.907e-05 8.950e-05 9.010e-05 9.013e-05 9.064e-05 9.117e-05 9.119e-05 9.177e-05 9.195e-05 9.202e-05 9.223e-05 9.289e-05 9.289e-05 9.321e-05 9.377e-05 9.486e-05 9.495e-05 9.674e-05 9.700e-05 1.032e-04
 residency/after-idle-3s	alloc_words	exact	0
 residency/after-idle-3s	wall_time	batch=1	n=20	3.024e+00	3.022e+00 3.022e+00 3.023e+00 3.023e+00 3.023e+00 3.024e+00 3.024e+00 3.024e+00 3.024e+00 3.024e+00 3.024e+00 3.024e+00 3.025e+00 3.025e+00 3.025e+00 3.025e+00 3.026e+00 3.026e+00 3.027e+00 3.031e+00
 residency/warm-1GiB	alloc_words	exact	0
