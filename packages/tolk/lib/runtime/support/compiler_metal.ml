@@ -16,6 +16,7 @@ let library () = C.findlib "MTLCompiler" [ "MTLCompiler" ]
    program embedded in the library ([compiler_metal_worker.c]), each serving
    compiles in turn. *)
 let worker = Compiler_worker.v ~name:"metal" Mtlcompiler_worker.program
+let worker_digest = Digest.to_hex (Digest.string Mtlcompiler_worker.program)
 
 (* MetalCompiler *)
 
@@ -68,13 +69,19 @@ let compile library src =
       lib
 
 (* MTLCompiler is part of macOS: its build names the framework, unless
-   MTLCOMPILER_PATH names another, whose file then does. The options and the
-   prologue are the rest of what a library is a function of: the worker passes
-   the request to MTLCompiler as it is. *)
+   MTLCOMPILER_PATH names another, whose file then does. The worker, which makes
+   the request MTLCompiler builds, the options and the prologue are the rest of
+   what a library is a function of. *)
 let table library () =
   let identity =
     String.concat "\n"
-      [ macos_build (); C.identity (Some library); options (); prologue ]
+      [
+        macos_build ();
+        C.identity (Some library);
+        worker_digest;
+        options ();
+        prologue;
+      ]
   in
   "compile_metal_direct_" ^ Digest.to_hex (Digest.string identity)
 

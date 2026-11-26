@@ -41,8 +41,8 @@ val compiler : unit -> Renderer.Compiler.t
     With {!Setting.ccache}, libraries are cached in the table
     [compile_metal_direct_D], where [D] is the digest of the build of macOS,
     which MTLCompiler is part of, MTLCompiler's file ({!C.identity}), the
-    language and the options: a library is read back only for its source,
-    compiled by the same MTLCompiler with the same options.
+    program that runs it, the language and the options: a library is read back
+    only for its source, compiled by the same MTLCompiler with the same options.
 
     Raises [Failure] naming [MTLCOMPILER_PATH] if MTLCompiler is not found.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
