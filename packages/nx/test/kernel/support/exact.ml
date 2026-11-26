@@ -23,7 +23,8 @@ let ulps64 a b =
     else Int64.to_int d
 
 (* The rows of golden/kinds/<kind>.golden, from packages/nx/test/kernel:
-   operands, then the value correctly rounded and its remainder. *)
+   operands, then the value correctly rounded and its remainder in units of that
+   rounding's ulp, 0 only where the value is exact or no finite rounding. *)
 let golden kind =
   let ic = open_in (Filename.concat "golden/kinds" (kind ^ ".golden")) in
   let rows = ref [] in
@@ -80,8 +81,9 @@ let normwise u (re, im) ((zr, _) as r, ((zi, _) as i)) =
 
 let round_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
-(* The rows of golden/kinds/complex-<kind>.golden: operands, then each part
-   of the value correctly rounded and its remainder. *)
+(* The rows of golden/kinds/complex-<kind>.golden: operands, then each part of
+   the value correctly rounded and its remainder in ulps of the rounding, as
+   {!golden}'s. *)
 let complex_golden kind = golden ("complex-" ^ kind)
 
 (* Whether a row's operands are binary32's and its value is in the range
@@ -91,7 +93,18 @@ let single_row args (re, im) =
   && Float.is_finite (round_f32 (Float.hypot (fst re) (fst im)))
   && Float.hypot (fst re) (fst im) >= 0x1p-100
 
-let golden_value row n = ((row.(n), row.(n + 1)), (row.(n + 2), row.(n + 3)))
+(* The value of a complex row whose operands end at [n]: each part as a
+   double-double, its rounding and its remainder. *)
+let golden_value row n =
+  let ulp r =
+    if r = 0. then 0x1p-1074
+    else Float.ldexp 1. (max (snd (Float.frexp r) - 53) (-1074))
+  in
+  let part j =
+    let r = row.(j) in
+    (r, if Float.is_finite r then row.(j + 1) *. ulp r else 0.)
+  in
+  (part n, part (n + 2))
 
 (* a b + c rounded once, to nearest with ties to even. Float.fma rounds
    some subnormal results twice under MinGW, so a result below the least

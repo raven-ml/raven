@@ -14,11 +14,13 @@ written, and the run fails if a file would change.
 
 A golden is a table of hexadecimal doubles, one row per point: the
 arguments, the value correctly rounded to binary64, or `nan`, and the
-exact value's remainder past it rounded to binary64, 0 where the value
-is no finite rounding, so that a test measures errors to a fraction of
-an ulp. A complex row has both parts of each argument, then each part of
-the value and its remainder; its c64 points are those whose arguments
-are binary32's.
+exact value's remainder past that rounding in units of its ulp (its last
+bit's value, 2^-1074 at a zero), so that a test measures errors to a
+fraction of an ulp. The remainder is rounded to binary64, one below the
+least subnormal written as the least subnormal of its sign, and is 0 only
+where the value is exact or no finite rounding. A complex row has both
+parts of each argument, then each part of the value and its remainder;
+its c64 points are those whose arguments are binary32's.
 
 The second form prints the minimax fits that nx_kinds.h's polynomials
 copy, each with its weighted error, coefficients from the constant term
@@ -75,6 +77,33 @@ def to_double(v):
     if abs(r) >= E.ldexp(1, 1024):
         return math.copysign(math.inf, v)
     return float(r)
+
+
+# A remainder is resolved at the working precision where it stands 64 bits
+# above the value's last bit. The precision doubles from PREC until it is,
+# up to PREC_MAX, where a remainder of 0 is an exact value: but for the
+# saturations, which give their remainder apart, no kind's value at binary64
+# operands that is not a double lies within 2^-2200 of one, the closest
+# being f(x) = x + O(x^3) at the least subnormal, 2^-2148 of x.
+PREC = 320
+PREC_MAX = 16 * PREC
+LEAST = 2.0**-1074
+
+
+def resolved(d, t, prec):
+    """Whether d, a remainder past a double c of c + t, t at prec bits,
+    stands 64 bits above t's last bit."""
+    return abs(d) > abs(t) * E.ldexp(1, 64 - prec)
+
+
+def in_ulps(d, r):
+    """The remainder d past the double r in units of r's ulp, rounded to
+    binary64; one below the least subnormal is the least subnormal of its
+    sign, so that only an exact value's is 0."""
+    if d == 0:
+        return 0.0
+    q = to_double(d / mpf(math.ulp(r)))
+    return q if q != 0 else (LEAST if d > 0 else -LEAST)
 
 
 def cr(f, x):
@@ -405,11 +434,43 @@ def binary_points(fn, rng):
     return pts
 
 
+# A kind that saturates gives, past 1 in magnitude, its value as a pair
+# (c, t): c + t exactly, c the double it saturates at and |t| < |c| / 2.
+# Its remainder past c, t, lies below any working precision far out, as
+# 1 - tanh x = 2 / (e^2x + 1) does.
+
+
+def tanh_near(x):
+    if abs(x) < 1:
+        return E.tanh(x)
+    s = 1.0 if x > 0 else -1.0
+    return (s, -s * 2 / (E.exp(2 * abs(x)) + 1))
+
+
+def erfc_far(a):
+    """erfc a for a >= 1; past 2^20, where mpmath's series check overflows,
+    e^-a^2 / (a sqrt pi) (1 - 1 / 2a^2), within 3 / 4a^4 of itself."""
+    if a < 2**20:
+        return E.erfc(a)
+    return E.exp(-a * a) / (a * E.sqrt(E.pi)) * (1 - 1 / (2 * a * a))
+
+
+def erf_near(x):
+    if abs(x) < 1:
+        return E.erf(x)
+    s = 1.0 if x > 0 else -1.0
+    return (s, -s * erfc_far(abs(x)))
+
+
+def expm1_near(x):
+    return E.expm1(x) if x > -1 else (-1.0, E.exp(x))
+
+
 UNARY = {
-    "exp": E.exp, "exp2": lambda x: E.power(2, x), "expm1": E.expm1, "log": E.log,
+    "exp": E.exp, "exp2": lambda x: E.power(2, x), "expm1": expm1_near, "log": E.log,
     "log2": lambda x: E.log(x, 2), "log1p": E.log1p, "sin": E.sin, "cos": E.cos,
     "tan": E.tan, "asin": E.asin, "acos": E.acos, "atan": E.atan, "sinh": E.sinh,
-    "cosh": E.cosh, "tanh": E.tanh, "erf": E.erf,
+    "cosh": E.cosh, "tanh": tanh_near, "erf": erf_near,
 }
 
 
@@ -468,24 +529,64 @@ def unary_ref(fn, x):
     return UNARY[fn](mpf(x))
 
 
-def rounded(v):
-    """The value v, a float or exact, as its binary64 rounding and the
-    remainder past it, rounded."""
-    if isinstance(v, float):
-        return f"{hexf(v)}\t{hexf(0.0)}"
-    hi = to_double(v)
-    lo = to_double(v - mpf(hi)) if math.isfinite(hi) else 0.0
-    return f"{hexf(hi)}\t{hexf(lo)}"
+def split(v):
+    """v, a value or a pair (c, t), as the pair."""
+    return v if isinstance(v, tuple) else (0.0, v)
+
+
+def total(v):
+    return sum(split(v))
+
+
+def rounded(f):
+    """f(), a float where it is exact, as its binary64 rounding and the
+    remainder past it in ulps of the rounding, f evaluated at the precision
+    that resolves the remainder."""
+    prec = PREC
+    while True:
+        with mp.workprec(prec):
+            v = f()
+            if isinstance(v, float):
+                return f"{hexf(v)}\t{hexf(0.0)}"
+            c, t = split(v)
+            v = c + t
+            hi = to_double(v)
+            if not math.isfinite(hi):
+                return f"{hexf(hi)}\t{hexf(0.0)}"
+            d = (mpf(c) - hi) + t
+            if resolved(d, t, prec) or prec >= PREC_MAX and d == 0:
+                return f"{hexf(hi)}\t{hexf(in_ulps(d, hi))}"
+            if prec >= PREC_MAX:
+                raise ValueError(f"no precision resolves the remainder past {hexf(hi)}")
+        prec *= 2
 
 
 # Complex kinds
 
+
+def ctanh_near(z):
+    """tanh z, past 1 in |Re z| as (s, -s 2 / (e^2sz + 1)), s the sign of
+    Re z."""
+    if abs(z.real) < 1:
+        return E.tanh(z)
+    s = 1.0 if z.real > 0 else -1.0
+    return (complex(s, 0), -s * 2 / (E.exp(2 * s * z) + 1))
+
+
+def ctan_near(z):
+    """tan z = -i tanh iz, past 1 in |Im z| as ctanh_near's pair times -i."""
+    if abs(z.imag) < 1:
+        return E.tan(z)
+    c, t = ctanh_near(1j * z)
+    return (-1j * c, -1j * t)
+
+
 COMPLEX = {
     "exp": E.exp, "exp2": lambda z: E.power(2, z), "log": E.log,
     "log2": lambda z: E.log(z) / E.log(2), "sqrt": E.sqrt, "sin": E.sin, "cos": E.cos,
-    "tan": E.tan, "asin": E.asin, "acos": E.acos, "atan": E.atan, "sinh": E.sinh,
-    "cosh": E.cosh, "tanh": E.tanh, "asinh": E.asinh, "acosh": E.acosh,
-    "atanh": E.atanh, "sign": E.sign, "pow": E.power,
+    "tan": ctan_near, "asin": E.asin, "acos": E.acos, "atan": E.atan,
+    "sinh": E.sinh, "cosh": E.cosh, "tanh": ctanh_near, "asinh": E.asinh,
+    "acosh": E.acosh, "atanh": E.atanh, "sign": E.sign, "pow": E.power,
 }
 
 # A zero part stands for the limit from its side: a branch cut takes the
@@ -604,14 +705,45 @@ def settled(f, ops):
     span = max([abs(math.frexp(o)[1]) for o in ops if o != 0 and math.isfinite(o)] + [0])
     # A zero part's side, SIDE, must not round away inside the function.
     side = 2 * 3000 if any(o == 0 for o in ops) else 0
-    prec, prev = 320 + 2 * span + side, None
+    prec, prev = PREC + 2 * span + side, None
     for _ in range(5):
         with mp.workprec(prec):
             v = f()
-        if prev is not None and close(prev, v):
-            return v
+        if prev is not None and close(total(prev), total(v)):
+            return v, prec
         prev, prec = v, 2 * prec
     raise ValueError("no precision settles the value")
+
+
+def complex_rounded(f, v, prec):
+    """Each part of v, f() settled at prec, as its binary64 rounding and the
+    remainder past it in ulps of the rounding, f evaluated again at twice the
+    precision until each remainder is resolved against the larger part, as
+    mpmath bounds its error; up to four times settled's, where a remainder
+    of 0 is an exact part."""
+    top = 4 * prec
+    while True:
+        cols = []
+        with mp.workprec(prec):
+            c, t = split(v)
+            c, v = E.mpc(c), c + t
+            m = max(abs(t.real), abs(t.imag))
+            for cp, tp, p in ((c.real, t.real, v.real), (c.imag, t.imag, v.imag)):
+                hi = to_double(p)
+                if not math.isfinite(hi):
+                    cols.append(f"{hexf(hi)}\t{hexf(0.0)}")
+                    continue
+                d = (cp - hi) + tp
+                if not resolved(d, m, prec) and (prec < top or d != 0):
+                    break
+                cols.append(f"{hexf(hi)}\t{hexf(in_ulps(d, hi))}")
+        if len(cols) == 2:
+            return cols
+        if prec >= top:
+            raise ValueError("no precision resolves a part's remainder")
+        prec *= 2
+        with mp.workprec(prec):
+            v = f()
 
 
 def complex_row(fn, args, single):
@@ -621,19 +753,20 @@ def complex_row(fn, args, single):
         (x, y), (u, v) = args
         if x == 0 and y == 0:
             return None
-        val = settled(lambda: E.power(limit(x, y), limit(u, v)), (x, y, u, v))
+        f = lambda: E.power(limit(x, y), limit(u, v))
         ops = (x, y, u, v)
     else:
         x, y = args
         if fn == "sign" and x == 0 and y == 0:
             return None
-        val = settled(lambda: COMPLEX[fn](limit(x, y)), (x, y))
+        f = lambda: COMPLEX[fn](limit(x, y))
         ops = (x, y)
-    m = abs(val)
+    val, prec = settled(f, ops)
+    m = abs(total(val))
     lo, hi = (mpf(2) ** -100, mpf(2) ** 127) if single else (mpf(2) ** -969, mpf(2) ** 1023)
     if not (lo <= m <= hi):
         return None
-    cols = [hexf(a) for a in ops] + [rounded(val.real), rounded(val.imag)]
+    cols = [hexf(a) for a in ops] + complex_rounded(f, val, prec)
     return "\t".join(cols) + "\n"
 
 
@@ -658,11 +791,13 @@ def goldens():
     files = complex_goldens()
     for fn in UNARY:
         rng = random.Random(f"nx_kinds:{fn}")
-        rows = [f"{hexf(x)}\t{rounded(unary_ref(fn, x))}\n" for x in unary_points(fn, rng)]
+        rows = [f"{hexf(x)}\t{rounded(lambda: unary_ref(fn, x))}\n"
+                for x in unary_points(fn, rng)]
         files[fn] = HEADER + "x\tf\tlo\n" + "".join(rows)
     for fn, ref in (("pow", pow_ref), ("atan2", atan2_ref)):
         rng = random.Random(f"nx_kinds:{fn}")
-        rows = [f"{hexf(a)}\t{hexf(b)}\t{rounded(ref(a, b))}\n" for a, b in binary_points(fn, rng)]
+        rows = [f"{hexf(a)}\t{hexf(b)}\t{rounded(lambda: ref(a, b))}\n"
+                for a, b in binary_points(fn, rng)]
         cols = "x\ty\tf\tlo\n" if fn == "pow" else "y\tx\tf\tlo\n"
         files[fn] = HEADER + cols + "".join(rows)
     return files

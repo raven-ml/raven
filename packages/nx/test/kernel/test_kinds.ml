@@ -1507,24 +1507,55 @@ let test_complex_parity =
 (* The f64 kinds that gen/kinds.py's goldens hold. *)
 let golden_kinds = transcendental_kinds @ [ "atan2"; "pow" ]
 
-(* Whether [y] is within one ulp of the exact value [r + lo], [r] that value
-   correctly rounded and [lo] its remainder: [r] itself, or [r]'s neighbour on
-   [lo]'s side, counting floats; [r] alone where it is exact, no finite rounding
-   or a NaN. A remainder below the least subnormal is a zero of its sign, so
-   where [r]'s neighbours are the least subnormal apart, below 2^-1021, a [+0]
-   leaves the side above open. *)
+(* Whether [y] is within one ulp of the exact value, [r] that value correctly
+   rounded and [lo] its remainder in ulps of [r]: [r] itself, or [r]'s neighbour
+   on [lo]'s side, counting floats; [r] alone where [lo] is 0, an exact value,
+   no finite rounding or a NaN. *)
 let within_one_ulp y (r, lo) =
-  let side =
-    if lo > 0. then 1L
-    else if lo < 0. || Float.sign_bit lo then -1L
-    else if Float.abs r < 0x1p-1021 then 1L
-    else 0L
-  in
+  let side = if lo > 0. then 1L else if lo < 0. then -1L else 0L in
   if Float.is_nan r then Float.is_nan y
   else if not (Float.is_finite r) then bits64 y = bits64 r
   else
     let d = Int64.sub (rank64 y) (rank64 r) in
     d = 0L || d = side
+
+(* Golden rows, a result next to their [r], and whether {!within_one_ulp} takes
+   it: [r] alone where the value is exact, and [r]'s neighbour on the exact
+   value's side alone where [r]'s neighbours are the least subnormal apart. *)
+let one_ulp_rows =
+  [
+    ("pow", [| 0x1p-1074; 1. |], 0x1p-1073, false);
+    ("sin", [| 0. |], 0x1p-1074, false);
+    ("sin", [| 0x1p-1074 |], 0., true);
+    ("sin", [| 0x1p-1074 |], 0x1p-1073, false);
+    ("atan", [| 0x1p-1074 |], 0., true);
+    ("atan", [| 0x1p-1074 |], 0x1p-1073, false);
+    ( "pow",
+      [| 0x1.31ab48c1294bbp+6; -0x1.46b41332042bfp+7 |],
+      0x1.125fbee250730p-1022,
+      true );
+    ( "pow",
+      [| 0x1.31ab48c1294bbp+6; -0x1.46b41332042bfp+7 |],
+      0x1.125fbee25072ep-1022,
+      false );
+  ]
+
+let test_one_ulp =
+  cases
+    "the one-ulp check takes r alone at an exact value, else r's neighbour on \
+     the exact value's side"
+    ~id:(fun (k, args, y, _) ->
+      strf "%s %s: %h" k
+        (String.concat " " (Array.to_list (Array.map (strf "%h") args)))
+        y)
+    one_ulp_rows
+    (fun (k, args, y, takes) ->
+      let n = Array.length args in
+      let same r = Array.for_all2 (fun a b -> bits64 a = bits64 b) args r in
+      let row = List.find (fun r -> same (Array.sub r 0 n)) (golden k) in
+      equal bool takes
+        (within_one_ulp y (row.(n), row.(n + 1)))
+        ~msg:(strf "r %h, remainder %h" row.(n) row.(n + 1)))
 
 let test_goldens =
   test
@@ -1985,7 +2016,13 @@ let () =
                 test_complex_parity;
               ]);
           group "nx_kinds.h"
-            [ test_goldens; test_exact_points; test_digests; test_near ];
+            [
+              test_goldens;
+              test_one_ulp;
+              test_exact_points;
+              test_digests;
+              test_near;
+            ];
         ]
        @ List.map narrow
            (Support.declare Support.cpu
