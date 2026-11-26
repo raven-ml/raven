@@ -346,6 +346,19 @@ let integers =
           equal ~msg:"a multiple" int 0 (floormod r y);
           at_least int ~than:x r;
           less int ~than:(x + y) r);
+      (* Pairs whose exact result fits an int, though negating the divisor or
+         adding it to the dividend wraps. *)
+      cases "ceildiv and round_up are exact near the ends of int"
+        ~id:(fun (f, x, y, _) -> Printf.sprintf "%s %d %d" f x y)
+        [
+          ("ceildiv", 1, min_int, Bigint.(cdiv one (of_int min_int)));
+          ("ceildiv", min_int, min_int, Bigint.one);
+          ("round_up", 2, max_int, Bigint.of_int max_int);
+          ("round_up", min_int, max_int, Bigint.of_int (min_int + 1));
+        ]
+        (fun (f, x, y, exact) ->
+          let r = if f = "ceildiv" then ceildiv x y else round_up x y in
+          equal int (Bigint.to_int exact) r);
       test "round_up keeps a multiple and rounds up a negative number"
         (fun () ->
           equal (list int)

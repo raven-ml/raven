@@ -131,8 +131,19 @@ let fdiv x y =
   let q = x / y in
   if x mod y <> 0 && x < 0 <> (y < 0) then q - 1 else q
 
-let ceildiv num amt = -fdiv num (-amt)
-let round_up num amt = fdiv (num + amt - 1) amt * amt
+(* Rounded down, plus one when inexact: negating [amt], or adding [amt - 1] to
+   [num], would wrap near the ends of [int] where the result fits. *)
+let ceildiv num amt =
+  let q = fdiv num amt in
+  if num mod amt <> 0 then q + 1 else q
+
+(* A non-positive [amt], which the contract leaves open, rounds as
+   [fdiv (num + amt - 1) amt * amt] does. *)
+let round_up num amt =
+  if amt <= 0 then fdiv (num + amt - 1) amt * amt
+  else
+    match num mod amt with 0 -> num | r -> num + if r > 0 then amt - r else -r
+
 let floordiv x y = if y = 0 then 0 else fdiv x y
 let floormod x y = x - (floordiv x y * y)
 let lo32 x = x land 0xFFFF_FFFF
