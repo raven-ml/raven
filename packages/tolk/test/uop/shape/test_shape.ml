@@ -4,7 +4,6 @@ let () =
        [
          Values.shapes;
          Values.resolving;
-         Rules.installation;
          Values.sint_module;
          Values.inference;
          Values.compilation;

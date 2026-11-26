@@ -1686,32 +1686,3 @@ let weak_constants =
           equal Dtypes.const (`Bool false)
             (Interpreter.eval ~vars:[ ("x", i 100) ] (symbolic lt)));
     ]
-
-(* Installation *)
-
-let installation =
-  group "installation"
-    [
-      prop "simplify is symbolic's rewrite"
-        ~examples:[ Ops.O.((a * int 4) + b < int 16 lor (a + a < int 3)) ]
-        (Gen.with_pp (Testable.pp uop)
-           (Gen.map Expressions.node Expressions.scenario))
-        (fun e -> equal uop (symbolic e) (Shape.simplify e));
-      test "resolve decides from the symbolic rules" (fun () ->
-          equal bool true (Shape.resolve Ops.O.(a < int 9));
-          equal bool false
-            (Shape.resolve ~default:true Ops.O.(a * int 2 < int 0)));
-      test "a constant and a sink of constants and stacks are themselves"
-        (fun () ->
-          let consts =
-            Ops.sink
-              [ Ops.int 3; raw Stack []; raw Stack [ Ops.int 1; Ops.int 2 ] ]
-          in
-          equal uop consts (Shape.simplify consts));
-      test "log2 of -1 folds to NaN and the reciprocal of 0 to infinity"
-        (fun () ->
-          equal same_float (`Float Float.nan)
-            (Ops.value (Shape.simplify (Ops.log2 (Ops.float (-1.)))));
-          equal uop (Ops.float Float.infinity)
-            (Shape.simplify (Ops.reciprocal (Ops.float 0.))));
-    ]

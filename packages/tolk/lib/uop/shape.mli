@@ -26,11 +26,22 @@
 val shape_opt : Ops.t -> Ops.sint list option
 (** [shape_opt u] is [u]'s shape, or [None] for nodes that have none, such as
     effects and program structure. Movements check their argument against their
-    source's shape; broadcastable operations broadcast their sources' shapes
-    ({!Ops.broadcast_shape}).
+    source's shape, and accept a reshape whose element counts are symbolic
+    unless simplification shows them different; broadcastable operations
+    broadcast their sources' shapes ({!Ops.broadcast_shape}), or, under
+    {!Setting.disallow_broadcast}, require them equal. A stack prepends its
+    number of sources to theirs; an index has its indices' shape, then its
+    source's axes past the indices; a bitcast scales its last axis by the ratio
+    of the item sizes; a reduction drops its first [num_axes] axes; a stage puts
+    its ranges' sizes in front; a call has its body's shape, code its
+    function's, and an instruction is a scalar; binary code is a vector of its
+    bytes; a multiply-accumulate has its accumulator's shape; an {!Op.After}, a
+    copy, {!Op.Detach}, {!Op.Contiguous_backward} and {!Op.Noop} keep their
+    source's. Its stack use does not grow with the graph's depth.
 
-    Raises [Invalid_argument] if a movement does not fit its source's shape, or
-    if sources cannot be broadcast. *)
+    Raises [Invalid_argument] if a movement does not fit its source's shape, if
+    a bitcast's ratio does not divide its last axis, if a reduction has more
+    axes than its source, or if sources cannot be broadcast. *)
 
 val shape : Ops.t -> Ops.sint list
 (** [shape u] is [u]'s shape.
@@ -99,7 +110,9 @@ val to_float : Ops.t -> float
 
     Arithmetic computes on integers, and builds nodes as soon as an operand is
     symbolic. It is exact: a result that does not fit an [int] raises
-    [Invalid_argument]. *)
+    [Invalid_argument], and a quotient or remainder of integers by [0] raises
+    [Division_by_zero]. A divisor [0] with a symbolic operand builds the node,
+    as any divisor does. *)
 module Sint : sig
   type node := Ops.t
   type t = Ops.sint
@@ -146,7 +159,10 @@ end
 val sym_infer : Ops.sint -> (string * int) list -> int
 (** [sym_infer s vars] is the value of [s] with each variable named in [vars]
     bound to its value. Integer arithmetic is exact, divisions round as their
-    operations say, and casts convert without truncating.
+    operations say, and casts convert without truncating. [s] is simplified
+    first, which keeps its value wherever no divisor is [0] ({!section-rules}):
+    a division by a divisor that is [0] at [vars] has no promised value, and may
+    raise [Division_by_zero].
 
     Raises [Invalid_argument] if [s] reads a variable [vars] lacks, if it
     bitcasts to a boolean a byte neither [0] nor [1], whose bits no boolean
@@ -662,6 +678,10 @@ val launch_dims : Ops.program_info -> (string * int) list -> int list * int list
     no value it computes wraps ({!Ops.exact}); a weak integer, such as an index,
     never wraps.
 
+    {b Division by zero.} A rewrite keeps a node's value wherever no divisor is
+    [0]: the rules that divide a divisor out of a quotient's operands, as
+    {!div_and_mod_symbolic} makes [x // x] [1], assume it is not [0].
+
     {b Invalid values.} An index that is {!Ops.invalid} where a condition fails,
     [where cond x invalid], is a {e gated} value ({!invalid_gate}). The rewrites
     keep the gate outermost, so that it reaches the load or store that reads the
@@ -696,7 +716,8 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
     - {b identities}: [x + 0], [x lxor 0], [x lor 0], [x lsl 0], [x lsr 0],
       [x * 1] and [x // 1] are [x], a float [x + 0] only for [-0.]; [x // -1] is
       [-x] for a signed or weak [x]; [x // x] is [1] where [x]'s bounds hold no
-      [0]; [(x lxor y) lxor y] is [x] for a weak [y]; [(x % y) % y] is [x % y];
+      [0], which {!div_and_mod_symbolic} does not check; [(x lxor y) lxor y] is
+      [x] for a weak [y]; [(x % y) % y] is [x % y];
       a boolean [x land c] and [x lor c] with [c] constant are [x] or [c];
       [x = true], [x <> false], a double negation, [where x true false] and an
       idempotent operation of [x] with itself are [x]; [where x false true] is

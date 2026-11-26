@@ -496,10 +496,9 @@ tinygrad's positive `math.nan` (`dtype.py` `fp8_to_float`).
   classes › integer constants keep their bits and wrap` and `› a square of a
   product whose constant squares to 0`, at every signed and unsigned width,
   compile constants whose arithmetic wraps against eager nx.
-- **Pinned by:** `Tolk.Symbolic › symbolic_simple › constants › an operation
-  reads committed constants at their width`, `Tolk.Symbolic ›
-  symbolic_simple › constants › a comparison reads a committed constant at
-  its width`, 
+- **Pinned by:** `Tolk.Shape › symbolic_simple › constants › an operation
+  reads a committed constant at its width`, `Tolk.Shape › weak constants ›
+  pm_uncast_const reads a committed constant at its width`,
   `Tolk.Symbolic › sym › values › keeps an integer graph's value at its
   width, wrapping included` (rows `a weak operand is read at the width of the
   operation`, `a folded result is written at its width` and `nested maxima
@@ -871,9 +870,9 @@ multi-device is out of scope, see README.
   Codegen and C-style goldens, with tolk's output naming D25 in `.tolk` files
   beside them. `Tolk.Ops › exec_alu › a float multiply-add folds rounded once`
   (its float32 case past a double's rounding ties to the wrong float32 when the
-  sum is not rounded to odd); `Tolk.Symbolic › invalid values › a multiply-add
-  moves inside the gate of each operand` and `› a multiply-add of invalid is
-  invalid`. In rune, `Lower_arith › exact binary kinds, comparisons, where and
+  sum is not rounded to odd); `Tolk.Shape › symbolic_simple › invalid values ›
+  an operation on a gated value moves inside the gate` (its multiply-add rows)
+  and `› an operation on invalid is invalid` (row `a multiply-add`). In rune, `Lower_arith › exact binary kinds, comparisons, where and
   fma give eager's bits` and `Lower_real › exact › fma`, and `rune jit › classes
   › jit gives eager's bits for exact functions`. On rune: missing for a sum's
   products and for `Nx.ewma`. A narrow float's `Mulacc`: `Tolk.Codegen › a
@@ -949,8 +948,9 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   are different nodes`; `Tolk.Ops › key › tells apart NaN constants of
   different bits`; `Tolk.Ops › exec_alu › an invalid operation's
   NaN is the canonical positive quiet NaN, whatever the host gives`;
-  `Tolk.Symbolic › symbolic_simple › casts › a bitcast round trip of every
-  8- and 16-bit word folds to its value`; `Tolk.Dtype › Data types › const ›
+  `Tolk.Shape › symbolic_simple › casts › a bitcast round trip of a word
+  through a float folds to the word: every 8-bit word, and each 16-bit word of
+  an exponent all zeros or all ones`; `Tolk.Dtype › Data types › const ›
   keeps the bits of every word of an 8- or 16-bit float`; `Tolk.Dtype › Casts ›
   to_storage_scalar › moves a NaN of a float with infinities, with its sign and
   as much of its payload as it holds`, `› stores an Fp8e4m3 NaN as 0x7F or
@@ -1059,7 +1059,7 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   renders as C's `-x`, which flips the sign bit alone.
 - **Pinned by:** `Tolk.Ops › exec_alu › a selection keeps a NaN's bits and a
   negation flips only its sign, a signalling NaN's included`; and
-  `Tolk.Symbolic › symbolic_simple › constants › a folded selection keeps a
+  `Tolk.Shape › symbolic_simple › constants › a folded selection keeps a
   signalling NaN's bits, and a negation flips only its sign`. On rune:
   `Lower_arith › a folded selection keeps a NaN's bits, and a negation or an
   absolute value sets only its sign`.
@@ -3158,7 +3158,7 @@ held only on another machine is no reason.
   schedule tinygrad makes can run.
 - **Pinned by:** the Engine suite: `link and run › a loop runs its call while
   its flag holds, at most its trips`, `› a loop of one trip passes its call the
-  trip as a scalar argument`, and `Tolk.Symbolic › symbolic › ordering › an end
+  trip as a scalar argument`, and `Tolk.Shape › symbolic › ordering › an end
   drops the ranges that became constants`, `› a loop's flag that views wider
   storage is refused`, `› a planned buffer a loop writes is not placed over
   one it leaves`, `› a loop's planned flag is not placed under a buffer before
@@ -3892,8 +3892,8 @@ supports Windows: `Cstyle.clang_lang` keeps the empty `abi` and plain
   recorded simplification, within its recorded bounds › tests.golden`, row
   `class=TestWeakConstFolding test=test_float_unaries`, which folds
   `sin 4.0`; and
-  `Tolk.Symbolic › symbolic_simple › powers › c ** x multiplies x by log2 c
-  correctly rounded`, at `c = 0.86`.
+  `Tolk.Shape › symbolic_simple › powers › c ** x for an integer x reads x
+  as a float, and log2 c correctly rounded`, row `0.86 ** x`.
 
 ## D151. An x86 kernel declares that it uses 512-bit vectors
 
@@ -7166,8 +7166,8 @@ rows (1.04-1.18x on `contract/bf16-*` on fudge) is the stated cost.
   rewrite: tinygrad makes no bound that holds a condition, and without it a
   lifted kernel with a load gated by the loop's own clause does not compile.
 - **Pinned by:** `Tolk.Codegen`'s `reduces under a uniform gate` (on the
-  host and CUDA); `Tolk.Symbolic`'s selections (`the condition is not
-  assumed in the bound of a loop in a branch`); the goldens
+  host and CUDA); `Tolk.Shape › symbolic › selections › a range's
+  bound keeps the condition whatever the branch`; the goldens
   `uniform_gate_reduce`, `uniform_gate_store` and `varying_gate_reduce`;
   rune's `rows in blocks give eager's integers and hold their bound`;
   kaun's `GptOss/experts-at-prefill-512` and `GptOss/prefill-512`, and the
