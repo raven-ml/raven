@@ -1638,6 +1638,185 @@ let converts name from to_ =
 let other dt = if dt = Dtype.Int64 then Dtype.Uint64 else Dtype.Int64
 let long_ dt = dt
 
+(* Shifts of 64-bit integers on a target that emulates them
+
+   A target without 64-bit integers computes them on two 32-bit words, low first
+   (the setting names the type to emulate, as a target lacking it does). A count
+   is a number of bits whatever its words: the count's high word and any count at
+   or past the width count as much as a low word below 32. [shifted] states the
+   value, and a count is read in full, in the operand's type or in Uint32. *)
+
+let of_int dt n = Dtype.truncate dt (`Int (Bigint.of_int n))
+
+(* The least and greatest values, their neighbours, and -1 to 2. *)
+let edges dt =
+  let near v d = Dtype.truncate dt Dtype.Value.(v + of_int d) in
+  [ Dtype.min dt; near (Dtype.min dt) 1; of_int dt (-1); of_int dt 0;
+    of_int dt 1; of_int dt 2; near (Dtype.max dt) (-1); Dtype.max dt ]
+
+(* [shifted dt op x k] is [x] of [dt] shifted by [k] bits, as a count means:
+   past the width of [dt] a left shift is 0 and a right shift the sign fill;
+   below it, [x 2^k] modulo [2^w] and the floor of [x / 2^k]. *)
+let shifted dt op x k : Dtype.value =
+  let past = Bigint.geq k (Bigint.of_int (Dtype.bitsize dt)) in
+  match (op : Op.t) with
+  | Shl when past -> `Int Bigint.zero
+  | Shl -> Dtype.truncate dt (`Int (Bigint.shift_left x (Bigint.to_int k)))
+  | _ when past ->
+      `Int (if Bigint.sign x < 0 then Bigint.minus_one else Bigint.zero)
+  | _ -> `Int (Bigint.shift_right x (Bigint.to_int k))
+
+(* A power of two and its neighbours. *)
+let around p = Bigint.[ pred p; p; succ p ]
+
+let power n = Bigint.shift_left Bigint.one n
+
+let v_name = "shift_v"
+
+let emulate_long f =
+  Setting.context [ B (Setting.emulated_dtypes, [ "long" ]) ] f
+
+(* The storage of 64-bit values: the two words of each, low first. *)
+let in_words dt (xs : Dtype.value array) =
+  Array.concat
+    (Array.to_list
+       (Array.map
+          (fun x ->
+            let z = Dtype.Value.to_z x in
+            Array.map
+              (fun k ->
+                Dtype.truncate (word_of dt) (`Int (Bigint.extract z (32 * k) 32)))
+              [| 0; 1 |])
+          xs))
+
+(* The reverse: words read back as 64-bit values. *)
+let of_long_words dt (ws : Dtype.value array) =
+  Array.init
+    (Array.length ws / 2)
+    (fun i ->
+      let word k = Bigint.extract (Dtype.Value.to_z ws.((2 * i) + k)) 0 32 in
+      Dtype.truncate dt (`Int Bigint.(word 0 + shift_left (word 1) 32)))
+
+let long_lanes = 6
+
+(* Counts at the word boundary and either side of the width, 2^31, 2^32 and 2^63,
+   and the greatest of each count type: every one its type holds. *)
+let long_counts cdt =
+  let cap = snd (Dtypes.int_bounds cdt) in
+  List.sort_uniq Bigint.compare
+    (List.filter
+       (fun c -> Bigint.leq c cap)
+       (List.map Bigint.of_int [ 0; 1; 31; 32; 33; 63; 64; 65 ]
+       @ List.concat_map around (List.map power [ 31; 32; 63 ])
+       @ [ Bigint.of_int ((1 lsl 32) + 63); cap ]))
+
+(* The kernel of the shifts by a count loaded from a buffer of [cdt], by weak
+   literals, and by weak expressions [v + c - 2] of a variable bound at 2. Slot
+   0 holds the values, slot 1 the loaded counts. *)
+let long_shift_kernel dt cdt =
+  let i = Ops.range ~axis_type:Weak (Int long_lanes) [ 0 ] in
+  let at slot t = Ops.index (Shape.placeholder ~slot [ long_lanes ] t) [ i ] in
+  let x = at 0 dt in
+  let v = Ops.variable v_name (`Int Bigint.zero) (`Int (Bigint.of_int 3)) in
+  let lit c = Ops.const (`Int c) in
+  let shifts k = List.map (fun o -> Ops.alu x o [ k ]) Op.[ Shl; Shr ] in
+  let values =
+    shifts (at 1 cdt)
+    @ List.concat_map (fun c -> shifts (lit c)) (long_counts dt)
+    @ List.concat_map
+        (fun c -> shifts Ops.O.(v + lit (Bigint.sub c (Bigint.of_int 2))))
+        (List.filter (fun c -> Bigint.geq c (Bigint.of_int 2)) (long_counts dt))
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"long_shifts" ~opts_to_apply:[] ())
+    [
+      Ops.end_
+        (Ops.group
+           (List.mapi
+              (fun j value ->
+                Ops.store (Ops.index (Shape.placeholder ~slot:(j + 2) [ long_lanes ] dt) [ i ]) value)
+              values))
+        [ i ];
+    ]
+
+(* The reference of each store of {!long_shift_kernel}, after the loaded one. *)
+let long_shift_references dt =
+  let each c = List.map (fun o -> (o, c)) Op.[ Shl; Shr ] in
+  let two = Bigint.of_int 2 in
+  List.concat_map each (long_counts dt)
+  @ List.concat_map each (List.filter (fun c -> Bigint.geq c two) (long_counts dt))
+
+let long_shift_program =
+  let compiled = Hashtbl.create 8 in
+  fun dt cdt ->
+    match Hashtbl.find_opt compiled (dt, cdt) with
+    | Some prg -> prg
+    | None ->
+        let prg =
+          emulate_long (fun () ->
+              Codegen.to_program (long_shift_kernel dt cdt)
+                (Run.renderer Rig.host))
+        in
+        Hashtbl.replace compiled (dt, cdt) prg;
+        prg
+
+let long_shifts_compute (dt, cdt, xs, ks) =
+  let w = Bigint.of_int (Dtype.bitsize dt) in
+  cover "a loaded count at or past the width"
+    (Array.exists (fun k -> Bigint.geq (Dtype.Value.to_z k) w) ks);
+  cover "a loaded count below the width"
+    (Array.exists (fun k -> Bigint.lt (Dtype.Value.to_z k) w) ks);
+  let counts_buffer =
+    if Dtype.equal cdt Uint32 then ks else in_words cdt ks
+  in
+  let references = long_shift_references dt in
+  let out =
+    Run.on ~vars:[ (v_name, 2) ] Rig.host (long_shift_program dt cdt)
+      ([ (0, in_words dt xs); (1, counts_buffer) ]
+      @ List.init
+          ((List.length references + 2))
+          (fun j ->
+            ( j + 2,
+              Array.make (2 * long_lanes)
+                (Dtype.truncate (word_of dt) (`Int Bigint.zero)) )))
+  in
+  let check j msg expected =
+    equal ~msg (array value) expected (of_long_words dt (List.assoc (j + 2) out))
+  in
+  let msg o what =
+    Format.asprintf "%a %a by %s" Dtype.pp dt Op.pp o what
+  in
+  let by o c x = shifted dt o (Dtype.Value.to_z x) c in
+  List.iteri
+    (fun j o ->
+      check j (msg o "the loaded count")
+        (Array.map2 (fun x k -> by o (Dtype.Value.to_z k) x) xs ks))
+    Op.[ Shl; Shr ];
+  List.iteri
+    (fun j (o, c) ->
+      check (j + 2) (msg o (Bigint.to_string c)) (Array.map (by o c) xs))
+    references
+
+let long_shifts_gen =
+  let open Gen in
+  let* dt = of_list ~pp:Dtype.pp Dtype.[ Int64; Uint64 ] in
+  let* cdt = of_list ~pp:Dtype.pp [ dt; Dtype.Uint32 ] in
+  let counts = List.map (fun c -> (`Int c : Dtype.value)) (long_counts cdt) in
+  let value = frequency [ (3, of_list (edges dt)); (1, map (of_int dt) int) ] in
+  let+ xs = array ~size:(constant long_lanes) value
+  and+ ks = array ~size:(constant long_lanes) (of_list counts) in
+  (dt, cdt, xs, ks)
+
+let long_shifts_prop =
+  prop "an emulated 64-bit shift reads the whole of its count" ~count:60
+    (Gen.with_pp
+       (fun ppf (dt, cdt, xs, ks) ->
+         Format.fprintf ppf "%a by %a: %a by %a" Dtype.pp dt Dtype.pp cdt
+           (Testable.pp (array Dtypes.value)) xs
+           (Testable.pp (array Dtypes.value)) ks)
+       long_shifts_gen)
+    long_shifts_compute
+
 let sixty_four_bits =
   group "64-bit integers"
     [
@@ -1784,6 +1963,7 @@ let sixty_four_bits =
             (converts Int64 Float32 "-9007199791611905");
           equal (list hex) [ 0xdebb ]
             (List.map as_int (converts Int64 Bfloat16 "-6719370644036780033")));
+      long_shifts_prop;
     ]
 
 (* Goldens *)

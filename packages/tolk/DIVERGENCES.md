@@ -7572,11 +7572,13 @@ C's undefined behaviour.
   host (`clang › on the host`) and on each GPU (`metal › on Metal`, `cuda
   › on CUDA` and `› on NV`, `hip › on AMD`, run on fudge's CUDA and NV),
   and `an 8- or 16-bit integer shifted by a uint32 count is what
-  Ops.exec_alu computes`, beside them; the Tolk_engine suite's `a shift by a literal or weak count of any size computes
-  the shift`, compiled and through the interpreter, on the host and each
-  GPU; `an emulated 64-bit shift reads the whole of its count`, compiled
-  with 64-bit integers emulated, by counts of the operand's type, of
-  `Uint32`, weak literals and weak expressions; and the Symbolic suite's `a
+  Ops.exec_alu computes`, beside them; the Tolk_engine suite's `a shift by
+  a literal or weak count of any size computes the shift`, compiled and
+  through the interpreter, on the host and each GPU; the Decomp_dtype
+  suite's `pm_dtype_decomps › 64-bit integers › an emulated 64-bit shift
+  reads the whole of its count`, compiled with 64-bit integers emulated, by
+  counts of the operand's type, of `Uint32`, weak literals and weak
+  expressions; and the Symbolic suite's `a
   shift of constants folds by its count, of any size` and `a masked right
   shift past the width keeps its mask's sign`.
 
