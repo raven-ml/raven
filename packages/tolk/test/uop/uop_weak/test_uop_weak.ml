@@ -142,6 +142,23 @@ let pm_commit_weak =
 
 (* pm_lower_weak *)
 
+let big n = Bigint.shift_left Bigint.one n
+
+let first op u =
+  List.find (fun n -> Ops.op n = op) (Ops.toposort ~calls:Enter u)
+
+(* u just below 2^63 + 2, which commits at Uint64, and v just above -2^63, which
+   commits at Int64 *)
+let near_top =
+  Ops.variable "u"
+    (`Int Bigint.(pred (pred (big 63))))
+    (`Int (Bigint.succ (big 63)))
+
+let near_bottom =
+  Ops.variable "v"
+    (`Int (Bigint.neg (big 63)))
+    (`Int Bigint.(add (neg (big 63)) (of_int 3)))
+
 let lower ?default_float name u =
   rewrites ?default_float Uop_weak.pm_lower_weak name (Ops.sink [ u ])
 
@@ -209,6 +226,46 @@ let pm_lower_weak =
          let n = var "i" 0 (pow2 28) in
          let offset = Shape.valid Ops.O.(n * int 24) Ops.O.(n < int (pow2 28)) in
          Ops.v Op.Shrink ~src:[ buf; offset; int 4 ]);
+      (* a variable of the one value 2^65 is no constant: it has a width *)
+      test
+        "an expression whose bounds are one value no 64-bit integer holds \
+         commits at Int64" (fun () ->
+          let p = Ops.variable "p" (`Int (big 65)) (`Int (big 65)) in
+          let lowered =
+            rewrite Uop_weak.pm_lower_weak (Ops.sink [ Ops.O.(p * int 2) ])
+          in
+          equal Dtypes.dtype Int64 (Ops.dtype (first Op.Mul lowered)));
+      (* u * 2 passes every 64-bit integer, and u commits at Uint64: the two
+         meet only at a float *)
+      test "an integer node computes in integers" (fun () ->
+          let lowered =
+            rewrite Uop_weak.pm_lower_weak
+              (Ops.sink [ Ops.O.(near_top * int 2) ])
+          in
+          equal (list Uops.uop) []
+            (List.filter
+               (fun n -> Dtype.is_float (Ops.dtype n))
+               (Ops.toposort ~calls:Enter lowered)));
+      (* u + v is -2 at u = 2^63 - 2 and v = -2^63, which an unsigned sum reads
+         as 2^64 - 2, and 4 at u = 2^63 + 1 and v = -2^63 + 3, which a float32
+         sum reads as 0 *)
+      cases "a sum of a 64-bit unsigned and a signed operand keeps its value"
+        ~id:(fun (u, v) ->
+          Format.asprintf "u = %a, v = %a" Bigint.pp_print u Bigint.pp_print v)
+        Bigint.
+          [
+            (pred (pred (big 63)), neg (big 63));
+            (succ (big 63), add (neg (big 63)) (of_int 3));
+          ]
+        (fun (u, v) ->
+          let below_three =
+            Ops.where Ops.O.(near_top + near_bottom < int 3) (int 1) (int 0)
+          in
+          let at g =
+            Interpreter.eval ~vars:[ ("u", `Int u); ("v", `Int v) ] g
+          in
+          equal Dtypes.const (at below_three)
+            (at (rewrite Uop_weak.pm_lower_weak below_three)));
       lower "lower_a_register_buffer_size"
         (Shape.placeholder ~slot:0 ~addrspace:Reg [ 4 ] Float32);
     ]

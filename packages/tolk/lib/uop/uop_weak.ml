@@ -8,7 +8,38 @@
 open Ops
 open Shape
 
-let committed u = commit_dtype ~default_int:Dtype.Int32 u
+(* Only a constant has no width: an expression whose bounds no 64-bit integer
+   holds, one value among them, commits at Int64 and wraps there. *)
+let committed u =
+  if (not (is_const u)) && Dtype.equal (dtype u) Dtype.Weak_int && fits_no_int u
+  then Dtype.Int64
+  else commit_dtype ~default_int:Dtype.Int32 u
+
+(* The operations whose result reads their operands' signedness. *)
+let reads_sign =
+  Op.Set.of_list
+    Op.[ Cmplt; Cmpne; Cmpeq; Max; Truncdiv; Truncmod; Div; Mod; Shr ]
+
+(* [machine_width u operands] is the 64-bit integer type the integer node [u]
+   computes at where its widths meet only at a float, as a 64-bit unsigned and a
+   signed integer do. A node whose bits do not read its operands' signedness
+   computes at the 64-bit type of its own width's signedness, which keeps its
+   bits and its value. One that reads it, a comparison, a maximum, a division, a
+   remainder or a right shift, computes at the 64-bit type that holds every one
+   of [operands], and at Int64 where none does, its operands past it
+   wrapping. *)
+let machine_width u operands =
+  let holds dt = List.for_all (fun s -> not (overflows s dt)) operands in
+  if Op.Set.mem (op u) reads_sign then
+    if holds Dtype.Int64 then Dtype.Int64
+    else if holds Dtype.Uint64 then Dtype.Uint64
+    else Dtype.Int64
+  else if Dtype.equal (committed u) Dtype.Uint64 then Dtype.Uint64
+  else Dtype.Int64
+
+(* The sources of [u] that are values: a shift's count and a power's exponent
+   are numbers. *)
+let values u = List.filteri (fun i _ -> not (is_number u i)) (src u)
 
 (* The decompositions and float emulation commit bare constants at a type
    another source already states. *)
@@ -88,13 +119,10 @@ let cast_weak_srcs c u =
     in
     let widths = committed u :: srcs in
     let dt = Dtype.least_upper (dtype c :: widths) in
-    (* An integer cast never computes in a float, which the lattice puts above a
-       64-bit unsigned and a signed integer: the node computes
-       at 64 bits, unsigned only where its bounds pass a signed integer's. *)
+    (* An integer cast never computes in a float. *)
     let dt =
       if Dtype.is_int (dtype c) && Dtype.is_float dt then
-        if Dtype.mem Dtype.Uint64 widths then Dtype.Uint64
-        else Dtype.Int64
+        machine_width u (values u)
       else dt
     in
     Option.map (fun ret -> cast ret (dtype c)) (commit_srcs_at u dt)
@@ -148,6 +176,14 @@ let absorb_weak_src s =
       cast x (committed s)
     else x
 
+(* [in_integers u operands widths dt] is [dt], the type [u] meets its
+   [operands], of types [widths], at; where none is a float, [u] never computes
+   in one ({!machine_width}). *)
+let in_integers u operands widths dt =
+  if Dtype.is_float dt && not (List.exists Dtype.is_float widths) then
+    machine_width u operands
+  else dt
+
 let lower_weak_node u =
   (* A committed constant, not a consumer. *)
   if op u = Op.Cast && is_const (nth u 0) then None
@@ -173,11 +209,15 @@ let lower_weak_node u =
         (* Resolve whole once every weak expression is lowered: a binary node
            widens from its own bounds too, and derivable constants wait. *)
         let dt =
-          Dtype.strong
-            (if Op.Set.mem (op u) Op.Set.binary then
-               Dtype.least_upper (committed u :: List.map dtype src)
-             else dtype_of (op u) src (arg u))
+          if Op.Set.mem (op u) Op.Set.binary then
+            let widths = committed u :: List.map dtype src in
+            in_integers u (values u) widths (Dtype.least_upper widths)
+          else if op u = Op.Where || op u = Op.Stack then
+            let widths = List.map dtype operands in
+            in_integers u operands widths (dtype_of (op u) src (arg u))
+          else dtype_of (op u) src (arg u)
         in
+        let dt = Dtype.strong dt in
         let commit s =
           if is_invalid (base s) || weak s then s else ccast s dt
         in

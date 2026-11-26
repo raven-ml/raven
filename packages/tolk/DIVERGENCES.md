@@ -1329,9 +1329,9 @@ encodes no queue (D146).
 - **Differs:** a cast to a committed type over a weak expression commits the
   expression at the least upper type of the cast's type and the committed
   types of the expression and its weak sources. Where that type is a float and
-  the cast's type an integer, the expression commits at `Int64` here, or at
-  `Uint64` where one of the committed types is, and the 64-bit result converts
-  to the cast's type as C converts an integer. tinygrad computes such an
+  the cast's type an integer, the expression computes at 64 bits here, as D507
+  states, and the 64-bit result converts to the cast's type as C converts an
+  integer. tinygrad computes such an
   expression in float32, since a 64-bit unsigned integer and a signed one meet
   only at a float: `(b * 3 + 1).cast(dtypes.uint64)` rounds past 2^24. Every
   other cast commits as tinygrad's does.
@@ -10397,3 +10397,29 @@ D466.
   recorded access as its golden states`, through `bounds.tolk`'s two rows, and
   `› with check_oob, an access through a shrink passes iff its run lies within
   the storage`.
+
+## D507. A weak integer node computes in machine integers
+
+- **tinygrad:** `uop/weak.py` `lower_weak_node`, `cast_weak_srcs`;
+  `dtype.py` `commit_int`.
+- **tolk:** `Uop_weak.pm_lower_weak` and `Uop_weak.pm_commit_weak`
+  (`machine_width`, `committed`).
+- **Differs:** where an integer node's widths meet only at a float, as a
+  64-bit unsigned and a signed integer do, tinygrad computes it in the
+  default float. Here a node whose result does not read its operands'
+  signedness (a sum, a product, a selection) computes at the 64-bit type of
+  its own width's signedness, and a comparison, maximum, division, remainder
+  or right shift at the 64-bit type that holds every operand's bounds, or at
+  `Int64` where none does. An expression whose bounds are one value no 64-bit
+  integer holds commits at `Int64` here, as one of wider bounds does;
+  tinygrad's `commit_int` raises, taking equal bounds for a constant. D44's
+  integer cast computes at the same 64-bit type.
+- **Reason:** (b): `u * 2` with a weak `u` near 2^63 computed in float32, and
+  a weak variable of the one value 2^65 raised while lowering.
+- **Pinned by:** the Uop_weak suite: `pm_lower_weak › computes an integer
+  node in integers`, `pm_lower_weak › keeps the value of a node over a 64-bit
+  unsigned and a signed operand` (named examples `(u + v < 3).where(1, 0)`,
+  `(u + v) // 2`, and `u // 2`, `u < 2^63`, `u * 1` and `u + w1` at each of
+  `u`'s bounds), `pm_commit_weak › keeps the value of a cast over a 64-bit
+  unsigned and a signed operand`, and `pm_lower_weak › an expression whose
+  bounds are one value no 64-bit integer holds commits at Int64`.

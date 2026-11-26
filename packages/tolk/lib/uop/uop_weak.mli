@@ -21,11 +21,21 @@
     - by {b default}, for the rest ({!pm_lower_weak}): a weak float takes
       {!Dtype.default_float}, and a weak integer the first of {!Dtype.Int32},
       {!Dtype.Int64} and {!Dtype.Uint64} that holds its bounds
-      ({!Ops.commit_dtype}).
+      ({!Ops.commit_dtype}); an expression whose bounds none holds, one value
+      included, commits at {!Dtype.Int64}, where its values past [Int64] wrap.
 
     A weak constant whose consumer derives its type from its other sources stays
     a bare literal, so rules keyed on constant values keep matching it;
-    {!pm_cast_const} states the width of every remaining literal last. *)
+    {!pm_cast_const} states the width of every remaining literal last.
+
+    An integer node never computes in a float. Where its widths meet only at
+    one, as a 64-bit unsigned and a signed integer do, it computes at 64 bits: a
+    node whose result does not read its operands' signedness, as a sum, a
+    product or a selection, at the 64-bit type of its own width's signedness,
+    which keeps its bits and its value; a comparison, a maximum, a division, a
+    remainder or a right shift at the 64-bit type that holds every operand's
+    bounds, or at {!Dtype.Int64} where none does, its operands past it wrapping.
+*)
 
 val commit_weak_consts : Ops.t -> Dtype.t option -> Ops.t
 (** [commit_weak_consts u dt] is [u] with each of its sources that is a weak
@@ -53,12 +63,11 @@ val pm_commit_weak : (unit, Ops.t) Ops.Pattern_matcher.t
     - a {!Op.Store} of a weak value converts it to the destination's type;
     - a cast to a committed type [dt] over a weak arithmetic node [u] of [dt]'s
       kind commits [u]'s weak sources at the least upper type of [dt], [u]'s
-      committed type and each weak source's committed type, a shift's count
-      and an integer power's exponent apart, and casts the result
-      to [dt]. Where that type is a float, as it is for a 64-bit unsigned [dt]
-      over a signed width, they commit at {!Dtype.Int64} instead, or at
-      {!Dtype.Uint64} where one of the committed types is: an integer cast
-      computes in integers.
+      committed type and each weak source's committed type, a shift's count and
+      an integer power's exponent apart, and casts the result to [dt]. Where
+      that type is a float, as it is for a 64-bit unsigned [dt] over a signed
+      width, they commit at 64 bits as an integer node does (see above): an
+      integer cast computes in integers.
 
     It runs with every rewrite that can build a weak constant, and must reach
     its fixed point before {!pm_lower_weak} gives defaults. *)
@@ -75,9 +84,10 @@ val pm_lower_weak : (unit, Ops.t) Ops.Pattern_matcher.t
     - once no source is a weak expression, a unary, binary, {!Op.Where},
       {!Op.Range}, {!Op.Stack} or {!Op.Special} node computes at one committed
       type: for a binary node, the least upper type of its sources and of its
-      own default, and otherwise the type it derives. Its sources are converted
-      to it, and the node is cast back to its own type, which its consumers
-      absorb in turn;
+      own default, and otherwise the type it derives. Where that is a float over
+      integer operands, the node computes at 64 bits as an integer node does
+      (see above). Its sources are converted to it, and the node is cast back to
+      its own type, which its consumers absorb in turn;
     - two stacked weak casts over a committed value are two conversions, each at
       the default of its kind;
     - a weak integer scalar parameter or buffer is stored at its default, cast
