@@ -2605,10 +2605,10 @@ host's accumulators in its vector registers.
   is linear in its length`, `› sym's work on a chain under one far
   condition is linear in its length` and tinygrad's
   `test_where_closure_folding*` goldens; the Ops suite (`test/uop/ops`):
-  `graphs › reaches is membership in the node's toposort`, `› reaches
-  ~calls:Enter enters call bodies`, `› op_in_backward_slice_with_self is an
-  operation of the slice` and `› op_in_backward_slice_with_self enters call
-  bodies only under Enter`.
+  `reaches › is whether a node is the root or a source of a node the walk
+  enters, through nodes other than it that the gate accepts` and
+  `op_in_backward_slice_with_self › is whether an operation of the list is
+  one of the slice's`, each under both treatments of calls.
 
 ## D94. Withdrawn
 
@@ -4421,9 +4421,10 @@ its float bound`, hold.
   reaches an element the mark is the pad's weak `0`, and compiling raised:
   rune's `a fold wraps integers and holds its float bound` failed.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a maximum of
-  weak integers › is the greatest value it reduces`; `Tolk.Ops › data types ›
-  identities.golden`; rune's `Lower_index › folds and assemblies › a fold wraps
-  integers and holds its float bound`.
+  weak integers › is the greatest value it reduces`; `Tolk.Ops ›
+  identity_element › is each operation's identity as identities.golden states
+  › identities.golden`; rune's `Lower_index › folds and assemblies › a fold
+  wraps integers and holds its float bound`.
 
 ## D166. A minimum of a minimum against one value is one selection
 
@@ -5982,8 +5983,8 @@ union, as fast on CUDA, on the host and in compile time.
   or at launch.
 - **Pinned by:** the Tolk_engine suite: `loops bounded by a loaded value`,
   on the host and each GPU present (CUDA and NV on fudge), every test. The
-  Ops suite: `ranges › a launch knows a bound of constants and variables,
-  ...`. The Postrange suite: `loops bounded by an axis`, and `axes.tolk`'s
+  Ops suite: `known_at_launch › is true of the ranges whose bound reads no
+  range and no memory`. The Postrange suite: `loops bounded by an axis`, and `axes.tolk`'s
   `padto_reduction_bound`. The Spec suite: `verdicts.tolk`'s `a load after a
   store`, and `verdicts.golden`'s `an int32 load after a range` and `a range
   bounded by a load after a range`. The Codegen suite: `hand-written kernels on the host › a lane of
@@ -7949,8 +7950,9 @@ reason and its pins.
   `max(w, 253)`; on int32, `(x * 65536) * 65536` made a shift by 32, which C
   leaves undefined; `x:i32 * 2^32` failed to compile. The literal has the
   value before any rule sees it, so no rule must know to read it so.
-- **Pinned by:** the Ops suite's `integer literals`, at every integer type, at
-  -1, at the bounds, past the width and at the width's power; the Codegen
+- **Pinned by:** the Ops suite's `v › a literal holds its value at the
+  operation's integer type`, at every integer type, at -1, at the bounds,
+  past the width and at the width's power; the Codegen
   suite's `constants past the width` (`a literal computes as its value at the
   operation's type`, every operation and type, `a product or conjunction by a
   literal that is 0 at its type is 0`, `a square of a product whose constant

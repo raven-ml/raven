@@ -1199,190 +1199,233 @@ let tables =
 
 (* Data types *)
 
-let dtype_or_raise cell =
-  if raised cell then cell else "dtypes." ^ Dtypes.alias (dtype_of_cell cell)
-
 let operand dt =
   if Dtype.equal dt Bool then flag "x"
   else Ops.variable ~dtype:dt "x" (i 0) (i 1)
 
+let transcendentals = Op.[ Exp2; Log2; Sin; Sqrt; Recip ]
+
 let data_types =
-  group "data types"
+  group "dtype_of"
     [
-      Golden.cases "dtypes_of.golden" ~key:[ "op"; "a"; "b" ] (fun cell ->
-          let o = op_of_cell (cell "op") in
-          let srcs =
-            match (o, cell "b") with
-            | _, "-" -> [ operand (dtype_of_cell (cell "a")) ]
-            | Op.Where, b ->
-                [
-                  operand (dtype_of_cell (cell "a"));
-                  operand (dtype_of_cell b);
-                  operand Float32;
-                ]
-            | _, b ->
-                [
-                  operand (dtype_of_cell (cell "a")); operand (dtype_of_cell b);
-                ]
+      group "derives each operation's type as dtypes_of.golden states"
+        [
+          Golden.cases "dtypes_of.golden" ~key:[ "op"; "a"; "b" ] (fun cell ->
+              let o = op_of_cell (cell "op") in
+              let srcs =
+                match (o, cell "b") with
+                | _, "-" -> [ operand (dtype_of_cell (cell "a")) ]
+                | Op.Where, b ->
+                    [
+                      operand (dtype_of_cell (cell "a"));
+                      operand (dtype_of_cell b);
+                      operand Float32;
+                    ]
+                | _, b ->
+                    [
+                      operand (dtype_of_cell (cell "a"));
+                      operand (dtype_of_cell b);
+                    ]
+              in
+              let derive () = Ops.dtype_of o srcs No_arg in
+              if raised (cell "dtype") then rejects derive
+              else equal dtype (dtype_of_cell (cell "dtype")) (derive ()));
+        ];
+      (* The graph format's table of constants: a constant's type follows from
+         its kind. *)
+      cases "is a constant's weak type of its kind, Bool for Invalid"
+        ~id:(fun (c, _) -> str Ops.pp_arg (Const c))
+        [
+          (`Bool true, Dtype.Bool);
+          (f 3., Weak_float);
+          (i 3, Weak_int);
+          (`Invalid, Bool);
+        ]
+        (fun (c, dt) -> equal dtype dt (Ops.dtype_of Op.Const [] (Const c)));
+      cases "is Bool for a transcendental of invalid" ~id:(str Op.pp)
+        transcendentals (fun o ->
+          equal dtype Bool (Ops.dtype (Ops.alu Ops.invalid o [])));
+      cases "is Void for an effect" ~id:(str Op.pp)
+        Op.
+          [
+            Store;
+            Sink;
+            Linear;
+            Program;
+            Source;
+            Backedge;
+            Barrier;
+            If;
+            Endif;
+            Noop;
+          ]
+        (fun o -> equal dtype Void (Ops.dtype_of o [] No_arg));
+    ]
+
+let promoting =
+  group "promo_dtype"
+    [
+      prop "is the type its nodes share, or their least upper bound"
+        (Gen.list ~size:(Gen.int_range 1 3) Dtypes.promotable)
+        (fun dts ->
+          let shared =
+            match dts with
+            | d :: rest when List.for_all (Dtype.equal d) rest -> Some d
+            | _ -> None
           in
-          let derive () = Ops.dtype_of o srcs No_arg in
-          if raised (cell "dtype") then rejects derive
-          else equal dtype (dtype_of_cell (cell "dtype")) (derive ()));
-      test "a constant's data type is its literal's" (fun () ->
-          equal dtype Bool (Ops.dtype_of Op.Const [] (Const (`Bool true)));
-          equal dtype Weak_float (Ops.dtype_of Op.Const [] (Const (f 3.)));
-          equal dtype Weak_int (Ops.dtype_of Op.Const [] (Const (i 3)));
-          equal dtype Bool (Ops.dtype_of Op.Const [] (Const `Invalid)));
-      test "a transcendental of Invalid is boolean" (fun () ->
-          equal dtype Bool (Ops.dtype (Ops.alu Ops.invalid Op.Sqrt [])));
-      test "effects are void, and a call has its body's type" (fun () ->
-          List.iter
-            (fun o ->
-              equal ~msg:(str Op.pp o) dtype Void (Ops.dtype_of o [] No_arg))
-            Op.
-              [
-                Sink;
-                Linear;
-                Program;
-                Source;
-                Backedge;
-                Barrier;
-                If;
-                Endif;
-                Noop;
-              ];
-          equal dtype Int32
-            (Ops.dtype
-               (Ops.call (Ops.custom_function ~dtype:Int32 "f" []) []));
-          equal dtype Void
-            (Ops.dtype (Ops.call (Ops.custom_function "f" []) [ Ops.int 1 ])));
-      test "promo_dtype is the shared type, or the least upper one" (fun () ->
-          equal dtype Float32
-            (Ops.promo_dtype [ fvar "x"; fvar ~dtype:Float16 "y" ]);
-          equal dtype Int32
-            (Ops.promo_dtype [ var ~dtype:Int8 "a" 0 1; var "b" 0 1 ]);
-          equal dtype Weak_int (Ops.promo_dtype [ Ops.int 1; Ops.int 2 ]));
-      Golden.cases "identities.golden" ~key:[ "op"; "dtype" ]
-        ~differs:[ ("D165", [ "op=Ops.MAX dtype=dtypes.weakint" ]) ]
-        (fun cell ->
-          equal const
-            (const_of_cell (cell "identity"))
-            (Ops.identity_element
-               (op_of_cell (cell "op"))
-               (dtype_of_cell (cell "dtype"))));
-      test "identity_element rejects an operation without one" (fun () ->
-          rejects (fun () -> Ops.identity_element Op.Sub Int32);
-          rejects (fun () -> Ops.identity_element Op.Where Int32));
+          cover "a shared type" (Option.is_some shared);
+          cover "several types" (Option.is_none shared);
+          equal dtype
+            (Option.value shared ~default:(Dtype.least_upper dts))
+            (Ops.promo_dtype (List.map operand dts)));
+    ]
+
+(* An operation that has an identity, a data type and a value of the type its
+   accumulator takes. *)
+let accumulated =
+  Gen.(
+    with_pp
+      (fun ppf (o, dt, x) ->
+        Format.fprintf ppf "(%a, %a, %a)" Op.pp o (Testable.pp dtype) dt
+          (Testable.pp value) x)
+      (let* o = of_list ~pp:Op.pp Op.[ Add; Mul; Max ] in
+       let* dt =
+         of_list ~pp:(Testable.pp dtype)
+           (Dtype.Weak_int :: Dtype.Weak_float :: Dtype.all)
+       in
+       let+ x = Dtypes.value_of (Dtype.strong dt) in
+       (o, dt, x)))
+
+let is_nan = function `Float x -> Float.is_nan x | _ -> false
+let is_neg_zero = function `Float x -> x = 0. && Float.sign_bit x | _ -> false
+
+(* [op e x] and [op x e] are [x], but for the two exceptions the .mli states:
+   [0. + -0.] is [0.], and [Max] of the identity and a NaN gives either. *)
+let neutral (o, dt, x) =
+  cover "-0. under Add" (o = Op.Add && is_neg_zero x);
+  cover "a NaN under Max" (o = Op.Max && is_nan x);
+  cover "a NaN under Add or Mul" (o <> Op.Max && is_nan x);
+  let e = Ops.identity_element o dt and x = (x :> Dtype.const) in
+  let apply a b = Ops.exec_alu o (Dtype.strong dt) [ a; b ] in
+  List.iter
+    (fun r ->
+      if o = Op.Add && is_neg_zero x then equal const (`Float 0.) r
+      else if o = Op.Max && is_nan x then mem const r [ e; x ]
+      else equal const x r)
+    [ apply e x; apply x e ]
+
+let identities =
+  group "identity_element"
+    [
+      group "is each operation's identity as identities.golden states"
+        [
+          Golden.cases "identities.golden" ~key:[ "op"; "dtype" ]
+            ~differs:[ ("D165", [ "op=Ops.MAX dtype=dtypes.weakint" ]) ]
+            (fun cell ->
+              equal const
+                (const_of_cell (cell "identity"))
+                (Ops.identity_element
+                   (op_of_cell (cell "op"))
+                   (dtype_of_cell (cell "dtype"))));
+        ];
+      prop
+        "is neutral for its operation on every value of the accumulator's type"
+        ~examples:
+          [
+            (Op.Add, Dtype.Float32, `Float (-0.));
+            (Op.Max, Dtype.Float64, `Float Float.nan);
+            (Op.Mul, Dtype.Float16, `Float Float.nan);
+          ]
+        accumulated neutral;
+      cases "raises for an operation other than Add, Mul and Max"
+        ~id:(str Op.pp)
+        (List.filter
+           (fun o -> not (List.mem o Op.[ Add; Mul; Max ]))
+           (Op.Set.to_list Op.Set.all))
+        (fun o -> rejects (fun () -> Ops.identity_element o Int32));
     ]
 
 (* Graphs *)
 
-(* A random DAG: node [n] adds two of the earlier ones. *)
-let gen_dag =
+(* A random graph over two variables: each step adds two of the nodes before it,
+   or calls a body that multiplies two of them on the second. A call has no
+   value, so no later step reads it. *)
+let gen_graph =
   Gen.(
-    list ~size:(int_range 1 12) (pair nat nat)
+    list ~size:(int_range 1 12) (triple nat nat bool)
     |> with_pp (fun ppf l ->
         Format.pp_print_list
-          (fun ppf (a, b) -> Format.fprintf ppf "(%d,%d)" a b)
+          (fun ppf (a, b, call) -> Format.fprintf ppf "(%d,%d,%b)" a b call)
           ppf l))
 
-let dag edges =
-  let nodes = ref [ var "leaf0" 0 1; var "leaf1" 0 1 ] in
+let graph steps =
+  let nodes = ref [ var "leaf0" 0 1; var "leaf1" 0 1 ] and calls = ref [] in
   List.iter
-    (fun (a, b) ->
+    (fun (a, b, call) ->
       let n = List.length !nodes in
       let pick k = List.nth !nodes (n - 1 - (k mod n)) in
-      nodes := !nodes @ [ Ops.v ~src:[ pick a; pick b ] Op.Add ])
-    edges;
-  Ops.sink !nodes
+      if call then
+        calls :=
+          Ops.call (Ops.sink [ Ops.O.(pick a * pick b) ]) [ pick b ] :: !calls
+      else nodes := !nodes @ [ Ops.v ~src:[ pick a; pick b ] Op.Add ])
+    steps;
+  Ops.sink (!nodes @ List.rev !calls)
 
-let index_of l =
-  let t = Ops.Tbl.create 16 in
-  List.iteri (fun n u -> Ops.Tbl.replace t u n) l;
-  Ops.Tbl.find t
+let walked_srcs ~calls u =
+  match (calls, Ops.op u) with
+  | Ops.Skip, Op.Call -> List.tl (Ops.src u)
+  | _ -> Ops.src u
 
-let graphs =
-  group "graphs"
+(* The order ops.mli states: a depth-first walk of the sources, in order,
+   through the nodes [gate] accepts, each listed when the walk finishes it. *)
+let reference_toposort ?(gate = fun _ -> true) ~calls root =
+  let seen = Ops.Tbl.create 16 and order = ref [] in
+  let rec visit u =
+    if (not (Ops.Tbl.mem seen u)) && gate u then begin
+      Ops.Tbl.replace seen u ();
+      List.iter visit (walked_srcs ~calls u);
+      order := u :: !order
+    end
+  in
+  visit root;
+  List.rev !order
+
+(* [x] is [u], or a source of a node a walk from [u] enters through nodes other
+   than [x] that [gate] accepts. *)
+let reference_reaches ?(gate = fun _ -> true) ~calls u x =
+  u == x
+  || List.exists
+       (fun n -> List.memq x (walked_srcs ~calls n))
+       (reference_toposort ~gate:(fun n -> n != x && gate n) ~calls u)
+
+let has_call root = List.exists (fun u -> Ops.op u = Op.Call) (Ops.src root)
+
+let pp_calls ppf (c : Ops.calls) =
+  Format.pp_print_string ppf (match c with Enter -> "Enter" | Skip -> "Skip")
+
+let gen_walk =
+  Gen.(triple gen_graph bool (of_list ~pp:pp_calls Ops.[ Enter; Skip ]))
+
+(* The nodes of the graph of [steps], each a root, and a gate that refuses every
+   third of them if [gated]. *)
+let walks steps gated =
+  let root = graph steps in
+  let nodes = reference_toposort ~calls:Enter root in
+  let at = Ops.Tbl.create 16 in
+  List.iteri (fun n u -> Ops.Tbl.replace at u n) nodes;
+  let gate u = (not gated) || Ops.Tbl.find at u mod 3 <> 1 in
+  (root, nodes, gate)
+
+let call_covers root calls =
+  cover "a call's body left out" (calls = Ops.Skip && has_call root);
+  cover "a call's body walked" (calls = Ops.Enter && has_call root)
+
+let walk_errors =
+  group "Graphs"
     [
-      prop "toposort lists each node once, after its sources" gen_dag
-        (fun edges ->
-          let order = Ops.toposort ~calls:Enter (dag edges) in
-          let at = index_of order in
-          equal int (List.length order)
-            (Ops.Tbl.length
-               (let t = Ops.Tbl.create 16 in
-                List.iter (fun u -> Ops.Tbl.replace t u ()) order;
-                t));
-          List.iter
-            (fun u ->
-              List.iter (fun s -> less int ~than:(at u) (at s)) (Ops.src u))
-            order);
-      prop "toposort reaches exactly what the sources reach" gen_dag
-        (fun edges ->
-          let root = dag edges in
-          let rec reach acc u =
-            if List.memq u acc then acc
-            else List.fold_left reach (u :: acc) (Ops.src u)
-          in
-          equal int
-            (List.length (reach [] root))
-            (List.length (Ops.toposort ~calls:Enter root)));
-      prop "reaches is membership in the node's toposort" gen_dag (fun edges ->
-          let nodes = Ops.toposort ~calls:Enter (dag edges) in
-          List.iter
-            (fun u ->
-              let reached = Ops.toposort ~calls:Enter u in
-              List.iter
-                (fun x ->
-                  equal bool (List.memq x reached)
-                    (Ops.reaches ~calls:Enter u x))
-                nodes)
-            nodes);
-      prop "reaches through a gate is a source of the gated toposort" gen_dag
-        (fun edges ->
-          let nodes = Ops.toposort ~calls:Enter (dag edges) in
-          let at = index_of nodes in
-          let gate u = at u mod 3 <> 1 in
-          List.iter
-            (fun u ->
-              let walked = Ops.toposort ~gate ~calls:Enter u in
-              List.iter
-                (fun x ->
-                  let reference =
-                    x == u
-                    || List.exists (fun n -> List.memq x (Ops.src n)) walked
-                  in
-                  equal bool reference (Ops.reaches ~gate ~calls:Enter u x))
-                nodes)
-            nodes);
-      prop "op_in_backward_slice_with_self is an operation of the slice"
-        gen_dag (fun edges ->
-          let nodes = Ops.toposort ~calls:Enter (dag edges) in
-          let slice calls u =
-            Ops.Nodes.to_list (Ops.backward_slice_with_self ~calls u)
-          in
-          let reference calls u ops =
-            List.exists (fun n -> List.mem (Ops.op n) ops) (slice calls u)
-          in
-          List.iter
-            (fun u ->
-              List.iter
-                (fun (calls, ops) ->
-                  equal bool (reference calls u ops)
-                    (Ops.op_in_backward_slice_with_self ~calls u ops))
-                (List.concat_map
-                   (fun ops -> [ (Ops.Skip, ops); (Ops.Enter, ops) ])
-                   Op.[ [ Add ]; [ Param ]; [ Sink ]; [ Mul; Add ] ]))
-            nodes);
-      test "toposort finishes sources left to right, then the node" (fun () ->
-          let a = var "a" 0 4 and b = var "b" 0 4 in
-          let c = Ops.int 2 in
-          let size = Ops.size_src None in
-          equal uops
-            [ size; a; b; Ops.O.(a + b); c; Ops.O.((a + b) * c) ]
-            (Ops.toposort ~calls:Enter Ops.O.((a + b) * c)));
-      test "an exception at any allocation of a walk leaves later walks right"
-        (fun () ->
+      test
+        "a walk an exception ends at any allocation leaves later walks their \
+         results" (fun () ->
           (* A chain of 40 sums outgrows a walk's first rows and pairs, so some
              raises land as they grow. A walk the exception ends gives its
              arrays back, and later walks take them: a walk in another's gate
@@ -1416,126 +1459,214 @@ let graphs =
             match made with Some n when n < k -> () | _ -> from (k + 1)
           in
           from 1);
-      test "toposort enters only the nodes the gate accepts" (fun () ->
-          let a = var "a" 0 4 and b = var "b" 0 4 in
-          let s = Ops.O.(a + b) in
-          equal uops
-            [ Ops.O.(s * s) ]
-            (Ops.toposort ~calls:Enter ~gate:(fun u -> u != s) Ops.O.(s * s));
-          equal uops [] (Ops.toposort ~calls:Enter ~gate:(fun _ -> false) s));
-      test "toposort ~calls:Skip does not enter call bodies" (fun () ->
-          let body = Ops.sink [ var "inside" 0 1 ] in
-          let arg = var "arg" 0 1 in
-          let c = Ops.call body [ arg ] in
-          is_true (List.memq body (Ops.toposort ~calls:Enter c));
-          is_false (List.memq body (Ops.toposort ~calls:Skip c));
-          is_true (List.memq arg (Ops.toposort ~calls:Skip c)));
-      test "topovisit applies its function once per node, sources first"
-        (fun () ->
-          let a = var "a" 0 4 in
-          let s = Ops.O.(a + a) in
-          let seen = ref [] in
-          let cache = Ops.Tbl.create 4 in
-          let depth u =
-            seen := u :: !seen;
-            List.length !seen
+    ]
+
+let toposorts =
+  group "toposort"
+    [
+      prop
+        "is the nodes a depth-first walk of the sources finishes, through \
+         those the gate accepts"
+        gen_walk (fun (steps, gated, calls) ->
+          let root, nodes, gate = walks steps gated in
+          call_covers root calls;
+          cover "a gate that refuses nodes" gated;
+          List.iter
+            (fun u ->
+              equal uops
+                (reference_toposort ~gate ~calls u)
+                (Ops.toposort ~gate ~calls u))
+            nodes);
+    ]
+
+let topovisits =
+  group "topovisit"
+    [
+      (* A cache that holds every fourth node beforehand, if [cached]. *)
+      prop
+        "applies its function to the nodes a walk enters outside the cache, \
+         each after its sources, once" (Gen.pair gen_graph Gen.bool)
+        (fun (steps, cached) ->
+          let root = graph steps in
+          let nodes = reference_toposort ~calls:Enter root in
+          let cache = Ops.Tbl.create 16 in
+          List.iteri
+            (fun n u ->
+              if cached && n mod 4 = 0 then Ops.Tbl.replace cache u (-1))
+            nodes;
+          let outside u = not (Ops.Tbl.mem cache u) in
+          let expected = reference_toposort ~gate:outside ~calls:Enter root in
+          cover "a cached node" cached;
+          let visited = ref [] in
+          let f u =
+            visited := u :: !visited;
+            List.length !visited
           in
-          equal int 3 (Ops.topovisit s depth cache);
-          equal uops [ Ops.size_src None; a; s ] (List.rev !seen);
-          equal int 3 (Ops.topovisit s depth cache);
-          equal int 3 (List.length !seen));
-      test "backward_slice is the reached nodes without the root" (fun () ->
-          let leaf = Shape.param 97 Int32 in
-          let branch = Ops.O.(leaf + Ops.int 3) in
-          let root = Ops.sink [ branch; leaf; branch ] in
-          equal uops
-            (List.filter (fun u -> u != root) (Ops.toposort ~calls:Enter root))
-            (Ops.Nodes.to_list (Ops.backward_slice ~calls:Skip root));
-          equal uops
-            (root :: Ops.Nodes.to_list (Ops.backward_slice ~calls:Skip root))
-            (Ops.Nodes.to_list (Ops.backward_slice_with_self ~calls:Skip root));
-          let body = Ops.sink [ var "inside" 0 1 ] in
-          let c = Ops.call body [] in
-          equal bool ~msg:"Skip" false
-            (Ops.Nodes.mem body (Ops.backward_slice ~calls:Skip c));
-          equal bool ~msg:"Enter after Skip" true
-            (Ops.Nodes.mem body (Ops.backward_slice ~calls:Enter c));
-          equal bool ~msg:"Skip after Enter" false
-            (Ops.Nodes.mem body (Ops.backward_slice ~calls:Skip c)));
-      test
-        "op_in_backward_slice_with_self looks at the node and what it reaches"
-        (fun () ->
-          let e = Ops.O.(var "a" 0 4 + Ops.int 1) in
-          let has ops = Ops.op_in_backward_slice_with_self ~calls:Skip e ops in
-          is_true (has [ Op.Add ]);
-          is_true (has [ Op.Param; Op.Mul ]);
-          is_false (has [ Op.Mul ]));
-      test "op_in_backward_slice_with_self enters call bodies only under Enter"
-        (fun () ->
-          let body = Ops.sink [ Ops.O.(var "inside" 0 1 * Ops.int 2) ] in
-          let c = Ops.call body [ Ops.O.(var "arg" 0 1 + Ops.int 1) ] in
-          let has calls ops = Ops.op_in_backward_slice_with_self ~calls c ops in
-          equal bool ~msg:"Skip, an argument's" true (has Skip [ Op.Add ]);
-          equal bool ~msg:"Skip, the body's" false (has Skip [ Op.Mul ]);
-          equal bool ~msg:"Enter, the body's" true (has Enter [ Op.Mul ]));
-      test "reaches ~calls:Enter enters call bodies" (fun () ->
-          let inside = var "inside" 0 1 in
-          let c = Ops.call (Ops.sink [ inside ]) [] in
-          is_true (Ops.reaches ~calls:Enter c inside);
-          is_true (Ops.reaches ~calls:Enter c c);
-          is_false (Ops.reaches ~calls:Enter inside c));
-      test "reaches ~calls:Skip does not enter call bodies" (fun () ->
-          let inside = var "inside" 0 1 and arg = var "arg" 0 1 in
-          let c = Ops.call (Ops.sink [ inside ]) [ arg ] in
-          equal bool false (Ops.reaches ~calls:Skip c inside);
-          equal bool true (Ops.reaches ~calls:Skip c arg));
-      test "split_uop is the operands of a tree of one operation" (fun () ->
-          let a = var "a" 0 4 and b = var "b" 0 4 and c = var "c" 0 4 in
-          equal uops [ a; b; c ] (Ops.split_uop Ops.O.(a + b + c) Op.Add);
-          equal uops
-            [ a; Ops.O.(b * c) ]
-            (Ops.split_uop Ops.O.(a + (b * c)) Op.Add);
-          equal uops [ a ] (Ops.split_uop a Op.Mul));
+          let result = Ops.topovisit root f cache in
+          equal uops expected (List.rev !visited);
+          equal
+            (list (pair uop int))
+            (List.mapi (fun n u -> (u, n + 1)) expected)
+            (List.map (fun u -> (u, Ops.Tbl.find cache u)) expected);
+          equal int (Ops.Tbl.find cache root) result;
+          equal int result (Ops.topovisit root f cache);
+          equal int (List.length expected) (List.length !visited));
+    ]
+
+let slices =
+  group "backward_slice"
+    [
+      prop "is toposort's nodes without the root" gen_graph (fun steps ->
+          let root = graph steps in
+          cover "a call" (has_call root);
+          (* Both walks of each node in turn: a slice kept for one must not
+             answer the other. *)
+          List.iter
+            (fun u ->
+              List.iter
+                (fun calls ->
+                  equal uops
+                    (List.filter
+                       (fun n -> n != u)
+                       (reference_toposort ~calls u))
+                    (Ops.Nodes.to_list (Ops.backward_slice ~calls u)))
+                Ops.[ Skip; Enter; Skip ])
+            (reference_toposort ~calls:Enter root));
+    ]
+
+let slices_with_self =
+  group "backward_slice_with_self"
+    [
+      prop "is the root, then its backward_slice" gen_walk
+        (fun (steps, _, calls) ->
+          let root, nodes, _ = walks steps false in
+          call_covers root calls;
+          List.iter
+            (fun u ->
+              equal uops
+                (u :: Ops.Nodes.to_list (Ops.backward_slice ~calls u))
+                (Ops.Nodes.to_list (Ops.backward_slice_with_self ~calls u)))
+            nodes);
+    ]
+
+let ops_in_slices =
+  group "op_in_backward_slice_with_self"
+    [
+      prop "is whether an operation of the list is one of the slice's" gen_walk
+        (fun (steps, _, calls) ->
+          let root, nodes, _ = walks steps false in
+          call_covers root calls;
+          let lists =
+            Op.[ [ Add ]; [ Mul ]; [ Param ]; [ Sink ]; [ Mul; Call ] ]
+          in
+          List.iter
+            (fun u ->
+              let ops_of n = Ops.op n in
+              let slice = reference_toposort ~calls u in
+              equal
+                (list (list op))
+                (List.filter
+                   (fun ops ->
+                     List.exists (fun n -> List.mem (ops_of n) ops) slice)
+                   lists)
+                (List.filter
+                   (Ops.op_in_backward_slice_with_self ~calls u)
+                   lists))
+            nodes);
+    ]
+
+let reaching =
+  group "reaches"
+    [
+      prop
+        "is whether a node is the root or a source of a node the walk enters, \
+         through nodes other than it that the gate accepts"
+        gen_walk (fun (steps, gated, calls) ->
+          let root, nodes, gate = walks steps gated in
+          call_covers root calls;
+          cover "a gate that refuses nodes" gated;
+          List.iter
+            (fun u ->
+              equal uops
+                (List.filter (reference_reaches ~gate ~calls u) nodes)
+                (List.filter (Ops.reaches ~gate ~calls u) nodes))
+            nodes);
+    ]
+
+let splitting =
+  group "split_uop"
+    [
+      cases "is the operands of the tree of the operation, left to right"
+        ~id:(fun (what, _, _, _) -> what)
+        (let a = var "a" 0 4 and b = var "b" 0 4 and c = var "c" 0 4 in
+         [
+           ("a chain of sums", Ops.O.(a + b + c), Op.Add, [ a; b; c ]);
+           ( "a sum of a product",
+             Ops.O.(a + (b * c)),
+             Op.Add,
+             [ a; Ops.O.(b * c) ] );
+           ("a sum of sums", Ops.O.(a + b + (c + a)), Op.Add, [ a; b; c; a ]);
+           ("another operation", a, Op.Mul, [ a ]);
+         ])
+        (fun (_, u, o, expected) -> equal uops expected (Ops.split_uop u o));
     ]
 
 (* Shapes *)
 
-let t_var () = weak_var "t" 1 10
-
-let shapes =
-  group "shapes"
+let broadcasting =
+  let t = weak_var "t" 1 10 in
+  group "broadcast_shape"
     [
-      test "broadcast_shape aligns right and keeps the size that is not 1"
-        (fun () ->
-          equal shape
-            (ints [ 4; 8 ])
-            (Ops.broadcast_shape [ ints [ 4; 8 ]; ints [ 4; 1 ] ]);
-          equal shape
-            (ints [ 4; 8 ])
-            (Ops.broadcast_shape [ ints [ 4; 8 ]; ints [ 1; 8 ] ]);
-          equal shape
-            (ints [ 4; 8 ])
-            (Ops.broadcast_shape [ ints [ 4; 8 ]; ints [ 8 ] ]);
-          equal shape
-            (ints [ 4; 8 ])
-            (Ops.broadcast_shape [ ints [ 4; 8 ]; [] ]);
-          equal shape (ints [ 0 ])
-            (Ops.broadcast_shape [ ints [ 0 ]; ints [ 1 ] ]);
-          let t = t_var () in
-          equal shape [ Int 1; Sym t ]
-            (Ops.broadcast_shape [ [ Int 1; Sym t ]; [ Int 1; Sym t ] ]);
-          equal shape [ Sym t ] (Ops.broadcast_shape [ ints [ 1 ]; [ Sym t ] ]));
-      test "broadcast_shape rejects two sizes other than 1" (fun () ->
-          rejects (fun () -> Ops.broadcast_shape [ ints [ 3 ]; ints [ 2 ] ]);
-          rejects (fun () ->
-              Ops.broadcast_shape
-                [ [ Sym (t_var ()) ]; [ Sym (weak_var "s" 1 10) ] ]));
-      test "broadcast_shape of no shape is the empty shape" (fun () ->
+      cases
+        "aligns shapes to the right, each axis the size of its sources not 1"
+        ~id:(fun (what, _, _) -> what)
+        [
+          ("one shape", [ ints [ 2; 3 ] ], ints [ 2; 3 ]);
+          ("a 1 of the second", [ ints [ 4; 8 ]; ints [ 4; 1 ] ], ints [ 4; 8 ]);
+          ("a 1 of the first", [ ints [ 4; 1 ]; ints [ 1; 8 ] ], ints [ 4; 8 ]);
+          ("a shorter shape", [ ints [ 4; 8 ]; ints [ 8 ] ], ints [ 4; 8 ]);
+          ("the empty shape", [ ints [ 4; 8 ]; [] ], ints [ 4; 8 ]);
+          ("an axis of 0", [ ints [ 0 ]; ints [ 1 ] ], ints [ 0 ]);
+          ( "three shapes",
+            [ ints [ 3; 1; 1 ]; ints [ 1; 4; 1 ]; ints [ 5 ] ],
+            ints [ 3; 4; 5 ] );
+          ("all 1", [ ints [ 1; 1 ]; ints [ 1 ] ], ints [ 1; 1 ]);
+          ( "a symbolic size twice",
+            [ [ Int 1; Sym t ]; [ Int 1; Sym t ] ],
+            [ Int 1; Sym t ] );
+          ("a symbolic size against 1", [ ints [ 1 ]; [ Sym t ] ], [ Sym t ]);
+        ]
+        (fun (_, shapes, expected) ->
+          equal shape expected (Ops.broadcast_shape shapes));
+      cases "raises on an axis of two sizes other than 1"
+        ~id:(fun (what, _) -> what)
+        [
+          ("3 and 2", [ ints [ 3 ]; ints [ 2 ] ]);
+          ("3 and 0", [ ints [ 3; 1 ]; ints [ 0; 1 ] ]);
+          ("two symbolic sizes", [ [ Sym t ]; [ Sym (weak_var "s" 1 10) ] ]);
+        ]
+        (fun (_, shapes) -> rejects (fun () -> Ops.broadcast_shape shapes));
+      test "of no shape is the empty shape" (fun () ->
           equal shape [] (Ops.broadcast_shape []));
-      test "sint_to_uop is the literal, or the node itself" (fun () ->
+    ]
+
+let max_shapes =
+  group "to_max_shape"
+    [
+      test "replaces each symbolic size by its greatest value" (fun () ->
+          let t = weak_var "t" 1 10 in
+          equal (list int) [ 3; 10; 20; 0 ]
+            (Ops.to_max_shape [ Int 3; Sym t; Sym Ops.O.(t * int 2); Int 0 ]));
+    ]
+
+let sints =
+  group "sint_to_uop"
+    [
+      test "is an integer's literal, of the type given" (fun () ->
           equal uop (Ops.int 3) (Ops.sint_to_uop (Int 3));
           equal uop (Ops.int ~dtype:Int32 3)
-            (Ops.sint_to_uop ~dtype:Int32 (Int 3));
+            (Ops.sint_to_uop ~dtype:Int32 (Int 3)));
+      test "is a symbolic size's node" (fun () ->
           let n = weak_var "n" 1 8 in
           equal uop n (Ops.sint_to_uop (Sym n)));
     ]
@@ -1543,189 +1674,373 @@ let shapes =
 (* Ranges *)
 
 let list_ranges u = Ops.Nodes.to_list (Ops.ranges u)
+let weak_range ?dtype axis = Ops.range ~axis_type:Weak ?dtype (Int 4) [ axis ]
+
+let range_starts =
+  group "range_start"
+    [
+      cases "is 1 for Stage, Reduce and End, 0 for Linear, None otherwise"
+        ~id:(str Op.pp) (Op.Set.to_list Op.Set.all) (fun o ->
+          let expected =
+            match o with
+            | Stage | Reduce | End -> Some 1
+            | Linear -> Some 0
+            | _ -> None
+          in
+          equal (option int) expected (Ops.range_start o));
+    ]
+
+let ended =
+  let r = weak_range 0 and outer = weak_range 1 and loop = Ops.loop 2 in
+  let ended = Ops.end_ Ops.O.(r + int 1) [ r ] in
+  group "ended_ranges"
+    [
+      cases "is the ranges a node closes"
+        ~id:(fun (what, _, _) -> what)
+        [
+          ( "an end, its ranges",
+            Ops.end_ Ops.O.(r + outer) [ r; outer ],
+            [ r; outer ] );
+          ( "a reduction, its ranges",
+            Ops.reduce Ops.O.(r + int 1) Op.Add [ r ],
+            [ r ] );
+          ("a stage, its ranges", Ops.bufferize Ops.O.(r + int 1) [ r ], [ r ]);
+          ("a linear program, its sources", Ops.v ~src:[ r ] Op.Linear, [ r ]);
+          ("a barrier, what its sources close", Ops.barrier ended [], [ r ]);
+          ( "an after, what its effects close",
+            Ops.after Ops.O.(outer + int 1) [ ended ],
+            [ r ] );
+          ( "a backedge, its loop",
+            Ops.backedge (Ops.int 1) ~loop ~cond:Ops.O.(outer < int 2),
+            [ loop ] );
+          ( "a call, none",
+            Ops.call (Ops.custom_function "f" []) [ Ops.O.(r + int 1) ],
+            [] );
+          ("a sum, none", Ops.O.(r + int 1), []);
+        ]
+        (fun (_, u, expected) -> equal uops expected (Ops.ended_ranges u));
+    ]
 
 let ranges =
+  let range axis = weak_range axis in
   group "ranges"
     [
-      test
-        "range_start is the first range source of the operations that end \
-         ranges" (fun () ->
-          List.iter
-            (fun (o, expected) ->
-              equal ~msg:(str Op.pp o) (option int) expected (Ops.range_start o))
-            Op.
-              [
-                (Stage, Some 1);
-                (Reduce, Some 1);
-                (End, Some 1);
-                (Call, None);
-                (Linear, Some 0);
-                (Add, None);
-                (After, None);
-              ]);
-      test "an end closes its ranges, and an after ordered on it too" (fun () ->
-          let r = Ops.range ~axis_type:Weak (Int 10) [ 0 ] in
-          let c = Ops.O.(r + int 1) in
-          is_true (Ops.Nodes.mem r (Ops.ranges c));
-          let e = Ops.end_ (Ops.v Op.Noop) [ r ] in
-          is_false (Ops.Nodes.mem r (Ops.ranges e));
-          let group = Ops.group [ e; e ] in
-          is_true (group == Ops.after (Ops.v Op.Stack) [ e; e ]);
-          is_true (Shape.simplify group == Ops.after (Ops.v Op.Stack) [ e ]);
-          is_false (Ops.Nodes.mem r (Ops.ranges (Ops.after c [ e ]))));
-      test "ranges lists the node first, then its sources' ranges" (fun () ->
-          let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-          let r1 =
-            Ops.range ~axis_type:Weak (Sym (Ops.after (Ops.int 4) [ r0 ])) [ 1 ]
+      cases
+        "is the node if a range, then those its sources run inside, minus \
+         those it closes"
+        ~id:(fun (what, _, _) -> what)
+        (let r = range 0 and outer = range 1 in
+         let inner =
+           Ops.range ~axis_type:Weak
+             (Sym (Ops.after (Ops.int 4) [ outer ]))
+             [ 2 ]
+         in
+         let ended = Ops.end_ (Ops.v Op.Noop) [ r ] in
+         let loop = Ops.loop 3 in
+         let backedge =
+           Ops.backedge (Ops.int 1) ~loop ~cond:Ops.O.(outer < int 2)
+         in
+         let first = range 4 and closed = range 5 and last = range 6 in
+         let barrier = Ops.barrier (Ops.end_ closed [ closed ]) [] in
+         [
+           ("a range", r, [ r ]);
+           ("a sum over a range", Ops.O.(r + int 1), [ r ]);
+           ("a range bounded after another", inner, [ inner; outer ]);
+           ("an end of its range", ended, []);
+           ( "an after ordered after an end",
+             Ops.after Ops.O.(r + int 1) [ ended ],
+             [] );
+           ( "an end of an inner range",
+             Ops.end_ Ops.O.(outer + inner) [ inner ],
+             [ outer ] );
+           ("a linear program", Ops.v ~src:[ r ] Op.Linear, []);
+           ( "an after of a barrier over an end",
+             Ops.after Ops.O.(first + closed + last) [ barrier; barrier ],
+             [ first; last ] );
+           ("a backedge", backedge, [ outer ]);
+           ( "an after ordered after a backedge",
+             Ops.after Ops.O.(outer + int 1) [ backedge ],
+             [ outer ] );
+           ( "a call to an external function",
+             Ops.call
+               (Ops.custom_function ~dtype:Int32 "external" [])
+               [ Ops.int ~dtype:Uint64 0; Ops.O.(r + int 1) ],
+             [ r ] );
+           ( "a call to an external function of a source",
+             Ops.call (Ops.custom_function "f" [ Ops.int 0 ]) [ r ],
+             [ r ] );
+           ( "a call to a kernel",
+             Ops.call (Ops.sink [ var "inside" 0 1 ]) [ r ],
+             [ r ] );
+         ])
+        (fun (_, u, expected) -> equal uops expected (list_ranges u));
+    ]
+
+let not_ranges = [ ("a constant", Ops.int 1); ("a variable", var "v" 0 4) ]
+
+let axis_ids =
+  group "axis_id"
+    [
+      cases "is a range's identity"
+        ~id:(fun (ids, _) -> str Format.(pp_print_list pp_print_int) ids)
+        [
+          ([ 0 ], Ops.Axis_type.Weak); ([ 1; 0 ], Loop); ([ -2; 3; 1 ], Upcast);
+        ]
+        (fun (ids, a) ->
+          equal (list int) ids
+            (Ops.axis_id (Ops.range ~axis_type:a (Int 4) ids)));
+      cases "raises on anything else" ~id:fst not_ranges (fun (_, u) ->
+          rejects (fun () -> Ops.axis_id u));
+    ]
+
+let axis_types_of =
+  group "axis_type"
+    [
+      cases "is a range's role" ~id:show_axis_type axis_types (fun a ->
+          equal axis_type a
+            (Ops.axis_type (Ops.range ~axis_type:a (Int 4) [ 0 ])));
+      cases "raises on anything else" ~id:fst not_ranges (fun (_, u) ->
+          rejects (fun () -> Ops.axis_type u));
+    ]
+
+(* Bounds of a range [bounded b] and what [bound_loads] and [known_at_launch]
+   make of each, from their definitions: a bound reads memory through a load, or
+   an index into global or workgroup storage; a launch knows a bound that reads
+   no range and no memory; effects an after orders a bound after are no part of
+   it. *)
+let bounds_rows =
+  let i = weak_range 0 in
+  let x = Shape.param ~shape:[ Int 4 ] 0 Int32 in
+  let y = Shape.param ~shape:[ Int 4 ] 1 Int32 in
+  let one = Ops.int ~dtype:Int32 1 in
+  let stores = Ops.end_ (Ops.store (Ops.index x [ i ]) one) [ i ] in
+  let copy read =
+    Ops.end_ (Ops.store (Ops.index x [ i ]) (read (Ops.index y [ i ]))) [ i ]
+  in
+  let local =
+    Ops.v
+      ~arg:(Param (Ops.param_arg ~addrspace:Local ~slot:2 Int32))
+      ~src:[ Ops.size_src (Some 4) ]
+      Op.Param
+  in
+  let register =
+    Ops.v
+      ~arg:(Param (Ops.param_arg ~addrspace:Reg ~slot:3 Int32))
+      ~src:[ Ops.size_src (Some 4) ]
+      Op.Param
+  in
+  let at p = Ops.cast (Ops.index p [ Ops.int 0 ]) Weak_int in
+  let bounded_by_memory = Ops.range ~axis_type:Weak (Sym (at x)) [ 2 ] in
+  [
+    ("a constant", Ops.int 4, false, true);
+    ("a variable", var "n" 0 8, false, true);
+    ( "a variable after a loop that stores",
+      Ops.after (var "n" 0 8) [ stores ],
+      false,
+      true );
+    ( "a variable after a loop that loads",
+      Ops.after (var "n" 0 8) [ copy (fun at -> Ops.load at []) ],
+      false,
+      true );
+    ( "a variable after a loop that indexes",
+      Ops.after (var "n" 0 8) [ copy Fun.id ],
+      false,
+      true );
+    ("a range", Ops.O.(i + int 1), false, false);
+    ("a constant after a range", Ops.after (Ops.int 4) [ i ], false, true);
+    ("a variable after a range", Ops.after (var "n" 0 8) [ i ], false, true);
+    ( "a constant after a range bounded by memory",
+      Ops.after (Ops.int 4) [ bounded_by_memory ],
+      false,
+      true );
+    ( "a load",
+      Ops.cast (Ops.load (Ops.index x [ Ops.int 0 ]) []) Weak_int,
+      true,
+      false );
+    ("an index into global storage", at x, true, false);
+    ("an index into workgroup storage", at local, true, false);
+    ("an index into registers", at register, false, true);
+    ( "a sum of a load",
+      Ops.O.(
+        Ops.cast (Ops.load (Ops.index x [ Ops.int 0 ]) []) Weak_int + int 1),
+      true,
+      false );
+  ]
+
+let bounded b = Ops.range ~axis_type:Weak (Sym b) [ 1 ]
+
+(* The rows' names of the ranges [pred] holds of: each bound's range, then a
+   loop, which has no bound, alone and ordered after a range, as the linearizer
+   orders a loop after the effects before it. *)
+let holds pred expected =
+  let loop = Ops.loop 7 in
+  let after_range =
+    Ops.replace ~src:[ Ops.after (Ops.nth loop 0) [ weak_range 0 ] ] loop
+  in
+  let rows =
+    List.map
+      (fun (what, b, reads, known) -> (what, bounded b, reads, known))
+      bounds_rows
+    @ [
+        ("no bound, a loop's", loop, false, false);
+        ("no bound, a loop's ordered after a range", after_range, false, false);
+      ]
+  in
+  let names f =
+    List.filter_map
+      (fun (what, r, reads, known) ->
+        if f r reads known then Some what else None)
+      rows
+  in
+  equal (list string)
+    (names (fun _ reads known -> expected reads known))
+    (names (fun r _ _ -> pred r))
+
+let loads =
+  group "bound_loads"
+    [
+      test "is true of the ranges whose bound reads memory" (fun () ->
+          holds Ops.bound_loads (fun reads _ -> reads));
+      cases "raises on anything else" ~id:fst not_ranges (fun (_, u) ->
+          rejects (fun () -> Ops.bound_loads u));
+    ]
+
+let launches =
+  group "known_at_launch"
+    [
+      test "is true of the ranges whose bound reads no range and no memory"
+        (fun () -> holds Ops.known_at_launch (fun _ known -> known));
+      cases "raises on anything else" ~id:fst not_ranges (fun (_, u) ->
+          rejects (fun () -> Ops.known_at_launch u));
+    ]
+
+(* A range's argument: its axis type and a short identity, so that drawn
+   arguments often share a type, an identity or a prefix. *)
+let gen_range_arg =
+  Gen.(
+    pair
+      (of_list ~pp:Ops.Axis_type.pp axis_types)
+      (list ~size:(int_range 1 3) (int_range (-1) 1)))
+
+(* Two arguments, the second drawn apart, the first's identity extended or the
+   first itself, in either order, so that a prefix and one argument are each
+   over a fifth of the cases: 100 cases all miss either under 10^-9. *)
+let gen_range_args =
+  Gen.(
+    let extended (a, ids) =
+      map
+        (fun more -> (a, ids @ more))
+        (list ~size:(int_range 1 2) (int_range (-1) 1))
+    in
+    let pp_arg ppf (a, ids) =
+      Format.fprintf ppf "(%a, [%a])" Ops.Axis_type.pp a
+        Format.(
+          pp_print_list
+            ~pp_sep:(fun ppf () -> pp_print_string ppf "; ")
+            pp_print_int)
+        ids
+    in
+    with_pp
+      (fun ppf (r0, r1) -> Format.fprintf ppf "(%a, %a)" pp_arg r0 pp_arg r1)
+      (let* r0 = gen_range_arg in
+       let* r1 =
+         frequency
+           [ (2, gen_range_arg); (1, extended r0); (1, constant ~pp:pp_arg r0) ]
+       in
+       let+ swap = bool in
+       if swap then (r1, r0) else (r0, r1)))
+
+let range_of (a, ids) = Ops.range ~axis_type:a (Int 4) ids
+
+(* A strict prefix of an identity of one axis type. *)
+let prefix ((a0, ids0), (a1, ids1)) =
+  Ops.Axis_type.equal a0 a1
+  && List.length ids0 < List.length ids1
+  && List.filteri (fun n _ -> n < List.length ids0) ids1 = ids0
+
+let range_args =
+  group "compare_range_arg"
+    [
+      prop
+        "orders by axis type, then identity, lexicographically, a prefix first"
+        gen_range_args (fun ((a0, ids0), (a1, ids1)) ->
+          let pair = ((a0, ids0), (a1, ids1)) in
+          cover "one axis type" (Ops.Axis_type.equal a0 a1);
+          cover "a prefix" (prefix pair || prefix ((a1, ids1), (a0, ids0)));
+          cover "one argument" (Ops.Axis_type.equal a0 a1 && ids0 = ids1);
+          let expected =
+            match Ops.Axis_type.compare a0 a1 with
+            | 0 -> List.compare Int.compare ids0 ids1
+            | c -> c
           in
-          equal uops [ r1; r0 ] (list_ranges r1);
-          equal int 2 (Ops.Nodes.cardinal (Ops.ranges r1));
-          equal uops [ r0; r1 ]
-            (Ops.Nodes.fold (fun u acc -> u :: acc) (Ops.ranges r1) []));
-      test
-        "a launch knows a bound of constants and variables, ordered after \
-         effects or not, and not one that reads a range or memory" (fun () ->
-          let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-          let x = Shape.param ~shape:[ Int 4 ] 0 Int32 in
-          let one = Ops.int ~dtype:Int32 1 in
-          let loop = Ops.end_ (Ops.store (Ops.index x [ i ]) one) [ i ] in
-          let y = Shape.param ~shape:[ Int 4 ] 1 Int32 in
-          let copy read =
-            Ops.end_
-              (Ops.store (Ops.index x [ i ]) (read (Ops.index y [ i ])))
-              [ i ]
-          in
-          let bounded b = Ops.range ~axis_type:Weak (Sym b) [ 1 ] in
-          let bounded_by_index =
-            Ops.range ~axis_type:Weak
-              (Sym (Ops.cast (Ops.index x [ Ops.int 0 ]) Weak_int))
-              [ 2 ]
-          in
-          List.iter
-            (fun (msg, b, known) ->
-              equal ~msg bool known (Ops.known_at_launch (bounded b)))
-            [
-              ("a variable", var "n" 0 8, true);
-              ("a variable after a loop", Ops.after (var "n" 0 8) [ loop ], true);
-              ( "a variable after a loop that loads",
-                Ops.after (var "n" 0 8) [ copy (fun at -> Ops.load at []) ],
-                true );
-              ( "a variable after a loop that indexes",
-                Ops.after (var "n" 0 8) [ copy Fun.id ],
-                true );
-              ("a range", Ops.O.(i + int 1), false);
-              ("a range ordered after", Ops.after (Ops.int 4) [ i ], true);
-              ( "a variable ordered after a range",
-                Ops.after (var "n" 0 8) [ i ],
-                true );
-              ( "a range bounded by memory ordered after",
-                Ops.after (Ops.int 4) [ bounded_by_index ],
-                true );
-              ( "a load",
-                Ops.cast (Ops.load (Ops.index x [ Ops.int 0 ]) []) Weak_int,
-                false );
-              ( "an index",
-                Ops.cast (Ops.index x [ Ops.int 0 ]) Weak_int,
-                false );
-            ];
-          equal bool true (Ops.known_at_launch i);
-          equal ~msg:"a loop, which has no bound" bool false
-            (Ops.known_at_launch (Ops.loop 1));
-          equal ~msg:"a loop ordered after a range" bool false
-            (Ops.known_at_launch
-               (Ops.replace
-                  ~src:[ Ops.after (Ops.nth (Ops.loop 7) 0) [ i ] ]
-                  (Ops.loop 7)));
-          raises_match
-            (function Invalid_argument _ -> true | _ -> false)
-            (fun () -> Ops.known_at_launch (Ops.int 4)));
-      test "a range runs inside itself" (fun () ->
-          let r = Ops.range ~axis_type:Weak (Int 10) [ 0 ] in
-          equal uops [ r ] (list_ranges r));
-      test "a call keeps its arguments' ranges" (fun () ->
-          let r = Ops.range ~axis_type:Weak ~dtype:Int32 (Int 4) [ 0 ] in
-          let foreign =
-            Ops.call
-              (Ops.custom_function ~dtype:Int32 "external" [])
-              [ Ops.int ~dtype:Uint64 0; Ops.O.(r + int 1) ]
-          in
-          equal uops ~msg:"an external function" [ r ] (list_ranges foreign);
-          let kernel = Ops.call (Ops.sink [ var "inside" 0 1 ]) [ r ] in
-          equal uops ~msg:"a kernel" [ r ] (list_ranges kernel));
-      test "a backedge closes its loop and keeps the condition's other ranges"
-        (fun () ->
-          let outer = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
-          and inner = Ops.loop 1 in
-          let e =
-            Ops.backedge (Ops.int 1) ~loop:inner ~cond:Ops.O.(outer < int 2)
-          in
-          equal uops [ outer ] (list_ranges e);
-          equal uops [ outer ]
-            (list_ranges (Ops.after Ops.O.(outer + int 1) [ e ])));
-      test "an after of a barrier over an end closes the ended range" (fun () ->
-          let range axis = Ops.range ~axis_type:Weak (Int 4) [ axis ] in
-          let first = range 1 and closed = range 2 and last = range 3 in
-          let barrier = Ops.barrier (Ops.end_ closed [ closed ]) [] in
-          let root =
-            Ops.after Ops.O.(first + closed + last) [ barrier; barrier ]
-          in
-          equal uops [ first; last ] (list_ranges root));
-      test "an external call keeps the ranges it is given, whatever its body"
-        (fun () ->
-          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-          equal uops [ r ]
-            (list_ranges (Ops.call (Ops.custom_function "f" []) [ r ]));
-          equal uops [ r ]
-            (list_ranges
-               (Ops.call (Ops.custom_function "f" [ Ops.int 0 ]) [ r ])));
-      test "an end closes its range only, not the ranges it runs inside"
-        (fun () ->
-          let outer = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-          let inner =
-            Ops.range ~axis_type:Weak
-              (Sym (Ops.after (Ops.int 4) [ outer ]))
-              [ 1 ]
-          in
-          equal uops [ outer ]
-            (list_ranges (Ops.end_ Ops.O.(outer + inner) [ inner ])));
-      test "a linear program closes the ranges it lays out" (fun () ->
-          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-          is_false (Ops.Nodes.mem r (Ops.ranges (Ops.v ~src:[ r ] Op.Linear))));
-      test "a barrier closes what its sources close" (fun () ->
-          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-          let ended = Ops.end_ Ops.O.(r + int 1) [ r ] in
-          equal uops [ r ] (Ops.ended_ranges (Ops.barrier ended [])));
-      test "axis_id and axis_type read a range and reject anything else"
-        (fun () ->
-          let r = Ops.range ~axis_type:Loop (Int 4) [ 1; 0 ] in
-          equal (list int) [ 1; 0 ] (Ops.axis_id r);
-          is_true (Ops.axis_type r = Loop);
-          rejects (fun () -> Ops.axis_id (Ops.int 1));
-          rejects (fun () -> Ops.axis_type (Ops.int 1)));
-      test
-        "range_str writes the identity with underscores and m for a negative \
-         part" (fun () ->
-          equal string "0_1"
-            (Ops.range_str (Ops.range ~axis_type:Weak (Int 4) [ 0; 1 ]));
-          equal string "m1"
-            (Ops.range_str (Ops.range ~axis_type:Loop (Int 4) [ -1 ]));
-          equal string "2_m3"
-            (Ops.range_str (Ops.range ~axis_type:Weak (Int 4) [ 2; -3 ])));
-      test "range_str paints in the axis colour on request" (fun () ->
-          let r = Ops.range ~axis_type:Upcast (Int 4) [ 3 ] in
+          equal int (sign expected)
+            (sign
+               (Ops.compare_range_arg
+                  (range_of (a0, ids0))
+                  (range_of (a1, ids1)))));
+      cases "raises on anything else" ~id:fst not_ranges (fun (_, u) ->
+          let r = weak_range 0 in
+          rejects (fun () -> Ops.compare_range_arg u r);
+          rejects (fun () -> Ops.compare_range_arg r u));
+    ]
+
+let range_strs =
+  group "range_str"
+    [
+      cases
+        "writes the identity with underscores, a negative part as m and its \
+         magnitude"
+        ~id:fst
+        [ ("0_1", [ 0; 1 ]); ("m1", [ -1 ]); ("2_m3", [ 2; -3 ]); ("7", [ 7 ]) ]
+        (fun (text, ids) ->
+          equal string text
+            (Ops.range_str (Ops.range ~axis_type:Loop (Int 4) ids)));
+      cases "is in the axis colour if color" ~id:show_axis_type
+        (List.filter (fun a -> a <> Ops.Axis_type.Placeholder) axis_types)
+        (fun a ->
           equal string
-            (Helpers.colored Yellow "3")
-            (Ops.range_str ~color:true r));
-      test
-        "multirange_str sorts by argument, axis type first, and pads to \
-         printed columns" (fun () ->
+            (Helpers.colored (Ops.Axis_type.color a) "3")
+            (Ops.range_str ~color:true (Ops.range ~axis_type:a (Int 4) [ 3 ])));
+    ]
+
+let multirange_strs =
+  group "multirange_str"
+    [
+      test "writes each range sorted by argument, separated by commas"
+        (fun () ->
+          let r0 = Ops.range ~axis_type:Global (Int 4) [ 0; 1 ]
+          and r1 = Ops.range ~axis_type:Upcast (Int 4) [ 0; 0 ]
+          and r2 = Ops.range ~axis_type:Global (Int 4) [ 0 ] in
+          equal string "0,0_1,0_0" (Ops.multirange_str [ r1; r0; r2 ]));
+      test "pads to printed columns, colours aside" (fun () ->
           let r0 = Ops.range ~axis_type:Global (Int 4) [ 0; 1 ]
           and r1 = Ops.range ~axis_type:Upcast (Int 4) [ 0; 0 ] in
-          equal string "0_1,0_0" (Ops.multirange_str [ r1; r0 ]);
           equal string "0_1,0_0   " (Ops.multirange_str ~pad:10 [ r1; r0 ]);
           equal int 10
             (Helpers.ansilen
-               (Ops.multirange_str ~color:true ~pad:10 [ r0; r1 ])));
+               (Ops.multirange_str ~color:true ~pad:10 [ r0; r1 ]));
+          equal string "0_1,0_0" (Ops.multirange_str ~pad:3 [ r1; r0 ]));
+    ]
+
+(* Nodes, through the slices the walks keep *)
+
+let node_sets =
+  group "Nodes"
+    [
+      prop "agree with the list of their nodes in the order they joined"
+        gen_graph (fun steps ->
+          let root = graph steps in
+          let nodes = reference_toposort ~calls:Enter root in
+          List.iter
+            (fun u ->
+              let s = Ops.backward_slice_with_self ~calls:Enter u in
+              let l = Ops.Nodes.to_list s in
+              equal uops (List.rev l) (Ops.Nodes.fold List.cons s []);
+              equal int (List.length l) (Ops.Nodes.cardinal s);
+              equal uops
+                (List.filter (fun n -> List.memq n l) nodes)
+                (List.filter (fun n -> Ops.Nodes.mem n s) nodes))
+            nodes);
     ]
 
 (* Integer literals *)
@@ -1772,9 +2087,30 @@ let groups =
     keys;
     keys_with;
     tables;
+    node_sets;
     data_types;
-    graphs;
-    shapes;
+    promoting;
+    identities;
+    walk_errors;
+    toposorts;
+    topovisits;
+    slices;
+    slices_with_self;
+    ops_in_slices;
+    reaching;
+    splitting;
+    broadcasting;
+    max_shapes;
+    sints;
+    range_starts;
+    ended;
     ranges;
+    axis_ids;
+    axis_types_of;
+    loads;
+    launches;
+    range_args;
+    range_strs;
+    multirange_strs;
     fits;
   ]

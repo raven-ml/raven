@@ -524,7 +524,9 @@ val dtype_of : Op.t -> t list -> arg -> Dtype.t
     argument [arg]. Unary operations and movements keep their source's type,
     comparisons are {!Dtype.t.Bool}, transcendentals widen to a float,
     broadcastable operations promote ({!promo_dtype}), and effects are
-    {!Dtype.Void}.
+    {!Dtype.Void}. A transcendental of {!invalid} keeps its type,
+    {!Dtype.t.Bool}. [`Invalid] marks a lane that is never read ({!get_valid}),
+    so it has no value to widen.
 
     Raises [Invalid_argument] if there is none. *)
 
@@ -533,10 +535,13 @@ val promo_dtype : t list -> Dtype.t
     least upper bound ({!Dtype.least_upper}) otherwise. *)
 
 val identity_element : Op.t -> Dtype.t -> Dtype.const
-(** [identity_element op dt] is the value [e] of type [dt] with [op e x = x]
-    for every [x] of type [Dtype.strong dt] ({!Dtype.strong}), the width an
-    accumulator of [dt] takes: [0] for {!Op.Add}, [1] for {!Op.Mul}, and that
-    type's least value for {!Op.Max}.
+(** [identity_element op dt] is the value [e] of type [dt] with [op e x = x] and
+    [op x e = x] for every [x] of type [Dtype.strong dt] ({!Dtype.strong}), the
+    width an accumulator of [dt] takes: [0] for {!Op.Add}, [1] for {!Op.Mul},
+    and that type's least value for {!Op.Max}. The exceptions are [x = -0.]
+    under {!Op.Add}, since [0. + -0.] is [0.], and a NaN [x] under {!Op.Max},
+    whose maximum with [e] is [e] or the NaN by the order of the operands
+    ({!exec_alu}).
 
     Raises [Invalid_argument] for any other [op]. *)
 
@@ -561,8 +566,9 @@ val toposort : ?gate:(t -> bool) -> calls:calls -> t -> t list
 
 val topovisit : t -> (t -> 'a) -> 'a Tbl.t -> 'a
 (** [topovisit u f cache] is [f u], after [f] has been applied to each node [u]
-    reaches, each after its sources, and stored in [cache]. Nodes already in
-    [cache] are not visited again. *)
+    reaches, each after its sources, and stored in [cache]. A node already in
+    [cache] is not visited again, and the walk does not pass through it to
+    its sources. *)
 
 val backward_slice : calls:calls -> t -> Nodes.t
 (** [backward_slice ~calls u] is the nodes [u] reaches, without [u], in

@@ -314,6 +314,14 @@ let kernel_nodes =
           equal op Op.Noop (Ops.op (Ops.nth l 0)));
       test "a group of one node is that node" (fun () ->
           equal uop a (Ops.group [ a ]));
+      test
+        "a group of several nodes is the empty stack ordered after them, which \
+         simplifies to it ordered after each once" (fun () ->
+          let r = Ops.range ~axis_type:Weak (Int 10) [ 0 ] in
+          let e = Ops.end_ (Ops.v Op.Noop) [ r ] in
+          let g = Ops.group [ e; e ] in
+          equal uop (Ops.after (Ops.v Op.Stack) [ e; e ]) g;
+          equal uop (Ops.after (Ops.v Op.Stack) [ e ]) (Shape.simplify g));
     ]
 
 (* Movement *)
@@ -531,6 +539,18 @@ let calls =
           equal uops [ out ] (Ops.unbound_outputs c);
           is_false (Ops.has_unbound_outputs (Ops.call body [ arg ]));
           is_false (Ops.has_unbound_outputs arg));
+      cases "a call has its body's type"
+        ~id:(fun (what, _, _) -> what)
+        [
+          ( "a function of an int32",
+            Ops.call (Ops.custom_function ~dtype:Int32 "f" []) [],
+            Dtype.Int32 );
+          ( "a function of nothing",
+            Ops.call (Ops.custom_function "f" []) [ Ops.int 1 ],
+            Void );
+          ("a sink", Ops.call body [ arg ], Void);
+        ]
+        (fun (_, c, dt) -> equal dtype dt (Ops.dtype c));
       test "custom_function names an external function and its type" (fun () ->
           let fn = Ops.custom_function "f" [ arg ] in
           equal op Op.Custom_function (Ops.op fn);
