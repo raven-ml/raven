@@ -115,7 +115,7 @@ let exact =
 let missing =
   cases
     ~id:(fun (l, (f, _, _, _)) -> l ^ " " ^ f)
-    "a processor lacking one feature states the level below it:"
+    "a processor lacking one feature states the level below it"
     (List.concat_map (fun (l, fs) -> List.map (fun f -> (l, f)) fs) features)
   @@ fun (l, f) ->
   equal named (below l) (level (words (List.filter (( != ) f) all)))
@@ -164,10 +164,10 @@ let law =
 
 (* This machine *)
 
-(* What [uname -m] prints, without its newline: [None] where the system has no
-   uname. *)
-let uname_machine () =
-  match Unix.open_process_args_in "/usr/bin/uname" [| "uname"; "-m" |] with
+(* What [uname flag] prints, without its newline: [None] where the system has
+   no uname. *)
+let uname flag =
+  match Unix.open_process_args_in "/usr/bin/uname" [| "uname"; flag |] with
   | exception Unix.Unix_error _ -> None
   | ic -> (
       let out = In_channel.input_all ic in
@@ -192,8 +192,12 @@ let host_names () =
       | _ -> fail ("another arch: " ^ Rig.arch Rig.host))
   | isa -> (
       equal ~msg:"no level or features" string isa (Rig.arch Rig.host);
-      match uname_machine () with
-      | Some m when isa <> "" -> equal ~msg:"uname's name" string m isa
+      (* rig.mli names the set "as Linux's uname gives it": another system's
+         uname may name the machine otherwise, as FreeBSD's "riscv" for
+         riscv64. *)
+      match (uname "-s", uname "-m") with
+      | Some "Linux", Some m when isa <> "" ->
+          equal ~msg:"Linux's uname" string m isa
       | _ -> ())
 
 let arm64_host () =
@@ -275,24 +279,32 @@ let runs_its_level () =
   | status -> equal ~msg:"the child's status" int 0 status
 
 let software () =
-  let d = Result.get_ok (Rig.software "arch:software") in
+  let d = require_ok ~pp:Format.pp_print_string (Rig.software "arch:software") in
   equal (pair string string)
     (Rig.arch Rig.host, Rig.instruction_set Rig.host)
     (Rig.arch d, Rig.instruction_set d)
+
+let io () =
+  let d = require_ok ~pp:Format.pp_print_string (Rig.open_io "arch:io") in
+  equal string "" (Rig.arch d)
 
 let () =
   exit
     (run "rig.arch"
        [
-         group "the x86-64 levels"
-           [ test "are the psABI's, in order" ordered; exact; missing; law ];
-         group "this machine"
+         group "arch"
            [
-             test "names its instruction set and its level" host_names;
-             test "states the level Linux's flags show" matches_linux;
-             test "runs each instruction of its level" runs_its_level;
-             test "states the half arithmetic macOS lists" half_arithmetic;
-             test "runs the half arithmetic it states" runs_features;
-             test "a software device's arch is the host's" software;
+             test "the host's names its instruction set and its level"
+               host_names;
+             test "the host's is the level Linux's flags show" matches_linux;
+             test "the host runs each instruction of its level" runs_its_level;
+             test "the host's states the half arithmetic macOS lists"
+               half_arithmetic;
+             test "the host runs the half arithmetic its arch states"
+               runs_features;
+             test "a software device's is the host's" software;
+             test "an io device's is empty" io;
            ];
+         group "x86_levels" [ test "are the psABI's levels, in order" ordered ];
+         group "x86_level" [ exact; missing; law ];
        ])
