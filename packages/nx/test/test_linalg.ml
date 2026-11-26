@@ -1213,10 +1213,15 @@ let test_det_raises () =
 (* slogdet *)
 
 (* logabs is the sum of the pivots' magnitudes' logarithms and sign the product
-   of their signs, negated per interchange (nx.mli). Each logarithm is within 2
-   ulps, 4 u of its value ({!Nx.log}), and adds at most u absolutely where it is
-   near 0; their sum in the dtype adds γ(n) of the sum of their magnitudes. Each
-   complex sign is within 3 u ({!Nx.sign}), their product within γ(2n) more. *)
+   of their signs, negated per interchange (nx.mli). A real pivot's logarithm is
+   within 2 ulps, 4 u of its value ({!Nx.log}); a complex pivot's is the real
+   part of its complex logarithm, within 4 u |log z|, whose imaginary part is
+   arg z. Their sum in the dtype adds γ(n) of the sum of their magnitudes. Each
+   complex sign is within 3 u ({!Nx.sign}), their product within γ(2n) more.
+
+   The check's logarithm takes |z|² as an exact sum of two doubles, so that its
+   error is relative to its result even near |z| = 1, where the rounding of a
+   computed |z| alone would err by u absolutely. *)
 let test_slogdet =
   prop "sign and logabs are those of lu's pivots" (square_matrices ())
     (fun (Case (dt, s, layout, re, im)) ->
@@ -1242,23 +1247,41 @@ let test_slogdet =
               float_exact Float.neg_infinity logabs.(b)
           end
           else begin
-            (* A pivot's parts as [(re, im, e)], z = (re + i im) 2^e: below
-               2^-900 they are scaled exactly by 2^600, so that a subnormal
-               pivot's modulus keeps its precision. *)
+            (* A pivot's parts as [(re, im, e)], z = (re + i im) 2^e: outside
+               [2^-500, 2^500] scaled exactly into [1/2, 1), so that their
+               squares neither underflow nor overflow. *)
             let scaled (z : Complex.t) =
               let big = Float.max (Float.abs z.re) (Float.abs z.im) in
-              if big >= 0x1p-900 then (z.re, z.im, 0)
-              else (Float.ldexp z.re 600, Float.ldexp z.im 600, -600)
+              if big >= 0x1p-500 && big <= 0x1p500 then (z.re, z.im, 0)
+              else
+                let _, e = Float.frexp big in
+                (Float.ldexp z.re (-e), Float.ldexp z.im (-e), e)
             in
             let unit z =
               let re, im, _ = scaled z in
               let m = Float.hypot re im in
               { Complex.re = re /. m; im = im /. m }
             in
+            (* log |z| = log (h + t) / 2 + e ln 2, h + t the scaled parts'
+               squares' sum, h rounded, t its error and the squares' (TwoSum and
+               fma), exact but for the rounding of t. The products are opaque,
+               so that no sum fuses them. *)
             let log_norm z =
               let re, im, e = scaled z in
-              let l = Float.log (Float.hypot re im) in
+              let p = Sys.opaque_identity (re *. re)
+              and q = Sys.opaque_identity (im *. im) in
+              let h = p +. q in
+              let v = h -. p in
+              let t = p -. (h -. v) +. (q -. v) in
+              let t = t +. (Float.fma re re (-.p) +. Float.fma im im (-.q)) in
+              let l = (Float.log h +. Float.log1p (t /. h)) /. 2. in
               if e = 0 then l else l +. (Float.of_int e *. Float.log 2.)
+            in
+            (* What bounds the error of the logarithm [l] of a pivot [z]: |l|,
+               or |log z| on a complex dtype. *)
+            let weight (z : Complex.t) l =
+              if D.is D.Complex dt then Float.hypot l (Float.atan2 z.im z.re)
+              else Float.abs l
             in
             let want =
               Array.fold_left
@@ -1269,13 +1292,14 @@ let test_slogdet =
             let logs = Array.map log_norm d in
             let sum = Array.fold_left ( +. ) 0. logs in
             let size = Array.fold_left (fun t l -> t +. Float.abs l) 0. logs in
+            let weights =
+              Array.fold_left ( +. ) 0. (Array.map2 weight d logs)
+            in
             at_most ~msg:(msg "sign") float_exact
               ~than:((3. *. Float.of_int n *. u) +. g dt (2 * n) +. here n)
               (Nx_support.complex_gap sign.(b) want);
             at_most ~msg:(msg "logabs") float_exact
-              ~than:
-                ((((4. *. u) +. g dt n +. here n) *. size)
-                +. (Float.of_int n *. u))
+              ~than:((4. *. u *. weights) +. ((g dt n +. here n) *. size))
               (Nx_support.gap logabs.(b) sum)
           end)
         (pivots a))
