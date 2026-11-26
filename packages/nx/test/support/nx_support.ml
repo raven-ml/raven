@@ -570,12 +570,8 @@ let rank ~width b =
   if Int64.logand b sign = 0L then b
   else Int64.(sub (neg (logand b (sub sign 1L))) 1L)
 
-let gap r ref =
-  if Float.is_nan r || Float.is_nan ref then
-    if Float.is_nan r && Float.is_nan ref then 0. else Float.infinity
-  else if Float.is_finite r && Float.is_finite ref then Float.abs (r -. ref)
-  else if r = ref then 0.
-  else Float.infinity
+let gap = Nx_array_support.gap
+let complex_gap = Nx_array_support.complex_gap
 
 let ulps (type s) (dt : (float, s) D.t) r v =
   let rank_of =

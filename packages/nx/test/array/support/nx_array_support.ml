@@ -282,3 +282,15 @@ let write b s =
     }
   in
   ignore (Rig.submit s ~buffers:[| b |] ~args:[| args |])
+
+(* Distances *)
+
+let gap r ref =
+  if Float.is_nan r || Float.is_nan ref then
+    if Float.is_nan r && Float.is_nan ref then 0. else Float.infinity
+  else if Float.is_finite r && Float.is_finite ref then Float.abs (r -. ref)
+  else if r = ref then 0.
+  else Float.infinity
+
+let complex_gap (z : Complex.t) (ref : Complex.t) =
+  Float.hypot (gap z.re ref.re) (gap z.im ref.im)
