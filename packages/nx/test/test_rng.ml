@@ -3595,7 +3595,7 @@ let dirichlet_group =
                       (fun i y ->
                         at_most ~msg float_exact
                           ~than:((7. *. u *. Float.max x.(i) y) +. eta)
-                          (Float.abs (x.(i) -. y)))
+                          (gap x.(i) y))
                       own)
                 (List.filter (fun w -> w <= most) [ 9; 10; 13; 21; most ]))
             lens;
