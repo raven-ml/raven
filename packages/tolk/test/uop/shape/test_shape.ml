@@ -1,0 +1,32 @@
+let () =
+  exit
+    (Windtrap.run "Tolk.Shape"
+       [
+         Values.shapes;
+         Values.resolving;
+         Rules.installation;
+         Values.sint_module;
+         Values.inference;
+         Values.compilation;
+         Values.exact_compilation;
+         Construction.constants;
+         Construction.kernel_nodes;
+         Construction.movement;
+         Construction.long_aranges;
+         Construction.devices;
+         Construction.storage;
+         Construction.variables;
+         Construction.divisibility;
+         Construction.calls;
+         Construction.programs;
+         Rules.wrapping;
+         Rules.floats;
+         Rules.laws;
+         Rules.invalid_values;
+         Rules.remove_invalid;
+         Rules.symbolic_simple;
+         Rules.commutative;
+         Rules.symbolic_group;
+         Div_and_mod.div_and_mod_symbolic;
+         Mop_cleanup.mop_cleanup;
+       ])

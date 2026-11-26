@@ -1,5 +1,5 @@
 (* Construction: the graphs the constructors build, elementwise arithmetic,
-   movement, devices, storage, variables and calls. *)
+   constants, kernel nodes, movement, devices, storage, variables and calls. *)
 
 open Windtrap
 open Tolk
@@ -194,19 +194,6 @@ let constants =
           equal uop
             (Ops.v ~src:[ Ops.bool true ] ~arg:(Dtype Bool) Op.Cast)
             (Ops.cconst Bool (`Bool true)));
-      test "consts takes the committed type of its literals" (fun () ->
-          equal dtype Int32 (Ops.dtype (Shape.consts [ i 1; i 2 ]));
-          equal dtype Int64
-            (Ops.dtype
-               (Shape.consts [ i 1; `Int (Bigint.shift_left Bigint.one 40) ]));
-          equal dtype Float32 (Ops.dtype (Shape.consts [ i 1; f 2.5 ]));
-          equal dtype Bool (Ops.dtype (Shape.consts [ `Bool true; `Bool false ])));
-      test "const_like expands to the node's shape, in its type" (fun () ->
-          let p = param [ 2; 3 ] 0 Float16 in
-          let c = Shape.const_like p (i 1) in
-          equal dtype Float16 (Ops.dtype c);
-          equal shape (ints [ 2; 3 ]) (Shape.shape c);
-          equal uop (Ops.int ~dtype:Float16 1) (Ops.base c));
     ]
 
 (* Nodes of a kernel *)
@@ -215,10 +202,6 @@ let kernel_nodes =
   let a = var "a" 0 1 in
   group "kernel nodes"
     [
-      test "stack rejects nothing to stack and differing shapes" (fun () ->
-          rejects (fun () -> Shape.stack []);
-          rejects (fun () ->
-              Shape.stack [ param [ 2 ] 0 Float32; param [ 3 ] 1 Float32 ]));
       test "an index of a stack by a constant is the element" (fun () ->
           let s = Shape.stack [ a; var "b" 0 1 ] in
           is_true (Ops.index s [ Ops.int 0 ] == a);
@@ -253,9 +236,6 @@ let kernel_nodes =
             (fun i -> rejects (fun () -> Ops.nth s i))
             [ -1; 3; max_int; min_int ];
           rejects (fun () -> Ops.nth (Ops.sink []) 0));
-      test "contract rejects a range that is not upcast" (fun () ->
-          let r = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
-          rejects (fun () -> Shape.contract Ops.O.(r + int 1) [ r ]));
       test "range defaults to a weak integer loop of weak role" (fun () ->
           let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
           equal dtype Weak_int (Ops.dtype r);
@@ -266,274 +246,16 @@ let kernel_nodes =
           equal dtype Void (Ops.dtype l);
           equal (list int) [ 2 ] (Ops.axis_id l);
           equal op Op.Noop (Ops.op (Ops.nth l 0)));
+      test "a group of one node is that node" (fun () ->
+          equal uop a (Ops.group [ a ]));
     ]
 
 (* Movement *)
-
-(* Up to three axes of up to four elements, some of them named in either
-   order. *)
-let gen_flip =
-  Gen.(
-    let* dims = list ~size:(int_range 1 3) (int_range 0 4) in
-    let+ flags = list ~size:(constant (List.length dims)) bool
-    and+ backwards = bool in
-    let axes =
-      List.filter_map Fun.id
-        (List.mapi (fun a f -> if f then Some a else None) flags)
-    in
-    (dims, if backwards then List.rev axes else axes))
-
-(* The row-major position in [dims] of the element that output position [i]
-   holds once [axes] are reversed. *)
-let flipped dims axes i =
-  let rank = List.length dims in
-  let rec coords a i acc =
-    if a < 0 then acc
-    else
-      let d = List.nth dims a in
-      let j = if List.mem a axes then d - 1 - (i mod d) else i mod d in
-      coords (a - 1) (i / d) (j :: acc)
-  in
-  List.fold_left2 (fun acc j d -> (acc * d) + j) 0 (coords (rank - 1) i []) dims
-
-(* Aranges of any length *)
-
-(* The values of [u]'s elements [lo] to [lo + k - 1]: what the one kernel that
-   stores them into storage of [k] elements writes. It reads no other element,
-   so an arange of billions of elements is read without its memory; a schedule
-   that stores more fails before it is run. *)
-let window u lo k =
-  let out = Ops.new_buffer ~slot:0 cpu k (Ops.dtype u) in
-  let view = Shape.shrink u [ Some (Int lo, Int (lo + k)) ] in
-  let sink = Ops.sink [ Ops.after out [ Ops.store out view ] ] in
-  let linear, _ = Schedule.create_linear_with_vars ~cores:Cores.host sink in
-  equal ~msg:"kernels" int 1 (List.length (Ops.src linear));
-  List.iter
-    (fun b ->
-      if Ops.op b = Op.Buffer then
-        at_most ~msg:"stored elements" int ~than:k (Shape.max_numel b))
-    (Ops.toposort ~calls:Skip linear);
-  List.map (fun (_, _, v) -> v) (Kernel_graphs.linear_writes linear)
-
-(* Short lengths, lengths about the powers of two where an element's index or
-   value leaves 32 bits, and past them up to the longest. *)
-let long_lengths =
-  [
-    3;
-    1000;
-    (1 lsl 30) - 1;
-    1 lsl 30;
-    (1 lsl 30) + 1;
-    1518500249;
-    1518500250;
-    (1 lsl 31) - 1;
-    1 lsl 31;
-    (1 lsl 31) + 1;
-    (1 lsl 32) + 3;
-    (1 lsl 46) + 5;
-    (1 lsl 60) + 7;
-    max_int - (1 lsl 30);
-  ]
-
-(* The longest arange that is a running sum. *)
-let pooled_run = 1518500249
-
-(* The integer [v] in [dt]: rounded once to a float type, whose double holds
-   it exactly below [2^53]. *)
-let element dt v : Dtype.value =
-  match dt with
-  | Dtype.Float32 ->
-      `Float (Int32.float_of_bits (Int32.bits_of_float (Float.of_int v)))
-  | Float64 | Float16 | Bfloat16 -> `Float (Float.of_int v)
-  | _ -> `Int (Bigint.of_int v)
-
-(* An arange of [n] elements from [start] by [step], the type it is asked for
-   or [None], and the first of three elements read. An integer type, when
-   given, holds the elements, and a float type is given where it holds them
-   exactly or the arange is laid out in rows, its elements below [2^53]; the
-   weak integer holds them all. Past [2^46] elements, a step of [1] keeps the
-   arange within an int. *)
-let gen_long_arange =
-  let open Gen in
-  let pp_int = Format.pp_print_int in
-  let* n = of_list ~pp:pp_int long_lengths in
-  let* step =
-    of_list ~pp:pp_int (if n > 1 lsl 46 then [ 1; -1 ] else [ 1; -1; 3; -7 ])
-  in
-  let span = (n - 1) * abs step in
-  let* start =
-    of_list ~pp:pp_int
-      (if step > 0 then [ 0; -5; -(span / 2); min_int ]
-       else [ span; span + 9; max_int ])
-  in
-  let last = start + ((n - 1) * step) in
-  let lo' = Stdlib.min start last and hi' = Stdlib.max start last in
-  let below m = -m <= lo' && hi' <= m in
-  let holds dt =
-    match dt with
-    | Dtype.Float32 ->
-        below (1 lsl 24) || (n > pooled_run && below ((1 lsl 53) - 1))
-    | Float64 -> below (1 lsl 53)
-    | Float16 -> below (1 lsl 11)
-    | Bfloat16 -> below (1 lsl 8)
-    | Weak_int -> true
-    | _ ->
-        let lo, hi = Dtypes.int_bounds dt in
-        Bigint.(leq lo (of_int lo') && leq (of_int hi') hi)
-  in
-  let pp_type ppf = function
-    | None -> Format.pp_print_string ppf "default"
-    | Some dt -> Dtype.pp ppf dt
-  in
-  let* dtype =
-    of_list ~pp:pp_type
-      (None
-      :: List.filter_map
-           (fun dt -> if holds dt then Some (Some dt) else None)
-           Dtype.
-             [
-               Int8;
-               Uint8;
-               Int16;
-               Uint16;
-               Int32;
-               Uint32;
-               Int64;
-               Uint64;
-               Weak_int;
-               Float16;
-               Bfloat16;
-               Float32;
-               Float64;
-             ])
-  in
-  let+ first =
-    of_list ~pp:pp_int
-      (List.map (min (n - 3))
-         [ 0; n - 3; (1 lsl 31) - 2; (1 lsl 32) - 2; n / 2 ])
-  in
-  (n, start, step, dtype, first)
-
-let long_aranges =
-  group "aranges"
-    [
-      prop "an arange's element i is start + i * step at any length" ~count:200
-        gen_long_arange (fun (n, start, step, dtype, first) ->
-          cover "a length past 2^30.5" (n > pooled_run);
-          cover "a length past 2^31" (n > 1 lsl 31);
-          cover "a length past 2^32" (n > 1 lsl 32);
-          cover "a descending arange" (step < 0);
-          cover "a start at an int's bounds"
-            (start = min_int || start = max_int);
-          cover "an unsigned type"
-            (Option.fold ~none:false ~some:Dtype.is_unsigned dtype);
-          cover "a float type past 2^30.5"
-            (n > pooled_run
-            && Option.fold ~none:false ~some:Dtype.is_float dtype);
-          cover "elements across 2^31"
-            (first < 1 lsl 31 && first + 3 > 1 lsl 31);
-          cover "the weak integer" (dtype = Some Dtype.Weak_int);
-          let u = Shape.arange ~start ~step ?dtype (start + (n * step)) in
-          equal shape (ints [ n ]) (Shape.shape u);
-          (* A weak arange is stored at the type that holds an int. *)
-          let u = if dtype = Some Weak_int then Ops.cast u Int64 else u in
-          equal (list value)
-            (List.init 3 (fun j ->
-                 element (Ops.dtype u) (start + ((first + j) * step))))
-            (window u first 3));
-    ]
 
 let movement =
   let p = param [ 2; 3; 4 ] 0 Float32 in
   group "movement"
     [
-      test "reshape infers a -1 and rejects two" (fun () ->
-          equal shape
-            (ints [ 4; 6 ])
-            (Shape.shape (Shape.reshape p (ints [ 4; -1 ])));
-          rejects (fun () -> Shape.reshape p (ints [ -1; -1 ])));
-      test "reshape rejects a different number of elements" (fun () ->
-          rejects (fun () -> Shape.reshape p (ints [ 5; 5 ])));
-      test "cumalu past 512 elements sums each prefix" (fun () ->
-          let sums = Shape.cumalu (Shape.arange ~dtype:Int32 600) 0 Op.Add in
-          equal (list int)
-            (List.init 600 (fun i -> i * (i + 1) / 2))
-            (List.map
-               (function `Int z -> Bigint.to_int z | _ -> -1)
-               (Array.to_list (Tensors.eval sums))));
-      test "arange rejects a step of 0 and a dtype that cannot hold it"
-        (fun () ->
-          rejects (fun () -> Shape.arange ~step:0 4);
-          rejects (fun () -> Shape.arange ~dtype:Int8 200));
-      test "arange rejects more than max_int - 2^30 elements" (fun () ->
-          rejects (fun () -> Shape.arange (max_int - (1 lsl 30) + 1));
-          rejects (fun () -> Shape.arange ~start:(-(1 lsl 61)) (1 lsl 61)));
-      test "arange counts its elements past an int's range" (fun () ->
-          let step = 1 lsl 60 in
-          let u = Shape.arange ~start:min_int ~step max_int in
-          let at k =
-            Bigint.(add (of_int min_int) (mul (of_int k) (of_int step)))
-          in
-          equal (list Dtypes.const)
-            (List.init 8 (fun k -> `Int (at k)))
-            (Array.to_list (Tensors.eval u));
-          let u = Shape.arange ~dtype:Int8 ~start:(-100) ~step:max_int (-50) in
-          equal (list Dtypes.const) [ i (-100) ]
-            (Array.to_list (Tensors.eval u)));
-      test "arange's type holds its last element, past [stop - step]"
-        (fun () ->
-          rejects (fun () -> Shape.arange ~dtype:Int8 ~step:2 129);
-          let u = Shape.arange ~step:2 ((1 lsl 31) + 1) in
-          equal (list value)
-            [ `Int (Bigint.of_int (1 lsl 31)) ]
-            (window u (1 lsl 30) 1));
-      test "rop rejects a repeated axis" (fun () ->
-          rejects (fun () -> Shape.rop p Op.Add [ 1; 1 ]));
-      test "permute rejects an order that is not a permutation" (fun () ->
-          rejects (fun () -> Shape.permute p [ 0; 0; 1 ]);
-          rejects (fun () -> Shape.permute p [ 0; 1 ]);
-          rejects (fun () -> Shape.permute p [ 0; 1; 3 ]));
-      test "mop rejects an empty pad or shrink of a node with axes" (fun () ->
-          rejects (fun () -> Shape.mop p (Pad []));
-          rejects (fun () -> Shape.mop p (Shrink []));
-          let s = Ops.int 1 in
-          is_true (Shape.mop s (Pad []) == s);
-          is_true (Shape.mop s (Shrink []) == s));
-      test "mop stores a shape argument as sources and reads it back" (fun () ->
-          let r = Shape.mop p (Reshape (ints [ 6; 4 ])) in
-          equal uops
-            [ p; Ops.v ~src:[ Ops.int 6; Ops.int 4 ] Op.Stack ]
-            (Ops.src r);
-          equal shape
-            (ints [ 6; 4 ])
-            (match Shape.marg r with Reshape s -> s | _ -> fail "a reshape");
-          equal shape (ints [ 6; 4 ]) (Shape.as_shape (Ops.nth r 1));
-          equal shape (ints [ 3 ]) (Shape.as_shape (Ops.int 3)));
-      test "as_shape of a node is the node" (fun () ->
-          let n = weak_var "n" 1 4 in
-          equal shape [ Sym n ] (Shape.as_shape n));
-      test "marg reads each movement's argument and rejects other nodes"
-        (fun () ->
-          (match Shape.marg (Shape.permute p [ 2; 0; 1 ]) with
-          | Permute o -> equal (list int) [ 2; 0; 1 ] o
-          | _ -> fail "permute");
-          (match
-             Shape.marg (Shape.shrink p [ Some (Int 1, Int 2); None; None ])
-           with
-          | Shrink l ->
-              equal
-                (list (pair sint sint))
-                [ (Int 1, Int 1); (Int 0, Int 3); (Int 0, Int 4) ]
-                l
-          | _ -> fail "shrink");
-          (match Shape.marg (Shape.pad p [ Some (Int 1, Int 2); None; None ]) with
-          | Pad l ->
-              equal
-                (list (pair sint sint))
-                [ (Int 1, Int 5); (Int 0, Int 3); (Int 0, Int 4) ]
-                l
-          | _ -> fail "pad");
-          rejects (fun () -> Shape.marg (Ops.int 1)));
       test "base strips movements, and storage_base bitcasts and afters"
         (fun () ->
           let flat = Ops.base p in
@@ -547,63 +269,6 @@ let movement =
               Int32
           in
           equal op Op.Param (Ops.op (Ops.storage_base viewed)));
-      test "flip rejects an axis given twice, and is the node for no axis"
-        (fun () ->
-          rejects (fun () -> Shape.flip p [ 0; 0 ]);
-          rejects (fun () -> Shape.flip (Shape.param 1 Float32) [ 0 ]);
-          is_true (Shape.flip (Shape.param 1 Float32) [] == Shape.param 1 Float32);
-          is_true (Shape.flip p [] == p));
-      test "repeat refuses a negative repeat" (fun () ->
-          rejects (fun () -> Shape.repeat (param [ 1 ] 1 Float32) [ -1 ]));
-      test "a flip of a view of variable size reverses it at each size"
-        (fun () ->
-          let n = Ops.variable "n" (`Int Bigint.zero) (`Int (Bigint.of_int 4)) in
-          let x = param [ 4 ] 1 Int32 in
-          let flipped = Shape.flip (Shape.shrink x [ Some (Int 0, Sym n) ]) [ 0 ] in
-          let memory : Dtype.value array =
-            Array.init 4 (fun j -> `Int (Bigint.of_int j))
-          in
-          List.iter
-            (fun k ->
-              let bound =
-                Ops.substitute ~calls:Skip ~pass:Fixed_point flipped
-                  [ (n, Ops.int k) ]
-              in
-              equal ~msg:(string_of_int k) (list Dtypes.const)
-                (List.init k (fun i -> `Int (Bigint.of_int (k - 1 - i))))
-                (Array.to_list (Tensors.eval ~buffers:[ (1, memory) ] bound)))
-            [ 0; 1; 2; 3; 4 ]);
-      prop "a flip reverses each axis it names and keeps the others"
-        gen_flip (fun (dims, axes) ->
-          let n = List.fold_left ( * ) 1 dims in
-          let flips_long = List.exists (fun a -> List.nth dims a > 1) axes in
-          cover "an empty axis beside a flipped one"
-            (List.mem 0 dims && flips_long);
-          cover "an axis of one element is flipped"
-            (List.exists (fun a -> List.nth dims a = 1) axes);
-          cover "two axes are flipped" (List.length axes >= 2);
-          let x = Shape.reshape (param [ n ] 1 Int32) (ints dims) in
-          let memory : Dtype.value array =
-            Array.init n (fun j -> `Int (Bigint.of_int j))
-          in
-          equal (list Dtypes.const)
-            (List.init n (fun i ->
-                 (memory.(flipped dims axes i) :> Dtype.const)))
-            (Array.to_list
-               (Tensors.eval ~buffers:[ (1, memory) ] (Shape.flip x axes))));
-      test "shrink, pad and pad_to reject a list of another length" (fun () ->
-          rejects (fun () -> Shape.shrink p [ None ]);
-          rejects (fun () -> Shape.pad p [ None; None ]);
-          rejects (fun () -> Shape.pad_to p [ None ]));
-      test "pad_to to the same shape is the node, whatever the value" (fun () ->
-          is_true (Shape.pad_to ~value:(f 1.) p [ None; None; None ] == p));
-      test "squeeze leaves an axis of another size" (fun () ->
-          is_true (Shape.squeeze ~axis:1 p == p));
-      test "cat rejects shapes that differ off its axis" (fun () ->
-          rejects (fun () -> Shape.cat p [ param [ 2; 4; 4 ] 1 Float32 ]));
-      test "nbytes is the elements times their size" (fun () ->
-          equal int 96 (Shape.nbytes p);
-          equal int 2 (Shape.nbytes (Shape.param 1 Float16)));
     ]
 
 (* Devices *)
@@ -634,14 +299,6 @@ let devices =
           in
           equal (option device) (Some cpu)
             (Ops.device (deepen 10_000 (Ops.new_buffer ~slot:0 cpu 1 Int8))));
-      test "empty_like on another device takes the value's shape" (fun () ->
-          let u =
-            Shape.empty_like ~dtype:Int32 ~device:"CPU:2"
-              (param ~device:cpu [ 8; 6 ] 1 Float32)
-          in
-          equal shape (ints [ 8; 6 ]) (Shape.shape u);
-          equal (option device) (Some "CPU:2") (Ops.device u);
-          is_true (Ops.has_buffer_identity u));
     ]
 
 (* Storage *)
@@ -725,41 +382,6 @@ let storage =
             (Ops.param_arg_of made).slot);
       test "a buffer cannot be given the last number" (fun () ->
           rejects (fun () -> Ops.new_buffer ~slot:max_int cpu 8 Float32));
-      test "an alloc given a slot is no alloc made without one" (fun () ->
-          (* The number the next fresh alloc would take, given by hand first. *)
-          let slot = Ops.unique_num () + 1 in
-          let given = Shape.alloc ~slot ~device:cpu (ints [ 8 ]) Float32 in
-          let made = Shape.alloc ~device:cpu (ints [ 8 ]) Float32 in
-          not_equal int
-            (Ops.param_arg_of (Ops.base given)).slot
-            (Ops.param_arg_of (Ops.base made)).slot);
-      test "a placeholder given a slot is no placeholder made without one"
-        (fun () ->
-          let check addrspace =
-            let slot = Ops.unique_num () + 1 in
-            let given = Shape.placeholder ~slot ~addrspace [ 8 ] Float32 in
-            let made = Shape.placeholder ~addrspace [ 8 ] Float32 in
-            not_equal int (Ops.param_arg_of given).slot
-              (Ops.param_arg_of made).slot
-          in
-          List.iter check [ Dtype.Global; Dtype.Local; Dtype.Reg ]);
-      test "an alloc or a placeholder cannot be given the last number"
-        (fun () ->
-          rejects (fun () -> Shape.alloc ~slot:max_int (ints [ 8 ]) Float32);
-          rejects (fun () -> Shape.placeholder ~slot:max_int [ 8 ] Float32));
-      test "placeholder rejects a scalar variable's address space" (fun () ->
-          rejects (fun () ->
-              Shape.placeholder ~slot:0 ~addrspace:Alu [ 4 ] Float32));
-      test "storage rejects a weak type" (fun () ->
-          rejects (fun () -> Ops.new_buffer cpu 4 Weak_float);
-          rejects (fun () -> Shape.empty ~device:cpu (ints [ 4 ]) Weak_int);
-          rejects (fun () -> Shape.param 0 Weak_int));
-      test "placeholder commits a weak type" (fun () ->
-          equal dtype Int32 (Ops.dtype (Shape.placeholder ~slot:0 [ 4 ] Weak_int)));
-      test "a clone of a weak value commits its type" (fun () ->
-          equal dtype Int32
-            (Ops.dtype
-               (Shape.clone ~device:cpu (Shape.expand (Ops.int 3) (ints [ 4 ])))));
       test "a stage is its own base and storage, without buffer identity"
         (fun () ->
           let s = Ops.bufferize (param ~device:cpu [ 2; 4 ] 0 Float32) [] in
@@ -767,13 +389,6 @@ let storage =
           is_true (Ops.buf_uop s == s);
           is_false (Ops.has_buffer_identity s);
           equal shape (ints [ 2; 4 ]) (Shape.shape s));
-      test "clone rejects a disk, named in any case" (fun () ->
-          let p = param ~device:cpu [ 4 ] 0 Float32 in
-          rejects (fun () -> Shape.clone ~device:"DISK:/tmp/f" p);
-          rejects (fun () -> Shape.clone ~device:"disk:0" p);
-          is_true
-            (String.equal "DISKS"
-               (Option.get (Ops.device (Shape.clone ~device:"DISKS" p)))));
       test "new_buffer takes the next slot without one" (fun () ->
           let slot u =
             match Ops.arg u with Param p -> p.slot | _ -> fail "a buffer"
@@ -801,49 +416,6 @@ let variables =
           equal string "w"
             (Ops.expr (Shape.param ~name:"w" ~shape:(ints [ 4 ]) 0 Float32));
           rejects (fun () -> Ops.expr (param [ 4 ] 0 Float32)));
-      test "param_like names the parameter it makes, or leaves it unnamed"
-        (fun () ->
-          let p = param ~device:cpu [ 4 ] 0 Float32 in
-          equal string "x" (Ops.expr (Shape.param_like ~name:"x" p 1));
-          equal string "y" (Ops.expr (Shape.param_like ~name:"y" n 2));
-          rejects (fun () -> Ops.expr (Shape.param_like n 2));
-          rejects (fun () -> Ops.expr (Shape.param_like p 1)));
-      test "bind binds a value within the range" (fun () ->
-          let b = Shape.bind n (i 3) in
-          is_true (Shape.is_bound_var b);
-          is_true (Shape.is_variable b);
-          equal (pair uop value) (n, i 3) (Shape.unbind b);
-          ignore (Shape.bind n (i 1));
-          ignore (Shape.bind n (i 8)));
-      test
-        "bind rejects a bound variable and a value out of range" (fun () ->
-          rejects (fun () -> Shape.bind (Shape.bind n (i 3)) (i 4));
-          rejects (fun () -> Shape.bind n (i 0));
-          rejects (fun () -> Shape.bind n (i 9));
-          rejects (fun () -> Shape.bind (param [ 4 ] 0 Float32) (i 1)));
-      test "unbound strips the value" (fun () ->
-          is_true (Shape.unbound (Shape.bind n (i 3)) == n);
-          is_true (Shape.unbound n == n));
-      test "unbound rejects a node that is not a variable" (fun () ->
-          rejects (fun () -> Shape.unbound (param [ 4 ] 0 Float32)));
-      test "variables lists a scalar parameter without a range" (fun () ->
-          let s = Shape.param ~addrspace:Alu 0 Int32 in
-          equal uops [ s ] (Shape.variables Ops.O.(s + int 1)));
-      test "unbind rejects a variable that is not bound" (fun () ->
-          rejects (fun () -> Shape.unbind n));
-      test "unbind_all unbinds each variable and lists its value" (fun () ->
-          let m = weak_var "m" 0 4 in
-          let e = Ops.O.(Shape.bind n (i 3) + Shape.bind m (i 2)) in
-          let u, values = Shape.unbind_all e in
-          equal uop Ops.O.(n + m) u;
-          equal
-            (slist (pair uop value) (fun (a, _) (b, _) -> Ops.compare a b))
-            [ (n, i 3); (m, i 2) ]
-            values);
-      test "variables are sorted by name" (fun () ->
-          let m = weak_var "m" 0 4 in
-          equal uops [ m; n ] (Shape.variables Ops.O.(n + m));
-          equal uops [ m; n ] (Shape.variables Ops.O.(Shape.bind n (i 3) + m)));
     ]
 
 (* Calls *)
@@ -893,22 +465,6 @@ let calls =
           equal uops [ out ] (Ops.unbound_outputs c);
           is_false (Ops.has_unbound_outputs (Ops.call body [ arg ]));
           is_false (Ops.has_unbound_outputs arg));
-      test
-        "call_with_outputs rejects output positions that do not ascend within \
-         the arguments" (fun () ->
-          let v = Ops.O.(arg + float 1.) in
-          rejects (fun () ->
-              Shape.call_with_outputs ~output_pos:[ 1; 0 ] [ v; v ] [ arg ]);
-          rejects (fun () ->
-              Shape.call_with_outputs ~output_pos:[ 0; 0 ] [ v; v ] [ arg ]);
-          rejects (fun () ->
-              Shape.call_with_outputs ~output_pos:[ 5 ] [ v ] [ arg ]);
-          rejects (fun () ->
-              Shape.call_with_outputs ~output_pos:[ 0; 1 ] [ v ] [ arg ]));
-      test "a call compiled apart stages its arguments" (fun () ->
-          let v = Ops.O.(arg + float 1.) in
-          let out = Shape.call_with_output ~precompile:true v [ v ] in
-          equal op Op.Stage (Ops.op (Ops.nth (Ops.nth out 1) 1)));
       test "custom_function names an external function and its type" (fun () ->
           let fn = Ops.custom_function "f" [ arg ] in
           equal op Op.Custom_function (Ops.op fn);
@@ -926,7 +482,6 @@ let groups =
     elementwise;
     constants;
     kernel_nodes;
-    long_aranges;
     movement;
     devices;
     storage;

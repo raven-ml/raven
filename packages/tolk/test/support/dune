@@ -40,6 +40,15 @@
   (language c)
   (names spawn_stubs)))
 
+; The law that a rewrite keeps the value, and the random expressions it is
+; checked on, for the suites of Shape's rules and of Symbolic.
+
+(library
+ (name tolk_simplification)
+ (modules simplification expressions)
+ (wrapped false)
+ (libraries windtrap tolk tolk_test))
+
 (tests
  (names
   test_golden

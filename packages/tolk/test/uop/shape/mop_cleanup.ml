@@ -11,6 +11,7 @@ let var name lo hi =
   Ops.variable name (`Int (Bigint.of_int lo)) (`Int (Bigint.of_int hi))
 
 let storage shape = Shape.param ~shape:(ints shape) 0 Float32
+
 let cleanup u =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
     (After_sources Shape.mop_cleanup)
@@ -223,7 +224,5 @@ let laws =
           Law.idempotent Uops.uop cleanup u);
     ]
 
-let () =
-  exit
-    (run "Tolk.Shape.mop_cleanup"
-       [ shrinks; reshapes; permutes; stacks; indexing; laws ])
+let mop_cleanup =
+  group "mop_cleanup" [ shrinks; reshapes; permutes; stacks; indexing; laws ]

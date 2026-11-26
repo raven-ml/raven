@@ -24,10 +24,16 @@ let rec every_other = function
   | d :: _ :: rest -> d :: every_other rest
   | [] | [ _ ] -> []
 
-let recorded file = every_other (Ops.src (Golden.sink file))
+(* The goldens sit in [divandmod/], since the tests read every golden there. *)
+let dir = "divandmod"
+
+let recorded file =
+  every_other (Ops.src (Golden.sink (Filename.concat dir file)))
 
 let rewrites name d =
-  Golden.graph (name ^ ".golden") (fun () -> rewritten [ d ])
+  Golden.graph
+    (Filename.concat dir (name ^ ".golden"))
+    (fun () -> rewritten [ d ])
 
 (* (x // c + a) // d *)
 
@@ -189,14 +195,16 @@ let invalid =
 (* tinygrad's tests *)
 
 let goldens =
-  Sys.readdir (Filename.dirname Sys.executable_name)
+  Sys.readdir (Filename.concat (Filename.dirname Sys.executable_name) dir)
   |> Array.to_list
   |> List.filter (fun f -> Filename.check_suffix f ".golden")
   |> List.sort String.compare
 
 (* The goldens recorded from tinygrad's tests are named after them. *)
 let tinygrad_goldens = List.filter (String.starts_with ~prefix:"test_") goldens
-let as_tinygrad file = Golden.graph file (fun () -> rewritten (recorded file))
+
+let as_tinygrad file =
+  Golden.graph (Filename.concat dir file) (fun () -> rewritten (recorded file))
 
 let tinygrad_tests =
   group "tinygrad's tests" (List.map as_tinygrad tinygrad_goldens)
@@ -377,17 +385,16 @@ let values =
         (fun (d, env) -> keeps_lanes d env);
     ]
 
-let () =
-  exit
-    (run "Tolk.Shape.div_and_mod_symbolic"
-       [
-         nested_divisions;
-         constant_terms;
-         one_quotient;
-         constant_divisors;
-         other_divisors;
-         zero_divisors;
-         invalid;
-         tinygrad_tests;
-         values;
-       ])
+let div_and_mod_symbolic =
+  group "div_and_mod_symbolic"
+    [
+      nested_divisions;
+      constant_terms;
+      one_quotient;
+      constant_divisors;
+      other_divisors;
+      zero_divisors;
+      invalid;
+      tinygrad_tests;
+      values;
+    ]

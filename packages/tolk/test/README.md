@@ -10,8 +10,9 @@
   need and is hard to get right: reference interpreters, witnesses and
   generators over tolk types. A suite states its laws with windtrap's verbs,
   through no harness of its own. `tolk_run` (running kernels through the engine),
-  `tolk_gpus` (the GPUs) and `tolk_spawn` (a process that cannot start
-  another) sit beside it, for the suites that need them. Its goldens
+  `tolk_gpus` (the GPUs), `tolk_spawn` (a process that cannot start
+  another) and `tolk_simplification` (the value law of rewrites, for Shape's
+  and Symbolic's suites) sit beside it, for the suites that need them. Its goldens
   `differs`, `kept_diff`, `lattice`, `listing`, `stale` and `stale_table`
   are fixtures of `Golden`'s suite; the others are tinygrad output
   (`gen/support.py`, `gen/support/programs.py`), and `programs/` feeds the

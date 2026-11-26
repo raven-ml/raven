@@ -1,0 +1,9 @@
+(test
+ (name test_shape)
+ (package tolk)
+ (libraries windtrap tolk tolk_test tolk_simplification)
+ (deps
+  (glob_files *.golden)
+  (glob_files *.tolk)
+  (glob_files divandmod/*.golden)
+  (glob_files divandmod/*.tolk)))

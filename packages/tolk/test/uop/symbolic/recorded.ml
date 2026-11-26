@@ -5,7 +5,7 @@
 open Windtrap
 open Tolk
 open Dtypes
-open Common
+open Simplification
 
 let matcher = function
   | "sym" -> Symbolic.sym

@@ -125,18 +125,18 @@ its input cells, such as `D › truncate › truncation.golden › dtype=dtypes.
 | tinygrad: runtime/test_dtype.py::TestDType::test_uint64_cast_float_rounds_once, test_uint64_cast_double_rounds_once | a uint64 past 2^53 converts to a float with one rounding | dropped: device runs of the x86 instruction renderer's conversion (README exclusions); the rounding is `D › truncate › truncation.golden` |
 | tinygrad: runtime/test_dtype_alu.py (every test but the twenty-one below) | device ALU results against numpy, rounded with `truncate` | dropped: execution on a device (L5-L7). The rounding reference it uses is `D › truncate › truncation.golden` |
 | tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_unsigned_add_lt | an unsigned sum near its type's top wraps before a comparison reads it | `Tolk.Symbolic › integers wrap › an offset crosses a comparison only where neither side wraps` |
-| tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_div_add_div_no_overflow | `(x // 2 + a) // 2` of a committed integer near its top | `Tolk.Divandmod › nested divisions › a committed division stays where x + a * c wraps`, `Tolk.Divandmod › nested divisions › keep_nested_divisions_of_committed_integers.golden` |
+| tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_div_add_div_no_overflow | `(x // 2 + a) // 2` of a committed integer near its top | `Tolk.Shape › div_and_mod_symbolic › nested divisions › a committed division stays where x + a * c wraps`, `Tolk.Shape › div_and_mod_symbolic › nested divisions › divandmod/keep_nested_divisions_of_committed_integers.golden` |
 | tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_unsigned_mul_max | the maximum of an unsigned product that wraps | `Tolk.Symbolic › integers wrap › a factor leaves a maximum only where no product wraps` |
 | tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_unsigned_wrap_bounds | the bounds of an unsigned sum, product, shift, negation and complement that wrap | `Tolk.Ops › bounds › a committed integer that can leave its type has its bounds`; `Tolk.Symbolic › integers wrap › a comparison folds from bounds only where they do not wrap` |
 | tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_unsigned_narrow_wrap | each wrapping operation on an unsigned char or short wraps | `Tolk.Cstyle › clang › on the host › wraps each operation on unsigned chars`; `› a kernel over a narrow type wraps and rounds as the interpreter` |
 | tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_unsigned_const_canonical | an unsigned constant holds its type's value, and so do folds of it | `D › const › const.golden` (the unsigned types); `Tolk.Symbolic › committed constants hold their type's value` |
-| tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_div_div_no_overflow, test_add_add_no_overflow, test_neg_add_no_overflow, test_add_mul_no_overflow, test_add_lt_no_overflow, test_mul_mul_no_overflow, test_combine_terms_no_overflow | int32 folds near the type's bounds keep the device's values | D24: tolk folds at the width, `Tolk.Symbolic › integers wrap ›` "(x // c1) // c2 stays where c1 * c2 wraps", "an offset crosses a comparison only where neither side wraps", "a square of a product keeps its value, its constants folded at an unsigned width", "like terms combine their factors at their width", "a folded result is written at its width" |
-| tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_pow_one_keeps_dtype | `1 ** x` is 1 of `x`'s type | `Tolk.Symbolic › symbolic_simple › powers ›` "1 ** x is 1 of the power's type, and c ** x is exp2 (x * log2 c) for positive c" |
+| tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_div_div_no_overflow, test_add_add_no_overflow, test_neg_add_no_overflow, test_add_mul_no_overflow, test_add_lt_no_overflow, test_mul_mul_no_overflow, test_combine_terms_no_overflow | int32 folds near the type's bounds keep the device's values | D24: tolk folds at the width, `Tolk.Shape › integers wrap › (x // c1) // c2 stays where c1 * c2 wraps`; `Tolk.Symbolic › integers wrap ›` "an offset crosses a comparison only where neither side wraps", "a square of a product keeps its value, its constants folded at an unsigned width", "like terms combine their factors at their width", "a folded result is written at its width" |
+| tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_pow_one_keeps_dtype | `1 ** x` is 1 of `x`'s type | `Tolk.Shape › symbolic_simple › powers ›` "1 ** x is 1 of the power's type, and c ** x is exp2 (x * log2 c) for positive c" |
 | tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_neg_zero, test_neg_add_half_zero, test_neg_add_signed_zero | a negated sum of signed zeros keeps the sign IEEE gives | D24's signed zeros: `Tolk.Symbolic › floats keep IEEE values › signed zeros: a negated sum and complementary selections` |
 | tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_reassociate_no_overflow | int32 sums and products regrouped near the type's bounds keep the device's values | D24: tolk computes committed integers at their width, `Tolk.Symbolic › integers wrap ›` "like terms combine their factors at their width", "an offset crosses a comparison only where neither side wraps" |
 | tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_float_reassociate | float sums, products and selections regrouped round and overflow as computed | D24's reassociation: `Tolk.Symbolic › floats keep IEEE values › reassociation: constants, like terms and selections of a sum` (`x + x * -1` at `-1.`, `(x * -1) * y` at `-0.`, infinities and NaN) |
 | tinygrad: runtime/test_dtype_alu.py::TestDTypeALU::test_fused_div_matches_unfused, test_fused_recip_const_matches_unfused | a product's quotient, a quotient's quotient and a product's reciprocal round as computed apart | `Tolk.Symbolic › sym › reciprocals of products stay`; tinygrad deleted the folds, which tolk had left out |
-| tinygrad: runtime/test_invalid_tensor.py::TestInvalidTensor::test_where_reduce_identity | a sum, product and maximum of a selection by an Invalid take the reduction's identity in the failing lanes | `Tolk.Symbolic › invalid values ›` "a gate clause on a reduction's range selects its identity in it", "a gate on a reduction's range alone selects its identity" |
+| tinygrad: runtime/test_invalid_tensor.py::TestInvalidTensor::test_where_reduce_identity | a sum, product and maximum of a selection by an Invalid take the reduction's identity in the failing lanes | `Tolk.Shape › invalid values ›` "a gate clause on a reduction's range selects its identity in it", "a gate on a reduction's range alone selects its identity" |
 | tinygrad: runtime/test_dtype_spec.py::TestTypeSpec::test_dtype_str_arg | "nonexistdtype" and "" name no data type | `D › names › the error names what is not a data type`; `D › names › the empty string is not a data type` |
 | tinygrad: runtime/test_dtype_spec.py (every other test) | dtypes of Tensor creation and reductions | dropped: Tensor surface, rune's lowering |
 
@@ -189,10 +189,10 @@ to that module's section; each is listed here once, with its owner.
 | tinygrad: null/test_uop_graph.py::TestUOpGraph::test_backedge_preserves_outer_range | a backedge closes its loop only | `O › ranges › a backedge closes its loop and keeps the condition's other ranges` |
 | tinygrad: null/test_uop_graph.py::TestReduceCollapse (2 tests) | `pm_reduce_collapse`, `full_rewrite` | Codegen's section |
 | tinygrad: null/test_uop_graph.py::TestMovementOps (2 tests) | `pm_mops` folds reshapes into indices | `Tolk.Prepare › pm_mops ›` "an index of a reshape's added leading axis is its source" (`test_pm_mops_partial_reshape_index_removes_reshape`), "an index of a reshape whose trailing axes change is left as it is" (`…_suffix_mismatch_does_nothing`) |
-| tinygrad: null/test_uop_graph.py::TestConstBufferize (2 tests) | `pm_const_buffer_folding` | `Tolk.Rangeify › get_kernel_graph › makes each recorded program's kernel graph as its golden states ›` `setitem_column_kernels.golden` and `setitem_cube_kernels.golden` (Rangeify's rows left by other sections); `bufferize` itself is `O › arguments › reprs.golden` (name=bufferize) and `O › shapes › a stage puts its ranges' sizes in front` |
+| tinygrad: null/test_uop_graph.py::TestConstBufferize (2 tests) | `pm_const_buffer_folding` | `Tolk.Rangeify › get_kernel_graph › makes each recorded program's kernel graph as its golden states ›` `setitem_column_kernels.golden` and `setitem_cube_kernels.golden` (Rangeify's rows left by other sections); `bufferize` itself is `O › arguments › reprs.golden` (name=bufferize) and `Tolk.Shape › shapes › a stage puts its ranges' sizes in front` |
 | tinygrad: null/test_uop_graph.py::TestUOpGetItem (18 tests) | `UOp.__getitem__` | dropped: `__getitem__` is not ported (README exclusions); its shrink, permute and index are `O › graphs › movement.golden` and `O › graphs › kernel_nodes.golden` |
-| tinygrad: null/test_uop_graph.py::TestUOpBroadcast::test_broadcast_row, test_broadcast_col, test_broadcast_lower_dim, test_broadcast_scalar, test_broadcast_symbolic_same_shape | elementwise operations broadcast shapes | `O › shapes › an elementwise operation broadcasts its sources' shapes`; `O › shapes › an elementwise operation keeps a symbolic shape` |
-| tinygrad: null/test_uop_graph.py::TestUOpBroadcast::test_broadcast_axes | `broadcast_axes`, symbolic sizes, rejection | `O › shapes › broadcast_axes is the axes broadcasting adds or expands`; `O › shapes › broadcast_axes compares symbolic sizes` |
+| tinygrad: null/test_uop_graph.py::TestUOpBroadcast::test_broadcast_row, test_broadcast_col, test_broadcast_lower_dim, test_broadcast_scalar, test_broadcast_symbolic_same_shape | elementwise operations broadcast shapes | `Tolk.Shape › shapes › an elementwise operation broadcasts its sources' shapes`; `Tolk.Shape › shapes › an elementwise operation keeps a symbolic shape` |
+| tinygrad: null/test_uop_graph.py::TestUOpBroadcast::test_broadcast_axes | `broadcast_axes`, symbolic sizes, rejection | `Tolk.Shape › shapes › broadcast_axes is the axes broadcasting adds or expands`; `Tolk.Shape › shapes › broadcast_axes compares symbolic sizes` |
 
 ### tinygrad: null/test_pattern_matcher.py, test_rewrite_bottom_up_gate.py, test_graph_rewrite.py
 
@@ -249,14 +249,14 @@ to that module's section; each is listed here once, with its owner.
 |---|---|---|
 | tinygrad: null/test_uop_repr.py::TestUOpRepr (4 tests) | `repr` of a node, with `x0:=` sharing | `O › printing › pretty.golden` (every node of the tests, and kernels, ranges and typed constants) |
 | tinygrad: null/test_uop_repr.py::TestUOpRepr::test_range_arg | a range's argument is its axis type, then its identity, of one part or more | `O › arguments › reprs.golden` (the `range` rows); `O › ranges › axis_id and axis_type read a range and reject anything else` |
-| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_simple_int, test_int_add, test_rfloordiv, and the integer half of test_weak_const | `int()` of a typed, weak or summed integer | `O › resolve › to_z, to_float and to_bool read a literal`; `O › resolve › to_z reads a typed constant and an integer sum of constants` |
-| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_weak_const (float half) | `float()` of a weak float | `O › resolve › to_z, to_float and to_bool read a literal` |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_simple_int, test_int_add, test_rfloordiv, and the integer half of test_weak_const | `int()` of a typed, weak or summed integer | `Tolk.Shape › resolve › to_z, to_float and to_bool read a literal`; `Tolk.Shape › resolve › to_z reads a typed constant and an integer sum of constants` |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_weak_const (float half) | `float()` of a weak float | `Tolk.Shape › resolve › to_z, to_float and to_bool read a literal` |
 | tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_rtruediv, test_float_direct, test_ssimplify | float and remainder folding | Symbolic's section: without `symbolic` a float sum has no single-valued bounds |
-| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_lt, test_leq, test_ne, test_ne_f, test_ngt | comparisons of constants | `O › resolve › to_bool decides comparisons of constants` |
-| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_ambiguous_less_than | `resolve` falls back to its default | `O › resolve › resolve takes the default when the comparison is undecided` |
-| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_var_cmp_t, test_var_cmp_t2, test_var_cmp_f, test_var_cmp_f2, test_max | bounds decide a comparison | `O › resolve › to_bool decides a comparison the bounds decide` |
-| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_or_true, test_and_false | an absorbing boolean decides | `O › resolve › to_bool decides a disjunction with true and a conjunction with false` |
-| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_or_false, test_and_true, test_x_lt_xp1, test_var_cmp_range, test_var_cmp_assert | an undecided condition raises | `O › resolve › to_bool rejects a condition with two possible values` |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_lt, test_leq, test_ne, test_ne_f, test_ngt | comparisons of constants | `Tolk.Shape › resolve › to_bool decides comparisons of constants` |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_ambiguous_less_than | `resolve` falls back to its default | `Tolk.Shape › resolve › resolve takes the default when the comparison is undecided` |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_var_cmp_t, test_var_cmp_t2, test_var_cmp_f, test_var_cmp_f2, test_max | bounds decide a comparison | `Tolk.Shape › resolve › to_bool decides a comparison the bounds decide` |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_or_true, test_and_false | an absorbing boolean decides | `Tolk.Shape › resolve › to_bool decides a disjunction with true and a conjunction with false` |
+| tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_or_false, test_and_true, test_x_lt_xp1, test_var_cmp_range, test_var_cmp_assert | an undecided condition raises | `Tolk.Shape › resolve › to_bool rejects a condition with two possible values` |
 | tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_x_lt_x, test_plus_ordering_lt | `simplify` folds `x < x` and `i+j < j+i` | Symbolic's section |
 | tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_constant | a constant | `O › bounds › a constant is its own bounds` |
 | tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxProperties::test_vmin_vmax_copy | a copy and a contiguous pass bounds through | `O › bounds › a copy and a contiguous keep their source's bounds` |
@@ -279,7 +279,7 @@ to that module's section; each is listed here once, with its owner.
 | tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxVConst (5 tests) | constant stacks of integers, floats, booleans | `O › bounds › a stack's bounds span its values, Invalid left out` |
 | tinygrad: null/test_uop_vmin_vmax.py::TestVminVmaxVConst::test_vmin_vmax_vector_with_gep | a load of an int buffer divided by 32 | `O › bounds › a load of an integer buffer has its type's bounds` |
 | tinygrad: null/test_uop_vmin_vmax.py::TestConstFactor (6 tests; 1 skipped) | `const_factor` | `O › divisibility › const_factor is a known divisor`; the skipped `(x*3)*5` case is dropped: tinygrad skips it as broken |
-| tinygrad: null/test_uop_vmin_vmax.py::TestDivides (5 tests; 1 skipped) | `divides` | `O › divisibility › divides divides a known multiple`; the skipped `(x*6)/6` case is dropped: tinygrad skips it as broken |
+| tinygrad: null/test_uop_vmin_vmax.py::TestDivides (5 tests; 1 skipped) | `divides` | `Tolk.Shape › divisibility › divides divides a known multiple`; the skipped `(x*6)/6` case is dropped: tinygrad skips it as broken |
 
 ### tinygrad: null/test_uops.py, test_uops_stats.py, runtime/test_uops.py
 
@@ -302,10 +302,10 @@ to that module's section; each is listed here once, with its owner.
 | tinygrad: null/test_uops.py::TestExecALU::test_int_pow | integer powers wrap at their type; an integer to a negative power is 0 but for 1 and -1 | `O › exec_alu › an integer power wraps at its type, and a negative power truncates toward 0`; `O › exec_alu › exec_alu_values.golden` (the weak integer rows) |
 | tinygrad: null/test_uops.py::TestGatedStoreRewrite (5 tests), TestFastIdiv (13 tests) | gated stores, fast division | Codegen's section |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_compare_alu_same_src_different_arg (skipped) | nodes are ordered by `<` | dropped: tinygrad skips it; `O › identity › compare is a total order that agrees with equal` |
-| tinygrad: null/test_uops.py::TestUOpMethod::test_uop_variables | a `Tensor` program's variables | dropped: Tensor surface; `O › variables › variables are sorted by name` |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_uop_variables | a `Tensor` program's variables | dropped: Tensor surface; `Tolk.Shape › variables › variables are sorted by name` |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_const_factor | `const_factor` of a hardware index | `O › divisibility › const_factor is a known divisor` |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_cmp_self_folding_multidim | `simplify` folds `x < x` | Symbolic's section |
-| tinygrad: null/test_uops.py::TestUOpMethod::test_cmpeq_canonical | equality is CMPEQ of type bool, an inequality and a logical not its equality to False, and simplify folds a double negation and `x == True` | `O › graphs › comparisons.golden`, `bitwise.golden`; `Tolk.Symbolic › symbolic_simple › identities ›` "a double negation is x", "x = true and x <> false are x" |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_cmpeq_canonical | equality is CMPEQ of type bool, an inequality and a logical not its equality to False, and simplify folds a double negation and `x == True` | `O › graphs › comparisons.golden`, `bitwise.golden`; `Tolk.Shape › symbolic_simple › identities ›` "a double negation is x", "x = true and x <> false are x" |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_replace | `replace` changes a field, and rejects an unknown one | `O › identity › replace is the node itself when nothing changes`; the unknown field is dropped: labelled arguments make it a type error |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_const_zero_neg_zero_different | 0.0 and -0.0 are different nodes | `O › identity › zero and negative zero are different nodes` |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_const_nan_same | two `float('nan')` constants are one node | `O › identity › NaN constants of different bits are different nodes`, whose last claim is this; NaNs of different bits are not (D27) |
@@ -336,24 +336,24 @@ has no `Tensor`, so each kept method's UOp graph is a golden instead.
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_div_sum_by_sum, test_isclose | `sum`, `isclose` | dropped: not kept |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBinop::test_floordiv_int, test_floordiv_float, test_rfloordiv_int, test_mod_int, test_mod_float, test_div_trunc_int, test_div_trunc_float, test_fmod_int, test_fmod_float, test_floordiv_bool, test_mod_bool, test_fmod_bool | rounding divisions by type | `O › graphs › constant_division.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpClone::test_clone | `clone` | `O › graphs › clones.golden` |
-| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpClone::test_clone_deviceless_const | a clone of a constant goes to the default device | dropped: there is no default device (RFC 0010 Law 9); `O › storage › a clone of a weak value commits its type` |
-| tinygrad: null/test_edgecases.py::TestInputValidation::test_repeat_negative | a negative repeat is refused | `O › movement › repeat refuses a negative repeat` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpClone::test_clone_deviceless_const | a clone of a constant goes to the default device | dropped: there is no default device (RFC 0010 Law 9); `Tolk.Shape › storage › a clone of a weak value commits its type` |
+| tinygrad: null/test_edgecases.py::TestInputValidation::test_repeat_negative | a negative repeat is refused | `Tolk.Shape › movement › repeat refuses a negative repeat` |
 | tinygrad: runtime/test_ops.py::TestOps::test_squeeze (a sequence of axes) | `squeeze` of several axes | dropped: `Shape.squeeze` takes one axis or all, which rune's lowering uses; several are one reshape |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpGradient | `gradient` | dropped: rune owns differentiation |
-| tinygrad: runtime/test_flip.py::TestFlip::test_symbolic_zero_and_singleton | a flip of an axis of every size from 0, the size a variable's | `O › movement › a flip reverses each axis it names and keeps the others` (sizes from 0, one to three axes, flipped in either order), `› a flip of a view of variable size reverses it at each size` (0 to 4); the kernels are Rangeify's `variable_staged`, `variable_flipped_store` |
+| tinygrad: runtime/test_flip.py::TestFlip::test_symbolic_zero_and_singleton | a flip of an axis of every size from 0, the size a variable's | `Tolk.Shape › movement › a flip reverses each axis it names and keeps the others` (sizes from 0, one to three axes, flipped in either order), `› a flip of a view of variable size reverses it at each size` (0 to 4); the kernels are Rangeify's `variable_staged`, `variable_flipped_store` |
 | tinygrad: runtime/test_flip.py::TestFlip::test_gradient, test_symbolic_gradient, test_partial_store_gradient | the gradient of a flip, its arithmetic and traffic linear in the size | dropped: rune owns differentiation; the kernel a flip compiles to is Codegen's `flip_<target>.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpGetitem (all) | `__getitem__` | dropped: not ported (README exclusions) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCumalu, TestTensorUOpCumMinMax, TestTensorUOpArgMinMax, TestTensorUOpSequential, TestTensorUOpOneHot, TestTensorUOpSort, TestTensorUOpAllclose, TestTensorUOpRand, TestTensorUOpGather, TestTensorUOpInterpolate, TestTensorUOpLoss, TestTensorUOpScatter, TestTensorUOpScatterReduce, TestTensorUOpMaskedSelect, TestTensorUOpNonzero, TestTensorUOpPool, TestTensorUOpConv2d, TestTensorUOpHashing, TestTensorUOpEinsum, TestTensorUOpSoftmax, TestTensorUOpQR, TestTensorUOpSVD | the other `Tensor` methods | dropped: not kept; rune's lowering |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCast::test_cast_str_dtype, TestTensorUOpBitcast::test_bitcast_str_dtype | a type named by a string | dropped: types are `Dtype.t` values; reading a name is `Dtype.of_string` (Dtype's section) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBitcast::test_bitcast_same_dtype | a bitcast to the same type is the node | `O › elementwise › a cast or bitcast to the node's own type is the node` |
-| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBitcast::test_bitcast_same_and_diff_size | bitcasts that keep, widen or narrow the element | `O › graphs › bitcasts.golden`; `O › shapes › a bitcast rescales the last axis, and rejects a size that does not divide` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpBitcast::test_bitcast_same_and_diff_size | bitcasts that keep, widen or narrow the element | `O › graphs › bitcasts.golden`; `Tolk.Shape › shapes › a bitcast rescales the last axis, and rejects a size that does not divide` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCat (4 tests) | `cat` along each axis, three inputs, a negative axis | `O › graphs › concatenation.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpPad::test_pad_flat, test_pad_flat_negative, test_pad_grouped_none | constant padding, negative, `None` axes | `O › graphs › padding.golden` (the flat spelling is `Tensor` syntax; the interface takes one pair per axis) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpPad::test_pad_circular, test_pad_circular_zero_after, test_pad_reflect, test_pad_reflect_negative, test_pad_replicate, test_pad_replicate_negative | other padding modes | dropped: only constant padding is kept |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpStack::test_stack_dim0, test_stack_dim1, test_stack_3tensors, test_stack_new_last, test_stack_mixed_dtype | `stack` | `O › graphs › stacks.golden` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpStack::test_stack_index_dtype | a stack of weak constants | `O › graphs › bitcasts.golden` (its last node) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_dtype_string | a type named by a string | dropped: types are values |
-| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_dtype_override | `empty_like` with a type is storage | `O › graphs › clones.golden`; `O › devices › empty_like on another device takes the value's shape` |
+| tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_dtype_override | `empty_like` with a type is storage | `O › graphs › clones.golden`; `Tolk.Shape › devices › empty_like on another device takes the value's shape` |
 | tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_like_sharded_to_single_device | a sharded value's `empty_like` on one device | dropped: the multi-device rewrite is excluded (README) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestUOpEmpty::test_empty_direct_singleton_tuple_device | a one-device tuple canonicalizes | dropped: canonicalizing devices is Device's (L6) |
 | tinygrad: null/test_tensor_uop_mixin.py::TestTensorUOpCreation::test_empty, test_empty_like | `empty`, `empty_like` | `O › graphs › clones.golden` |
@@ -510,7 +510,7 @@ pass.
 
 ## Movement
 
-The suite is `Tolk.Shape.mop_cleanup` (`uop/movement/`, after tinygrad's
+The suite is the group `mop_cleanup` of `Tolk.Shape` (`uop/shape/`, after tinygrad's
 `uop/movement.py`), written `M` below. A
 golden check is named after its golden, which holds a graph and its cleanup. A
 test of offsets that are nodes simplifies them with Symbolic's rules.
@@ -521,13 +521,14 @@ input capture); those tests belong to their passes' sections.
 
 ## Divandmod
 
-The suite is `Tolk.Shape.div_and_mod_symbolic` (`uop/divandmod/`, after
+The suite is the group `div_and_mod_symbolic` of `Tolk.Shape` (`uop/shape/`, after
 tinygrad's `uop/divandmod.py`), written `DM` below.
 Each golden holds divisions and remainders, each followed by its rewrite by
 `div_and_mod_symbolic` applied once, or by itself where no rule applies. A
-golden named after a claim holds one case, built in the suite. A golden
+golden named after a claim holds one case, built in the suite. Its goldens sit in
+`uop/shape/divandmod/`, so a golden check is named `divandmod/<name>.golden`. A golden
 `test_<name>.golden` holds every division and remainder of the tinygrad test of
-that name, which `gen/uop/divandmod.py` records while the test runs.
+that name, which `gen/uop/shape/divandmod.py` records while the test runs.
 
 tinygrad's symbolic tests assert what the whole rule set makes of an
 expression (`sym`, `simplify`): those claims are Symbolic's section. Here each
@@ -535,11 +536,11 @@ division and remainder they build is rewritten by this matcher alone.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: null/test_uop_symbolic.py (every test that builds a division or a remainder, one golden each: TestSymbolic, TestSymbolicNumeric, TestSymInfer, TestSymbolicRealWorld, TestFuzzFailure, TestInvalidIndex, TestGatedUopGivenValid, TestRangeSplitting) | the rewrite of each division and remainder the test builds | `DM › tinygrad's tests › test_<name>.golden`; `DM › values › each rewrite of the goldens' divisions keeps the division's value` |
+| tinygrad: null/test_uop_symbolic.py (every test that builds a division or a remainder, one golden each: TestSymbolic, TestSymbolicNumeric, TestSymInfer, TestSymbolicRealWorld, TestFuzzFailure, TestInvalidIndex, TestGatedUopGivenValid, TestRangeSplitting) | the rewrite of each division and remainder the test builds | `DM › tinygrad's tests › divandmod/test_<name>.golden`; `DM › values › each rewrite of the goldens' divisions keeps the division's value` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_div_mod_zero | a division or remainder by 0 raises | `DM › zero divisors` (4 tests) |
-| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_variable_divmod | a variable bounded by another | dropped: a variable's bounds are values (`Ops.variable`), so `gen/uop/divandmod.py` records no division that reads a variable bounded by a node |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_variable_divmod | a variable bounded by another | dropped: a variable's bounds are values (`Ops.variable`), so `gen/uop/shape/divandmod.py` records no division that reads a variable bounded by a node |
 | tinygrad: null/test_uop_symbolic.py (the tests that build no division or remainder) | the other symbolic rules | `S › tinygrad › tests.golden › <Class>.<test>` (Symbolic's section) |
-| tinygrad: null/test_symbolic_failures.py::TestFuzzFailure (11 tests) | simplifying an expression keeps its value | `DM › tinygrad's tests › test_fuzz_failure<n>.golden` (test_fuzz_failure1 is test_uop_symbolic.py's too); `DM › values › each rewrite of the goldens' divisions keeps the division's value`; the claim on the whole rule set is `S › tinygrad › tests.golden › TestFuzzFailure.test_fuzz_failure<n>` |
+| tinygrad: null/test_symbolic_failures.py::TestFuzzFailure (11 tests) | simplifying an expression keeps its value | `DM › tinygrad's tests › divandmod/test_fuzz_failure<n>.golden` (test_fuzz_failure1 is test_uop_symbolic.py's too); `DM › values › each rewrite of the goldens' divisions keeps the division's value`; the claim on the whole rule set is `S › tinygrad › tests.golden › TestFuzzFailure.test_fuzz_failure<n>` |
 | tinygrad: null/test_simplify_valid_idx.py (44 tests) | valid and index simplification | `S › tinygrad › tests.golden › TestValidIdxSimplification.<test>` (Symbolic's section); the image tests and `indexing_simplify` are dropped there |
 
 ## Render
@@ -693,8 +694,10 @@ constants the value the machine computes: the claim tinygrad proves with z3.
 The rendered strings of `helper_test_variable` are compared as nodes: tinygrad
 evaluates each string into the node it checks, and the golden holds that node.
 `S › tinygrad › sym simplifies random integer expressions as tinygrad does`
-replays 200 random expressions the same way, and `S › laws` state the laws on
-expressions generated here, weak and at committed widths.
+replays 200 random expressions the same way, and `S › laws` and
+`Tolk.Shape › laws` state the laws on
+expressions that test support's `Expressions` generates, weak and at committed
+widths.
 
 tinygrad folds committed constants without wrapping them to their width, which
 its own `TestModularWraparound` marks as expected failures; tolk reads
@@ -706,24 +709,24 @@ it check that each result is the machine's value instead, and name D13.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic (every test but the four below, 185 tests) | `sym` of each expression and its bounds; `commutative` of each expected expression; `simplify`, `ssimplify`, `gcd` and `divide_exact` results | `S › tinygrad › tests.golden › TestSymbolic.<test>` |
-| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_equality | equal expressions are one node, and operand order counts | `S › tinygrad's other tests › equal expressions are the same node, and operand order counts` |
-| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_divide_exact_not | `divide_exact` gives up | `S › tinygrad's other tests › divide_exact gives up on what does not divide` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_equality | equal expressions are one node, and operand order counts | `O › identity › equal expressions are the same node, and operand order counts` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_divide_exact_not | `divide_exact` gives up | `Tolk.Shape › divisibility › divide_exact gives up on what does not divide` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_div_mod_zero | a division or remainder by 0 raises | `DM › zero divisors` (Divandmod's section) |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_variable_divmod | a variable bounded by another | dropped: a variable's bounds are numbers |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicPickle (2 tests) | a variable survives pickling | dropped: pickling is Python's; a graph's text form round-trips in the graph format (test support's `Graph` suite) |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicNumeric (9 tests) | a rewrite of a constant is its value, and bounds hold every value | `S › tinygrad › tests.golden › TestSymbolicNumeric.<test>`; `S › laws › sym keeps the value of an integer expression where nothing wraps` |
-| tinygrad: null/test_uop_symbolic.py::TestSymbolicVariables::test_simple, test_compound, test_dedup | `variables` lists each variable once, sorted | `S › tinygrad's other tests › variables lists each variable once, sorted by name` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolicVariables::test_simple, test_compound, test_dedup | `variables` lists each variable once, sorted | `Tolk.Shape › variables › variables lists each variable once, sorted by name` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicVariables::test_variable_min_eq_max_bind_folds | a bound variable of one value folds | `S › tinygrad › tests.golden › TestSymbolicVariables.test_variable_min_eq_max_bind_folds` |
-| tinygrad: null/test_uop_symbolic.py::TestSymInfer::test_sym_infer, test_sym_infer_floordiv_floormod, test_sym_infer_truncdiv_truncmod, test_sym_infer_with_cast | `sym_infer` of sums, products, floor and truncating division, by 0 too, and casts | `O › sym_infer › an integer is itself`; `O › sym_infer › a node takes its variables' values`; `O › sym_infer › divisions round as their operations say`; `O › sym_infer › a cast converts without truncating to a width` (Ops' section) |
-| tinygrad: null/test_uop_symbolic.py::TestSymInfer::test_sym_infer_with_bitcast | `sym_infer` through bit reinterpretations | `S › tinygrad's other tests › sym_infer reads bits through bit reinterpretations` |
-| tinygrad: null/test_uop_symbolic.py::TestSymInfer::test_sym_infer_deeply_nested | `sym_infer` of an expression 200 deep | `S › tinygrad's other tests › sym_infer evaluates an expression nested 200 deep` |
+| tinygrad: null/test_uop_symbolic.py::TestSymInfer::test_sym_infer, test_sym_infer_floordiv_floormod, test_sym_infer_truncdiv_truncmod, test_sym_infer_with_cast | `sym_infer` of sums, products, floor and truncating division, by 0 too, and casts | `Tolk.Shape › sym_infer › an integer is itself`; `Tolk.Shape › sym_infer › a node takes its variables' values`; `Tolk.Shape › sym_infer › divisions round as their operations say`; `Tolk.Shape › sym_infer › a cast converts without truncating to a width` |
+| tinygrad: null/test_uop_symbolic.py::TestSymInfer::test_sym_infer_with_bitcast | `sym_infer` through bit reinterpretations | `Tolk.Shape › sym_infer › sym_infer reads bits through bit reinterpretations` |
+| tinygrad: null/test_uop_symbolic.py::TestSymInfer::test_sym_infer_deeply_nested | `sym_infer` of an expression 200 deep | `Tolk.Shape › sym_infer › sym_infer evaluates an expression nested 200 deep` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolicSymbolicOps | none | dropped: a string literal in tinygrad, not a test |
 | tinygrad: null/test_uop_symbolic.py::TestInvalidIndex (7 tests), TestStoreLoadFolding, TestGatedUopGivenValid (2 tests), TestSymbolicRealWorld | invalid gates, store and load folding, gated index simplification, a real index | `S › tinygrad › tests.golden › <Class>.<test>`; the rendered text of test_resnet_half is Render's |
 | tinygrad: null/test_uop_symbolic.py::TestMoveWhereOnLoad::test_bool_index_preserves_dtype | the rewrite keeps a boolean index's type, which `type_verify` checks | `S › tinygrad › tests.golden › TestMoveWhereOnLoad.test_bool_index_preserves_dtype` (reading the golden checks every node's derived type) |
-| tinygrad: null/test_uop_symbolic.py::TestRangeSplitting::test_backedge_preserves_constant_condition | a constant backedge condition stays | `S › tinygrad › tests.golden › TestRangeSplitting.test_backedge_preserves_constant_condition`; `S › symbolic › ordering › a backedge keeps a constant condition` |
+| tinygrad: null/test_uop_symbolic.py::TestRangeSplitting::test_backedge_preserves_constant_condition | a constant backedge condition stays | `S › tinygrad › tests.golden › TestRangeSplitting.test_backedge_preserves_constant_condition`; `Tolk.Shape › symbolic › ordering › a backedge keeps a constant condition` |
 | tinygrad: null/test_uop_symbolic.py::TestRangeSplitting::test_range_split_on_mod | `pm_split_ranges` | dropped here: `codegen/simplify.py`'s matchers, Simplify's section (L3) |
-| tinygrad: null/test_uop_symbolic.py::TestBounds::test_unrolled_arange | bounds of an arange index | `S › tinygrad's other tests › the bounds of an unrolled arange's index` |
-| tinygrad: null/test_uop_symbolic.py::TestBounds::test_where_float_consts | bounds of float selections and their casts | `S › tinygrad's other tests › the bounds of selections between float constants` |
+| tinygrad: null/test_uop_symbolic.py::TestBounds::test_unrolled_arange | bounds of an arange index | `O › bounds › the bounds of an unrolled arange's index` |
+| tinygrad: null/test_uop_symbolic.py::TestBounds::test_where_float_consts | bounds of float selections and their casts | `O › bounds › the bounds of selections between float constants` |
 | tinygrad: null/test_uop_symbolic.py::TestFuzzFailure::test_fuzz_failure1, null/test_symbolic_failures.py::TestFuzzFailure (11 tests) | simplifying keeps the value at a binding | `S › tinygrad › tests.golden › TestFuzzFailure.test_fuzz_failure<n>` (the value law at the extremes and random bindings of every record) |
 | tinygrad: null/test_simplify_valid_idx.py::TestValidIdxSimplification (every test but the two below, 13 tests) | `sym` with `pm_move_where_on_load` on gated loads; `simplify_valid` | `S › tinygrad › tests.golden › TestValidIdxSimplification.<test>` |
 | tinygrad: null/test_simplify_valid_idx.py::TestValidIdxSimplification::test_simplex_const_term_keeps_lanes_aligned | a constant term of a clause's sum is no term to try at least 1, so each lane simplifies alike | `S › uop_given_valid › a clause on a sum with a constant term tries no term of it` |
@@ -738,12 +741,12 @@ it check that each result is the machine's value instead, and name D13.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: null/test_const_folding.py::TestWeakConstFolding (4 tests: all but test_nan_compare, below), TestBitcastConstFolding::test_out_of_range_source_value, test_scalar_bitcast | weak constants fold exactly; a bitcast of a constant folds | `S › tinygrad › tests.golden › <Class>.<test>` |
-| tinygrad: null/test_const_folding.py::TestWeakConstFolding::test_nan_compare | `nan != nan` folds to true | `S › tinygrad › tests.golden › TestWeakConstFolding.test_nan_compare`; `S › symbolic_simple › constants › NaN is unequal to itself when constants fold, as IEEE says` |
+| tinygrad: null/test_const_folding.py::TestWeakConstFolding::test_nan_compare | `nan != nan` folds to true | `S › tinygrad › tests.golden › TestWeakConstFolding.test_nan_compare`; `Tolk.Shape › symbolic_simple › constants › NaN is unequal to itself when constants fold, as IEEE says` |
 | tinygrad: null/test_const_folding.py::TestThreefryConstFolding::test_threefry | a threefry of constants folds once decomposed | `S › tinygrad › tests.golden › TestThreefryConstFolding.test_threefry` (the machine's value, D13) |
 | tinygrad: null/test_const_folding.py::TestBitcastConstFolding::test_vec_bitcast | a bitcast of a stack of constants | dropped here: the lanes fold after devectorizing, `full_rewrite`, Codegen's section (L4) |
 | tinygrad: null/test_const_folding.py::TestMovedConstFolding (5 tests), TestReduceOpsConstFolding::test_sum_output_dtype | constant folding in `Tensor` programs | dropped: `Tensor` surface, the frontend is nx |
 | tinygrad: runtime/test_const_folding.py::TestMovedConstFolding (2 tests), TestReduceOpsConstFolding (9 tests), TestMultiConstFolding (2 tests) | constant folding in `Tensor` programs run on a device | dropped: `Tensor` surface and execution |
-| tinygrad: runtime/test_const_folding.py::TestTautologicalCompare (5 tests) | `x < x`, `x == x` and `x != x` on tensors | dropped: `Tensor` surface; the folds are `S › symbolic_simple › zeros › x < x is false`, `S › symbolic_simple › zeros › x <> x is false for integers and booleans`, `S › symbolic_simple › zeros › x <> x stays for floats, which may be NaN` |
+| tinygrad: runtime/test_const_folding.py::TestTautologicalCompare (5 tests) | `x < x`, `x == x` and `x != x` on tensors | dropped: `Tensor` surface; the folds are `Tolk.Shape › symbolic_simple › zeros › x < x is false`, `Tolk.Shape › symbolic_simple › zeros › x <> x is false for integers and booleans`, `Tolk.Shape › symbolic_simple › zeros › x <> x stays for floats, which may be NaN` |
 
 ### tinygrad: the tests of other files that other sections leave to Symbolic's
 
@@ -752,10 +755,10 @@ it check that each result is the machine's value instead, and name D13.
 | tinygrad: null/test_uop_graph.py::TestGraphRewriteConst (2 tests), TestGraphRewrite::test_commutative_work, test_consts_go_last_right_away, test_consts_go_last, TestUOpGraph::test_where_same_fold, test_where_const_fold, test_depth_2_const_fold | `sym` and `simplify` fold stacks, order operands, move constants last, fold selections | `S › tinygrad › tests.golden › <Class>.<test>` |
 | tinygrad: null/test_uop_graph.py::TestModularWraparound (6 tests, xfail in tinygrad) | `simplify` folds constants modulo their width | `S › tinygrad › tests.golden › TestModularWraparound.<test>` (test_div, test_neg and test_payne_hanek_reduction_bug: the machine's value, D13, which tinygrad's own tests expect) |
 | tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_rtruediv, test_float_direct, test_ssimplify, test_x_lt_x, test_plus_ordering_lt | `simplify` under `float`, `bool` and `ssimplify` | `S › tinygrad › tests.golden › TestUOpResolve.<test>` |
-| tinygrad: null/test_uops.py::TestDTypeFromUOp::test_remove_invalid_stack_lanes, and the `pm_remove_invalid` half of test_invalid_dtype_and_consumers | `pm_remove_invalid` zeroes invalid lanes and gates | `S › tinygrad › tests.golden › TestDTypeFromUOp.test_remove_invalid_stack_lanes`; `S › pm_remove_invalid › a gate's invalid is 0 of the gate's type`; `S › pm_remove_invalid › a float gate's invalid is 0.0 of its type` |
+| tinygrad: null/test_uops.py::TestDTypeFromUOp::test_remove_invalid_stack_lanes, and the `pm_remove_invalid` half of test_invalid_dtype_and_consumers | `pm_remove_invalid` zeroes invalid lanes and gates | `S › tinygrad › tests.golden › TestDTypeFromUOp.test_remove_invalid_stack_lanes`; `Tolk.Shape › pm_remove_invalid › a gate's invalid is 0 of the gate's type`; `Tolk.Shape › pm_remove_invalid › a float gate's invalid is 0.0 of its type` |
 | tinygrad: null/test_uops.py::TestSafeCast (3 tests), TestUOpMethod::test_cmp_self_folding_multidim | `simplify` removes casts, folds `x < x` on shaped nodes | `S › tinygrad › tests.golden › <Class>.<test>` |
 | tinygrad: null/test_graph_rewrite.py::TestBottomUpRewrite::test_const_folding | bottom-up and top-down `symbolic_simple` reach one fold | `S › tinygrad › tests.golden › TestBottomUpRewrite.test_const_folding` (both directions are recorded) |
-| tinygrad: null/test_graph_rewrite.py::TestEdgeCasesAndSpecialOperations::test_full_graph_rewrite_transcendental_edge_cases | `log2(-1)` folds to NaN and `1/0` to infinity | `S › tinygrad's other tests › log2 of -1 folds to NaN and the reciprocal of 0 to infinity` |
+| tinygrad: null/test_graph_rewrite.py::TestEdgeCasesAndSpecialOperations::test_full_graph_rewrite_transcendental_edge_cases | `log2(-1)` folds to NaN and `1/0` to infinity | `Tolk.Shape › installation › log2 of -1 folds to NaN and the reciprocal of 0 to infinity` |
 | tinygrad: null/test_dtype_weak.py::TestWeakPromotion::test_committed_const_conversion_folds, test_derivable_const_rounds_at_the_derived_width | a cast of a committed constant folds; `x * 1` and `x * -1` fold after a literal is rounded | `S › tinygrad › tests.golden › TestWeakPromotion.<test>` (`symbolic_simple` alone and with `pm_commit_weak`) |
 | tinygrad: `null/test_uop_symbolic.py` (the eight `.render()` asserts) | the rewritten expression renders as written | `S › tinygrad › tests.golden › <Class>.<test>` for the rewrite; the text is Render's |
 

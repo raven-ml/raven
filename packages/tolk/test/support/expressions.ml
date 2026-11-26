@@ -82,7 +82,8 @@ let build leaf s =
   in
   node s.expr
 
-let node s = build (fun name (lo, hi) -> Common.var ~dtype:s.dtype name lo hi) s
+let node s =
+  build (fun name (lo, hi) -> Simplification.var ~dtype:s.dtype name lo hi) s
 
 (* [constants s] is [s]'s expression over committed constants of its type in
    place of its variables: a variable's least value, a divisor's greatest. *)
@@ -182,7 +183,8 @@ let committed_scenario = scenario_of (Gen.of_list (List.tl dtypes))
 
 type float_expr =
   | Param of int  (** The scalar float32 parameter of slot [i]. *)
-  | Special of int  (** The [i]th of {!Common.specials}, as a constant. *)
+  | Special of int
+      (** The [i]th of {!Simplification.specials}, as a constant. *)
   | Fneg of float_expr
   | Fadd of float_expr * float_expr
   | Fsub of float_expr * float_expr
@@ -194,7 +196,7 @@ type float_expr =
 
 let rec pp_float ppf = function
   | Param i -> Format.fprintf ppf "p%d" i
-  | Special i -> Dtype.pp_const ppf (List.nth Common.specials i)
+  | Special i -> Dtype.pp_const ppf (List.nth Simplification.specials i)
   | Fneg a -> Format.fprintf ppf "-%a" pp_float a
   | Fadd (a, b) -> Format.fprintf ppf "(%a + %a)" pp_float a pp_float b
   | Fsub (a, b) -> Format.fprintf ppf "(%a - %a)" pp_float a pp_float b
@@ -210,7 +212,8 @@ let rec float_node e =
     match e with
     | Param i -> Shape.param i Float32
     | Special i ->
-        Ops.const ~dtype:Float32 (List.nth Common.specials i :> Dtype.const)
+        Ops.const ~dtype:Float32
+          (List.nth Simplification.specials i :> Dtype.const)
     | Fneg a -> ~-(float_node a)
     | Fadd (a, b) -> float_node a + float_node b
     | Fsub (a, b) -> float_node a - float_node b
@@ -229,7 +232,7 @@ let rec float_expr depth =
         ( 2,
           map
             (fun i -> Special i)
-            (int_range 0 (List.length Common.specials - 1)) );
+            (int_range 0 (List.length Simplification.specials - 1)) );
       ]
   in
   if depth = 0 then leaf

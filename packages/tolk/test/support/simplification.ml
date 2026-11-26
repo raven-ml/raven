@@ -1,5 +1,5 @@
-(* Builders and the law that a rewrite keeps the value, shared by the suite's
-   groups. *)
+(* Builders and the law that a rewrite keeps the value, shared by the suites of
+   Shape's rules and of Symbolic. *)
 
 open Windtrap
 open Tolk
@@ -20,7 +20,6 @@ let before m = Ops.Before_sources m
 let rewrite ?(order = fun m -> Ops.After_sources m) m u =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u (order m)
 
-let simple u = rewrite Shape.symbolic_simple u
 let symbolic u = rewrite Shape.symbolic u
 let sym u = rewrite Symbolic.sym u
 
