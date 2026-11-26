@@ -8498,29 +8498,35 @@ let law_grown_plans g =
         Hashtbl.add plans terms r;
         r
   in
-  (* A Logsumexp or Moments slice takes one pass up to its block's terms and
-     three past them: the block's terms, its network launches' NX_LOOP_SEGMENT
-     at 4096 terms a slice, or at the longest where shorter, and one more. *)
-  let switch =
+  (* [word] of the first network launch of the plan of [terms] terms a slice,
+     [None] where it takes none. *)
+  let network_word word terms =
     let network (l : Plan.launch) =
       match l.kernel with
       | Loop_network_v4 | Loop_network_v1 | Loop_network_wide -> true
       | _ -> false
     in
-    let segment (l : Plan.launch) =
-      Int64.to_int
-        (Bytes.get_int64_le l.words (8 * Nx_metal.Kernels.loop_segment))
-    in
+    match plan terms with
+    | Ok (Some p) ->
+        Option.map
+          (fun (l : Plan.launch) ->
+            Int64.to_int (Bytes.get_int64_le l.words (8 * word)))
+          (List.find_opt network (Array.to_list p.launches))
+    | Ok None | Error _ -> None
+  in
+  (* A Logsumexp or Moments slice takes one pass up to its block's terms and
+     three past them: the block's terms, its network launches' NX_LOOP_SEGMENT
+     at 4096 terms a slice, or at the longest where shorter, and one more. *)
+  let switch =
     match c.r with
     | Monoid _ | Arg _ -> []
     | (Logsumexp | Moments) when longest < 1 -> []
     | Logsumexp | Moments -> (
-        match plan (Int.min 4096 longest) with
-        | Ok (Some p) -> (
-            match List.find_opt network (Array.to_list p.launches) with
-            | Some l -> [ segment l; segment l + 1 ]
-            | None -> [])
-        | Ok None | Error _ -> [])
+        match
+          network_word Nx_metal.Kernels.loop_segment (Int.min 4096 longest)
+        with
+        | Some b -> [ b; b + 1 ]
+        | None -> [])
   in
   let lengths =
     List.filter
@@ -8541,8 +8547,16 @@ let law_grown_plans g =
   cover "a Logsumexp or Moments"
     (match c.r with Logsumexp | Moments -> true | Monoid _ | Arg _ -> false);
   cover "a program past 64 nodes" (depends c.p > 64);
+  (* The switch is planned where a slice is one block at its block's terms and
+     several at one more, NX_LOOP_SEGMENTS. *)
+  let blocks = network_word Nx_metal.Kernels.loop_segments in
   cover "a Logsumexp or Moments at its block's terms and one more"
-    (switch <> [] && List.for_all (fun t -> List.mem t lengths) switch);
+    (match switch with
+    | [ b; more ] -> (
+        more <= longest
+        && blocks b = Some 1
+        && match blocks more with Some n -> n > 1 | None -> false)
+    | _ -> false);
   List.iter
     (fun rank -> cover (Printf.sprintf "%d axes" rank) (g.grank = rank))
     [ 8; 20; 32 ]
