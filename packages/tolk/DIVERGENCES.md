@@ -265,10 +265,11 @@ a source (`uop/upat.py` `_get_clause`).
 - **Pinned by:** `Tolk.Setting › context › is not seen by the other domains` and
   `Tolk.Setting › context › binds for the domains spawned while it runs`;
   `Tolk.Worker` (every test); `Tolk.Codegen › programs are kept › calls from
-  several domains at once make one program, compiled once`; `Tolk.Decomp_dtype,
-  compiled in parallel › targets lowered on several domains at once get their
-  own rules`; `Tolk.Compiler_metal › compiles in processes of their own` (every
-  test), `› compiler › a library that does not load raises Compile_error
+  two domains at once make each program once, compiled once`; `Tolk
+  decompositions, compiled in parallel › targets lowered on several domains at
+  once get their own rules`; `Tolk.Compiler_metal › compiles in processes of
+  their own` (every test), `› compiler › a library that does not load raises
+  Compile_error
   naming it`, `› a library without MTLCompiler's functions …`, `› a library
   that makes no service …`, `› a process that cannot start raises Failure
   naming the worker`, `› a cache that cannot be written`, `› a cache whose
