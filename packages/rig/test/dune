@@ -5,7 +5,7 @@
   test_buffer
   test_submit
   test_launch
-  test_args
+  test_submission
   test_loss
   test_domains
   test_commit
