@@ -553,7 +553,7 @@ let law_digits (type s) (dt : (float, s) D.t) x =
             ~msg:(Printf.sprintf "%h printed as %s" v t)
             Windtrap.float_exact
             ~than:(0.5 +. (Float.succ (Float.abs v) -. Float.abs v))
-            (Float.abs (p -. v));
+            (Nx_support.gap p v);
         if needed dt v <= digits then begin
           classify "whole" true;
           if not (same v (D.of_float dt p)) then failf "%h printed as %s" v t
@@ -574,7 +574,7 @@ let law_digits (type s) (dt : (float, s) D.t) x =
             ~msg:(Printf.sprintf "%h printed as %s" v t)
             Windtrap.float_exact
             ~than:((0.5 *. unit *. (1. +. 1e-9)) +. step)
-            (Float.abs (p -. v))
+            (Nx_support.gap p v)
         end
       end)
     xs
