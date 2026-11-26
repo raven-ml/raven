@@ -138,7 +138,7 @@ let () =
     let s, _ = step !state in
     state := s
   done;
-  Nx.print_data (Nx.sigmoid (Mlp.apply (fst !state) x))
+  Nx.print (Nx.sigmoid (Mlp.apply (fst !state) x))
 ```
 
 ```sh
