@@ -573,8 +573,10 @@ let kernel_graph : t =
       check (pat [ Op.Alloc ] ~src:[ p_size ] ~allow_any_len:true ~name:"x") "x"
         (fun x -> size_only x && addrspace x = Some Dtype.Global);
       accept (pat [ Op.Bitcast ]);
-      (* A loop range runs the calls an end closes it around. *)
-      check (pat [ Op.Range ] ~name:"r") "r" loop;
+      (* A loop range runs the calls an end closes it around. Its one source
+         is its bound. *)
+      check (pat [ Op.Range ] ~name:"r") "r" (fun r ->
+          List.compare_length_with (src r) 1 = 0 && loop r);
       check (pat [ Op.End ] ~name:"e") "e" (fun e ->
           op (nth e 0) = Op.Call
           && List.for_all (fun r -> op r = Op.Range && loop r) (List.tl (src e)));

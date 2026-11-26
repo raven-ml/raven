@@ -99,7 +99,7 @@ a cast of two sources	None	None	None	None	None
 a range	True	True	False	True	False
 a range with a nested axis	True	True	False	True	False
 a global int32 range	True	True	True	True	False
-a range with extra sources	None	None	False	False	True
+a range with extra sources	None	None	False	False	False
 a loop header	True	True	True	True	False
 an index by a weak integer	True	True	False	True	None
 an index by int32	True	True	True	True	None
