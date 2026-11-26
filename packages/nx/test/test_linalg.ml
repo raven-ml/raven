@@ -98,6 +98,11 @@ let worst x =
     0.
     (Nx.to_array (mag x))
 
+(* [|x - y|], infinite where a part of one is NaN and not the other's
+   ({!Nx_support.gap}), so that no bound passes it. *)
+let distance (x : Complex.t) (y : Complex.t) =
+  Float.hypot (Nx_support.gap x.re y.re) (Nx_support.gap x.im y.im)
+
 (* Each element of [err] at most its element of [bound], NaN in neither. *)
 let within ~msg bound err =
   let b = Nx.to_array (Nx.broadcast_to (Nx.shape err) bound) in
@@ -981,7 +986,7 @@ let test_eigvals_hermitian =
             ~msg:(Printf.sprintf "value %d" i)
             float_exact
             ~than:delta.(i / n)
-            (Complex.norm (Complex.sub x y)))
+            (distance x y))
         (List.combine got want))
 
 let test_eigvals_alone () =
@@ -1161,7 +1166,7 @@ let test_det =
             ~msg:(Printf.sprintf "matrix %d" b)
             float_exact
             ~than:(((g dt (2 * n) +. here n) *. size) +. e dt (2 * n))
-            (Complex.norm (Complex.sub got.(b) want)))
+            (distance got.(b) want))
         (pivots a))
 
 let test_det_edges () =
@@ -1271,12 +1276,12 @@ let test_slogdet =
             let size = Array.fold_left (fun t l -> t +. Float.abs l) 0. logs in
             at_most ~msg:(msg "sign") float_exact
               ~than:((3. *. Float.of_int n *. u) +. g dt (2 * n) +. here n)
-              (Complex.norm (Complex.sub sign.(b) want));
+              (distance sign.(b) want);
             at_most ~msg:(msg "logabs") float_exact
               ~than:
                 ((((4. *. u) +. g dt n +. here n) *. size)
                 +. (Float.of_int n *. u))
-              (Float.abs (logabs.(b) -. sum))
+              (Nx_support.gap logabs.(b) sum)
           end)
         (pivots a))
 
