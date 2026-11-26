@@ -1,15 +1,13 @@
-(* Tests of Tolk.Shape.mop_cleanup: it shortens chains of movements and indexing
-   as tinygrad's does, and keeps the elements they denote. *)
+(* Shape.mop_cleanup: the merges and removals of movements and indexing that
+   shape.mli states, as their goldens record them, and the law that a cleanup
+   keeps the elements a chain of movements denotes. *)
 
 open Windtrap
 open Tolk
 
+let var = Simplification.var
 let int = Ops.int
 let ints = List.map (fun n : Ops.sint -> Int n)
-
-let var name lo hi =
-  Ops.variable name (`Int (Bigint.of_int lo)) (`Int (Bigint.of_int hi))
-
 let storage shape = Shape.param ~shape:(ints shape) 0 Float32
 
 let cleanup u =
@@ -19,6 +17,8 @@ let cleanup u =
 let index u idxs = Ops.v Op.Index ~src:(u :: idxs)
 let element u i = index u [ int i ]
 
+(* Movements as nodes of one movement each, which [Shape.shrink] and the other
+   builders would merge or skip. *)
 let shrink u bounds =
   Shape.mop u (Shrink (List.map (fun (s, n) -> (Ops.Int s, Ops.Int n)) bounds))
 
@@ -30,7 +30,7 @@ let cleans name u =
   Golden.graph (name ^ ".golden") (fun () -> Ops.sink [ u; cleanup u ])
 
 let shrinks =
-  group "shrinks"
+  group "merges a shrink of a shrink as its goldens state"
     [
       cleans "merge_two_shrinks"
         (shrink
@@ -48,7 +48,9 @@ let shrinks =
     ]
 
 let reshapes =
-  group "reshapes"
+  group
+    "merges a reshape of a reshape, and removes a reshape to its source's \
+     shape, as its goldens state"
     [
       cleans "merge_two_reshapes"
         (reshape (reshape (storage [ 8; 10 ]) [ 80 ]) [ 4; 20 ]);
@@ -59,7 +61,7 @@ let reshapes =
     ]
 
 let permutes =
-  group "permutes"
+  group "composes a permutation of a permutation as its goldens state"
     [
       cleans "merge_two_permutes"
         (permute (permute (storage [ 2; 3; 4 ]) [ 1; 2; 0 ]) [ 0; 2; 1 ]);
@@ -73,17 +75,17 @@ let permutes =
 let stacks =
   let x = storage [ 3 ] in
   let stack_of order = Ops.v Op.Stack ~src:(List.map (element x) order) in
-  group "stacks of elements"
+  group
+    "removes a stack of a node's elements in order and of its shape, as its \
+     goldens state"
     [
       cleans "stack_the_elements_of_a_node_in_order" (stack_of [ 0; 1; 2 ]);
       cleans "keep_a_stack_of_elements_out_of_order" (stack_of [ 1; 0; 2 ]);
       cleans "keep_a_stack_of_some_elements" (stack_of [ 0; 1 ]);
     ]
 
-let indexing =
-  let i = var "i" 0 3 and j = var "j" 0 4 in
-  let table = Shape.param ~shape:(ints [ 4; 5 ]) 1 Int32 in
-  group "indexing"
+let stack_indexing =
+  group "indexes a stack by a constant as its source, as its goldens state"
     [
       cleans "index_a_stack_by_a_constant"
         (index (Shape.stack [ var "a" 0 9; var "b" 0 9 ]) [ int 1 ]);
@@ -92,15 +94,30 @@ let indexing =
            (Shape.stack
               [ storage [ 4 ]; Shape.param ~shape:(ints [ 4 ]) 1 Float32 ])
            [ int 1; var "j" 0 3 ]);
+    ]
+
+let index_indexing =
+  let i = var "i" 0 3 and j = var "j" 0 4 in
+  group "merges an index of an index by scalars as its golden states"
+    [
       cleans "index_an_index_by_scalars"
         (index (index (storage [ 4; 5 ]) [ i ]) [ j ]);
+    ]
+
+let shaped_indexing =
+  let i = var "i" 0 3 and j = var "j" 0 4 in
+  let table = Shape.param ~shape:(ints [ 4; 5 ]) 1 Int32 in
+  group
+    "indexes storage indexed by a shaped index by the element it selects, as \
+     its goldens state"
+    [
       cleans "index_an_index_of_a_shaped_index"
         (index (index (storage [ 20 ]) [ table ]) [ i; j ]);
       cleans "keep_an_index_of_a_shaped_index_by_fewer_indices"
         (index (index (storage [ 20 ]) [ table ]) [ i ]);
     ]
 
-(* Laws *)
+(* The elements a chain denotes *)
 
 (* The elements a chain of movements over storage denotes: its shape, and the
    position in the storage of each of its elements, in row-major order. *)
@@ -150,9 +167,26 @@ let rec elements u =
           e.(ravel shape (Array.to_list src)))
   | o, _ -> invalid_arg (Format.asprintf "not a movement: %a" Op.pp o)
 
-(* A chain of movements, drawn as the seeds that pick each step on the shape it
-   meets, so that a failing chain shrinks. *)
+(* A chain of movements from storage of [start], drawn as the seeds that pick
+   each step on the shape it meets, so that a failing chain shrinks. *)
 type step = Shrink of int | Reshape of int | Permute of int
+type chain = { start : int list; steps : step list }
+
+let pp_chain ppf c =
+  let pp_step ppf = function
+    | Shrink s -> Format.fprintf ppf "shrink %d" s
+    | Reshape s -> Format.fprintf ppf "reshape %d" s
+    | Permute s -> Format.fprintf ppf "permute %d" s
+  in
+  Format.fprintf ppf "[%a] then %a"
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ")
+       Format.pp_print_int)
+    c.start
+    (Format.pp_print_list
+       ~pp_sep:(fun ppf () -> Format.fprintf ppf ", ")
+       pp_step)
+    c.steps
 
 let rec permutations = function
   | [] -> [ [] ]
@@ -168,13 +202,15 @@ let apply u s =
   in
   match s with
   | Shrink seed ->
-      shrink u
-        (List.mapi
-           (fun k d ->
-             let h = Hashtbl.hash (seed, k) in
-             let start = h mod d in
-             (start, 1 + (h / d mod (d - start))))
-           shape)
+      (* an axis of no element keeps its empty whole *)
+      let bound k d =
+        if d = 0 then (0, 0)
+        else
+          let h = Hashtbl.hash (seed, k) in
+          let start = h mod d in
+          (start, 1 + (h / d mod (d - start)))
+      in
+      shrink u (List.mapi bound shape)
   | Reshape seed ->
       let n = List.fold_left ( * ) 1 shape in
       let splits =
@@ -191,6 +227,11 @@ let apply u s =
       let orders = permutations (List.init (List.length shape) Fun.id) in
       permute u (List.nth orders (seed mod List.length orders))
 
+let chain c = List.fold_left apply (storage c.start) c.steps
+
+(* Starting shapes, with an axis of no element and axes of one. *)
+let starts = [ [ 2; 3; 4 ]; [ 6 ]; [ 0; 3 ]; [ 1; 4 ]; [ 2; 1; 3 ]; [ 1 ] ]
+
 let gen_chain =
   let open Gen in
   let seed = int_range 0 1000 in
@@ -202,27 +243,57 @@ let gen_chain =
         (2, map (fun s -> Permute s) seed);
       ]
   in
-  with_pp (Testable.pp Uops.uop)
-    (map
-       (List.fold_left apply (storage [ 2; 3; 4 ]))
-       (list ~size:(int_range 1 5) step))
+  with_pp pp_chain
+    (let+ start = of_list starts and+ steps = list ~size:(int_range 1 5) step in
+     { start; steps })
 
-let shape = list (Testable.make ~pp:Shape.Sint.pp ~equal:Shape.Sint.equal)
+(* Whether some node of [u] is [outer] of [inner]. *)
+let has outer inner u =
+  List.exists
+    (fun n -> Ops.op n = outer && Ops.op (Ops.nth n 0) = inner)
+    (Ops.toposort ~calls:Skip u)
 
-let laws =
-  group "laws"
-    [
-      prop "mop_cleanup keeps the shape of a chain" gen_chain (fun u ->
-          equal shape (Shape.shape u) (Shape.shape (cleanup u)));
-      prop "mop_cleanup keeps the elements a chain denotes" gen_chain (fun u ->
-          let cleaned = cleanup u in
-          cover "shortened" (not (Ops.equal u cleaned));
-          equal
-            (pair (list Windtrap.int) (array Windtrap.int))
-            (elements u) (elements cleaned));
-      prop "mop_cleanup is idempotent" gen_chain (fun u ->
-          Law.idempotent Uops.uop cleanup u);
-    ]
+let reshapes_to_its_source u =
+  List.exists
+    (fun n ->
+      Ops.op n = Op.Reshape
+      && List.equal Shape.Sint.equal (Shape.shape n) (Shape.shape (Ops.nth n 0)))
+    (Ops.toposort ~calls:Skip u)
+
+(* One chain for each rule and each starting shape the law covers. *)
+let named_chains =
+  [
+    { start = [ 2; 3; 4 ]; steps = [ Shrink 1; Shrink 2 ] };
+    { start = [ 2; 3; 4 ]; steps = [ Reshape 0; Reshape 1 ] };
+    { start = [ 2; 3; 4 ]; steps = [ Permute 3; Permute 4 ] };
+    { start = [ 6 ]; steps = [ Reshape 0 ] };
+    { start = [ 0; 3 ]; steps = [ Permute 1; Shrink 5 ] };
+    { start = [ 1; 4 ]; steps = [ Shrink 7; Reshape 2 ] };
+  ]
+
+let keeps_the_elements c =
+  let u = chain c in
+  let cleaned = cleanup u in
+  cover "a shrink of a shrink" (has Op.Shrink Op.Shrink u);
+  cover "a reshape of a reshape" (has Op.Reshape Op.Reshape u);
+  cover "a permutation of a permutation" (has Op.Permute Op.Permute u);
+  cover "a reshape to its source's shape" (reshapes_to_its_source u);
+  cover "an axis of no element" (List.mem 0 c.start);
+  cover "an axis of one element" (List.mem 1 c.start);
+  equal
+    (pair (list Windtrap.int) (array Windtrap.int))
+    (elements u) (elements cleaned)
 
 let mop_cleanup =
-  group "mop_cleanup" [ shrinks; reshapes; permutes; stacks; indexing; laws ]
+  group "mop_cleanup"
+    [
+      shrinks;
+      reshapes;
+      permutes;
+      stacks;
+      stack_indexing;
+      index_indexing;
+      shaped_indexing;
+      prop "keeps the elements a chain of movements denotes"
+        ~examples:named_chains gen_chain keeps_the_elements;
+    ]

@@ -821,9 +821,7 @@ val div_and_mod_symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
 
     Any other weak integer [x // y] or [x % y] takes the first of the following
     forms that applies. When the quotient has one possible value [q], [x // y]
-    is [q] and [x % y] is [x - q * y]. When [x] is a parameter declared a
-    multiple of [m], and [m] is a multiple of the constant [y], [x % y] is [0]
-    and [x // y] stays as it is.
+    is [q] and [x % y] is [x - q * y].
 
     When [y] is a positive constant [c], with [x] a sum of terms and a constant:
 
