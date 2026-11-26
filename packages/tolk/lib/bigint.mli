@@ -53,12 +53,14 @@ val of_float : float -> t
 
 val of_string : string -> t
 (** [of_string s] is the integer [s] writes: an optional [-] or [+], an optional
-    [0x], [0o] or [0b] for base 16, 8 or 2 (base 10 otherwise), then digits of
-    the base, where underscores may follow the first digit.
+    [0x], [0o] or [0b], in either case, for base 16, 8 or 2 (base 10 otherwise),
+    then a digit of the base followed by digits of the base and underscores,
+    which are ignored. Hexadecimal digits are in either case.
 
-    Raises [Invalid_argument] if [s] is anything else, or if it writes more
-    than 4300 decimal digits: reading them takes time quadratic in their
-    number. *)
+    Raises [Invalid_argument] if [s] is anything else, or if it is in base 10
+    with more than 4300 digits, leading zeros included and underscores not:
+    reading a decimal takes time quadratic in its digits. Bases 2, 8 and 16 have
+    no limit: they read in time linear in their length. *)
 
 val fits_int : t -> bool
 (** [fits_int n] is [true] iff [n] is in [int]'s range. *)
@@ -74,8 +76,9 @@ val to_int64 : t -> int64
     Raises {!Overflow} if [n] is out of [int64]'s range. *)
 
 val to_float : t -> float
-(** [to_float n] is the float nearest to [n], ties to even: an infinity if [n]
-    is past the greatest float. *)
+(** [to_float n] is the float nearest to [n], ties to even: an infinity of [n]'s
+    sign if [abs n >= 2{^1024} - 2{^970}], where rounding passes the greatest
+    float. *)
 
 val to_string : t -> string
 (** [to_string n] is [n] in decimal, with a [-] if negative.
@@ -171,7 +174,7 @@ val gcd : t -> t -> t
     [gcd a zero] is [abs a]. *)
 
 val pow : t -> int -> t
-(** [pow b e] is [b] to the power [e].
+(** [pow b e] is [b] to the power [e]. [pow b 0] is [one], [zero] included.
 
     Raises [Invalid_argument] if [e] is negative. *)
 
