@@ -1447,6 +1447,25 @@ let footprint t devices =
   add Rig.host (2 * Rig.allocation Rig.host (ints_bytes t));
   List.map (fun (d, n) -> (d, !n)) held
 
+let kind_name = function
+  | B.Device -> "Device"
+  | Pinned -> "Pinned"
+  | Mapped -> "Mapped"
+
+(* Raises [Broken] for memory that [B.create] refuses, before load makes
+   anything: a kind its device does not offer, though an io device makes empty
+   buffers of every kind. Another machine's agent checks its own devices. *)
+let check_kinds t devices =
+  Iarray.iteri
+    (fun i -> function
+      | Alloc { device; kind; bytes; _ } ->
+          let d = devices.(device) in
+          if (not (Rig.offers d kind)) && (bytes > 0 || Rig.computes d) then
+            broken "memory %d: %s offers no %s memory" i (Rig.name d)
+              (kind_name kind)
+      | Rail _ -> ())
+    t.memory
+
 let load_here ~rails t devices =
   (* Every end [rails] gives is kept with the images: a rail ends once its end
      is unreachable. *)
@@ -1472,6 +1491,7 @@ let load_here ~rails t devices =
       steps
   in
   sends t.steps;
+  check_kinds t devices;
   let ints = Array.init 2 (fun _ -> make_ints t) in
   let mem =
     Array.append

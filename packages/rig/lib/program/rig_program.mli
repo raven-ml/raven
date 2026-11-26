@@ -315,6 +315,9 @@ val load :
        features;}
     {- an index is outside its array, a size is negative, or an [init] or a
        view lies outside its memory;}
+    {- on this machine, an [Alloc] memory is of a kind its device does not
+       offer ({!Rig.offers}), unless the device is an io device and the
+       memory has no bytes;}
     {- a launch's parameters are not a whole number of 32-bit words, a
        scalar lies outside them, two scalars share a byte, or the width of a
        scalar whose value is constant does not hold it;}

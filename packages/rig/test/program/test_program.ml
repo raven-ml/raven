@@ -1898,6 +1898,20 @@ let breaks =
     ( "a memory's size",
       (fun d -> { (base d) with memory = [| alloc 0 (-1) |] }),
       one );
+    (* Polled's device offers no Pinned memory: the host addresses its
+       memory. *)
+    ( "a memory's kind its device does not offer, even of no bytes",
+      (fun d -> { (base d) with memory = [| alloc 0 64; kind_alloc Pinned 0 |] }),
+      one );
+    ( "memory on an io device",
+      (fun d ->
+        let io = Rig_support.io "program:broken-io" in
+        {
+          (base d) with
+          devices = [| Rig.arch d; Rig.arch io |];
+          memory = [| alloc 0 64; alloc 1 64 |];
+        }),
+      fun d -> [ d; Rig_support.io "program:broken-io" ] );
     ( "an init longer than its memory",
       (fun d ->
         { (base d) with memory = [| alloc ~init:(String.make 65 'x') 0 64 |] }),
@@ -2405,6 +2419,22 @@ let test_disjoint_views () =
       ignore (G.run p { inputs = [| x |]; ints = [||] });
       equal ~msg:what string (String.make 64 'l') (read x))
     [ ("a move", move low high 32); ("a copy part", copy_part) ]
+
+(* An io device makes empty buffers of every kind (rig.mli, Buffer.create),
+   though it offers none. *)
+let test_io_empty () =
+  let io = Rig_support.io "program:io-empty" in
+  let t =
+    {
+      G.devices = [| Rig.arch io |];
+      ints = 0;
+      memory = [| kind_alloc Device 0; kind_alloc Pinned 0; kind_alloc Mapped 0 |];
+      images = [||];
+      inputs = [||];
+      steps = [||];
+    }
+  in
+  ignore (load_ok t [ io ])
 
 (* Loading on another machine's devices goes through its agent, which takes no
    rails from this process. *)
@@ -3487,6 +3517,7 @@ let tests =
           "accepts the two ends of a move or a copy in disjoint views of one \
            memory"
           test_disjoint_views;
+        test "loads empty memory of every kind on an io device" test_io_empty;
         test "raises for devices of several machines" test_machines;
         test "raises for rails given with another machine's devices"
           test_far_rails;
