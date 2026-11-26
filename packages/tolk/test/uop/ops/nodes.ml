@@ -347,23 +347,6 @@ let pp_args =
           if digits > 4300 then rejects write
           else equal int digits (String.length (write ())));
     ]
-(* Printing *)
-
-let printing =
-  group "printing"
-    [
-      Golden.text "pretty.golden" (fun () ->
-          let print u =
-            let b = Buffer.create 256 in
-            let ppf = Format.formatter_of_buffer b in
-            Format.pp_set_margin ppf 10_000;
-            Format.fprintf ppf "%a@?" Ops.pp u;
-            Buffer.contents b
-          in
-          String.concat "\n\n" (List.map print (Goldens.printed_nodes ()))
-          ^ "\n");
-    ]
-
 (* Identity *)
 
 (* Random expressions over two variables, built from a recipe so that each can
@@ -471,11 +454,13 @@ let interrupted k f =
    node's reference is its key and the collections before it. Nodes dropped
    before a build can still read live when it walks their slots, and die by the
    next collection, so a key built again after it walks dead slots before
-   reaching its live node. Few keys, so that comparisons often meet one key
-   built on each side of a collection. *)
+   reaching its live node. Two keys, comparisons drawn twice as often as the
+   other calls, and programs of 50 calls, so that about half the cases compare
+   one key built on each side of a collection: 40 cases all miss it with a
+   probability under 0.55^40, 4e-11. *)
 let churn_node k = Ops.v ~arg:(String (Printf.sprintf "churn key %d" k)) Op.Noop
 
-let[@inline never] drop n =
+let[@inline never] [@local never] drop n =
   for i = 0 to n - 1 do
     ignore
       (Sys.opaque_identity
@@ -489,13 +474,15 @@ let churn =
     cover "two keys" (ka <> kb);
     ka = kb
   in
-  stateful "a node is any equal live node, across collections and churn"
+  stateful ~count:40 ~steps:50
+    "a node is any equal live node, across collections and churn"
     [
       command "world" (Gen.unit @-> makes world) (fun () -> ref 0) ignore;
       command "build"
-        (world ^-> Gen.int_range 0 3 @-> makes node)
+        (world ^-> Gen.int_range 0 1 @-> makes node)
         (fun w k -> (k, !w))
         (fun () k -> churn_node k);
+      command "same" (node ^-> node ^-> returns bool) same ( == );
       command "same" (node ^-> node ^-> returns bool) same ( == );
       command "drop" (Gen.int_range 0 2000 @-> returns unit) ignore drop;
       command "collect"
@@ -504,61 +491,112 @@ let churn =
         (fun () -> Gc.full_major ());
     ]
 
+(* Nodes built on two domains, by key: a table's nodes are its own, never built
+   before it, so the branches race to build each first. *)
+type built = { table : int; nodes : Ops.t list Atomic.t array }
+
+let tables_made = Atomic.make 0
+
+let new_built () =
+  {
+    table = Atomic.fetch_and_add tables_made 1;
+    nodes = Array.init 4 (fun _ -> Atomic.make []);
+  }
+
+let built_node t k =
+  Ops.v ~arg:(String (Printf.sprintf "table %d key %d" t.table k)) Op.Noop
+
+let build_recorded t k =
+  let u = built_node t k in
+  let rec push () =
+    let l = Atomic.get t.nodes.(k) in
+    if not (Atomic.compare_and_set t.nodes.(k) l (u :: l)) then push ()
+  in
+  push ()
+
+(* [one_recorded t k] is the node of [k] built now and the nodes recorded for
+   it, which [one] judges on the test's domain. *)
+let one_recorded t k = (built_node t k, Atomic.get t.nodes.(k))
+
+let one () _ = function
+  | Ok (u, recorded) ->
+      cover "two builds recorded for one key" (List.length recorded >= 2);
+      equal uops (List.map (fun _ -> u) recorded) recorded
+  | Error e -> raise e
+
+(* [one_built vars r] is [r] built twice over the same leaves. *)
+let one_built r = (build (leaves ()) r, build (leaves ()) r)
+let sign c = Int.compare c 0
+
+(* The variables of [prefix], so that two calls build disjoint graphs. *)
+let leaves_of prefix = [| var (prefix ^ "0") (-8) 8; var (prefix ^ "1") 1 5 |]
+
+(* Leaves no earlier call made, so that no node over them is alive before. *)
+let fresh_leaves =
+  let made = ref 0 in
+  fun () ->
+    incr made;
+    leaves_of (Printf.sprintf "fresh%d_" !made)
+
+(* A constant past the 4300 digits Bigint writes. *)
+let unwritable =
+  Ops.const (`Int (Bigint.pred (Bigint.pow (Bigint.of_int 10) 4301)))
+
 let identity =
-  group "identity"
+  group "Identity"
     [
       churn;
+      stateful ~domains:2 "nodes built on two domains at once are one node"
+        (let built = abstract "t" in
+         [
+           command "table" (Gen.unit @-> makes built) ignore new_built;
+           command "build"
+             (built ^-> Gen.int_range 0 3 @-> returns unit)
+             (fun () _ -> ())
+             build_recorded;
+           command "one"
+             (built ^-> Gen.int_range 0 3 @-> judges (pair uop uops))
+             one one_recorded;
+         ]);
       prop "building a graph twice gives the same node" gen_recipe (fun r ->
-          is_true (build (leaves ()) r == build (leaves ()) r));
+          let u0, u1 = one_built r in
+          equal uop u0 u1);
       prop "structurally different graphs are different nodes"
         (Gen.pair gen_recipe gen_recipe) (fun (r0, r1) ->
-          assume (r0 <> r1);
           let vars = leaves () in
           let normal r = Graph.to_string (build vars r) in
-          equal bool (normal r0 = normal r1) (build vars r0 == build vars r1));
-      prop "equal is an equivalence" (Gen.pair gen_recipe gen_recipe)
-        (fun (r0, r1) ->
-          let vars = leaves () in
-          Law.equivalence uop (build vars r0, build vars r1));
-      prop "compare is a total order that agrees with equal"
-        (Gen.triple gen_recipe gen_recipe gen_recipe) (fun (r0, r1, r2) ->
-          let vars = leaves () in
-          Law.order uop (build vars r0, build vars r1, build vars r2));
-      prop "hash agrees with equal on live nodes" gen_recipe (fun r ->
-          let u0 = build (leaves ()) r in
-          let u1 = build (leaves ()) r in
-          equal int (Ops.hash u0) (Ops.hash u1);
-          is_true (Sys.opaque_identity u0 == u1));
-      test "zero and negative zero are different nodes" (fun () ->
-          is_false (Ops.float 0. == Ops.float (-0.)));
-      (* A NaN constant keeps its bits, where tinygrad makes every NaN
-         constant the same. *)
-      test "NaN constants of different bits are different nodes" (fun () ->
-          is_false
-            (Ops.float Float.nan
-            == Ops.float (Int64.float_of_bits 0x7FF4_0000_0000_0000L));
-          is_false (Ops.float Float.nan == Ops.float (-.Float.nan));
-          is_true (Ops.float Float.nan == Ops.float Float.nan));
-      test "an integer and a boolean of equal value are different nodes"
-        (fun () ->
-          is_false (Ops.int 1 == Ops.bool true);
-          is_false (Ops.int 0 == Ops.float 0.));
-      test "replace is the node itself when nothing changes" (fun () ->
-          let a = Ops.O.(var "a" 0 4 + Ops.int 1) in
-          is_true (Ops.replace a == a);
-          is_true
-            (Ops.replace ~op:Op.Add ~src:(Ops.src a) ~arg:Ops.No_arg a == a);
-          is_true
-            (Ops.replace ~op:Op.Mul a
-            == Ops.alu (Ops.nth a 0) Op.Mul [ Ops.nth a 1 ]));
-      test "nth is the ith source, and rejects one past the last" (fun () ->
-          let a = var "a" 0 4 and b = var "b" 0 4 in
-          equal uop b (Ops.nth Ops.O.(a + b) 1);
-          rejects (fun () -> Ops.nth Ops.O.(a + b) 2);
-          rejects (fun () -> Ops.nth Ops.O.(a + b) (-1)));
+          let u0 = build vars r0 and u1 = build vars r1 in
+          if String.equal (normal r0) (normal r1) then (
+            cover "one structure" true;
+            equal uop u0 u1)
+          else (
+            cover "two structures" true;
+            not_equal uop u0 u1));
+      cases "constants of other bits or kinds are different nodes"
+        ~id:(fun (what, _, _) -> what)
+        [
+          ("0. and -0.", Ops.float 0., Ops.float (-0.));
+          ( "NaNs of other payloads",
+            Ops.float Float.nan,
+            Ops.float (Int64.float_of_bits 0x7FF4_0000_0000_0000L) );
+          ("NaNs of other signs", Ops.float Float.nan, Ops.float (-.Float.nan));
+          ("1 and true", Ops.int 1, Ops.bool true);
+          ("0 and 0.", Ops.int 0, Ops.float 0.);
+        ]
+        (fun (_, u0, u1) -> not_equal uop u0 u1);
+      test "a NaN constant is one node with its own bits" (fun () ->
+          equal uop (Ops.float Float.nan) (Ops.float Float.nan));
+      cases "v keeps the order of a commutative operation's operands"
+        ~id:(fun (what, _, _) -> what)
+        (let i1 = weak_var "idx1" 0 3 and i2 = weak_var "idx2" 0 3 in
+         [
+           ("a sum", Ops.O.(i1 + i2), Ops.O.(i2 + i1));
+           ("a product", Ops.O.(i1 * i2), Ops.O.(i2 * i1));
+         ])
+        (fun (_, u0, u1) -> not_equal uop u0 u1);
       test "a node nothing references is collected" (fun () ->
           let cell = Weak.create 2 in
-          let[@inline never] build () =
+          let[@inline never] [@local never] build () =
             let r = Ops.range ~axis_type:Weak (Int 9127) [ 9127 ] in
             let c = Ops.O.(r < int 4) in
             ignore
@@ -574,63 +612,171 @@ let identity =
           build ();
           Gc.full_major ();
           Gc.full_major ();
-          is_false ~msg:"a range" (Weak.check cell 0);
-          is_false ~msg:"an end" (Weak.check cell 1));
+          equal (list string) []
+            (List.filter_map
+               (fun (what, i) -> if Weak.check cell i then Some what else None)
+               [ ("a range", 0); ("an end", 1) ]));
       test "a node built again after its first was collected is one node"
         (fun () ->
           let node k =
             Ops.v ~arg:(String (Printf.sprintf "again %d" k)) Op.Noop
           in
-          let[@inline never] build () = ignore (List.init 1000 node) in
+          let[@inline never] [@local never] build () =
+            ignore (List.init 1000 node)
+          in
           build ();
           Gc.full_major ();
           Gc.full_major ();
           let first = List.init 1000 node in
           let again = List.init 1000 node in
           equal uops first again);
-      test "arguments that differ in one field are different nodes" (fun () ->
-          let est ops lds mem : Ops.estimates =
-            { ops = Int ops; lds = Int lds; mem = Int mem }
+    ]
+
+(* The literals that tell whether one holds its type's value: -1, the type's
+   bounds and past them, the width's power and its neighbours, its negation, and
+   one no integer type holds. *)
+let width_literals dt =
+  let lo, hi = Dtypes.int_bounds dt in
+  let wide = Bigint.shift_left Bigint.one (Dtype.bitsize dt) in
+  Bigint.
+    [
+      minus_one;
+      zero;
+      one;
+      lo;
+      pred lo;
+      hi;
+      succ hi;
+      pred wide;
+      wide;
+      succ wide;
+      neg wide;
+      shift_left one 80;
+    ]
+
+let literal z = Ops.const (`Int z)
+let literal_value u i = Ops.value (Ops.nth u i)
+let at_type dt z = (Dtype.truncate dt (`Int z) :> Dtype.const)
+
+let construct =
+  let reading_ops =
+    Op.
+      [
+        Add;
+        Sub;
+        Mul;
+        And;
+        Or;
+        Xor;
+        Max;
+        Div;
+        Mod;
+        Truncdiv;
+        Truncmod;
+        Cmplt;
+        Cmpne;
+        Cmpeq;
+      ]
+  in
+  let on_ints f = List.iter f Dtype.ints in
+  let variable dt =
+    let lo, hi = Dtypes.int_bounds dt in
+    Ops.variable ~dtype:dt "x" (`Int lo) (`Int hi)
+  in
+  group "v"
+    [
+      test "an operation whose type is its argument's needs that argument"
+        (fun () ->
+          rejects (fun () -> Ops.v Op.Const);
+          rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] Op.Cast);
+          rejects (fun () ->
+              Ops.v ~src:[ Ops.int 1 ] ~arg:(Device "CPU") Op.Bitcast);
+          rejects (fun () -> Ops.v Op.Param);
+          rejects (fun () -> Ops.v Op.Ins));
+      test "a literal holds its value at the operation's integer type"
+        (fun () ->
+          on_ints (fun dt ->
+              let x = variable dt in
+              List.iter
+                (fun z ->
+                  let want = at_type dt z in
+                  let holds name u i =
+                    equal
+                      ~msg:
+                        (Format.asprintf "%s %a %s" name Dtype.pp dt
+                           (Bigint.to_string z))
+                      const want (literal_value u i)
+                  in
+                  List.iter
+                    (fun op ->
+                      let name = Format.asprintf "%a" Op.pp op in
+                      holds name (Ops.v op ~src:[ x; literal z ]) 1;
+                      holds name (Ops.v op ~src:[ literal z; x ]) 0)
+                    reading_ops;
+                  let cond =
+                    Ops.variable ~dtype:Bool "c" (`Bool false) (`Bool true)
+                  in
+                  holds "a selection"
+                    (Ops.v Op.Where ~src:[ cond; literal z; x ])
+                    1;
+                  holds "a multiply-add"
+                    (Ops.v Op.Mulacc ~src:[ x; x; literal z ])
+                    2;
+                  holds "a cast"
+                    (Ops.v Op.Cast ~src:[ literal z ] ~arg:(Dtype dt))
+                    0)
+                (width_literals dt)));
+      test "a 64-bit key of a random bits operation holds its value" (fun () ->
+          let k = variable Uint64 in
+          equal const
+            (`Int (Bigint.of_int 1))
+            (literal_value
+               (Ops.v Op.Threefry
+                  ~src:
+                    [
+                      k; literal (Bigint.shift_left Bigint.one 64 |> Bigint.succ);
+                    ])
+               1));
+      test "a shift's count and an exponent keep their value" (fun () ->
+          on_ints (fun dt ->
+              let x = variable dt in
+              List.iter
+                (fun z ->
+                  if Bigint.sign z >= 0 then
+                    List.iter
+                      (fun op ->
+                        equal const (`Int z)
+                          (literal_value (Ops.v op ~src:[ x; literal z ]) 1))
+                      Op.[ Shl; Shr; Pow ])
+                (width_literals dt)));
+      test "a literal base of a power is read at the power's type" (fun () ->
+          let y = variable Uint8 in
+          equal const
+            (`Int (Bigint.of_int 44))
+            (literal_value
+               (Ops.v Op.Pow ~src:[ literal (Bigint.of_int 300); y ])
+               0));
+      test "a weak expression, a float operation and no peer keep their values"
+        (fun () ->
+          let x = variable Uint8 in
+          let w =
+            Ops.variable "w" (`Int Bigint.zero) (`Int (Bigint.of_int 1000))
           in
-          let kernel ?(beam = 0) e =
-            Ops.sink ~kernel:(Ops.kernel_info ~estimates:e ~beam ()) []
-          in
-          is_false (kernel (est 1 2 3) == kernel (est 1 2 4));
-          is_false (kernel (est 1 2 3) == kernel (est 1 3 3));
-          is_false (kernel (est 1 2 3) == kernel ~beam:1 (est 1 2 3));
-          let program target =
-            Ops.v
-              ~arg:
-                (Program
-                   { (Shape.program_info_of_sink (Ops.sink [])) with target })
-              Op.Program
-          in
-          let cpu = Result.get_ok (Helpers.Target.of_string "CPU") in
-          let cuda = Result.get_ok (Helpers.Target.of_string "CUDA") in
-          is_false (program cpu == program cuda);
-          is_false
-            (Ops.range ~axis_type:Weak (Int 4) [ 0 ]
-            == Ops.range ~axis_type:Upcast (Int 4) [ 0 ]));
-      test "Tbl is keyed by identity" (fun () ->
-          let t = Ops.Tbl.create 4 in
-          Ops.Tbl.replace t (var "a" 0 4) 1;
-          Ops.Tbl.replace t (var "a" 0 4) 2;
-          Ops.Tbl.replace t (var "a" 0 5) 3;
-          equal int 2 (Ops.Tbl.length t);
-          equal (option int) (Some 2) (Ops.Tbl.find_opt t (var "a" 0 4)));
-      test "nodes built on several domains at once are the same node" (fun () ->
-          let build () =
-            Array.init 200 (fun n -> Ops.O.(var "d" 0 1000 * Ops.int n))
-          in
-          let domains = List.init 4 (fun _ -> Domain.spawn build) in
-          let results = List.map Domain.join domains in
-          let first = List.hd results in
-          List.iter
-            (fun r ->
-              Array.iteri
-                (fun n u -> is_true ~msg:(string_of_int n) (u == first.(n)))
-                r)
-            results);
+          let expr = Ops.O.(w + Ops.int 300) in
+          equal uop expr (Ops.nth (Ops.v Op.Add ~src:[ x; expr ]) 1);
+          let f = Ops.variable ~dtype:Float32 "f" (`Float 0.) (`Float 1.) in
+          equal const
+            (`Int (Bigint.of_int 300))
+            (literal_value
+               (Ops.v Op.Add ~src:[ f; literal (Bigint.of_int 300) ])
+               1);
+          equal const
+            (`Int (Bigint.of_int 300))
+            (literal_value
+               (Ops.v Op.Add
+                  ~src:
+                    [ literal (Bigint.of_int 300); literal (Bigint.of_int 7) ])
+               0));
       test "an exception at any allocation of v keeps the nodes built"
         (fun () ->
           let node tag = Ops.v ~arg:(String tag) Op.Noop in
@@ -638,10 +784,10 @@ let identity =
           let built = ref [] in
           let build tag = built := (tag, node tag) :: !built in
           List.iter build (List.init 256 (tag "kept"));
-          (* Building a batch of new nodes raises at its [k]th allocation,
-             for each [k] up to the batch's last. The batches fill the
-             shards, so some raises land as a shard's buckets or table grow
-             and move the nodes held in [built]. *)
+          (* Building a batch of new nodes raises at its [k]th allocation, for
+             each [k] up to the batch's last. The batches fill the shards, so
+             some raises land as a shard's buckets or table grow and move the
+             nodes held in [built]. *)
           let rec from k =
             if k > 10_000 then fail "a batch makes over 10000 allocations";
             let batch =
@@ -653,18 +799,82 @@ let identity =
           from 1;
           let tags, nodes = List.split !built in
           equal uops nodes (List.map node tags));
-      test "equal expressions are the same node, and operand order counts"
-        (fun () ->
-          let i1 = weak_var "idx1" 0 3 and i2 = weak_var "idx2" 0 3 in
-          let same u0 u1 = is_true (Ops.equal u0 u1) in
-          let differ u0 u1 = is_false (Ops.equal u0 u1) in
-          same Ops.O.(i1 * int 4) Ops.O.(i1 * int 4);
-          differ Ops.O.(i1 * int 4) Ops.O.(i1 * int 3);
-          differ Ops.O.(i1 * int 4) Ops.O.(i1 + int 4);
-          differ Ops.O.(i1 * int 4) Ops.O.(i2 * int 4);
-          same Ops.O.(i1 + i2) Ops.O.(i1 + i2);
-          differ Ops.O.(i1 + i2) Ops.O.(i2 + i1);
-          differ Ops.O.(i1 * i2) Ops.O.(i2 * i1));
+    ]
+
+let replacing =
+  group "replace"
+    [
+      test "is the node itself when nothing changes" (fun () ->
+          let a = Ops.O.(var "a" 0 4 + Ops.int 1) in
+          equal uop a (Ops.replace a);
+          equal uop a
+            (Ops.replace ~op:Op.Add ~src:(Ops.src a) ~arg:Ops.No_arg a));
+      test "is the node with the fields given" (fun () ->
+          let a = Ops.O.(var "a" 0 4 + Ops.int 1) in
+          equal uop
+            (Ops.alu (Ops.nth a 0) Op.Mul [ Ops.nth a 1 ])
+            (Ops.replace ~op:Op.Mul a));
+    ]
+
+let equality =
+  group "equal"
+    [
+      prop "is an equivalence" (Gen.pair gen_recipe gen_recipe) (fun (r0, r1) ->
+          let vars = leaves () in
+          Law.equivalence uop (build vars r0, build vars r1));
+    ]
+
+let ordering =
+  group "compare"
+    [
+      prop "is a total order that agrees with equal"
+        (Gen.triple gen_recipe gen_recipe gen_recipe) (fun (r0, r1, r2) ->
+          let vars = leaves () in
+          Law.order uop (build vars r0, build vars r1, build vars r2));
+    ]
+
+let hashing =
+  group "hash"
+    [
+      prop "agrees with equal on live nodes" gen_recipe (fun r ->
+          let u0, u1 = one_built r in
+          equal int (Ops.hash u0) (Ops.hash u1));
+    ]
+
+let printing =
+  group "pp"
+    [
+      group "writes each node as pretty.golden states"
+        [
+          Golden.text "pretty.golden" (fun () ->
+              let print u =
+                let b = Buffer.create 256 in
+                let ppf = Format.formatter_of_buffer b in
+                Format.pp_set_margin ppf 10_000;
+                Format.fprintf ppf "%a@?" Ops.pp u;
+                Buffer.contents b
+              in
+              String.concat "\n\n" (List.map print (Goldens.printed_nodes ()))
+              ^ "\n");
+        ];
+    ]
+
+(* Functions that raise as [pp_arg] does where they write an argument: each
+   compares the constant with another one. *)
+let writers =
+  [
+    ("pp", fun u -> ignore (str Ops.pp u));
+    ("compare_structure", fun u -> ignore (Ops.compare_structure u (Ops.int 1)));
+    ( "structure_ranks",
+      fun u -> ignore (Ops.structure_ranks (Ops.sink [ u; Ops.int 1 ]) u) );
+    ("key", fun u -> ignore (Ops.key u));
+  ]
+
+let raising =
+  group "pp_arg's raise"
+    [
+      cases "raises where they write an integer pp_arg rejects" ~id:fst writers
+        (fun (_, write) -> rejects (fun () -> write unwritable));
     ]
 
 (* A few expressions and a chain of one operation by a constant over the first
@@ -680,17 +890,19 @@ let gen_ranked =
 let structure_order =
   group "compare_structure"
     [
-      test "is zero exactly on equal graphs" (fun () ->
-          let a = Ops.int 1 and b = Ops.int 2 in
-          List.iter
-            (fun (x, y) -> equal bool (x == y) (Ops.compare_structure x y = 0))
-            [
-              (a, Ops.int 1);
-              (a, b);
-              (a, Ops.O.(a + b));
-              (Ops.O.(a + b), Ops.O.(b + a));
-              (Ops.sink [ a; b ], Ops.sink [ a; b ]);
-            ]);
+      cases "is zero exactly on equal graphs"
+        ~id:(fun (what, _, _) -> what)
+        (let a = Ops.int 1 and b = Ops.int 2 in
+         [
+           ("one constant", a, Ops.int 1);
+           ("two constants", a, b);
+           ("a constant and a sum", a, Ops.O.(a + b));
+           ("sums of swapped operands", Ops.O.(a + b), Ops.O.(b + a));
+           ("one sink", Ops.sink [ a; b ], Ops.sink [ a; b ]);
+         ])
+        (fun (_, x, y) ->
+          if x == y then equal int 0 (Ops.compare_structure x y)
+          else not_equal int 0 (Ops.compare_structure x y));
       test "tells apart deep graphs that differ only at the bottom" (fun () ->
           let rec deepen n u =
             if n = 0 then u else deepen (n - 1) (Ops.v ~src:[ u; u ] Op.Add)
@@ -708,8 +920,27 @@ let structure_order =
                    Ops.compare_structure a b = 0))
           in
           Law.order by_structure (build vars r0, build vars r1, build vars r2));
-      prop "structure_ranks numbers a graph's nodes in its order"
-        gen_ranked (fun (recipes, (o, k, length)) ->
+      (* Two graphs over fresh variables, built in one order and then in the
+         other: [compare]'s order may follow the build, this one may not. *)
+      prop "does not depend on the order nodes were built in"
+        (Gen.pair gen_recipe gen_recipe) (fun (r0, r1) ->
+          let a = fresh_leaves () in
+          let u0 = build a r0 in
+          let u1 = build a r1 in
+          let b = fresh_leaves () in
+          let w1 = build b r1 in
+          let w0 = build b r0 in
+          cover "two graphs" (u0 != u1);
+          equal int
+            (sign (Ops.compare_structure u0 u1))
+            (sign (Ops.compare_structure w0 w1)));
+    ]
+
+let ranks =
+  group "structure_ranks"
+    [
+      prop "numbers a graph's nodes in compare_structure's order" gen_ranked
+        (fun (recipes, (o, k, length)) ->
           cover "a chain of one operation past 128 steps" (length > 128);
           let vars = leaves () in
           let rec chain n =
@@ -720,7 +951,6 @@ let structure_order =
           in
           let rank = Ops.structure_ranks sink in
           let order a b = Int.compare (rank a) (rank b) in
-          let sign c = Int.compare c 0 in
           let sorted =
             List.stable_sort Ops.compare_structure
               (Ops.toposort ~calls:Enter sink)
@@ -734,7 +964,7 @@ let structure_order =
           in
           let steps = steps sorted in
           equal (list int) (List.map fst steps) (List.map snd steps));
-      test "structure_ranks numbers NaNs of different bits alike" (fun () ->
+      test "numbers NaNs of different bits alike" (fun () ->
           let nan bits = Ops.float (Int64.float_of_bits bits) in
           let a = nan 0x7FF8_0000_0000_0000L
           and b = nan 0x7FF8_0000_0000_0001L in
@@ -745,10 +975,13 @@ let structure_order =
           let sa = chain 3 a and sb = chain 3 b in
           let rank = Ops.structure_ranks (Ops.sink [ sa; sb ]) in
           let order a b = Int.compare (rank a) (rank b) in
-          equal ~msg:"the same node" bool false (a == b);
+          not_equal uop a b;
           equal int 0 (order sa sb);
           equal int 0 (order a b);
           equal int 0 (order Ops.O.(a + x) Ops.O.(b + x)));
+      test "raises Not_found on a node the graph does not reach" (fun () ->
+          let rank = Ops.structure_ranks Ops.O.(var "a" 0 4 + int 1) in
+          raises Not_found (fun () -> rank (var "b" 0 4)));
     ]
 
 (* Short texts of quotes, escapes and bytes past ASCII, often equal. *)
@@ -759,36 +992,38 @@ let texts =
 let keys =
   group "key"
     [
-      prop "is equal for equal graphs" gen_recipe (fun r ->
-          equal string
-            (Ops.key (build (leaves ()) r))
-            (Ops.key (build (leaves ()) r)));
+      (* A collection per case: ten graphs share one. *)
+      prop ~count:20
+        "is equal for equal graphs, built before a collection and after"
+        (Gen.list ~size:(Gen.int_range 1 10) gen_recipe)
+        (fun rs ->
+          let[@inline never] [@local never] keys () =
+            List.map (fun r -> Ops.key (build (leaves_of "collected") r)) rs
+          in
+          let before = keys () in
+          Gc.full_major ();
+          equal (list string) before (keys ()));
       prop "differs for different graphs" (Gen.pair gen_recipe gen_recipe)
         (fun (r0, r1) ->
           let vars = leaves () in
           let u0 = build vars r0 and u1 = build vars r1 in
           assume (u0 != u1);
           not_equal string (Ops.key u0) (Ops.key u1));
-      test "tells apart an operation, a type, an argument and a source"
-        (fun () ->
+      cases "tells apart an operation, a type, an argument and a source" ~id:fst
+        (let x = var "x" 0 4 and y = var "y" 0 4 in
+         [
+           ("operation", Ops.O.(x * y));
+           ("type", Ops.cast Ops.O.(x + y) Int64);
+           ("argument", Ops.O.(x + var "y" 0 5));
+           ("source", Ops.O.(y + x));
+         ])
+        (fun (_, b) ->
           let x = var "x" 0 4 and y = var "y" 0 4 in
-          let a = Ops.O.(x + y) in
-          List.iter
-            (fun (what, b) ->
-              not_equal ~msg:what string (Ops.key a) (Ops.key b))
-            [
-              ("operation", Ops.O.(x * y));
-              ("type", Ops.cast a Int64);
-              ("argument", Ops.O.(x + var "y" 0 5));
-              ("source", Ops.O.(y + x));
-            ];
-          equal int 32 (String.length (Ops.key a)));
-      test "tells arguments apart" (fun () ->
-          not_equal string
-            (Ops.key (Ops.sink ~kernel:(Ops.kernel_info ()) []))
-            (Ops.key (Ops.sink ~kernel:(Ops.kernel_info ~beam:3 ()) [])));
+          not_equal string (Ops.key Ops.O.(x + y)) (Ops.key b));
       prop "tells apart sources and binaries by their text"
-        (Gen.pair texts texts) (fun (t0, t1) ->
+        (Gen.pair texts texts)
+        ~examples:[ ("a", "a") ]
+        (fun (t0, t1) ->
           cover "equal texts" (String.equal t0 t1);
           List.iter
             (fun (what, node) ->
@@ -813,12 +1048,18 @@ let keys =
           equal string (Ops.key quiet) (Ops.key (nan 0x7FF8_0000_0000_0000L)));
       (* A node redrawn in one field of its argument keys apart, but for a
          call's write marks, which the key leaves out. *)
-      prop ~count:4000 "two nodes of one key are one node, but for a call's marks"
+      (* The rarest field's differing draw, stage.device's, has a share of
+         about 0.4%: 6000 cases all miss it with a probability of about
+         0.996^6000, 3.6e-11. *)
+      prop ~count:6000
+        "two nodes of one key are one node, but for a call's marks"
         Args.neighbours (fun (field, u, v) ->
-          List.iter (fun f -> cover f (String.equal f field && u != v))
+          List.iter
+            (fun f -> cover f (String.equal f field && u != v))
             Args.field_names;
-          let same = u == v || String.equal field "call.write" in
-          equal bool same (String.equal (Ops.key u) (Ops.key v)));
+          if u == v || String.equal field "call.write" then
+            equal string (Ops.key u) (Ops.key v)
+          else not_equal string (Ops.key u) (Ops.key v));
       prop ~count:3000 "two nodes drawn apart share a key only as one node"
         Args.pairs (fun (u, v) ->
           let unmarked w =
@@ -826,10 +1067,12 @@ let keys =
             | Call c -> Ops.replace w ~arg:(Call { c with write = [] })
             | _ -> w
           in
-          let one = unmarked u == unmarked v in
-          cover "one node, but for a call's marks" one;
-          cover "two nodes of one kind" (not one);
-          equal bool one (String.equal (Ops.key u) (Ops.key v)));
+          if unmarked u == unmarked v then (
+            cover "one node, but for a call's marks" true;
+            equal string (Ops.key u) (Ops.key v))
+          else (
+            cover "two nodes of one kind" true;
+            not_equal string (Ops.key u) (Ops.key v)));
       test "tells apart arguments a repr prints alike" (fun () ->
           let open Args in
           let stage keep =
@@ -865,7 +1108,8 @@ let keys =
               [ x ]
           in
           List.iter
-            (fun (what, u, v) -> not_equal ~msg:what string (Ops.key u) (Ops.key v))
+            (fun (what, u, v) ->
+              not_equal ~msg:what string (Ops.key u) (Ops.key v))
             [
               ("a parameter's NaNs", bounded quiet, bounded signalling);
               ("what a stage keeps", stage Whole, stage Argument);
@@ -924,6 +1168,33 @@ let keys_with =
       test "is the key when no argument is given" (fun () ->
           let u = Ops.O.(var "x" 0 4 + Ops.int 1) in
           equal string (Ops.key u) (Ops.key_with ~arg:(fun _ -> None) u));
+      prop "calls arg once on each node" gen_recipe (fun r ->
+          let u = build (leaves ()) r in
+          let calls = Ops.Tbl.create 16 in
+          let arg n =
+            Ops.Tbl.replace calls n
+              (1 + Option.value ~default:0 (Ops.Tbl.find_opt calls n));
+            None
+          in
+          ignore (Ops.key_with ~arg u);
+          let nodes = Ops.toposort ~calls:Enter u in
+          equal (list int)
+            (List.map (fun _ -> 1) nodes)
+            (List.map
+               (fun n -> Option.value ~default:0 (Ops.Tbl.find_opt calls n))
+               nodes));
+    ]
+
+let tables =
+  group "Tbl"
+    [
+      test "is keyed by identity" (fun () ->
+          let t = Ops.Tbl.create 4 in
+          Ops.Tbl.replace t (var "a" 0 4) 1;
+          Ops.Tbl.replace t (var "a" 0 4) 2;
+          Ops.Tbl.replace t (var "a" 0 5) 3;
+          equal int 2 (Ops.Tbl.length t);
+          equal (option int) (Some 2) (Ops.Tbl.find_opt t (var "a" 0 4)));
     ]
 
 (* Data types *)
@@ -962,13 +1233,6 @@ let data_types =
           equal dtype Weak_float (Ops.dtype_of Op.Const [] (Const (f 3.)));
           equal dtype Weak_int (Ops.dtype_of Op.Const [] (Const (i 3)));
           equal dtype Bool (Ops.dtype_of Op.Const [] (Const `Invalid)));
-      test "an operation whose type is its argument's needs that argument"
-        (fun () ->
-          rejects (fun () -> Ops.v Op.Const);
-          rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] Op.Cast);
-          rejects (fun () -> Ops.v ~src:[ Ops.int 1 ] ~arg:(Device "CPU") Op.Bitcast);
-          rejects (fun () -> Ops.v Op.Param);
-          rejects (fun () -> Ops.v Op.Ins));
       test "a transcendental of Invalid is boolean" (fun () ->
           equal dtype Bool (Ops.dtype (Ops.alu Ops.invalid Op.Sqrt [])));
       test "effects are void, and a call has its body's type" (fun () ->
@@ -1459,87 +1723,9 @@ let ranges =
 
 (* Integer literals *)
 
-(* The literals that tell whether one holds its type's value: -1, the type's
-   bounds and past them, the width's power and its neighbours, its negation, and
-   one no integer type holds. *)
-let width_literals dt =
-  let lo, hi = Dtypes.int_bounds dt in
-  let wide = Bigint.shift_left Bigint.one (Dtype.bitsize dt) in
-  Bigint.
+let fits =
+  group "fits_no_int"
     [
-      minus_one; zero; one; lo; pred lo; hi; succ hi; pred wide; wide; succ wide;
-      neg wide; shift_left one 80;
-    ]
-
-let literal z = Ops.const (`Int z)
-let literal_value u i = Ops.value (Ops.nth u i)
-
-let at_type dt z = (Dtype.truncate dt (`Int z) :> Dtype.const)
-
-let integer_literals =
-  let reading_ops =
-    Op.[ Add; Sub; Mul; And; Or; Xor; Max; Div; Mod; Truncdiv; Truncmod; Cmplt;
-         Cmpne; Cmpeq ]
-  in
-  let on_ints f = List.iter f Dtype.ints in
-  let variable dt =
-    let lo, hi = Dtypes.int_bounds dt in
-    Ops.variable ~dtype:dt "x" (`Int lo) (`Int hi)
-  in
-  group "integer literals"
-    [
-      test "a literal holds its value at the operation's integer type"
-        (fun () ->
-          on_ints (fun dt ->
-              let x = variable dt in
-              List.iter
-                (fun z ->
-                  let want = at_type dt z in
-                  let holds name u i =
-                    equal
-                      ~msg:(Format.asprintf "%s %a %s" name Dtype.pp dt
-                             (Bigint.to_string z))
-                      const want (literal_value u i)
-                  in
-                  List.iter
-                    (fun op ->
-                      let name = Format.asprintf "%a" Op.pp op in
-                      holds name (Ops.v op ~src:[ x; literal z ]) 1;
-                      holds name (Ops.v op ~src:[ literal z; x ]) 0)
-                    reading_ops;
-                  let cond = Ops.variable ~dtype:Bool "c" (`Bool false) (`Bool true) in
-                  holds "a selection" (Ops.v Op.Where ~src:[ cond; literal z; x ]) 1;
-                  holds "a multiply-add" (Ops.v Op.Mulacc ~src:[ x; x; literal z ]) 2;
-                  holds "a cast"
-                    (Ops.v Op.Cast ~src:[ literal z ] ~arg:(Dtype dt))
-                    0)
-                (width_literals dt)));
-      test "a 64-bit key of a random bits operation holds its value" (fun () ->
-          let k = variable Uint64 in
-          equal const
-            (`Int (Bigint.of_int 1))
-            (literal_value
-               (Ops.v Op.Threefry
-                  ~src:[ k; literal (Bigint.shift_left Bigint.one 64 |> Bigint.succ) ])
-               1));
-      test "a shift's count and an exponent keep their value" (fun () ->
-          on_ints (fun dt ->
-              let x = variable dt in
-              List.iter
-                (fun z ->
-                  if Bigint.sign z >= 0 then
-                    List.iter
-                      (fun op ->
-                        equal const
-                          (`Int z)
-                          (literal_value (Ops.v op ~src:[ x; literal z ]) 1))
-                      Op.[ Shl; Shr; Pow ])
-                (width_literals dt)));
-      test "a literal base of a power is read at the power's type" (fun () ->
-          let y = variable Uint8 in
-          equal const
-            (`Int (Bigint.of_int 44))
-            (literal_value (Ops.v Op.Pow ~src:[ literal (Bigint.of_int 300); y ]) 0));
       test "fits_no_int is true only of known bounds no 64-bit integer holds"
         (fun () ->
           let bounded lo hi = Ops.variable "b" (`Int lo) (`Int hi) in
@@ -1547,34 +1733,16 @@ let integer_literals =
           let held lo hi = equal bool false (Ops.fits_no_int (bounded lo hi)) in
           held Bigint.zero (Bigint.pred (two 64));
           held (Bigint.neg (two 63)) (Bigint.pred (two 63));
-          equal bool true
-            (Ops.fits_no_int (bounded Bigint.minus_one (two 63)));
+          equal bool true (Ops.fits_no_int (bounded Bigint.minus_one (two 63)));
           equal bool true (Ops.fits_no_int (bounded Bigint.zero (two 64)));
           let r = Ops.range ~axis_type:Weak (Ops.Int 4) [ 0 ] in
           let unknown = Ops.reduce (bounded Bigint.zero (two 3)) Op.Add [ r ] in
           equal bool false (Ops.fits_no_int unknown);
           equal bool false (Ops.fits_no_int Ops.O.(unknown + int 1)));
-      test "a weak expression, a float operation and no peer keep their values"
-        (fun () ->
-          let x = variable Uint8 in
-          let w = Ops.variable "w" (`Int Bigint.zero) (`Int (Bigint.of_int 1000)) in
-          let expr = Ops.O.(w + Ops.int 300) in
-          equal uop expr (Ops.nth (Ops.v Op.Add ~src:[ x; expr ]) 1);
-          let f = Ops.variable ~dtype:Float32 "f" (`Float 0.) (`Float 1.) in
-          equal const
-            (`Int (Bigint.of_int 300))
-            (literal_value (Ops.v Op.Add ~src:[ f; literal (Bigint.of_int 300) ]) 1);
-          equal const
-            (`Int (Bigint.of_int 300))
-            (literal_value
-               (Ops.v Op.Add
-                  ~src:[ literal (Bigint.of_int 300); literal (Bigint.of_int 7) ])
-               0));
     ]
 
 let groups =
   [
-    integer_literals;
     axis_type_group;
     pp_devices;
     disk_devices;
@@ -1584,13 +1752,22 @@ let groups =
     function_names;
     equal_args;
     pp_args;
-    printing;
     identity;
+    construct;
+    replacing;
+    equality;
+    ordering;
+    hashing;
+    printing;
+    raising;
     structure_order;
+    ranks;
     keys;
     keys_with;
+    tables;
     data_types;
     graphs;
     shapes;
     ranges;
+    fits;
   ]

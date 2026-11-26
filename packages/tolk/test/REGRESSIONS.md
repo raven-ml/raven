@@ -174,7 +174,7 @@ to that module's section; each is listed here once, with its owner.
 |---|---|---|
 | tinygrad: null/test_uop_graph.py::TestTuplize::test_equality_is_identity | structural order is zero exactly on equal nodes | `O › compare_structure › is zero exactly on equal graphs` |
 | tinygrad: null/test_uop_graph.py::TestTuplize::test_deep_shared_subgraphs | deep graphs differing at the bottom order both ways, quickly | `O › compare_structure › tells apart deep graphs that differ only at the bottom` |
-| tinygrad: null/test_uop_graph.py::TestTuplize::test_does_not_retain_uops | the cached tuple does not keep nodes alive | `O › identity › a node nothing references is collected`; `compare_structure` caches nothing |
+| tinygrad: null/test_uop_graph.py::TestTuplize::test_does_not_retain_uops | the cached tuple does not keep nodes alive | `O › Identity › a node nothing references is collected`; `compare_structure` caches nothing |
 | tinygrad: null/test_uop_graph.py::TestGraphRewriteConst (2 tests) | `sym` folds an index of a constant stack and a sum of stacks | Symbolic's section (`sym`); the index fold at construction is `O › kernel nodes › an index of a stack by a constant is the element` |
 | tinygrad: null/test_uop_graph.py::TestModularWraparound (6 tests, xfail) | `simplify` folds constants modulo the width | Symbolic's section (`simplify` with `symbolic`); the wrapping itself is `O › exec_alu › exec_alu_values.golden` |
 | tinygrad: null/test_uop_graph.py::TestGraphRewrite::test_dedup | a rewrite keeps equal nodes shared | `O › graph_rewrite › keeps shared nodes shared` |
@@ -249,7 +249,7 @@ to that module's section; each is listed here once, with its owner.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: null/test_uop_repr.py::TestUOpRepr (4 tests) | `repr` of a node, with `x0:=` sharing | `O › printing › pretty.golden` (every node of the tests, and kernels, ranges and typed constants) |
+| tinygrad: null/test_uop_repr.py::TestUOpRepr (4 tests) | `repr` of a node, with `x0:=` sharing | `O › pp › writes each node as pretty.golden states › pretty.golden` (every node of the tests, and kernels, ranges and typed constants) |
 | tinygrad: null/test_uop_repr.py::TestUOpRepr::test_range_arg | a range's argument is its axis type, then its identity, of one part or more | `O › pp_arg › writes each argument as reprs.golden states › reprs.golden` (the `range` rows); `O › ranges › axis_id and axis_type read a range and reject anything else` |
 | tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_simple_int, test_int_add, test_rfloordiv, and the integer half of test_weak_const | `int()` of a typed, weak or summed integer | `Tolk.Shape › resolve › to_z, to_float and to_bool read a literal`; `Tolk.Shape › resolve › to_z reads a typed constant and an integer sum of constants` |
 | tinygrad: null/test_uop_resolve.py::TestUOpResolve::test_weak_const (float half) | `float()` of a weak float | `Tolk.Shape › resolve › to_z, to_float and to_bool read a literal` |
@@ -303,14 +303,14 @@ to that module's section; each is listed here once, with its owner.
 | tinygrad: null/test_uops.py::TestExecALU::test_trunc_nonfinite, test_trunc_neg_zero, test_invalid_poison, test_div, test_truncdiv, test_mod, test_recip, test_bool_cmplt, test_bool_cmpne, test_bool_where, test_overflow | `exec_alu` values, truncation, Invalid | `O › exec_alu › exec_alu_values.golden` (every operand of these tests is a row); `O › exec_alu › Invalid poisons every binary operation` |
 | tinygrad: null/test_uops.py::TestExecALU::test_int_pow | integer powers wrap at their type; an integer to a negative power is 0 but for 1 and -1 | `O › exec_alu › an integer power wraps at its type, and a negative power truncates toward 0`; `O › exec_alu › exec_alu_values.golden` (the weak integer rows) |
 | tinygrad: null/test_uops.py::TestGatedStoreRewrite (5 tests), TestFastIdiv (13 tests) | gated stores, fast division | Codegen's section |
-| tinygrad: null/test_uops.py::TestUOpMethod::test_compare_alu_same_src_different_arg (skipped) | nodes are ordered by `<` | dropped: tinygrad skips it; `O › identity › compare is a total order that agrees with equal` |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_compare_alu_same_src_different_arg (skipped) | nodes are ordered by `<` | dropped: tinygrad skips it; `O › compare › is a total order that agrees with equal` |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_uop_variables | a `Tensor` program's variables | dropped: Tensor surface; `Tolk.Shape › variables › variables are sorted by name` |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_const_factor | `const_factor` of a hardware index | `O › divisibility › const_factor is a known divisor` |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_cmp_self_folding_multidim | `simplify` folds `x < x` | Symbolic's section |
 | tinygrad: null/test_uops.py::TestUOpMethod::test_cmpeq_canonical | equality is CMPEQ of type bool, an inequality and a logical not its equality to False, and simplify folds a double negation and `x == True` | `O › lt, gt, le, ge, eq and ne › build each comparison as comparisons.golden states › comparisons.golden`, `bitwise.golden`; `Tolk.Shape › symbolic_simple › identities › x = true, x <> false, a double negation, where x true false and an idempotent operation of x with itself are x` |
-| tinygrad: null/test_uops.py::TestUOpMethod::test_replace | `replace` changes a field, and rejects an unknown one | `O › identity › replace is the node itself when nothing changes`; the unknown field is dropped: labelled arguments make it a type error |
-| tinygrad: null/test_uops.py::TestUOpMethod::test_const_zero_neg_zero_different | 0.0 and -0.0 are different nodes | `O › identity › zero and negative zero are different nodes` |
-| tinygrad: null/test_uops.py::TestUOpMethod::test_const_nan_same | two `float('nan')` constants are one node | `O › identity › NaN constants of different bits are different nodes`, whose last claim is this; NaNs of different bits are not (D27) |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_replace | `replace` changes a field, and rejects an unknown one | `O › replace › is the node itself when nothing changes`; the unknown field is dropped: labelled arguments make it a type error |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_const_zero_neg_zero_different | 0.0 and -0.0 are different nodes | `O › Identity › constants of other bits or kinds are different nodes` |
+| tinygrad: null/test_uops.py::TestUOpMethod::test_const_nan_same | two `float('nan')` constants are one node | `O › Identity › a NaN constant is one node with its own bits`; NaNs of different bits are not: `O › Identity › constants of other bits or kinds are different nodes` (D27) |
 | tinygrad: null/test_uops.py::TestUOpStr (3 tests) | `str` is compact and `eval` reads it back | Render's section; `eval` is dropped (Python source) |
 | tinygrad: null/test_uops.py::TestUPatHelpers::test_location | a pattern records its source location | dropped: `UPat.location` serves match statistics, not ported (README exclusions) |
 | tinygrad: null/test_uops.py::TestUopsObject::test_timing | building 10k constants | dropped: a timing print |
@@ -711,7 +711,7 @@ it check that each result is the machine's value instead, and name D13.
 | Source | Behaviour | Outcome |
 |---|---|---|
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic (every test but the four below, 185 tests) | `sym` of each expression and its bounds; `commutative` of each expected expression; `simplify`, `ssimplify`, `gcd` and `divide_exact` results | `S › sym › makes each recorded simplification, within its recorded bounds › tests.golden › class=TestSymbolic test=<test>` |
-| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_equality | equal expressions are one node, and operand order counts | `O › identity › equal expressions are the same node, and operand order counts` |
+| tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_equality | equal expressions are one node, and operand order counts | `O › Identity › building a graph twice gives the same node`; `O › Identity › v keeps the order of a commutative operation's operands` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_divide_exact_not | `divide_exact` gives up | `Tolk.Shape › divisibility › divide_exact gives up on what does not divide` |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_div_mod_zero | a division or remainder by 0 raises | `DM › raises Division_by_zero for a divisor that is always 0` (Divandmod's section) |
 | tinygrad: null/test_uop_symbolic.py::TestSymbolic::test_variable_divmod | a variable bounded by another | dropped: a variable's bounds are numbers |

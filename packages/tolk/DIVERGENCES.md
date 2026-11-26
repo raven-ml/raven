@@ -86,8 +86,9 @@ a source (`uop/upat.py` `_get_clause`).
   `spec_kernel_graph` hold by construction.
 - **Reason:** (c).
 - **Pinned by:** for `Ops`: `Tolk.Ops › storage › new_buffer takes the
-  next slot without one` and `Tolk.Ops › arguments › reprs.golden`; for the
-  engine, the Engine suite (`test/engine/tolk_engine`): `refusals › link
+  next slot without one` and `Tolk.Ops › pp_arg › writes each argument as
+  reprs.golden states › reprs.golden`; for the engine, the Engine suite
+  (`test/engine/tolk_engine`): `refusals › link
   refuses a device the map does not hold` and `refusals › run refuses a
   parameter it binds no buffer`.
 
@@ -161,9 +162,9 @@ a source (`uop/upat.py` `_get_clause`).
   Invalid_argument when a kernel asks for a beam and none is given`; for
   `Ops`: `Tolk.Ops › resolve › simplify leaves a constant, and a sink of
   constants and stacks of constants, alone`, and the `Tolk.Ops › resolve`
-  tests that simplify with `Symbolic`'s rules; `Tolk.Ops › printing ›
-  pretty.golden`; `Tolk.Ops › elementwise patterns › the pattern operators
-  are the named pattern operations`; for `Renderer`: `Tolk.Renderer ›
+  tests that simplify with `Symbolic`'s rules; `Tolk.Ops › pp › writes each
+  node as pretty.golden states › pretty.golden`; `Tolk.Ops › elementwise
+  patterns › the pattern operators are the named pattern operations`; for `Renderer`: `Tolk.Renderer ›
   Compiler › compile raises what the toolchain rejects`, its
   `Compile_error`; for `Prepare`: `Tolk.Prepare › contiguous_view › a
   reshape keeps the order`; for `Schedule`: `Tolk.Schedule ›
@@ -441,9 +442,9 @@ tinygrad's positive `math.nan` (`dtype.py` `fp8_to_float`).
   `Local` and `Upcast`, in their axis types' order. The malformed arguments that
   `postrange.py` refuses at run time cannot be built.
 - **Reason:** (a): static types.
-- **Pinned by:** the type itself, whose printing `Tolk.Ops › arguments ›
-  reprs.golden` checks against tinygrad's `Opt` repr (the row "kernel with
-  opts"); `Tolk.Postrange` drops tinygrad's malformed-argument cases with
+- **Pinned by:** the type itself, whose printing `Tolk.Ops › pp_arg › writes
+  each argument as reprs.golden states › reprs.golden` checks against
+  tinygrad's `Opt` repr (the row "kernel with opts"); `Tolk.Postrange` drops tinygrad's malformed-argument cases with
   this entry as the reason.
 
 ## D12. A node's key is a BLAKE2 digest
@@ -463,10 +464,10 @@ tinygrad's positive `math.nan` (`dtype.py` `fp8_to_float`).
   NaNs of different bits, as tolk's repr writes an `Argument` stage and a
   `Whole` one alike, and a program's target whose fields split one text two
   ways.
-- **Pinned by:** `Tolk.Ops › key › tells arguments apart`, `› two nodes of one
-  key are one node, but for a call's marks`, `› tells apart arguments a repr
-  prints alike`; `Tolk.Graph › of_string › a graph of any argument reads
-  back as itself`.
+- **Pinned by:** `Tolk.Ops › key › two nodes of one key are one node, but
+  for a call's marks`, `› two nodes drawn apart share a key only as one node`,
+  `› tells apart arguments a repr prints alike`; `Tolk.Graph › of_string › a
+  graph of any argument reads back as itself`.
 
 ## D13. Folding reads and writes committed constants at their width
 
@@ -944,7 +945,7 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   kernel's and nx's do, so a bitcast that rune folds must keep them, which a
   constant can only if it holds them, and in the bits nx stores for it; a
   rewrite must keep a graph's value.
-- **Pinned by:** `Tolk.Ops › identity › NaN constants of different bits
+- **Pinned by:** `Tolk.Ops › Identity › constants of other bits or kinds
   are different nodes`; `Tolk.Ops › key › tells apart NaN constants of
   different bits`; `Tolk.Ops › exec_alu › an invalid operation's
   NaN is the canonical positive quiet NaN, whatever the host gives`;
@@ -8888,8 +8889,8 @@ one reads what the other left, and then they form a chain (D474).
   without long chains pays the numbering: tolk's linearize stage rows take
   30% to 55% longer and allocate about 30% more words.
 - **Pinned by:** tolk's bench `chains/linearize`, on fudge;
-  `Tolk.Ops › compare_structure › structure_ranks numbers a graph's nodes in
-  its order` and `› structure_ranks numbers NaNs of different bits alike`.
+  `Tolk.Ops › structure_ranks › numbers a graph's nodes in
+  compare_structure's order` and `› numbers NaNs of different bits alike`.
 
 ## D469. Withdrawn
 
