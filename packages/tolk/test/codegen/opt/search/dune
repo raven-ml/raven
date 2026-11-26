@@ -1,7 +1,5 @@
-; The search's environment variables are read once per process, so what they
-; change is checked in a process of its own, with the variables set. CACHEDB is
-; a directory of the sandbox, which the cache's tests fill with the results of
-; made-up measurements.
+; CACHEDB is a directory of the sandbox, set by the root dune's env stanza:
+; the cache's tests fill it with the results of made-up measurements.
 
 (test
  (name test_search)
@@ -11,32 +9,7 @@
  (deps
   (sandbox always)
   (glob_files *.golden)
-  (glob_files *.tolk))
- (action
-  (setenv
-   CACHEDB
-   cache
-   (progn
-     (run %{test} --exclude-tag environment)
-     (setenv
-      BEAM_PADTO
-      1
-      (setenv
-       TC
-       2
-       (setenv
-        BEAM_STRICT_MODE
-        1
-        (setenv
-         BEAM_UOPS_MAX
-         50
-         (setenv
-          BEAM_LOG_SURPASS_MAX
-          1
-          (setenv
-           BEAM_DEBUG
-           2
-           (run %{test} --tag environment)))))))))))
+  (glob_files *.tolk)))
 
 ; The searches of kernels on the host compile each candidate with its C
 ; compiler and time it through the engine.
@@ -50,6 +23,7 @@
  (alias runtest)
  (package tolk)
  (deps
+  (sandbox always)
   (glob_files *.golden)
   (glob_files *.tolk))
  (action

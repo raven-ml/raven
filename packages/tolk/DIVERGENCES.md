@@ -2923,10 +2923,8 @@ encodes its barriers (D146).
   are kept › a program is not returned for a compiler of other options, with
   CCACHE=0`, `Tolk.Codegen › programs are kept on disk › a program is not
   read back for a compiler of another table`,
-  `Tolk.Search › a search kept under one setting measures again under
-  another`, `› a search kept for one part measures again on another`, `› a
-  search kept under one value of a setting declared by its caller measures
-  again under another` and `› the search's settings shape compilation`, and
+  `Tolk.Search › beam_search keeps its choice › a search kept under one
+  value is measured again under another, of ›` every row, and
   `Tolk_engine › target › a software device is the host's part`.
 
 ## D114. Every environment variable is one declared setting
@@ -2991,17 +2989,18 @@ encodes its barriers (D146).
 - **Pinned by:** `Tolk.Setting › declarations` and `› shaping` (every test,
   among them `› holds the library's settings of output, and those alone` and `›
   changes a library setting's entry when the setting changes`); `Tolk.Search ›
-  the tensor cores' actions ›` every test and `› a search kept under one value
-  of a setting declared by its caller measures again under another`;
-  `Tolk.Codegen › programs are kept › a program is made again under another
-  value of ›` each setting, a setting its caller declares among them;
-  `Tolk.Schedule › create_linear_with_vars › schedules a body once › a body
-  scheduled under one setting is scheduled again under another › a setting
-  its caller declares`; rune's `search.t`, a function given a width that compiles once
-  under another `BEAM` or `JITBEAM`. On rune: missing (the old rune's `Rune.jit
-  › keys › a setting that shapes compilation ›` each setting, `› a call under
-  DEBUG=2, which reports kernel times, retraces once` and `› a call under
-  DEBUG=1 replays the program` went with its rewrite).
+  actions › asks for the tensor cores' levels whatever TC_OPT` and `›
+  beam_search keeps its choice › a search kept under one value is measured
+  again under another, of › a setting its caller declares`; `Tolk.Codegen ›
+  programs are kept › a program is made again under another value of ›` each
+  setting, a setting its caller declares among them; `Tolk.Schedule ›
+  create_linear_with_vars › schedules a body once › a body scheduled under one
+  setting is scheduled again under another › a setting its caller declares`;
+  rune's `search.t`, a function given a width that compiles once under another
+  `BEAM` or `JITBEAM`. On rune: missing (the old rune's `Rune.jit › keys › a
+  setting that shapes compilation ›` each setting, `› a call under DEBUG=2,
+  which reports kernel times, retraces once` and `› a call under DEBUG=1
+  replays the program` went with its rewrite).
 
 ## D115. A search linearizes a candidate before it compiles it
 
@@ -3022,8 +3021,8 @@ encodes its barriers (D146).
   width-1 search of the step's three kernels drops none (the largest has
   2,582 instructions): the gain at the workload's own settings is to
   re-measure.
-- **Pinned by:** `Tolk.Search › BEAM_PADTO=1 ... › a candidate of
-  BEAM_UOPS_MAX instructions or more is not compiled`; `Tolk.Codegen ›
+- **Pinned by:** `Tolk.Search › beam_search compiles › compiles and times
+  no candidate of BEAM_UOPS_MAX instructions or more`; `Tolk.Codegen ›
   linearize and compile › compile completes linearize into the program
   to_program makes` and `› linearize compiles nothing`.
 
@@ -3053,8 +3052,9 @@ encodes its barriers (D146).
   table would hold every candidate of every search for the life of the process.
   A stage resumed by `to_program` is one reached by `Codegen.linearize` or
   `Codegen.compile`, so no caller loses one.
-- **Pinned by:** `Tolk.Search › a search keeps each candidate's binary in its
-  compiler's table, as a kernel compiled with it keeps its own`; an absence:
+- **Pinned by:** `Tolk.Search › beam_search compiles › keeps each
+  candidate's binary in its compiler's table, and reads it back` and `› keeps
+  no candidate's program`; an absence:
   `Search.try_compile` calls `Codegen.linearize` and `Codegen.compile`, which
   keep nothing; `Tolk.Codegen › linearize and compile` (every test).
 
@@ -3141,8 +3141,8 @@ held only on another machine is no reason.
   signal stops, and a process with domains cannot fork; a limit would reach
   only the toolchain processes and promise what lowering does not keep.
 - **Pinned by:** an absence; the bound tolk keeps is pinned by D115's
-  `Tolk.Search › BEAM_PADTO=1 ... › a candidate of BEAM_UOPS_MAX
-  instructions or more is not compiled`.
+  `Tolk.Search › beam_search compiles › compiles and times no candidate of
+  BEAM_UOPS_MAX instructions or more`.
 
 ## D125. Withdrawn
 
@@ -3499,7 +3499,8 @@ driver signals its own (D146).
   call reads its trip on each trip, at most its trips`, `› a loop of one trip
   passes its call the trip as a scalar argument`, `› loops of any range and
   trips around one call compile one program`, and the same two on each GPU;
-  `Tolk.Search › a search binds a positional size in its call and launch`;
+  `Tolk.Search › beam_search links › binds a positional size in its call and
+  launch`;
   `Tolk.Search on the host › a search runs candidates with named and
   positional scalars`. On rune: missing (the old rune's `Rune.jit › keys › a
   scan searched with beam 2 draws as eager does` went with its rewrite;
@@ -4640,7 +4641,7 @@ and 0.4% of compile instructions, which did not pay for the scan.
 - **Pinned by:** `Tolk.Schedule › create_linear_with_vars › devices › one
   expression on two devices of a target is one kernel`, `… › a kernel on
   buffers of two devices is refused` and `create_linear_with_vars › copies
-  between devices`; `Tolk.Search › a search
+  between devices`; `Tolk.Search › beam_search keeps its choice › a search
   kept for one device serves another of its target`; `Tolk.Spec › program ›
   parameters`; rune's `Rune.jit over several devices`, `searches` among them.
 
@@ -5580,7 +5581,8 @@ into D183, which holds its rule, its reason and its pins.
   counts a range bounded by a value loaded outside any range at its greatest
   trips`; the Tolk_engine suite: `a kernel whose estimates fit no int ›
   splits and runs, its loop bounded by a value loaded outside it`; the Search
-  suite: `a search measures candidates whose estimates fit no int`.
+  suite: `beam_search times › times candidates whose estimated operations fit
+  no int`.
 
 ## D192. A call that accesses LOCAL memory is ordered by barriers
 
@@ -7981,8 +7983,8 @@ reason and its pins.
   the search, where tinygrad's `inf - inf < min_progress` goes on. The
   round's fastest keeps its linked program through the round, and the beam's
   first through the next. Each round from the second times six more runs.
-  `a search chooses what tinygrad's chooses` counts the first timings against
-  tinygrad's measurements.
+  `beam_search times › chooses as its golden states, measuring as often`
+  counts the first timings against tinygrad's measurements.
 - **Reason:** (d), to re-measure on fudge. A device's clock follows its load,
   and a GPU idles while a round compiles, so times taken rounds apart ran at
   different clocks. On nonnormal's R9700 at the firmware's clocks, searches of a
@@ -7994,12 +7996,12 @@ reason and its pins.
   time against the least of a round's. No row on fudge holds the choice: a near
   tie at round 4 decides between kernels of 161 and 122 us per call under either
   rule.
-- **Pinned by:** `Tolk.Search › a search goes on past a round whose clock is
-  half the round before's` and `› a search chooses as at a steady clock when
-  its device's clock changes between rounds`, which fail under tinygrad's
-  rule; `› after a round, the beam's first and its fastest are timed again in
-  turn; …`; `› a time taken again that raises ›` (`Failure` counts as
-  infinite, for one or both, and `Exit` is raised).
+- **Pinned by:** `Tolk.Search › beam_search times › goes on past a round
+  whose clock is half the round before's` and `› chooses as at a steady clock
+  when its device's clock changes between rounds`, which fail under
+  tinygrad's rule; `› after a round, times the beam's first and its fastest
+  again in turn, …`; `› a time taken again that raises ›` (`Failure` counts
+  as infinite, for one or both, and `Exit` is raised).
 
 ## D404. Calls that interfere with no other run as one launch of bodies
 
@@ -9502,8 +9504,9 @@ D466.
 - **Pinned by:** the Heuristic suite's `streaming › a product's workgroups
   hold at most a block's threads on every GPU`, gfx942 included; the Cstyle
   suite's `a renderer states its SIMD group's threads and a workgroup's
-  most`; the Search suite's `a candidate's workgroup holds at most its
-  renderer's most threads`; rune's `Lower_index › workgroups › a scatter's
+  most`; the Search suite's `get_kernel_actions › a candidate's workgroup
+  holds at most its renderer's threads, past BEAM_LOCAL_MAX`; rune's
+  `Lower_index › workgroups › a scatter's
   workgroups hold at most a block's threads on every GPU`. AMD and Metal are
   unrun.
 
@@ -9641,8 +9644,9 @@ D466.
   Postrange suite's `workgroups › apply_opt keeps a workgroup's threads
   within its target's and a group's float sum within 256 partials, a pad's
   included` on sm_89, gfx90a and Apple2, a tensor core beside 32 and 64
-  local threads on sm_89 and gfx90a; the Search suite's `candidates that
-  pad a local axis`.
+  local threads on sm_89 and gfx90a; the Search suite's `get_kernel_actions ›
+  a candidate that pads a local axis holds at most its renderer's threads`
+  and `› a candidate that pads a local axis adds at most 256 partials`.
 
 ## D489. A search lowers each candidate as the compile lowers its chosen kernel
 
@@ -9665,10 +9669,11 @@ D466.
   other programs than those it ships. Searched unstaged, the stream kernel
   `key-projection-64` ran 32.7 us against the heuristic's 13.3 us. No bench
   row runs a search; the law below pins the rule.
-- **Pinned by:** `Tolk.Search`'s `a search times the program each candidate
-  compiles to and returns it` (CUDA's staged tensor cores, the host's
-  blocks) and `measuring on fewer workgroups › launches a host program's
-  blocks over its whole loop`; `searches.golden`'s host rows, which count a
+- **Pinned by:** `Tolk.Search › beam_search compiles › times the program
+  each candidate compiles to, and returns it` (the host's blocks and decoded
+  panels, staged tensor cores on Metal, CUDA and HIP) and `› beam_search
+  measures on fewer workgroups › measures a host program's blocks over its
+  whole loop`; `searches.golden`'s host rows, which count a
   host program's workgroups without its blocks.
 
 ## D490. A padded sum of products multiplies its factors gated to zero

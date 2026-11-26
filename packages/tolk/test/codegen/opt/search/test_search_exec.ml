@@ -6,7 +6,7 @@ open Tolk
 
 let host = lazy (Cstyle.clang (Run.target Rig.host))
 let devices _ = Rig.host
-let part = Tolk_engine.part Rig.host
+let part = lazy (Tolk_engine.part Rig.host)
 
 let applied_opts prg =
   match Ops.arg (Ops.nth prg 0) with
@@ -49,12 +49,11 @@ let searched name =
       [ B (Setting.ignore_beam_cache, true) ]
       (fun () ->
         Codegen.to_program
-          ~beam:
-            (Search.beam_search ~part ~link ~time)
+          ~beam:(Search.beam_search ~part:(Lazy.force part) ~link ~time)
           (with_info (fun i -> { i with beam = 2 }) k)
           (Lazy.force host))
   in
-  is_true ~msg:"optimised" (applied_opts prg <> []);
+  greater int ~msg:"optimisations" ~than:0 (List.length (applied_opts prg));
   equal values (run k unoptimised) (run k prg)
 
 let scalar_arguments =
@@ -89,7 +88,7 @@ let scalar_arguments =
           [ B (Setting.ignore_beam_cache, true) ]
           (fun () ->
             Codegen.to_program
-              ~beam:(Search.beam_search ~part ~link ~time)
+              ~beam:(Search.beam_search ~part:(Lazy.force part) ~link ~time)
               ast (Lazy.force host))
       in
       greater int ~than:0 !measured;
@@ -99,8 +98,7 @@ let scalar_arguments =
           let args =
             List.init (slot + 1) (fun i ->
                 if i = slot then Ops.const ~dtype:Int32 (z scalar)
-                else
-                  Shape.param ~shape:[ Int 4 ] ~device:"CPU" i Float32)
+                else Shape.param ~shape:[ Int 4 ] ~device:"CPU" i Float32)
           in
           let s = Tolk_engine.link_call ~devices (Ops.call prg args) in
           let slots = Tolk_engine.slots s in
@@ -110,8 +108,8 @@ let scalar_arguments =
             (Run.values Float32 (Option.get slots.(0))))
         [ -7; -1 ])
 
-(* [out[r, i]] sums [j] over [j < x[i]]: a loop whose trips are what the
-   storage of [x] holds. Its [rows] axis reads no bound, so a search would have
+(* [out[r, i]] sums [j] over [j < x[i]]: a loop whose trips are what the storage
+   of [x] holds. Its [rows] axis reads no bound, so a search would have
    candidates that upcast it. [~read:`Index] reads [x] through a bare index, as
    a scheduled kernel reads memory, [`Load] through an explicit load. *)
 let loaded_trips ?beam ?(read = `Load) () =
@@ -130,13 +128,13 @@ let loaded_trips ?beam ?(read = `Load) () =
     ~kernel:(Ops.kernel_info ~name:"loaded_trips" ?beam ())
     [ Ops.end_ (Ops.store at sum) [ r; i ] ]
 
-(* [out[i, j] = Σ_k a[i, k] b[k, j]] for the rows of the blocks of 64 whose
-   flag [fl[i / 64]] holds, and no value elsewhere: a routed product, whose
-   blocks of rows routed to no expert hold padding. Code generation runs the
-   sum's loop only where the flag holds, so its trips are what the storage of
-   [fl] holds. [routed] reads [fl] at the rows' block, [~gate:`Rows] gates the
-   sum by the rows' own index instead, which no storage holds. Memory is read
-   through bare indices, as a scheduled kernel reads it. *)
+(* [out[i, j] = Σ_k a[i, k] b[k, j]] for the rows of the blocks of 64 whose flag
+   [fl[i / 64]] holds, and no value elsewhere: a routed product, whose blocks of
+   rows routed to no expert hold padding. Code generation runs the sum's loop
+   only where the flag holds, so its trips are what the storage of [fl] holds.
+   [routed] reads [fl] at the rows' block, [~gate:`Rows] gates the sum by the
+   rows' own index instead, which no storage holds. Memory is read through bare
+   indices, as a scheduled kernel reads it. *)
 let routed ?beam ?(gate = `Flags) () =
   let m = 128 and k = 64 and n = 16 and block = 64 in
   let param slot size dt = Shape.param ~shape:[ Ops.Int size ] slot dt in
@@ -178,7 +176,7 @@ let timed_programs kernel =
       [ B (Setting.ignore_beam_cache, true) ]
       (fun () ->
         Codegen.to_program
-          ~beam:(Search.beam_search ~part ~link ~time)
+          ~beam:(Search.beam_search ~part:(Lazy.force part) ~link ~time)
           (kernel ~beam:2 ()) (Lazy.force host))
   in
   (!measured, opt_names searched)
@@ -225,7 +223,7 @@ let memory_bound =
           [ B (Setting.ignore_beam_cache, true) ]
           (fun () ->
             Codegen.to_program
-              ~beam:(Search.beam_search ~part ~link ~time)
+              ~beam:(Search.beam_search ~part:(Lazy.force part) ~link ~time)
               (loaded_trips ~beam:2 ~read ())
               (Lazy.force host))
       in
@@ -244,12 +242,8 @@ let () =
          scalar_arguments;
          memory_bound;
          gated_by_memory;
-         slow
-         @@ cases
-              "a searched kernel computes what its unoptimised kernel computes"
-              ~id:Fun.id
-              [
-                "symbolic"; "add_small"; "sum_rows"; "variable_rows"; "pad_7x7";
-              ]
-              searched;
+         cases "a searched kernel computes what its unoptimised kernel computes"
+           ~id:Fun.id
+           [ "symbolic"; "add_small"; "sum_rows"; "variable_rows"; "pad_7x7" ]
+           searched;
        ])
