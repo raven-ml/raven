@@ -9,7 +9,8 @@
 
 let library () =
   let rocm = Setting.value Setting.rocm_path in
-  C.findlib "comgr" [ rocm ^ "/lib/libamd_comgr.so"; "amd_comgr" ]
+  let file = Filename.concat (Filename.concat rocm "lib") "libamd_comgr.so" in
+  C.findlib "comgr" [ file; "amd_comgr" ]
 
 (* comgr serialises the compiles of a process on a mutex of its own, so
    compiles run in processes of their own: workers, a C program embedded in the

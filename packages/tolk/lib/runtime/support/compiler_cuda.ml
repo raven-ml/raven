@@ -77,7 +77,7 @@ let nvrtc ?(ptx = true) ?(cache_key = "cuda") arch =
     match Setting.value Setting.cuda_path with
     | "" ->
         [ "-I/usr/local/cuda/include"; "-I/usr/include"; "-I/opt/cuda/include" ]
-    | cuda_path -> [ "-I" ^ cuda_path ^ "/include" ]
+    | cuda_path -> [ "-I" ^ Filename.concat cuda_path "include" ]
   in
   let options = ("--gpu-architecture=" ^ arch) :: "--fmad=false" :: includes in
   let compile src =
