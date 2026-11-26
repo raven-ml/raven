@@ -358,9 +358,19 @@ let devices =
             (Ops.device (Ops.copy_to_device p "CUDA"));
           equal (option device) None (Ops.device (var "a" 0 1)));
       test "on_disk holds for a disk device" (fun () ->
-          is_true
-            (Ops.on_disk (param ~device:"DISK:/tmp/f" [ 4 ] 0 Uint8));
-          is_false (Ops.on_disk (param ~device:cpu [ 4 ] 0 Uint8)));
+          let on d = (d, Ops.on_disk (param ~device:d [ 4 ] 0 Uint8)) in
+          equal
+            (list (pair string bool))
+            [
+              ("DISK:/tmp/f", true);
+              ("disk:0", true);
+              ("DiSk", true);
+              ("DISKS", false);
+              ("AMD:DISK", false);
+              (cpu, false);
+            ]
+            (List.map on
+               [ "DISK:/tmp/f"; "disk:0"; "DiSk"; "DISKS"; "AMD:DISK"; cpu ]));
       test "copy_to_device rejects a disk and a weak type" (fun () ->
           let p = param ~device:cpu [ 4 ] 0 Float32 in
           rejects (fun () -> Ops.copy_to_device p "DISK:/tmp/f");

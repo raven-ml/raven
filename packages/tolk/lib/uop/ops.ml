@@ -2898,10 +2898,7 @@ and compute_device u =
   | Op.Copy, Device d -> Some d
   | _ -> List.find_map device u.src
 
-let on_disk u =
-  match device u with
-  | Some d -> String.starts_with ~prefix:"DISK" d
-  | None -> false
+let on_disk u = match device u with Some d -> is_disk_device d | None -> false
 
 let is_virtual u = Option.is_none (device u) || Dtype.mem u.dtype Dtype.weaks
 
