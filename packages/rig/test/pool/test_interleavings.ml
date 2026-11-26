@@ -129,6 +129,18 @@ let test_worker_parks () =
   less ~msg:"the least ns from a worker's leave to its park" int
     ~than:(compute_spin_ns / 2) values.(0)
 
+(* The second job's thread finds the pool taken, with none of its chunks run,
+   and waits there for the first job's end. *)
+let test_take_waits () =
+  held 2
+    [
+      "the second job's thread found the pool taken";
+      "the second job's chunks run by then";
+      "first job's chunks not run once";
+      "second job's chunks not run once";
+    ]
+    [ 1; 0; 0; 0 ] H.take_waits ()
+
 let waiting_tests =
   group "waiting and waking"
     [
@@ -166,6 +178,10 @@ let waiting_tests =
         "a blocking job's worker sleeps as soon as it finds no chunk, sampled \
          over 7 jobs"
         test_worker_parks;
+      test
+        "a compute job of more than one thread waits for another thread's \
+         compute job to end"
+        test_take_waits;
     ]
 
 (* Fork *)

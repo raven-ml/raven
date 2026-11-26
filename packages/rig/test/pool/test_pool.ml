@@ -756,29 +756,6 @@ let test_nested kinds =
     (P.finishes "a job whose bodies begin jobs" (fun () ->
          P.nested ~kinds ~threads:cores ~outer ~inner ()))
 
-(* Nothing signals that a job waits, so the test samples: once the domain is
-   about to begin its job, none of its chunks has run 50 ms later. *)
-let test_waits () =
-  P.needs_two_cores ();
-  let beginning = Atomic.make false in
-  let waiting =
-    P.while_held (fun () ->
-        let d =
-          Domain.spawn (fun () ->
-              Atomic.set beginning true;
-              P.counted ~threads:2 ~total:4L ~chunks:4L ())
-        in
-        P.await "the domain did not begin its job" (fun () ->
-            Atomic.get beginning);
-        Unix.sleepf 0.05;
-        equal ~msg:"chunks run while another thread's job ran" int 0
-          (P.counted_calls ());
-        d)
-  in
-  P.await "the waiting job did not run once the other ended" (fun () ->
-      P.counted_calls () = 4);
-  Domain.join waiting
-
 (* A job's chunks, each once, from either domain. Jobs of up to 96 chunks reach
    runs of several chunks on several threads, which need c > 15 t: half the
    draws take two or three threads, whatever the cores. A program reaches them
@@ -901,10 +878,6 @@ let job_tests =
           ~id:(fun (o, i) -> strf "%s in %s" (kind_name i) (kind_name o))
           (List.concat_map (fun o -> List.map (fun i -> (o, i)) kinds) kinds)
           test_nested;
-        test
-          "a compute job of more than one thread waits for another thread's \
-           compute job to end, sampled for 50 ms"
-          test_waits;
         cases
           "bodies see the caller's writes made before the job, and the caller \
            the bodies' once it returns"

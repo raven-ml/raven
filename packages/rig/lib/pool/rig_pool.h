@@ -292,6 +292,9 @@ typedef enum {
   RIG_POOL_AT_PARKING,       /* a worker set its parked bit, holding the
                                 parking mutex, before it reads the job's
                                 generation and waits */
+  RIG_POOL_AT_TAKING,        /* the caller of a compute job found the pool
+                                taken, before it waits for the other
+                                thread's job to end */
   RIG_POOL_AT_OPENED,        /* the caller opened a job, before it stores
                                 the job's generation */
   RIG_POOL_AT_PUBLISHED,     /* the caller stored the generation, before it

@@ -86,6 +86,9 @@ typedef enum {
   w_asleep,
   j_closed,
   w_parked,
+  x_began,
+  y_taking,
+  y_seen,
   events
 } event;
 
@@ -113,6 +116,9 @@ static const char *event_names[events] = {
     "the worker's sleep",
     "the job's close",
     "the worker's park",
+    "the first job's chunk",
+    "the second job's take",
+    "the look at the second job's caller",
 };
 
 static _Atomic int signalled[events];
@@ -170,6 +176,7 @@ typedef enum {
   caller_closes,
   worker_parks,
   fork_parked,
+  take_wait,
 } phase;
 
 static _Atomic int current = none;
@@ -207,6 +214,16 @@ static int second(void) {
 
 static _Atomic int once_flags[events];
 static int once(event e) { return atomic_exchange(&once_flags[e], 1) == 0; }
+
+/* The thread that begins take_wait's second job, which it records before
+   the job. */
+static pthread_t taker_thread;
+static _Atomic int taker_known;
+
+static int is_taker(void) {
+  return atomic_load(&taker_known) &&
+         pthread_equal(taker_thread, pthread_self());
+}
 
 static void hook(rig_pool_point at) {
   int ph = atomic_load(&current);
@@ -324,6 +341,9 @@ static void hook(rig_pool_point at) {
       await(forked);
     }
     break;
+  case take_wait:
+    if (at == RIG_POOL_AT_TAKING && is_taker()) sig(y_taking);
+    break;
   }
 }
 
@@ -348,6 +368,7 @@ typedef struct {
   int awaited;                    /* others' chunks wait until it worked */
   int signals;                    /* the first chunk signals body_began */
   _Atomic int signalled_body;
+  int holds; /* its chunks wait for y_seen, the first signalling x_began */
 } tally;
 
 static void body(int64_t lo, int64_t hi, int w, void *ctx) {
@@ -362,6 +383,10 @@ static void body(int64_t lo, int64_t hi, int w, void *ctx) {
   if (w == j->holder) await(j->hold_for);
   if (j->awaited > 0 && w != j->awaited)
     while (!atomic_load(&j->worked[j->awaited]) && !past()) sched_yield();
+  if (j->holds) {
+    if (once(x_began)) sig(x_began);
+    await(y_seen);
+  }
   if (j->signals && atomic_exchange(&j->signalled_body, 1) == 0) {
     sig(body_began);
     usleep(50000);
@@ -790,6 +815,66 @@ value rig_pool_test_worker_parks(value unit) {
   return answer(v, 1);
 }
 
+static void *runner(void *ctx) {
+  tally *j = ctx;
+  run_tally(2, j);
+  return NULL;
+}
+
+/* The chunks of [j] run, counted once per call. */
+static int ran(const tally *j) {
+  int n = 0;
+  for (int64_t i = 0; i < j->chunks; i++) n += j->runs[i];
+  return n;
+}
+
+static void *taker(void *ctx) {
+  taker_thread = pthread_self();
+  atomic_store(&taker_known, 1);
+  run_tally(2, ctx);
+  return NULL;
+}
+
+/* A compute job waits for another thread's to end.
+   1. Thread X runs a job (t = 2, two chunks) whose chunks hold.
+   2. Once one began, thread Y begins a job (t = 2, four chunks). It finds
+      the pool taken and signals before it waits.
+   3. The caller waits until Y signalled, or a chunk of Y's job ran, reads
+      the chunks of Y's job that ran, and lets X's chunks go on.
+   Answers: whether Y found the pool taken, the chunks of Y's job run by then,
+   the chunks of X's and Y's jobs not run once. */
+value rig_pool_test_take_waits(value unit) {
+  (void)unit;
+  int v[4] = {0};
+  caml_enter_blocking_section();
+  begin(take_wait);
+  atomic_store(&taker_known, 0);
+  tally x, y;
+  tally_init(&x, 2);
+  x.holds = 1;
+  tally_init(&y, 4);
+  atomic_store(&go, 1);
+  pthread_t xt, yt;
+  int x_made = pthread_create(&xt, NULL, runner, &x) == 0;
+  if (x_made) await(x_began);
+  int y_made = x_made && pthread_create(&yt, NULL, taker, &y) == 0;
+  if (y_made) {
+    while (!atomic_load(&signalled[y_taking]) && ran(&y) == 0 && !past())
+      sched_yield();
+    v[0] = atomic_load(&signalled[y_taking]);
+    if (!v[0] && ran(&y) == 0) gave_up(y_taking);
+  }
+  v[1] = ran(&y);
+  sig(y_seen);
+  if (x_made) pthread_join(xt, NULL);
+  if (y_made) pthread_join(yt, NULL);
+  v[2] = not_once(&x);
+  v[3] = not_once(&y);
+  settle();
+  caml_leave_blocking_section();
+  return answer(v, 4);
+}
+
 /* A child made by fork runs a job on every core; it exits with the chunks
    not run once. */
 static int fork_child(void) {
@@ -842,12 +927,6 @@ value rig_pool_test_fork_parked(value unit) {
   settle();
   caml_leave_blocking_section();
   return answer(v, 1);
-}
-
-static void *runner(void *ctx) {
-  tally *j = ctx;
-  run_tally(2, j);
-  return NULL;
 }
 
 /* Fork from a thread while another thread's job of two threads runs a

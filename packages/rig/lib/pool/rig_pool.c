@@ -865,7 +865,9 @@ static void open_strips(pool *p, uint64_t c, int t) {
    another thread's to end. A blocking job does not: the system decides
    when that one ends. */
 static int take(pool *p, kind k) {
-  if (k == BLOCKING) return pthread_mutex_trylock(&p->drive) == 0;
+  if (pthread_mutex_trylock(&p->drive) == 0) return 1;
+  if (k == BLOCKING) return 0;
+  RIG_POOL_HOOK(TAKING);
   pthread_mutex_lock(&p->drive);
   return 1;
 }

@@ -75,6 +75,13 @@ val worker_parks : unit -> answer
     worker runs a chunk of. Its value: the least nanoseconds, over the jobs,
     from the worker's leave to its decision to park. *)
 
+val take_waits : unit -> answer
+(** [take_waits ()] runs a compute job of two threads whose chunks hold, and
+    once one began, another thread's compute job of two threads, until that
+    thread finds the pool taken or runs a chunk; then the first job's chunks go
+    on. Its values: whether the second job's thread found the pool taken, its
+    chunks run by then, the chunks of the first and second jobs not run once. *)
+
 (** {1:fork Fork} *)
 
 val fork_parked : unit -> answer
