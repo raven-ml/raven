@@ -579,6 +579,11 @@ let contiguous_views =
       (let r = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
        case "rows from a range's start are no view" None
          (Shape.shrink x [ Some (Ops.Sym r, Ops.Sym Ops.O.(r + int 2)); None ]));
+      (let s =
+         Ops.variable "s" (`Int (Bigint.of_int 0)) (`Int (Bigint.of_int 2))
+       in
+       case "elements from an unbound variable's start are no view" None
+         (Shape.shrink b [ Some (Ops.Sym s, Ops.Sym Ops.O.(s + int 4)) ]));
       (let ints = Shape.param ~device:cpu ~shape:[ Int 8 ] 1 Int32 in
        let ordered =
          Ops.after ints

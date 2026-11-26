@@ -506,8 +506,13 @@ let rec contiguous_view u =
          run at one value is a run at all. A variable meeting a range in a
          div/mod of non-constant size would need the check at every value. In
          a call's body, a scalar parameter stands for a bound variable, checked
-         at its least value. *)
-      let scalar u = op u = Op.Param && addrspace u = Some Dtype.Alu in
+         at its least value. A variable has a name, and an unbound one leaves
+         the index symbolic. *)
+      let scalar u =
+        op u = Op.Param
+        && addrspace u = Some Dtype.Alu
+        && (param_arg_of u).name = None
+      in
       let bound =
         List.filter
           (fun u -> is_bound_var u || scalar u)
