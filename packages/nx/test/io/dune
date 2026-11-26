@@ -26,7 +26,8 @@
   test_tiff
   test_hdf5
   test_wav
-  test_flac)
+  test_flac
+  test_hostile)
  (modules
   test_save
   test_archive
@@ -40,8 +41,18 @@
   test_hdf5
   test_wav
   test_flac
+  test_hostile
   io_support)
- (libraries nx nx_array nx_io nx_support rig unix lz windtrap)
+ (libraries
+  nx
+  nx_array
+  nx_io
+  nx_support
+  nx_limit_support
+  rig
+  unix
+  lz
+  windtrap)
  (foreign_stubs
   (language c)
   (names io_support_stubs))

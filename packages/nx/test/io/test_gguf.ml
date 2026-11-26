@@ -396,8 +396,6 @@ let loads =
     [
       test "every proper prefix fails, naming the file" (fun () ->
           prefixes_fail Nx_io.load_gguf (gguf_file ()));
-      test "any header byte flipped loads or fails" (fun () ->
-          flips_load_or_fail Nx_io.load_gguf ~upto:600 (gguf_file ()));
       (let one = [ ("w", 0, [ 1 ], "abcd") ] in
        let raw ?magic ?version ?alignment ?shift kvs tensors () =
          file (gguf ?magic ?version ?alignment ?shift kvs tensors)

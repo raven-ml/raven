@@ -1179,6 +1179,64 @@ def hdf5_fixtures():
         assert b[8] == 0 and b"FRHP" in b, name
 
 
+def hostile_fixtures():
+    # Files whose header fields a regressed loader could size the OCaml heap
+    # by, for test_hostile.ml, which runs under a limit of its memory.
+    # A GGUF file of keys of each kind and two arrays, laid out as GGML's
+    # specification states (version 3, alignment 32).
+    def gstring(t):
+        return struct.pack("<Q", len(t)) + t
+
+    def kv(key, tag, payload):
+        return gstring(key) + struct.pack("<I", tag) + payload
+
+    kvs = [
+        kv(b"general.architecture", 8, gstring(b"llama")),
+        kv(b"n", 4, struct.pack("<I", 7)),
+        kv(b"tokens", 9, struct.pack("<IQ", 8, 3) + gstring(b"a") + gstring(b"") + gstring(b"bc")),
+        kv(b"ids", 9, struct.pack("<IQ", 5, 2) + struct.pack("<ii", 1, -2)),
+    ]
+    tensors = [(b"f32", 0, [3, 2], bytes(range(24))), (b"q8_0", 8, [64, 2], bytes(136))]
+    infos, offset = [], 0
+    for name, tag, dims, data in tensors:
+        infos.append(gstring(name) + struct.pack("<I", len(dims))
+                     + b"".join(struct.pack("<Q", d) for d in dims)
+                     + struct.pack("<IQ", tag, offset))
+        offset = (offset + len(data) + 31) // 32 * 32
+    header = b"GGUF" + struct.pack("<IQQ", 3, len(tensors), len(kvs)) + b"".join(kvs) + b"".join(infos)
+    header += bytes((32 - len(header) % 32) % 32)
+    data = b""
+    for _, _, _, d in tensors:
+        data += d + bytes((32 - len(d) % 32) % 32)
+    open("hostile.gguf", "wb").write(header + data)
+
+    # Checkpoints whose byte counts pass an int's range: an offset of 2^61
+    # elements of complex32, and a storage of 2^59 complex128 elements, each
+    # beside a storage entry of 4 bytes or none.
+    def x(t):
+        return b"X" + struct.pack("<I", len(t)) + t
+
+    def glob(m, n):
+        return b"c" + m + b"\n" + n + b"\n"
+
+    def pid(cls, key, n):
+        return b"(" + x(b"storage") + glob(b"torch", cls) + x(key) + x(b"cpu") + n + b"tQ"
+
+    long8 = lambda top: b"\x8a\x08" + bytes(7) + bytes([top])
+    odict = glob(b"collections", b"OrderedDict") + b")R"
+    offset_overflow = (glob(b"torch._utils", b"_rebuild_tensor_v3") + b"("
+                       + pid(b"UntypedStorage", b"0", b"K\x04") + long8(0x20)
+                       + b"K\x01\x85K\x01\x85\x89" + odict + glob(b"torch", b"complex32") + b"tR")
+    count_overflow = (b"(" + x(b"storage") + glob(b"torch", b"ComplexDoubleStorage")
+                      + x(b"0") + x(b"cpu") + long8(0x08) + b"tQ")
+    date = (1980, 1, 1, 0, 0, 0)
+    for name, body, storage in [("pt_offset_overflow.pt", offset_overflow, b"abcd"),
+                                ("pt_count_overflow.pt", count_overflow, b"")]:
+        with zipfile.ZipFile(name, "w") as z:
+            z.writestr(zipfile.ZipInfo("archive/data.pkl", date_time=date), b"\x80\x02" + body + b".")
+            z.writestr(zipfile.ZipInfo("archive/data/0", date_time=date), storage)
+
+
 SUPPORT = Path(__file__).resolve().parent.parent / "support"
 
 
@@ -1194,6 +1252,7 @@ def generate():
     pytorch_fixtures()
     tiff_fixtures()
     hdf5_fixtures()
+    hostile_fixtures()
 
 
 def main():

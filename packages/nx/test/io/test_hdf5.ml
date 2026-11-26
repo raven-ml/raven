@@ -741,11 +741,6 @@ let rows_cases =
     test "rows and counts of other lengths" (fun () ->
         invalid ~by (fun () ->
             H.rows (d "/chunked/edges") ~row:[| 0; 1 |] ~rows:[| 1 |]));
-    test "windows of more than 2^53 elements are refused" (fun () ->
-        let d = dataset "hdf5_huge.h5" "/huge" in
-        let half = 1 lsl 27 in
-        refused ~naming:"the windows hold more than 2^53 elements" (fun () ->
-            H.rows d ~row:[| 0; 0 |] ~rows:[| half; half |]));
     cases "a window outside the rows, naming it" ~id:fst
       [
         ("a negative row", ([| 0; -1 |], [| 1; 1 |]));
@@ -860,12 +855,6 @@ let shape_chunk =
             (option (array int))
             c
             (H.chunk (dataset "hdf5_layouts.h5" path)));
-      test "chunks whose bytes pass any integer" (fun () ->
-          let d = dataset "hdf5_damaged.h5" "/h" in
-          fails ~path:(fixture "hdf5_damaged.h5") ~naming:"/h: " (fun () ->
-              H.values d);
-          fails ~path:(fixture "hdf5_damaged.h5") ~naming:"/h: " (fun () ->
-              H.chunk d));
       cases "shape and chunk raise for a dataspace they do not read" ~id:fst
         [
           ( "shape of a null dataspace",

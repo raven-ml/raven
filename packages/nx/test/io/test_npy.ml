@@ -825,20 +825,6 @@ let load_npz =
           zero "PK\007\008" 4 0;
           zero "PK\001\002" 16 0;
           equal packed x (find (Nx_io.load_npz (file (Bytes.to_string b))) "w"));
-      test
-        "a deflated entry that declares more data than deflate can expand to \
-         fails" (fun () ->
-          let s = read (fixture "unaligned.npz") in
-          let rec find signature i =
-            if String.sub s i 4 = signature then i else find signature (i + 1)
-          in
-          (* The uncompressed size of the local and the central header. *)
-          let b = Bytes.of_string s in
-          Bytes.set_int32_le b (find "PK\003\004" 0 + 22) 0x40000000l;
-          Bytes.set_int32_le b (find "PK\001\002" 0 + 24) 0x40000000l;
-          let path = file (Bytes.to_string b) in
-          fails ~path ~naming:"declares more data" (fun () ->
-              Nx_io.load_npz path));
       test "every proper prefix fails, and any byte flipped loads or fails"
         (fun () ->
           let whole =

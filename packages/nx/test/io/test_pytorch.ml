@@ -805,39 +805,6 @@ let tensor_cases =
           in
           refused ~naming:"byte order"
             (checkpoint ~byteorder:"big" (pickle body) [ ("0", "abcd") ]));
-      cases "byte counts that pass an int's range are refused" ~id:fst
-        [
-          ( "an offset times a dtype's width",
-            ( global "torch._utils" "_rebuild_tensor_v3"
-              ^ tuple
-                  [
-                    pid ~cls:"UntypedStorage" "0" 4;
-                    "\x8a\x08" ^ le 7 0 ^ "\x20";
-                    int1 1 ^ "\x85";
-                    int1 1 ^ "\x85";
-                    "\x89";
-                    odict;
-                    global "torch" "complex32";
-                  ]
-              ^ "R",
-              [ ("0", "abcd") ],
-              "past" ) );
-          ( "a storage's count times its width",
-            ( tuple
-                [
-                  str "storage";
-                  global "torch" "ComplexDoubleStorage";
-                  str "0";
-                  str "cpu";
-                  "\x8a\x08" ^ le 7 0 ^ "\x08";
-                ]
-              ^ "Q",
-              [ ("0", "") ],
-              "more bytes" ) );
-        ]
-        (fun (_, (body, storages, naming)) ->
-          within_budget (fun () ->
-              refused ~naming (checkpoint (pickle body) storages)));
     ]
 
 (* Calls outside the vocabulary *)
