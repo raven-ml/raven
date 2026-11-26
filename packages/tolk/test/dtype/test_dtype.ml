@@ -222,8 +222,8 @@ let pp_const_group =
 (* Values *)
 
 (* An integer that rounds past the greatest double, from 2^1024 - 2^970, is the
-   infinity of its sign where a float operates on it (Value's preamble). Python
-   refuses to convert it, and its golden cell is a raise. *)
+   infinity of its sign where a float operates on it (Value's preamble, D509).
+   Python refuses to convert it, and its golden cell is a raise. *)
 let beyond_doubles =
   Bigint.sub
     (Bigint.shift_left Bigint.one 1024)
@@ -866,9 +866,9 @@ let word dt v = as_int (Dtype.bitcast dt (word_of dt) v)
    1.0039062500000002 and 1 + 2^-8 + 2^-40 onto a bfloat16 tie, which then goes
    to even; rounded once, each is the bfloat16 above it.
 
-   An integer from 2^1024 - 2^970 converts to a double as the infinity of its
-   sign, and overflows a narrower float as the greatest double does (truncate),
-   where Python refuses to convert it.
+   D509: an integer from 2^1024 - 2^970 converts to a double as the infinity
+   of its sign, and overflows a narrower float as the greatest double does
+   (truncate), where Python refuses to convert it.
 
    D508: past an 8-bit float's greatest finite value, Fp8e5m2 gives the
    infinity of the value's sign, from 61440, where tinygrad saturates to
@@ -1639,6 +1639,28 @@ let truncate_group =
             (Fp8e5m2, Float.neg_infinity, Float.neg_infinity);
           ]
         (fun (dt, f, want) -> equal float_exact want (truncated dt f));
+      (* D509: 2^1024 - 2^970 lies halfway between the greatest double and
+         2^1024, and rounds to even, past it. Only a weak integer holds it. *)
+      cases
+        "converts an integer to a double's infinity from 2^1024 - 2^970, and \
+         one below to the greatest double"
+        ~id:(fun (n, _) -> Bigint.to_string n)
+        [
+          (Bigint.pred beyond_doubles, Float.max_float);
+          (beyond_doubles, Float.infinity);
+          (Bigint.neg (Bigint.pred beyond_doubles), -.Float.max_float);
+          (Bigint.neg beyond_doubles, Float.neg_infinity);
+        ]
+        (fun (n, want) ->
+          let const dt =
+            match Dtype.const dt (`Int n) with
+            | `Float f -> f
+            | c -> failf "%a is not a float" Dtype.pp_const c
+          in
+          equal float_exact ~msg:"truncate Float64" want
+            (as_float (Dtype.truncate Float64 (`Int n)));
+          equal float_exact ~msg:"const Float64" want (const Float64);
+          equal float_exact ~msg:"const Weak_float" want (const Weak_float));
       prop "is monotone on floats"
         (Gen.triple (dtype_list Dtype.floats) finite_float finite_float)
         (fun (dt, a, b) ->

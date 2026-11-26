@@ -10479,3 +10479,32 @@ D466.
   same, native on fudge's CUDA and NV, from float32, float64, float16 and
   int32, with e5m2 infinity constants; the Cstyle suite's `cuda_*fp8e5m2`,
   `cuda_constants` and OCP `hip_*` goldens' `.tolk` files.
+
+## D509. An integer past the greatest double converts to an infinity
+
+- **tinygrad:** `dtype.py` `DType.const`, whose `float(val)` raises
+  `OverflowError` for an integer of magnitude 2^1024 - 2^970 or more, for
+  every float type, before its `truncate`.
+- **tolk:** `Dtype.const` and `Dtype.truncate`, through `Bigint.to_float`
+  (`Dtype.Value.to_float`) at `Float64` and the weak float, and
+  `Dtype.float_of_integer` at a narrower float.
+- **Differs:** such an integer converts. 2^1024 - 2^970 lies halfway
+  between the greatest double and 2^1024 and rounds to even, past the
+  greatest double: from it on, an integer is the infinity of its sign in
+  `Float64` and the weak float, and one less is the greatest double. A
+  narrower float takes the value its overflow gives: the integer reaches it
+  as the greatest double, so it is an infinity, ±448 in `Fp8e4m3` (D508), or
+  an fnuz format's greatest finite value of its sign. Only a weak integer
+  holds such a value.
+- **Reason:** (e): tinygrad raises on a graph that computes a value. nx
+  converts an integer to a float by rounding its exact value once, an
+  infinity past the format's greatest finite value, so `2^1024`, a weak
+  constant, cast to a float64 is an infinity, where tinygrad's
+  `DType.const` raises `OverflowError`.
+- **Pinned by:** the Dtype suite's `Casts › truncate › converts an integer
+  to a double's infinity from 2^1024 - 2^970, and one below to the greatest
+  double`, at `Dtype.truncate` and `Dtype.const`; the raised rows of
+  `truncation.golden` and `const.golden`, at every float type, through the
+  test's `as_tinygrad`, and of `conversions.golden`, through its
+  `to_infinity`; the Bigint suite's
+  `to_float n is an infinity of n's sign iff abs n >= 2^1024 - 2^970`.
