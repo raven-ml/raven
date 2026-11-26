@@ -5100,9 +5100,13 @@ let loop_reads_earlier_states () =
    loop has written. Fixed runs start at any element, off 16 bytes too. The
    buffers live on [d] of [devices].
 
-   Each case compiles the program it draws, about 30 ms of Clang on fudge, a
-   warm cache included: the laws over drawn loops take a second or more by
-   their counts alone. *)
+   Each drawn program is a kernel of its own, about 30 ms of Clang on fudge:
+   the phase of each run's constant start, and the program's flips and calls,
+   make its kernel. A start that a variable placed would take another path,
+   so the law draws constants. A case draws one to eight programs, each on
+   buffers and a loop range of its own, and runs them as one schedule, whose
+   distinct kernels compile in parallel. Programs that store one value into
+   one shape may share a kernel; a case of one program runs alone. *)
 
 type loop_step = {
   target : int;  (* The buffer written, at [lo + 4 t]. *)
@@ -5135,8 +5139,9 @@ let no_flips st = List.map (fun _ -> false) st.reads
 (* The loop of [steps] over [storage], buffers or a body's parameters, each
    read reversed where [flipped] says: a value of its run, no view. Its call
    is compiled on its own, or inlined unless [compiled]. *)
-let loop_over ?(flipped = no_flips) ?(compiled = true) d storage steps =
-  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+let loop_over ?(flipped = no_flips) ?(compiled = true) ?(axis = 100) d storage
+    steps =
+  let r = Ops.range ~axis_type:Loop (Int 3) [ axis ] in
   let view b lo stride =
     Shape.shrink storage.(b)
       [
@@ -5172,17 +5177,21 @@ let loop_over ?(flipped = no_flips) ?(compiled = true) d storage steps =
 let afters storage e =
   Ops.sink (List.map (fun b -> Ops.after b [ e ]) (Array.to_list storage))
 
-let loop_of_program ~compiled d sizes steps =
+let loop_of_program ~compiled ~axis d sizes steps =
   let bufs = Array.map (fun n -> Ops.new_buffer d n Float32) sizes in
-  (bufs, afters bufs (loop_over ~compiled d bufs steps))
+  (bufs, afters bufs (loop_over ~compiled ~axis d bufs steps))
 
 (* The loop in the body of a call of the buffers, precompiled or inlined: the
    loop's storage is the body's parameters. *)
-let loop_in_body ~precompile ~compiled ~flipped d sizes steps =
+let loop_in_body ~precompile ~compiled ~flipped ~axis d sizes steps =
   let params =
-    Array.mapi (fun j n -> Shape.param ~shape:[ Int n ] ~device:d j Float32) sizes
+    Array.mapi
+      (fun j n -> Shape.param ~shape:[ Int n ] ~device:d j Float32)
+      sizes
   in
-  let body = afters params (loop_over ~flipped ~compiled d params steps) in
+  let body =
+    afters params (loop_over ~flipped ~compiled ~axis d params steps)
+  in
   let bufs = Array.map (fun n -> Ops.new_buffer d n Float32) sizes in
   (bufs, afters bufs (Ops.call ~precompile body (Array.to_list bufs)))
 
@@ -5210,12 +5219,12 @@ let loop_spec ?(flipped = no_flips) steps init =
 
 (* The same law over a state: each buffer holds its [After] state, [b * 2],
    when the loop starts, and a read names that state or the buffer as given. *)
-let loop_of_states d sizes steps older =
+let loop_of_states ~axis d sizes steps older =
   let bufs = Array.map (fun n -> Ops.new_buffer d n Float32) sizes in
   let states =
     Array.map (fun b -> Ops.after b [ Ops.store b Ops.O.(b * float 2.) ]) bufs
   in
-  let r = Ops.range ~axis_type:Loop (Int 3) [ 100 ] in
+  let r = Ops.range ~axis_type:Loop (Int 3) [ axis ] in
   let view u lo stride =
     Shape.shrink u
       [
@@ -5274,83 +5283,102 @@ let loop_states_spec steps older init =
   done;
   cur
 
+(* A drawn program: its sink, the buffers bound to its storage, and what each
+   holds once it ran, read as the type given, with the name of its
+   program. *)
+type drawn = {
+  sink : Ops.t;
+  bound : (Ops.t * Buffer.t) list;
+  wants : (string * Dtype.t * Dtype.value array * Buffer.t) list;
+}
+
+(* The programs [programs] of a case, run as one schedule, and each of their
+   buffers checked against what its program wants. *)
+let run_drawn ?(devices = devices) programs =
+  let sink = Ops.sink (List.concat_map (fun p -> Ops.src p.sink) programs) in
+  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host sink in
+  let bound = List.concat_map (fun p -> p.bound) programs in
+  Engine.run ~vars (Engine.link ~devices ~bound (compile ~devices linear)) [||];
+  List.iter
+    (fun p ->
+      List.iter
+        (fun (msg, dt, want, b) -> equal ~msg values want (Run.values dt b))
+        p.wants)
+    programs
+
+(* The seeds of a case's programs, one to eight. *)
+let program_seeds =
+  Gen.list ~size:(Gen.int_range 1 8) (Gen.int_range 1 1_000_000)
+
+let initial_loop_values sizes =
+  Array.mapi
+    (fun j n ->
+      Array.init n (fun i -> Float.of_int (((j * 7) + (i * 13) + 3) mod 11)))
+    sizes
+
+(* The loop program [k] of seed [seed]: [sink] over [bufs], bound to new
+   buffers of [d] holding [init], which hold [want] once it ran. *)
+let loop_program ~devices d ~k ~seed sink bufs init want =
+  let buffers =
+    Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
+  in
+  let msg j = Printf.sprintf "program %d (seed %d), buffer %d" k seed j in
+  {
+    sink;
+    bound = Array.to_list (Array.map2 (fun b x -> (b, x)) bufs buffers);
+    wants =
+      List.init (Array.length bufs) (fun j ->
+          (msg j, Dtype.Float32, floats want.(j), buffers.(j)));
+  }
+
+(* Whether a step reads a fixed run off 16 bytes. *)
+let reads_off_16 s =
+  List.exists (fun (_, o, rs) -> rs = 0 && o mod 4 <> 0) s.reads
+
 let loop_states_law ?(devices = devices) d =
-  prop ~count:80 "a loop reads each run of an After state as its trip starts"
-    (Gen.int_range 1 1_000_000)
-    (fun seed ->
-      let r = Random.State.make [| seed |] in
-      let sizes, steps = gen_loop_program r in
-      let flags =
-        List.map
-          (fun st -> List.map (fun _ -> Random.State.int r 4 = 0) st.reads)
-          steps
-      in
-      let tbl = List.combine steps flags in
-      let older st = List.assq st tbl in
-      let init =
-        Array.mapi
-          (fun j n ->
-            Array.init n (fun i -> Float.of_int (((j * 7) + (i * 13) + 3) mod 11)))
-          sizes
-      in
-      let off s = List.exists (fun (_, o, rs) -> rs = 0 && o mod 4 <> 0) s.reads in
-      let reads_own s =
-        List.exists2
-          (fun (b, _, _) o -> b = s.target && not o) s.reads (older s)
-      in
-      cover "a fixed run read off 16 bytes" (List.exists off steps);
-      cover "a run of the state the step writes" (List.exists reads_own steps);
-      cover "a read of the older state"
-        (List.exists (fun st -> List.exists Fun.id (older st)) steps);
-      let bufs, sink = loop_of_states d sizes steps older in
-      let linear, vars = Schedule.create_linear_with_vars
-                           ~cores:Cores.host sink in
-      let buffers =
-        Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
-      in
-      let bound =
-        Array.to_list (Array.map2 (fun b x -> (b, x)) bufs buffers)
-      in
-      Engine.run ~vars (Engine.link ~devices ~bound (compile ~devices linear)) [||];
-      let want = loop_states_spec steps older init in
-      Array.iteri
-        (fun j x -> equal values (floats want.(j)) (Run.values Float32 x))
-        buffers)
+  let program k seed =
+    let r = Random.State.make [| seed |] in
+    let sizes, steps = gen_loop_program r in
+    let flags =
+      List.map
+        (fun st -> List.map (fun _ -> Random.State.int r 4 = 0) st.reads)
+        steps
+    in
+    let tbl = List.combine steps flags in
+    let older st = List.assq st tbl in
+    let init = initial_loop_values sizes in
+    let reads_own s =
+      List.exists2 (fun (b, _, _) o -> b = s.target && not o) s.reads (older s)
+    in
+    cover "a fixed run read off 16 bytes" (List.exists reads_off_16 steps);
+    cover "a run of the state the step writes" (List.exists reads_own steps);
+    cover "a read of the older state"
+      (List.exists (fun st -> List.exists Fun.id (older st)) steps);
+    let bufs, sink = loop_of_states ~axis:(100 + k) d sizes steps older in
+    loop_program ~devices d ~k ~seed sink bufs init
+      (loop_states_spec steps older init)
+  in
+  prop ~count:20 "a loop reads each run of an After state as its trip starts"
+    program_seeds (fun seeds -> run_drawn ~devices (List.mapi program seeds))
 
 let loop_reads_law ?(devices = devices) d =
-  prop ~count:60 "a loop reads each run as its trip starts"
-    (Gen.int_range 1 1_000_000)
-    (fun seed ->
-      let r = Random.State.make [| seed |] in
-      let sizes, steps = gen_loop_program r in
-      let init =
-        Array.mapi
-          (fun j n -> Array.init n (fun i -> Float.of_int (((j * 7) + (i * 13) + 3) mod 11)))
-          sizes
-      in
-      let off s = List.exists (fun (_, o, rs) -> rs = 0 && o mod 4 <> 0) s.reads in
-      let reads_own s =
-        List.exists (fun (b, _, _) -> b = s.target) s.reads
-      in
-      cover "a fixed run read off 16 bytes" (List.exists off steps);
-      cover "a run read of a buffer the step writes" (List.exists reads_own steps);
-      let compiled = Random.State.bool r in
-      cover "an inlined call in the loop" (not compiled);
-      let bufs, sink = loop_of_program ~compiled d sizes steps in
-      let linear, vars = Schedule.create_linear_with_vars
-                           ~cores:Cores.host sink in
-      let buffers =
-        Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
-      in
-      let bound =
-        Array.to_list (Array.map2 (fun b x -> (b, x)) bufs buffers)
-      in
-      let s = Engine.link ~devices ~bound (compile ~devices linear) in
-      Engine.run ~vars s [||];
-      let want = loop_spec steps init in
-      Array.iteri
-        (fun j x -> equal values (floats want.(j)) (Run.values Float32 x))
-        buffers)
+  let program k seed =
+    let r = Random.State.make [| seed |] in
+    let sizes, steps = gen_loop_program r in
+    let init = initial_loop_values sizes in
+    let reads_own s = List.exists (fun (b, _, _) -> b = s.target) s.reads in
+    cover "a fixed run read off 16 bytes" (List.exists reads_off_16 steps);
+    cover "a run read of a buffer the step writes"
+      (List.exists reads_own steps);
+    let compiled = Random.State.bool r in
+    cover "an inlined call in the loop" (not compiled);
+    let bufs, sink =
+      loop_of_program ~compiled ~axis:(100 + k) d sizes steps
+    in
+    loop_program ~devices d ~k ~seed sink bufs init (loop_spec steps init)
+  in
+  prop ~count:16 "a loop reads each run as its trip starts" program_seeds
+    (fun seeds -> run_drawn ~devices (List.mapi program seeds))
 
 (* The law of a loop's reads in a body: the loop of [loop_reads_law] runs in
    the body of a call, precompiled or inlined, over the body's parameters, and
@@ -5358,64 +5386,53 @@ let loop_reads_law ?(devices = devices) d =
    reads each run and value as it starts, and Tensors, the reference
    interpreter, agrees. *)
 let loop_in_body_law ?(devices = devices) d =
-  prop ~count:40 "a loop in a body reads its parameters as each trip starts"
-    (Gen.int_range 1 1_000_000)
-    (fun seed ->
-      let r = Random.State.make [| seed |] in
-      let sizes, steps = gen_loop_program r in
-      let flips =
-        List.map (fun st -> List.map (fun _ -> Random.State.bool r) st.reads) steps
-      in
-      let flipped st = List.assq st (List.combine steps flips) in
-      let precompile = Random.State.bool r in
-      let init =
-        Array.mapi
-          (fun j n ->
-            Array.init n (fun i -> Float.of_int (((j * 7) + (i * 13) + 3) mod 11)))
-          sizes
-      in
-      let reads_own flip s =
-        List.exists2
-          (fun (b, _, rs) f -> b = s.target && f = flip && (flip || rs = 0))
-          s.reads (flipped s)
-      in
-      cover "a precompiled body" precompile;
-      cover "an inlined body" (not precompile);
-      cover "a fixed run of the parameter the step writes"
-        (List.exists (reads_own false) steps);
-      cover "a reversed run of the parameter the step writes"
-        (List.exists (reads_own true) steps);
-      let compiled = Random.State.bool r in
-      cover "an inlined call in the loop" (not compiled);
-      let bufs, sink = loop_in_body ~precompile ~compiled ~flipped d sizes steps in
-      let want = loop_spec ~flipped steps init in
-      let slot b = (Ops.param_arg_of b).slot in
-      let given = Array.map (fun xs -> Array.map (fun x -> `Float x) xs) init in
-      let writes =
-        Tensors.writes
-          ~buffers:(Array.to_list (Array.map2 (fun b x -> (slot b, x)) bufs given))
-          sink
-      in
-      Array.iteri
-        (fun j b ->
-          let after = Array.copy given.(j) in
-          List.iter
-            (fun (s, i, v) -> if s = slot b then after.(i) <- v)
-            writes;
-          equal values ~msg:"Tensors" (floats want.(j)) after)
-        bufs;
-      let linear, vars = Schedule.create_linear_with_vars
-                           ~cores:Cores.host sink in
-      let buffers =
-        Array.map (fun xs -> Run.buffer (devices d) Float32 (floats xs)) init
-      in
-      let bound =
-        Array.to_list (Array.map2 (fun b x -> (b, x)) bufs buffers)
-      in
-      Engine.run ~vars (Engine.link ~devices ~bound (compile ~devices linear)) [||];
-      Array.iteri
-        (fun j x -> equal values (floats want.(j)) (Run.values Float32 x))
-        buffers)
+  let program k seed =
+    let r = Random.State.make [| seed |] in
+    let sizes, steps = gen_loop_program r in
+    let flips =
+      List.map
+        (fun st -> List.map (fun _ -> Random.State.bool r) st.reads)
+        steps
+    in
+    let flipped st = List.assq st (List.combine steps flips) in
+    let precompile = Random.State.bool r in
+    let init = initial_loop_values sizes in
+    let reads_own flip s =
+      List.exists2
+        (fun (b, _, rs) f -> b = s.target && f = flip && (flip || rs = 0))
+        s.reads (flipped s)
+    in
+    cover "a precompiled body" precompile;
+    cover "an inlined body" (not precompile);
+    cover "a fixed run of the parameter the step writes"
+      (List.exists (reads_own false) steps);
+    cover "a reversed run of the parameter the step writes"
+      (List.exists (reads_own true) steps);
+    let compiled = Random.State.bool r in
+    cover "an inlined call in the loop" (not compiled);
+    let bufs, sink =
+      loop_in_body ~precompile ~compiled ~flipped ~axis:(100 + k) d sizes steps
+    in
+    let want = loop_spec ~flipped steps init in
+    let slot b = (Ops.param_arg_of b).slot in
+    let given = Array.map (fun xs -> Array.map (fun x -> `Float x) xs) init in
+    let writes =
+      Tensors.writes
+        ~buffers:
+          (Array.to_list (Array.map2 (fun b x -> (slot b, x)) bufs given))
+        sink
+    in
+    Array.iteri
+      (fun j b ->
+        let after = Array.copy given.(j) in
+        List.iter (fun (s, i, v) -> if s = slot b then after.(i) <- v) writes;
+        let msg = Printf.sprintf "program %d (seed %d), Tensors" k seed in
+        equal values ~msg (floats want.(j)) after)
+      bufs;
+    loop_program ~devices d ~k ~seed sink bufs init want
+  in
+  prop ~count:18 "a loop in a body reads its parameters as each trip starts"
+    program_seeds (fun seeds -> run_drawn ~devices (List.mapi program seeds))
 
 (* A loop whose trip [r] moves row [r] of a buffer of CPU:1, a GPU, into row
    [r] of host storage made at link, which a move then copies whole into a
@@ -5538,8 +5555,8 @@ let valid_slot_store =
    elements and leaves the others. The target is the bytes read back as
    float32, or of the other type itself; one row or rows of two; from a
    constant or a bound start; its value a constant or a run of the state it
-   stores into. Each case compiles the program it draws, as the loop laws'
-   cases do. *)
+   stores into. A case draws one to eight programs, run as one schedule, as
+   the loop laws' cases do. *)
 
 type byte_store = {
   of_state : bool;  (* The storage after a store of [x + 1]. *)
@@ -5600,7 +5617,9 @@ let typed_store = function
         fun j -> if j mod 2 = 0 then 3l else 0l )
   | dt -> invalid_arg (Format.asprintf "no typed store of %a" Dtype.pp dt)
 
-let stores_through_bytes ?(devices = devices) d s =
+(* The program of the store [s] on [d], named [name] in its check, its bound
+   start the variable [start]. *)
+let stores_through_bytes ?(devices = devices) ~name ~start d s =
   let n = byte_elements in
   let x = Ops.new_buffer d n Float32 in
   let st =
@@ -5613,7 +5632,7 @@ let stores_through_bytes ?(devices = devices) d s =
     else
       let v =
         Shape.bind
-          (Ops.variable "first" (`Int Bigint.zero) (`Int (Bigint.of_int n)))
+          (Ops.variable start (`Int Bigint.zero) (`Int (Bigint.of_int n)))
           (`Int (Bigint.of_int s.first))
       in
       let per = 4 / size in
@@ -5644,40 +5663,39 @@ let stores_through_bytes ?(devices = devices) d s =
           fun _ -> Int32.bits_of_float 2.5 )
   in
   let sink = Ops.sink [ Ops.after st [ Ops.store target value ] ] in
-  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host sink in
   let buffer =
     Run.buffer (devices d) Float32 (floats (Array.init n Float.of_int))
   in
-  Engine.run ~vars
-    (Engine.link ~devices ~bound:[ (x, buffer) ] (compile ~devices linear))
-    [||];
   let want =
     Array.init n (fun i ->
         if i >= s.first && i < s.first + s.count then covered (i - s.first)
         else Int32.bits_of_float (before i))
   in
-  equal values
-    ~msg:(Format.asprintf "%a" pp_byte_store s)
-    (Array.map (fun b -> `Int (Bigint.of_int32 b)) want)
-    (Run.values Int32 buffer)
+  let msg = Format.asprintf "%s: %a" name pp_byte_store s in
+  let want = Array.map (fun b -> `Int (Bigint.of_int32 b)) want in
+  { sink; bound = [ (x, buffer) ]; wants = [ (msg, Int32, want, buffer) ] }
 
 let byte_views ?devices d =
-  prop ~count:100
+  let program k seed =
+    let s = gen_byte_store (Random.State.make [| seed |]) in
+    cover "a state" s.of_state;
+    cover "storage" (not s.of_state);
+    cover "a value reading its target" (s.reads <> None);
+    cover "a typed target" s.typed;
+    cover "rows" s.rows;
+    cover "a bound start" s.bound;
+    cover "through int64" (s.via = Int64);
+    cover "through float16" (s.via = Float16);
+    cover "through uint8" (s.via = Uint8);
+    let name = Printf.sprintf "program %d (seed %d)" k seed in
+    let start = Printf.sprintf "first%d" k in
+    stores_through_bytes ?devices ~name ~start d s
+  in
+  prop ~count:25
     "a store through whole elements of bytes viewed as another type writes \
      the value's bits into them"
-    (Gen.int_range 1 1_000_000)
-    (fun seed ->
-      let s = gen_byte_store (Random.State.make [| seed |]) in
-      cover "a state" s.of_state;
-      cover "storage" (not s.of_state);
-      cover "a value reading its target" (s.reads <> None);
-      cover "a typed target" s.typed;
-      cover "rows" s.rows;
-      cover "a bound start" s.bound;
-      cover "through int64" (s.via = Int64);
-      cover "through float16" (s.via = Float16);
-      cover "through uint8" (s.via = Uint8);
-      stores_through_bytes ?devices d s)
+    program_seeds
+    (fun seeds -> run_drawn ?devices (List.mapi program seeds))
 
 (* The law of stores through runs of bytes that cut elements: a store into
    float32 storage, or into a state of it, through a run of its bytes viewed
@@ -5685,7 +5703,7 @@ let byte_views ?devices d =
    element, writes the value's bytes into the run and leaves every other byte,
    as [Tensors] computes. Its value is a constant, or the run reversed, which
    reads the bytes it overwrites. *)
-let stores_through_cut_bytes ?(devices = devices) d r =
+let stores_through_cut_bytes ?(devices = devices) ~name d r =
   let n = byte_elements in
   let via = if Random.State.bool r then Dtype.Uint8 else Float16 in
   let per = 4 / Dtype.itemsize via in
@@ -5715,33 +5733,38 @@ let stores_through_cut_bytes ?(devices = devices) d r =
     | `Float v -> `Int (Bigint.of_int32 (Int32.bits_of_float v))
     | v -> v
   in
-  let linear, vars = Schedule.create_linear_with_vars ~cores:Cores.host sink in
   let buffer = Run.buffer (devices d) Float32 (floats given) in
-  Engine.run ~vars
-    (Engine.link ~devices ~bound:[ (x, buffer) ] (compile ~devices linear))
-    [||];
   let msg =
-    Format.asprintf "%s through %a, elements %d..%d, %s"
+    Format.asprintf "%s: %s through %a, elements %d..%d, %s" name
       (if of_state then "state" else "storage")
       Dtype.pp via first (first + count - 1)
       (if reverse then "reversed" else "a constant")
   in
-  ((first mod per <> 0, (first + count) mod per <> 0), fun () ->
-    equal values ~msg (Array.map bits want) (Run.values Int32 buffer))
+  ( (first mod per <> 0, (first + count) mod per <> 0),
+    {
+      sink;
+      bound = [ (x, buffer) ];
+      wants = [ (msg, Int32, Array.map bits want, buffer) ];
+    } )
 
 let cut_byte_views ?devices d =
-  prop ~count:100
+  let program k seed =
+    let name = Printf.sprintf "program %d (seed %d)" k seed in
+    let (cuts_start, cuts_end), program =
+      stores_through_cut_bytes ?devices ~name d (Random.State.make [| seed |])
+    in
+    cover "a start inside an element" cuts_start;
+    cover "an end inside an element" cuts_end;
+    cover "whole elements" ((not cuts_start) && not cuts_end);
+    program
+  in
+  (* Seed 19 draws whole elements, 2 float16s from the 22nd, which 16 % of
+     the programs draw. *)
+  prop ~count:25 ~examples:[ [ 19 ] ]
     "a store through a run of bytes that cuts elements writes the value's \
      bytes into it, the others kept"
-    (Gen.int_range 1 1_000_000)
-    (fun seed ->
-      let (cuts_start, cuts_end), check =
-        stores_through_cut_bytes ?devices d (Random.State.make [| seed |])
-      in
-      cover "a start inside an element" cuts_start;
-      cover "an end inside an element" cuts_end;
-      cover "whole elements" ((not cuts_start) && not cuts_end);
-      check ())
+    program_seeds
+    (fun seeds -> run_drawn ?devices (List.mapi program seeds))
 
 (* A store through a bitcast of a view of float32 storage that is no run, its
    elements reversed or a column of rows, writes the value's bits through the
