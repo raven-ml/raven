@@ -193,8 +193,12 @@ let bool ~reach key default =
 let float ~reach key default =
   v ~reach ~show:(Printf.sprintf "%h") key (read key parse_float default)
 
+(* Strings are shown as OCaml literals: printable ASCII, so that no text breaks
+   the lines a cache key joins, and each with a text of its own. *)
+let literal = Printf.sprintf "%S"
+
 let string ~reach key default =
-  v ~reach ~show:Fun.id key (read key Result.ok default)
+  v ~reach ~show:literal key (read key Result.ok default)
 
 let int_option ~reach key =
   let parse s = Result.map Option.some (parse_int s) in
@@ -291,8 +295,8 @@ let max_kernel_buffers = int ~reach:Output "MAX_KERNEL_BUFFERS" 0
 
 let emulated_dtypes =
   let names = String.split_on_char ',' (read "EMULATED_DTYPES" Result.ok "") in
-  v ~reach:Output ~show:(String.concat ",") "EMULATED_DTYPES"
-    (List.filter (fun x -> x <> "") names)
+  let show names = String.concat "," (List.map literal names) in
+  v ~reach:Output ~show "EMULATED_DTYPES" (List.filter (fun x -> x <> "") names)
 
 let default_float = string ~reach:Output "DEFAULT_FLOAT" "float32"
 let default_int = string ~reach:Output "DEFAULT_INT" "int32"

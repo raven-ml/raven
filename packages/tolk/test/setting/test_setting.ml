@@ -613,6 +613,10 @@ let int_option_out = Setting.int_option ~reach:Output (fresh ())
 let bool_out = Setting.bool ~reach:Output (fresh ()) false
 let string_out = Setting.string ~reach:Output (fresh ()) ""
 
+(* [emulated_dtypes] is the setting of lists of strings; [text] shows it under a
+   binding without binding it. *)
+let names_out = Setting.emulated_dtypes
+
 (* [x] and [y] have the same text only if [eq x y]. *)
 let only_if_equal eq v (x, y) =
   let unequal = not (eq x y) in
@@ -647,6 +651,20 @@ let int_pairs =
    (x, y))
   |> with_pp (pp_pair Windtrap.int)
 
+(* Lists of names drawn from the bytes that separate or quote them. *)
+let names_pairs =
+  let open Gen in
+  let name =
+    string_of ~size:(int_range 0 3) (of_list [ 'a'; ','; '"'; '\\' ])
+  in
+  let names = list ~size:(int_range 0 3) name in
+  pair names names |> with_pp (pp_pair Windtrap.(list string))
+
+let printable s = String.for_all (fun c -> c >= ' ' && c <= '~') s
+
+let in_printable_ascii v x =
+  satisfies ~claim:"printable ASCII" string printable (text v x)
+
 (* The fewest words one of ten calls of [f] allocates on the minor heap. *)
 let words f =
   let fewest = ref max_int in
@@ -680,6 +698,11 @@ let shaping_ =
           equal (list string) (List.sort compare names) names);
       test "writes a number in hexadecimal" (fun () ->
           equal string "0x1.4p+1" (text float_out 2.5));
+      test "writes a string as an OCaml string literal" (fun () ->
+          equal string {|" a,\"b "|} (text string_out {| a,"b |}));
+      test "writes a list's strings as OCaml string literals separated by ','"
+        (fun () ->
+          equal string {|"half","b,f"|} (text names_out [ "half"; "b,f" ]));
       test "writes None as \"\"" (fun () ->
           equal string "" (text int_option_out None));
       prop
@@ -716,6 +739,21 @@ let shaping_ =
         ~examples:[ ("", {|""|}); ("a", {|"a"|}) ]
         (Gen.pair Gen.string Gen.string |> Gen.with_pp (pp_pair string))
         (only_if_equal String.equal string_out);
+      prop "gives two lists of strings the same text only if they are equal"
+        ~examples:
+          [ ([ "half,bfloat16" ], [ "half"; "bfloat16" ]); ([], [ "" ]) ]
+        names_pairs
+        (only_if_equal (List.equal String.equal) names_out);
+      prop "writes every text in printable ASCII"
+        ~examples:[ ("a\nDEFAULT_INT=b", [ "\n" ]); ("\x00\xff", [ "\r" ]) ]
+        (Gen.pair Gen.string (Gen.list Gen.string)
+        |> Gen.with_pp (fun ppf (s, l) ->
+            Format.fprintf ppf "(%S, %a)" s (Testable.pp (list string)) l))
+        (fun (s, l) ->
+          cover "a string with a byte that is no printable ASCII"
+            (not (printable s));
+          in_printable_ascii string_out s;
+          in_printable_ascii names_out l);
       test "holds the values a domain spawned in a context started with"
         (fun () ->
           let key = fresh () in

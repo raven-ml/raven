@@ -119,12 +119,14 @@ val shaping : unit -> (string * string) list
 (** [shaping ()] is the name and the current value on the calling domain, as
     text, of each setting whose reach is {!Output}, sorted by name: what the
     caches of programs, schedules and searches key on. Two values have the same
-    text only if they are equal: a number is written in hexadecimal and [None]
-    as [""]. While no such setting changes on the calling domain, the result is
-    the same list, and reading it allocates nothing. A {!context} that binds
-    settings to the values they hold leaves it the same list while it runs, and
-    once a {!context} ends the list is the one it found, unless a setting was
-    declared or changed meanwhile. *)
+    text only if they are equal, any two NaNs counting as equal, and every text
+    is printable ASCII: a number is written in hexadecimal, a string, and each
+    string of a list, as an OCaml string literal, the literals of a list
+    separated by [,], and [None] as [""]. While no such setting changes on the
+    calling domain, the result is the same list, and reading it allocates
+    nothing. A {!context} that binds settings to the values they hold leaves it
+    the same list while it runs, and once a {!context} ends the list is the one
+    it found, unless a setting was declared or changed meanwhile. *)
 
 (** {1:tolk Tolk's settings}
 
