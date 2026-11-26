@@ -1629,6 +1629,13 @@ let ranges =
                 false );
             ];
           equal bool true (Ops.known_at_launch i);
+          equal ~msg:"a loop, which has no bound" bool false
+            (Ops.known_at_launch (Ops.loop 1));
+          equal ~msg:"a loop ordered after a range" bool false
+            (Ops.known_at_launch
+               (Ops.replace
+                  ~src:[ Ops.after (Ops.nth (Ops.loop 7) 0) [ i ] ]
+                  (Ops.loop 7)));
           raises_match
             (function Invalid_argument _ -> true | _ -> false)
             (fun () -> Ops.known_at_launch (Ops.int 4)));

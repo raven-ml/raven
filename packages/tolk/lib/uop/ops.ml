@@ -2964,10 +2964,12 @@ let bound_loads r =
   | [ bound ] -> List.exists reads_memory (value_nodes bound)
   | _ -> false
 
+(* A loop's source is a [Noop], or one ordered after effects: it has no bound,
+   so no launch knows one. *)
 let known_at_launch r =
   ignore (range_arg r);
   match r.src with
-  | [ bound ] ->
+  | [ bound ] when (without_after bound).op <> Op.Noop ->
       let reads u = u.op = Op.Range || reads_memory u in
       not (List.exists reads (value_nodes bound))
   | _ -> false
