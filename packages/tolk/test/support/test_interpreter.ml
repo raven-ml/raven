@@ -339,6 +339,160 @@ let casts =
                (Ops.bitcast (x Dtype.Float32) Dtype.Uint32)));
     ]
 
+(* Operations against Ops.exec_alu *)
+
+(* [outcome f] is [f ()], or [Error ()] if it raises [Invalid_argument]. *)
+let outcome f =
+  match f () with v -> Ok v | exception Invalid_argument _ -> Error ()
+
+let refused =
+  Testable.make
+    ~pp:(fun ppf () -> Format.pp_print_string ppf "refused")
+    ~equal:(fun () () -> true)
+
+(* A value of [dt]: any, or a special float or an integer bound made one as a
+   constant of [dt]. *)
+let operand dt =
+  let as_dt v =
+    match Dtype.const dt v with
+    | #Dtype.value as v -> v
+    | `Invalid -> invalid_arg "a value has no constant"
+  in
+  Gen.frequency
+    [
+      (3, value_of dt);
+      (1, Gen.map as_dt (Gen.of_list examples));
+      (1, Gen.map (fun n -> as_dt (int n)) (Gen.int_range (-3) 3));
+    ]
+
+let arithmetic =
+  Op.
+    [
+      Add;
+      Sub;
+      Mul;
+      Max;
+      Cmplt;
+      Cmpne;
+      Cmpeq;
+      And;
+      Or;
+      Xor;
+      Div;
+      Mod;
+      Truncdiv;
+      Truncmod;
+    ]
+
+let operation =
+  let open Gen in
+  with_pp
+    (fun ppf (op, dt, a, b) ->
+      Format.fprintf ppf "%a %a at %a, %a" Op.pp op (Testable.pp value) a
+        (Testable.pp dtype) dt (Testable.pp value) b)
+    (let* op = of_list arithmetic in
+     let* dt =
+       frequency [ (6, stored); (1, of_list Dtype.[ Weak_int; Weak_float ]) ]
+     in
+     (* A weak value is any of the widest type of its kind. *)
+     let held = function
+       | Dtype.Weak_int -> Dtype.Int64
+       | Weak_float -> Float64
+       | dt -> dt
+     in
+     let+ a = operand (held dt) and+ b = operand (held dt) in
+     (op, dt, a, b))
+
+(* [operands dt a b] is a node of two operands of [dt], and its evaluation where
+   they are [a] and [b]: parameters, weak integer variables or weak float
+   literals. *)
+let operands op dt a b =
+  match (dt, a, b) with
+  | Dtype.Weak_int, _, _ ->
+      ( Ops.alu (weak "a") op [ weak "b" ],
+        fun u -> Interpreter.eval ~vars:[ ("a", a); ("b", b) ] u )
+  | Weak_float, `Float a, `Float b ->
+      (Ops.alu (Ops.float a) op [ Ops.float b ], fun u -> Interpreter.eval u)
+  | _ ->
+      ( Ops.alu (x dt) op [ x ~slot:1 dt ],
+        fun u -> Interpreter.eval ~params:[ (0, a); (1, b) ] u )
+
+(* An integer type's extremes, where a quotient or a remainder overflows and an
+   unsigned order differs from the signed one. *)
+let extremes =
+  let lo dt = `Int (fst (int_bounds dt))
+  and hi dt = `Int (snd (int_bounds dt)) in
+  Op.
+    [
+      (Div, Dtype.Int8, lo Dtype.Int8, int (-1));
+      (Truncdiv, Int8, lo Int8, int (-1));
+      (Truncmod, Int64, lo Int64, int (-1));
+      (Mod, Int64, lo Int64, int (-1));
+      (Cmplt, Uint64, lo Uint64, hi Uint64);
+      (Cmplt, Uint64, hi Uint64, lo Uint64);
+      (Cmplt, Uint32, hi Uint32, int 1);
+      (Max, Uint64, hi Uint64, int 1);
+    ]
+
+let exec_alu =
+  group "operations as Ops.exec_alu computes them"
+    [
+      prop ~count:2000 ~examples:extremes
+        "an operation of two operands of one type is Ops.exec_alu's, a NaN's \
+         bits included"
+        operation (fun (op, dt, a, b) ->
+          let u, eval =
+            match outcome (fun () -> operands op dt a b) with
+            | Ok u -> u
+            | Error () -> reject ()
+          in
+          let is_nan = function `Float x -> Float.is_nan x | _ -> false in
+          cover "an integer type" (Dtype.is_int dt);
+          cover "a float type" (Dtype.is_float dt);
+          cover "a weak type" (Dtype.mem dt Dtype.weaks);
+          cover "a NaN operand" (is_nan a || is_nan b);
+          cover "a division by 0"
+            (List.mem op Op.[ Div; Mod; Truncdiv; Truncmod ]
+            && Dtype.Value.( = ) b (int 0));
+          equal (result bits refused)
+            (outcome (fun () ->
+                 Ops.exec_alu op (Ops.dtype u)
+                   [ (a :> Dtype.const); (b :> Dtype.const) ]))
+            (outcome (fun () -> eval u)));
+      prop ~count:500
+        "a selection of a number and a weak literal is Ops.exec_alu's of the \
+         literal as the number's type commits it"
+        Gen.(
+          let* dt =
+            of_list (List.filter (fun dt -> dt <> Dtype.Bool) stored_dtypes)
+          in
+          let+ c = bool and+ a = operand dt and+ n = int_range (-300) 300 in
+          (dt, c, a, n))
+        (fun (dt, c, a, n) ->
+          let literal, v =
+            if Dtype.is_float dt then
+              (Ops.float (Float.of_int n /. 4.), `Float (Float.of_int n /. 4.))
+            else (Ops.int n, int n)
+          in
+          let u =
+            match
+              outcome (fun () ->
+                  Ops.where (x ~slot:1 Dtype.Bool) (x dt) literal)
+            with
+            | Ok u -> u
+            | Error () -> reject ()
+          in
+          let v =
+            if Dtype.is_int dt then (Dtype.truncate dt v :> Dtype.value) else v
+          in
+          equal (result bits refused)
+            (outcome (fun () ->
+                 Ops.exec_alu Where (Ops.dtype u)
+                   [ `Bool c; (a :> Dtype.const); (v :> Dtype.const) ]))
+            (outcome (fun () ->
+                 Interpreter.eval ~params:[ (0, a); (1, `Bool c) ] u)));
+    ]
+
 let selections =
   let c = x Dtype.Bool in
   group "selections"
@@ -393,6 +547,19 @@ let invalid =
             (at 7 (Ops.where Ops.O.(i < int 9) (Ops.int 1) Ops.invalid)));
     ]
 
+(* A float reduction of four terms of [dt] over one range. *)
+let float_reduction =
+  let open Gen in
+  with_pp
+    (fun ppf (op, dt, terms) ->
+      Format.fprintf ppf "%a at %a of %a" Op.pp op (Testable.pp dtype) dt
+        (Format.pp_print_list ~pp_sep:Format.pp_print_space (Testable.pp value))
+        terms)
+    (let* op = of_list Op.[ Add; Mul; Max ] in
+     let* dt = of_list (List.filter Dtype.is_float stored_dtypes) in
+     let+ terms = list ~size:(constant 4) (operand dt) in
+     (op, dt, terms))
+
 let reductions =
   let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
   and s = Ops.range ~axis_type:Weak (Int 3) [ 1 ]
@@ -416,6 +583,17 @@ let reductions =
           let empty = Ops.range ~axis_type:Weak (Int 0) [ 3 ] in
           equal const (int expected)
             (Interpreter.eval (over [ empty ] op (int32 empty))));
+      prop ~count:500
+        "a float reduction folds Ops.exec_alu's operation from its identity"
+        float_reduction (fun (op, dt, terms) ->
+          let t = Ops.range ~axis_type:Weak (Int 4) [ 7 ] in
+          let table = Shape.param ~shape:[ Int 4 ] 0 dt in
+          let fold acc v = Ops.exec_alu op dt [ acc; (v :> Dtype.const) ] in
+          equal bits
+            (List.fold_left fold (Ops.identity_element op dt) terms)
+            (Interpreter.eval
+               ~buffers:[ (0, Array.of_list terms) ]
+               (over [ t ] op (Ops.index table [ t ]))));
       test "a reduction over two ranges runs over every pair" (fun () ->
           equal const (int 66)
             (Interpreter.eval
@@ -1038,7 +1216,14 @@ let () =
          group "name" [ name ];
          group "eval"
            [
-             leaves; operations; casts; selections; invalid; reductions; storage;
+             leaves;
+             operations;
+             exec_alu;
+             casts;
+             selections;
+             invalid;
+             reductions;
+             storage;
            ];
          overflows;
          writes;

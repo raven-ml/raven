@@ -8,7 +8,19 @@ let name u =
   | _ -> None
 
 let is_invalid = function `Invalid -> true | #Dtype.value -> false
+
+(* [Array.exists is_invalid], without the closure it allocates at each call. *)
+let has_invalid (a : Dtype.const array) =
+  let n = Array.length a and j = ref 0 in
+  while !j < n && not (is_invalid (Array.unsafe_get a !j)) do
+    incr j
+  done;
+  !j < n
+
 let zero dt = Dtype.const dt (`Int Bigint.zero)
+
+(* The offset of storage read from its first element. *)
+let start : Dtype.const = `Int Bigint.zero
 let weak u = List.mem (Ops.dtype u) Dtype.weaks
 
 (* [dt] is one of {!Dtype.ints}, tested without the generic equality of
@@ -31,7 +43,7 @@ let held ~check dt (v : Dtype.value) : Dtype.const =
   (* An integer type wraps: [check] sees the exact integer, which one conversion
      gives for both. *)
   | _ when committed_int dt ->
-      let exact = `Int (Dtype.Value.to_z v) in
+      let exact = match v with `Int _ -> v | _ -> `Int (Dtype.Value.to_z v) in
       check dt exact;
       (Dtype.truncate dt exact :> Dtype.const)
   | _ -> (
@@ -40,6 +52,82 @@ let held ~check dt (v : Dtype.value) : Dtype.const =
           check dt e;
           (Dtype.truncate dt e :> Dtype.const)
       | `Invalid -> `Invalid)
+
+(* Arithmetic *)
+
+exception Generic
+
+(* [arith op a b] is [Ops.exec_alu ~truncate_output:false op dt [a; b]] for the
+   operations that index arithmetic, gates and sums are made of, on two
+   integers, two booleans or two floats, computed without exec_alu's dispatch,
+   lists and closures, which each step would pay. A division by 0 is 0 and its
+   remainder the dividend. A NaN result is left to exec_alu, which chooses its
+   bits. Raises [Generic] for any other operation or operands. *)
+let arith op (a : Dtype.const) (b : Dtype.const) : Dtype.value =
+  match (op, a, b) with
+  | Op.Add, `Int a, `Int b -> `Int (Bigint.add a b)
+  | Sub, `Int a, `Int b -> `Int (Bigint.sub a b)
+  | Mul, `Int a, `Int b -> `Int (Bigint.mul a b)
+  | Max, `Int a, `Int b -> `Int (if Bigint.gt b a then b else a)
+  | Cmplt, `Int a, `Int b -> `Bool (Bigint.lt a b)
+  | Cmpne, `Int a, `Int b -> `Bool (not (Bigint.equal a b))
+  | Cmpeq, `Int a, `Int b -> `Bool (Bigint.equal a b)
+  | And, `Int a, `Int b -> `Int (Bigint.logand a b)
+  | Or, `Int a, `Int b -> `Int (Bigint.logor a b)
+  | Xor, `Int a, `Int b -> `Int (Bigint.logxor a b)
+  | (Div | Truncdiv), `Int _, `Int b when Bigint.equal b Bigint.zero ->
+      `Int Bigint.zero
+  | (Mod | Truncmod), `Int a, `Int b when Bigint.equal b Bigint.zero -> `Int a
+  | Div, `Int a, `Int b -> `Int (Bigint.fdiv a b)
+  | Mod, `Int a, `Int b -> `Int Bigint.(sub a (mul (fdiv a b) b))
+  (* The quotient of the magnitudes, with the sign of the exact quotient. *)
+  | (Truncdiv | Truncmod), `Int a, `Int b -> (
+      let q = Bigint.(fdiv (abs a) (abs b)) in
+      let q = if Bigint.sign a * Bigint.sign b < 0 then Bigint.neg q else q in
+      match op with Truncdiv -> `Int q | _ -> `Int Bigint.(sub a (mul q b)))
+  | And, `Bool a, `Bool b -> `Bool (a && b)
+  | Or, `Bool a, `Bool b -> `Bool (a || b)
+  | (Xor | Cmpne), `Bool a, `Bool b -> `Bool (a <> b)
+  | Cmpeq, `Bool a, `Bool b -> `Bool (a = b)
+  | Cmplt, `Float x, `Float y -> `Bool (x < y)
+  | Cmpne, `Float x, `Float y -> `Bool (not (x = y))
+  | Cmpeq, `Float x, `Float y -> `Bool (x = y)
+  | (Add | Sub | Mul | Max), `Float x, `Float y ->
+      let r =
+        match op with
+        | Add -> x +. y
+        | Sub -> x -. y
+        | Mul -> x *. y
+        | _ -> if y > x then y else x
+      in
+      if Float.is_nan r then raise_notrace Generic else `Float r
+  | _ -> raise_notrace Generic
+
+(* How an operation's value takes its type, as {!Tolk.Ops.exec_alu} gives it: an
+   integer of a committed integer type wraps ([held]), a weak type or void keeps
+   any value, and any other type rounds it ({!Dtype.truncate}). *)
+type rounding = Wraps | Keeps | Rounds
+
+let rounding dt =
+  if committed_int dt then Wraps
+  else if Dtype.equal dt Dtype.Void || Dtype.mem dt Dtype.weaks then Keeps
+  else Rounds
+
+(* [rounded ~check rounding dt v] is [v], a value [arith] gives, as [dt] takes
+   it. *)
+let rounded ~check rounding dt (v : Dtype.value) : Dtype.const =
+  match (rounding, v) with
+  | Wraps, `Int _ -> held ~check dt v
+  | Keeps, _ -> (v :> Dtype.const)
+  | _ -> (Dtype.truncate dt v :> Dtype.const)
+
+(* [selected ~check rounding dt v] is the branch [v] that a selection picks, as
+   {!Tolk.Ops.exec_alu} gives it at [dt]: a NaN whole. *)
+let selected ~check rounding dt (v : Dtype.const) : Dtype.const =
+  match v with
+  | `Invalid -> `Invalid
+  | `Float x when Float.is_nan x && Dtype.is_float dt -> Dtype.const dt v
+  | #Dtype.value as v -> rounded ~check rounding dt v
 
 (* A vector load reads a view of its storage. *)
 let vector_load u =
@@ -114,9 +202,14 @@ type program = {
   mutable params : (int * Dtype.value) list;
   mutable buffers : (int * Dtype.value array) list;
   mutable nodes : Ops.t array;
+  mutable ops : Op.t array;
+  mutable dtypes : Dtype.t array;
+  mutable roundings : rounding array;
   mutable srcs : int array array;
   mutable leaves : int array;
   mutable commits : Dtype.t option array array;
+  mutable args : Dtype.const array array;
+  mutable storage : int option array;
   mutable stacks : bool array;
   mutable selects : bool array;
   mutable deps : int array array;
@@ -137,9 +230,14 @@ let grown a n x =
 let grow p =
   let n = 2 * Array.length p.nodes in
   p.nodes <- grown p.nodes n p.nodes.(0);
+  p.ops <- grown p.ops n Op.Noop;
+  p.dtypes <- grown p.dtypes n Dtype.Void;
+  p.roundings <- grown p.roundings n Keeps;
   p.srcs <- grown p.srcs n [||];
   p.leaves <- grown p.leaves n (-1);
   p.commits <- grown p.commits n [||];
+  p.args <- grown p.args n [||];
+  p.storage <- grown p.storage n None;
   p.stacks <- grown p.stacks n false;
   p.selects <- grown p.selects n false;
   p.deps <- grown p.deps n [||];
@@ -213,6 +311,13 @@ let deps p u i srcs =
   in
   Array.of_list (List.sort_uniq Int.compare read)
 
+(* The slot of [u] if it is storage. The kernel has no order, so storage read
+   after other nodes is that storage. *)
+let storage_slot u =
+  match Ops.arg (Ops.without_after u) with
+  | Param { slot; _ } when Shape.max_shape u <> [] -> Some slot
+  | _ -> None
+
 let rec add p u =
   match Ops.Tbl.find_opt p.ids u with
   | Some i -> i
@@ -221,9 +326,14 @@ let rec add p u =
       let i = p.count in
       if i = Array.length p.nodes then grow p;
       p.nodes.(i) <- u;
+      p.ops.(i) <- Ops.op u;
+      p.dtypes.(i) <- Ops.dtype u;
+      p.roundings.(i) <- rounding (Ops.dtype u);
       p.srcs.(i) <- srcs;
       p.leaves.(i) <- leaf_slot p u;
       p.commits.(i) <- commits u;
+      p.args.(i) <- Array.make (Array.length srcs) `Invalid;
+      p.storage.(i) <- storage_slot u;
       p.stacks.(i) <-
         (match Ops.op u with
         | Stack -> true
@@ -255,9 +365,14 @@ let make u =
       params = [];
       buffers = [];
       nodes = Array.make n u;
+      ops = Array.make n Op.Noop;
+      dtypes = Array.make n Dtype.Void;
+      roundings = Array.make n Keeps;
       srcs = Array.make n [||];
       leaves = Array.make n (-1);
       commits = Array.make n [||];
+      args = Array.make n [||];
+      storage = Array.make n None;
       stacks = Array.make n false;
       selects = Array.make n false;
       deps = Array.make n [||];
@@ -323,59 +438,79 @@ let leaf p i =
         (Printf.sprintf "%s has no value"
            (Option.value (name u) ~default:"a leaf"))
 
-(* [node ~check p i operands] computes the node [i] from the values of its
+(* [alu ~check op dt operands] is {!Tolk.Ops.exec_alu}'s [op] of [operands] at
+   [dt], a committed integer [held]. *)
+let alu ~check op dt operands =
+  let operands = Array.to_list operands in
+  if not (committed_int dt) then Ops.exec_alu op dt operands
+  else
+    match Ops.exec_alu ~truncate_output:false op dt operands with
+    | `Int _ as v -> held ~check dt v
+    | _ -> Ops.exec_alu op dt operands
+
+(* [general ~check p i operands] computes the node [i] from the values of its
    sources as compiled code reads them, [check] seeing each value that an
    operation, a cast or a commitment gives a type before it is wrapped to it. *)
-let node ~check p i operands =
-  let u = p.nodes.(i) in
-  match (Ops.op u, Ops.arg u, operands) with
-  | Const, Const c, [] -> c
+let general ~check p i (operands : Dtype.const array) =
+  let u = p.nodes.(i) and dt = p.dtypes.(i) in
+  match (p.ops.(i), Ops.arg u, operands) with
+  | Const, Const c, [||] -> c
   | (Param | Range | Special), _, _ when p.leaves.(i) >= 0 ->
       (leaf p i :> Dtype.const)
   | Param, Param { slot; _ }, _ when Shape.max_shape u = [] -> (
       match List.assoc_opt slot p.params with
       | Some v -> (v :> Dtype.const)
       | None -> invalid_arg (Printf.sprintf "parameter %d has no value" slot))
-  | Load, _, v :: _ -> v
-  | Where, _, `Invalid :: _ -> `Invalid
-  | Where, _, [ `Bool c; x; y ] when p.selects.(i) -> if c then x else y
-  | op, _, src when op <> Op.Where && List.exists is_invalid src -> `Invalid
-  | Cast, _, [ v ] when Dtype.equal (Ops.dtype (Ops.nth u 0)) (Ops.dtype u) -> v
-  | Cast, _, [ (#Dtype.value as v) ] -> held ~check (Ops.dtype u) v
-  | Bitcast, _, [ (#Dtype.value as v) ] ->
-      (Dtype.bitcast (Ops.dtype (Ops.nth u 0)) (Ops.dtype u) v :> Dtype.const)
+  | Load, _, src when Array.length src > 0 -> src.(0)
+  | Where, _, [| `Invalid; _; _ |] -> `Invalid
+  | Where, _, [| `Bool c; x; y |] when p.selects.(i) -> if c then x else y
+  | Where, _, [| `Bool c; x; y |] ->
+      selected ~check p.roundings.(i) dt (if c then x else y)
+  | op, _, src when op <> Op.Where && has_invalid src -> `Invalid
+  | Cast, _, [| v |] when Dtype.equal p.dtypes.(p.srcs.(i).(0)) dt -> v
+  | Cast, _, [| #Dtype.value as v |] -> held ~check dt v
+  | Bitcast, _, [| #Dtype.value as v |] ->
+      (Dtype.bitcast p.dtypes.(p.srcs.(i).(0)) dt v :> Dtype.const)
   (* A count at or past a committed type's width leaves no bit to overflow. *)
-  | ((Shl | Shr) as op), _, ([ _; `Int n ] as src)
-    when committed_int (Ops.dtype u)
-         && Bigint.geq n (Bigint.of_int (Dtype.bitsize (Ops.dtype u))) ->
-      Ops.exec_alu op (Ops.dtype u) src
+  | ((Shl | Shr) as op), _, [| _; `Int n |]
+    when committed_int dt && Bigint.geq n (Bigint.of_int (Dtype.bitsize dt)) ->
+      Ops.exec_alu op dt (Array.to_list operands)
   (* A power at a committed type past a width's worth of products is computed
      in the type's bits. Its exact value, which may not fit in memory, is past
      the type for any base but 0, 1 and -1. *)
-  | Pow, _, ([ (`Int _ | `Bool _) as b; `Int n ] as src)
-    when committed_int (Ops.dtype u)
-         && Bigint.geq n (Bigint.of_int (Dtype.bitsize (Ops.dtype u))) ->
-      let dt = Ops.dtype u in
+  | Pow, _, [| (`Int _ | `Bool _) as b; `Int n |]
+    when committed_int dt && Bigint.geq n (Bigint.of_int (Dtype.bitsize dt)) ->
       if Bigint.gt (Bigint.abs (Dtype.Value.to_z (b :> Dtype.value))) Bigint.one
       then check dt (`Int (Bigint.shift_left Bigint.one (Dtype.bitsize dt)));
-      Ops.exec_alu Pow dt src
+      Ops.exec_alu Pow dt (Array.to_list operands)
   (* An operation's value is exec_alu's, which keeps a negation's or a
      selection's NaN whole. At a committed integer type [check] first sees the
      exact value, which one computation gives before it wraps. *)
-  | op, _, src when Op.Set.mem op Op.Set.alu -> (
-      let dt = Ops.dtype u in
-      if not (committed_int dt) then Ops.exec_alu op dt src
-      else
-        match Ops.exec_alu ~truncate_output:false op dt src with
-        | `Int _ as v -> held ~check dt v
-        | _ -> Ops.exec_alu op dt src)
+  | op, _, src when Op.Set.mem op Op.Set.alu -> alu ~check op dt src
   | op, _, _ -> invalid_arg (Format.asprintf "cannot evaluate %a" Op.pp op)
 
-(* The kernel has no order, so storage read after other nodes is that storage. *)
-let storage_slot u =
-  match Ops.arg (Ops.without_after u) with
-  | Param { slot; _ } when Shape.max_shape u <> [] -> slot
-  | _ -> invalid_arg "cannot access a node that is not storage"
+(* [node ~check p i operands] is [general ~check p i operands], an operation of
+   two operands first tried as [arith], which most steps compute. *)
+let node ~check p i (operands : Dtype.const array) =
+  match operands with
+  | [| a; b |] -> (
+      match arith p.ops.(i) a b with
+      | v -> rounded ~check p.roundings.(i) p.dtypes.(i) v
+      | exception Generic -> general ~check p i operands)
+  | _ -> general ~check p i operands
+
+(* [elements buffers slot] is the storage [buffers] gives [slot]. *)
+let rec elements buffers slot =
+  match buffers with
+  | (s, elements) :: _ when Int.equal s slot -> elements
+  | _ :: buffers -> elements buffers slot
+  | [] -> invalid_arg (Printf.sprintf "buffer %d has no elements" slot)
+
+(* [slot_of p i] is the slot of node [i], storage. *)
+let slot_of p i =
+  match p.storage.(i) with
+  | Some slot -> slot
+  | None -> invalid_arg "cannot access a node that is not storage"
 
 (* [bind p slot v] binds [slot] to [v], at a time of its own. *)
 let bind p slot v =
@@ -385,13 +520,15 @@ let bind p slot v =
 
 (* [fresh p i] is [true] iff the value kept for node [i] was computed in this
    evaluation and none of the slots it reads has been bound since. *)
-let fresh p i =
+let[@inline] fresh p i =
   let stamp = p.stamps.(i) in
   stamp >= p.epoch
   &&
-  let deps = p.deps.(i) in
+  let deps = p.deps.(i) and bound_at = p.bound_at in
   let n = Array.length deps and j = ref 0 in
-  while !j < n && p.bound_at.(Array.unsafe_get deps !j) <= stamp do
+  while
+    !j < n && Array.unsafe_get bound_at (Array.unsafe_get deps !j) <= stamp
+  do
     incr j
   done;
   !j = n
@@ -412,7 +549,7 @@ let rec over :
   match ranges with
   | [] -> f acc
   | r :: rs -> (
-      if Ops.op p.nodes.(r) <> Op.Range then
+      if p.ops.(r) <> Op.Range then
         invalid_arg "cannot evaluate a loop over a node that is not a range";
       match value ~check p p.srcs.(r).(0) with
       | `Int n ->
@@ -433,32 +570,35 @@ and value ~check p i =
   if fresh p i then p.values.(i)
   else
     let v =
-      match Ops.op p.nodes.(i) with
+      match p.ops.(i) with
       | Reduce -> reduction ~check p i
       | Index -> read ~check p i
       | Load when Array.length p.srcs.(i) = 3 -> gated_load ~check p i
       (* A define's source is its size, not a value. *)
-      | Param | Buffer | Alloc -> node ~check p i []
+      | Param | Buffer | Alloc -> node ~check p i [||]
       (* An after is the value of its first source; the others only order it. *)
       | After -> value ~check p p.srcs.(i).(0)
-      | _ -> node ~check p i (operands ~check p i 0)
+      | _ -> node ~check p i (operands ~check p i)
     in
     p.values.(i) <- v;
     p.stamps.(i) <- p.clock;
     v
 
-(* [operands ~check p i j] is the values of the sources of [i] from the [j]th,
-   each committed to the type [commits] gives it. *)
-and operands ~check p i j =
-  let src = p.srcs.(i) in
-  if j = Array.length src then []
-  else
+(* [operands ~check p i] is the values of the sources of [i], each committed to
+   the type [commits] gives it, in the array kept for them: [i] is no source of
+   itself, so its evaluation is over before it is filled again. *)
+and operands ~check p i =
+  let src = p.srcs.(i) and commits = p.commits.(i) and args = p.args.(i) in
+  for j = 0 to Array.length src - 1 do
     let v =
-      match (p.commits.(i).(j), value ~check p src.(j)) with
+      match (commits.(j), value ~check p src.(j)) with
       | Some dt, (`Int _ as v) -> held ~check dt v
       | _, v -> v
     in
-    v :: operands ~check p i (j + 1)
+    (* A source kept from the last evaluation is not stored again. *)
+    if v != args.(j) then args.(j) <- v
+  done;
+  args
 
 (* The index of a gated load is read only where its gate holds. *)
 and gated_load ~check p i =
@@ -487,9 +627,12 @@ and reduction ~check p i =
   let combine (acc : Dtype.const) =
     match (acc, value ~check p body) with
     | (#Dtype.value as acc), (#Dtype.value as v) -> (
-        match Ops.exec_alu ~truncate_output:false op dt [ acc; v ] with
-        | #Dtype.value as v -> held ~check dt v
-        | `Invalid -> `Invalid)
+        match arith op acc v with
+        | v -> held ~check dt v
+        | exception Generic -> (
+            match Ops.exec_alu ~truncate_output:false op dt [ acc; v ] with
+            | #Dtype.value as v -> held ~check dt v
+            | `Invalid -> `Invalid))
     | _ -> `Invalid
   in
   over ~check p ranges combine (Ops.identity_element op dt)
@@ -529,17 +672,13 @@ and element ~check p i storage ix =
             (storage, value ~check p offset, Some p.nodes.(length))
         | _ -> invalid_arg "a vector load has a storage, an offset and a length"
         )
-    | _ -> (storage, `Int Bigint.zero, None)
+    | _ -> (storage, start, None)
   in
-  let slot = storage_slot p.nodes.(storage) in
-  let elements =
-    match List.assoc_opt slot p.buffers with
-    | Some elements -> elements
-    | None -> invalid_arg (Printf.sprintf "buffer %d has no elements" slot)
-  in
+  let slot = slot_of p storage in
+  let elements = elements p.buffers slot in
   (* Compiled code gates a read at an invalid index, which then reads zero. *)
   match (offset, value ~check p ix) with
-  | `Invalid, _ | _, `Invalid -> zero (Ops.dtype p.nodes.(i))
+  | `Invalid, _ | _, `Invalid -> zero p.dtypes.(i)
   | `Int o, `Int k -> (
       (match length with
       | Some n when not Bigint.(geq k zero && lt k (Shape.to_z n)) ->
@@ -611,13 +750,13 @@ let writes ?(vars = []) ?(params = []) ?(buffers = []) u =
     let slot, index, lanes =
       match (Ops.op dst, Ops.src dst) with
       | Index, [ storage; index ] ->
-          (storage_slot storage, id index, [ id value_node ])
+          (slot_of p (id storage), id index, [ id value_node ])
       | Shrink, [ storage; offset; length ]
         when of_stacks p.vectors value_node
              && Bigint.equal (Shape.to_z length)
                   (Bigint.of_int (Shape.max_numel value_node)) ->
           let n = Bigint.to_int (Shape.to_z length) in
-          ( storage_slot storage,
+          ( slot_of p (id storage),
             id offset,
             List.init n (fun k -> lane_of p (id value_node) k) )
       | Shrink, _ ->
