@@ -70,6 +70,40 @@ let interpreter =
           | `Float y ->
               is_true ~msg:"a negative NaN" (Float.is_nan y && Float.sign_bit y)
           | v -> failf "%a is not a float" (Testable.pp const) v);
+      (* IEEE 754's fusedMultiplyAdd rounds the exact a * b + c once: 1.0625^2 =
+         1 + 2^-3 + 2^-8 is the tie between two bfloat16s, and 2^-100 puts the
+         sum above it. Rounded to a double first, 2^-100 is lost, and the tie
+         goes to the even 1.125. The float32 row is the same with 1 + 2^-12. *)
+      cases "a multiply-add of floats rounds once to its type"
+        ~id:(fun (dt, _, _) -> Testable.to_string dtype dt)
+        [
+          (Dtype.Bfloat16, 1.0625, 1.1328125);
+          (Float32, 1. +. ldexp 1. (-12), 1. +. ldexp 1. (-11) +. ldexp 1. (-23));
+        ]
+        (fun (dt, a, expected) ->
+          let u = Ops.alu (x dt) Mulacc [ x ~slot:1 dt; x ~slot:2 dt ] in
+          let params =
+            [ (0, `Float a); (1, `Float a); (2, `Float (ldexp 1. (-100))) ]
+          in
+          equal const (`Float expected) (Interpreter.eval ~params u));
+      cases "a negation or a selection keeps the bits of a NaN, as Ops.exec_alu"
+        ~id:(fun (name, _, _) -> name)
+        [
+          ( "a negation of a signalling NaN",
+            (fun f -> Ops.v ~src:[ f ] Neg),
+            (0x7f800001, 0xff800001) );
+          ( "a negation of a quiet NaN",
+            (fun f -> Ops.v ~src:[ f ] Neg),
+            (0x7fc12345, 0xffc12345) );
+          ( "a selection of a signalling NaN and a weak literal",
+            (fun f -> Ops.where (x ~slot:1 Dtype.Bool) f (Ops.float 1.)),
+            (0x7f800001, 0x7f800001) );
+        ]
+        (fun (_, op, (input, expected)) ->
+          let f = Ops.bitcast (x Dtype.Uint32) Dtype.Float32 in
+          let params = [ (0, int input); (1, `Bool true) ] in
+          equal const (int expected)
+            (eval ~params (Ops.bitcast (op f) Dtype.Uint32)));
       test "a node that is not arithmetic is refused" (fun () ->
           rejects (fun () -> eval (Ops.sink [ Ops.int ~dtype:Dtype.Int32 1 ])));
     ]
@@ -110,8 +144,8 @@ let cast_of from to_ (v : Dtype.value) : Dtype.const =
         | `Invalid -> `Invalid)
 
 (* [overflows_of from to_ v] is [true] iff the cast of [v] from [from] to the
-   integer type [to_] gives it an exact value outside it: an infinity or a NaN
-   has none, and takes a value of [to_]. *)
+   integer type [to_] gives it an exact value outside it, or [v] is an infinity
+   or a NaN, which has none. *)
 let overflows_of from to_ (v : Dtype.value) =
   (not (Dtype.equal from to_))
   && Dtype.is_int to_

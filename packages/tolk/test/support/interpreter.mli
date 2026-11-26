@@ -58,13 +58,16 @@ val eval :
     whatever [vars] binds them to. A weak integer operand of an operation on a
     committed integer type takes that type and wraps, as compiled code commits
     it; the count of a {!Tolk.Op.Shl} or {!Tolk.Op.Shr} and the exponent of a
-    {!Tolk.Op.Pow} are numbers and read at no width. A cast converts as {!Dtype.const} then wraps to the target type
-    ({!Dtype.truncate}), and a cast to its operand's own type is the operand; a
-    bit reinterpretation is {!Dtype.bitcast}. A selection of committed operands
-    is the operand it selects, bits included. A NaN that an operation or a cast
-    gives a float type keeps its sign, and its payload as far as
-    {!Dtype.truncate} keeps it, as compiled code keeps them. Both branches of a
-    selection are evaluated.
+    {!Tolk.Op.Pow} are numbers and read at no width. A cast converts as
+    {!Dtype.const} then wraps to the target type ({!Dtype.truncate}), and a cast
+    to its operand's own type is the operand; a bit reinterpretation is
+    {!Dtype.bitcast}. A selection of committed operands is the operand it
+    selects, bits included. A NaN that a cast gives a float type keeps its sign,
+    and its payload as far as {!Dtype.truncate} keeps it, as compiled code
+    converts it. An operation's value, a NaN included, is the one
+    {!Tolk.Ops.exec_alu} gives. A multiply-add ({!Tolk.Op.Mulacc}) of floats
+    rounds once to its type, and a negation or a selection keeps a NaN's bits, a
+    signalling NaN's included. Both branches of a selection are evaluated.
 
     Raises [Invalid_argument] if [u] reads an unbound variable, a range or a
     hardware index that [vars] does not bind, a parameter that [params] does not

@@ -358,11 +358,16 @@ let node ~check p i operands =
       if Bigint.gt (Bigint.abs (Dtype.Value.to_z (b :> Dtype.value))) Bigint.one
       then check dt (`Int (Bigint.shift_left Bigint.one (Dtype.bitsize dt)));
       Ops.exec_alu Pow dt src
+  (* An operation's value is exec_alu's, which keeps a negation's or a
+     selection's NaN whole. At a committed integer type [check] first sees the
+     exact value, which one computation gives before it wraps. *)
   | op, _, src when Op.Set.mem op Op.Set.alu -> (
       let dt = Ops.dtype u in
-      match Ops.exec_alu ~truncate_output:false op dt src with
-      | #Dtype.value as v -> held ~check dt v
-      | `Invalid -> `Invalid)
+      if not (committed_int dt) then Ops.exec_alu op dt src
+      else
+        match Ops.exec_alu ~truncate_output:false op dt src with
+        | `Int _ as v -> held ~check dt v
+        | _ -> Ops.exec_alu op dt src)
   | op, _, _ -> invalid_arg (Format.asprintf "cannot evaluate %a" Op.pp op)
 
 (* The kernel has no order, so storage read after other nodes is that storage. *)
