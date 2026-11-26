@@ -148,8 +148,10 @@ val sym_infer : Ops.sint -> (string * int) list -> int
     bound to its value. Integer arithmetic is exact, divisions round as their
     operations say, and casts convert without truncating.
 
-    Raises [Invalid_argument] if [s] reads a variable [vars] lacks, or if its
-    value does not fit an [int] ({!sym_compile_z} computes one of any size). *)
+    Raises [Invalid_argument] if [s] reads a variable [vars] lacks, if it
+    bitcasts to a boolean a byte neither [0] nor [1], whose bits no boolean
+    value holds, or if its value does not fit an [int] ({!sym_compile_z}
+    computes one of any size). *)
 
 val sym_compile : Ops.sint -> (Ops.t -> 'env -> int) -> 'env -> int
 (** [sym_compile s var] is the function computing [s] in an environment, each
@@ -683,52 +685,57 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
     their sources alone:
 
     - {b invalid values}: an operation on a gated value moves inside the gate;
-      an operation on {!Ops.invalid} is invalid; a gate on a reduction's operand
-      that does not depend on its ranges moves out of the reduction, and one
-      that does selects the reduction's identity where it fails; a store to
-      an invalid index does nothing, and a load from one is its alternative
-      value, or [0];
+      an operation on {!Ops.invalid} is invalid, but a comparison of it with a
+      node that is not constant, which is left as it is; a gate moves out of a
+      selection's condition and branches, and invalid in the true branch moves
+      to the false one under the negated condition, so that the gate is
+      outermost; a gate on a reduction's operand that does not depend on its
+      ranges moves out of the reduction, and one that does selects the
+      reduction's identity where it fails; a store to an invalid index does
+      nothing, and a load from one is its alternative value, or [0];
     - {b identities}: [x + 0], [x lxor 0], [x lor 0], [x lsl 0], [x lsr 0],
       [x * 1] and [x // 1] are [x], a float [x + 0] only for [-0.]; [x // -1] is
-      [-x] for a signed or weak [x]; [x // x] is [1] where [x]'s bounds hold
-      no [0]; [(x lxor y) lxor y] is [x] for a weak [y]; [(x % y) % y] is
-      [x % y]; a boolean [x land c] and
-      [x lor c] with [c] constant are [x] or [c]; [x = true], a double negation, [where x true false] and an
+      [-x] for a signed or weak [x]; [x // x] is [1] where [x]'s bounds hold no
+      [0]; [(x lxor y) lxor y] is [x] for a weak [y]; [(x % y) % y] is [x % y];
+      a boolean [x land c] and [x lor c] with [c] constant are [x] or [c];
+      [x = true], [x <> false], a double negation, [where x true false] and an
       idempotent operation of [x] with itself are [x]; [where x false true] is
       the negation of [x]; a boolean cast to an integer and equal to [0] or [1]
       is the boolean's negation or the boolean, and to any other integer
-      [false]; the truncation of an integer is itself;
+      [false], and unequal the negation of that; the truncation of an integer or
+      a boolean is itself;
     - {b recombination}: in a weak integer sum, [(b % d) * m] and a term
       [q * (d * m)], where [q] is [b' // d] for some [b'] congruent to [b]
       modulo [d] up to constants, recombine into [b' * m]; where [q] is
       [(b' // d) % k] with [k] positive, into [(b' % (d * k)) * m];
-    - {b zeros}: [x < x] is [false], [x = x] is [true] for integers and
-      booleans, [x % x], [x lxor x] and [x land 0] are [0], and so is [x * 0]
-      for integers and booleans; a mask that clears only bits that a right shift
-      drops is removed;
+    - {b zeros}: [x < x] is [false], [x = x] is [true] and [x <> x] [false] for
+      integers and booleans, [x % x], [x lxor x] and [x land 0] are [0], and so
+      is [x * 0] for integers and booleans; a mask that clears only bits that a
+      right shift drops is removed;
     - {b constants}: an arithmetic operation on constants is its value
-      ({!Ops.exec_alu}), except {!Op.Threefry}; weak constants keep their
-      mathematical value, a committed integer holds its type's value (a weak
-      operand of an operation on one is read, and the result written, at its
-      width, but a shift's count and a power's exponent, numbers, are read as
-      they are), and an operation mixing weak and committed constants commits
-      the weak ones to the promoted type; a cast of a constant is the constant of
-      the cast's type; [0 / 0] is NaN;
+      ({!Ops.exec_alu}), except {!Op.Threefry}, and stays where it has none: a
+      shift by a negative count, and a cast of an infinity or a NaN to an
+      integer; weak constants keep their mathematical value, a committed integer
+      holds its type's value (a weak operand of an operation on one is read, and
+      the result written, at its width, but a shift's count and a power's
+      exponent, numbers, are read as they are), and an operation mixing weak and
+      committed constants commits the weak ones to the promoted type; a cast of
+      a constant is the constant of the cast's type; [0 / 0] is NaN;
     - {b booleans}: a boolean [*] is [land], and a boolean [+] or maximum is
       [lor];
     - {b casts}: a cast or bitcast to its operand's type is its operand; a
-      bitcast of a constant is the constant with the same bits, but to a boolean
-      from a byte neither [0] nor [1], which no boolean constant holds; a cast
-      through a type that holds every value of the result's type, back to that
-      type, is its operand; two bitcasts are one; a cast to a boolean is
-      [x <> 0];
-    - {b powers}: [x ** c], for a constant [c] that is an integer or a half
-      integer, [0] or at least [1] in magnitude, is a product of powers of [x],
-      its reciprocal and its square root, a float half-integer power being [+0.]
-      at [-0.] and [+inf] at [-inf]; [c ** x] is [1] of the power's type if
-      [c = 1], and [exp2 (x * log2 c)] for positive finite [c], [log2 c]
-      correctly rounded ({!Ops.exec_alu}); a 64-bit integer packed from two
-      32-bit halves and unpacked again is the half read;
+      bitcast of a constant to a type of its width is the constant with the same
+      bits, but to a boolean from a byte neither [0] nor [1], which no boolean
+      constant holds; a cast through a type that holds every value of the
+      result's type, back to that type, is its operand; two bitcasts are one; a
+      cast to a boolean is [x <> 0];
+    - {b powers}: [x ** c], for a float [x] and a constant [c] that is an
+      integer or a half integer, [0] or at least [1] in magnitude, is a product
+      of powers of [x], its reciprocal and its square root, a float half-integer
+      power being [+0.] at [-0.] and [+inf] at [-inf]; [c ** x] is [1] of the
+      power's type if [c = 1], and [exp2 (x * log2 c)] for positive finite [c]
+      and a float [x], [log2 c] correctly rounded ({!Ops.exec_alu}); a 64-bit
+      integer packed from two 32-bit halves and unpacked again is the half read;
     - {b selections}: a selection between equal values is that value, and a
       selection by a constant is the branch it picks, keeping the selection's
       type;
@@ -752,19 +759,17 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
     - {b selections}: a selection by a negation swaps its branches; within
       [where c t f], [c] is [true] in [t] and [false] in [f], unless [c] is a
       constant through movements, which is one node for every use of that
-      constant, [c], [t] or [f] reaches an {!Op.Index} or an {!Op.Load}, or
-      [c] reaches the operand of a conversion of a float to an integer in a
-      branch, where it may be the guard of a value that conversion is
-      undefined for; a range's bound keeps [c] whatever the branch, since a
-      loop is one loop wherever it is read;
-      [where g x 0 <> 0] is [g land (x <> 0)]; nested selections sharing a
-      branch merge their conditions with [land] or [lor], or with [land] of
-      the inner one's negation where the outer's other branch is the inner's
-      first;
-      an operation on two selections by the same condition, one of whose branch
-      pairs is constant, selects between the operations on the branches, also as
-      the last two terms of an integer sum; for integers,
-      [where c t 0 + where c 0 f] is [where c t f];
+      constant, [c], [t] or [f] reaches an {!Op.Index} or an {!Op.Load}, or [c]
+      reaches the operand of a conversion of a float to an integer in a branch,
+      where it may be the guard of a value that conversion is undefined for; a
+      range's bound keeps [c] whatever the branch, since a loop is one loop
+      wherever it is read; [where g x 0 <> 0] is [g land (x <> 0)]; nested
+      selections sharing a branch merge their conditions with [land] or [lor],
+      or with [land] of the inner one's negation where the outer's other branch
+      is the inner's first; an operation on two selections by the same
+      condition, one of whose branch pairs is constant, selects between the
+      operations on the branches, also as the last two terms of an integer sum;
+      for integers, [where c t 0 + where c 0 f] is [where c t f];
     - {b bounds}: a less-than or equality comparison, division, remainder,
       variable, {!Op.After}, {!Op.Special} or range with a constant end whose
       bounds are equal is that constant; an integer maximum of two operands
@@ -777,18 +782,19 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       fold the constants together, sums, products and maxima for integers only,
       a signed result only where it {!fits}, and a weak result on an unsigned
       integer wrapped to its width, as [(x * 65536) * 65536] on uint32 is
-      [x * 0];
-      [(x // c1) // c2] is [x // (c1 * c2)] for positive [c2] where [c1 * c2]
-      does not wrap ({!Ops.exact}); constants move to the end of integer sums
-      and products, and a factor [-1] to the end of float products;
+      [x * 0]; [(x // c1) // c2] is [x // (c1 * c2)] for positive [c2] where
+      [c1 * c2] does not wrap ({!Ops.exact}); constants move to the end of
+      integer sums and products, and a factor [-1] to the end of float products;
     - {b comparisons}, on integers: [c0 + x < c1] is [x < c1 - c0] where neither
       side wraps; [c0 * x < c1] divides both sides by [c0], rounding up, and
       flips [x]'s sign if [c0] is negative; [x // d < c] is [x < c * d] for
-      positive [d]; in [x < c] with [c]
-      positive, a divisor [d] common to [c] and the coefficients of some terms
-      of [x], whose other terms stay within [0] and [d - 1], divides out;
-      [-x < -y] is [y < x]; [not (x < 1)] with [x] a sum of non-negative terms
-      with positive coefficients drops the coefficients;
+      positive [d]; for a weak integer [x] = [d * y + p], with [d > 1] the
+      greatest common divisor of its coefficients other than [1] and [p] the sum
+      of its terms of coefficient [1], [x < c] is [y < ⌈(c - p) / d⌉] where that
+      bound is the same at the sum of [p]'s terms' least values and at the sum
+      of their greatest values; [-x < -y] is [y < x]; [not (x < 1)] with [x] a
+      sum of non-negative terms with positive coefficients drops the
+      coefficients;
     - {b ranges}: a range modulo its end is the range, and divided by its end is
       [0];
     - {b casts}: a cast through a type that holds every value of the operand is
@@ -800,12 +806,12 @@ val symbolic : (unit, Ops.t) Ops.Pattern_matcher.t
       whose count can reach 32 and a remainder of a dividend that can be the
       least {!Dtype.Int32} by a divisor that can be [-1], which have no value
       there; a cast of [x + c] to a signed integer is the cast of [x] plus [c];
-    - {b ordering}: an {!Op.After} waits only on effects
-      ({!Op.Set.effectful}), ranges, ends, backedges, linear programs,
-      stages and {!Op.After}s of global storage, on a reduction's
-      source with the reduction's ranges ended, and on the sources of any other
-      node it names; an {!Op.After} or {!Op.End} of nothing is its value, and
-      an {!Op.End} drops the ranges that became constants;
+    - {b ordering}: an {!Op.After} waits only on effects ({!Op.Set.effectful}),
+      ranges, ends, backedges, linear programs, stages and {!Op.After}s of
+      global storage, on a reduction's source with the reduction's ranges ended,
+      and on the sources of any other node it names; an {!Op.After} or {!Op.End}
+      of nothing is its value, and an {!Op.End} drops the ranges that became
+      constants;
 
     then simplifies division and remainder ({!div_and_mod_symbolic}), and
     restores bare constant operands ({!pm_uncast_const}). *)

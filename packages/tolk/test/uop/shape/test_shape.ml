@@ -20,14 +20,15 @@ let () =
          Construction.divisibility;
          Construction.calls;
          Construction.programs;
-         Rules.wrapping;
-         Rules.floats;
-         Rules.laws;
-         Rules.invalid_values;
-         Rules.remove_invalid;
+         Rules.values;
+         Rules.invalid_gate;
+         Rules.pm_remove_invalid;
+         Rules.fits;
          Rules.symbolic_simple;
          Rules.commutative;
          Rules.symbolic_group;
          Div_and_mod.div_and_mod_symbolic;
+         Rules.values_of_constants;
          Mop_cleanup.mop_cleanup;
+         Rules.weak_constants;
        ])

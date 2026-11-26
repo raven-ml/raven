@@ -1,5 +1,5 @@
-(* Tests of Shape's simplification rules: each rewrite its interface states, and
-   the laws of simplification. *)
+(* Shape's simplification rules: each rewrite shape.mli states, the values every
+   rewrite keeps, and the helpers the rules share. *)
 
 open Windtrap
 open Tolk
@@ -10,12 +10,13 @@ open Simplification
 let folds_to input expected =
   equal uop expected (rewrite Shape.symbolic_simple input)
 
-(* [simplifies_to ~by input expected] is the claim that [by] (default [sym])
-   rewrites [input] to [expected], the operands of [expected] in the order
-   [commutative] gives them, as the rewrite does. *)
-let simplifies_to ?(by = sym) input expected =
-  equal uop (rewrite Shape.commutative expected) (by input)
+(* [by_symbolic input expected] is the claim that symbolic rewrites [input] to
+   [expected], the operands of [expected] in the order [commutative] gives them,
+   as the rewrite does. *)
+let by_symbolic input expected =
+  equal uop (rewrite Shape.commutative expected) (symbolic input)
 
+let stays_under_symbolic u = by_symbolic u u
 let a = var "a" 0 8
 let b = var "b" 0 8
 let x = var ~dtype:Int32 "x" 0 8
@@ -29,205 +30,384 @@ let r0 = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
 let reduce_range = Ops.range ~axis_type:Weak (Int 4) [ 2 ]
 let int32 n = Ops.int ~dtype:Int32 n
 let cast_bool dt = Ops.cast cond dt
+let op = Common.op
+let naming = list (list (pair string uop))
 
 (* A node built as given, where the constructors would fold it: a cast to its
    own type, a group of one node. *)
 let raw ?arg op src = Ops.v ?arg ~src op
 
-(* Invalid values *)
+(* Rows of tables of rewrites: a name, an input and what it rewrites to, or a
+   name and an input that stays. *)
+let id (name, _, _) = name
+let folds (_, input, expected) = folds_to input expected
+let simplifies (_, input, expected) = by_symbolic input expected
+let stays (_, u) = folds_to u u
+let stays_symbolic (_, u) = stays_under_symbolic u
 
-let invalid_values =
-  let gated = Shape.valid a cond in
-  group "invalid values"
+(* [holding p candidates] is the candidates [p] holds of, in order. *)
+let holding p candidates = List.filter p candidates
+
+(* A constant, as a weak literal or a committed one: a literal cast to its
+   type. *)
+let constant =
+  let is u =
+    Ops.op u = Const || (Ops.op u = Cast && Ops.op (Ops.nth u 0) = Const)
+  in
+  fun u -> satisfies ~claim:"a constant" uop is u
+
+(* Values *)
+
+(* Integers wrap at a committed width, so a rewrite that computes as unbounded
+   integers do applies there only where nothing wraps. *)
+let keeps_machine_value u points =
+  let after = symbolic u in
+  List.iter
+    (fun vars ->
+      let msg = Format.asprintf "at %a" pp_binding vars in
+      equal ~msg Dtypes.const (Interpreter.eval ~vars u)
+        (Interpreter.eval ~vars after))
+    points
+
+(* Floats keep IEEE's values. [keeps_float_bits u points] evaluates [u] before
+   and after symbolic, with the parameters of slots 0, 1 and 3 bound to each
+   point's float32 values. *)
+let keeps_float_bits u points =
+  let after = symbolic u in
+  List.iter
+    (fun values ->
+      let params =
+        List.mapi (fun k v -> (List.nth [ 0; 1; 3 ] k, float32 v)) values
+      in
+      let msg =
+        Format.asprintf "at %a"
+          (Format.pp_print_list
+             ~pp_sep:(fun ppf () -> Format.fprintf ppf ", ")
+             Format.pp_print_float)
+          values
+      in
+      equal ~msg same_float
+        (Interpreter.eval ~params u)
+        (Interpreter.eval ~params after))
+    points
+
+(* The integer types index arithmetic computes in. *)
+let integer_types = Dtype.Weak_int :: Dtype.ints
+
+(* [at_each_type law] is [law] drawn at each integer type, one property each, so
+   that each type is reached on every run. *)
+let at_each_type law =
+  List.map
+    (fun dt ->
+      prop
+        (Format.asprintf "at %a" Dtype.pp dt)
+        (Expressions.scenario_of (Gen.constant dt))
+        law)
+    integer_types
+
+let values =
+  let inf = Float.infinity in
+  group "values"
     [
-      test "invalid_gate matches a gated value, naming its sources" (fun () ->
-          let by_name =
-            List.sort (fun (n0, _) (n1, _) -> String.compare n0 n1)
+      group
+        "symbolic keeps the value of an integer expression where nothing wraps"
+        (at_each_type (fun s ->
+             let e = Expressions.node s in
+             let r = symbolic e in
+             cover "the rewrite changed the graph" (not (Ops.equal e r));
+             let checked = keeps_value ~name:"symbolic" e r in
+             cover ~share:0.4 "a binding was checked" (checked > 0)));
+      group "symbolic folds a graph of constants to what the machine computes"
+        (at_each_type (fun s ->
+             let e = Expressions.constants s in
+             let r = symbolic e in
+             constant r;
+             at_least ~msg:"bindings checked" Windtrap.int ~than:1
+               (keeps_value ~name:"constants" e r)));
+      test "(x // c1) // c2 stays where c1 * c2 wraps" (fun () ->
+          let w =
+            Ops.variable ~dtype:Int32 "w" (Dtype.min Int32) (Dtype.max Int32)
           in
-          equal
-            (list (list (pair string uop)))
-            [ [ ("cond", cond); ("i", Ops.invalid); ("x", a) ] ]
-            (List.map by_name (Ops.Upat.match_ Shape.invalid_gate gated)));
-      test "invalid_gate does not match a selection of a valid value" (fun () ->
-          equal int 0
-            (List.length
-               (Ops.Upat.match_ Shape.invalid_gate (Ops.where cond a b))));
-      test "a binary operation moves inside the gate of its first operand"
-        (fun () ->
-          folds_to Ops.O.(gated * int 10) (Shape.valid Ops.O.(a * int 10) cond);
-          folds_to Ops.O.(gated < int 3) (Shape.valid Ops.O.(a < int 3) cond));
-      test "a binary operation moves inside the gate of its second operand"
-        (fun () ->
-          folds_to Ops.O.(int 10 * gated) (Shape.valid Ops.O.(int 10 * a) cond));
-      test "a multiply-add moves inside the gate of each operand" (fun () ->
-          let mulacc x y z = Ops.alu x Mulacc [ y; z ] in
-          folds_to
-            (mulacc (Shape.valid f cond) g g)
-            (Shape.valid (mulacc f g g) cond);
-          folds_to
-            (mulacc f g (Shape.valid g cond))
-            (Shape.valid (mulacc f g g) cond));
-      test "a multiply-add of invalid is invalid" (fun () ->
-          folds_to (raw Mulacc [ f; Ops.invalid; g ]) Ops.invalid);
-      test "a cast moves inside the gate" (fun () ->
-          let gated = Shape.valid x Ops.O.(x < int32 4) in
-          folds_to
-            (Ops.cast gated Dtype.Float16)
-            (Shape.valid (Ops.cast x Dtype.Float16) Ops.O.(x < int32 4)));
-      test "an arithmetic operation of invalid is invalid" (fun () ->
-          folds_to Ops.O.(Ops.invalid * int 2) Ops.invalid;
-          folds_to Ops.O.(Ops.invalid + a) Ops.invalid;
-          folds_to (Ops.cast Ops.invalid Dtype.Int32) Ops.invalid);
-      test "a stack of invalid is invalid expanded to its width" (fun () ->
-          let lanes = raw Stack [ Ops.invalid; Ops.invalid ] in
-          folds_to lanes (Shape.expand Ops.invalid [ Int 2 ]));
-      test "a selection between invalid and invalid is invalid" (fun () ->
-          folds_to (Ops.where cond Ops.invalid Ops.invalid) Ops.invalid);
-      test "a rule that computes with the value of invalid does not apply"
-        (fun () ->
-          let stays e =
-            equal uop (rewrite Shape.commutative e) (symbolic e)
-          in
-          stays (Ops.where Ops.O.(a < Ops.invalid) (Ops.int 0) a);
-          stays Ops.O.(a * int 2 < Ops.invalid);
-          stays Ops.O.(a // int 2 < Ops.invalid));
-      test "a comparison of invalid is left" (fun () ->
-          let lt = Ops.O.(Ops.invalid < a) in
-          equal uop lt (symbolic lt));
-      test "a selection by invalid is invalid" (fun () ->
-          folds_to (raw Where [ Ops.invalid; a; b ]) Ops.invalid);
-      test "a gate on a condition moves out of the selection" (fun () ->
-          let gated_cond = Shape.valid other cond in
-          folds_to (Ops.where gated_cond a b)
-            (Shape.valid (Ops.where other a b) cond));
-      test "invalid in the true branch moves to the false branch" (fun () ->
-          folds_to
-            (Ops.where cond Ops.invalid a)
-            (Shape.valid a (Ops.logical_not cond)));
-      test "a gate in a branch lifts out of the selection" (fun () ->
-          folds_to
-            (Ops.where other (Shape.valid a cond) b)
-            (Shape.valid (Ops.where other a b)
-               Ops.O.(Ops.logical_not other lor cond));
-          folds_to
-            (Ops.where other b (Shape.valid a cond))
-            (Shape.valid (Ops.where other b a) Ops.O.(other lor cond)));
-      test "a gate independent of a reduction's ranges moves out of it"
-        (fun () ->
-          let body = Shape.valid a cond in
-          folds_to
-            (Ops.reduce body Add [ reduce_range ])
-            (Shape.valid (Ops.reduce a Add [ reduce_range ]) cond));
-      test "a gate clause on a reduction's range selects its identity in it"
-        (fun () ->
-          let on_range = Ops.O.(reduce_range < int 2) in
-          let body = Shape.valid a Ops.O.(cond land on_range) in
-          folds_to
-            (Ops.reduce body Add [ reduce_range ])
-            (Shape.valid
-               (Ops.reduce (Ops.where on_range a (Ops.int 0)) Add
-                  [ reduce_range ])
-               cond));
-      test "a gate on a reduction's range alone selects its identity" (fun () ->
-          let on_range = Ops.O.(reduce_range < int 2) in
-          folds_to
-            (Ops.reduce (Shape.valid a on_range) Max [ reduce_range ])
-            (Ops.reduce
-               (Ops.where on_range a
-                  (Shape.const_like a (Ops.identity_element Max (Ops.dtype a))))
-               Max [ reduce_range ]));
-      test "a store to an invalid index does nothing after its sources"
-        (fun () ->
-          let index = Ops.index buf [ Ops.invalid ] in
-          folds_to (Ops.store index f) (Ops.after (raw Noop []) [ index; f ]));
-      test "a load from an invalid index is its alternative, or 0" (fun () ->
-          let index = Ops.index buf [ Ops.invalid ] in
-          folds_to (Ops.load index []) (Ops.float ~dtype:Float32 0.);
-          folds_to (Ops.load index [ g ]) g);
+          stays_under_symbolic Ops.O.(w // int 65536 // int 65536));
+      cases "a float selection that computes a maximum stays" ~id:fst
+        [
+          ("where (f < 0) 0 f", Ops.where Ops.O.(f < float 0.) (Ops.float 0.) f);
+          ("where (0 < f) f 0", Ops.where Ops.O.(float 0. < f) f (Ops.float 0.));
+        ]
+        stays_symbolic;
+      cases "a float division by itself or by a factor of its dividend stays"
+        ~id:fst
+        [ ("f / f", Ops.O.(f / f)); ("(f * g) / g", Ops.O.(f * g / g)) ]
+        stays;
+      test "a power keeps pow's special values" (fun () ->
+          keeps_float_bits (Ops.pow f (Ops.float 2.5)) [ [ -.inf ]; [ -0. ] ];
+          keeps_float_bits (Ops.pow f (Ops.float 0.5)) [ [ -0. ]; [ -.inf ] ];
+          keeps_float_bits (Ops.pow f (Ops.float (-0.8))) [ [ 1e-40 ] ];
+          keeps_float_bits (Ops.pow (Ops.float ~dtype:Float32 inf) f) [ [ 0. ] ]);
     ]
 
-let remove_invalid =
-  let rewrite = rewrite Shape.pm_remove_invalid in
+(* invalid_gate *)
+
+let invalid_gate =
+  let gated = Shape.valid a cond in
+  let by_name = List.sort (fun (n0, _) (n1, _) -> String.compare n0 n1) in
+  let namings u = List.map by_name (Ops.Upat.match_ Shape.invalid_gate u) in
+  group "invalid_gate"
+    [
+      test "matches a gated value, naming its sources" (fun () ->
+          equal naming
+            [ [ ("cond", cond); ("i", Ops.invalid); ("x", a) ] ]
+            (namings gated));
+      test "does not match a selection of a valid value" (fun () ->
+          equal naming [] (namings (Ops.where cond a b)));
+    ]
+
+(* pm_remove_invalid *)
+
+let pm_remove_invalid =
+  let removes (_, input, expected) =
+    equal uop expected (rewrite Shape.pm_remove_invalid input)
+  in
   group "pm_remove_invalid"
     [
-      test "a gate's invalid is 0 of the gate's type" (fun () ->
-          equal uop (Ops.where cond x (int32 0)) (rewrite (Shape.valid x cond)));
-      test "a stack's invalid elements are 0" (fun () ->
-          let stack = raw Stack [ a; Ops.invalid; b ] in
-          equal uop (raw Stack [ a; Ops.int 0; b ]) (rewrite stack));
-      test "a float gate's invalid is 0.0 of its type" (fun () ->
-          equal uop
-            (Ops.where cond f (Ops.float ~dtype:Float32 0.))
-            (rewrite (Shape.valid f cond)));
+      cases "replaces each invalid a gate or a stack holds by 0 of its type" ~id
+        [
+          ("an int32 gate", Shape.valid x cond, Ops.where cond x (int32 0));
+          ( "a float32 gate",
+            Shape.valid f cond,
+            Ops.where cond f (Ops.float ~dtype:Float32 0.) );
+          ( "a stack",
+            raw Stack [ a; Ops.invalid; b ],
+            raw Stack [ a; Ops.int 0; b ] );
+        ]
+        removes;
+    ]
+
+(* fits *)
+
+let fits =
+  let candidates =
+    [
+      i (-129);
+      i (-128);
+      i 127;
+      i 128;
+      i 256;
+      `Int (Bigint.shift_left Bigint.one 62);
+    ]
+  in
+  group "fits"
+    [
+      cases "is true unless x is of a signed integer type that does not hold v"
+        ~id
+        [
+          ("int8", Ops.int ~dtype:Int8 0, [ i (-128); i 127 ]);
+          ("uint8, unsigned", Ops.int ~dtype:Uint8 0, candidates);
+          ("the weak integer", a, candidates);
+          ("float32", f, candidates);
+        ]
+        (fun (_, u, expected) ->
+          equal (list Dtypes.value) expected (holding (Shape.fits u) candidates));
     ]
 
 (* symbolic_simple *)
 
+let invalid_values =
+  let gated = Shape.valid a cond in
+  let mulacc x y z = Ops.alu x Mulacc [ y; z ] in
+  let on_range = Ops.O.(reduce_range < int 2) in
+  let index = Ops.index buf [ Ops.invalid ] in
+  group "invalid values"
+    [
+      cases "an operation on a gated value moves inside the gate" ~id
+        [
+          ( "a product's first operand",
+            Ops.O.(gated * int 10),
+            Shape.valid Ops.O.(a * int 10) cond );
+          ( "a comparison's first operand",
+            Ops.O.(gated < int 3),
+            Shape.valid Ops.O.(a < int 3) cond );
+          ( "a product's second operand",
+            Ops.O.(int 10 * gated),
+            Shape.valid Ops.O.(int 10 * a) cond );
+          ( "a multiply-add's first operand",
+            mulacc (Shape.valid f cond) g g,
+            Shape.valid (mulacc f g g) cond );
+          ( "a multiply-add's last operand",
+            mulacc f g (Shape.valid g cond),
+            Shape.valid (mulacc f g g) cond );
+          ( "a cast",
+            Ops.cast (Shape.valid x Ops.O.(x < int32 4)) Dtype.Float16,
+            Shape.valid (Ops.cast x Dtype.Float16) Ops.O.(x < int32 4) );
+        ]
+        folds;
+      cases "an operation on invalid is invalid" ~id
+        [
+          ("a product", Ops.O.(Ops.invalid * int 2), Ops.invalid);
+          ("a sum with a variable", Ops.O.(Ops.invalid + a), Ops.invalid);
+          ("a cast", Ops.cast Ops.invalid Dtype.Int32, Ops.invalid);
+          ("a multiply-add", raw Mulacc [ f; Ops.invalid; g ], Ops.invalid);
+          ( "a selection by invalid",
+            raw Where [ Ops.invalid; a; b ],
+            Ops.invalid );
+          ( "a selection between invalid and invalid",
+            Ops.where cond Ops.invalid Ops.invalid,
+            Ops.invalid );
+          ( "a stack of invalid, expanded to its width",
+            raw Stack [ Ops.invalid; Ops.invalid ],
+            Shape.expand Ops.invalid [ Int 2 ] );
+        ]
+        folds;
+      test "a comparison of invalid with a node that is not constant is left"
+        (fun () ->
+          let lt = Ops.O.(Ops.invalid < a) in
+          equal uop lt (symbolic lt));
+      test "a comparison of invalid with a constant folds to invalid" (fun () ->
+          equal Dtypes.const `Invalid
+            (Ops.value (symbolic Ops.O.(Ops.invalid < int 3))));
+      cases "a gate in a selection moves outermost" ~id
+        [
+          ( "a gate on the condition",
+            Ops.where (Shape.valid other cond) a b,
+            Shape.valid (Ops.where other a b) cond );
+          ( "invalid in the true branch",
+            Ops.where cond Ops.invalid a,
+            Shape.valid a (Ops.logical_not cond) );
+          ( "a gate in the true branch",
+            Ops.where other (Shape.valid a cond) b,
+            Shape.valid (Ops.where other a b)
+              Ops.O.(Ops.logical_not other lor cond) );
+          ( "a gate in the false branch",
+            Ops.where other b (Shape.valid a cond),
+            Shape.valid (Ops.where other b a) Ops.O.(other lor cond) );
+        ]
+        folds;
+      test
+        "a gate on a reduction's operand that does not depend on its ranges \
+         moves out of the reduction" (fun () ->
+          folds_to
+            (Ops.reduce (Shape.valid a cond) Add [ reduce_range ])
+            (Shape.valid (Ops.reduce a Add [ reduce_range ]) cond));
+      cases
+        "a gate on a reduction's operand that depends on its ranges selects \
+         the reduction's identity where it fails"
+        ~id
+        [
+          ( "beside a clause that does not",
+            Ops.reduce
+              (Shape.valid a Ops.O.(cond land on_range))
+              Add [ reduce_range ],
+            Shape.valid
+              (Ops.reduce
+                 (Ops.where on_range a (Ops.int 0))
+                 Add [ reduce_range ])
+              cond );
+          ( "alone",
+            Ops.reduce (Shape.valid a on_range) Max [ reduce_range ],
+            Ops.reduce
+              (Ops.where on_range a
+                 (Shape.const_like a (Ops.identity_element Max (Ops.dtype a))))
+              Max [ reduce_range ] );
+        ]
+        folds;
+      test "a store to an invalid index does nothing after its sources"
+        (fun () ->
+          folds_to (Ops.store index f) (Ops.after (raw Noop []) [ index; f ]));
+      cases "a load from an invalid index is its alternative value, or 0" ~id
+        [
+          ("no alternative", Ops.load index [], Ops.float ~dtype:Float32 0.);
+          ("an alternative", Ops.load index [ g ], g);
+        ]
+        folds;
+    ]
+
 let identities =
+  let p = var "p" 1 8 in
+  let n = Shape.param 5 Dtype.Int32 in
   group "identities"
     [
-      test "x + 0, x lxor 0 and x lor 0 are x" (fun () ->
-          folds_to Ops.O.(a + int 0) a;
-          folds_to Ops.O.(x lxor int 0) x;
-          folds_to Ops.O.(x lor int 0) x);
-      test "shifts by 0 are x" (fun () ->
-          folds_to Ops.O.(x lsl int 0) x;
-          folds_to Ops.O.(x lsr int 0) x);
-      test "x * 1 and x // 1 are x" (fun () ->
-          folds_to Ops.O.(a * int 1) a;
-          folds_to Ops.O.(int 1 * a) a;
-          folds_to Ops.O.(a // int 1) a);
-      test "x // -1 is -x" (fun () ->
-          folds_to Ops.O.(a // int (-1)) Ops.O.(~-a));
+      cases "x + 0, x lxor 0, x lor 0, x lsl 0, x lsr 0, x * 1 and x // 1 are x"
+        ~id
+        [
+          ("a + 0", Ops.O.(a + int 0), a);
+          ("x lxor 0", Ops.O.(x lxor int 0), x);
+          ("x lor 0", Ops.O.(x lor int 0), x);
+          ("x lsl 0", Ops.O.(x lsl int 0), x);
+          ("x lsr 0", Ops.O.(x lsr int 0), x);
+          ("a * 1", Ops.O.(a * int 1), a);
+          ("1 * a", Ops.O.(int 1 * a), a);
+          ("a // 1", Ops.O.(a // int 1), a);
+        ]
+        folds;
+      test "a float x + -0. is x" (fun () -> folds_to Ops.O.(f + float (-0.)) f);
+      test "a float x + 0. stays, since -0. + 0. is 0." (fun () ->
+          folds_to Ops.O.(f + float 0.) Ops.O.(f + float 0.));
+      cases "x // -1 is -x for a signed or weak x" ~id
+        [
+          ("weak", Ops.O.(a // int (-1)), Ops.O.(~-a));
+          ("int32", Ops.O.(n // int (-1)), Ops.O.(n * int (-1)));
+        ]
+        folds;
       test "x // x is 1 where x's bounds hold no 0" (fun () ->
-          let p = var "p" 1 8 in
-          folds_to Ops.O.(p // p) (Ops.int 1);
+          folds_to Ops.O.(p // p) (Ops.int 1));
+      test "x // x stays where x's bounds hold 0" (fun () ->
           folds_to Ops.O.(a // a) Ops.O.(a // a));
       test "(x lxor y) lxor y is x for a weak y" (fun () ->
-          folds_to Ops.O.(a lxor b lxor b) a;
-          let typed = Ops.O.(x lxor y lxor y) in
-          folds_to typed typed);
+          folds_to Ops.O.(a lxor b lxor b) a);
+      test "(x lxor y) lxor y stays for a committed y" (fun () ->
+          folds_to Ops.O.(x lxor y lxor y) Ops.O.(x lxor y lxor y));
       test "(x % y) % y is x % y" (fun () ->
           folds_to Ops.O.(a % b % b) Ops.O.(a % b));
-      test "a boolean and a constant fold by the constant" (fun () ->
-          folds_to Ops.O.(cond land bool true) cond;
-          folds_to Ops.O.(cond land bool false) (Ops.bool false);
-          folds_to Ops.O.(cond lor bool true) (Ops.bool true);
-          folds_to Ops.O.(cond lor bool false) cond);
-      test "x = true and x <> false are x" (fun () ->
-          folds_to (Ops.eq cond (Ops.bool true)) cond;
-          folds_to Ops.O.(cond <> bool false) cond);
-      test "a double negation is x" (fun () ->
-          folds_to (Ops.logical_not (Ops.logical_not cond)) cond);
-      test "where x true false is x, where x false true is not x" (fun () ->
-          folds_to (Ops.where cond (Ops.bool true) (Ops.bool false)) cond;
+      cases "a boolean x land c and x lor c with c constant are x or c" ~id
+        [
+          ("x land true", Ops.O.(cond land bool true), cond);
+          ("x land false", Ops.O.(cond land bool false), Ops.bool false);
+          ("x lor true", Ops.O.(cond lor bool true), Ops.bool true);
+          ("x lor false", Ops.O.(cond lor bool false), cond);
+        ]
+        folds;
+      cases
+        "x = true, x <> false, a double negation, where x true false and an \
+         idempotent operation of x with itself are x"
+        ~id
+        [
+          ("x = true", Ops.eq cond (Ops.bool true), cond);
+          ("x <> false", Ops.O.(cond <> bool false), cond);
+          ("not (not x)", Ops.logical_not (Ops.logical_not cond), cond);
+          ( "where x true false",
+            Ops.where cond (Ops.bool true) (Ops.bool false),
+            cond );
+          ("max a a", Ops.maximum a a, a);
+          ("x land x", Ops.O.(cond land cond), cond);
+          ("x lor x", Ops.O.(cond lor cond), cond);
+        ]
+        folds;
+      test "where x false true is the negation of x" (fun () ->
           folds_to
             (Ops.where cond (Ops.bool false) (Ops.bool true))
             (Ops.logical_not cond));
-      test "an idempotent operation of x with itself is x" (fun () ->
-          folds_to (Ops.maximum a a) a;
-          folds_to Ops.O.(cond land cond) cond;
-          folds_to Ops.O.(cond lor cond) cond);
-      test "a boolean cast to an integer and compared to 0 is the boolean"
-        (fun () ->
-          folds_to Ops.O.(cast_bool Int32 <> int 0) cond;
-          folds_to Ops.O.(cast_bool Weak_int <> int 0) cond);
-      test "a boolean cast to an integer and compared to 1 is its negation"
-        (fun () ->
-          folds_to Ops.O.(cast_bool Int32 <> int 1) (Ops.logical_not cond));
-      test "a boolean cast to an integer differs from any other integer"
-        (fun () ->
-          folds_to Ops.O.(cast_bool Int32 <> int 2) (Ops.bool true);
-          folds_to Ops.O.(cast_bool Int32 <> int (-1)) (Ops.bool true));
-      test "a boolean cast to an integer and equal to 0, 1 or another integer \
-            is its negation, itself or false" (fun () ->
-          folds_to (Ops.eq (cast_bool Int32) (Ops.int 0)) (Ops.logical_not cond);
-          folds_to (Ops.eq (cast_bool Weak_int) (Ops.int 1)) cond;
-          folds_to (Ops.eq (cast_bool Int32) (Ops.int 2)) (Ops.bool false));
-      test "the truncation of an integer or a boolean is itself" (fun () ->
-          folds_to (Ops.trunc x) x;
-          folds_to (Ops.trunc a) a;
-          folds_to (Ops.trunc cond) cond);
+      cases
+        "a boolean cast to an integer and equal to 0 or 1 is its negation or \
+         itself, to any other integer false, and unequal the negation of that"
+        ~id
+        [
+          ("= 0", Ops.eq (cast_bool Int32) (Ops.int 0), Ops.logical_not cond);
+          ("weak, = 1", Ops.eq (cast_bool Weak_int) (Ops.int 1), cond);
+          ("= 2", Ops.eq (cast_bool Int32) (Ops.int 2), Ops.bool false);
+          ("<> 0", Ops.O.(cast_bool Int32 <> int 0), cond);
+          ("weak, <> 0", Ops.O.(cast_bool Weak_int <> int 0), cond);
+          ("<> 1", Ops.O.(cast_bool Int32 <> int 1), Ops.logical_not cond);
+          ("<> 2", Ops.O.(cast_bool Int32 <> int 2), Ops.bool true);
+          ("<> -1", Ops.O.(cast_bool Int32 <> int (-1)), Ops.bool true);
+        ]
+        folds;
+      cases "the truncation of an integer or a boolean is itself" ~id
+        [
+          ("int32", Ops.trunc x, x);
+          ("weak", Ops.trunc a, a);
+          ("boolean", Ops.trunc cond, cond);
+        ]
+        folds;
       test "the truncation of a float stays" (fun () ->
           folds_to (Ops.trunc f) (Ops.trunc f));
     ]
@@ -236,39 +416,40 @@ let recombination =
   let g = var "g" 0 124 in
   group "recombination"
     [
-      test "x % d + (x // d) * d is x" (fun () ->
-          folds_to Ops.O.((g % int 4) + (g // int 4 * int 4)) g;
-          folds_to Ops.O.((g // int 4 * int 4) + (g % int 4)) g);
-      test "a scaled remainder and quotient recombine into x times the scale"
-        (fun () ->
-          folds_to
-            Ops.O.((g % int 4 * int 2) + (g // int 4 * int 8))
-            Ops.O.(g * int 2));
-      test "a recombination keeps the other terms of the sum" (fun () ->
-          folds_to Ops.O.(a + (g % int 4) + (g // int 4 * int 4)) Ops.O.(g + a));
-      test "a remainder of the quotient recombines into a wider remainder"
+      cases "a remainder and a quotient by d recombine into their base" ~id
+        [
+          ("x % 4 + (x // 4) * 4", Ops.O.((g % int 4) + (g // int 4 * int 4)), g);
+          ("(x // 4) * 4 + x % 4", Ops.O.((g // int 4 * int 4) + (g % int 4)), g);
+          ( "scaled by 2",
+            Ops.O.((g % int 4 * int 2) + (g // int 4 * int 8)),
+            Ops.O.(g * int 2) );
+          ( "beside another term",
+            Ops.O.(a + (g % int 4) + (g // int 4 * int 4)),
+            Ops.O.(g + a) );
+        ]
+        folds;
+      test
+        "a remainder of the quotient by k recombines into a remainder by d * k"
         (fun () ->
           folds_to
             Ops.O.((g % int 4) + (g // int 4 % int 3 * int 4))
             Ops.O.(g % int 12));
-      test "a quotient of another divisor does not recombine" (fun () ->
-          let sum = Ops.O.((g % int 4) + (g // int 3 * int 4)) in
-          folds_to sum sum);
-      test
-        "a quotient by a variable, of another base, or merged with another \
-         divisor does not recombine" (fun () ->
-          let stays sum = folds_to sum sum in
-          stays Ops.O.((g % int 4) + (g // b * int 4));
-          stays Ops.O.((g % int 4) + (a // int 4 * int 4));
-          stays Ops.O.((g // int 2 % int 4) + (g // int 16 * int 4));
-          stays Ops.O.((g % int 4) + ((g + int 1) // int 4 * int 4)));
-      test "a remainder of the quotient by a negative number does not recombine"
-        (fun () ->
-          let sum = Ops.O.((g % int 4) + (g // int 4 % int (-3) * int 4)) in
-          folds_to sum sum);
-      test "a committed sum does not recombine" (fun () ->
-          let sum = Ops.O.((x % int32 4) + (x // int32 4 * int32 4)) in
-          folds_to sum sum);
+      cases "terms of no common base, divisor or sign do not recombine" ~id:fst
+        [
+          ( "a quotient by another divisor",
+            Ops.O.((g % int 4) + (g // int 3 * int 4)) );
+          ("a quotient by a variable", Ops.O.((g % int 4) + (g // b * int 4)));
+          ( "a quotient of another base",
+            Ops.O.((g % int 4) + (a // int 4 * int 4)) );
+          ( "a quotient merged with another divisor",
+            Ops.O.((g // int 2 % int 4) + (g // int 16 * int 4)) );
+          ( "a quotient of a shifted base",
+            Ops.O.((g % int 4) + ((g + int 1) // int 4 * int 4)) );
+          ( "a remainder of the quotient by a negative k",
+            Ops.O.((g % int 4) + (g // int 4 % int (-3) * int 4)) );
+          ("a committed sum", Ops.O.((x % int32 4) + (x // int32 4 * int32 4)));
+        ]
+        stays;
     ]
 
 let zeros =
@@ -276,160 +457,244 @@ let zeros =
   group "zeros"
     [
       test "x < x is false" (fun () -> folds_to Ops.O.(a < a) (Ops.bool false));
-      test "x <> x is false for integers and booleans" (fun () ->
-          folds_to Ops.O.(a <> a) (Ops.bool false);
-          folds_to Ops.O.(cond <> cond) (Ops.bool false));
-      test "x = x is true for integers and booleans" (fun () ->
-          folds_to (Ops.eq a a) (Ops.bool true);
-          folds_to (Ops.eq x x) (Ops.bool true));
+      cases "x = x is true, and x <> x false, for integers and booleans" ~id
+        [
+          ("weak a = a", Ops.eq a a, Ops.bool true);
+          ("int32 x = x", Ops.eq x x, Ops.bool true);
+          ("weak a <> a", Ops.O.(a <> a), Ops.bool false);
+          ("boolean <> itself", Ops.O.(cond <> cond), Ops.bool false);
+        ]
+        folds;
       test "x <> x stays for floats, which may be NaN" (fun () ->
           folds_to Ops.O.(f <> f) Ops.O.(f <> f));
-      test "x % x, x lxor x and x land 0 are 0" (fun () ->
-          folds_to Ops.O.(a % a) (Ops.int 0);
-          folds_to Ops.O.(x lxor x) (int32 0);
-          folds_to Ops.O.(x land int 0) (int32 0));
-      test "a mask of the bits a right shift drops is removed" (fun () ->
+      cases "x % x, x lxor x, x land 0 and an integer or boolean x * 0 are 0"
+        ~id
+        [
+          ("a % a", Ops.O.(a % a), Ops.int 0);
+          ("x lxor x", Ops.O.(x lxor x), int32 0);
+          ("x land 0", Ops.O.(x land int 0), int32 0);
+          ("a * 0", Ops.O.(a * int 0), Ops.int 0);
+          ("boolean * false", Ops.O.(cond * bool false), Ops.bool false);
+        ]
+        folds;
+      test "a float x * 0. stays" (fun () ->
+          folds_to Ops.O.(f * float 0.) Ops.O.(f * float 0.));
+      test "a mask that clears only bits a right shift drops is removed"
+        (fun () ->
           folds_to Ops.O.((u land int (-4)) lsr int 2) Ops.O.(u lsr int 2));
-      test "a mask of kept bits stays" (fun () ->
-          let shifted = Ops.O.((u land int (-8)) lsr int 2) in
-          folds_to shifted shifted;
-          let above = Ops.O.(u land int (-8) // int 4) in
-          folds_to above above;
-          let by_three = Ops.O.(u land int (-4) // int 3) in
-          folds_to by_three by_three);
+      cases "a mask that clears a bit the result keeps stays" ~id:fst
+        [
+          ("shifted by 2", Ops.O.((u land int (-8)) lsr int 2));
+          ("divided by 4", Ops.O.(u land int (-8) // int 4));
+          ("divided by 3", Ops.O.(u land int (-4) // int 3));
+        ]
+        stays;
     ]
 
+(* An arithmetic operation on two constants of one type. *)
+type operation = { dt : Dtype.t; o : Op.t; v0 : Dtype.value; v1 : Dtype.value }
+
+let pp_operation ppf c =
+  Format.fprintf ppf "%a %a %a at %a" Dtype.pp_const
+    (c.v0 :> Dtype.const)
+    Op.pp c.o Dtype.pp_const
+    (c.v1 :> Dtype.const)
+    Dtype.pp c.dt
+
+let int_ops =
+  Op.
+    [
+      Add;
+      Sub;
+      Mul;
+      Div;
+      Mod;
+      Truncdiv;
+      Truncmod;
+      Max;
+      Cmplt;
+      Cmpne;
+      Cmpeq;
+      Xor;
+      Or;
+      And;
+      Shl;
+      Shr;
+    ]
+
+let float_ops = Op.[ Add; Sub; Mul; Fdiv; Max; Cmplt; Cmpne; Cmpeq ]
+
+(* Operands at a type's bounds and their neighbours. *)
+let gen_operation =
+  let open Gen in
+  with_pp pp_operation
+    (let* dt =
+       of_list ~pp:Dtype.pp
+         Dtype.
+           [
+             Int8;
+             Uint8;
+             Int16;
+             Uint16;
+             Int32;
+             Uint32;
+             Int64;
+             Uint64;
+             Float16;
+             Bfloat16;
+             Float32;
+             Float64;
+           ]
+     in
+     let+ o =
+       of_list ~pp:Op.pp (if Dtype.is_float dt then float_ops else int_ops)
+     and+ v0 = Dtypes.value_of dt
+     and+ v1 = Dtypes.value_of dt in
+     { dt; o; v0; v1 })
+
+let folds_to_its_value c =
+  let operand v = Ops.const ~dtype:c.dt (v :> Dtype.const) in
+  let u = Ops.alu (operand c.v0) c.o [ operand c.v1 ] in
+  let r = rewrite Shape.symbolic_simple u in
+  let args = [ (c.v0 :> Dtype.const); (c.v1 :> Dtype.const) ] in
+  match Ops.exec_alu c.o (Ops.dtype u) args with
+  | v ->
+      cover "a value" true;
+      constant r;
+      equal same_float v (Ops.value r)
+  | exception Invalid_argument _ ->
+      cover "no value" true;
+      equal uop u r
+
+let operation_examples =
+  [
+    (* a shift by a negative count, which has no value *)
+    { dt = Int32; o = Shl; v0 = i 3; v1 = i (-1) };
+    { dt = Int32; o = Shr; v0 = i 3; v1 = i (-2) };
+    (* division and remainder by 0: 0, and the dividend (op.mli) *)
+    { dt = Int32; o = Div; v0 = i 7; v1 = i 0 };
+    { dt = Int32; o = Mod; v0 = i 7; v1 = i 0 };
+    { dt = Int32; o = Truncdiv; v0 = i 7; v1 = i 0 };
+    { dt = Int32; o = Truncmod; v0 = i 7; v1 = i 0 };
+    (* rounding toward 0 *)
+    { dt = Int32; o = Truncdiv; v0 = i (-50); v1 = i 6 };
+    { dt = Int32; o = Truncmod; v0 = i 5; v1 = i (-3) };
+    (* NaN is unequal to itself and less than nothing *)
+    { dt = Float32; o = Cmpne; v0 = `Float Float.nan; v1 = `Float Float.nan };
+    { dt = Float32; o = Cmplt; v0 = `Float Float.nan; v1 = `Float Float.nan };
+    (* a committed integer computes at its width *)
+    { dt = Uint32; o = Add; v0 = i 0xFFFF_FFFF; v1 = i 1 };
+    { dt = Float32; o = Add; v0 = `Float 1.5; v1 = `Float 2. };
+  ]
+
 let constants =
+  let big = Bigint.shift_left Bigint.one 40 in
+  let stack l = raw Stack l in
+  let u16 x = Ops.const ~dtype:Uint16 (`Int (Bigint.of_int x)) in
   group "constants"
     [
-      test "an operation on weak constants is its exact value" (fun () ->
-          let big = Bigint.shift_left Bigint.one 40 in
-          folds_to
-            Ops.O.(Ops.const (`Int big) + Ops.const (`Int big))
-            (Ops.const (`Int (Bigint.shift_left Bigint.one 41)));
-          folds_to Ops.O.(float 1.25 + float 2.5) (Ops.float 3.75));
-      test "an operation on committed constants computes at their width"
-        (fun () ->
-          folds_to Ops.O.(int32 3 * int32 4) (int32 12);
-          folds_to
-            Ops.O.(Ops.float ~dtype:Float32 1.5 + Ops.float ~dtype:Float32 2.)
-            (Ops.float ~dtype:Float32 3.5));
-      (* Uncasting a committed constant reads it at its width, where
-         tinygrad keeps the literal unwrapped. *)
-      test "a comparison reads a committed constant at its width" (fun () ->
-          let x = var ~dtype:Uint8 "x" 0 255 in
-          let lt = Ops.O.(x < Ops.cconst Uint8 (i 300)) in
-          equal uop Ops.O.(x < int 44) (rewrite Shape.pm_uncast_const lt);
-          equal Dtypes.const (`Bool false)
-            (Interpreter.eval ~vars:[ ("x", i 100) ] (symbolic lt)));
-      (* A committed constant is read at its width, by an operation that
-         folds and by a cast of it, where tinygrad reads it unwrapped. *)
-      test "an operation reads committed constants at their width" (fun () ->
-          let max = Ops.int ~dtype:Uint32 0xFFFF_FFFF in
-          let one = Ops.int ~dtype:Uint32 1 in
-          folds_to Ops.O.((max + one) lsr one) (Ops.int ~dtype:Uint32 0);
-          let half = `Int (Bigint.shift_left Bigint.one 31) in
-          folds_to
-            (Ops.cast (Ops.cconst Int32 half) Int64)
-            (Ops.int ~dtype:Int64 (-2147483648));
-          let e = var ~dtype:Uint8 "e" 3 3 in
-          equal Dtypes.const (i 0)
-            (Interpreter.eval
-               ~vars:[ ("e", i 3) ]
-               (symbolic Ops.O.(Ops.cast (int (-1)) Uint8 % e))));
-      test "NaN is unequal to itself when constants fold, as IEEE says"
-        (fun () ->
-          let nan = Ops.float ~dtype:Float32 Float.nan in
-          folds_to Ops.O.(nan <> nan) (Ops.bool true);
-          folds_to Ops.O.(nan < nan) (Ops.bool false));
-      test "a truncating division of constants rounds toward zero" (fun () ->
-          let tdiv x y = Ops.alu (Ops.int x) Truncdiv [ Ops.int y ] in
-          let tmod x y = Ops.alu (Ops.int x) Truncmod [ Ops.int y ] in
-          folds_to (tdiv 7 (-3)) (Ops.int (-2));
-          folds_to (tdiv (-50) 6) (Ops.int (-8));
-          folds_to (tmod 5 (-3)) (Ops.int 2));
-      test "a shift of constants by a negative count stays" (fun () ->
-          let stays e =
-            folds_to e e;
-            equal uop e (symbolic e)
-          in
-          stays Ops.O.(int 3 lsl int (-1));
-          stays Ops.O.(int32 3 lsr int32 (-2));
-          let u = var ~dtype:Uint32 "u" 0 255 in
-          stays Ops.O.((u land int (-4)) lsr int (-2)));
+      prop
+        "an operation on constants of one type is its value, and stays where \
+         it has none"
+        ~examples:operation_examples gen_operation folds_to_its_value;
       test "a threefry of constants stays" (fun () ->
           let tf =
             Ops.alu (Ops.int ~dtype:Uint32 0) Threefry
               [ Ops.int ~dtype:Uint32 1 ]
           in
           folds_to tf tf);
-      test "a division of constants by zero is 0, a remainder the dividend"
-        (fun () ->
-          folds_to Ops.O.(int 7 // int 0) (Ops.int 0);
-          folds_to (Ops.alu (Ops.int 7) Truncdiv [ Ops.int 0 ]) (Ops.int 0);
-          folds_to (Ops.alu (Ops.int 7) Truncmod [ Ops.int 0 ]) (Ops.int 7);
-          folds_to Ops.O.(int 7 % int 0) (Ops.int 7));
-      test "a where, a comparison and a negation of stacks fold lane by lane"
-        (fun () ->
-          let stack l = raw Stack l in
-          folds_to
-            (Ops.where
-               (stack [ Ops.bool true; Ops.bool false ])
-               (stack [ Ops.int 3; Ops.int 4 ])
-               (stack [ Ops.int 30; Ops.int 40 ]))
-            (stack [ Ops.int 3; Ops.int 40 ]);
-          folds_to
-            Ops.O.(stack [ int 1; int 4 ] < stack [ int 2; int 3 ])
-            (stack [ Ops.bool true; Ops.bool false ]);
-          folds_to
-            Ops.O.(~-(stack [ int 1; int (-2) ]))
-            (stack [ Ops.int (-1); Ops.int 2 ]));
-      test "an operation on stacks of constants folds lane by lane" (fun () ->
-          folds_to
+      cases "an operation on weak constants keeps their mathematical value" ~id
+        [
+          ( "2^40 + 2^40",
+            Ops.O.(Ops.const (`Int big) + Ops.const (`Int big)),
+            Ops.const (`Int (Bigint.shift_left Bigint.one 41)) );
+          ("1.25 + 2.5", Ops.O.(float 1.25 + float 2.5), Ops.float 3.75);
+          ("sqrt 4.", Ops.sqrt (Ops.float 4.), Ops.float 2.);
+          ("exp2 3.", Ops.exp2 (Ops.float 3.), Ops.float 8.);
+        ]
+        folds;
+      (* A committed constant is read at its width, by an operation that folds
+         and by a cast of it, where tinygrad reads it unwrapped. *)
+      cases "an operation reads a committed constant at its width" ~id
+        [
+          ( "(2^32 - 1 + 1) >> 1 at uint32",
             Ops.O.(
-              raw Stack [ int32 1; int32 2 ] + raw Stack [ int32 3; int32 4 ])
-            (raw Stack [ int32 4; int32 6 ]));
-      test "a shift of stacks of constants reads each lane's bare count whole"
+              (Ops.int ~dtype:Uint32 0xFFFF_FFFF + Ops.int ~dtype:Uint32 1)
+              lsr Ops.int ~dtype:Uint32 1),
+            Ops.int ~dtype:Uint32 0 );
+          ( "2^31 at int32, cast to int64",
+            Ops.cast
+              (Ops.cconst Int32 (`Int (Bigint.shift_left Bigint.one 31)))
+              Int64,
+            Ops.int ~dtype:Int64 (-2147483648) );
+        ]
+        folds;
+      test "a weak operand of a committed operation is read at its width"
         (fun () ->
-          let u16 x = Ops.const ~dtype:Uint16 (`Int (Bigint.of_int x)) in
-          folds_to
-            (Ops.alu
-               (raw Stack [ u16 3; u16 3 ])
-               Shl
-               [ raw Stack [ Ops.int 65536; Ops.int 1 ] ])
-            (raw Stack [ u16 0; u16 6 ]));
-      test "a unary operation of a weak float constant stays weak" (fun () ->
-          folds_to (Ops.sqrt (Ops.float 4.)) (Ops.float 2.);
-          folds_to (Ops.exp2 (Ops.float 3.)) (Ops.float 8.));
+          (* -1 at uint8 is 255, and 255 % 3 is 0 *)
+          let e = var ~dtype:Uint8 "e" 3 3 in
+          equal Dtypes.const (i 0)
+            (Interpreter.eval
+               ~vars:[ ("e", i 3) ]
+               (symbolic Ops.O.(Ops.cast (int (-1)) Uint8 % e))));
       test "weak constants commit to the type of a committed peer" (fun () ->
           folds_to Ops.O.(int32 3 + int 4) (int32 7));
-      test "a cast of an infinity or a NaN to an integer stays a cast"
-        (fun () ->
-          List.iter
-            (fun v ->
-              let c = Ops.cast (Ops.float ~dtype:Float32 v) Int32 in
-              folds_to c c)
-            [ Float.infinity; Float.neg_infinity; Float.nan ]);
-      test "a cast of a constant is the constant of the cast's type" (fun () ->
-          folds_to (Ops.cast (Ops.int 3) Float32) (Ops.float ~dtype:Float32 3.);
-          folds_to
-            (Ops.cast (Ops.cast (Ops.int 3) Int64) Float32)
-            (Ops.float ~dtype:Float32 3.));
+      cases "an operation on stacks of constants folds lane by lane" ~id
+        [
+          ( "a selection",
+            Ops.where
+              (stack [ Ops.bool true; Ops.bool false ])
+              (stack [ Ops.int 3; Ops.int 4 ])
+              (stack [ Ops.int 30; Ops.int 40 ]),
+            stack [ Ops.int 3; Ops.int 40 ] );
+          ( "a comparison",
+            Ops.O.(stack [ int 1; int 4 ] < stack [ int 2; int 3 ]),
+            stack [ Ops.bool true; Ops.bool false ] );
+          ( "a negation",
+            Ops.O.(~-(stack [ int 1; int (-2) ])),
+            stack [ Ops.int (-1); Ops.int 2 ] );
+          ( "a sum of int32",
+            Ops.O.(stack [ int32 1; int32 2 ] + stack [ int32 3; int32 4 ]),
+            stack [ int32 4; int32 6 ] );
+          ( "a shift, each lane's bare count read whole",
+            Ops.alu
+              (stack [ u16 3; u16 3 ])
+              Shl
+              [ stack [ Ops.int 65536; Ops.int 1 ] ],
+            stack [ u16 0; u16 6 ] );
+        ]
+        folds;
+      cases
+        "a cast of an infinity or a NaN to an integer, which has no value, \
+         stays"
+        ~id:(Printf.sprintf "%h")
+        [ Float.infinity; Float.neg_infinity; Float.nan ] (fun v ->
+          let c = Ops.cast (Ops.float ~dtype:Float32 v) Int32 in
+          folds_to c c);
+      cases "a cast of a constant is the constant of the cast's type" ~id
+        [
+          ( "int to float32",
+            Ops.cast (Ops.int 3) Float32,
+            Ops.float ~dtype:Float32 3. );
+          ( "through int64",
+            Ops.cast (Ops.cast (Ops.int 3) Int64) Float32,
+            Ops.float ~dtype:Float32 3. );
+        ]
+        folds;
       test "0 / 0 is NaN" (fun () ->
           let zero = Ops.float 0. in
-          let nan =
+          let r =
             rewrite ~order:before Shape.symbolic_simple Ops.O.(zero / zero)
           in
-          match Ops.arg nan with
-          | Const (`Float v) when Float.is_nan v -> ()
-          | _ -> failf "0 / 0 is@ %a" (Testable.pp uop) nan);
+          equal same_float (`Float Float.nan) (Ops.value r));
       cases
         "a folded selection keeps a signalling NaN's bits, and a negation \
          flips only its sign"
         ~id:(Format.asprintf "%a" Dtype.pp)
         Dtype.[ Float16; Bfloat16; Float32; Float64 ]
         (fun dt ->
-          (* A signalling NaN whose leading payload bit every format holds. *)
+          (* A signalling NaN whose leading payload bit every format holds,
+             moved and never computed, so its bits are portable. *)
           let snan = Int64.float_of_bits 0x7FF4_0000_0000_0000L in
           let c = Ops.float ~dtype:dt snan in
           let bits u =
@@ -438,7 +703,8 @@ let constants =
             | _ -> failf "%a is not a float constant" (Testable.pp uop) u
           in
           let int64 =
-            Testable.make ~pp:(fun ppf b -> Format.fprintf ppf "0x%Lx" b)
+            Testable.make
+              ~pp:(fun ppf b -> Format.fprintf ppf "0x%Lx" b)
               ~equal:Int64.equal
           in
           let held = bits c in
@@ -451,65 +717,164 @@ let constants =
           equal ~msg:"neg" int64
             (Int64.logxor Int64.min_int held)
             (bits (raw Neg [ c ])));
-      test "x / x and (x * y) / y stay, for floats" (fun () ->
-          folds_to Ops.O.(f / f) Ops.O.(f / f);
-          folds_to Ops.O.(f * g / g) Ops.O.(f * g / g));
-      test "x * 0 is 0 for integers and booleans, and stays for floats"
+    ]
+
+(* The value of a shift: past the width a left shift is 0 and a right shift the
+   sign fill; below it, [x 2^k] modulo [2^w] or the floor of [x / 2^k]. *)
+let shift_reference dt o x k : Dtype.value =
+  let past = Bigint.geq k (Bigint.of_int (Dtype.bitsize dt)) in
+  match (o : Op.t) with
+  | Shl when past -> `Int Bigint.zero
+  | Shl -> Dtype.truncate dt (`Int (Bigint.shift_left x (Bigint.to_int k)))
+  | _ when past ->
+      `Int (if Bigint.sign x < 0 then Bigint.minus_one else Bigint.zero)
+  | _ -> `Int (Bigint.shift_right x (Bigint.to_int k))
+
+(* Constant operands at a type's extremes, counts either side of its width and
+   of the larger powers of two. *)
+let gen_constant_shift =
+  let open Gen in
+  let* dt = of_list ~pp:Dtype.pp Dtype.ints in
+  let in_type v d =
+    Dtype.Value.to_z (Dtype.truncate dt Dtype.Value.(v + of_int d))
+  in
+  let xs =
+    [
+      in_type (Dtype.min dt) 0;
+      in_type (Dtype.min dt) 1;
+      in_type (Dtype.max dt) 0;
+    ]
+    @ List.map (fun n -> in_type (Dtype.Value.of_int n) 0) [ -1; 0; 1; 7 ]
+  in
+  let powers =
+    List.map (fun n -> Bigint.shift_left Bigint.one n) [ 8; 16; 32; 63; 64 ]
+  in
+  let around c = Bigint.[ pred c; c; succ c ] in
+  let width = Bigint.of_int (Dtype.bitsize dt) in
+  let z = Testable.pp Dtypes.z in
+  let+ o = of_list ~pp:Op.pp Op.[ Shl; Shr ]
+  and+ x = of_list ~pp:z xs
+  and+ k = of_list ~pp:z (List.concat_map around (width :: powers)) in
+  (dt, o, x, k)
+
+(* A shift's count and a power's exponent are numbers, read as they are. *)
+let numbers =
+  group "counts and exponents"
+    [
+      prop "a shift of constants folds by its count, of any size"
+        gen_constant_shift (fun (dt, o, x, k) ->
+          let u =
+            Ops.alu (Ops.const ~dtype:dt (`Int x)) o [ Ops.const (`Int k) ]
+          in
+          cover "a count at or past the width"
+            (Bigint.geq k (Bigint.of_int (Dtype.bitsize dt)));
+          cover "a count an OCaml int does not hold" (not (Bigint.fits_int k));
+          let folded = symbolic u in
+          constant folded;
+          equal
+            ~msg:(Format.asprintf "%a" Ops.pp u)
+            Dtypes.const
+            (shift_reference dt o x k :> Dtype.const)
+            (Ops.value folded));
+      test "a masked right shift past the width keeps its mask's sign"
         (fun () ->
-          folds_to Ops.O.(a * int 0) (Ops.int 0);
-          folds_to Ops.O.(cond * bool false) (Ops.bool false);
-          folds_to Ops.O.(f * float 0.) Ops.O.(f * float 0.));
+          (* The rule that drops a mask reads the bits below the count, and past
+             the width that is every bit, the sign included. *)
+          let x = var ~dtype:Int32 "x" (-5) 5 in
+          let high = Ops.O.(x land int32 0x7FFFFFFF) in
+          let keeps k =
+            let e = Ops.O.(high lsr Ops.const (`Int k)) in
+            let at = [ ("x", i (-1)) ] in
+            equal Dtypes.const
+              (Interpreter.eval ~vars:at e)
+              (Interpreter.eval ~vars:at (symbolic e))
+          in
+          keeps (Bigint.of_int 32);
+          keeps (Bigint.shift_left Bigint.one 63));
+      test "a bare constant shifted by a committed count commits at its type"
+        (fun () ->
+          let by_u32 o x k =
+            Ops.value
+              (symbolic (Ops.alu (Ops.int x) o [ Ops.int ~dtype:Uint32 k ]))
+          in
+          equal Dtypes.const (i 0x7FFFFFFF) (by_u32 Op.Shr (-1) 1);
+          equal Dtypes.const (i 0) (by_u32 Op.Shl 1 40));
+      test "a left shift of constants at no width by a huge count stays"
+        (fun () ->
+          let huge = Bigint.shift_left Bigint.one 80 in
+          let e = Ops.alu (Ops.int 3) Shl [ Ops.const (`Int huge) ] in
+          equal uop e (symbolic e));
+      test "a power no width truncates stays a power past what it can hold"
+        (fun () ->
+          let e = Bigint.(succ (shift_left one 23)) in
+          let u = Ops.alu (Ops.int 2) Op.Pow [ Ops.const (`Int e) ] in
+          equal op Op.Pow (Ops.op (symbolic u)));
+      cases
+        "a power no width truncates folds for a base of 0, 1 or -1 at any size"
+        ~id:string_of_int [ 0; 1; -1 ] (fun b ->
+          let e = Bigint.(succ (shift_left one 70)) in
+          let u = Ops.alu (Ops.int b) Op.Pow [ Ops.const (`Int e) ] in
+          equal Dtypes.const (i b) (Ops.value (symbolic u)));
     ]
 
 let booleans =
   group "booleans"
     [
-      test "a boolean product is a conjunction" (fun () ->
-          folds_to Ops.O.(cond * other) Ops.O.(cond land other));
-      test "a boolean sum and maximum are a disjunction" (fun () ->
-          folds_to Ops.O.(cond + other) Ops.O.(cond lor other);
-          folds_to (Ops.maximum cond other) Ops.O.(cond lor other));
+      cases "a boolean * is land, and a boolean + or maximum is lor" ~id
+        [
+          ("*", Ops.O.(cond * other), Ops.O.(cond land other));
+          ("+", Ops.O.(cond + other), Ops.O.(cond lor other));
+          ("maximum", Ops.maximum cond other, Ops.O.(cond lor other));
+        ]
+        folds;
     ]
+
+(* [round_trips mid word] is the claim that the bitcast of [word] to the float
+   [mid] and back folds to [word]: a folded bitcast reads a float constant's
+   bits as its type stores them, where tinygrad converts it first and a NaN
+   loses its bits. *)
+let round_trips mid word =
+  let w = if Dtype.itemsize mid = 1 then Dtype.Uint8 else Uint16 in
+  let u = Ops.bitcast (Ops.bitcast (Ops.int ~dtype:w word) mid) w in
+  equal
+    ~msg:(Printf.sprintf "0x%x" word)
+    Dtypes.const (Interpreter.eval u)
+    (Interpreter.eval (Shape.simplify u))
+
+(* Every word of an 8-bit float; of a 16-bit one, the words whose exponent is
+   all zeros (zeros and subnormals) or all ones (infinities and NaNs, signalling
+   ones included). *)
+let special_words mid =
+  if Dtype.itemsize mid = 1 then List.init 256 Fun.id
+  else
+    let exponent = if mid = Dtype.Float16 then 0x7C00 else 0x7F80 in
+    List.filter
+      (fun w -> w land exponent = 0 || w land exponent = exponent)
+      (List.init 0x10000 Fun.id)
 
 let casts =
   let i8 = var ~dtype:Int8 "i" (-4) 4 in
   group "casts"
     [
-      test "a cast or bitcast to its operand's type is its operand" (fun () ->
-          folds_to (raw ~arg:(Dtype Int32) Cast [ x ]) x;
-          folds_to (raw ~arg:(Dtype Int32) Bitcast [ x ]) x);
-      test "a bitcast of a constant has the same bits" (fun () ->
-          folds_to
-            (Ops.bitcast (int32 (-1)) Uint32)
-            (Ops.int ~dtype:Uint32 0xFFFF_FFFF);
-          folds_to
-            (Ops.bitcast (Ops.float ~dtype:Float32 1.) Int32)
-            (int32 0x3f80_0000));
-      test "a cast through a type that holds every value back is its operand"
-        (fun () -> folds_to (Ops.cast (Ops.cast i8 Int32) Int8) i8);
-      test "a cast through a narrower type back stays" (fun () ->
-          let there_and_back = Ops.cast (Ops.cast x Int8) Int32 in
-          folds_to there_and_back there_and_back);
-      test "two bitcasts are one" (fun () ->
-          folds_to
-            (Ops.bitcast (Ops.bitcast x Float32) Uint32)
-            (Ops.bitcast x Uint32);
-          folds_to (Ops.bitcast (Ops.bitcast x Float32) Int32) x);
-      (* A folded bitcast reads a float constant's bits as its type stores
-         them, where tinygrad converts it first and a NaN loses its bits. *)
+      cases "a cast or bitcast to its operand's type is its operand" ~id
+        [
+          ("cast", raw ~arg:(Dtype Int32) Cast [ x ], x);
+          ("bitcast", raw ~arg:(Dtype Int32) Bitcast [ x ], x);
+        ]
+        folds;
       cases
-        "a bitcast round trip of every 8- and 16-bit word folds to its value"
-        ~id:(Format.asprintf "%a" Dtype.pp)
-        Dtype.[ Fp8e4m3; Fp8e5m2; Fp8e4m3fnuz; Fp8e5m2fnuz; Float16; Bfloat16 ]
-        (fun mid ->
-          let w = if Dtype.itemsize mid = 1 then Dtype.Uint8 else Uint16 in
-          for word = 0 to (1 lsl (8 * Dtype.itemsize mid)) - 1 do
-            let u = Ops.bitcast (Ops.bitcast (Ops.int ~dtype:w word) mid) w in
-            equal
-              ~msg:(Printf.sprintf "0x%x" word)
-              Dtypes.const (Interpreter.eval u)
-              (Interpreter.eval (Shape.simplify u))
-          done);
+        "a bitcast of a constant to a type of its width is the constant with \
+         the same bits"
+        ~id
+        [
+          ( "-1 to uint32",
+            Ops.bitcast (int32 (-1)) Uint32,
+            Ops.int ~dtype:Uint32 0xFFFF_FFFF );
+          ( "1.0 to int32",
+            Ops.bitcast (Ops.float ~dtype:Float32 1.) Int32,
+            int32 0x3f80_0000 );
+        ]
+        folds;
       test "a bitcast of a constant to another width stays" (fun () ->
           let widened = Ops.bitcast (int32 1) Int64 in
           folds_to widened widened);
@@ -518,6 +883,36 @@ let casts =
       test "a bitcast to a boolean of a byte neither 0 nor 1 stays" (fun () ->
           let byte = Ops.bitcast (Ops.int ~dtype:Uint8 2) Bool in
           folds_to byte byte);
+      cases
+        "a bitcast round trip of a word through a float folds to the word: \
+         every 8-bit word, and each 16-bit word of an exponent all zeros or \
+         all ones"
+        ~id:(Format.asprintf "%a" Dtype.pp)
+        Dtype.[ Fp8e4m3; Fp8e5m2; Fp8e4m3fnuz; Fp8e5m2fnuz; Float16; Bfloat16 ]
+        (fun mid -> List.iter (round_trips mid) (special_words mid));
+      prop
+        "a bitcast round trip of any 16-bit word through a float folds to the \
+         word"
+        Gen.(
+          pair
+            (of_list ~pp:Dtype.pp Dtype.[ Float16; Bfloat16 ])
+            (int_range 0 0xFFFF))
+        (fun (mid, word) -> round_trips mid word);
+      test
+        "a cast through a type that holds every value of the result's type, \
+         back to that type, is its operand" (fun () ->
+          folds_to (Ops.cast (Ops.cast i8 Int32) Int8) i8);
+      test "a cast through a narrower type back stays" (fun () ->
+          let there_and_back = Ops.cast (Ops.cast x Int8) Int32 in
+          folds_to there_and_back there_and_back);
+      cases "two bitcasts are one" ~id
+        [
+          ( "to another type",
+            Ops.bitcast (Ops.bitcast x Float32) Uint32,
+            Ops.bitcast x Uint32 );
+          ("back", Ops.bitcast (Ops.bitcast x Float32) Int32, x);
+        ]
+        folds;
       test "a cast to a boolean is x <> 0" (fun () ->
           folds_to (Ops.cast a Bool) Ops.O.(a <> int 0));
     ]
@@ -525,77 +920,91 @@ let casts =
 (* A power leaves committed constants, [1.0 * x], that symbolic_simple alone
    does not uncast: its claims hold under symbolic. *)
 let powers =
-  let by_symbolic input expected =
-    equal uop (rewrite Shape.commutative expected) (symbolic input)
+  let special v r =
+    Ops.where (Ops.eq f (Ops.float v)) (Ops.float (Float.abs v)) r
   in
+  let p = Shape.param 5 Dtype.Int32 in
+  let n = Ops.cast p Weak_float in
   group "powers"
     [
-      test "x ** 0 is 1" (fun () ->
-          by_symbolic (Ops.pow f (Ops.float 0.)) (Ops.float ~dtype:Float32 1.));
-      test "x ** 1 is x, x ** 2 is x * x" (fun () ->
-          by_symbolic (Ops.pow f (Ops.float 1.)) f;
-          by_symbolic (Ops.pow f (Ops.float 2.)) Ops.O.(f * f));
-      test "x ** 0.5 is the square root of x, +0. at -0. and +inf at -inf"
-        (fun () ->
-          let special v r =
-            Ops.where (Ops.eq f (Ops.float v)) (Ops.float (Float.abs v)) r
-          in
-          by_symbolic
-            (Ops.pow f (Ops.float 0.5))
-            (special Float.neg_infinity (special 0. (Ops.sqrt f))));
-      test "x ** -1 is the reciprocal of x" (fun () ->
-          by_symbolic (Ops.pow f (Ops.float (-1.))) (Ops.reciprocal f));
-      test "x ** c stays for c between -1 and 0" (fun () ->
-          let p = Ops.pow f (Ops.float (-0.8)) in
-          by_symbolic p p);
-      test "a power of constants is its value" (fun () ->
-          by_symbolic
-            (Ops.pow (Ops.float ~dtype:Float32 3.) (Ops.float 2.))
-            (Ops.float ~dtype:Float32 9.));
-      test "x ** 1.3 stays" (fun () ->
-          let p = Ops.pow f (Ops.float 1.3) in
-          by_symbolic p p);
-      test "a large integer exponent takes no square root" (fun () ->
+      cases
+        "x ** c for a float x and c an integer or a half-integer, 0 or at \
+         least 1 in magnitude, is a product of powers"
+        ~id
+        [
+          ("x ** 0", Ops.pow f (Ops.float 0.), Ops.float ~dtype:Float32 1.);
+          ("x ** 1", Ops.pow f (Ops.float 1.), f);
+          ("x ** 2", Ops.pow f (Ops.float 2.), Ops.O.(f * f));
+          ("x ** -1", Ops.pow f (Ops.float (-1.)), Ops.reciprocal f);
+          ( "x ** 0.5, +0. at -0. and +inf at -inf",
+            Ops.pow f (Ops.float 0.5),
+            special Float.neg_infinity (special 0. (Ops.sqrt f)) );
+          ( "3. ** 2.",
+            Ops.pow (Ops.float ~dtype:Float32 3.) (Ops.float 2.),
+            Ops.float ~dtype:Float32 9. );
+        ]
+        simplifies;
+      cases "x ** c stays for c below 1 in magnitude, or not a half-integer"
+        ~id:fst
+        [
+          ("x ** -0.8", Ops.pow f (Ops.float (-0.8)));
+          ("x ** 1.3", Ops.pow f (Ops.float 1.3));
+        ]
+        stays_symbolic;
+      test "x ** c for a large integer c takes no square root" (fun () ->
           let p = symbolic (Ops.pow f (Ops.float (Float.ldexp 1. 60))) in
-          equal (list string) []
-            (List.filter_map
-               (fun u -> if Ops.op u = Sqrt then Some "Ops.SQRT" else None)
-               (Ops.toposort ~calls:Enter p)));
-      test
-        "1 ** x is 1 of the power's type, and c ** x is exp2 (x * log2 c) for \
-         positive c"
-        (fun () ->
-          by_symbolic
-            (Ops.pow (Ops.float ~dtype:Float32 1.) f)
-            (Ops.float ~dtype:Float32 1.);
-          by_symbolic (Ops.pow (Ops.float ~dtype:Float32 2.) f) (Ops.exp2 f));
-      test "c ** x computes in float for an integer exponent" (fun () ->
-          let n = Shape.param 5 Dtype.Int32 in
-          folds_to
-            (Ops.pow (Ops.float 3.) n)
-            (Ops.exp2 Ops.O.(Ops.cast n Weak_float * float 1.584962500721156)));
-      (* log2 0.86 correctly rounded, which glibc's log2 gives one unit away,
-         as -0.2175914350726268. *)
-      test "c ** x multiplies x by log2 c correctly rounded" (fun () ->
-          let n = Shape.param 5 Dtype.Int32 in
-          folds_to
-            (Ops.pow (Ops.float 0.86) n)
-            (Ops.exp2
-               Ops.O.(Ops.cast n Weak_float * float (-0.21759143507262677))));
+          equal (list op) []
+            (List.filter
+               (fun o -> o = Op.Sqrt)
+               (List.map Ops.op (Ops.toposort ~calls:Enter p))));
       test "an integer x ** c stays a power for a negative c" (fun () ->
           let p = symbolic (Ops.alu x Op.Pow [ Ops.int ~dtype:Int32 (-2) ]) in
-          equal string "POW" (Op.name (Ops.op p));
+          equal op Op.Pow (Ops.op p);
           equal uop x (Ops.nth p 0));
+      cases
+        "1 ** x is 1 of the power's type, and c ** x is exp2 (x * log2 c) for \
+         a positive finite c and a float x"
+        ~id
+        [
+          ( "1 ** x",
+            Ops.pow (Ops.float ~dtype:Float32 1.) f,
+            Ops.float ~dtype:Float32 1. );
+          ("2 ** x", Ops.pow (Ops.float ~dtype:Float32 2.) f, Ops.exp2 f);
+        ]
+        simplifies;
+      cases
+        "c ** x for an integer x reads x as a float, and log2 c correctly \
+         rounded"
+        ~id
+        [
+          (* log2 3 correctly rounded *)
+          ( "3 ** x",
+            Ops.pow (Ops.float 3.) p,
+            Ops.exp2 Ops.O.(n * float 1.584962500721156) );
+          (* log2 0.86 correctly rounded, which glibc's log2 gives one unit
+             away, as -0.2175914350726268. *)
+          ( "0.86 ** x",
+            Ops.pow (Ops.float 0.86) p,
+            Ops.exp2 Ops.O.(n * float (-0.21759143507262677)) );
+        ]
+        folds;
       test "c ** x stays a power for an integer x" (fun () ->
           let p = symbolic (Ops.alu (Ops.int ~dtype:Int32 3) Op.Pow [ x ]) in
-          equal string "POW" (Op.name (Ops.op p));
+          equal op Op.Pow (Ops.op p);
           equal uop x (Ops.nth p 1));
       test "c ** x stays for c at most 0" (fun () ->
           by_symbolic
             (Ops.pow (Ops.float ~dtype:Float32 (-2.)) f)
             (Ops.pow (Ops.float (-2.)) f));
-      test "a 64-bit integer packed from two halves unpacks to the half read"
-        (fun () ->
+      cases "x ** infinity and x ** NaN stay" ~id:fst
+        [
+          ("x ** inf", Ops.pow f (Ops.float Float.infinity));
+          ("x ** nan", Ops.pow f (Ops.float Float.nan));
+        ]
+        stays_symbolic;
+      test
+        "a 64-bit integer packed from two 32-bit halves unpacks to the half \
+         read" (fun () ->
           let hi = var ~dtype:Uint32 "hi" 0 7
           and lo = var ~dtype:Uint32 "lo" 0 7 in
           let wide dt = Ops.cast dt Uint64 in
@@ -614,14 +1023,27 @@ let selections =
     [
       test "a selection between equal values is that value" (fun () ->
           folds_to (Ops.where cond a a) a);
-      test "a selection by a constant is the branch it picks" (fun () ->
-          folds_to (Ops.where (Ops.bool true) a b) a;
-          folds_to (Ops.where (Ops.bool false) a b) b);
-      test "a weak branch picked from a weak selection stays as it is"
+      cases "a selection by a constant is the branch it picks" ~id
+        [
+          ("true", Ops.where (Ops.bool true) a b, a);
+          ("false", Ops.where (Ops.bool false) a b, b);
+          ( "a weak branch of a weak selection",
+            raw Where
+              [ Ops.bool true; Ops.int 1; var ~dtype:Weak_float "v" 0 3 ],
+            Ops.int 1 );
+        ]
+        folds;
+      cases "a selection by a constant keeps the selection's type" ~id
+        [
+          ( "float16",
+            Ops.where (Ops.bool true) (Ops.float 0.)
+              (var ~dtype:Float16 "h" 0 3),
+            Ops.float ~dtype:Float16 0. );
+          ("int32", Ops.where (Ops.bool true) (Ops.int 0) x, int32 0);
+        ]
+        folds;
+      test "a selection by a padded constant, which is not one value, stays"
         (fun () ->
-          let v = var ~dtype:Weak_float "v" 0 3 in
-          folds_to (raw Where [ Ops.bool true; Ops.int 1; v ]) (Ops.int 1));
-      test "a selection by a padded constant is no constant's" (fun () ->
           let p = Shape.param ~shape:[ Int 6 ] 0 Dtype.Float32
           and q = Shape.param ~shape:[ Int 6 ] 1 Dtype.Float32 in
           let mask =
@@ -633,25 +1055,31 @@ let selections =
           in
           let e = Ops.where mask p q in
           folds_to e e);
-      test "a selection by a constant keeps the selection's type" (fun () ->
-          let h = var ~dtype:Float16 "h" 0 3 in
-          folds_to
-            (Ops.where (Ops.bool true) (Ops.float 0.) h)
-            (Ops.float ~dtype:Float16 0.);
-          folds_to (Ops.where (Ops.bool true) (Ops.int 0) x) (int32 0));
+    ]
+
+let movements =
+  let p = Shape.param ~shape:[ Int 16 ] 0 Dtype.Float32 in
+  let shrink u lo n = Shape.mop u (Shrink [ (Int lo, Int n) ]) in
+  group "movements"
+    [
+      test "cleans up movements as mop_cleanup does" (fun () ->
+          folds_to (shrink (shrink p 2 8) 3 4) (shrink p 5 4));
     ]
 
 let symbolic_simple =
   group "symbolic_simple"
     [
+      invalid_values;
       identities;
       recombination;
       zeros;
       constants;
+      numbers;
       booleans;
       casts;
       powers;
       selections;
+      movements;
     ]
 
 (* commutative *)
@@ -660,9 +1088,12 @@ let commutative =
   let canonical u = rewrite Shape.commutative u in
   group "commutative"
     [
-      test "two sums of the same weak integer terms are the same node"
-        (fun () ->
-          equal uop (canonical Ops.O.(a + b)) (canonical Ops.O.(b + a)));
+      prop "two sums of the same weak integer terms are the same node"
+        Gen.(pair Expressions.weak_scenario Expressions.weak_scenario)
+        (fun (s0, s1) ->
+          Law.commutative uop
+            (fun u0 u1 -> canonical Ops.O.(u0 + u1))
+            (Expressions.node s0, Expressions.node s1));
       test "a committed sum keeps its order" (fun () ->
           equal uop Ops.O.(y + x) (canonical Ops.O.(y + x)));
       test "a non-commutative operation keeps its order" (fun () ->
@@ -671,237 +1102,260 @@ let commutative =
 
 (* symbolic *)
 
-let by_symbolic = simplifies_to ~by:symbolic
-
 let terms =
+  let n = Shape.param 5 Dtype.Int32 in
   group "terms"
     [
       test "x lor not x is true" (fun () ->
           by_symbolic Ops.O.(cond lor Ops.logical_not cond) (Ops.bool true));
-      test "like terms combine" (fun () ->
-          by_symbolic Ops.O.((a * int 2) + (a * int 3)) Ops.O.(a * int 5);
-          by_symbolic Ops.O.(a + (a * int 3)) Ops.O.(a * int 4);
-          by_symbolic Ops.O.(a + a) Ops.O.(a * int 2));
-      test "like terms combine as the last two terms of a sum" (fun () ->
-          by_symbolic
-            Ops.O.(b + (a * int 2) + (a * int 3))
-            Ops.O.(b + (a * int 5));
-          by_symbolic Ops.O.(b + a + (a * int 3)) Ops.O.(b + (a * int 4));
-          by_symbolic Ops.O.(b + (a * int 3) + a) Ops.O.(b + (a * int 4));
-          by_symbolic Ops.O.(b + a + a) Ops.O.(b + (a * int 2)));
-      test "a term's new coefficient is a weak constant" (fun () ->
-          let n = Shape.param 5 Dtype.Int32 in
-          by_symbolic Ops.O.(n + n) Ops.O.(n * int 2);
-          folds_to Ops.O.(n // int (-1)) Ops.O.(n * int (-1)));
-      test "(x / y) / z stays" (fun () ->
-          let h = Shape.param 3 Dtype.Float32 in
-          by_symbolic Ops.O.(f / g / h) Ops.O.(f / g / h));
-      test "-(x + c) is -x + -c for integers, and stays for floats"
-        (fun () ->
-          by_symbolic
-            Ops.O.(int (-1) * (a + int 3))
-            Ops.O.((a * int (-1)) + int (-3));
-          let neg = Ops.O.(float (-1.) * (f + float 3.)) in
-          by_symbolic neg neg);
-      test "c * (x + c') is c * x + c * c'" (fun () ->
-          by_symbolic Ops.O.(int 2 * (a + int 3)) Ops.O.((a * int 2) + int 6));
+      cases "like terms combine, also as the last two terms of a sum" ~id
+        [
+          ("2a + 3a", Ops.O.((a * int 2) + (a * int 3)), Ops.O.(a * int 5));
+          ("a + 3a", Ops.O.(a + (a * int 3)), Ops.O.(a * int 4));
+          ("a + a", Ops.O.(a + a), Ops.O.(a * int 2));
+          ("n + n, int32", Ops.O.(n + n), Ops.O.(n * int 2));
+          ( "b + 2a + 3a",
+            Ops.O.(b + (a * int 2) + (a * int 3)),
+            Ops.O.(b + (a * int 5)) );
+          ("b + a + 3a", Ops.O.(b + a + (a * int 3)), Ops.O.(b + (a * int 4)));
+          ("b + 3a + a", Ops.O.(b + (a * int 3) + a), Ops.O.(b + (a * int 4)));
+          ("b + a + a", Ops.O.(b + a + a), Ops.O.(b + (a * int 2)));
+        ]
+        simplifies;
+      cases "c * (x + c') is c * x + c * c' for a weak integer x" ~id
+        [
+          ( "2 * (a + 3)",
+            Ops.O.(int 2 * (a + int 3)),
+            Ops.O.((a * int 2) + int 6) );
+          ( "-1 * (a + 3)",
+            Ops.O.(int (-1) * (a + int 3)),
+            Ops.O.((a * int (-1)) + int (-3)) );
+        ]
+        simplifies;
+      cases "a float sum or quotient keeps its grouping" ~id:fst
+        [
+          ("-1 * (f + 3)", Ops.O.(float (-1.) * (f + float 3.)));
+          ("(f / g) / h", Ops.O.(f / g / Shape.param 3 Dtype.Float32));
+        ]
+        stays_symbolic;
     ]
 
 let symbolic_selections =
   let t = var "t" 0 3 and e = var "e" 0 3 in
   group "selections"
     [
-      test "a selection by a negation swaps its branches" (fun () ->
-          by_symbolic
-            (Ops.where (Ops.logical_not cond) t e)
-            (Ops.where cond e t);
-          by_symbolic
-            (Ops.where (raw Cmpeq [ Ops.bool false; cond ]) t e)
-            (Ops.where cond e t));
-      test "the condition is true in the true branch and false in the other"
-        (fun () ->
-          let inner = Ops.where cond Ops.O.(~-a) a in
-          by_symbolic
-            (Ops.where cond Ops.O.(inner * int 2) Ops.O.(inner + int 1))
-            (Ops.where cond Ops.O.(a * int (-2)) Ops.O.(a + int 1)));
-      test "the condition is not assumed in the bound of a loop in a branch"
-        (fun () ->
+      cases "a selection by a negation swaps its branches" ~id
+        [
+          ("not c", Ops.where (Ops.logical_not cond) t e, Ops.where cond e t);
+          ( "false = c",
+            Ops.where (raw Cmpeq [ Ops.bool false; cond ]) t e,
+            Ops.where cond e t );
+        ]
+        simplifies;
+      cases
+        "the condition is true in the true branch and false in the false one"
+        ~id
+        [
+          ( "both branches",
+            (let inner = Ops.where cond Ops.O.(~-a) a in
+             Ops.where cond Ops.O.(inner * int 2) Ops.O.(inner + int 1)),
+            Ops.where cond Ops.O.(a * int (-2)) Ops.O.(a + int 1) );
+          ( "the false branch",
+            Ops.where cond t (Ops.cast cond Weak_int),
+            Ops.where cond t (raw ~arg:(Dtype Weak_int) Cast [ Ops.bool false ])
+          );
+        ]
+        simplifies;
+      test "a range's bound keeps the condition whatever the branch" (fun () ->
           let bound = Ops.where cond (Ops.int 3) (Ops.int 0) in
           let r = Ops.range ~axis_type:Weak (Sym bound) [ 0 ] in
           let index = Ops.O.(r * int 2) in
-          let invalid = Shape.const_like index `Invalid in
-          by_symbolic
-            (Ops.where cond index invalid)
-            (Ops.where cond index invalid));
-      test "the condition is still true elsewhere in a branch holding such a \
-            loop" (fun () ->
+          stays_under_symbolic
+            (Ops.where cond index (Shape.const_like index `Invalid)));
+      test "the condition holds elsewhere in a branch holding such a range"
+        (fun () ->
           let bound = Ops.where cond (Ops.int 3) (Ops.int 0) in
           let r = Ops.range ~axis_type:Weak (Sym bound) [ 0 ] in
           let inner = Ops.where cond Ops.O.(r * int 2) a in
-          by_symbolic
-            (Ops.where cond inner e)
+          by_symbolic (Ops.where cond inner e)
             (Ops.where cond Ops.O.(r * int 2) e));
-      test "the condition is false in the false branch" (fun () ->
-          let t = var "t" 0 3 in
-          by_symbolic
-            (Ops.where cond t (Ops.cast cond Weak_int))
-            (Ops.where cond t
-               (raw ~arg:(Dtype Weak_int) Cast [ Ops.bool false ])));
-      test "another condition is not folded in the branches" (fun () ->
-          let e' = Ops.where other t e in
-          let sel = Ops.where cond e' (Ops.where other e t) in
-          by_symbolic sel sel);
-      test
-        "a broadcast constant condition is not folded in the branches"
-        (fun () ->
-          let x = Shape.param ~shape:[ Ops.Int 4 ] 0 Dtype.Float32 in
-          let y = Shape.param ~shape:[ Ops.Int 4 ] 1 Dtype.Float32 in
-          (* One node for every use of the constant: assuming it false in the
-             false branch, and true in the true one, trades the two without
-             end. *)
-          let f = Shape.const_like ~dtype:Bool x (`Bool false) in
-          let sel = Ops.where f (Ops.where f x (Ops.where f y x)) y in
-          equal uop sel (symbolic sel));
-      test
-        "a padded constant condition is not folded in the branches"
-        (fun () ->
-          let x = Shape.param ~shape:[ Ops.Int 6 ] 0 Dtype.Float32 in
-          let y = Shape.param ~shape:[ Ops.Int 6 ] 1 Dtype.Float32 in
-          let inner = Shape.param ~shape:[ Ops.Int 4 ] 2 Dtype.Float32 in
-          (* One node for every use of the constant: assuming it true in a
-             branch would rewrite it everywhere. *)
-          let c =
-            Shape.pad
-              (Shape.const_like ~dtype:Bool inner (`Bool true))
-              [ Some (Ops.Int 1, Ops.Int 1) ]
-          in
-          let sel = Ops.where c (Ops.where c x (Ops.where c y x)) y in
-          equal uop sel (symbolic sel));
-      test "a condition over an index is not folded in the branches" (fun () ->
-          let load = Ops.index buf [ a ] in
-          let c = Ops.O.(load < float 1.) in
-          let sel = Ops.where c (Ops.where c f g) (Shape.param 3 Dtype.Float32) in
-          equal uop sel (symbolic sel));
-      test
-        "a condition over a load of several elements is not folded in the \
-         branches"
-        (fun () ->
-          (* The access memory coalescing makes of four loads: its address
-             is a shrink of the buffer, where one load's is an index. *)
-          let load = Ops.load (Ops.v Op.Shrink ~src:[ buf; a; Ops.int 4 ]) [] in
-          let lanes u = Ops.broadcast u 4 in
-          let c = Ops.O.(load < lanes (float 1.)) in
-          let sel = Ops.where c (Ops.where c (lanes f) (lanes g)) load in
-          equal uop sel (symbolic sel));
-      test
-        "a condition is not folded in branches over a load of several \
-         elements"
-        (fun () ->
-          let load = Ops.load (Ops.v Op.Shrink ~src:[ buf; a; Ops.int 4 ]) [] in
-          let c = Ops.broadcast cond 4 in
-          let inner = Ops.where c load (Ops.broadcast f 4) in
-          let sel = Ops.where c Ops.O.(inner + load) inner in
-          equal uop sel (symbolic sel));
-      test "a guard of a conversion to an integer is kept in the branches"
-        (fun () ->
-          let near = Ops.O.(f < float 4096.) in
-          let q = Ops.cast (Ops.where near f (Ops.O.float 0.)) Dtype.Int32 in
-          let sel = Ops.where near q x in
-          equal uop sel (symbolic sel));
+      test "another condition is not assumed in the branches" (fun () ->
+          stays_under_symbolic
+            (Ops.where cond (Ops.where other t e) (Ops.where other e t)));
+      cases "the condition is not assumed in the branches" ~id:fst
+        [
+          ( (* One node for every use of the constant: assuming it in a branch
+               would rewrite it everywhere. *)
+            "a broadcast constant",
+            let x = Shape.param ~shape:[ Ops.Int 4 ] 0 Dtype.Float32 in
+            let y = Shape.param ~shape:[ Ops.Int 4 ] 1 Dtype.Float32 in
+            let c = Shape.const_like ~dtype:Bool x (`Bool false) in
+            Ops.where c (Ops.where c x (Ops.where c y x)) y );
+          ( "a padded constant",
+            let x = Shape.param ~shape:[ Ops.Int 6 ] 0 Dtype.Float32 in
+            let y = Shape.param ~shape:[ Ops.Int 6 ] 1 Dtype.Float32 in
+            let inner = Shape.param ~shape:[ Ops.Int 4 ] 2 Dtype.Float32 in
+            let c =
+              Shape.pad
+                (Shape.const_like ~dtype:Bool inner (`Bool true))
+                [ Some (Ops.Int 1, Ops.Int 1) ]
+            in
+            Ops.where c (Ops.where c x (Ops.where c y x)) y );
+          ( "a condition reaching an index",
+            let c = Ops.O.(Ops.index buf [ a ] < float 1.) in
+            Ops.where c (Ops.where c f g) (Shape.param 3 Dtype.Float32) );
+          ( (* The access memory coalescing makes of four loads: its address is
+               a shrink of the buffer, where one load's is an index. *)
+            "a condition reaching a load of several elements",
+            let load =
+              Ops.load (Ops.v Op.Shrink ~src:[ buf; a; Ops.int 4 ]) []
+            in
+            let lanes u = Ops.broadcast u 4 in
+            let c = Ops.O.(load < lanes (float 1.)) in
+            Ops.where c (Ops.where c (lanes f) (lanes g)) load );
+          ( "branches reaching a load of several elements",
+            let load =
+              Ops.load (Ops.v Op.Shrink ~src:[ buf; a; Ops.int 4 ]) []
+            in
+            let c = Ops.broadcast cond 4 in
+            let inner = Ops.where c load (Ops.broadcast f 4) in
+            Ops.where c Ops.O.(inner + load) inner );
+          ( "a guard of a conversion of a float to an integer",
+            let near = Ops.O.(f < float 4096.) in
+            let q = Ops.cast (Ops.where near f (Ops.O.float 0.)) Dtype.Int32 in
+            Ops.where near q x );
+        ]
+        (fun (_, sel) -> equal uop sel (symbolic sel));
       test "where g x 0 <> 0 is g land (x <> 0)" (fun () ->
           by_symbolic
             Ops.O.(Ops.where cond b (int 0) <> int 0)
             Ops.O.(cond land (b <> int 0)));
-      test "nested selections sharing a false branch merge by conjunction"
-        (fun () ->
-          by_symbolic
-            (Ops.where cond (Ops.where other t e) e)
-            (Ops.where Ops.O.(cond land other) t e));
-      test "nested selections sharing a true branch merge by disjunction"
-        (fun () ->
-          by_symbolic
-            (Ops.where cond t (Ops.where other t e))
-            (Ops.where Ops.O.(cond lor other) t e));
-      test "an operation on selections by one condition with constant branches"
-        (fun () ->
-          by_symbolic
-            Ops.O.(Ops.where cond t (int 0) + Ops.where cond e (int 1))
-            (Ops.where cond Ops.O.(t + e) (Ops.int 1));
-          by_symbolic
-            Ops.O.(b + Ops.where cond t (int 0) + Ops.where cond e (int 1))
-            Ops.O.(b + Ops.where cond (t + e) (int 1)));
-      test "a cast of a selection stays outside it" (fun () ->
-          let sel = Ops.where cond other Ops.O.(a < int 2) in
-          by_symbolic (Ops.cast sel Int32) (Ops.cast sel Int32));
-      test "an operation on selections without a constant pair stays" (fun () ->
-          let sum = Ops.O.(Ops.where cond t e + Ops.where cond e t) in
-          by_symbolic sum sum;
-          let sum = Ops.O.(b + Ops.where cond t e + Ops.where cond e t) in
-          by_symbolic sum sum);
-      test "complementary zero branches select directly" (fun () ->
-          by_symbolic
-            Ops.O.(Ops.where cond t (int 0) + Ops.where cond (int 0) e)
-            (Ops.where cond t e));
+      cases "nested selections sharing a branch merge their conditions" ~id
+        [
+          ( "the false branch, by land",
+            Ops.where cond (Ops.where other t e) e,
+            Ops.where Ops.O.(cond land other) t e );
+          ( "the true branch, by lor",
+            Ops.where cond t (Ops.where other t e),
+            Ops.where Ops.O.(cond lor other) t e );
+          ( "the outer's false branch as the inner's true one, by land of the \
+             inner's negation",
+            Ops.where cond (Ops.where other e t) e,
+            Ops.where Ops.O.(cond land Ops.logical_not other) t e );
+        ]
+        simplifies;
+      cases
+        "an operation on two selections by one condition with a constant pair \
+         of branches selects between the operations"
+        ~id
+        [
+          ( "a sum",
+            Ops.O.(Ops.where cond t (int 0) + Ops.where cond e (int 1)),
+            Ops.where cond Ops.O.(t + e) (Ops.int 1) );
+          ( "the last two terms of a sum",
+            Ops.O.(b + Ops.where cond t (int 0) + Ops.where cond e (int 1)),
+            Ops.O.(b + Ops.where cond (t + e) (int 1)) );
+          ( "where c t 0 + where c 0 f",
+            Ops.O.(Ops.where cond t (int 0) + Ops.where cond (int 0) e),
+            Ops.where cond t e );
+        ]
+        simplifies;
+      cases "an operation on selections without a constant pair stays" ~id:fst
+        [
+          ("a sum", Ops.O.(Ops.where cond t e + Ops.where cond e t));
+          ( "in a longer sum",
+            Ops.O.(b + Ops.where cond t e + Ops.where cond e t) );
+          ( "a cast of one selection",
+            Ops.cast (Ops.where cond other Ops.O.(a < int 2)) Int32 );
+        ]
+        stays_symbolic;
     ]
 
 let bounds =
+  let v = var "v" (-10) 10 in
+  let s = var ~dtype:Int32 "s" (-10) 10 in
   group "bounds"
     [
-      test "a comparison whose bounds are equal is a constant" (fun () ->
-          by_symbolic Ops.O.(a < int 9) (Ops.bool true);
-          by_symbolic Ops.O.(a < int 0) (Ops.bool false);
-          by_symbolic Ops.O.(a <> int 9) (Ops.bool true));
-      test "a division and a remainder with one possible value are constants"
-        (fun () ->
-          by_symbolic Ops.O.(a // int 9) (Ops.int 0);
-          by_symbolic Ops.O.(var "v" 10 14 // int 5) (Ops.int 2));
-      test "a variable of one value is that value" (fun () ->
-          by_symbolic (var "one" 1 1) (Ops.int 1));
-      test "a hardware index of one value is 0" (fun () ->
-          by_symbolic (Ops.special (Int 1) "gidx0") (Ops.int 0));
-      test "a range of a constant end with one value is 0" (fun () ->
-          by_symbolic (Ops.range ~axis_type:Weak (Int 1) [ 0 ]) (Ops.int 0));
-      test "a range of a symbolic end is not folded" (fun () ->
-          let r =
-            Ops.range ~axis_type:Weak (Sym (Ops.cast cond Weak_int)) [ 0 ]
-          in
-          by_symbolic r r);
-      test "a maximum of operands whose bounds do not overlap is the greater"
-        (fun () ->
-          by_symbolic (Ops.maximum a (Ops.int 10)) (Ops.int 10);
-          by_symbolic (Ops.maximum (Ops.int (-1)) a) a);
-      test "a selection that computes something else than a maximum stays"
-        (fun () ->
-          let v = var "v" (-10) 10 in
-          let sel = Ops.where Ops.O.(v < int 0) (Ops.int 1) v in
-          by_symbolic sel sel;
-          let sel = Ops.where Ops.O.(int 0 < v) v (Ops.int 1) in
-          by_symbolic sel sel);
-      test "a selection that computes a maximum is a maximum" (fun () ->
-          let v = var "v" (-10) 10 in
-          by_symbolic
-            (Ops.where Ops.O.(v < int 0) (Ops.int 0) v)
-            (Ops.maximum v (Ops.int 0));
-          by_symbolic
-            (Ops.where Ops.O.(int 0 < v) v (Ops.int 0))
-            (Ops.maximum v (Ops.int 0)));
+      cases "a node whose bounds are equal is that constant" ~id
+        [
+          ("a < 9", Ops.O.(a < int 9), Ops.bool true);
+          ("a < 0", Ops.O.(a < int 0), Ops.bool false);
+          ("a <> 9", Ops.O.(a <> int 9), Ops.bool true);
+          ("a // 9", Ops.O.(a // int 9), Ops.int 0);
+          (* 10 to 14 divided by 5 is 2 *)
+          ("[10, 14] // 5", Ops.O.(var "v" 10 14 // int 5), Ops.int 2);
+          (* a multiple of 4 is 0 modulo 2 *)
+          ("4a % 2", Ops.O.(a * int 4 % int 2), Ops.int 0);
+          ("a variable of one value", var "one" 1 1, Ops.int 1);
+          ( "a hardware index of one value",
+            Ops.special (Int 1) "gidx0",
+            Ops.int 0 );
+          ( "a range of one value",
+            Ops.range ~axis_type:Weak (Int 1) [ 0 ],
+            Ops.int 0 );
+          ( "an after of one value",
+            Ops.after (var "k" 2 2) [ Ops.v Op.Noop ],
+            Ops.int 2 );
+        ]
+        simplifies;
+      test "a range with a symbolic end is not folded" (fun () ->
+          stays_under_symbolic
+            (Ops.range ~axis_type:Weak (Sym (Ops.cast cond Weak_int)) [ 0 ]));
+      cases
+        "an integer maximum of operands that do not overlap is the greater, \
+         committed to its type"
+        ~id
+        [
+          ("max a 10", Ops.maximum a (Ops.int 10), Ops.int 10);
+          ("max -1 a", Ops.maximum (Ops.int (-1)) a, a);
+          ("max x 10, int32", Ops.maximum x (Ops.int 10), int32 10);
+        ]
+        simplifies;
+      cases "an integer selection that computes a maximum is one" ~id
+        [
+          ( "where (v < 0) 0 v",
+            Ops.where Ops.O.(v < int 0) (Ops.int 0) v,
+            Ops.maximum v (Ops.int 0) );
+          ( "where (0 < v) v 0",
+            Ops.where Ops.O.(int 0 < v) v (Ops.int 0),
+            Ops.maximum v (Ops.int 0) );
+          ( "where (s < 3) 5 (s + 2)",
+            Ops.where Ops.O.(s < int32 3) (int32 5) Ops.O.(s + int32 2),
+            Ops.maximum Ops.O.(s + int 2) (Ops.int 5) );
+        ]
+        simplifies;
+      cases "a selection that computes something other than a maximum stays"
+        ~id:fst
+        [
+          ("where (v < 0) 1 v", Ops.where Ops.O.(v < int 0) (Ops.int 1) v);
+          ("where (0 < v) v 1", Ops.where Ops.O.(int 0 < v) v (Ops.int 1));
+        ]
+        stays_symbolic;
     ]
 
 let symbolic_constants =
   group "constants"
     [
-      test "two associative operations on constants fold them" (fun () ->
-          by_symbolic Ops.O.(a + int 3 + int 4) Ops.O.(a + int 7);
-          by_symbolic Ops.O.(a * int 3 * int 4) Ops.O.(a * int 12);
-          by_symbolic
-            (Ops.maximum (Ops.maximum (var "v" 0 20) (Ops.int 10)) (Ops.int 11))
-            (Ops.maximum (var "v" 0 20) (Ops.int 11)));
-      test "(x // c1) // c2 is x // (c1 * c2) for positive c2" (fun () ->
+      cases "two associative operations on constants fold the constants" ~id
+        [
+          ("a + 3 + 4", Ops.O.(a + int 3 + int 4), Ops.O.(a + int 7));
+          ("a * 3 * 4", Ops.O.(a * int 3 * int 4), Ops.O.(a * int 12));
+          ( "max (max v 10) 11",
+            Ops.maximum (Ops.maximum (var "v" 0 20) (Ops.int 10)) (Ops.int 11),
+            Ops.maximum (var "v" 0 20) (Ops.int 11) );
+        ]
+        simplifies;
+      test "(x // c1) // c2 is x // (c1 * c2) for a positive c2" (fun () ->
           let v = var "v" 0 1800 in
           by_symbolic Ops.O.(v // int 10 // int 9) Ops.O.(v // int 90));
-      test "constants move to the end of sums and products" (fun () ->
-          by_symbolic Ops.O.(a + int 3 + b) Ops.O.(a + b + int 3);
-          by_symbolic Ops.O.(a * int 3 * b) Ops.O.(a * b * int 3));
+      cases "constants move to the end of integer sums and products" ~id
+        [
+          ("a + 3 + b", Ops.O.(a + int 3 + b), Ops.O.(a + b + int 3));
+          ("a * 3 * b", Ops.O.(a * int 3 * b), Ops.O.(a * b * int 3));
+        ]
+        simplifies;
+      test "a factor -1 moves to the end of a float product" (fun () ->
+          by_symbolic Ops.O.(f * float (-1.) * g) Ops.O.(f * g * float (-1.)));
     ]
 
 let comparisons =
@@ -909,199 +1363,153 @@ let comparisons =
     [
       test "c0 + x < c1 is x < c1 - c0" (fun () ->
           by_symbolic Ops.O.(a + int 2 < int 5) Ops.O.(a < int 3));
-      test "c0 * x < c1 divides by c0, rounding up" (fun () ->
-          by_symbolic Ops.O.(a * int 4 < int 13) Ops.O.(a < int 4);
-          by_symbolic Ops.O.(a * int 4 < int 16) Ops.O.(a < int 4));
-      test "c0 * x < c1 flips x's sign for a negative c0" (fun () ->
-          let v = var "v" (-5) 5 in
-          by_symbolic Ops.O.(v * int (-4) < int 13) Ops.O.(int (-4) < v));
-      test "x // d < c is x < c * d for positive d" (fun () ->
+      cases "c0 * x < c1 divides both sides by c0, rounding up" ~id
+        [
+          ("4a < 13", Ops.O.(a * int 4 < int 13), Ops.O.(a < int 4));
+          ("4a < 16", Ops.O.(a * int 4 < int 16), Ops.O.(a < int 4));
+          ( "a negative c0 flips x's sign",
+            Ops.O.(var "v" (-5) 5 * int (-4) < int 13),
+            Ops.O.(int (-4) < var "v" (-5) 5) );
+        ]
+        simplifies;
+      test "x // d < c is x < c * d for a positive d" (fun () ->
           let v = var "v" 0 24 in
           by_symbolic Ops.O.(v // int 4 < int 3) Ops.O.(v < int 12));
-      test "a common divisor of c and the coefficients divides out" (fun () ->
-          let small = var "s" 0 3 in
-          by_symbolic Ops.O.((a * int 4) + small < int 16) Ops.O.(a < int 4));
-      test "a common divisor divides out of a bound of at most 0" (fun () ->
-          let signed = var "s" (-3) 3 and small = var "t" 0 3 in
-          by_symbolic
-            Ops.O.((signed * int 4) + small < int 0)
-            Ops.O.(signed < int 0));
-      test "a divisor stays when the other terms can reach it" (fun () ->
-          let wide = var "w" 0 4 in
-          let lt = Ops.O.((a * int 4) + wide < int 16) in
-          by_symbolic lt lt);
+      cases
+        "d * y + p < c is y < ceil((c - p) / d) where that bound is one for \
+         every value of p"
+        ~id
+        [
+          ( "4a + [0, 3] < 16",
+            Ops.O.((a * int 4) + var "s" 0 3 < int 16),
+            Ops.O.(a < int 4) );
+          ( "4s + [0, 3] < 0, s signed",
+            Ops.O.((var "s" (-3) 3 * int 4) + var "t" 0 3 < int 0),
+            Ops.O.(var "s" (-3) 3 < int 0) );
+        ]
+        simplifies;
+      test "d * y + p < c stays where the bound differs across p's values"
+        (fun () ->
+          stays_under_symbolic Ops.O.((a * int 4) + var "w" 0 4 < int 16));
       test "c0 + x < c1 stays for floats, where moving c0 rounds" (fun () ->
           let d = var ~dtype:Float64 "d" 0 2 in
-          let lt = Ops.O.(float 1e16 + d < float (1e16 +. 2.)) in
-          by_symbolic lt lt);
+          stays_under_symbolic Ops.O.(float 1e16 + d < float (1e16 +. 2.)));
       test "-x < -y is y < x" (fun () ->
           by_symbolic Ops.O.(a * int (-1) < b * int (-1)) Ops.O.(b < a));
-      test "not (x < 1) drops the positive coefficients of x" (fun () ->
+      test
+        "not (x < 1) drops the coefficients of a sum of non-negative terms \
+         with positive coefficients" (fun () ->
           let lt1 e = Ops.O.(lnot (e < int 1)) in
           by_symbolic
             (lt1 Ops.O.((a * int 3) + (b * int 4)))
             (lt1 Ops.O.(a + b)));
-      test "not (x < 1) keeps the coefficients of a term that can be negative"
-        (fun () ->
-          let lt1 e = Ops.O.(lnot (e < int 1)) in
-          let v = var "v" (-3) 3 in
-          let e = lt1 Ops.O.((a * int 3) + (v * int 4)) in
-          by_symbolic e e;
-          let e = lt1 Ops.O.((a * int (-3)) + (b * int 4)) in
-          by_symbolic e e);
-    ]
-
-(* Integers wrap at a committed width, so a rewrite that computes as
-   unbounded integers do applies there only where nothing wraps. Each graph is
-   evaluated before and after [sym] at bindings where something wraps. *)
-
-let keeps_machine_value ?(by = sym) u points =
-  let after = by u in
-  List.iter
-    (fun vars ->
-      let msg = Format.asprintf "at %a" pp_binding vars in
-      equal ~msg Dtypes.const (Interpreter.eval ~vars u)
-        (Interpreter.eval ~vars after))
-    points
-
-let wrapping =
-  group "integers wrap"
-    [
-      test "(x // c1) // c2 stays where c1 * c2 wraps" (fun () ->
-          let w =
-            Ops.variable ~dtype:Int32 "w" (Dtype.min Int32) (Dtype.max Int32)
-          in
-          let u = Ops.O.(w // int 65536 // int 65536) in
-          by_symbolic u u);
-    ]
-
-(* Floats keep IEEE's values, signed zeros, infinities, NaN and subnormals
-   included. Each graph is evaluated before and after the rewrite, with [f], [g]
-   and [h] bound to the given float32 values, at points where a rewrite tolk
-   restricts to exact values changes the value. *)
-
-let keeps_float_bits ?(by = sym) u points =
-  let after = by u in
-  List.iter
-    (fun values ->
-      let params =
-        List.mapi (fun k v -> (List.nth [ 0; 1; 3 ] k, float32 v)) values
-      in
-      let msg =
-        Format.asprintf "at %a"
-          (Format.pp_print_list
-             ~pp_sep:(fun ppf () -> Format.fprintf ppf ", ")
-             Format.pp_print_float)
-          values
-      in
-      equal ~msg same_float
-        (Interpreter.eval ~params u)
-        (Interpreter.eval ~params after))
-    points
-
-let floats =
-  let inf = Float.infinity in
-  group "floats keep IEEE values"
-    [
-      test "a float selection that computes a maximum stays" (fun () ->
-          let u = Ops.where Ops.O.(f < float 0.) (Ops.float 0.) f in
-          simplifies_to ~by:symbolic u u;
-          let u = Ops.where Ops.O.(float 0. < f) f (Ops.float 0.) in
-          simplifies_to ~by:symbolic u u);
-      test "powers keep pow's special values" (fun () ->
-          let by = symbolic in
-          keeps_float_bits ~by
-            (Ops.pow f (Ops.float 2.5))
-            [ [ -.inf ]; [ -0. ] ];
-          keeps_float_bits ~by
-            (Ops.pow f (Ops.float 0.5))
-            [ [ -0. ]; [ -.inf ] ];
-          keeps_float_bits ~by (Ops.pow f (Ops.float (-0.8))) [ [ 1e-40 ] ];
-          keeps_float_bits ~by
-            (Ops.pow (Ops.float ~dtype:Float32 inf) f)
-            [ [ 0. ] ]);
+      cases "not (x < 1) keeps the coefficients otherwise" ~id:fst
+        [
+          ( "a term that can be negative",
+            Ops.O.(lnot ((a * int 3) + (var "v" (-3) 3 * int 4) < int 1)) );
+          ( "a negative coefficient",
+            Ops.O.(lnot ((a * int (-3)) + (b * int 4) < int 1)) );
+        ]
+        stays_symbolic;
     ]
 
 let ranges =
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
+  let n = Ops.O.(var "n" 1 10 + int 2) in
+  let rn = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
   group "ranges"
     [
-      test "a range modulo its end is the range" (fun () ->
-          by_symbolic Ops.O.(r % int 8) r);
-      test "a range divided by its end is 0" (fun () ->
-          by_symbolic Ops.O.(r // int 8) (Ops.int 0));
-      test "a range of a symbolic end modulo and divided by its end" (fun () ->
-          let n = Ops.O.(var "n" 1 10 + int 2) in
-          let r = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
-          by_symbolic Ops.O.(r % n) r;
-          by_symbolic Ops.O.(r // n) (Ops.int 0));
+      cases "a range modulo its end is the range" ~id
+        [
+          ("a constant end", Ops.O.(r % int 8), r);
+          ("a symbolic end", Ops.O.(rn % n), rn);
+        ]
+        simplifies;
+      cases "a range divided by its end is 0" ~id
+        [
+          ("a constant end", Ops.O.(r // int 8), Ops.int 0);
+          ("a symbolic end", Ops.O.(rn // n), Ops.int 0);
+        ]
+        simplifies;
     ]
 
 let symbolic_casts =
   let i8 = var ~dtype:Int8 "i" (-4) 4 in
   let byte = var ~dtype:Uint8 "b" 0 255 and shift = var ~dtype:Uint8 "s" 0 7 in
+  let bounded = var ~dtype:Int64 "b" (-16) 16 in
+  let wide v = Ops.cast v Int64 in
   group "casts"
     [
-      test "a cast through a type that holds every value is one cast" (fun () ->
+      test
+        "a cast through a type that holds every value of the operand is one \
+         cast" (fun () ->
           by_symbolic
             (Ops.cast (Ops.cast i8 Int32) Float32)
             (Ops.cast i8 Float32));
-      test "a cast of an integer that fits the intermediate type is one cast"
+      cases "a cast of an integer that fits the intermediate type is one cast"
+        ~id
+        [
+          ( "int32 to int8 to int64",
+            Ops.cast (Ops.cast x Int8) Int64,
+            Ops.cast x Int64 );
+          ( "int64 to int32 to int16",
+            Ops.cast (Ops.cast bounded Int32) Int16,
+            Ops.cast bounded Int16 );
+        ]
+        simplifies;
+      cases "a cast of an integer the intermediate type does not hold stays"
+        ~id:fst
+        [
+          ( "int32 [0, 1000] through int8",
+            Ops.cast (Ops.cast (var ~dtype:Int32 "big" 0 1000) Int8) Int64 );
+          ( "int64 [0, 2^32 - 1] through int32",
+            let u =
+              Ops.variable ~dtype:Int64 "u" (i 0)
+                (`Int (Bigint.of_string "4294967295"))
+            in
+            Ops.cast (Ops.cast u Int32) Int64 );
+        ]
+        stays_symbolic;
+      cases
+        "a binary operation on 64-bit integers whose values fit 32 bits \
+         computes in int32"
+        ~id
+        [
+          ("a sum", Ops.O.(wide x + wide y), wide Ops.O.(x + y));
+          ("a product", Ops.O.(wide x * wide y), wide Ops.O.(x * y));
+          ( "with a weak constant",
+            Ops.O.(wide x + int 5),
+            wide Ops.O.(x + int 5) );
+          ( "a product by a constant",
+            Ops.O.(bounded * int 8),
+            wide Ops.O.(Ops.cast bounded Int32 * int 8) );
+        ]
+        simplifies;
+      test "a binary operation on 64-bit integers that can pass 32 bits stays"
         (fun () ->
-          by_symbolic (Ops.cast (Ops.cast x Int8) Int64) (Ops.cast x Int64));
-      test "a cast of an integer that overflows the intermediate type stays"
-        (fun () ->
-          let big = var ~dtype:Int32 "big" 0 1000 in
-          let c = Ops.cast (Ops.cast big Int8) Int64 in
-          by_symbolic c c);
-      test "64-bit arithmetic whose values fit 32 bits computes in 32 bits"
-        (fun () ->
-          let wide v = Ops.cast v Int64 in
-          by_symbolic Ops.O.(wide x + wide y) (wide Ops.O.(x + y));
-          by_symbolic Ops.O.(wide x * wide y) (wide Ops.O.(x * y)));
-      test "64-bit arithmetic with a weak constant computes in 32 bits"
-        (fun () ->
-          by_symbolic
-            Ops.O.(Ops.cast x Int64 + int 5)
-            (Ops.cast Ops.O.(x + int 5) Int64));
-      test "64-bit arithmetic that can overflow 32 bits stays" (fun () ->
-          let wide = var ~dtype:Int64 "w" 0 2147483647 in
-          by_symbolic Ops.O.(wide * int 8) Ops.O.(wide * int 8);
-          let bounded = var ~dtype:Int64 "b" (-16) 16 in
-          by_symbolic
-            Ops.O.(bounded * int 8)
-            (Ops.cast Ops.O.(Ops.cast bounded Int32 * int 8) Int64));
-      test
-        "a cast chain of a bounded integer is one cast, of an unbounded one two"
-        (fun () ->
-          let bounded = var ~dtype:Int64 "b" (-16) 16 in
-          by_symbolic
-            (Ops.cast (Ops.cast bounded Int32) Int16)
-            (Ops.cast bounded Int16);
-          let unbounded =
-            Ops.variable ~dtype:Int64 "u" (i 0)
-              (`Int (Bigint.of_string "4294967295"))
-          in
-          let chain = Ops.cast (Ops.cast unbounded Int32) Int64 in
-          by_symbolic chain chain);
+          let w = var ~dtype:Int64 "w" 0 2147483647 in
+          stays_under_symbolic Ops.O.(w * int 8));
       test "a cast of x + c to a signed integer is the cast of x plus c"
         (fun () ->
           by_symbolic
             (Ops.cast Ops.O.(a + int 3) Int32)
             Ops.O.(Ops.cast a Int32 + int 3));
-      test "a widened mask or shift keeps every value" (fun () ->
+      test "a widened unsigned mask or shift keeps every value" (fun () ->
           let points =
             List.concat_map
-              (fun b -> List.map (fun k -> [ ("b", i b); ("s", i k) ]) [ 0; 3; 4; 7 ])
+              (fun b ->
+                List.map (fun k -> [ ("b", i b); ("s", i k) ]) [ 0; 3; 4; 7 ])
               [ 0; 1; 15; 16; 127; 128; 200; 255 ]
           in
           List.iter
             (fun dt ->
-              keeps_machine_value ~by:symbolic
-                (Ops.cast Ops.O.(byte lsr shift land int 15) dt)
+              keeps_machine_value
+                (Ops.cast Ops.O.((byte lsr shift) land int 15) dt)
                 points;
-              keeps_machine_value ~by:symbolic
-                (Ops.cast Ops.O.(byte land (Ops.int ~dtype:Uint8 255 lsr shift)) dt)
+              keeps_machine_value
+                (Ops.cast
+                   Ops.O.(byte land (Ops.int ~dtype:Uint8 255 lsr shift))
+                   dt)
                 points)
             [ Dtype.Uint16; Uint32; Uint64 ]);
     ]
@@ -1111,8 +1519,7 @@ let ordering =
   group "ordering"
     [
       test "an after keeps its stores and ranges" (fun () ->
-          let after = Ops.after f [ store; r0 ] in
-          by_symbolic after after);
+          stays_under_symbolic (Ops.after f [ store; r0 ]));
       test
         "an after waits on a reduction's source, with the reduction's ranges \
          ended" (fun () ->
@@ -1124,21 +1531,22 @@ let ordering =
           by_symbolic
             (Ops.after f [ Ops.O.(g + float 1.); store ])
             (Ops.after f [ store ]));
-      test "an after or an end of nothing is its value" (fun () ->
-          by_symbolic (raw After [ f ]) f;
-          by_symbolic (raw End [ store ]) store);
-      test "an end of constant ranges only is its store" (fun () ->
-          let r = Ops.range ~axis_type:Weak (Int 1) [ 1 ] in
-          by_symbolic (Ops.end_ store [ r ]) store);
+      cases "an after or an end of nothing is its value" ~id
+        [ ("after", raw After [ f ], f); ("end", raw End [ store ], store) ]
+        simplifies;
+      cases "an end drops the ranges that became constants" ~id
+        [
+          ( "beside another range",
+            Ops.end_ store [ r0; Ops.range ~axis_type:Weak (Int 1) [ 1 ] ],
+            Ops.end_ store [ r0 ] );
+          ( "alone, so the end is its value",
+            Ops.end_ store [ Ops.range ~axis_type:Weak (Int 1) [ 1 ] ],
+            store );
+        ]
+        simplifies;
       test "a backedge keeps a constant condition" (fun () ->
-          let edge =
-            Ops.backedge store ~loop:(Ops.loop 3) ~cond:(Ops.bool false)
-          in
-          by_symbolic edge edge);
-      test "an end drops the ranges that became constants" (fun () ->
-          by_symbolic
-            (Ops.end_ store [ r0; Ops.range ~axis_type:Weak (Int 1) [ 1 ] ])
-            (Ops.end_ store [ r0 ]));
+          stays_under_symbolic
+            (Ops.backedge store ~loop:(Ops.loop 3) ~cond:(Ops.bool false)));
     ]
 
 let symbolic_group =
@@ -1152,9 +1560,131 @@ let symbolic_group =
       ranges;
       symbolic_casts;
       ordering;
-      test "division and remainder are simplified" (fun () ->
-          by_symbolic Ops.O.(((a * int 4) + int 3) // int 4) a;
-          by_symbolic Ops.O.(((a * int 4) + int 3) % int 4) (Ops.int 3));
+      cases "then simplifies division and remainder" ~id
+        [
+          ("(4a + 3) // 4", Ops.O.(((a * int 4) + int 3) // int 4), a);
+          ("(4a + 3) % 4", Ops.O.(((a * int 4) + int 3) % int 4), Ops.int 3);
+        ]
+        simplifies;
+    ]
+
+(* Values of constants *)
+
+let values_of_constants =
+  let double = Ops.Upat.(var "x" * cvar "c") in
+  let matcher rule = Ops.Pattern_matcher.v (fun () -> [ rule ]) in
+  (* doubles the constant factor of a product, read with number *)
+  let doubles m =
+    let c = Dtype.Value.(Shape.number (Ops.value (m "c")) * of_int 2) in
+    Some Ops.O.(m "x" * Ops.const (c :> Dtype.const))
+  in
+  group "values of constants"
+    [
+      cases "a rule that computes with the value of invalid does not apply"
+        ~id:fst
+        [
+          ( "a < invalid in a selection",
+            Ops.where Ops.O.(a < Ops.invalid) (Ops.int 0) a );
+          ("2a < invalid", Ops.O.(a * int 2 < Ops.invalid));
+          ("a // 2 < invalid", Ops.O.(a // int 2 < Ops.invalid));
+        ]
+        (fun (_, e) -> equal uop (rewrite Shape.commutative e) (symbolic e));
+      test "number is the value of a constant" (fun () ->
+          equal Dtypes.value (i 3) (Shape.number (i 3)));
+      test "number raises Not_a_number on invalid" (fun () ->
+          raises Shape.Not_a_number (fun () -> Shape.number `Invalid));
+      test "rule declines where its function raises Not_a_number" (fun () ->
+          let m = matcher (Shape.rule double doubles) in
+          equal (option uop) None
+            (Ops.Pattern_matcher.rewrite m () Ops.O.(a * Ops.invalid));
+          equal (option uop)
+            (Some Ops.O.(a * int 4))
+            (Ops.Pattern_matcher.rewrite m () Ops.O.(a * int 2)));
+      test "rule_ctx lets Not_a_number through" (fun () ->
+          let m = matcher (Shape.rule_ctx double (fun () m -> doubles m)) in
+          raises Shape.Not_a_number (fun () ->
+              Ops.Pattern_matcher.rewrite m () Ops.O.(a * Ops.invalid)));
+      test "with_ctx runs a matcher under any context" (fun () ->
+          let m = Shape.with_ctx (matcher (Shape.rule double doubles)) in
+          equal (option uop)
+            (Some Ops.O.(a * int 4))
+            (Ops.Pattern_matcher.rewrite m "any context" Ops.O.(a * int 2)));
+      cases "equals is whether the constant holds the number" ~id
+        [
+          ("3", Ops.int 3, [ i 3 ]);
+          ("a cast of 3", Ops.cconst Int32 (i 3), [ i 3 ]);
+          ("invalid", Ops.invalid, []);
+        ]
+        (fun (_, u, expected) ->
+          equal (list Dtypes.value) expected
+            (holding (Shape.equals u) [ i 2; i 3; i 4 ]));
+      test "equals rejects a node that is neither a constant nor a cast of one"
+        (fun () -> Common.rejects (fun () -> Shape.equals a (i 0)));
+      test "const_v is the number as a constant of the node's type" (fun () ->
+          let p = Shape.param ~shape:[ Int 2; Int 3 ] 0 Float16 in
+          equal uop (Shape.const_like p (i 5)) (Shape.const_v p (i 5)));
+      cases "conj is the conjunction" ~id
+        [
+          ("two", Shape.conj [ cond; other ], Ops.O.(cond land other));
+          ("one", Shape.conj [ cond ], cond);
+        ]
+        (fun (_, actual, expected) -> equal uop expected actual);
+      test "conj rejects the empty list" (fun () ->
+          Common.rejects (fun () -> Shape.conj []));
+      test "invalid_pat matches invalid, named i, and no other constant"
+        (fun () ->
+          equal naming
+            [ [ ("i", Ops.invalid) ] ]
+            (Ops.Upat.match_ Shape.invalid_pat Ops.invalid);
+          equal naming [] (Ops.Upat.match_ Shape.invalid_pat (Ops.int 0)));
+    ]
+
+(* Weak constants *)
+
+let weak_constants =
+  group "weak constants"
+    [
+      test "is_weak holds of Dtype.weaks alone" (fun () ->
+          equal (list Dtypes.dtype) Dtype.weaks
+            (holding Shape.is_weak Dtypes.declared));
+      test "weak is is_weak of the node's type" (fun () ->
+          equal (list uop)
+            [ a; Ops.float 1. ]
+            (holding Shape.weak [ a; x; Ops.float 1.; f ]));
+      test "is_const holds of a constant node" (fun () ->
+          equal (list uop)
+            [ Ops.int 3; Ops.invalid ]
+            (holding Shape.is_const [ Ops.int 3; Ops.invalid; a; cond ]));
+      test "unchanged holds of the node's sources, node for node" (fun () ->
+          equal
+            (list (list uop))
+            [ [ a; b ] ]
+            (holding
+               (fun src -> Shape.unchanged src Ops.O.(a + b))
+               [ [ a; b ]; [ b; a ]; [ a ]; [ a; b; a ] ]));
+      cases "derived_dtypes is the operands' meet and the node's type" ~id
+        [
+          ( "an int32 and a weak operand",
+            (Ops.O.(x + int 1), [ x; Ops.int 1 ]),
+            Some (Dtype.Int32, Dtype.Int32) );
+          ( "a comparison of int32",
+            (Ops.O.(x < int 1), [ x; Ops.int 1 ]),
+            Some (Dtype.Int32, Dtype.Bool) );
+          ("weak operands", (Ops.O.(a + b), [ a; b ]), None);
+        ]
+        (fun (_, (u, src), expected) ->
+          equal
+            (option (pair Dtypes.dtype Dtypes.dtype))
+            expected
+            (Shape.derived_dtypes u src));
+      (* Uncasting a committed constant reads it at its width, where tinygrad
+         keeps the literal unwrapped. *)
+      test "pm_uncast_const reads a committed constant at its width" (fun () ->
+          let x = var ~dtype:Uint8 "x" 0 255 in
+          let lt = Ops.O.(x < Ops.cconst Uint8 (i 300)) in
+          equal uop Ops.O.(x < int 44) (rewrite Shape.pm_uncast_const lt);
+          equal Dtypes.const (`Bool false)
+            (Interpreter.eval ~vars:[ ("x", i 100) ] (symbolic lt)));
     ]
 
 (* Installation *)
@@ -1162,12 +1692,15 @@ let symbolic_group =
 let installation =
   group "installation"
     [
-      test "simplify is symbolic's rewrite" (fun () ->
-          let e = Ops.O.((a * int 4) + b < int 16 lor (a + a < int 3)) in
-          equal uop (symbolic e) (Shape.simplify e));
+      prop "simplify is symbolic's rewrite"
+        ~examples:[ Ops.O.((a * int 4) + b < int 16 lor (a + a < int 3)) ]
+        (Gen.with_pp (Testable.pp uop)
+           (Gen.map Expressions.node Expressions.scenario))
+        (fun e -> equal uop (symbolic e) (Shape.simplify e));
       test "resolve decides from the symbolic rules" (fun () ->
           equal bool true (Shape.resolve Ops.O.(a < int 9));
-          equal bool false (Shape.resolve ~default:true Ops.O.(a * int 2 < int 0)));
+          equal bool false
+            (Shape.resolve ~default:true Ops.O.(a * int 2 < int 0)));
       test "a constant and a sink of constants and stacks are themselves"
         (fun () ->
           let consts =
@@ -1177,36 +1710,8 @@ let installation =
           equal uop consts (Shape.simplify consts));
       test "log2 of -1 folds to NaN and the reciprocal of 0 to infinity"
         (fun () ->
-          let is_nan u =
-            match Ops.arg u with
-            | Const (`Float v) -> Float.is_nan v
-            | _ -> false
-          in
-          is_true (is_nan (Shape.simplify (Ops.log2 (Ops.float (-1.)))));
+          equal same_float (`Float Float.nan)
+            (Ops.value (Shape.simplify (Ops.log2 (Ops.float (-1.)))));
           equal uop (Ops.float Float.infinity)
             (Shape.simplify (Ops.reciprocal (Ops.float 0.))));
-    ]
-
-(* Laws *)
-
-let laws =
-  let open Expressions in
-  let scenario_law name law = prop name scenario (fun s -> law (node s)) in
-  group "laws"
-    [
-      scenario_law
-        "symbolic keeps the value of an integer expression where nothing wraps"
-        (fun e -> ignore (keeps_value ~name:"symbolic" e (symbolic e)));
-      prop "a graph of constants folds to what the machine computes" scenario
-        (fun s ->
-          let e = constants s in
-          ignore (keeps_value ~name:"constants" e (symbolic e)));
-      scenario_law "simplify is symbolic's rewrite" (fun e ->
-          equal uop (symbolic e) (Shape.simplify e));
-      prop "commutative orders the operands of a weak integer sum"
-        Gen.(pair weak_scenario weak_scenario)
-        (fun (s0, s1) ->
-          Law.commutative uop
-            (fun u0 u1 -> rewrite Shape.commutative Ops.O.(u0 + u1))
-            (node s0, node s1));
     ]
