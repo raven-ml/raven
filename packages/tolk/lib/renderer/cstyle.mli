@@ -10,21 +10,21 @@
     Each renderer writes a linearized kernel as one function of its language.
     The function takes the kernel's parameters in order, each named after its
     name, or [data] and its slot, followed by its shape: [data0_16]
-    ({!param_name}). A {!clang} or {!metal} kernel takes its arguments as
-    bytes ({!Renderer.t.packed_args}): code generation gives it one parameter,
-    [args], from which it loads each argument, and a buffer
-    ({!Op.Refparam}) is the address loaded, cast to the buffer's pointer type
-    where it is used. Each loop is a [for] loop, and
-    each value is a local variable, unless it is used once and cheap to
-    repeat, in which case it is written into its user. That holds only while
-    its expression nests at most 64 brackets, counting parentheses, square
-    brackets and braces, and is at most 4096 characters long; a deeper or
-    longer one is a local variable, so a chain of any length stays below the
-    256 levels that Clang and Metal accept in a statement, and renders in time
-    proportional to its length. A call of code written into its reader
-    ({!Ops.call}) is written there at any length and depth, so a chain of them
-    is one statement, which renders in time growing with the square of its
-    length.
+    ({!param_name}). A {!clang} or {!metal} kernel takes its arguments as bytes
+    ({!Renderer.t.packed_args}): code generation gives it one parameter, [args],
+    from which it loads each argument, and a buffer ({!Op.Refparam}) is the
+    address loaded, cast to the buffer's pointer type where it is used. Each
+    loop is a [for] loop, and each value is a local variable, unless it is used
+    once and cheap to repeat, in which case it is written into its user. That
+    holds only while its expression nests at most 64 brackets, counting
+    parentheses, square brackets and braces, and is at most 4096 characters
+    long; a deeper or longer one is a local variable, so a chain of any length
+    stays below the 256 levels that Clang and Metal accept in a statement, and
+    renders in time proportional to its length. A call of code written into its
+    reader ({!Ops.call}) is written there at any length and depth, so a chain of
+    them is one statement, which renders in time growing with the square of its
+    length. A kernel's source declares the type of each of its parameters,
+    whether or not the kernel reads or writes it.
 
     A renderer's {!Renderer.t.render} raises [Invalid_argument] on a kernel that
     holds a node its language cannot write, such as an operation the target
@@ -36,20 +36,24 @@
 
     A call ({!Op.Call}) of an external function ({!Op.Custom_function}) casts
     the function's symbol, which the program declares and is linked against, to
-    the type its arguments and result give it. A call of a body of the program
-    (an {!Op.Linear}, as code generation lowers a call of a sink or of a
-    program) is a call of a function the program defines before the kernel,
+    the type its arguments and result give it. A call of code in the language, a
+    custom function with [fmt] ({!Ops.type-custom_function}), is its format
+    string with each field replaced by the argument it names;
+    {!Renderer.t.render} raises [Invalid_argument], naming the string, on a
+    field the format refuses or an argument the call lacks. A call of a body of
+    the program (an {!Op.Linear}, as code generation lowers a call of a sink or
+    of a program) is a call of a function the program defines before the kernel,
     after the language's own definitions, under the name the body holds, which
-    code generation gives it. The function is qualified
-    as the language's device functions are ([__device__] in {!cuda}, a device
-    attribute in {!hip}), and inline unless a call of it is compiled on its
-    own ({!Ops.type-call_info}, as a launch's calls are): such a function is
-    kept out of line ([__noinline__] in {!cuda}, the [noinline] attribute
-    elsewhere), so that the compiler compiles it once however many calls it
-    has. Its parameters are the body's, by slot, and each argument is passed
-    as written, converted to its parameter's type as the language converts an
-    argument. The choices {!cuda} makes for a program, its
-    asynchronous copies and matrix loads, read the bodies it calls too.
+    code generation gives it. The function is qualified as the language's device
+    functions are ([__device__] in {!cuda}, a device attribute in {!hip}), and
+    inline unless a call of it is compiled on its own ({!Ops.type-call_info}, as
+    a launch's calls are): such a function is kept out of line ([__noinline__]
+    in {!cuda}, the [noinline] attribute elsewhere), so that the compiler
+    compiles it once however many calls it has. Its parameters are the body's,
+    by slot, and each argument is passed as written, converted to its
+    parameter's type as the language converts an argument. The choices {!cuda}
+    makes for a program, its asynchronous copies and matrix loads, read the
+    bodies it calls too.
 
     A sum, difference, product, negation, left shift or multiply-add of a
     signed integer wraps at its width, as {!Ops.exec_alu} computes it. These
@@ -59,6 +63,13 @@
     [long long]'s for a 64-bit one, and converted back, unless its operands'
     bounds ({!Ops.operand_bounds}) keep each exact result it forms in that
     type and a shifted value from being negative, as an index's do.
+
+    An operation on a scalar of 8 or 16 bits, an integer or, in {!clang}, a
+    half, gives a value of its type, wrapping or rounding as {!Ops.exec_alu}
+    computes it. The languages compute it in [int] or [float], so written into
+    its user it is converted back to its type, and a sum, difference, product,
+    negation, left shift or multiply-add of an unsigned one is computed in
+    [unsigned int] and converted back.
 
     An integer division by 0, a signed division of the least value by -1 and
     a shift by a count at or past the width are what {!Ops.exec_alu} computes
@@ -99,10 +110,17 @@ val clang : Helpers.Target.t -> Renderer.t
     are converted to and from floats with integer operations. The data types are
     those of {!Dtype.all} without the 8-bit floats, and without
     {!Dtype.Bfloat16} unless the architecture starts with [x86] or [arm]. Its
-    vector registers are those of Clang's processor
-    ({!Compiler_cpu.registers}). On [arm64] with the [FEATURE] [fp16],
-    FEAT_FP16's half arithmetic, a half multiply-add, of one lane or many, is
-    LLVM's fused multiply-add of halves, rounded once ({!Renderer.t.fma}).
+    vector registers are those of Clang's processor ({!Compiler_cpu.registers}).
+    On [arm64] with the [FEATURE] [fp16], FEAT_FP16's half arithmetic, a half
+    multiply-add, of one lane or many, is LLVM's fused multiply-add of halves,
+    rounded once ({!Renderer.t.fma}).
+
+    A selection between a value and a constant by their comparison picks as the
+    comparison decides under IEEE 754, where a NaN, signalling or quiet, is
+    unordered with every value, and a zero equals a zero of either sign. This
+    holds on each machine, whose backend may otherwise lower the selection to a
+    minimum or a maximum, which quiets a signalling NaN or picks between zeros
+    by their signs.
 
     Clang's time on one function grows faster than the function, so a long
     kernel for a CPU is written as several functions called in order, which
@@ -141,15 +159,20 @@ val cuda : Helpers.Target.t -> Renderer.t
     [2^31 - 1] by 65535 by 65535 workgroups, and a workgroup shares 48 KiB of
     memory. The tensor cores are those of the compute capability ({!Tc.cuda}).
     From capability 80 a store into shared memory of a 16-byte load from global
-    memory is an asynchronous copy, PTX's [cp.async]
-    ({!Renderer.t.async_copy}), and each barrier of a kernel holding one first
-    waits for the thread's copies.
-    {!Dtype.Float16} needs capability 53, {!Dtype.Bfloat16} 80, and the 8-bit
-    floats {!Dtype.fp8_ocp} 89. The [fnuz] floats are not supported. A
-    conversion to an 8-bit float saturates: a value too large for the format,
-    an infinity included, becomes its greatest finite value of the same sign,
-    where a folded constant keeps an infinity in {!Dtype.Fp8e5m2} and makes it
-    a NaN in {!Dtype.Fp8e4m3} ({!Dtype.truncate}).
+    memory is an asynchronous copy, PTX's [cp.async] ({!Renderer.t.async_copy}),
+    and each barrier of a kernel holding one first waits for the thread's
+    copies. {!Dtype.Float16} needs capability 53, {!Dtype.Bfloat16} 80, and the
+    8-bit floats {!Dtype.fp8_ocp} 89. The [fnuz] floats are not supported. A
+    conversion to an 8-bit float saturates: a value too large for the format, an
+    infinity included, becomes its greatest finite value of the same sign, where
+    a folded constant keeps an infinity in {!Dtype.Fp8e5m2} and makes it a NaN
+    in {!Dtype.Fp8e4m3} ({!Dtype.truncate}). A conversion of an integer to
+    {!Dtype.Bfloat16} rounds once, to nearest with ties to even, as
+    [cuda_bf16.h]'s [__int2bfloat16_rn] does. The [CUDA] and [NV] devices of one
+    architecture are given one source. Code generation hands the renderer a
+    conversion of a vector, and a read of a vector's lane by a variable, one
+    lane at a time; a kernel that holds either whole renders to a source NVRTC
+    rejects.
 
     Raises [Invalid_argument] if the architecture has no compute capability
     after its first three characters, and [Failure] if no NVRTC is found
@@ -164,7 +187,10 @@ val hip : Helpers.Target.t -> Renderer.t
     threads on each axis, and a workgroup shares 64 KiB of memory. The tensor
     cores are those of the GPU ({!Tc.amd}). The 8-bit floats are the [fnuz] ones
     on ["gfx942"] and {!Dtype.fp8_ocp} on ["gfx950"], and none elsewhere. A load
-    marked ["nontemporal"] bypasses the caches.
+    marked ["nontemporal"] bypasses the caches. A conversion to
+    {!Dtype.Bfloat16} from an integer or a {!Dtype.Float32} rounds once, to
+    nearest with ties to even, a NaN staying a NaN, and one from it to a
+    {!Dtype.Float32} is exact. Each is written on the value's bits.
 
     Raises [Failure] if no comgr is found ({!Compiler_amd.hip}). *)
 

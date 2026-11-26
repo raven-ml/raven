@@ -548,12 +548,11 @@ does.
   wrapping gives `-28`. Eager nx and compiled code agree: nx computes each
   operation in its own type, as the folder (`Ops.exec_alu`) and tinygrad's
   interpreter do.
-- **Pinned by:** `Tolk.Cstyle › narrowing` and `Tolk.Cstyle › sources`;
-  `Tolk.Cstyle › execution on the host › rounds each operation on halves to
-  a half`; and the slow `Tolk.Cstyle › execution on the host › a kernel over
-  a narrow type wraps and rounds as the interpreter`, over each type's whole
-  range. The unsigned types' rule: `› wraps each operation on unsigned
-  chars`. Clang's, HIP's and Metal's rules were checked with their
+- **Pinned by:** `Tolk.Cstyle › render › writes each recorded kernel as its golden states` (each narrowed
+  case's golden is the source of the kernel with its casts); `Tolk.Cstyle ›
+  clang › on the host › a kernel over a narrow type wraps and rounds as the
+  interpreter, whole and cut into pieces`, over each type's whole range. The
+  unsigned types' rule: `› wraps each operation on unsigned chars`. Clang's, HIP's and Metal's rules were checked with their
   compilers; CUDA's rests on the operators `cuda_fp16.hpp` and
   `cuda_bf16.hpp` declare, and is on the hardware checks of
   `test/README.md`.
@@ -755,7 +754,7 @@ multi-device is out of scope, see README.
     cast from a boolean stays`;
   - transcendental polynomials: the `Tolk.Transcendental` goldens;
   - tensor-core accumulators: the sources of every tensor core,
-    `Tolk.Cstyle › sources › by default › metal_tc_*`, `hip_tc_*` and
+    `Tolk.Cstyle › render › writes each recorded kernel as its golden states › metal_tc_*`, `hip_tc_*` and
     `metal_matmul`; `Tolk.Codegen › tensor-core accumulators › the running
     sum replaces a zero accumulator`, on each target's tensor cores, one or
     two steps of K a trip; and `Tolk.Codegen › tensor cores on CUDA › a
@@ -880,9 +879,10 @@ multi-device is out of scope, see README.
   `Lower_fft`), so a difference of a negative constant, as `Nx.sub_s x (-1.)`
   states, or a negation of a negation can reach the renderer, and a rejected
   source is a failed program. No rune test is shown to reach it.
-- **Pinned by:** `Tolk.Cstyle › negation › a minus before a minus is
-  apart › *` (every renderer), `› Clang compiles and runs a difference with a
-  negated operand` and `› … with a negative constant`.
+- **Pinned by:** `Tolk.Cstyle › render › a minus before an operand's minus
+  stays apart › *` (every renderer), `› the host computes a difference with a
+  negated operand` and `› the host computes a difference with a negative
+  constant`.
 
 ## D27. A constant or a move keeps a NaN's bits
 
@@ -986,8 +986,9 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   eager nx stores, as it must store the bits of a constant folded from a bitcast
   (D27).
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a NaN constant
-  is stored with its sign and payload › *`; and the `*_inf_nan_*` goldens of
-  the `Cstyle` suite, for every renderer.
+  is stored with its sign and payload › *`; the `*_inf_nan_*` goldens of
+  the `Cstyle` suite, for every renderer, and its `render › the host stores a
+  NaN constant with its sign and payload`.
 
 ### A folded selection or negation keeps a NaN's bits (D176)
 
@@ -1041,8 +1042,9 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   element no update reaches from its target, and for a half `Add` on the
   host, in the kernel its comparison form makes, `0x7c01` came back
   `0x7e01`.
-- **Pinned by:** the Cstyle suite's `selections of 16-bit floats` (the
-  source of each Clang target); the goldens `clang_selected_half` and
+- **Pinned by:** the Cstyle suite's `clang › a selection and a gated load of
+  a 16-bit float held as a storage format choose between bits` (the source of
+  each Clang target); the goldens `clang_selected_half` and
   `written`; rune's `Lower_index › gathers and scatters › a scatter keeps the
   bits of each element no update lands on` and `Rune.jit`'s `a scatter keeps
   the bits of each element no update lands on`, on the host and on a GPU.
@@ -1328,11 +1330,10 @@ its dispatch packets (D146).
   arc tangent built on it, to `FDIV`: eager nx divides as IEEE does, rounding
   once, as at `a = 0x0.000000016db99p-1022`, `b = 0x1.5d24f36473bb3p-998`,
   where a product by the reciprocal differs.
-- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `sources › by
-  default › <target>_fdiv_<type>`, for Clang, Metal, CUDA and HIP in each
-  float type they have; `division › the operands tell a quotient from a
-  product by the reciprocal` and the slow `› Metal divides as IEEE does,
-  rounding once`. The `decomp_op` golden `late_division_fdiv`; rune's
+- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `render › writes each recorded kernel as its golden states › <target>_fdiv_<type>`, for Clang, Metal, CUDA and HIP in each
+  float type they have; `render › the operands tell a quotient from a
+  product by the reciprocal` and `› Metal divides as IEEE does, rounding
+  once`. The `decomp_op` golden `late_division_fdiv`; rune's
   `Lower_real › exact › fdiv` and `› recip`, and `rune jit › classes › jit
   gives eager's bits for exact functions`. On rune: missing for a product by a
   reciprocal at the value above. CUDA's and HIP's `/` are correctly rounded by
@@ -1476,10 +1477,9 @@ A selection or a pad by `-0.` keeps `-0.`: tinygrad's tests for 0 take
 - **Reason:** (b). rune's jit on Metal computes `Int8` and `Uint8` arrays
   (rune's `Lower_arith.dtype`, which also stores booleans and narrow floats as
   `Uint8`), whose upcast kernels hold `char4` and `uchar4` values.
-- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `sources › by
-  default › metal_vector_<element>_<lanes>`, for each element and 2, 3 and 4
-  lanes, and `metal_vector_cast_char`; the slow `every GPU kernel compiles
-  with its target's toolchain › metal_vector_*`, with MTLCompiler. On rune:
+- **Pinned by:** the `Cstyle` suite (`test/renderer/cstyle`): `render › writes each recorded kernel as its golden states › metal_vector_<element>_<lanes>`, for each element and 2, 3 and 4
+  lanes, and `metal_vector_cast_char`; `metal › every recorded kernel
+  compiles with the target's toolchain › metal_vector_*`, with MTLCompiler. On rune:
   missing.
 
 ## D56. The logarithm of a negative subnormal is NaN
@@ -1993,8 +1993,8 @@ the width, and devectorizes no expanded scalar into a stack; with it
 - **Reason:** (b): nx.quant's product, `Nx_quant.apply`, decodes each weight
   in the kernel that multiplies it, `x * (value * scale)`, and gave infinity
   where the eager product's infinities of both signs give NaN.
-- **Pinned by:** the Cstyle suite: `grouping › Clang computes a product of a
-  product as it is grouped`; and the rendered sources of the `codegen`,
+- **Pinned by:** the Cstyle suite: `render › the host computes a product of
+  a product as it is grouped`; and the rendered sources of the `codegen`,
   `renderer/cstyle` and `engine/jit` goldens. On rune: missing.
 
 ## D78. Withdrawn
@@ -2169,8 +2169,8 @@ Withdrawn: multi-device is out of scope, see README.
   CUDA needs a helper function around the `asm`; Metal has no inline `asm`.
   HIP and Metal are untested, as is a GPU's selection of a float16 against
   a zero, which InstCombine may make pick `+0.` at `-0.`.
-- **Pinned by:** the Cstyle suite (`test/renderer/cstyle`): `zeros a
-  comparison reads › a float constant a comparison reads is opaque to a
+- **Pinned by:** the Cstyle suite (`test/renderer/cstyle`): `clang ›
+  selections by a comparison › a float constant a comparison reads is opaque to a
   backend that lowers it to an extreme, and a literal elsewhere › *`, `› a
   select of a value and a constant picks the constant at a signalling NaN,
   on the host`, `› a select of a value and a constant by their comparison
@@ -2377,8 +2377,8 @@ Withdrawn: multi-device is out of scope, see README.
   its rows reduces over a SIMD group's threads`, `› a product streamed by
   its columns splits its reduce into threads` and `› a product streamed by
   its columns pads what its threads do not divide`, and the cases
-  `vecmat_1000_{cuda,metal,amd}`; the Cstyle suite's `a
-  renderer states its SIMD group's threads and a workgroup's most`; `the
+  `vecmat_1000_{cuda,metal,amd}`; the Cstyle suite's
+  `declarations › simd_threads and local_threads_max are each target's`; `the
   hand-coded optimisations keep a kernel's writes › small kernels ›
   experts_down_metal` (a group inside another reduce); the Postrange suite's
   cases `double_sum_group`, `double_sum_group_twice` and
@@ -2669,9 +2669,9 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
 - **Reason:** (b): rune compiles integer constants at every width's
   extremes, the least `int64` among them; a float constant converted to an
   integer was written as a literal past 64 bits, which C refuses.
-- **Pinned by:** the Cstyle suite: `execution on the host › stores each integer
-  constant as its type holds it` and `› converts an infinity or a NaN to an
-  integer type`; `clang_transcendental_f16.golden`; rune's `rune jit` suite:
+- **Pinned by:** the Cstyle suite: `clang › on the host › stores each
+  integer constant as its type holds it` and `› converts an infinity or a NaN
+  to an integer type`; `clang_transcendental_f16.golden`; rune's `rune jit` suite:
   `classes › integer constants keep their bits and wrap`. On rune, a float
   converted to an integer past 64 bits: missing (the old rune's
   `test_jit_programs` went with its rewrite).
@@ -3624,9 +3624,9 @@ driver signals its own (D146).
   vector kernels; `-fno-vectorize` on scalar kernels and 16-byte registers,
   which trade replay for compile time (D167 takes `-fno-vectorize` for a
   source of more than 400 000 bytes).
-- **Pinned by:** the Cstyle suite's `sources › by default › clang_vector_*`,
-  and `execution on the host › every kernel the interpreter runs writes what
-  it computes`; the Codegen suite's `vectors in programs › a host program
+- **Pinned by:** the Cstyle suite's `render › writes each recorded kernel as its golden states ›
+  clang_vector_*`, and `clang › on the host › every kernel the interpreter
+  runs writes what it computes, whole, cut into pieces and for Windows`; the Codegen suite's `vectors in programs › a host program
   computes on vectors of its lanes` (every host case), `› a host program of 6
   lanes computes one vector`, `› a host program of 48 lanes computes one
   vector`, `› a host program of 24 lanes computes one vector`, `› a host
@@ -3868,7 +3868,7 @@ supports Windows: `Cstyle.clang_lang` keeps the empty `abi` and plain
 - **Pinned by:** `Tolk.Compiler_cpu › features › a kernel over more than 16
   halves compiles for AVX-512`, which renders `half_neg`, `half_abs`,
   `half_copysign` and `half_min` (32 lanes each), and `› a sign bit of more
-  than 16 halves compiles for AVX-512`, which renders 32 halves' sign bit
+  than 16 halves compiles for`, which renders 32 halves' sign bit
   flipped and cleared as rune writes them, both for `skylake-avx512`,
   `icelake-server` and `sapphirerapids`, and failing under `CC` naming Clang
   18 without the mark; the x86 Clang goldens, whose kernels carry it. On rune:
@@ -3973,13 +3973,13 @@ rule, its reason and its pins.
   `special/betaincinv-grad-f64` 196.7 M words against 195.8 M; unbounded, with
   D468, it allocated 244.9 M. No raven consumer builds a chain of inline
   calls.
-- **Pinned by:** nesting, the Cstyle suite: `parentheses › a chain of any
-  length nests a bounded number of brackets`, which renders chains of 1 to 300
-  steps with each renderer, and `execution on the host › computes a chain too
-  deep for one expression`. Length, tolk's bench `chains/render-sum`, on
-  fudge, and the Cstyle suite's `parentheses › a sum of any length writes
-  statements of bounded length` and `execution on the host › adds a sum too
-  long for one expression in order`.
+- **Pinned by:** nesting, the Cstyle suite: `render › a chain of any length
+  nests a bounded number of brackets`, which renders chains of 1 to 300 steps
+  with each renderer, and `render › the host computes a chain too deep for one
+  expression`. Length, tolk's bench `chains/render-sum`, on fudge, and the
+  Cstyle suite's `render › a sum of any length writes statements of bounded
+  length` and `render › the host adds a sum too long for one expression in
+  order`.
 
 ## D158. A dead read of a staged value is 0
 
@@ -4924,14 +4924,16 @@ its rule, its reason and its pins.
   convention, as `Rig.section-host_abi` states such code. rig commits
   a thread's stack before it runs linked code, so the code probes none, and
   Windows may write below the stack pointer.
-- **Pinned by:** `Tolk.Cstyle › x86_64 Windows`: every x86_64 Clang case
+- **Pinned by:** `Tolk.Cstyle › clang › x86_64 Windows`: every x86_64 Clang case
   renders with no LP64 `long` and as its golden but for its 64-bit types,
   literals and the kernel's `sysv_abi`; `› the kernel is declared System
   V's`; `› a 64-bit integer is a long long and its literals end in ll`; `›
   an object is compiled for Windows' triple and calls no stack probe`; and,
-  on an x86_64 host, every Clang case compiled for Windows loads and every
-  interpreted one that calls nothing of the process runs through rig's host
-  and writes what the interpreter computes. `Tolk_engine › target › the host
+  on an x86_64 host, `› every kernel the interpreter cannot run compiles` and
+  `Tolk.Cstyle › clang › on the host › every kernel the interpreter runs
+  writes what it computes, whole, cut into pieces and for Windows`, where
+  each interpreted case that calls nothing of the process runs through rig's
+  host as Windows' object. `Tolk_engine › target › the host
   compiles C for Clang at its arch, tuned for its own processor, naming its
   system under Windows, whose functions follow a convention of their own`. On
   windows-2025 CI, `CG › calls in a kernel`.
@@ -5665,8 +5667,8 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
   Clang writes `__builtin_bit_cast` of a vector as a store and a load of a
   temporary; the row's one kernel, with 2495 vector bitcasts, spent 5.2 of
   Clang's 6.2 s of CPU removing them, and 0.08 s with casts.
-- **Pinned by:** the Cstyle suite's `sources › by default ›
-  clang_vector_bitcast` and `› clang_vector_byte_mask`, and every host golden
+- **Pinned by:** the Cstyle suite's `render › writes each recorded kernel as its golden states ›
+  clang_vector_bitcast.golden` and `› clang_vector_byte_mask.golden`, and every host golden
   with a vector bitcast; rune's compile bench row `special/betaincinv-grad-f64`,
   its fudge baseline pending the scheduled re-record.
 
@@ -7038,8 +7040,8 @@ rows (1.04-1.18x on `contract/bf16-*` on fudge) is the stated cost.
   with PTX against 58-131 ms with cubins. A cold compile is no slower with
   cubins: the slowdown D78 found, in whole calls timed under load, did not
   hold interleaved.
-- **Pinned by:** the Cstyle suite's `CUDA's binaries › the CUDA device's
-  kernels compile to a cubin`; rune's compile bench rows
+- **Pinned by:** the Cstyle suite's `cuda › a device's kernel compiles to a
+  cubin › CUDA`; rune's compile bench rows
   `cuda/sin-nested-8` and `warm/cuda/sin-nested-8`, whose processes run
   with the driver's cache off; their wall-clock baselines are missing until
   fudge's scheduled recording of every suite.
@@ -8252,8 +8254,8 @@ reason and its pins.
   score program does not read the score. The cost: the float32 product
   gives up the bfloat16 matrix type, and the bfloat16 product a call per
   product. Neither's speed is measured, since the Mac does not time.
-- **Pinned by:** `Tolk.Cstyle › tensor cores on Metal › a bfloat16 product
-  with an operand of literal zeros holds the product`, into each type, which
+- **Pinned by:** `Tolk.Cstyle › metal › a bfloat16 product with an operand
+  of literal zeros holds the product`, into each type, which
   fails to build its pipeline on the M1 Max without it;
   `metal_tc_bf16_f32_8_8_8.tolk` and `metal_tc_bf16_bf16_8_8_8.tolk`.
 
@@ -8412,9 +8414,11 @@ read or run after; D473 keeps this entry's reason and pins.
   takes 8 instructions a lane more than `fptrunc` and this one 3 more. The speed
   on a workload is to be measured on the R9700, and on fudge's host at the next
   re-record.
-- **Pinned by:** `Tolk.Cstyle › bfloat16 on AMD › leave LLVM no conversion to
-  fold`, `› an integer rounds once`, `› a bool is exact`, `› a float32 narrows
-  to its nearest code`, `› a bfloat16 widens to its value`; the `.tolk` files
+- **Pinned by:** `Tolk.Cstyle › hip › a bfloat16 conversion leaves LLVM no
+  conversion to fold`, `› an integer converts to bfloat16 rounding once`, `› a
+  bool converts to bfloat16 exactly`, `› a float32 converts to its nearest
+  bfloat16`, `› a bfloat16 converts to float32 exactly`, each on gfx1100,
+  gfx1201, gfx942 and gfx950; the `.tolk` files
   that name D430.
 
 ## D431. Note: a cast of an integer to a float on Metal rounds to nearest
@@ -8672,11 +8676,13 @@ one reads what the other left, and then they form a chain (D474).
   unmeasured. rune's gradients of float64 `betaincinv` and float32
   `betainccinv`, the longest kernels its suites build, stay whole.
 - **Pinned by:** rune's `compile` bench `long/pendulum-200`, on fudge;
-  `Tolk.Cstyle › execution on the host › writes a long kernel in pieces`,
-  `› leaves a GPU's kernels whole`, `› computes a long chain of values read
-  once`, `› keeps two loops whose indices render as one name` and `› cut into
-  pieces, writes what it writes whole`, whose cases include `keeps a value
-  read early in a loop for its next trip`.
+  `Tolk.Cstyle › clang › long kernels › a long kernel is written as several
+  functions`, `› a GPU's kernel stays one function`, `› computes a long chain
+  of values read once`; `Tolk.Cstyle › clang_in_pieces › writes what the whole
+  kernel writes`, `› reads a value of the outer scope on every trip`, `› keeps
+  a value read early in a loop for its next trip` and `› keeps two loops whose
+  indices render as one name`; and the laws of `Tolk.Cstyle › clang › on the
+  host`, which run every interpreted case cut into pieces.
 
 ## D450. A tensor core is tried on any number of reduce axes
 
@@ -9779,10 +9785,10 @@ D466.
   its store to `o` is dropped and its `nv_bfloat16*` parameter stays, which
   NVRTC rejects (`attribute "__global__" does not apply here`) without
   `cuda_bf16.h`.
-- **Pinned by:** the Cstyle suite's `parameters' types › a parameter the
-  kernel never reads or writes has its type declared` (CUDA's 16-bit and
-  8-bit floats, HIP's `half`) and `› a kernel with a parameter it never
-  reads or writes compiles` (NVRTC, where the machine has it).
+- **Pinned by:** the Cstyle suite's `render › declares the type of a
+  parameter the kernel never reads or writes` (CUDA's 16-bit and 8-bit
+  floats, HIP's `half`) and `› a CUDA kernel with a parameter it never reads
+  or writes compiles` (NVRTC, where the machine has it).
 
 ## D493. A partial form's trip takes its block whole
 
@@ -10015,9 +10021,10 @@ D466.
   baseline is pending. A wider integer would need its float32 rounded to
   odd (`Decomp_dtype.narrow`), twice the instructions of CUDA's own
   rounding to odd, so it is left.
-- **Pinned by:** `Tolk.Cstyle › bfloat16 on CUDA` (through a float32 on
-  sm_80 and sm_89, CUDA's cast for a wider integer and on sm_90, and each
-  such integer rounded once on sm_89); rune's `Rune.jit on a GPU ›
+- **Pinned by:** `Tolk.Cstyle › cuda › below sm_90 an integer within 2^24
+  converts to bfloat16 through a float32 › sm_80` and `› sm_89`, and `› an
+  integer converts to bfloat16 rounding once › *` (every integer type, and
+  int32s of 24 and 25 bits, on sm_80, sm_89 and sm_90); rune's `Rune.jit on a GPU ›
   integers › every integer of 16 bits and the ties of wider ones cast to
   bfloat16 give eager's bits`; tolk's bench rows `stream/q8_0-core-64` and
   `stream/q8_0-512`, the latter's baseline pending the scheduled
