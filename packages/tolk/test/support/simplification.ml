@@ -38,11 +38,28 @@ let exact u =
   let node n =
     (not (Dtype.is_float (Ops.dtype n)))
     &&
-    match Ops.op n with
-    | Const | Param | Range | Special | Cast | Bitcast -> true
-    | op -> Op.Set.mem op Op.Set.alu && op <> Op.Threefry
+    match (Ops.op n, Ops.arg n) with
+    | Param, Param { addrspace = Alu; vmin_vmax = Some _; _ } -> true
+    | Param, _ -> false
+    | (Const | Range | Special | Cast | Bitcast), _ -> true
+    | op, _ -> Op.Set.mem op Op.Set.alu && op <> Op.Threefry
   in
-  List.for_all node (Ops.toposort ~calls:Enter u)
+  (* A parameter's, buffer's or allocation's first source is its size, which no
+     value reads: a variable's is the empty stack. *)
+  let value_src n =
+    match (Ops.op n, Ops.src n) with
+    | (Param | Buffer | Alloc), _ :: rest -> rest
+    | _, src -> src
+  in
+  let seen = Ops.Tbl.create 64 in
+  let rec walk n =
+    Ops.Tbl.mem seen n
+    || begin
+      Ops.Tbl.add seen n ();
+      node n && List.for_all walk (value_src n)
+    end
+  in
+  walk u
 
 (* Leaves *)
 
@@ -137,13 +154,9 @@ let within_bounds ~msg u v =
         failf "%s: %a is outside the bounds [%a, %a]" msg Dtype.pp_const v
           Dtype.pp_const lo Dtype.pp_const hi
 
-(* [keeps_value ~wrapping ~name before after] checks that [after] has [before]'s
-   value at [count] bindings of their leaves, their extremes first, where
-   [before] divides by no zero and, unless [wrapping] (default [false]) or it is
-   a graph of constants, wraps nothing, and that the value is within [after]'s
-   bounds. It checks nothing unless both are exact. *)
 let keeps_value ?(count = 16) ?(wrapping = false) ~name before after =
-  if exact before && exact after then begin
+  if not (exact before && exact after) then 0
+  else begin
     let rng = Random.State.make [| Hashtbl.hash (name, Ops.key before) |] in
     let constants =
       not (List.exists is_leaf (Ops.toposort ~calls:Enter before))
@@ -152,15 +165,18 @@ let keeps_value ?(count = 16) ?(wrapping = false) ~name before after =
       defined env before
       && (wrapping || constants || not (Interpreter.overflows ~vars:env before))
     in
+    let checked = ref 0 in
     for k = 0 to count - 1 do
       match bindings rng k [ before; after ] with
       | Some env when defined env ->
           let msg = Format.asprintf "%s at %a" name pp_binding env in
           let v = Interpreter.eval ~vars:env before in
           equal ~msg const v (Interpreter.eval ~vars:env after);
-          within_bounds ~msg after v
+          within_bounds ~msg after v;
+          incr checked
       | _ -> ()
-    done
+    done;
+    !checked
   end
 
 (* Floats

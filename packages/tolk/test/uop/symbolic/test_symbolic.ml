@@ -932,7 +932,7 @@ let other_tests =
                Ops.O.(r0 * int 1568)
                Ops.O.((r2 < int 1) land (r1 < int 6)))
             simplified;
-          keeps_value ~count:64 ~name:"mobilenet" gated simplified);
+          ignore (keeps_value ~count:64 ~name:"mobilenet" gated simplified));
     ]
 
 (* Laws *)
@@ -944,13 +944,16 @@ let laws =
     [
       scenario_law
         "sym keeps the value of an integer expression where nothing wraps"
-        (fun e -> keeps_value ~name:"sym" e (sym e));
+        (fun e ->
+          let checked = keeps_value ~name:"sym" e (sym e) in
+          cover ~share:0.9 "a binding was checked" (checked > 0));
       prop ~count:1000
         "sym keeps the value of an integer expression at a committed width, \
          wrapping included"
         committed_scenario (fun s ->
           let e = node s in
-          keeps_value ~wrapping:true ~name:"sym" e (sym e));
+          let checked = keeps_value ~wrapping:true ~name:"sym" e (sym e) in
+          cover ~share:0.9 "a binding was checked" (checked > 0));
       prop "sym keeps a float expression's value bit for bit at special values"
         float_scenario (fun f ->
           let e = float_node f in

@@ -174,7 +174,8 @@ let scenario_of dtype =
 
 let scenario =
   scenario_of
-    Gen.(frequency [ (3, constant Dtype.Weak_int); (2, of_list dtypes) ])
+    Gen.(
+      frequency [ (3, constant Dtype.Weak_int); (2, of_list (List.tl dtypes)) ])
 
 let weak_scenario = scenario_of (Gen.constant Dtype.Weak_int)
 let committed_scenario = scenario_of (Gen.of_list (List.tl dtypes))

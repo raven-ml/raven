@@ -1191,11 +1191,11 @@ let laws =
     [
       scenario_law
         "symbolic keeps the value of an integer expression where nothing wraps"
-        (fun e -> keeps_value ~name:"symbolic" e (symbolic e));
+        (fun e -> ignore (keeps_value ~name:"symbolic" e (symbolic e)));
       prop "a graph of constants folds to what the machine computes" scenario
         (fun s ->
           let e = constants s in
-          keeps_value ~name:"constants" e (symbolic e));
+          ignore (keeps_value ~name:"constants" e (symbolic e)));
       scenario_law "simplify is symbolic's rewrite" (fun e ->
           equal uop (symbolic e) (Shape.simplify e));
       prop "commutative orders the operands of a weak integer sum"

@@ -73,7 +73,8 @@ let replay test k r =
       let out = Option.get r.result in
       equal ~msg (pair value value) (lo, hi) (Ops.vmin out, Ops.vmax out))
     r.bounds;
-  keeps_value ~name:msg r.input (Option.value r.result ~default:r.input)
+  ignore
+    (keeps_value ~name:msg r.input (Option.value r.result ~default:r.input))
 
 let replay_all name =
   let records = Ops.src (Golden.sink (name ^ ".golden")) in
