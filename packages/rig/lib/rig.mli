@@ -1006,11 +1006,15 @@ val failure : unit -> string option
        domain's major heap and the host buffers live at the last cycle, or
        half the host's last-level cache if that is more, and at least 4 MiB.
        In a small heap a cycle also does the
-       runtime's minimum work ([small_heap_limit] of OCaml 5.5's runtime). A
-       dropped buffer returns with the sweep after the marking that finds it
-       unreachable, so its memory returns within about two cycles. Above both
-       floors the bound is proportional to [custom_major_ratio], so raising the
-       ratio holds more dropped memory between cycles and runs fewer of them.
+       runtime's minimum work ([small_heap_limit] of OCaml 5.5's runtime).
+       The runtime estimates a cycle's work from the major heap's size, as if
+       [space_overhead] said its live share, and a cycle does the work of its
+       live blocks only: a heap of less live data ends its cycles sooner and
+       runs more of them, each of less work. A dropped buffer returns with the
+       sweep after the marking that finds it unreachable, so its memory
+       returns within about two cycles. Above both floors the bound is
+       proportional to [custom_major_ratio], so raising the ratio holds more
+       dropped memory between cycles and runs fewer of them.
        rig sets none of the runtime's parameters. The bytes of buffers the
        minor heap holds bring a minor collection once they reach the same
        bound.}

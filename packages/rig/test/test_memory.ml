@@ -1344,25 +1344,45 @@ let promoted_cycles ?(d = Rig.host) k =
   done;
   Float.of_int ((Gc.quick_stat ()).major_collections - before)
 
+(* The least work, in words, a major cycle of OCaml 5.5's runtime does before it
+   marks: [small_heap_limit]. *)
+let small_heap_limit = 262_144
+
+(* Major cycles per MiB over [k] dropped buffers of a MiB on [d], from a
+   compacted heap beside [small_heap_limit] live words. The runtime estimates a
+   cycle's work from the heap's size, as if [space_overhead] said its live
+   share, and a cycle does the work of its live blocks only: a heap that earlier
+   tests left mostly free ends cycles sooner. One of 2 million words, a 64th of
+   them live, ended one per two buffers on the M1 Max. Compacted, the heap holds
+   its live blocks alone. The live words keep the least work from dominating a
+   cycle, which would hide a pace too fast. *)
 let cycles_per_mib ?d k =
-  Gc.full_major ();
-  promoted_cycles ?d k /. Float.of_int k
+  let live = Array.make small_heap_limit 0 in
+  Gc.compact ();
+  let rate = promoted_cycles ?d k /. Float.of_int k in
+  ignore (Sys.opaque_identity live);
+  rate
+
+(* The message of a count of [cycles_per_mib], with the heap it ran beside. *)
+let rate_msg () =
+  Printf.sprintf "cycles per MiB, beside a heap of %d words"
+    (Gc.quick_stat ()).heap_words
 
 (* The margin a cycle-per-bound assertion allows: a count over 256 buffers
    includes the cycles already under way at either end. *)
 let margin = 1.5
 
-(* At a small heap, dropped host buffers bring a major cycle at most once per
-   4 MiB, the least that half the last-level cache is. *)
+(* At a small heap, compacted, dropped host buffers bring a major cycle at most
+   once per 4 MiB, the least that half the last-level cache is. *)
 let test_paced_host () =
   let rate = cycles_per_mib 256 in
-  at_most ~msg:"cycles per MiB" float_exact ~than:(margin /. 4.) rate
+  at_most ~msg:(rate_msg ()) float_exact ~than:(margin /. 4.) rate
 
-(* A software device's memory is the host's: with a budget that leaves it
-   room, its dropped buffers bring a major cycle at most once per half the
-   host's last-level cache or 4 MiB, whichever is more, as host buffers do,
-   whatever [custom_major_ratio] says of the heap. At a ratio of 1, the
-   heap's and the device's share would bring a cycle per buffer. *)
+(* A software device's memory is the host's: with a budget that leaves it room,
+   beside a compacted heap, its dropped buffers bring a major cycle at most once
+   per half the host's last-level cache or 4 MiB, whichever is more, as host
+   buffers do, whatever [custom_major_ratio] says of the heap. At a ratio of 1,
+   the heap's and the device's share would bring a cycle per buffer. *)
 let test_paced_software () =
   let d = Result.get_ok (Rig.software "memory:paced-floor") in
   let cache = Option.value (Rig.cache_bytes Rig.host) ~default:0 in
@@ -1375,7 +1395,7 @@ let test_paced_software () =
         Gc.set { (Gc.get ()) with custom_major_ratio = was })
       (fun () -> cycles_per_mib ~d 256)
   in
-  at_most ~msg:"cycles per MiB" float_exact
+  at_most ~msg:(rate_msg ()) float_exact
     ~than:(margin *. Float.of_int (kib * kib) /. Float.of_int floor)
     rate
 
@@ -1482,11 +1502,11 @@ let test_paced_refused () =
   at_least ~msg:"cycles over 256 MiB dropped after the refusal" float_exact
     ~than:(usual /. margin) (promoted_cycles 256)
 
-(* Live host buffers raise the bound as heap bytes do: beside 256 MiB of
-   them, dropped buffers bring a cycle at most once per [custom_major_ratio]
-   / 150 of the heap's and their bytes, about 75 MiB. Without the live term,
-   cycles would come once per half the last-level cache, more often on any
-   host whose last level is under about 100 MiB. *)
+(* Live host buffers raise the bound as heap bytes do: beside 256 MiB of them
+   and a compacted heap, dropped buffers bring a cycle at most once per
+   [custom_major_ratio] / 150 of the heap's and their bytes, about 75 MiB.
+   Without the live term, cycles would come once per half the last-level cache,
+   more often on any host whose last level is under about 100 MiB. *)
 let test_paced_host_live () =
   let held = 256 * kib * kib in
   let live = B.create Rig.host held in
@@ -1495,12 +1515,12 @@ let test_paced_host_live () =
   let bytes = Float.of_int ((words * (Sys.word_size / 8)) + held) in
   let share = bytes *. Float.of_int (Gc.get ()).custom_major_ratio /. 150. in
   ignore (Sys.opaque_identity live);
-  at_most ~msg:"cycles per MiB" float_exact
+  at_most ~msg:(rate_msg ()) float_exact
     ~than:(margin *. Float.of_int (kib * kib) /. share)
     rate
 
-(* At a large heap, cycles come at most once per the collector's share of
-   the heap, [custom_major_ratio] / 150 of its bytes. *)
+(* At a large heap, compacted, cycles come at most once per the collector's
+   share of the heap, [custom_major_ratio] / 150 of its bytes. *)
 let test_paced_host_heap () =
   let heap = Array.make (16 * kib * kib) 0. in
   let rate = cycles_per_mib 256 in
@@ -1508,7 +1528,7 @@ let test_paced_host_heap () =
   let bytes = Float.of_int (words * (Sys.word_size / 8)) in
   let share = bytes *. Float.of_int (Gc.get ()).custom_major_ratio /. 150. in
   ignore (Sys.opaque_identity heap);
-  at_most ~msg:"cycles per MiB" float_exact
+  at_most ~msg:(rate_msg ()) float_exact
     ~than:(margin *. Float.of_int (kib * kib) /. share)
     rate
 

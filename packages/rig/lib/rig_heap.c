@@ -462,14 +462,17 @@ static LINED(_Atomic uintnat) cycles_seen;
    the heap: a block of [mem] bytes against a bound [max] adds [mem / max]
    of a cycle's work, at most a whole cycle, and that work is marking and
    sweeping the major heap (OCaml's runtime/memory.c, caml_adjust_gc_speed,
-   and runtime/major_gc.c). Its own bound, [caml_custom_get_max_major], is
-   [custom_major_ratio] / 150 of the heap's bytes, 29% by default, so that
-   floating garbage stays a share of what the heap holds. A program whose
-   memory is mostly buffers would then collect once per buffer as large as
-   that share of its small heap, and mark the whole heap each time. The
-   share is taken here of the program's whole memory instead: the major heap
-   and the bytes buffers hold live, so the garbage floating outside the heap
-   stays the same share of what the program holds. The live term matters
+   and runtime/major_gc.c). The runtime estimates it from the heap's size, as
+   if [space_overhead] said its live share, while a cycle does the work of
+   its live blocks only, so a heap of less live data ends more cycles per
+   bound. Its own bound, [caml_custom_get_max_major], is [custom_major_ratio]
+   / 150 of the heap's bytes, 29% by default, so that floating garbage stays
+   a share of what the heap holds. A program whose memory is mostly buffers
+   would then collect once per buffer as large as that share of its small
+   heap, and mark the whole heap each time. The share is taken here of the
+   program's whole memory instead: the major heap and the bytes buffers hold
+   live, so the garbage floating outside the heap stays the same share of
+   what the program holds. The live term matters
    where a program keeps its weights live and churns results: an Adam step
    of a 2048-wide MLP on the M1 Max ran 22 cycles over kaun's
    pointer-dense heap without it, against 8, and 7% slower.
