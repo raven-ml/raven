@@ -513,17 +513,23 @@ let complexes (A.Any y) : Complex.t array =
         (A.to_array (A.expect D.Float64 (A.Any y)))
   | _ -> invalid_arg "complexes"
 
-(* An error [e] within [bound]. windtrap orders NaN below every float, so a NaN
-   error, from a NaN result element, reads as infinity and fails, as
-   Nx_support.gap reads it; this library does not link nx. *)
-let error_within bound e =
-  at_most float_exact ~than:bound (if Float.is_nan e then infinity else e)
-
 let norm (zs : Complex.t array) =
   sqrt
     (Array.fold_left
        (fun s (z : Complex.t) -> s +. (z.re *. z.re) +. (z.im *. z.im))
        0. zs)
+
+(* [‖got - want‖₂], each element's error its {!Nx_array_support.complex_gap}:
+   infinite at a NaN, or at an infinity beside a finite reference, which no
+   bound passes. *)
+let distance (want : Complex.t array) (got : Complex.t array) =
+  let s = ref 0. in
+  Array.iteri
+    (fun k w ->
+      let d = Nx_array_support.complex_gap got.(k) w in
+      s := !s +. (d *. d))
+    want;
+  sqrt !s
 
 (* ‖x‖₂ as the bounds read it: a c2r's √2 times its operand's, at least its
    completed bins'. *)
@@ -539,7 +545,7 @@ let within_bound b c =
     Array.map complex_of
       (exact ~wide:c.wide c.kind c.axes c.shape (Array.map dd_of xs))
   in
-  let err = norm (Array.map2 Complex.sub want got) in
+  let err = distance want got in
   let u = if c.wide then epsilon_float /. 2. else 0x1p-24 in
   let n = Array.fold_left (fun k a -> k * (points c).(a)) 1 c.axes in
   let bound =
@@ -548,7 +554,7 @@ let within_bound b c =
     *. sqrt (Float.of_int n)
     *. operand_norm c
   in
-  error_within bound err
+  at_most float_exact ~than:bound err
 
 (* Within the bound, by the prime factors of the points along each axis. *)
 let law_bound b c =
@@ -618,7 +624,8 @@ let law_opposite b c =
   cover "several other axes" (Array.length c.shape > 2);
   cover "bin n/2" (match c.kind with C2r n -> n mod 2 = 0 | _ -> false);
   let x = operand c in
-  let err = norm (complexes (run b c x)) in
+  let got = complexes (run b c x) in
+  let err = distance (Array.map (fun _ -> Complex.zero) got) got in
   let u = if c.wide then epsilon_float /. 2. else 0x1p-24 in
   let n = Array.fold_left (fun k a -> k * (points c).(a)) 1 c.axes in
   let bound =
@@ -627,7 +634,7 @@ let law_opposite b c =
     *. sqrt (Float.of_int n)
     *. operand_norm c
   in
-  error_within bound err
+  at_most float_exact ~than:bound err
 
 let specials = [| Float.nan; Float.infinity; Float.neg_infinity |]
 
@@ -816,14 +823,14 @@ let check_impulses b ~wide kind n w ats cs =
                 if j = 0 || 2 * j = m then z.re *. c
                 else 2. *. ((z.re *. c) +. (z.im *. s)))
         impulses;
-      let dre = y.re -. !re and dim = y.im -. !im in
-      err := !err +. (dre *. dre) +. (dim *. dim))
+      let d = Nx_array_support.complex_gap y { re = !re; im = !im } in
+      err := !err +. (d *. d))
     got;
   let u = if wide then epsilon_float /. 2. else 0x1p-24 in
   let bound =
     epsilon b kind [| 0 |] shape *. u *. sqrt (Float.of_int n) *. operand_norm c
   in
-  error_within bound (sqrt !err)
+  at_most float_exact ~than:bound (sqrt !err)
 
 let impulses =
   Complex.
@@ -870,14 +877,14 @@ let impulse_line (type s) (b : Support.backend) (dt : (Complex.t, s) D.t) n at =
       let phi =
         sign *. 2. *. Float.pi *. float_of_int (at * k mod n) /. float_of_int n
       in
-      let dre = z.re -. cos phi and dim = z.im -. sin phi in
-      err := !err +. (dre *. dre) +. (dim *. dim)
+      let d = Nx_array_support.complex_gap z { re = cos phi; im = sin phi } in
+      err := !err +. (d *. d)
     done;
     let u = match dt with D.Complex64 -> 0x1p-24 | _ -> epsilon_float /. 2. in
     let bound =
       epsilon b (C2c direction) [| 0 |] [| n |] *. u *. sqrt (float_of_int n)
     in
-    error_within bound (sqrt !err)
+    at_most float_exact ~than:bound (sqrt !err)
   in
   check_line Forward;
   check_line Inverse
@@ -1242,7 +1249,7 @@ let check_later b (kind, n0, n1, wide) =
     | C2r _ -> short kind shape (long ~inverse:true e1 xs)
   in
   let got = complexes (run b c (operand c)) in
-  let err = norm (Array.map2 Complex.sub want got) in
+  let err = distance want got in
   let u = if wide then epsilon_float /. 2. else 0x1p-24 in
   let n = n0 * match kind with C2r m -> m | _ -> n1 in
   let bound =
@@ -1251,7 +1258,7 @@ let check_later b (kind, n0, n1, wide) =
     *. sqrt (Float.of_int n)
     *. operand_norm c
   in
-  error_within bound err
+  at_most float_exact ~than:bound err
 
 let later_lines =
   List.concat_map
@@ -1616,10 +1623,7 @@ let test_past_2_31 (b : Support.backend) () =
       (exact ~wide:false c.kind c.axes c.shape (Array.map dd_of row))
   in
   let err =
-    norm
-      (Array.map2
-         (fun (w : Complex.t) re -> Complex.sub w { re; im = 0. })
-         want first)
+    distance want (Array.map (fun re -> { Complex.re; im = 0. }) first)
   in
   let bound =
     epsilon b c.kind c.axes c.shape
@@ -1627,7 +1631,7 @@ let test_past_2_31 (b : Support.backend) () =
     *. sqrt (Float.of_int n)
     *. operand_norm c
   in
-  error_within bound err
+  at_most float_exact ~than:bound err
 
 (* The bytes of device memory nx_cuda.mli states nx.cuda keeps for later calls
    on a device, and the most of them its transforms' plans take. *)
