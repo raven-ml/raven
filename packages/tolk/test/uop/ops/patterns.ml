@@ -1,4 +1,4 @@
-(* Patterns, pattern matchers and graph rewriting. *)
+(* Patterns, pattern matchers and rewriting. *)
 
 open Windtrap
 open Tolk
@@ -7,7 +7,6 @@ module P = Ops.Upat
 module Pm = Ops.Pattern_matcher
 
 let str pp x = Format.asprintf "%a" pp x
-let matches p u = P.match_ p u <> []
 let sunk u = Some (Ops.sink [ u ])
 
 (* [pm_sink p] wraps the node [p] names ["x"] in a sink. *)
@@ -19,593 +18,6 @@ and c2 = Ops.float 2.
 and c3 = Ops.float 3.
 
 let add x y = Ops.v ~src:[ x; y ] Op.Add
-
-(* [binds name u naming] is that [naming] names [u] [name]. *)
-let binds name u naming =
-  match List.assoc_opt name naming with Some v -> v == u | None -> false
-
-let names_both x y namings =
-  List.exists (fun n -> binds "x" x n && binds "y" y n) namings
-
-let upat =
-  group "Upat"
-    [
-      test "matches a constant of a type" (fun () ->
-          let m = pm_sink (P.op ~name:"x" ~dtype:[ Weak_float ] Op.Const) in
-          equal (option uop) (sunk (Ops.float 1.)) (rewrite m (Ops.float 1.));
-          equal (option uop) None (rewrite m (Ops.int 1)));
-      test "matches an operation, and no other" (fun () ->
-          let m = pm_sink (P.op ~name:"x" Op.Const) in
-          equal (option uop) (sunk c1) (rewrite m c1);
-          equal (option uop) None (rewrite m (add c1 c1)));
-      test "matches any operation of a set" (fun () ->
-          let m =
-            pm_sink (P.v ~op:(Op.Set.of_list [ Const; Cast ]) ~name:"x" ())
-          in
-          let f = Ops.bool false in
-          let cast = Ops.v ~src:[ f ] ~arg:(Dtype Int32) Op.Cast in
-          equal (option uop) (sunk f) (rewrite m f);
-          equal (option uop) (sunk cast) (rewrite m cast);
-          equal (option uop) None (rewrite m (add c3 c3)));
-      test "matches an argument as a number: 0, 0.0 and false are equal"
-        (fun () ->
-          let m =
-            Pm.v (fun () ->
-                [
-                  Pm.rule
-                    (P.op ~arg:(Const (i 0)) ~name:"x" Op.Const)
-                    (fun m -> sunk (m "x"));
-                  Pm.rule (P.op ~name:"x" Op.Max) (fun m -> sunk (m "x"));
-                ])
-          in
-          let zero = Ops.float 0. in
-          equal (option uop) (sunk zero) (rewrite m zero);
-          equal (option uop)
-            (sunk (Ops.float (-0.)))
-            (rewrite m (Ops.float (-0.)));
-          equal (option uop)
-            (sunk (Ops.bool false))
-            (rewrite m (Ops.bool false));
-          let max = Ops.v ~src:[ zero; zero ] Op.Max in
-          equal (option uop) (sunk max) (rewrite m max);
-          equal (option uop) None (rewrite m (Ops.v ~src:[ zero; zero ] Op.Mul));
-          equal (option uop) None (rewrite m (Ops.int (-1))));
-      test "matches integers and floats exactly" (fun () ->
-          let exact = `Int (Bigint.of_string "9007199254740992")
-          and next = `Int (Bigint.of_string "9007199254740993") in
-          let rounded = Ops.float 9007199254740992. in
-          is_true (matches (P.const exact) rounded);
-          is_false (matches (P.const next) rounded);
-          is_false (matches (P.const (f 9007199254740992.)) (Ops.const next));
-          is_true (matches (P.const (i 1)) (Ops.bool true));
-          is_false (matches (P.const (i 1)) (Ops.float 1.5));
-          is_false (matches (P.const exact) (Ops.float Float.infinity)));
-      test "a NaN argument matches no other constant" (fun () ->
-          is_false
-            (matches (P.op ~arg:(Const (f Float.nan)) Op.Const) (Ops.float 1.));
-          is_false
-            (matches (P.op ~arg:(Const (f 1.)) Op.Const) (Ops.float Float.nan)));
-      test "patterns that differ only in their argument permute" (fun () ->
-          let p = P.op ~perm:[ P.const (i 0); P.const (i 1) ] Op.Add in
-          is_true (matches p (Ops.v ~src:[ Ops.int 1; Ops.int 0 ] Op.Add)));
-      test "a NaN argument matches a NaN constant" (fun () ->
-          let m =
-            Pm.fold (fun () ->
-                [
-                  Pm.rule
-                    (P.op ~arg:(Const (f Float.nan)) Op.Const)
-                    (fun _ -> Some true);
-                ])
-          in
-          equal (option bool) (Some true)
-            (Pm.rewrite m () (Ops.float Float.nan)));
-      test "the sources of a rule filter it" (fun () ->
-          let m =
-            Pm.v (fun () ->
-                [
-                  Pm.rule
-                    (P.op ~name:"x"
-                       ~perm:
-                         [
-                           P.op ~name:"c" Op.Const;
-                           P.op ~arg:(Const (i 2)) Op.Const;
-                         ]
-                       Op.Mul)
-                    (fun m ->
-                      match Ops.value (m "c") with
-                      | `Int n when Bigint.equal (Bigint.abs n) Bigint.one ->
-                          sunk (m "x")
-                      | _ -> None);
-                ])
-          in
-          let mul a b = Ops.v ~src:[ Ops.int a; Ops.int b ] Op.Mul in
-          List.iter
-            (fun (a, b, fires) ->
-              equal
-                ~msg:(Printf.sprintf "%d * %d" a b)
-                (option uop)
-                (if fires then sunk (mul a b) else None)
-                (rewrite m (mul a b)))
-            [
-              (1, 2, true);
-              (2, 2, false);
-              (-1, 2, true);
-              (2, 1, true);
-              (2, -1, true);
-            ]);
-      test "a name used twice matches one node" (fun () ->
-          let p =
-            P.v ~op:Op.Set.alu ~name:"x"
-              ~src:[ P.op ~name:"y" Op.Const; P.op ~name:"y" Op.Const ]
-              ()
-          in
-          is_true (matches p (add c1 c1));
-          is_true (matches p (add c1 (Ops.float 1.)));
-          is_false (matches p (add c1 c2)));
-      test "matches a type among several" (fun () ->
-          let m =
-            pm_sink (P.op ~name:"x" ~dtype:[ Float32; Float64 ] Op.Cast)
-          in
-          let cast dt = Ops.cast (Ops.float 1.) dt in
-          equal (option uop) (sunk (cast Float32)) (rewrite m (cast Float32));
-          equal (option uop) (sunk (cast Float64)) (rewrite m (cast Float64));
-          equal (option uop) None (rewrite m (cast Float16));
-          equal (option uop) None (rewrite m (Ops.int ~dtype:Int32 1)));
-      test "src matches the sources in order, and exactly as many" (fun () ->
-          let m =
-            pm_sink
-              (P.v ~op:Op.Set.alu ~name:"x"
-                 ~src:[ P.op Op.Const; P.op Op.Const ]
-                 ())
-          in
-          let s = add c1 c2 in
-          equal (option uop) (sunk s) (rewrite m s);
-          equal (option uop) None (rewrite m c2);
-          equal (option uop) None
-            (rewrite m (Ops.v ~src:[ c1; c2; c3 ] Op.Mulacc)));
-      test "perm matches the sources in any order" (fun () ->
-          let m =
-            pm_sink
-              (P.v ~op:Op.Set.alu ~name:"x"
-                 ~perm:[ P.op Op.Const; P.v ~op:Op.Set.alu () ]
-                 ())
-          in
-          let s3 = add c1 c2 in
-          let s4 = add s3 c2 and s5 = add c2 s3 in
-          equal (option uop) None (rewrite m s3);
-          equal (option uop) (sunk s4) (rewrite m s4);
-          equal (option uop) (sunk s5) (rewrite m s5);
-          equal (option uop) None (rewrite m (add s3 s4)));
-      test "each matches every source" (fun () ->
-          let m =
-            pm_sink (P.v ~op:Op.Set.alu ~name:"x" ~each:(P.op Op.Const) ())
-          in
-          let s = add c1 c2 in
-          equal (option uop) (sunk s) (rewrite m s);
-          equal (option uop) None (rewrite m (add c2 s)));
-      test "allow_any_len takes more sources, never fewer" (fun () ->
-          let m =
-            pm_sink
-              (P.op ~name:"x"
-                 ~src:[ P.op Op.Const ]
-                 ~allow_any_len:true Op.Mulacc)
-          in
-          let s = Ops.v ~src:[ c1; c2; c3 ] Op.Mulacc in
-          equal (option uop) None (rewrite m (Ops.v ~src:[ c1 ] Op.Exp2));
-          equal (option uop) None (rewrite m (add c1 c2));
-          equal (option uop) (sunk s) (rewrite m s);
-          let noop = Ops.v Op.Noop in
-          let p =
-            Pm.fold (fun () ->
-                [
-                  Pm.rule
-                    (P.op
-                       ~src:[ P.op Op.Noop; P.op Op.Noop ]
-                       ~allow_any_len:true Op.Noop)
-                    (fun _ -> Some true);
-                ])
-          in
-          equal (option bool) (Some true)
-            (Pm.rewrite p () (Ops.v ~src:[ noop; noop; noop ] Op.Noop));
-          equal (option bool) (Some true)
-            (Pm.rewrite p () (Ops.v ~src:[ noop; noop ] Op.Noop));
-          equal (option bool) None
-            (Pm.rewrite p () (Ops.v ~src:[ noop ] Op.Noop)));
-      test "permutations nest" (fun () ->
-          let p =
-            P.v ~op:Op.Set.alu
-              ~perm:
-                [
-                  P.v ~op:Op.Set.alu ~perm:[ P.var "a"; P.var "b" ] ();
-                  P.var "b";
-                ]
-              ()
-          in
-          is_true (matches p (add (add c1 c2) c1));
-          is_true (matches p (add (add c2 c1) c1)));
-      test "any matches through any of its alternatives" (fun () ->
-          let v1 = weak_var "a" 0 10 and v2 = weak_var "b" 0 10 in
-          let m =
-            Pm.v (fun () ->
-                [
-                  Pm.rule
-                    P.(P.var "a" + P.any [ P.var "x"; P.var "y"; P.var "z" ])
-                    (fun m ->
-                      match m "y" with
-                      | y -> sunk Ops.O.(m "a" + y)
-                      | exception Invalid_argument _ -> None);
-                ])
-          in
-          equal (option uop)
-            (sunk Ops.O.(v1 + v2))
-            (rewrite m Ops.O.(v1 + v2)));
-      test "match_ names the nodes of each way a pattern matches" (fun () ->
-          let a = var "a" 0 4 and b = var "b" 0 4 in
-          let namings = P.match_ P.(P.var "x" + P.var "y") Ops.O.(a + b) in
-          is_true (names_both a b namings);
-          is_true (names_both b a namings);
-          equal
-            (list (list (pair string uop)))
-            []
-            (P.match_ (P.op Op.Mul) Ops.O.(a + b)));
-      test "v rejects two ways of matching sources" (fun () ->
-          rejects (fun () -> P.v ~src:[ P.wild ] ~perm:[ P.wild ] ());
-          rejects (fun () -> P.v ~src:[ P.wild ] ~each:P.wild ()));
-      test "the constructors match what the node constructors build" (fun () ->
-          let a = var "a" 0 4 and x = fvar "x" in
-          let p = Shape.param ~shape:(ints [ 4 ]) 0 Float32 in
-          let idx = Ops.index p [ a ] in
-          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-          List.iter
-            (fun (name, pat, u) -> is_true ~msg:name (matches pat u))
-            [
-              ("wild", P.wild, a);
-              ("var", P.var ~dtype:[ Int32 ] "x", a);
-              ("cvar", P.cvar ~arg:(i 1) "c", Ops.int 1);
-              ("const", P.const (i 3), Ops.int 3);
-              ("named", P.named "n" (P.op Op.Param), a);
-              ("or_casted value", P.or_casted (P.op Op.Param), a);
-              ("or_casted cast", P.or_casted (P.op Op.Param), Ops.cast a Float32);
-              ( "or_bitcasted",
-                P.or_bitcasted (P.op Op.Param),
-                Ops.bitcast a Uint32 );
-              ( "or_after",
-                P.or_after (P.op Op.Param),
-                Ops.after a [ Ops.sink []; Ops.sink [ a ] ] );
-              ("f", P.f (P.op Op.Param) Op.Cast, Ops.cast a Float32);
-              ( "or_casted named",
-                P.or_casted ~name:"c" (P.op Op.Param),
-                Ops.cast a Float32 );
-              ("or_bitcasted named", P.or_bitcasted ~name:"c" (P.op Op.Param), a);
-              ( "or_after named",
-                P.or_after ~name:"c" (P.op Op.Param),
-                Ops.after a [ Ops.sink [] ] );
-              ("sink", P.sink [ P.wild; P.wild ], Ops.sink [ a; x ]);
-              ("index", P.index (P.op Op.Param) [ P.var "i" ], idx);
-              ("load", P.load (P.op Op.Index) [], Ops.load idx []);
-              ( "store",
-                P.store (P.op Op.Index) [ P.wild ],
-                Ops.store idx (Ops.float ~dtype:Float32 1.) );
-              ( "reduce",
-                P.reduce ~op:Op.Add P.wild [ P.op Op.Range ],
-                Ops.reduce x Op.Add [ r ] );
-              ( "broadcast",
-                P.broadcast (P.const (i 1)),
-                Ops.broadcast (Ops.int 1) 3 );
-              ( "after",
-                P.after (P.op Op.Param) [ P.wild ],
-                Ops.after a [ Ops.sink [] ] );
-              ( "end_",
-                P.end_ P.wild [ P.op Op.Range ],
-                Ops.end_ (Ops.sink []) [ r ] );
-              ( "backedge",
-                P.backedge P.wild ~loop:(P.op Op.Range) ~cond:P.wild,
-                Ops.backedge (Ops.int 1) ~loop:(Ops.loop 1) ~cond:(flag "p") );
-              ("bitcast", P.bitcast ~dtype:Uint32 P.wild, Ops.bitcast a Uint32);
-            ]);
-      test "a reduce pattern names its operation in the argument" (fun () ->
-          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-          is_false
-            (matches
-               (P.reduce ~op:Op.Mul P.wild [ P.wild ])
-               (Ops.reduce (fvar "x") Op.Add [ r ])));
-      test "dtype is the first type a pattern requires" (fun () ->
-          equal dtype Float16 (P.dtype (P.var ~dtype:[ Float16; Float32 ] "x"));
-          equal dtype Void (P.dtype P.wild));
-      test "cast to the type a pattern requires is the pattern" (fun () ->
-          let x = fvar "x" in
-          is_true (matches (P.cast (P.var ~dtype:[ Float32 ] "x") Float32) x);
-          is_false (matches (P.cast (P.var "x") Float32) x));
-    ]
-
-(* Elementwise patterns: each builds the pattern of the node its operation
-   builds, and names the operands. *)
-let alu_pairs =
-  Ops.
-    [
-      ("add", P.add, add, Dtype.Int32);
-      ("sub", P.sub, sub, Int32);
-      ("mul", P.mul, mul, Int32);
-      ("floor division", P.div ~rounding:`Floor, div ~rounding:`Floor, Int32);
-      ("truncated division", P.div ~rounding:`Trunc, div ~rounding:`Trunc, Int32);
-      ( "true division of floats",
-        P.div ?rounding:None,
-        div ?rounding:None,
-        Float32 );
-      ( "floor division of floats",
-        P.div ~rounding:`Floor,
-        div ~rounding:`Floor,
-        Float32 );
-      ("mod_", P.mod_, mod_, Int32);
-      ("fmod", P.fmod, fmod, Int32);
-      ("fmod of floats", P.fmod, fmod, Float32);
-      ("pow", P.pow, pow, Float32);
-      ("lt", P.lt, lt, Int32);
-      ("gt", P.gt, gt, Int32);
-      ("le", P.le, le, Int32);
-      ("ge", P.ge, ge, Int32);
-      ("ne", P.ne, ne, Int32);
-      ("eq", P.eq, eq, Int32);
-      ("bitwise_and", P.bitwise_and, bitwise_and, Int32);
-      ("bitwise_or", P.bitwise_or, bitwise_or, Int32);
-      ("bitwise_xor", P.bitwise_xor, bitwise_xor, Int32);
-      ("shl", P.shl, shl, Int32);
-      ("shr", P.shr, shr, Int32);
-      ("maximum", P.maximum, maximum, Int32);
-      ("minimum", P.minimum, minimum, Int32);
-      ("minimum of floats", P.minimum, minimum, Float32);
-    ]
-
-let alu_unary =
-  Ops.
-    [
-      ("neg", P.neg, neg, Dtype.Int32);
-      ("neg of a boolean", P.neg, neg, Bool);
-      ("logical_not", P.logical_not, logical_not, Int32);
-      ("bitwise_not", P.bitwise_not, bitwise_not, Int32);
-      ("bitwise_not of an unsigned", P.bitwise_not, bitwise_not, Uint8);
-      ("reciprocal", P.reciprocal, reciprocal, Float32);
-      ("trunc", P.trunc, trunc, Float32);
-      ("floor", P.floor, floor, Float32);
-      ("sqrt", P.sqrt, sqrt, Float32);
-      ("exp2", P.exp2, exp2, Float32);
-      ("log2", P.log2, log2, Float32);
-    ]
-
-let operand dt name =
-  if Dtype.is_float dt then fvar ~dtype:dt name
-  else if Dtype.is_bool dt then flag name
-  else var ~dtype:dt name 0 10
-
-let elementwise_patterns =
-  group "elementwise patterns"
-    [
-      cases "a binary pattern matches the node its operation builds"
-        ~id:(fun (n, _, _, _) -> n)
-        alu_pairs
-        (fun (_, pattern, node, dt) ->
-          let x = operand dt "x" and y = operand dt "y" in
-          is_true
-            (names_both x y
-               (P.match_
-                  (pattern (P.var ~dtype:[ dt ] "x") (P.var ~dtype:[ dt ] "y"))
-                  (node x y))));
-      cases "a unary pattern matches the node its operation builds"
-        ~id:(fun (n, _, _, _) -> n)
-        alu_unary
-        (fun (_, pattern, node, dt) ->
-          let x = operand dt "x" in
-          is_true
-            (List.exists (binds "x" x)
-               (P.match_ (pattern (P.var ~dtype:[ dt ] "x")) (node x))));
-      test "a where pattern matches a selection" (fun () ->
-          let c = flag "c" and x = var "x" 0 10 and y = var "y" 0 10 in
-          is_true
-            (names_both x y
-               (P.match_
-                  (P.where (P.var "c") (P.var "x") (P.var "y"))
-                  (Ops.where c x y))));
-      test "a commutative operation matches its operands in either order"
-        (fun () ->
-          let x = var "x" 0 10 in
-          is_true (matches P.(P.var "x" + P.cvar "c") Ops.O.(int 2 + x));
-          is_true (matches P.(P.var "x" * P.cvar "c") Ops.O.(x * int 2));
-          is_false (matches P.(P.var "x" < P.cvar "c") Ops.O.(int 2 < x)));
-      test
-        "a literal matches a constant of any type, never a typed constant's \
-         cast" (fun () ->
-          let x = fvar "x" in
-          is_true (matches P.(P.var "x" * int 2) Ops.O.(x * float 2.));
-          is_true
-            (matches
-               P.(P.var "x" + float 0.)
-               (Ops.add (var "a" 0 1) (Ops.int 0)));
-          is_false
-            (matches
-               P.(P.var "x" * int 2)
-               (Ops.v ~src:[ x; Ops.float ~dtype:Float32 2. ] Op.Mul)));
-      test "floor division and remainder operators match their operations"
-        (fun () ->
-          let a = var "a" 0 10 and b = var "b" 1 10 in
-          is_true
-            (matches P.(P.var "x" // P.var "y") (Ops.alu a Op.Div [ b ]));
-          is_true
-            (matches P.(P.var "x" % P.var "y") (Ops.alu a Op.Mod [ b ]));
-          is_false
-            (matches P.(P.var "x" // P.var "y") (Ops.alu a Op.Truncdiv [ b ])));
-      test "the pattern operators are the named pattern operations" (fun () ->
-          let a = var "a" 0 10 and b = var "b" 1 10 in
-          let both p q u = equal bool (matches p u) (matches q u) in
-          List.iter
-            (fun u ->
-              both P.(P.var "x" + P.var "y") (P.add (P.var "x") (P.var "y")) u;
-              both P.(P.var "x" - P.var "y") (P.sub (P.var "x") (P.var "y")) u;
-              both P.(P.var "x" < P.var "y") (P.lt (P.var "x") (P.var "y")) u;
-              both
-                P.(P.var "x" land P.var "y")
-                (P.bitwise_and (P.var "x") (P.var "y"))
-                u)
-            Ops.O.[ a + b; a - b; a < b; a land b; a * b ]);
-    ]
-
-(* Pattern matchers *)
-
-let matchers =
-  let a = var "a" 0 10 in
-  group "Pattern_matcher"
-    [
-      test "v's first rewrite rejects a rule whose pattern has no operation"
-        (fun () ->
-          let m = Pm.v (fun () -> [ Pm.rule P.wild (fun _ -> Some a) ]) in
-          rejects (fun () -> Pm.rewrite m () a));
-      test "the first rule that matches and does not decline wins" (fun () ->
-          let m =
-            Pm.v (fun () ->
-                [
-                  Pm.rule (P.op Op.Param) (fun _ -> None);
-                  Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x"));
-                  Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1));
-                  Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2));
-                ])
-          in
-          equal (option uop) (Some (Ops.int 1)) (rewrite m a));
-      test "a rule is given each naming in turn until one gives a result"
-        (fun () ->
-          let seen = ref [] in
-          let m =
-            Pm.v (fun () ->
-                [
-                  Pm.rule
-                    P.(P.var "x" + P.cvar "c")
-                    (fun m ->
-                      seen := (m "x", m "c") :: !seen;
-                      None);
-                  Pm.rule
-                    P.(P.var "x" + P.cvar "c")
-                    (fun m -> if m "c" == c2 then Some (m "x") else None);
-                ])
-          in
-          equal (option uop) (Some c3) (rewrite m (add c2 c3));
-          equal (list (pair uop uop)) [ (c2, c3); (c3, c2) ] (List.rev !seen));
-      test "a part of a pattern that names nothing gives one naming"
-        (fun () ->
-          let p = P.(var "x" + (const (`Float 1.) * wild)) in
-          let u = add a Ops.O.(c1 * c1) in
-          equal int 1 (List.length (P.match_ p u));
-          let calls = ref 0 in
-          let m =
-            Pm.v (fun () ->
-                [
-                  Pm.rule
-                    (P.sink
-                       [
-                         P.broadcast P.(var "x" + var "y");
-                         P.(const (`Float 1.) * wild);
-                       ])
-                    (fun _ ->
-                      incr calls;
-                      None);
-                ])
-          in
-          let b = var "b" 0 10 in
-          equal (option uop) None
-            (rewrite m
-               (Ops.sink [ Ops.v ~src:[ add a b ] Op.Stack; Ops.O.(c1 * c1) ]));
-          equal int 2 !calls);
-      test "a fold's rule declines by returning nothing" (fun () ->
-          let m =
-            Pm.fold (fun () ->
-                [
-                  Pm.rule (P.op Op.Param) (fun _ -> None);
-                  Pm.rule (P.op Op.Param) (fun _ -> Some "second");
-                ])
-          in
-          equal (option string) (Some "second") (Pm.rewrite m () a));
-      test "a fold's rule that returns its node is a result" (fun () ->
-          let m =
-            Pm.fold (fun () ->
-                [
-                  Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x"));
-                  Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1));
-                ])
-          in
-          equal (option uop) (Some a) (Pm.rewrite m () a));
-      test "concat tries the matchers' rules in order" (fun () ->
-          let one =
-            Pm.v (fun () ->
-                [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1)) ])
-          in
-          let two =
-            Pm.v (fun () ->
-                [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2)) ])
-          in
-          let none =
-            Pm.v (fun () -> [ Pm.rule (P.op Op.Param) (fun _ -> None) ])
-          in
-          equal (option uop)
-            (Some (Ops.int 2))
-            (rewrite (Pm.concat [ none; two; one ]) a);
-          equal (option uop) None (rewrite (Pm.concat []) a));
-      test "a naming the pattern does not bind is rejected" (fun () ->
-          let m =
-            Pm.v (fun () ->
-                [ Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "y")) ])
-          in
-          rejects (fun () -> rewrite m a));
-      test "rule_ctx reads the context" (fun () ->
-          let ctx = ref 0 in
-          let m =
-            Pm.v (fun () ->
-                [
-                  Pm.rule_ctx (P.op ~src:[] ~name:"x" Op.Noop) (fun ctx m ->
-                      incr ctx;
-                      Some (Ops.replace ~src:[ Ops.v Op.Noop ] (m "x")));
-                ])
-          in
-          let once = Option.get (Pm.rewrite m ctx (Ops.v Op.Noop)) in
-          equal (option uop) None (Pm.rewrite m ctx once);
-          equal int 1 !ctx);
-      test "append tries the first matcher's rules first" (fun () ->
-          let one =
-            Pm.v (fun () ->
-                [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1)) ])
-          in
-          let two =
-            Pm.v (fun () ->
-                [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2)) ])
-          in
-          equal (option uop) (Some (Ops.int 1)) (rewrite (Pm.append one two) a);
-          equal (option uop) (Some (Ops.int 2)) (rewrite (Pm.append two one) a));
-      test "with_ctx joins a matcher without context to one with" (fun () ->
-          let plain =
-            Pm.v (fun () ->
-                [ Pm.rule (P.op Op.Const) (fun _ -> Some (Ops.int 1)) ])
-          in
-          let reading =
-            Pm.v (fun () ->
-                [ Pm.rule_ctx (P.op Op.Param) (fun ctx _ -> Some ctx) ])
-          in
-          let m = Pm.append reading (Pm.with_ctx plain) in
-          equal (option uop) (Some (Ops.int 7)) (Pm.rewrite m (Ops.int 7) a);
-          equal (option uop)
-            (Some (Ops.int 1))
-            (Pm.rewrite m (Ops.int 7) (Ops.int 3)));
-      test "early_reject skips a rule unless the sources hold its operations"
-        (fun () ->
-          let fired = ref 0 in
-          let m =
-            Pm.v (fun () ->
-                [
-                  Pm.rule (P.op ~early_reject:[ Op.Mul ] Op.Add) (fun _ ->
-                      incr fired;
-                      None);
-                ])
-          in
-          equal (option uop) None (rewrite m Ops.O.(a + int 1));
-          equal int 0 !fired;
-          ignore (rewrite m (Ops.v ~src:[ Ops.O.(a * int 2); a ] Op.Add));
-          equal int 1 !fired);
-    ]
 
 (* A reference matcher
 
@@ -965,10 +377,10 @@ let view p store =
 
 let naming = list (pair string (option uop))
 
-(* Cases the generators reach rarely: a name a repeat binds on each source
-   that a nested repeat over no sources leaves to a later path, a repeat over
-   no sources, a name used inside and outside a repeat, and more orderings
-   than a rule enumerates as alternatives. *)
+(* Cases the generators reach rarely: a name a repeat binds on each source that
+   a nested repeat over no sources leaves to a later path, a repeat over no
+   sources, a name used inside and outside a repeat, and more orderings than a
+   rule enumerates as alternatives. *)
 let reference_examples =
   let n ?ops ?name ?(srcs = Leaf) () =
     Node { ops; dtypes = None; arg = None; name; srcs; any_len = false }
@@ -983,7 +395,8 @@ let reference_examples =
   (* A variable's one source is a stack of no sources. *)
   let empty = Ops.nth a 0 in
   let var_of_empty_each =
-    n ~ops:[ Ops.op a ]
+    n
+      ~ops:[ Ops.op a ]
       ~srcs:(Fixed [ n ~ops:[ Op.Stack ] ~srcs:(Each x) () ])
       ()
   in
@@ -1010,9 +423,710 @@ let reference_examples =
     (orderings, stack [ a; a; a ]);
   ]
 
-let by_reference =
-  group "matching by a reference"
+(* Elementwise patterns: each builds the pattern of the node its operation
+   builds, and names the operands. *)
+let alu_pairs =
+  Ops.
     [
+      ("add", P.add, add, Dtype.Int32);
+      ("sub", P.sub, sub, Int32);
+      ("mul", P.mul, mul, Int32);
+      ("floor division", P.div ~rounding:`Floor, div ~rounding:`Floor, Int32);
+      ("truncated division", P.div ~rounding:`Trunc, div ~rounding:`Trunc, Int32);
+      ( "true division of floats",
+        P.div ?rounding:None,
+        div ?rounding:None,
+        Float32 );
+      ( "floor division of floats",
+        P.div ~rounding:`Floor,
+        div ~rounding:`Floor,
+        Float32 );
+      ("mod_", P.mod_, mod_, Int32);
+      ("fmod", P.fmod, fmod, Int32);
+      ("fmod of floats", P.fmod, fmod, Float32);
+      ("pow", P.pow, pow, Float32);
+      ("lt", P.lt, lt, Int32);
+      ("gt", P.gt, gt, Int32);
+      ("le", P.le, le, Int32);
+      ("ge", P.ge, ge, Int32);
+      ("ne", P.ne, ne, Int32);
+      ("eq", P.eq, eq, Int32);
+      ("bitwise_and", P.bitwise_and, bitwise_and, Int32);
+      ("bitwise_or", P.bitwise_or, bitwise_or, Int32);
+      ("bitwise_xor", P.bitwise_xor, bitwise_xor, Int32);
+      ("shl", P.shl, shl, Int32);
+      ("shr", P.shr, shr, Int32);
+      ("maximum", P.maximum, maximum, Int32);
+      ("minimum", P.minimum, minimum, Int32);
+      ("minimum of floats", P.minimum, minimum, Float32);
+    ]
+
+let alu_unary =
+  Ops.
+    [
+      ("neg", P.neg, neg, Dtype.Int32);
+      ("neg of a boolean", P.neg, neg, Bool);
+      ("logical_not", P.logical_not, logical_not, Int32);
+      ("bitwise_not", P.bitwise_not, bitwise_not, Int32);
+      ("bitwise_not of an unsigned", P.bitwise_not, bitwise_not, Uint8);
+      ("reciprocal", P.reciprocal, reciprocal, Float32);
+      ("trunc", P.trunc, trunc, Float32);
+      ("floor", P.floor, floor, Float32);
+      ("sqrt", P.sqrt, sqrt, Float32);
+      ("exp2", P.exp2, exp2, Float32);
+      ("log2", P.log2, log2, Float32);
+    ]
+
+let operand dt name =
+  if Dtype.is_float dt then fvar ~dtype:dt name
+  else if Dtype.is_bool dt then flag name
+  else var ~dtype:dt name 0 10
+
+(* Patterns *)
+
+(* [matched rows] is the names of the rows whose pattern matches their node. *)
+let matched rows =
+  List.filter_map
+    (fun (what, p, u) -> if P.match_ p u <> [] then Some what else None)
+    rows
+
+(* [named_by p u] is [match_ p u], each naming sorted by name: the .mli orders
+   the namings, not the names within one. *)
+let named_by p u =
+  let by_name = List.sort (fun (n, _) (n', _) -> String.compare n n') in
+  List.map by_name (P.match_ p u)
+
+let namings_w = list (list (pair string uop))
+
+let upat =
+  group "Upat"
+    [
+      test "matches a constant of a type" (fun () ->
+          let m = pm_sink (P.op ~name:"x" ~dtype:[ Weak_float ] Op.Const) in
+          equal (option uop) (sunk (Ops.float 1.)) (rewrite m (Ops.float 1.));
+          equal (option uop) None (rewrite m (Ops.int 1)));
+      test "matches an operation, and no other" (fun () ->
+          let m = pm_sink (P.op ~name:"x" Op.Const) in
+          equal (option uop) (sunk c1) (rewrite m c1);
+          equal (option uop) None (rewrite m (add c1 c1)));
+      test "matches any operation of a set" (fun () ->
+          let m =
+            pm_sink (P.v ~op:(Op.Set.of_list [ Const; Cast ]) ~name:"x" ())
+          in
+          let f = Ops.bool false in
+          let cast = Ops.v ~src:[ f ] ~arg:(Dtype Int32) Op.Cast in
+          equal (option uop) (sunk f) (rewrite m f);
+          equal (option uop) (sunk cast) (rewrite m cast);
+          equal (option uop) None (rewrite m (add c3 c3)));
+      test "matches an argument as a number: 0, 0.0 and false are equal"
+        (fun () ->
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule
+                    (P.op ~arg:(Const (i 0)) ~name:"x" Op.Const)
+                    (fun m -> sunk (m "x"));
+                  Pm.rule (P.op ~name:"x" Op.Max) (fun m -> sunk (m "x"));
+                ])
+          in
+          let zero = Ops.float 0. in
+          equal (option uop) (sunk zero) (rewrite m zero);
+          equal (option uop)
+            (sunk (Ops.float (-0.)))
+            (rewrite m (Ops.float (-0.)));
+          equal (option uop)
+            (sunk (Ops.bool false))
+            (rewrite m (Ops.bool false));
+          let max = Ops.v ~src:[ zero; zero ] Op.Max in
+          equal (option uop) (sunk max) (rewrite m max);
+          equal (option uop) None (rewrite m (Ops.v ~src:[ zero; zero ] Op.Mul));
+          equal (option uop) None (rewrite m (Ops.int (-1))));
+      test "matches integers and floats exactly" (fun () ->
+          let exact = `Int (Bigint.of_string "9007199254740992")
+          and next = `Int (Bigint.of_string "9007199254740993") in
+          let rounded = Ops.float 9007199254740992. in
+          equal (list string)
+            [ "2^53 against the float 2^53"; "1 against true" ]
+            (matched
+               [
+                 ("2^53 against the float 2^53", P.const exact, rounded);
+                 ("2^53 + 1 against the float 2^53", P.const next, rounded);
+                 ( "the float 2^53 against 2^53 + 1",
+                   P.const (f 9007199254740992.),
+                   Ops.const next );
+                 ("1 against true", P.const (i 1), Ops.bool true);
+                 ("1 against 1.5", P.const (i 1), Ops.float 1.5);
+                 ( "2^53 against infinity",
+                   P.const exact,
+                   Ops.float Float.infinity );
+               ]));
+      test "a NaN argument matches no other constant" (fun () ->
+          equal (list string) []
+            (matched
+               [
+                 ( "NaN against 1.",
+                   P.op ~arg:(Const (f Float.nan)) Op.Const,
+                   Ops.float 1. );
+                 ( "1. against NaN",
+                   P.op ~arg:(Const (f 1.)) Op.Const,
+                   Ops.float Float.nan );
+               ]));
+      test "patterns that differ only in their argument permute" (fun () ->
+          let p = P.op ~perm:[ P.const (i 0); P.const (i 1) ] Op.Add in
+          equal namings_w [ [] ]
+            (named_by p (Ops.v ~src:[ Ops.int 1; Ops.int 0 ] Op.Add)));
+      test "a NaN argument matches a NaN constant" (fun () ->
+          let m =
+            Pm.fold (fun () ->
+                [
+                  Pm.rule
+                    (P.op ~arg:(Const (f Float.nan)) Op.Const)
+                    (fun _ -> Some true);
+                ])
+          in
+          equal (option bool) (Some true)
+            (Pm.rewrite m () (Ops.float Float.nan)));
+      test "the sources of a rule filter it" (fun () ->
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule
+                    (P.op ~name:"x"
+                       ~perm:
+                         [
+                           P.op ~name:"c" Op.Const;
+                           P.op ~arg:(Const (i 2)) Op.Const;
+                         ]
+                       Op.Mul)
+                    (fun m ->
+                      match Ops.value (m "c") with
+                      | `Int n when Bigint.equal (Bigint.abs n) Bigint.one ->
+                          sunk (m "x")
+                      | _ -> None);
+                ])
+          in
+          let mul a b = Ops.v ~src:[ Ops.int a; Ops.int b ] Op.Mul in
+          let fired (a, b) = rewrite m (mul a b) <> None in
+          equal
+            (list (pair int int))
+            [ (1, 2); (-1, 2); (2, 1); (2, -1) ]
+            (List.filter fired [ (1, 2); (2, 2); (-1, 2); (2, 1); (2, -1) ]));
+      test "a name used twice matches one node" (fun () ->
+          let p =
+            P.v ~op:Op.Set.alu ~name:"x"
+              ~src:[ P.op ~name:"y" Op.Const; P.op ~name:"y" Op.Const ]
+              ()
+          in
+          equal (list string)
+            [ "1. + 1."; "1. + another 1." ]
+            (matched
+               [
+                 ("1. + 1.", p, add c1 c1);
+                 ("1. + another 1.", p, add c1 (Ops.float 1.));
+                 ("1. + 2.", p, add c1 c2);
+               ]));
+      test "matches a type among several" (fun () ->
+          let m =
+            pm_sink (P.op ~name:"x" ~dtype:[ Float32; Float64 ] Op.Cast)
+          in
+          let cast dt = Ops.cast (Ops.float 1.) dt in
+          equal (option uop) (sunk (cast Float32)) (rewrite m (cast Float32));
+          equal (option uop) (sunk (cast Float64)) (rewrite m (cast Float64));
+          equal (option uop) None (rewrite m (cast Float16));
+          equal (option uop) None (rewrite m (Ops.int ~dtype:Int32 1)));
+      test "src matches the sources in order, and exactly as many" (fun () ->
+          let m =
+            pm_sink
+              (P.v ~op:Op.Set.alu ~name:"x"
+                 ~src:[ P.op Op.Const; P.op Op.Const ]
+                 ())
+          in
+          let s = add c1 c2 in
+          equal (option uop) (sunk s) (rewrite m s);
+          equal (option uop) None (rewrite m c2);
+          equal (option uop) None
+            (rewrite m (Ops.v ~src:[ c1; c2; c3 ] Op.Mulacc)));
+      test "perm matches the sources in any order" (fun () ->
+          let m =
+            pm_sink
+              (P.v ~op:Op.Set.alu ~name:"x"
+                 ~perm:[ P.op Op.Const; P.v ~op:Op.Set.alu () ]
+                 ())
+          in
+          let s3 = add c1 c2 in
+          let s4 = add s3 c2 and s5 = add c2 s3 in
+          equal (option uop) None (rewrite m s3);
+          equal (option uop) (sunk s4) (rewrite m s4);
+          equal (option uop) (sunk s5) (rewrite m s5);
+          equal (option uop) None (rewrite m (add s3 s4)));
+      test "each matches every source" (fun () ->
+          let m =
+            pm_sink (P.v ~op:Op.Set.alu ~name:"x" ~each:(P.op Op.Const) ())
+          in
+          let s = add c1 c2 in
+          equal (option uop) (sunk s) (rewrite m s);
+          equal (option uop) None (rewrite m (add c2 s)));
+      test "allow_any_len takes more sources, never fewer" (fun () ->
+          let m =
+            pm_sink
+              (P.op ~name:"x"
+                 ~src:[ P.op Op.Const ]
+                 ~allow_any_len:true Op.Mulacc)
+          in
+          let s = Ops.v ~src:[ c1; c2; c3 ] Op.Mulacc in
+          equal (option uop) None (rewrite m (Ops.v ~src:[ c1 ] Op.Exp2));
+          equal (option uop) None (rewrite m (add c1 c2));
+          equal (option uop) (sunk s) (rewrite m s);
+          let noop = Ops.v Op.Noop in
+          let p =
+            P.op ~src:[ P.op Op.Noop; P.op Op.Noop ] ~allow_any_len:true Op.Noop
+          in
+          equal (list string)
+            [ "three sources"; "two sources" ]
+            (matched
+               [
+                 ("three sources", p, Ops.v ~src:[ noop; noop; noop ] Op.Noop);
+                 ("two sources", p, Ops.v ~src:[ noop; noop ] Op.Noop);
+                 ("one source", p, Ops.v ~src:[ noop ] Op.Noop);
+               ]));
+      test "permutations nest" (fun () ->
+          let p =
+            P.v ~op:Op.Set.alu
+              ~perm:
+                [
+                  P.v ~op:Op.Set.alu ~perm:[ P.var "a"; P.var "b" ] ();
+                  P.var "b";
+                ]
+              ()
+          in
+          equal (list string)
+            [ "(1. + 2.) + 1."; "(2. + 1.) + 1." ]
+            (matched
+               [
+                 ("(1. + 2.) + 1.", p, add (add c1 c2) c1);
+                 ("(2. + 1.) + 1.", p, add (add c2 c1) c1);
+               ]));
+      test "any matches through any of its alternatives" (fun () ->
+          let v1 = weak_var "a" 0 10 and v2 = weak_var "b" 0 10 in
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule
+                    P.(P.var "a" + P.any [ P.var "x"; P.var "y"; P.var "z" ])
+                    (fun m ->
+                      match m "y" with
+                      | y -> sunk Ops.O.(m "a" + y)
+                      | exception Invalid_argument _ -> None);
+                ])
+          in
+          equal (option uop) (sunk Ops.O.(v1 + v2)) (rewrite m Ops.O.(v1 + v2)));
+      cases "v raises when more than one of src, perm and each is given" ~id:fst
+        [
+          ("src and perm", fun () -> P.v ~src:[ P.wild ] ~perm:[ P.wild ] ());
+          ("src and each", fun () -> P.v ~src:[ P.wild ] ~each:P.wild ());
+          ("perm and each", fun () -> P.v ~perm:[ P.wild ] ~each:P.wild ());
+        ]
+        (fun (_, f) -> rejects f);
+      test "early_reject skips a rule unless the sources hold its operations"
+        (fun () ->
+          let a = var "a" 0 10 in
+          let fired = ref 0 in
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule (P.op ~early_reject:[ Op.Mul ] Op.Add) (fun _ ->
+                      incr fired;
+                      None);
+                ])
+          in
+          equal (option uop) None (rewrite m Ops.O.(a + int 1));
+          equal int 0 !fired;
+          ignore (rewrite m (Ops.v ~src:[ Ops.O.(a * int 2); a ] Op.Add));
+          equal int 1 !fired);
+      test "the constructors match what the node constructors build" (fun () ->
+          let a = var "a" 0 4 and x = fvar "x" in
+          let p = Shape.param ~shape:(ints [ 4 ]) 0 Float32 in
+          let idx = Ops.index p [ a ] in
+          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+          let rows =
+            [
+              ("wild", P.wild, a);
+              ("var", P.var ~dtype:[ Int32 ] "x", a);
+              ("cvar", P.cvar ~arg:(i 1) "c", Ops.int 1);
+              ("const", P.const (i 3), Ops.int 3);
+              ("named", P.named "n" (P.op Op.Param), a);
+              ("or_casted value", P.or_casted (P.op Op.Param), a);
+              ("or_casted cast", P.or_casted (P.op Op.Param), Ops.cast a Float32);
+              ( "or_bitcasted",
+                P.or_bitcasted (P.op Op.Param),
+                Ops.bitcast a Uint32 );
+              ( "or_after",
+                P.or_after (P.op Op.Param),
+                Ops.after a [ Ops.sink []; Ops.sink [ a ] ] );
+              ("f", P.f (P.op Op.Param) Op.Cast, Ops.cast a Float32);
+              ( "or_casted named",
+                P.or_casted ~name:"c" (P.op Op.Param),
+                Ops.cast a Float32 );
+              ("or_bitcasted named", P.or_bitcasted ~name:"c" (P.op Op.Param), a);
+              ( "or_after named",
+                P.or_after ~name:"c" (P.op Op.Param),
+                Ops.after a [ Ops.sink [] ] );
+              ("sink", P.sink [ P.wild; P.wild ], Ops.sink [ a; x ]);
+              ("index", P.index (P.op Op.Param) [ P.var "i" ], idx);
+              ("load", P.load (P.op Op.Index) [], Ops.load idx []);
+              ( "store",
+                P.store (P.op Op.Index) [ P.wild ],
+                Ops.store idx (Ops.float ~dtype:Float32 1.) );
+              ( "reduce",
+                P.reduce ~op:Op.Add P.wild [ P.op Op.Range ],
+                Ops.reduce x Op.Add [ r ] );
+              ( "broadcast",
+                P.broadcast (P.const (i 1)),
+                Ops.broadcast (Ops.int 1) 3 );
+              ( "after",
+                P.after (P.op Op.Param) [ P.wild ],
+                Ops.after a [ Ops.sink [] ] );
+              ( "end_",
+                P.end_ P.wild [ P.op Op.Range ],
+                Ops.end_ (Ops.sink []) [ r ] );
+              ( "backedge",
+                P.backedge P.wild ~loop:(P.op Op.Range) ~cond:P.wild,
+                Ops.backedge (Ops.int 1) ~loop:(Ops.loop 1) ~cond:(flag "p") );
+              ("bitcast", P.bitcast ~dtype:Uint32 P.wild, Ops.bitcast a Uint32);
+            ]
+          in
+          equal (list string)
+            (List.map (fun (w, _, _) -> w) rows)
+            (matched rows));
+      test "a reduce pattern names its operation in the argument" (fun () ->
+          let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
+          let sum = Ops.reduce (fvar "x") Op.Add [ r ] in
+          equal (list string) [ "an Add pattern" ]
+            (matched
+               [
+                 ("an Add pattern", P.reduce ~op:Op.Add P.wild [ P.wild ], sum);
+                 ("a Mul pattern", P.reduce ~op:Op.Mul P.wild [ P.wild ], sum);
+               ]));
+      test "dtype is the first type a pattern requires" (fun () ->
+          equal dtype Float16 (P.dtype (P.var ~dtype:[ Float16; Float32 ] "x"));
+          equal dtype Void (P.dtype P.wild));
+      test "cast to the type a pattern requires is the pattern" (fun () ->
+          let x = fvar "x" in
+          equal (list string) [ "a float32 pattern" ]
+            (matched
+               [
+                 ( "a float32 pattern",
+                   P.cast (P.var ~dtype:[ Float32 ] "x") Float32,
+                   x );
+                 ("a pattern of any type", P.cast (P.var "x") Float32, x);
+               ]));
+      cases "a binary pattern matches the node its operation builds"
+        ~id:(fun (n, _, _, _) -> n)
+        alu_pairs
+        (fun (_, pattern, node, dt) ->
+          let x = operand dt "x" and y = operand dt "y" in
+          mem
+            (list (pair string uop))
+            [ ("x", x); ("y", y) ]
+            (named_by
+               (pattern (P.var ~dtype:[ dt ] "x") (P.var ~dtype:[ dt ] "y"))
+               (node x y)));
+      cases "a unary pattern matches the node its operation builds"
+        ~id:(fun (n, _, _, _) -> n)
+        alu_unary
+        (fun (_, pattern, node, dt) ->
+          let x = operand dt "x" in
+          mem
+            (list (pair string uop))
+            [ ("x", x) ]
+            (named_by (pattern (P.var ~dtype:[ dt ] "x")) (node x)));
+      test "a where pattern matches a selection" (fun () ->
+          let c = flag "c" and x = var "x" 0 10 and y = var "y" 0 10 in
+          equal namings_w
+            [ [ ("c", c); ("x", x); ("y", y) ] ]
+            (named_by
+               (P.where (P.var "c") (P.var "x") (P.var "y"))
+               (Ops.where c x y)));
+      test "a commutative operation matches its operands in either order"
+        (fun () ->
+          let x = var "x" 0 10 in
+          equal (list string) [ "2 + x"; "x * 2" ]
+            (matched
+               [
+                 ("2 + x", P.(P.var "x" + P.cvar "c"), Ops.O.(int 2 + x));
+                 ("x * 2", P.(P.var "x" * P.cvar "c"), Ops.O.(x * int 2));
+                 ("2 < x", P.(P.var "x" < P.cvar "c"), Ops.O.(int 2 < x));
+               ]));
+      test
+        "a literal matches a constant of any type, never a typed constant's \
+         cast" (fun () ->
+          let x = fvar "x" in
+          equal (list string)
+            [ "x * 2. against 2"; "a + 0 against 0." ]
+            (matched
+               [
+                 ( "x * 2. against 2",
+                   P.(P.var "x" * int 2),
+                   Ops.O.(x * float 2.) );
+                 ( "a + 0 against 0.",
+                   P.(P.var "x" + float 0.),
+                   Ops.add (var "a" 0 1) (Ops.int 0) );
+                 ( "x * 2 against a float32 2.",
+                   P.(P.var "x" * int 2),
+                   Ops.v ~src:[ x; Ops.float ~dtype:Float32 2. ] Op.Mul );
+               ]));
+      test "floor division and remainder operators match their operations"
+        (fun () ->
+          let a = var "a" 0 10 and b = var "b" 1 10 in
+          equal (list string)
+            [ "// of Div"; "% of Mod" ]
+            (matched
+               [
+                 ( "// of Div",
+                   P.(P.var "x" // P.var "y"),
+                   Ops.alu a Op.Div [ b ] );
+                 ("% of Mod", P.(P.var "x" % P.var "y"), Ops.alu a Op.Mod [ b ]);
+                 ( "// of Truncdiv",
+                   P.(P.var "x" // P.var "y"),
+                   Ops.alu a Op.Truncdiv [ b ] );
+               ]));
+      test "the pattern operators are the named pattern operations" (fun () ->
+          let a = var "a" 0 10 and b = var "b" 1 10 in
+          let x = P.var "x" and y = P.var "y" in
+          List.iter
+            (fun u ->
+              List.iter
+                (fun (name, operator, named) ->
+                  equal ~msg:name namings_w (named_by named u)
+                    (named_by operator u))
+                [
+                  ("+", P.(x + y), P.add x y);
+                  ("-", P.(x - y), P.sub x y);
+                  ("<", P.(x < y), P.lt x y);
+                  ("land", P.(x land y), P.bitwise_and x y);
+                ])
+            Ops.O.[ a + b; a - b; a < b; a land b; a * b ]);
+      test "match_ names the nodes of each way a pattern matches" (fun () ->
+          let a = var "a" 0 4 and b = var "b" 0 4 in
+          equal namings_w
+            [ [ ("x", a); ("y", b) ]; [ ("x", b); ("y", a) ] ]
+            (named_by P.(P.var "x" + P.var "y") Ops.O.(a + b));
+          equal namings_w [] (named_by (P.op Op.Mul) Ops.O.(a + b)));
+      prop "match_ is the namings of a node in the reference's order"
+        ~count:2000 ~examples:reference_examples case_gen (fun (p, u) ->
+          let expected = namings p u [] in
+          cover_case p expected;
+          let sorted = List.sort (fun (n, _) (n', _) -> String.compare n n') in
+          equal namings_w (List.map sorted expected) (named_by (built p) u));
+    ]
+
+(* Pattern matchers *)
+
+(* A matcher whose rules name the call of [rules ()] that made them: each call
+   gives a rule that rewrites a parameter to its own node. *)
+let calls_made = Atomic.make 0
+
+let numbered_matcher () =
+  Pm.v (fun () ->
+      let k = Atomic.fetch_and_add calls_made 1 in
+      [
+        Pm.rule (P.op Op.Param) (fun _ ->
+            Some
+              (Ops.v ~arg:(String (Printf.sprintf "rules call %d" k)) Op.Noop));
+      ])
+
+let rec record results u =
+  let l = Atomic.get results in
+  if not (Atomic.compare_and_set results l (u :: l)) then record results u
+
+let one_result () = function
+  | Ok us ->
+      let first = match us with u :: _ -> [ u ] | [] -> [] in
+      equal uops (List.concat_map (fun _ -> first) us) us
+  | Error e -> raise e
+
+let matchers =
+  let a = var "a" 0 10 in
+  group "Pattern_matcher"
+    [
+      test "a naming the pattern does not bind is rejected" (fun () ->
+          let m =
+            Pm.v (fun () ->
+                [ Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "y")) ])
+          in
+          rejects (fun () -> rewrite m a));
+      test "rule_ctx reads the context" (fun () ->
+          let ctx = ref 0 in
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule_ctx (P.op ~src:[] ~name:"x" Op.Noop) (fun ctx m ->
+                      incr ctx;
+                      Some (Ops.replace ~src:[ Ops.v Op.Noop ] (m "x")));
+                ])
+          in
+          let once = Option.get (Pm.rewrite m ctx (Ops.v Op.Noop)) in
+          equal (option uop) None (Pm.rewrite m ctx once);
+          equal int 1 !ctx);
+      test "v calls its rules on its first rewrite, and keeps them" (fun () ->
+          let calls = ref 0 in
+          let m =
+            Pm.v (fun () ->
+                incr calls;
+                [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1)) ])
+          in
+          let before = !calls in
+          ignore (rewrite m a);
+          ignore (rewrite m a);
+          equal (pair int int) (0, 1) (before, !calls));
+      stateful ~domains:2 "v's rewrites from two domains use one call's rules"
+        (let matcher = abstract "m" in
+         [
+           command "v"
+             (Gen.unit @-> makes matcher)
+             ignore
+             (fun () -> (numbered_matcher (), Atomic.make []));
+           command "rewrite"
+             (matcher ^-> returns unit)
+             ignore
+             (fun (m, results) -> record results (Option.get (rewrite m a)));
+           command "results"
+             (matcher ^-> judges uops)
+             one_result
+             (fun (_, results) -> Atomic.get results);
+         ]);
+      test "the first rule that matches and does not decline wins" (fun () ->
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule (P.op Op.Param) (fun _ -> None);
+                  Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x"));
+                  Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1));
+                  Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2));
+                ])
+          in
+          equal (option uop) (Some (Ops.int 1)) (rewrite m a));
+      test "v's first rewrite raises for a rule whose pattern has no operation"
+        (fun () ->
+          let m = Pm.v (fun () -> [ Pm.rule P.wild (fun _ -> Some a) ]) in
+          rejects (fun () -> Pm.rewrite m () a));
+      test "a fold's rule declines by returning nothing" (fun () ->
+          let m =
+            Pm.fold (fun () ->
+                [
+                  Pm.rule (P.op Op.Param) (fun _ -> None);
+                  Pm.rule (P.op Op.Param) (fun _ -> Some "second");
+                ])
+          in
+          equal (option string) (Some "second") (Pm.rewrite m () a));
+      test "a fold's rule that returns its node is a result" (fun () ->
+          let m =
+            Pm.fold (fun () ->
+                [
+                  Pm.rule (P.op ~name:"x" Op.Param) (fun m -> Some (m "x"));
+                  Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1));
+                ])
+          in
+          equal (option uop) (Some a) (Pm.rewrite m () a));
+      test "fold calls its rules on its first rewrite" (fun () ->
+          let calls = ref 0 in
+          let m =
+            Pm.fold (fun () ->
+                incr calls;
+                [ Pm.rule (P.op Op.Param) (fun _ -> Some ()) ])
+          in
+          let before = !calls in
+          ignore (Pm.rewrite m () a);
+          ignore (Pm.rewrite m () a);
+          equal (pair int int) (0, 1) (before, !calls));
+      test
+        "fold's first rewrite raises for a rule whose pattern has no operation"
+        (fun () ->
+          let m = Pm.fold (fun () -> [ Pm.rule P.wild (fun _ -> Some ()) ]) in
+          rejects (fun () -> Pm.rewrite m () a));
+      test "append tries the first matcher's rules first" (fun () ->
+          let one =
+            Pm.v (fun () ->
+                [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1)) ])
+          in
+          let two =
+            Pm.v (fun () ->
+                [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2)) ])
+          in
+          equal (option uop) (Some (Ops.int 1)) (rewrite (Pm.append one two) a);
+          equal (option uop) (Some (Ops.int 2)) (rewrite (Pm.append two one) a));
+      test "concat tries the matchers' rules in order" (fun () ->
+          let one =
+            Pm.v (fun () ->
+                [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 1)) ])
+          in
+          let two =
+            Pm.v (fun () ->
+                [ Pm.rule (P.op Op.Param) (fun _ -> Some (Ops.int 2)) ])
+          in
+          let none =
+            Pm.v (fun () -> [ Pm.rule (P.op Op.Param) (fun _ -> None) ])
+          in
+          equal (option uop)
+            (Some (Ops.int 2))
+            (rewrite (Pm.concat [ none; two; one ]) a);
+          equal (option uop) None (rewrite (Pm.concat []) a));
+      test "with_ctx joins a matcher without context to one with" (fun () ->
+          let plain =
+            Pm.v (fun () ->
+                [ Pm.rule (P.op Op.Const) (fun _ -> Some (Ops.int 1)) ])
+          in
+          let reading =
+            Pm.v (fun () ->
+                [ Pm.rule_ctx (P.op Op.Param) (fun ctx _ -> Some ctx) ])
+          in
+          let m = Pm.append reading (Pm.with_ctx plain) in
+          equal (option uop) (Some (Ops.int 7)) (Pm.rewrite m (Ops.int 7) a);
+          equal (option uop)
+            (Some (Ops.int 1))
+            (Pm.rewrite m (Ops.int 7) (Ops.int 3)));
+      test "a rule is given each naming in turn until one gives a result"
+        (fun () ->
+          let seen = ref [] in
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule
+                    P.(P.var "x" + P.cvar "c")
+                    (fun m ->
+                      seen := (m "x", m "c") :: !seen;
+                      None);
+                  Pm.rule
+                    P.(P.var "x" + P.cvar "c")
+                    (fun m -> if m "c" == c2 then Some (m "x") else None);
+                ])
+          in
+          equal (option uop) (Some c3) (rewrite m (add c2 c3));
+          equal (list (pair uop uop)) [ (c2, c3); (c3, c2) ] (List.rev !seen));
+      test "a part of a pattern that names nothing gives one naming" (fun () ->
+          let p = P.(var "x" + (const (`Float 1.) * wild)) in
+          let u = add a Ops.O.(c1 * c1) in
+          equal namings_w [ [ ("x", a) ] ] (named_by p u);
+          let calls = ref 0 in
+          let m =
+            Pm.v (fun () ->
+                [
+                  Pm.rule
+                    (P.sink
+                       [
+                         P.broadcast P.(var "x" + var "y");
+                         P.(const (`Float 1.) * wild);
+                       ])
+                    (fun _ ->
+                      incr calls;
+                      None);
+                ])
+          in
+          let b = var "b" 0 10 in
+          equal (option uop) None
+            (rewrite m
+               (Ops.sink [ Ops.v ~src:[ add a b ] Op.Stack; Ops.O.(c1 * c1) ]));
+          equal int 2 !calls);
       prop "a rule is given the namings of a node in the reference's order"
         ~count:2000 ~examples:reference_examples case_gen (fun (p, u) ->
           let expected = if tried p u then namings p u [] else [] in
@@ -1028,15 +1142,6 @@ let by_reference =
           in
           equal (option unit) None (Pm.rewrite m () u);
           equal (list naming) (List.map (view p) expected) (List.rev !seen));
-      prop "match_ is the namings of a node in the reference's order"
-        ~count:2000 ~examples:reference_examples case_gen (fun (p, u) ->
-          let expected = namings p u [] in
-          cover_case p expected;
-          let sorted = List.sort (fun (n, _) (n', _) -> String.compare n n') in
-          equal
-            (list (list (pair string uop)))
-            (List.map sorted expected)
-            (List.map sorted (P.match_ (built p) u)));
     ]
 
 (* Rewriting *)
@@ -1243,16 +1348,21 @@ let rewriting =
           let raising =
             Pm.v (fun () ->
                 [
-                  Pm.rule (P.op ~arg:(Const (`Float 3.)) Op.Const) (fun _ ->
-                      raise Exit);
-                  Pm.rule (P.op ~arg:(Const (`Float 1.)) Op.Const) (fun _ ->
-                      Some (fvar "one"));
+                  Pm.rule
+                    (P.op ~arg:(Const (`Float 3.)) Op.Const)
+                    (fun _ -> raise Exit);
+                  Pm.rule
+                    (P.op ~arg:(Const (`Float 1.)) Op.Const)
+                    (fun _ -> Some (fvar "one"));
                 ])
           in
-          let wide = Ops.sink (List.init 64 (fun k -> fconst (Float.of_int k))) in
+          let wide =
+            Ops.sink (List.init 64 (fun k -> fconst (Float.of_int k)))
+          in
           let u =
             Ops.sink
-              ((Ops.int 0 :: List.init 64 (fun k -> fconst (Float.of_int k +. 0.5)))
+              (Ops.int 0
+               :: List.init 64 (fun k -> fconst (Float.of_int k +. 0.5))
               @ [ Ops.O.(c1 + c2) ])
           in
           let rewrite () =
@@ -1669,9 +1779,7 @@ let module_matchers =
 let groups =
   [
     upat;
-    elementwise_patterns;
     matchers;
-    by_reference;
     rewriting;
     substituting;
     walks;

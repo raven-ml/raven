@@ -163,8 +163,8 @@ a source (`uop/upat.py` `_get_clause`).
   `Ops`: `Tolk.Shape › resolve › simplify leaves a constant, and a sink of
   constants and stacks of constants, as they are`, and the `Tolk.Shape ›
   resolve` tests that simplify with `Symbolic`'s rules; `Tolk.Ops › pp › writes each
-  node as pretty.golden states › pretty.golden`; `Tolk.Ops › elementwise
-  patterns › the pattern operators are the named pattern operations`; for `Renderer`: `Tolk.Renderer ›
+  node as pretty.golden states › pretty.golden`; `Tolk.Ops › Upat › the
+  pattern operators are the named pattern operations`; for `Renderer`: `Tolk.Renderer ›
   Compiler › compile raises what the toolchain rejects`, its
   `Compile_error`; for `Prepare`: `Tolk.Prepare › contiguous_view › a
   reshape keeps the order`; for `Schedule`: `Tolk.Schedule ›
@@ -6454,8 +6454,8 @@ against 2.77).
   ordering makes rune's first compile of float64 `betaincinv`'s gradient
   (the compile bench's `special/betaincinv-grad-f64`) allocate 216.3 M words
   where one naming allocates 190.2 M.
-- **Pinned by:** the Ops suite: `Pattern_matcher › a part of a pattern that
-  names nothing gives one naming`; the tolk bench's `sort/kernel_graph-fresh`,
+- **Pinned by:** the Ops suite: `Tolk.Ops › Pattern_matcher › a part of a
+  pattern that names nothing gives one naming`; the tolk bench's `sort/kernel_graph-fresh`,
   `gpt_oss_prefill/kernel_graph-fresh` and `gpt_oss_prefill/codegen-fresh`
   rows.
 

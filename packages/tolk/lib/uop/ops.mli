@@ -1056,7 +1056,9 @@ val addrspace : t -> Dtype.addr_space option
     index, a cast, an {!Op.After}, a reduction and a movement live where their
     first source does. A stack, a matrix product and an elementwise operation
     live where those of their sources that live somewhere do, and nowhere
-    ([None]) if those differ. Any other node lives nowhere. *)
+    ([None]) if those differ. Any other node, a copy, a stage or a call among
+    them, lives nowhere: an address space places a kernel's values, and such a
+    node is none. *)
 
 val whole : t -> t
 (** [whole p] is the parameter of the storage the {!Op.Param} [p] views, its
@@ -1122,7 +1124,10 @@ val expr : t -> string
 (** {1:symbolic Divisibility} *)
 
 val const_factor : t -> Bigint.t
-(** [const_factor u] is a known integer that divides every value of [u]. *)
+(** [const_factor u] is a known integer that divides every value [u] takes as an
+    unbounded integer, which a weak integer's values are; a committed integer
+    that wraps may take others ([x * 3] at {!Dtype.Int8} is [44] at
+    [x = 100]). *)
 
 val pop_const : ?op:Op.t -> t -> t * Dtype.const
 (** [pop_const ~op u] is [(x, c)] for [u = op x c] with [c] a constant, and
@@ -1254,7 +1259,10 @@ module type Elementwise = sig
       ({!Op.Pow}'s exponent is a number).
 
       Raises [Invalid_argument] if the promoted type is not a float and [y] is
-      the weak literal of a negative integer. *)
+      the weak literal of a negative integer: an integer's negative power is no
+      integer but for [1] and [-1], and a literal shows that where the power is
+      written. An exponent of a committed type is no literal and does not raise:
+      the power truncates toward [0] ({!exec_alu}). *)
 
   val gt : t -> t -> t
   (** [gt x y] is [lt y x]. *)
