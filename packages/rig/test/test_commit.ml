@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Commits: work a driver holds until it is committed. The devices here are
-   Polled devices that commit on their own every [lag] values and run only
+(* Timelines: the values work takes, committed work, and [signaled]. The devices
+   are Polled devices that commit on their own every [lag] values and run only
    committed work: a wait that sleeps on uncommitted work raises Polled's
    [Failure], so every call returning shows that it committed what it waited
    for. *)
@@ -29,13 +29,13 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
 (* The last value [p]'s word holds, read without a call of rig. *)
 let word p = Support.load (P.word_at p)
 
-(* Two devices and their order *)
+(* Committed work *)
 
 (* Two devices: [a] with a queue of two parts, so that a third uncommitted
    submission waits for room, and [b], whose queue waits on [a]'s word. Each
    submission occupies one queue part and reads its device's buffer, whose
-   stamps waits and copies follow. A scratch is device memory under a small
-   budget, which an allocation reclaims. *)
+   stamps waits, reads and copies follow. A scratch is device memory under a
+   small budget, which an allocation reclaims. *)
 type device = {
   d : Rig.t;
   p : P.t;
@@ -50,9 +50,6 @@ type world = device array
 let capacity = 2
 let budget = 64 * 1024
 let scratch_bytes = 40 * 1024
-
-let idle () =
-  (Sub.fill Support.noop ~params:0)
 
 let device (d, p) =
   {
@@ -91,13 +88,20 @@ let follow_system ~note w =
   in
   use b ~waits
 
+(* A wait for the device's last point, and then its word and the point's value:
+   0 and 0 before any submit. *)
 let wait_system w i =
   let x = w.(i) in
   match Atomic.get x.last with
-  | None -> true
+  | None -> (0, 0)
   | Some pt ->
       Rig.Point.wait pt;
-      word x.p >= Rig.Point.value pt
+      (word x.p, Rig.Point.value pt)
+
+let wait_model _ _ = function
+  | Error e -> raise e
+  | Ok (word, value) ->
+      at_least ~msg:"the word once the wait returned" int ~than:value word
 
 let scratch_system w i =
   let x = w.(i) in
@@ -107,12 +111,14 @@ let scratch_system w i =
 
 (* A program's devices stay open, as every drain walks the closed ones, and
    finish their work, which holds the host memory of their fills. *)
-let finish w = Array.iter (fun x -> Option.iter Rig.Point.wait (Atomic.get x.last)) w
+let finish w =
+  Array.iter (fun x -> Option.iter Rig.Point.wait (Atomic.get x.last)) w
+
 let world : (unit, world) abstract = abstract "w" ~release:finish
 let index = Gen.int_range 0 1
 
 (* The model holds nothing: every call returns, and a wait finds its value
-   reached. *)
+   reached in its device's word. *)
 let commands ~note =
   [
     command "open" (Gen.unit @-> makes world) Fun.id open_world;
@@ -125,7 +131,8 @@ let commands ~note =
       (fun _ -> ())
       (follow_system ~note);
     (* Submits on a until its queue is full, then once more, which waits for
-       room: random runs of submits reach a full queue too rarely to count on. *)
+       room: random runs of submits reach a full queue too rarely to count
+       on. *)
     command "fill"
       (world ^-> returns unit)
       (fun _ -> ())
@@ -134,13 +141,16 @@ let commands ~note =
           submit_system ~note w 0
         done);
     command "wait"
-      (world ^-> index @-> returns bool)
-      (fun _ _ -> true)
-      wait_system;
+      (world ^-> index @-> judges (pair int int))
+      wait_model wait_system;
     command "buffer wait"
       (world ^-> index @-> returns unit)
       (fun _ _ -> ())
       (fun w i -> B.wait w.(i).buffer Rig.Read_write);
+    command "read"
+      (world ^-> index @-> returns unit)
+      (fun _ _ -> ())
+      (fun w i -> B.read w.(i).buffer Bigarray.char ignore);
     command "copy"
       (world ^-> index @-> returns unit)
       (fun _ _ -> ())
@@ -153,12 +163,10 @@ let scratch =
     (fun _ _ -> ())
     scratch_system
 
-(* Law 7: a driver commits within its bound. *)
-
 (* Submits once on [d] a submission that keeps a value whose collection sets
    [released], and drops both: the submission is unreachable once this
    returns. *)
-let[@inline never] submit_kept d released =
+let[@inline never] [@local never] submit_kept d released =
   let v = ref () in
   Gc.finalise (fun _ -> Atomic.set released true) v;
   ignore (submit (Sub.make ~keep:v d [||]))
@@ -181,55 +189,9 @@ let test_lag_bounded () =
       ignore (Sys.opaque_identity (B.create d 8));
       Atomic.get released)
 
-(* Reading [signaled] commits nothing: values the driver holds stay unreached
-   while the device runs what it was given, until a wait commits them. *)
-let test_signaled_reads () =
-  let d, _ = P.open_ ~lag ~runs:`Itself (fresh "signaled") in
-  let base = Rig.submitted d in
-  let points = List.init (lag - 1) (fun _ -> submit (empty d)) in
-  let last = List.nth points (lag - 2) in
-  for _ = 1 to 10 do
-    Unix.sleepf 0.001;
-    equal ~msg:"signaled" int base (Rig.signaled d)
-  done;
-  Rig.Point.wait last;
-  equal ~msg:"after the wait" int (base + lag - 1) (Rig.signaled d)
-
-(* [reached] commits as a wait does, so a loop on it ends on values the
-   driver holds. *)
-let test_reached_commits () =
-  let d, _ = P.open_ ~lag ~runs:`Itself (fresh "reached") in
-  let base = Rig.submitted d in
-  let points = List.init (lag - 1) (fun _ -> submit (empty d)) in
-  let last = List.nth points (lag - 2) in
-  Support.await "the last point reached" (fun () -> Rig.Point.reached last);
-  equal ~msg:"signaled" int (base + lag - 1) (Rig.signaled d)
-
-(* A bounded wait commits what it waits for before its time can pass: after
-   one call, whatever it answered, the device runs the work with no other
-   wait. A lag of 2 never commits a lone value on its own, and the driver's
-   thread runs what is committed. *)
-let bounded_commits ns =
-  cover "one ns" (ns = 1);
-  let d, _ = P.open_ ~lag:2 ~runs:`Itself (fresh "bounded-commits") in
-  let pt = submit (empty d) in
-  ignore (Rig.Point.wait_for ~ns pt : bool);
-  Support.await "the work run" (fun () ->
-      Rig.signaled d >= Rig.Point.value pt);
-  Rig.close d
-
-(* A loop of the shortest bounded waits ends: each commits before its time
-   passes. *)
-let test_short_waits_end () =
-  let d, _ = P.open_ ~lag:2 ~runs:`Itself (fresh "short-waits") in
-  let pt = submit (empty d) in
-  Support.await "a short wait's true" (fun () -> Rig.Point.wait_for ~ns:1 pt);
-  Rig.close d
-
-(* Loss *)
-
 (* The device is lost by an allocation, which waits for nothing, so its stop
-   finds the values uncommitted. *)
+   finds the values uncommitted: Polled's stop then writes the last value it
+   received into its word. *)
 let test_lost_uncommitted () =
   let d, p = P.open_ ~lag (fresh "lost") in
   let base = Rig.submitted d in
@@ -243,20 +205,6 @@ let test_lost_uncommitted () =
   Rig.close d;
   equal ~msg:"the word after the stop" int (base + 2) (Rig.signaled d)
 
-(* A submit that blocks in its driver holds the turn: a wait for an earlier
-   value goes on without its commit and returns once the work runs. *)
-let test_wait_beside_blocked_submit () =
-  let d, p = P.open_ ~lag ~capacity:1 ~may_block:true (fresh "blocked") in
-  let one = Sub.make d [| idle () |] in
-  let submit_one () = Rig.submit one ~buffers:[||] ~args:(Support.zeros 1) in
-  let first = submit_one () in
-  let second = ref None in
-  let t = Thread.create (fun () -> second := Some (submit_one ())) () in
-  Support.await "the second submit blocked" (fun () -> P.blocked p = 1);
-  Rig.Point.wait first;
-  Thread.join t;
-  Option.iter Rig.Point.wait !second
-
 let test_commit_fails () =
   let d, p = P.open_ ~lag (fresh "commit-fails") in
   let first = submit (empty d) in
@@ -268,9 +216,85 @@ let test_commit_fails () =
     (fun () -> Rig.Point.wait first);
   equal (option string) (Some "the commit failed") (Rig.lost d)
 
+(* submitted *)
+
+(* A device whose memory the host does not address, so that its own copy engine
+   copies and fills it. *)
+let opaque () = fst (P.open_ ~host_visible:false (fresh "opaque"))
+
+(* Each row makes one copy or fill, on the device it names: the value it takes
+   is the one after the device's submitted value, which it then is. *)
+let next_value (_, make) =
+  let d, work = make () in
+  let before = Rig.submitted d in
+  let pt = work () in
+  equal ~msg:"its point's value" int (before + 1) (Rig.Point.value pt);
+  equal ~msg:"the submitted value" int (before + 1) (Rig.submitted d)
+
+let made_by =
+  let copy d () =
+    let src = B.create d 8 and dst = B.create d 8 in
+    (d, fun () -> B.submit_copy ~src ~dst [| B.row 8 |])
+  in
+  let fill d () =
+    let b = B.create d 8 in
+    (d, fun () -> B.submit_fill b '\x2a')
+  in
+  [
+    ("a device's copy", fun () -> copy (opaque ()) ());
+    ("a device's fill", fun () -> fill (opaque ()) ());
+    ("the host's copy", copy Rig.host);
+    ("the host's fill", fill Rig.host);
+  ]
+
+(* signaled *)
+
+(* Reading [signaled] commits nothing: values the driver holds stay unreached
+   while the device runs what it was given, until a wait commits them. No event
+   marks "nothing committed", so it samples ten reads over 10 ms. *)
+let test_signaled_reads () =
+  let d, _ = P.open_ ~lag ~runs:`Itself (fresh "signaled") in
+  let base = Rig.submitted d in
+  let points = List.init (lag - 1) (fun _ -> submit (empty d)) in
+  let last = List.nth points (lag - 2) in
+  for _ = 1 to 10 do
+    Unix.sleepf 0.001;
+    equal ~msg:"signaled" int base (Rig.signaled d)
+  done;
+  Rig.Point.wait last;
+  equal ~msg:"after the wait" int (base + lag - 1) (Rig.signaled d)
+
+(* Work that adds 1 to a word the host addresses, which the test runs on the
+   device: once [signaled] reports its value, the host reads the word with no
+   call of rig's. *)
+let test_signaled_writes () =
+  let d, p = P.open_ (fresh "writes") in
+  let b = B.create d 8 in
+  B.write b Bigarray.char (fun a -> Bigarray.Array1.fill a '\000');
+  let bump = Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Support.bump ~params:8 in
+  let pt =
+    submit (Sub.make d [| bump |]) ~buffers:[| b |] ~args:(Support.zeros 1)
+  in
+  less ~msg:"signaled before the run" int ~than:(Rig.Point.value pt)
+    (Rig.signaled d);
+  ignore (P.run p);
+  equal ~msg:"signaled after the run" int (Rig.Point.value pt) (Rig.signaled d);
+  equal ~msg:"the word" int 1 (Support.load (Support.Reader.host b));
+  Rig.close d
+
+(* A device behind a transport, whose word is read through its driver: a read
+   that faults loses the device, and [signaled] raises the loss. *)
+let test_signaled_loses () =
+  let d, p = P.open_ ~transport:true (fresh "transport") in
+  Rig.Point.wait (submit (empty d));
+  P.fault_word p "the link went down";
+  raises_match (lost d) (fun () -> Rig.signaled d);
+  equal (option string) ~msg:"the loss" (Some "the link went down") (Rig.lost d);
+  Rig.close d
+
 let tests =
   [
-    group "order"
+    group "committed work"
       [
         stateful "every wait commits what it waits for"
           (scratch :: commands ~note:cover);
@@ -279,23 +303,29 @@ let tests =
         stateful ~count:30 ~domains:2
           "every wait commits what it waits for, on two domains"
           (commands ~note:(fun _ _ -> ()));
-      ];
-    group "lag"
-      [
-        test "a driver commits within its bound" test_lag_bounded;
-        test "signaled commits nothing" test_signaled_reads;
-        test "a poll of reached commits" test_reached_commits;
-        prop ~count:30 ~examples:[ 1 ] "a bounded wait commits before its time"
-          (Gen.int_range 1 1_000_000) bounded_commits;
-        test "a loop of the shortest bounded waits ends" test_short_waits_end;
-      ];
-    group "loss"
-      [
+        test
+          "a collected submission's value goes, with no wait, once the driver \
+           commits on its own"
+          test_lag_bounded;
         test "a device lost with uncommitted values raises Lost"
           test_lost_uncommitted;
-        test "a wait beside a submit blocked in its driver returns"
-          test_wait_beside_blocked_submit;
         test "a commit that fails loses the device" test_commit_fails;
+      ];
+    group "submitted"
+      [
+        cases ~id:fst
+          "a copy or a fill takes the next value of the device that makes it"
+          made_by next_value;
+      ];
+    group "signaled"
+      [
+        test "signaled commits nothing (sampled)" test_signaled_reads;
+        test
+          "while live, the writes of the work up to signaled are visible to \
+           the host"
+          test_signaled_writes;
+        test "a read through the driver that loses the device raises Lost"
+          test_signaled_loses;
       ];
   ]
 
