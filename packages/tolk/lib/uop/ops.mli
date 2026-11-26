@@ -117,7 +117,8 @@ end
 type device = string
 
 val pp_device : Format.formatter -> device -> unit
-(** [pp_device] formats a device as its quoted name: ['CPU']. *)
+(** [pp_device] formats a device as the literal of its name, as {!pp_arg} writes
+    a string: ['CPU']. *)
 
 val is_disk_device : device -> bool
 (** [is_disk_device d] is [true] iff [d] is a disk: its name, up to its first
@@ -358,11 +359,16 @@ val equal_arg : arg -> arg -> bool
 val pp_arg : Format.formatter -> arg -> unit
 (** [pp_arg] formats an argument as the literal that denotes it: [None], [42],
     [ConstFloat(1.5)], [True], [Invalid], [dtypes.f32], [(AxisType.WEAK, 0)],
-    [(Ops.ADD, 0)], ['CPU'], [b'ab\x00'].
+    [(Ops.ADD, 0)], ['CPU'], [b'ab\x00']. A string or bytes is in single quotes,
+    or in double quotes where it holds a single quote and no double one. A
+    backslash and that quote take a backslash before them, a newline, tab and
+    carriage return are written [n], [t] and [r] after one, and another control
+    character, and in bytes a byte past [0x7f], is written [x] and two
+    hexadecimal digits after one.
 
     The records print as calls:
-    - {!Param}: the slot, the type and the size, then the fields that differ
-      from their defaults, by name:
+    - {!Param}: the slot and the type, then the fields that differ from their
+      defaults, by name:
       [ParamArg(-1, dtypes.weakint, vmin_vmax=(1, 10), name='i', ...)];
     - {!Kernel}: [KernelInfo(name='test', applied_opts=(), opts_to_apply=None,
       estimates=None, beam=0)];

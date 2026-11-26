@@ -71,8 +71,3 @@ let value_of_cell = Dtypes.value_of_cell
 let const_of_cell = Dtypes.const_of_cell
 let consts_of_cell = Dtypes.consts_of_cell
 let raised cell = String.starts_with ~prefix:"raises " cell
-
-(* [expect w read cell f] is that [f ()] is what [cell] reads as, or that it
-   rejects its arguments where tinygrad raises. *)
-let expect w read cell f =
-  if raised cell then rejects f else equal w (read cell) (f ())

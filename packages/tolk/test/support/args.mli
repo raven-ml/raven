@@ -20,6 +20,12 @@ val neighbours : (string * Ops.t * Ops.t) Windtrap.Gen.t
 (** [neighbours] draws [(field, u, v)]: two nodes of one kind whose arguments
     differ at most in [field], redrawn. *)
 
+val redrawn : (string * Ops.t * Ops.t * bool) Windtrap.Gen.t
+(** [redrawn] draws [(field, u, v, same)] as {!neighbours} draws
+    [(field, u, v)], with [same] whether [field]'s two values are equal: by
+    their bits for floats, physically for nodes, and structurally otherwise,
+    without the arguments' own equality. *)
+
 val pairs : (Ops.t * Ops.t) Windtrap.Gen.t
 (** [pairs] draws two nodes of one kind, each argument drawn on its own. *)
 

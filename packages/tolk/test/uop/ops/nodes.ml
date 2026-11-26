@@ -12,204 +12,341 @@ let str pp x = Format.asprintf "%a" pp x
 let axis_types =
   Ops.Axis_type.[ Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
 
+let axis_type = Testable.make ~pp:Ops.Axis_type.pp ~equal:Ops.Axis_type.equal
+let show_axis_type a = str Ops.Axis_type.pp a
+
 let axis_type_of_cell s =
   Result.get_ok (Ops.Axis_type.of_string (after "AxisType." s))
 
-let color_of_cell : string -> Helpers.color = function
-  | "green" -> Green
-  | "blue" -> Blue
-  | "CYAN" -> Bright_cyan
-  | "cyan" -> Cyan
-  | "WHITE" -> Bright_white
-  | "red" -> Red
-  | "yellow" -> Yellow
-  | "magenta" -> Magenta
-  | s -> invalid_arg s
+(* A colour as axis_types.golden writes it: bright ones in upper case. *)
+let color_name : Helpers.color -> string = function
+  | Green -> "green"
+  | Blue -> "blue"
+  | Cyan -> "cyan"
+  | Bright_cyan -> "CYAN"
+  | Bright_white -> "WHITE"
+  | Red -> "red"
+  | Yellow -> "yellow"
+  | Magenta -> "magenta"
+  | _ -> "another colour"
 
-let color =
-  Testable.make
-    ~pp:(fun ppf _ -> Format.pp_print_string ppf "<color>")
-    ~equal:( = )
+(* [named ~cell f a] is that [f a] is the golden's [cell], or raises where
+   tinygrad raises. *)
+let named ~cell name_of f a =
+  if raised cell then rejects (fun () -> f a)
+  else equal string cell (name_of (f a))
 
 let axis_type_group =
   group "Axis_type"
     [
-      Golden.cases "axis_types.golden" (fun cell ->
-          let a = axis_type_of_cell (cell "axis_type") in
-          equal string (cell "axis_type") (str Ops.Axis_type.pp a);
-          expect string Fun.id (cell "letter") (fun () ->
-              Ops.Axis_type.letter a);
-          expect color color_of_cell (cell "color") (fun () ->
-              Ops.Axis_type.color a);
-          equal ~msg:"nesting" int
-            (int_of_string (cell "nesting"))
-            (List.length
-               (List.filter
-                  (fun b -> Ops.Axis_type.compare b a < 0)
-                  axis_types)));
-      test "of_string reads back the name pp formats, without its prefix"
-        (fun () ->
-          List.iter
-            (fun a ->
-              let name = after "AxisType." (str Ops.Axis_type.pp a) in
-              is_true ~msg:name (Ops.Axis_type.of_string name = Ok a))
-            axis_types);
-      test "of_string rejects a name in lower case, naming it" (fun () ->
-          match Ops.Axis_type.of_string "weak" with
-          | Ok _ -> fail "read weak"
-          | Error e -> contains ~sub:"weak" e);
-      test "compare follows the declaration order" (fun () ->
-          List.iteri
-            (fun i a ->
-              List.iteri
-                (fun j b ->
-                  equal ~msg:(str Ops.Axis_type.pp a) int
-                    (Int.compare i j |> Int.min 1 |> Int.max (-1))
-                    (Ops.Axis_type.compare a b |> Int.min 1 |> Int.max (-1)))
-                axis_types)
-            axis_types);
+      group "names each axis type and orders it as axis_types.golden states"
+        [
+          Golden.cases "axis_types.golden" (fun cell ->
+              let a = axis_type_of_cell (cell "axis_type") in
+              equal string (cell "axis_type") (show_axis_type a);
+              named ~cell:(cell "letter") Fun.id Ops.Axis_type.letter a;
+              named ~cell:(cell "color") color_name Ops.Axis_type.color a;
+              equal ~msg:"axis types before it" int
+                (int_of_string (cell "nesting"))
+                (List.length
+                   (List.filter
+                      (fun b -> Ops.Axis_type.compare b a < 0)
+                      axis_types)));
+        ];
+      cases "equal holds of an axis type and itself alone" ~id:show_axis_type
+        axis_types (fun a ->
+          equal (list axis_type) [ a ]
+            (List.filter (Ops.Axis_type.equal a) axis_types));
+      cases "compare orders axis types by their declaration order"
+        ~id:show_axis_type axis_types (fun a ->
+          let i =
+            Option.get (List.find_index (Ops.Axis_type.equal a) axis_types)
+          in
+          let by sign =
+            List.filter (fun b -> sign (Ops.Axis_type.compare b a)) axis_types
+          in
+          equal
+            (triple (list axis_type) (list axis_type) (list axis_type))
+            ( List.filteri (fun j _ -> j < i) axis_types,
+              [ a ],
+              List.filteri (fun j _ -> j > i) axis_types )
+            (by (fun c -> c < 0), by (fun c -> c = 0), by (fun c -> c > 0)));
+      cases "of_string reads back the name pp formats, without its prefix"
+        ~id:show_axis_type axis_types (fun a ->
+          equal (result axis_type string) (Ok a)
+            (Ops.Axis_type.of_string (after "AxisType." (show_axis_type a))));
+      cases "of_string of anything but a name is an error that names it"
+        ~id:(Printf.sprintf "%S")
+        [ "weak"; "Weak"; "AxisType.WEAK"; " WEAK"; "THREAD" ] (fun s ->
+          contains ~sub:s (require_error (Ops.Axis_type.of_string s)));
+      test "of_string of the empty string is an error" (fun () ->
+          is_error ~pp:Ops.Axis_type.pp (Ops.Axis_type.of_string ""));
     ]
 
 (* Devices *)
 
-let devices =
-  group "devices"
+let pp_devices =
+  group "pp_device"
     [
-      test "pp_device formats a name quoted" (fun () ->
-          equal string "'CPU'" (str Ops.pp_device "CPU");
-          equal string "\"it's\"" (str Ops.pp_device "it's"));
+      cases "writes the name as pp_arg writes a string"
+        ~id:(fun (name, _) -> Printf.sprintf "%S" name)
+        [
+          ("CPU", "'CPU'");
+          ("it's", "\"it's\"");
+          ("a\"b", "'a\"b'");
+          ("it's \"x\"", "'it\\'s \"x\"'");
+          ("a\\b", "'a\\\\b'");
+          ("a\nb\tc\rd", "'a\\nb\\tc\\rd'");
+          ("\001\127", "'\\x01\\x7f'");
+          ("\xC3\xA9", "'\xC3\xA9'");
+        ]
+        (fun (name, literal) -> equal string literal (str Ops.pp_device name));
+    ]
+
+let disk_devices =
+  group "is_disk_device"
+    [
+      test "is a name that is DISK, in any case, up to a colon" (fun () ->
+          let names =
+            [
+              "DISK";
+              "disk";
+              "DiSk:1";
+              "DISK:a:b";
+              "DISK:";
+              "DISKS";
+              "DISK1";
+              "CPU";
+              "";
+              ":DISK";
+              "AMD:DISK";
+            ]
+          in
+          equal (list string)
+            [ "DISK"; "disk"; "DiSk:1"; "DISK:a:b"; "DISK:" ]
+            (List.filter Ops.is_disk_device names));
     ]
 
 (* Arguments *)
 
+(* A parameter's argument, compared field by field: the defaults hold no node or
+   float. *)
+let param_w =
+  Testable.make ~pp:(fun ppf p -> Ops.pp_arg ppf (Param p)) ~equal:( = )
+
+let param_rule =
+  Gen.triple
+    (Gen.of_list ~pp:(Testable.pp dtype) Dtype.all)
+    (Gen.int_range (-1) 17)
+    (Gen.of_list ~pp:Format.pp_print_int [ 0; 1; 2; 3; 4; 8; 16; 32 ])
+
+(* The phase and alignment [param_arg] keeps, or [None] where it raises. *)
+let kept ~phase ~align dt =
+  match Ops.param_arg ~slot:0 ~phase ~align dt with
+  | p -> Some (p.phase, p.align)
+  | exception Invalid_argument _ -> None
+
+let params =
+  group "param_arg"
+    [
+      test "defaults to global storage with no flags, phase 0 and alignment 16"
+        (fun () ->
+          equal param_w
+            {
+              slot = 3;
+              dtype = Float32;
+              vmin_vmax = None;
+              name = None;
+              addrspace = Global;
+              device = None;
+              volatile = false;
+              bind_on_realize = false;
+              bound = None;
+              phase = 0;
+              align = 16;
+            }
+            (Ops.param_arg ~slot:3 Float32));
+      prop
+        ~count:(List.length Dtype.all * 19 * 8)
+        "takes an alignment that is a power of two up to 16, and a phase below \
+         it that is a multiple of the element's size or of the alignment, \
+         whichever is less"
+        param_rule
+        (fun (dt, phase, align) ->
+          let allowed =
+            List.mem align [ 1; 2; 4; 8; 16 ]
+            && 0 <= phase && phase < align
+            && phase mod Int.min (Dtype.itemsize dt) align = 0
+          in
+          equal
+            (option (pair int int))
+            (if allowed then Some (phase, align) else None)
+            (kept ~phase ~align dt));
+    ]
+
+let estimates =
+  group "pp_estimates"
+    [
+      test "writes the record as a call" (fun () ->
+          equal string "Estimates(ops=0, lds=0, mem=0)"
+            (str Ops.pp_estimates { ops = Int 0; lds = Int 0; mem = Int 0 }));
+    ]
+
+let pp_kernel_info ppf (k : Ops.kernel_info) =
+  Format.fprintf ppf
+    "{ name = %S; applied_opts = %d; opts_to_apply = %s; estimates = %s; beam \
+     = %d; optimized = %b; kernel = %b; split = %s }"
+    k.name
+    (List.length k.applied_opts)
+    (match k.opts_to_apply with
+    | None -> "None"
+    | Some l -> string_of_int (List.length l))
+    (match k.estimates with None -> "None" | Some e -> str Ops.pp_estimates e)
+    k.beam k.optimized k.kernel
+    (match k.split with None -> "None" | Some _ -> "Some _")
+
+(* A kernel's argument, compared field by field: the defaults hold no node. *)
+let kernel_info_w = Testable.make ~pp:pp_kernel_info ~equal:( = )
+
+let kernel_infos =
+  group "kernel_info"
+    [
+      test "defaults to a launched kernel named test, not optimised" (fun () ->
+          equal kernel_info_w
+            {
+              name = "test";
+              applied_opts = [];
+              opts_to_apply = None;
+              estimates = None;
+              beam = 0;
+              optimized = false;
+              kernel = true;
+              split = None;
+            }
+            (Ops.kernel_info ()));
+    ]
+
+let function_names =
+  group "function_name"
+    [
+      prop "is the name as an identifier"
+        (Gen.string_of ~size:(Gen.int_range 0 8)
+           (Gen.of_list
+              [
+                'a';
+                'Z';
+                '9';
+                '_';
+                ' ';
+                '-';
+                '.';
+                '\027';
+                '[';
+                'm';
+                '\xC3';
+                '\xA9';
+              ]))
+        ~examples:
+          [
+            ""; "9abc"; "kernel name"; "a-b.c"; "\xC3\xA9"; "\027[31mred\027[0m";
+          ]
+        (fun name ->
+          equal string
+            (Helpers.to_function_name name)
+            (Ops.function_name (Ops.kernel_info ~name ())));
+    ]
+
+let equal_args =
+  group "equal_arg"
+    [
+      (* Two arguments redrawn in one field are equal exactly when the field's
+         two values are, by an equality of their own. A custom function's
+         argument is on the body its call calls. The rarest field's differing
+         draw has a share of 0.4%: 6000 cases miss it with a probability under
+         10^-9. *)
+      prop ~count:6000 "is equality of every field" Args.redrawn
+        (fun (field, u, v, same) ->
+          List.iter
+            (fun f -> cover f (String.equal f field && not same))
+            Args.field_names;
+          let holder w =
+            if String.starts_with ~prefix:"custom." field then Ops.nth w 0
+            else w
+          in
+          let a0 = Ops.arg (holder u) and a1 = Ops.arg (holder v) in
+          if same then equal arg a0 a1 else not_equal arg a0 a1);
+      cases
+        "compares constants by their bits, nodes physically, and kinds apart"
+        ~id:(fun (what, _, _, _) -> what)
+        (let a = var "a" 0 1 in
+         let program u =
+           Ops.Program
+             { (Shape.program_info_of_sink (Ops.sink [])) with params = [ u ] }
+         in
+         Ops.
+           [
+             ( "NaNs of other bits",
+               Const (f Float.nan),
+               Const (f (-.Float.nan)),
+               false );
+             ("0. and -0.", Const (f 0.), Const (f (-0.)), false);
+             ("1 and true", Const (i 1), Const (`Bool true), false);
+             ("a device and a string", Device "CPU", String "CPU", false);
+             ("programs of one node", program a, program (var "a" 0 1), true);
+             ("programs of two nodes", program a, program (var "b" 0 1), false);
+           ])
+        (fun (_, a0, a1, same) ->
+          if same then equal arg a0 a1 else not_equal arg a0 a1);
+    ]
+
 let reprs = lazy (Goldens.reprs ())
 
-let arguments =
-  group "arguments"
+(* [nines n] is the integer of [n] nines. *)
+let nines n = Bigint.pred (Bigint.pow (Bigint.of_int 10) n)
+
+let pp_args =
+  group "pp_arg"
     [
-      Golden.cases "reprs.golden"
-        ~differs:
-          [
-            ("D80", [ "name=kernel"; "name=kernel with opts" ]);
-            ("D77", [ "name=bufferize"; "name=bufferize without device" ]);
-          ]
-        (fun cell ->
-          let u = List.assoc (cell "name") (Lazy.force reprs) in
-          equal string (cell "arg") (str Ops.pp_arg (Ops.arg u)));
-      test "reprs.golden names every argument the suite builds" (fun () ->
+      group "writes each argument as reprs.golden states"
+        [
+          Golden.cases "reprs.golden"
+            ~differs:
+              [
+                ("D80", [ "name=kernel"; "name=kernel with opts" ]);
+                ("D77", [ "name=bufferize"; "name=bufferize without device" ]);
+              ]
+            (fun cell ->
+              let u = List.assoc (cell "name") (Lazy.force reprs) in
+              equal string (cell "arg") (str Ops.pp_arg (Ops.arg u)));
+        ];
+      test "every argument this suite builds has a row of reprs.golden"
+        (fun () ->
           equal
             (slist string String.compare)
             (List.map (fun cell -> cell "name") (Golden.rows "reprs.golden"))
             (List.map fst (Lazy.force reprs)));
-      test "pp_estimates formats the record" (fun () ->
-          equal string "Estimates(ops=0, lds=0, mem=0)"
-            (str Ops.pp_estimates { ops = Int 0; lds = Int 0; mem = Int 0 }));
-      test "param_arg defaults to global storage with no flags" (fun () ->
-          let p = Ops.param_arg ~slot:3 Dtype.Float32 in
-          is_true (p.addrspace = Dtype.Global);
-          is_false p.volatile;
-          is_false p.bind_on_realize;
-          is_true (p.vmin_vmax = None);
-          is_true (p.name = None && p.device = None && p.bound = None);
-          equal int 0 p.phase;
-          equal int 16 p.align);
-      test
-        "param_arg takes a phase that is a multiple of the element size below \
-         16" (fun () ->
-          equal int 12 (Ops.param_arg ~slot:0 ~phase:12 Dtype.Float32).phase;
-          equal int 2 (Ops.param_arg ~slot:0 ~phase:2 Dtype.Float16).phase;
-          List.iter
-            (fun (phase, dt) ->
-              raises_match (Exn.invalid_arg ?sub:None) (fun () ->
-                  ignore (Ops.param_arg ~slot:0 ~phase dt)))
-            [ (2, Dtype.Float32); (16, Dtype.Uint8); (-4, Dtype.Float32) ]);
-      test
-        "param_arg takes an alignment that is a power of two up to 16, and a \
-         phase below it" (fun () ->
-          equal int 4 (Ops.param_arg ~slot:0 ~align:4 Dtype.Float32).align;
-          equal int 2
-            (Ops.param_arg ~slot:0 ~phase:2 ~align:4 Dtype.Float16).phase;
-          equal int 4 (Ops.param_arg ~slot:0 ~align:4 Dtype.Float64).align;
-          List.iter
-            (fun (phase, align, dt) ->
-              raises_match (Exn.invalid_arg ?sub:None) (fun () ->
-                  ignore (Ops.param_arg ~slot:0 ~phase ~align dt)))
-            [
-              (0, 3, Dtype.Float32);
-              (0, 32, Dtype.Float32);
-              (4, 4, Dtype.Float32);
-              (1, 4, Dtype.Float16);
-            ]);
-      test
-        "pp_arg writes a parameter's phase that is not 0 and alignment that \
-         is not 16" (fun () ->
-          let param p = str Ops.pp_arg (Param p) in
-          equal string "ParamArg(0, dtypes.f32, phase=4)"
-            (param (Ops.param_arg ~slot:0 ~phase:4 Dtype.Float32));
-          equal string "ParamArg(0, dtypes.f32, align=4)"
-            (param (Ops.param_arg ~slot:0 ~align:4 Dtype.Float32));
-          equal string "ParamArg(0, dtypes.f32)"
-            (param (Ops.param_arg ~slot:0 Dtype.Float32)));
-      test "equal_arg tells apart parameters that differ in phase"
+      cases "writes a parameter's fields that differ from their defaults"
+        ~id:fst
+        [
+          ( "phase",
+            ( Ops.param_arg ~slot:0 ~phase:4 Float32,
+              "ParamArg(0, dtypes.f32, phase=4)" ) );
+          ( "align",
+            ( Ops.param_arg ~slot:0 ~align:4 Float32,
+              "ParamArg(0, dtypes.f32, align=4)" ) );
+          ("none", (Ops.param_arg ~slot:0 Float32, "ParamArg(0, dtypes.f32)"));
+        ]
+        (fun (_, (p, text)) -> equal string text (str Ops.pp_arg (Param p)));
+      test "writes a byte of bytes past 0x7f as x and two hexadecimal digits"
         (fun () ->
-          is_false
-            (Ops.equal_arg
-               (Param (Ops.param_arg ~slot:0 ~phase:4 Dtype.Float32))
-               (Param (Ops.param_arg ~slot:0 Dtype.Float32))));
-      test "kernel_info defaults to the kernel named test" (fun () ->
-          let k = Ops.kernel_info () in
-          equal string "test" k.name;
-          is_true
-            (k.applied_opts = [] && k.opts_to_apply = None && k.estimates = None);
-          equal int 0 k.beam);
-      test "function_name is the name as an identifier" (fun () ->
-          List.iter
-            (fun (name, expected) ->
-              equal ~msg:name string expected
-                (Ops.function_name (Ops.kernel_info ~name ())))
-            [
-              ("", "");
-              ("9abc", "9abc");
-              ("kernel name", "kernel20name");
-              ("a-b.c", "a2Db2Ec");
-              ("\xC3\xA9", "E9");
-              ("\027[31mred\027[0m", "red");
-            ]);
-      test "equal_arg tells apart arguments that differ in one field" (fun () ->
-          is_false
-            (Ops.equal_arg
-               (Range { axis_type = Weak; axis_id = [ 0 ] })
-               (Range { axis_type = Upcast; axis_id = [ 0 ] }));
-          is_false
-            (Ops.equal_arg
-               (Range { axis_type = Weak; axis_id = [ 0 ] })
-               (Range { axis_type = Weak; axis_id = [ 1 ] }));
-          is_false
-            (Ops.equal_arg
-               (Reduce { op = Op.Add; num_axes = 1 })
-               (Reduce { op = Op.Add; num_axes = 2 }));
-          is_false
-            (Ops.equal_arg
-               (Code { code = "a"; dtype = Void })
-               (Code { code = "a"; dtype = Int32 }));
-          is_false (Ops.equal_arg (Device "CPU") (String "CPU")));
-      test "equal_arg compares constants by their bits and nodes physically"
-        (fun () ->
-          is_false
-            (Ops.equal_arg
-               (Const (`Float Float.nan))
-               (Const (`Float (-.Float.nan))));
-          is_false (Ops.equal_arg (Const (`Float 0.)) (Const (`Float (-0.))));
-          is_false (Ops.equal_arg (Const (i 1)) (Const (`Bool true)));
-          let a = var "a" 0 1 in
-          let k u =
-            Ops.Program
-              { (Shape.program_info_of_sink (Ops.sink [])) with params = [ u ] }
-          in
-          is_true (Ops.equal_arg (k a) (k (var "a" 0 1)));
-          is_false (Ops.equal_arg (k a) (k (var "b" 0 1))));
+          equal string "b'\\x7f\\x80\\xff'"
+            (str Ops.pp_arg (Bytes "\x7f\x80\xff")));
+      cases "rejects an integer of more than 4300 digits" ~id:string_of_int
+        [ 4300; 4301 ] (fun digits ->
+          let write () = str Ops.pp_arg (Const (`Int (nines digits))) in
+          if digits > 4300 then rejects write
+          else equal int digits (String.length (write ())));
     ]
-
 (* Printing *)
 
 let printing =
@@ -817,8 +954,9 @@ let data_types =
                   operand (dtype_of_cell (cell "a")); operand (dtype_of_cell b);
                 ]
           in
-          expect dtype dtype_of_cell (cell "dtype") (fun () ->
-              Ops.dtype_of o srcs No_arg));
+          let derive () = Ops.dtype_of o srcs No_arg in
+          if raised (cell "dtype") then rejects derive
+          else equal dtype (dtype_of_cell (cell "dtype")) (derive ()));
       test "a constant's data type is its literal's" (fun () ->
           equal dtype Bool (Ops.dtype_of Op.Const [] (Const (`Bool true)));
           equal dtype Weak_float (Ops.dtype_of Op.Const [] (Const (f 3.)));
@@ -1438,8 +1576,14 @@ let groups =
   [
     integer_literals;
     axis_type_group;
-    devices;
-    arguments;
+    pp_devices;
+    disk_devices;
+    params;
+    estimates;
+    kernel_infos;
+    function_names;
+    equal_args;
+    pp_args;
     printing;
     identity;
     structure_order;

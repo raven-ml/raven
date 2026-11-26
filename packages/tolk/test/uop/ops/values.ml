@@ -12,7 +12,9 @@ let str pp x = Format.asprintf "%a" pp x
 let alu_row cell =
   let o = op_of_cell (cell "op") and dt = dtype_of_cell (cell "dtype") in
   let args = consts_of_cell (cell "operands") in
-  expect const const_of_cell (cell "result") (fun () -> Ops.exec_alu o dt args)
+  let compute () = Ops.exec_alu o dt args in
+  if raised (cell "result") then rejects compute
+  else equal const (const_of_cell (cell "result")) (compute ())
 
 let alu dt o args = Ops.exec_alu o dt args
 let exact dt o args = Ops.exec_alu ~truncate_output:false o dt args

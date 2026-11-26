@@ -38,6 +38,34 @@ let built f = match f () with r -> r | exception Invalid_argument _ -> reject ()
 
 (* Fields *)
 
+(* Equalities of field values that hold floats or nodes: floats by their bits,
+   nodes physically. Other fields compare with [( = )]. *)
+let eq_value (v0 : Dtype.value) (v1 : Dtype.value) =
+  match (v0, v1) with
+  | `Float x0, `Float x1 ->
+      Int64.equal (Int64.bits_of_float x0) (Int64.bits_of_float x1)
+  | `Int z0, `Int z1 -> Bigint.equal z0 z1
+  | `Bool b0, `Bool b1 -> Bool.equal b0 b1
+  | _ -> false
+
+let eq_const (c0 : Dtype.const) (c1 : Dtype.const) =
+  match (c0, c1) with
+  | `Invalid, `Invalid -> true
+  | (#Dtype.value as v0), (#Dtype.value as v1) -> eq_value v0 v1
+  | _ -> false
+
+let eq_sint (s0 : Ops.sint) (s1 : Ops.sint) =
+  match (s0, s1) with
+  | Int n0, Int n1 -> Int.equal n0 n1
+  | Sym u0, Sym u1 -> u0 == u1
+  | _ -> false
+
+let eq_estimates (e0 : Ops.estimates) (e1 : Ops.estimates) =
+  eq_sint e0.ops e1.ops && eq_sint e0.lds e1.lds && eq_sint e0.mem e1.mem
+
+let eq_split (s0 : Ops.split) (s1 : Ops.split) =
+  eq_sint s0.iterations s1.iterations && s0.lo = s1.lo && s0.hi = s1.hi
+
 let a_dtype =
   Gen.of_list ~pp:Dtype.pp Dtype.[ Bool; Uint8; Float16; Float32 ]
 
@@ -121,13 +149,18 @@ let wmma_axes =
    fields by name, and the node. *)
 type 'r kind = {
   draw : 'r Gen.t;
-  fields : (string * ('r -> 'r Gen.t)) list;
+  fields : (string * ('r -> ('r * 'r * bool) Gen.t)) list;
   node : 'r -> Ops.t;
 }
 
 type any = Kind : 'r kind -> any
 
-let field name g set = (name, fun r -> Gen.map (set r) g)
+(* A field redraws two values into one record, and says whether they are
+   equal. *)
+let field ?(eq = ( = )) name g set =
+  ( name,
+    fun r ->
+      Gen.map (fun (v0, v1) -> (set r v0, set r v1, eq v0 v1)) (Gen.pair g g) )
 
 let param_arg =
   let open Gen in
@@ -149,8 +182,8 @@ let param_arg =
         ~bind_on_realize ?bound ~phase ~align ~slot dtype)
 
 let param =
-  let f name g set =
-    field ("param." ^ name) g (fun (o, (p : Ops.param_arg), s) v ->
+  let f ?eq name g set =
+    field ?eq ("param." ^ name) g (fun (o, (p : Ops.param_arg), s) v ->
         (o, set p v, s))
   in
   Kind
@@ -165,6 +198,9 @@ let param =
           f "slot" (few [ -1; 0; 2 ]) (fun p slot -> { p with slot });
           f "dtype" a_dtype (fun p dtype -> { p with dtype });
           f "vmin_vmax"
+            ~eq:
+              (Option.equal (fun (a0, b0) (a1, b1) ->
+                   eq_value a0 a1 && eq_value b0 b1))
             Gen.(option (pair a_value a_value))
             (fun p vmin_vmax -> { p with vmin_vmax });
           f "name" (Gen.option a_string) (fun p name -> { p with name });
@@ -177,7 +213,8 @@ let param =
           f "volatile" Gen.bool (fun p volatile -> { p with volatile });
           f "bind_on_realize" Gen.bool (fun p bind_on_realize ->
               { p with bind_on_realize });
-          f "bound" (Gen.option a_value) (fun p bound -> { p with bound });
+          f "bound" ~eq:(Option.equal eq_value) (Gen.option a_value)
+            (fun p bound -> { p with bound });
           f "phase" (few [ 0; 8 ]) (fun p phase -> { p with phase });
           f "align" (few [ 16; 8; 1 ]) (fun p align -> { p with align });
         ];
@@ -187,8 +224,8 @@ let param =
     }
 
 let kernel =
-  let f name g set =
-    field ("kernel." ^ name) g (fun (k : Ops.kernel_info) v -> set k v)
+  let f ?eq name g set =
+    field ?eq ("kernel." ^ name) g (fun (k : Ops.kernel_info) v -> set k v)
   in
   Kind
     {
@@ -207,11 +244,13 @@ let kernel =
           f "applied_opts" opts (fun k applied_opts -> { k with applied_opts });
           f "opts_to_apply" (Gen.option opts) (fun k opts_to_apply ->
               { k with opts_to_apply });
-          f "estimates" estimates (fun k estimates -> { k with estimates });
+          f "estimates" ~eq:(Option.equal eq_estimates) estimates
+            (fun k estimates -> { k with estimates });
           f "beam" (few [ 0; 2 ]) (fun k beam -> { k with beam });
           f "optimized" Gen.bool (fun k optimized -> { k with optimized });
           f "kernel" Gen.bool (fun k kernel -> { k with kernel });
-          f "split" split (fun k split -> { k with split });
+          f "split" ~eq:(Option.equal eq_split) split (fun k split ->
+              { k with split });
         ];
       node = (fun k -> Ops.sink ~kernel:k [ x ]);
     }
@@ -227,8 +266,8 @@ let target_fields =
   ]
 
 let program =
-  let f name g set =
-    field ("program." ^ name) g (fun (p : Ops.program_info) v -> set p v)
+  let f ?eq name g set =
+    field ?eq ("program." ^ name) g (fun (p : Ops.program_info) v -> set p v)
   in
   let no_target : Helpers.Target.t =
     { device = ""; renderer = ""; arch = ""; interface = ""; indices = "" }
@@ -254,9 +293,11 @@ let program =
             : Ops.program_info));
       fields =
         [
-          f "global_size" sizes (fun p global_size -> { p with global_size });
-          f "local_size" sizes (fun p local_size -> { p with local_size });
-          f "params"
+          f "global_size" ~eq:(List.equal eq_sint) sizes (fun p global_size ->
+              { p with global_size });
+          f "local_size" ~eq:(List.equal eq_sint) sizes (fun p local_size ->
+              { p with local_size });
+          f "params" ~eq:(List.equal ( == ))
             (Gen.list ~size:(Gen.int_range 0 1) a_node_in_arg)
             (fun p params -> { p with params });
           f "globals" slots (fun p globals -> { p with globals });
@@ -354,12 +395,12 @@ let two prefix (n0, g0) (n1, g1) node =
     }
 
 (* A kind whose node holds one field. *)
-let one name g node =
-  Kind { draw = g; fields = [ field name g (fun _ v -> v) ]; node }
+let one ?eq name g node =
+  Kind { draw = g; fields = [ field ?eq name g (fun _ v -> v) ]; node }
 
 let kinds =
   [
-    one "const" a_const (fun c -> Ops.v ~arg:(Const c) Const);
+    one "const" ~eq:eq_const a_const (fun c -> Ops.v ~arg:(Const c) Const);
     one "cast" a_dtype (fun dt -> cast dt (lit 1));
     param;
     two "range" ("axis_type", an_axis) ("axis_id", ids)
@@ -411,7 +452,8 @@ let node =
   Gen.with_pp Ops.pp
     (Gen.bind (Gen.of_list kinds) (fun (Kind k) -> Gen.map k.node k.draw))
 
-type field = Field : 'r kind * string * ('r -> 'r Gen.t) -> field
+type field =
+  | Field : 'r kind * string * ('r -> ('r * 'r * bool) Gen.t) -> field
 
 let fields =
   List.concat_map
@@ -420,14 +462,24 @@ let fields =
 
 let field_names = List.map (fun (Field (_, name, _)) -> name) fields
 
-let neighbours =
-  let pp ppf (name, u, v) =
-    Format.fprintf ppf "%s:@.%a@.%a" name Ops.pp u Ops.pp v
+let redrawn =
+  let pp ppf (name, u, v, same) =
+    Format.fprintf ppf "%s (%s):@.%a@.%a" name
+      (if same then "one value" else "two values")
+      Ops.pp u Ops.pp v
   in
   Gen.with_pp pp
     (Gen.bind (Gen.of_list fields) (fun (Field (k, name, redraw)) ->
          Gen.bind k.draw (fun r ->
-             Gen.map (fun r' -> (name, k.node r, k.node r')) (redraw r))))
+             Gen.map
+               (fun (r0, r1, same) -> (name, k.node r0, k.node r1, same))
+               (redraw r))))
+
+let neighbours =
+  let pp ppf (name, u, v) =
+    Format.fprintf ppf "%s:@.%a@.%a" name Ops.pp u Ops.pp v
+  in
+  Gen.with_pp pp (Gen.map (fun (name, u, v, _) -> (name, u, v)) redrawn)
 
 (* Two nodes of one kind, drawn apart. *)
 let pairs =
