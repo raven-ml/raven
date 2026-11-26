@@ -64,6 +64,17 @@ val narrow_wake : unit -> answer
     and watches worker 2 for 20 ms after it. Its values: whether worker 1 ran a
     chunk, whether worker 2 parked again, the chunks not run once. *)
 
+val caller_closes : blocking:bool -> answer
+(** [caller_closes ~blocking] runs a job of two threads, a blocking one where
+    [blocking], whose caller holds once it closed the job until its worker,
+    inside until then, left. Its values: whether the caller set waiting, the
+    chunks not run once. *)
+
+val worker_parks : unit -> answer
+(** [worker_parks ()] runs 7 blocking jobs of two threads, each of which its
+    worker runs a chunk of. Its value: the least nanoseconds, over the jobs,
+    from the worker's leave to its decision to park. *)
+
 (** {1:fork Fork} *)
 
 val fork_parked : unit -> answer

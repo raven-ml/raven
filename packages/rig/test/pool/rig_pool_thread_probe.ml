@@ -26,11 +26,6 @@ let in_child kind s = in_child_raw (blocking kind) s
 external fork_beside_blocking : int -> bool * string
   = "rig_pool_test_fork_beside_blocking"
 
-external spin_cpu_raw : bool -> int -> int array * int array
-  = "rig_pool_test_spin_cpu"
-
-let spin_cpu kind ~runs = spin_cpu_raw (blocking kind) runs
-
 external limits_threads : unit -> bool = "rig_pool_test_limits_threads"
 
 (* Threads *)

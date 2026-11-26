@@ -84,6 +84,8 @@ typedef enum {
   asleep,
   w2_parking,
   w_asleep,
+  j_closed,
+  w_parked,
   events
 } event;
 
@@ -109,6 +111,8 @@ static const char *event_names[events] = {
     "workers 1 and 2's sleep",
     "worker 2's parking",
     "the worker's sleep",
+    "the job's close",
+    "the worker's park",
 };
 
 static _Atomic int signalled[events];
@@ -116,6 +120,8 @@ static _Atomic int order[events]; /* the order events were signalled in */
 static _Atomic int order_next;
 static _Atomic int timed_out = -1; /* the first event a wait gave up on */
 static _Atomic int64_t deadline;   /* the scenario's, set by [begin] */
+static _Atomic int64_t left_at;    /* worker_parks: the worker's last leave */
+static _Atomic int64_t parked_at;  /* and its park after it */
 
 static int past(void) { return now_ns() > atomic_load(&deadline); }
 
@@ -161,6 +167,8 @@ typedef enum {
   narrow,
   narrow_sleep,
   narrow_wake,
+  caller_closes,
+  worker_parks,
   fork_parked,
 } phase;
 
@@ -185,6 +193,16 @@ static _Atomic int gated;
 
 static void hold_at_gate(void) {
   while (atomic_load(&gated) && !past()) sched_yield();
+}
+
+/* Whether the calling thread is worker 1 of the scenario's job of two
+   threads: compute worker 1, or a blocking worker, which [who] maps to 0 as
+   it does the job's caller, [the_caller]. */
+static pthread_t the_caller;
+
+static int second(void) {
+  int id = who();
+  return id == 1 || (id == 0 && !pthread_equal(pthread_self(), the_caller));
 }
 
 static _Atomic int once_flags[events];
@@ -278,6 +296,28 @@ static void hook(rig_pool_point at) {
   case narrow_wake:
     if (at == RIG_POOL_AT_PARKING && id == 2) sig(w2_parking);
     break;
+  case caller_closes:
+    if (at == RIG_POOL_AT_CHUNK && second() && once(w_claimed))
+      sig(w_claimed);
+    else if (at == RIG_POOL_AT_CLOSED && caller) {
+      sig(j_closed);
+      await(w_left);
+    } else if (at == RIG_POOL_AT_LEFT && second() &&
+               atomic_load(&signalled[w_claimed]) && once(w_left))
+      sig(w_left);
+    else if (at == RIG_POOL_AT_WAITING && caller)
+      sig(caller_waiting);
+    break;
+  case worker_parks:
+    /* A blocking worker maps to no compute worker's id. Its park before its
+       first job, from the pool's first generation, follows no leave. */
+    if (at == RIG_POOL_AT_LEFT && id == 0)
+      atomic_store(&left_at, now_ns());
+    else if (at == RIG_POOL_AT_PARK && id == 0 && atomic_load(&left_at) != 0) {
+      atomic_store(&parked_at, now_ns());
+      sig(w_parked);
+    }
+    break;
   case fork_parked:
     if (at == RIG_POOL_AT_PARKING && mine && take_arm()) {
       sig(w_bit);
@@ -302,8 +342,9 @@ typedef struct {
   _Atomic int runs[max_chunks];   /* calls that ran chunk i */
   _Atomic int on[max_chunks];     /* the worker that ran chunk i */
   _Atomic int worked[max_mapped]; /* whether worker w ran a chunk */
-  int holder;                     /* a worker whose chunks last until the
-                                     caller set waiting */
+  int holder;                     /* a worker whose chunks last until */
+  event hold_for;                 /* this event, by default the caller's
+                                     wait */
   int awaited;                    /* others' chunks wait until it worked */
   int signals;                    /* the first chunk signals body_began */
   _Atomic int signalled_body;
@@ -318,7 +359,7 @@ static void body(int64_t lo, int64_t hi, int w, void *ctx) {
       atomic_store(&j->on[i], w);
     }
   if (w < max_mapped) atomic_store(&j->worked[w], 1);
-  if (w == j->holder) await(caller_waiting);
+  if (w == j->holder) await(j->hold_for);
   if (j->awaited > 0 && w != j->awaited)
     while (!atomic_load(&j->worked[j->awaited]) && !past()) sched_yield();
   if (j->signals && atomic_exchange(&j->signalled_body, 1) == 0) {
@@ -329,11 +370,19 @@ static void body(int64_t lo, int64_t hi, int w, void *ctx) {
 }
 
 static void tally_init(tally *j, int64_t chunks) {
-  *j = (tally){.total = chunks, .chunks = chunks, .holder = -1, .awaited = -1};
+  *j = (tally){.total = chunks,
+               .chunks = chunks,
+               .holder = -1,
+               .hold_for = caller_waiting,
+               .awaited = -1};
 }
 
 static void run_tally(int threads, tally *j) {
   rig_pool_run(threads, j->total, j->chunks, body, j);
+}
+
+static void run_blocking(int threads, tally *j) {
+  rig_pool_run_blocking(threads, j->total, j->chunks, body, j);
 }
 
 /* The chunks of [j] that did not run once, and those that ran on a worker
@@ -675,6 +724,70 @@ value rig_pool_test_narrow_wake(value unit) {
   settle();
   caml_leave_blocking_section();
   return answer(v, 3);
+}
+
+/* A caller whose claims find no chunk sleeps at once in a blocking job, and
+   spins first in a compute job.
+   1. The caller opens a job (t = 2, two chunks) and claims chunk 0, whose
+      call waits until W1 ran chunk 1.
+   2. W1's chunk 1 lasts until the caller closed the job.
+   3. The caller closes the job, W1 being inside, and holds until W1 left.
+   4. A blocking job's caller sets waiting, reads W1 gone and returns. A
+      compute job's caller spins, reads W1 gone and returns, never waiting.
+   Answers: whether the caller set waiting, the chunks not run once. */
+value rig_pool_test_caller_closes(value v_blocking) {
+  int blocking = Bool_val(v_blocking);
+  int v[2] = {0};
+  caml_enter_blocking_section();
+  begin(caller_closes);
+  tally j;
+  tally_init(&j, 2);
+  j.holder = 1;
+  j.hold_for = j_closed;
+  j.awaited = 1;
+  the_caller = pthread_self();
+  atomic_store(&go, 1);
+  if (blocking)
+    run_blocking(2, &j);
+  else
+    run_tally(2, &j);
+  v[0] = atomic_load(&signalled[caller_waiting]);
+  v[1] = not_once(&j);
+  settle();
+  caml_leave_blocking_section();
+  return answer(v, 2);
+}
+
+/* A blocking job's worker that finds no chunk left parks at once: between
+   its leave and its decision to park it only reads the clock and the
+   generation, where a compute worker spins (rig_pool.c's spin_ns). Each of
+   [park_runs] blocking jobs of two threads, whose caller's chunk waits for
+   the worker's, times the two points; the least time leaves out jobs in
+   which the system took the worker off its core between them. Answers: that
+   least, in ns. */
+enum { park_runs = 7 };
+
+value rig_pool_test_worker_parks(value unit) {
+  (void)unit;
+  int64_t least = INT64_MAX;
+  caml_enter_blocking_section();
+  begin(worker_parks);
+  atomic_store(&go, 1);
+  for (int k = 0; k < park_runs; k++) {
+    atomic_store(&left_at, 0);
+    atomic_store(&signalled[w_parked], 0);
+    tally j;
+    tally_init(&j, 2);
+    j.awaited = 1;
+    run_blocking(2, &j);
+    await(w_parked);
+    int64_t took = atomic_load(&parked_at) - atomic_load(&left_at);
+    if (took < least) least = took;
+  }
+  settle();
+  caml_leave_blocking_section();
+  int v[1] = {least > INT32_MAX ? INT32_MAX : (int)least};
+  return answer(v, 1);
 }
 
 /* A child made by fork runs a job on every core; it exits with the chunks

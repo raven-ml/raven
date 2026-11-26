@@ -58,17 +58,6 @@ val fork_beside_blocking : int -> bool * string
     once [n] threads of the child's own ran the chunks of a blocking job of
     [n] at once. *)
 
-(** {1:cpu CPU after a job} *)
-
-val spin_cpu : Rig_pool_probe.kind -> runs:int -> int array * int array
-(** [spin_cpu kind ~runs] runs [runs] jobs of [kind], at most 64, each of two
-    chunks on two threads: the caller's, which ends once the worker's began,
-    and the worker's, which sleeps 5 ms. It is, per job, the caller's CPU
-    time from its chunk's end to the job's, and the worker's CPU time in the
-    20 ms after the job returned, in ns; [-1] for both where no worker ran a
-    chunk. Both are empty where the system gives no thread's CPU clock:
-    Linux gives one. *)
-
 val limits_threads : unit -> bool
 (** [limits_threads ()] is whether the system can limit a process's own threads:
     Linux counts each thread against [RLIMIT_NPROC]. *)

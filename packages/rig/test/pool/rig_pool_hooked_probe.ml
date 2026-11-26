@@ -19,6 +19,8 @@ type wake_order = Bit_first | Decision_first | Asleep
 external wake : wake_order -> answer = "rig_pool_test_wake"
 external narrow_burst : unit -> answer = "rig_pool_test_narrow_burst"
 external narrow_wake : unit -> answer = "rig_pool_test_narrow_wake"
+external caller_closes : blocking:bool -> answer = "rig_pool_test_caller_closes"
+external worker_parks : unit -> answer = "rig_pool_test_worker_parks"
 
 (* Fork *)
 

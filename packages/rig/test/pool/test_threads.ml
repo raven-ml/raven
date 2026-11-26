@@ -107,33 +107,6 @@ let test_limited_blocking () =
   equal ~msg:"a worker ran a chunk once it was lifted" int 1 v.(3);
   equal ~msg:"threads after both jobs" int 8 v.(4)
 
-(* A compute job's waiting thread spins this long before it sleeps ([spin_ns] in
-   rig_pool.c), and spends about as much CPU. *)
-let compute_spin_ns = 100_000
-
-(* A blocking job's caller and workers sleep at once when they find no chunk:
-   each spends less than half a compute job's spin of CPU waiting, so a thread
-   that spun for much of one fails. The median of seven jobs, each sampled: the
-   caller's wait for a worker's chunk of 5 ms, and the worker's 20 ms after the
-   job. A sleep's own cost, the system calls that park and wake a thread, is
-   what remains: 32 microseconds on riscv64's cores. *)
-let test_parks_at_once () =
-  P.needs_two_cores ();
-  let waits, afters = T.spin_cpu P.Blocking ~runs:7 in
-  if Array.length waits = 0 then
-    skip ~reason:"the system gives no thread's CPU clock" ();
-  let median a =
-    let a = Array.copy a in
-    Array.sort compare a;
-    a.(Array.length a / 2)
-  in
-  let worked = Array.fold_left (fun n x -> if x >= 0 then n + 1 else n) 0 in
-  greater ~msg:"jobs where a worker ran a chunk" int ~than:3 (worked afters);
-  let bound = compute_spin_ns / 2 in
-  less ~msg:"the caller's CPU waiting for the job's end, ns" int ~than:bound
-    (median waits);
-  less ~msg:"the worker's CPU after the job, ns" int ~than:bound (median afters)
-
 (* An idle pool's threads park. A job then wakes a parked worker, and a caller
    whose job a worker holds parks until the job ends. *)
 let test_parks kind =
@@ -201,10 +174,6 @@ let thread_tests =
         "a blocking job makes the blocking workers it asks for that the pool \
          lacks, past the cores too, and they live until the process exits"
         test_grown;
-      test
-        "a blocking job's threads sleep at once when they find no chunk, \
-         sampled"
-        test_parks_at_once;
       cases "the pool's threads park when idle, and a job wakes them"
         ~id:kind_name kinds test_parks;
       cases

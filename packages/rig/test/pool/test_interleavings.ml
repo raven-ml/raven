@@ -108,6 +108,27 @@ let test_narrow_wake =
     ]
     [ 1; 0; 0 ] H.narrow_wake
 
+(* A job's caller that finds no chunk left, its worker leaving right after its
+   close: a blocking job's caller sets waiting at once, a compute job's spins
+   and sees the leave first (rig_pool.h's Blocking jobs). *)
+let caller_closes ~blocking expected =
+  held 2 [ "the caller set waiting"; "chunks not run once" ] [ expected; 0 ]
+    (fun () -> H.caller_closes ~blocking)
+
+(* A compute job's waiting thread spins this long before it sleeps ([spin_ns] in
+   rig_pool.c). *)
+let compute_spin_ns = 100_000
+
+(* A blocking job's worker that finds no chunk parks at once: in one of 7 jobs
+   at least, the time from its leave to its decision to park is under half a
+   compute worker's spin, which a spin there would take whole in each. *)
+let test_worker_parks () =
+  if P.cores () < 2 then skip ~reason:"the host has fewer than 2 cores" ();
+  let timed_out, values = P.finishes "the scenario" H.worker_parks in
+  equal ~msg:"the hold that gave up" string "" timed_out;
+  less ~msg:"the least ns from a worker's leave to its park" int
+    ~than:(compute_spin_ns / 2) values.(0)
+
 let waiting_tests =
   group "waiting and waking"
     [
@@ -133,6 +154,18 @@ let waiting_tests =
         "a job wakes only its own parked workers: one it leaves out sleeps on, \
          sampled for 20 ms"
         test_narrow_wake;
+      test
+        "a blocking job's caller sleeps as soon as its claims find no chunk: \
+         it waits though its worker left right after its close"
+        (caller_closes ~blocking:true 1);
+      test
+        "a compute job's caller spins first: its worker's leave right after \
+         its close ends the wait before it sleeps"
+        (caller_closes ~blocking:false 0);
+      test
+        "a blocking job's worker sleeps as soon as it finds no chunk, sampled \
+         over 7 jobs"
+        test_worker_parks;
     ]
 
 (* Fork *)
