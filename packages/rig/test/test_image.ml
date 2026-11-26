@@ -313,79 +313,41 @@ let test_unloads_beside_loss () =
   collect d;
   equal ~msg:"the final release retries once stopped" int 2 (count "unload" p)
 
-(* Two domains drop images and drain their device while its work waits to run:
-   no drain unloads an image.
-
-   Every collection stops each domain, and on a loaded machine waits for each to
-   be scheduled, and each program runs 50 times, so the test collects little. A
-   program's images stay on its own device, which no later program uses, so a
-   release collects nothing. A drop of a live image ends one major cycle, which
-   may finalise it while the other domain drains. *)
-type images = {
-  d : Rig.t;
-  p : P.t;
-  cells : Image.t option Atomic.t array;
-  unloaded : int;
-}
-
-let[@inline never] drop_image t i =
-  Option.is_some (Atomic.exchange t.cells.(i) None)
-
-let image_opened = ref 0
-let image_count = 2
-
-(* Loads [image_count] images on a fresh device whose submitted work waits to
-   run, then drops the first: every later drain is one after a drop, whichever
-   calls a program draws. *)
-let make_images () =
-  incr image_opened;
+(* Two domains drop images and drain their device while its work waits to run.
+   One domain's drain, which found the first image collected, is held before its
+   first step ({!Rig.on_drain}) while the other drops the second and collects
+   it, and with [drains] drains too. No drain unloads an image before the work
+   ran; then each collected image unloads once, and the live one stays. *)
+let test_parallel_drops drains =
   let d, p =
-    P.open_ (Printf.sprintf "image:parallel-releases-%d" !image_opened)
+    P.open_ (if drains then "image:drops-drains" else "image:drops-collects")
   in
-  let cells =
-    Array.init image_count (fun _ -> Atomic.make (Some (load d "functions")))
-  in
+  let first = ref (Some (load d "functions")) in
+  let second = ref (Some (load d "functions")) in
+  let live = load d "functions" in
   ignore (submit (Sub.make d [||]));
-  let t = { d; p; cells; unloaded = count "unload" p } in
-  ignore (drop_image t 0 : bool);
-  t
-
-(* The images unload once a later collection finalises them; none twice. *)
-let release_images t =
-  Array.iter (fun cell -> Atomic.set cell None) t.cells;
-  ignore (P.run t.p);
-  at_most ~msg:"each image unloads at most once" int ~than:image_count
-    (count "unload" t.p - t.unloaded)
-
-let images = abstract ~release:release_images "images"
-
-let image_commands =
-  [
-    command "load"
-      (Gen.unit @-> makes images)
-      (fun () -> Array.init image_count (fun i -> i > 0))
-      make_images;
-    command "drop"
-      (images ^-> Gen.int_range 0 (image_count - 1) @-> returns bool)
-      (fun cells i ->
-        let was_live = cells.(i) in
-        cover "a live image dropped" was_live;
-        cells.(i) <- false;
-        was_live)
-      (fun t i ->
-        let was_live = drop_image t i in
-        if was_live then Gc.major ();
-        drain t.d;
-        was_live);
-    command "drain"
-      (images ^-> returns int)
-      (fun cells ->
-        cover "a drain after a drop" (Array.exists not cells);
-        0)
-      (fun t ->
-        drain t.d;
-        count "unload" t.p - t.unloaded);
-  ]
+  first := None;
+  Gc.full_major ();
+  let entered = Atomic.make false and go = Atomic.make false in
+  Rig.on_drain (fun () ->
+      Atomic.set entered true;
+      Support.await "the other domain's drop" (fun () -> Atomic.get go));
+  let held = Domain.spawn (fun () -> drain d) in
+  Fun.protect
+    ~finally:(fun () ->
+      Atomic.set go true;
+      Domain.join held)
+    (fun () ->
+      Support.await "the held drain" (fun () -> Atomic.get entered);
+      second := None;
+      Gc.full_major ();
+      if drains then drain d;
+      equal ~msg:"unloads while a drain is held" int 0 (count "unload" p));
+  equal ~msg:"unloads once both drains returned" int 0 (count "unload" p);
+  ignore (P.run p);
+  drain d;
+  equal ~msg:"unloads once the work ran" int 2 (count "unload" p);
+  ignore (Sys.opaque_identity live)
 
 (* Image.resolve *)
 
@@ -555,9 +517,10 @@ let tests =
           test_append_during_unload;
         test "images collected before a loss unload once the device has stopped"
           test_unloads_beside_loss;
-        stateful ~count:10 ~domains:2
-          "parallel drops and drains keep images until work completes"
-          image_commands;
+        cases "parallel drops and drains keep images until work completes"
+          ~id:(fun drains ->
+            if drains then "both domains drain" else "one domain drains")
+          [ true; false ] test_parallel_drops;
       ];
     group "Image.device"
       [ test "an image is on the device it was loaded on" test_device ];

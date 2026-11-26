@@ -2927,6 +2927,13 @@ val on_host_exchange : (int -> unit) -> unit
     [f] is unset before it runs, so a load in [f] links without it. For rig's
     tests, which link the same object in [f] so that the outer load loses. *)
 
+val on_drain : (unit -> unit) -> unit
+(** [on_drain f] makes the next of rig's moves of collected memory and kept
+    values ({!section-reclaim}) that has anything to do call [f ()] once,
+    before it releases a keep or moves anything. [f] is unset before it runs,
+    so a move in [f] runs without it. For rig's tests, which hold a move there
+    while another domain releases, collects or moves. *)
+
 val x86_levels : string list
 (** [x86_levels] is the x86-64 psABI's levels, in order, as {!arch} names
     them. *)

@@ -176,6 +176,7 @@ let time_pairs = Submission.time_pairs
 let submit_state = Submission.submit_state
 let wait_room = Dev.wait_room
 let on_host_exchange = Host_code.on_exchange
+let on_drain = Memory.on_drain
 let x86_levels = Cpu.x86_levels
 
 let x86_level ~ecx1 ~ebx7 ~ecx81 ~xcr0 =

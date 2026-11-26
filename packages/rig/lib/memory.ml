@@ -1682,6 +1682,15 @@ let kept_locked l =
    releases. *)
 let kept d = Dev.protect d kept_locked d.live
 
+(* The hook the next drain with work calls first, for rig's tests
+   ({!Rig.on_drain}). *)
+let draining : (unit -> unit) option Atomic.t = Atomic.make None
+
+let on_drain f = Atomic.set draining (Some f)
+
+(* Calls the hook once, unset first, so a drain inside it runs without it. *)
+let run_hook () = Option.iter (fun f -> f ()) (Atomic.exchange draining None)
+
 (* A lost device's memory returns once it has stopped. A device whose stop
    returned frees its slot once its last memory and mapping went back and
    its last kept value went, then lets go of its word. Every drain gives
@@ -1704,6 +1713,7 @@ and has_work d =
   || not (Dev.is_live d)
 
 and drain_steps d =
+  if Atomic.get draining != None then run_hook ();
   if released_any hold_list then release_holds ();
   if ended_linked () then drain_every_ended ();
   if Dev.orphaned d then forget d

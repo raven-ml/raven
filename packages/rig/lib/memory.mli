@@ -487,6 +487,11 @@ val drain : device -> unit
     free, of [d] or of another device it drains; a drain of the other
     devices that raises leaves them to the next drain. *)
 
+val on_drain : (unit -> unit) -> unit
+(** [on_drain f] makes the next {!drain} that has anything to do call [f ()]
+    once, before its first step. [f] is unset before it runs. For rig's tests
+    ({!Rig.on_drain}). *)
+
 val reclaiming : device -> pool:device -> int -> (unit -> 'a option) -> 'a
 (** [reclaiming d ~pool n f] is the first [Some] result of [f], a try at [n]
     bytes of [d], after each round of the ladder, once a try has returned

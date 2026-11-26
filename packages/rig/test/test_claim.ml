@@ -389,25 +389,56 @@ let test_release_once () =
   ignore (Sys.opaque_identity k2);
   equal ~msg:"after the other's release" string "taken" (alone a)
 
-(* Two domains: releases of one keep of two memories, beside drops of the keep,
-   which release it, collections and takes of each memory. Another keep holds
-   the second memory to the end. A release after the first ends nothing, so the
-   first memory is taken only once the keep is released, and the second never
-   is. A drop beside a release releases the keep twice on two domains, and a
-   collection after it runs the drain of the keep's record beside the other
-   domain's release. A collection stops every domain, which takes about 2 ms
-   where the test's three domains share two processors, and each program runs 50
-   times: [~steps:3] keeps a program to its branches and a few calls around
-   them. Its rarest cover, "a collection after a release", marks 46.9% of 4000
-   cases, at least 45.4%: [~count:37] misses it with odds 2e-10. *)
-type releases = { mutable released : bool; mutable took : bool }
+(* Two domains: one releases a keep of two memories, and its next call's drain,
+   which finds the keep's record, is held before its first step
+   ({!Rig.on_drain}) while the other domain releases the keep again, takes the
+   first memory, and drops and collects the keep. The take succeeds; the drain
+   then ends no hold again, so the second memory, which another keep holds, is
+   refused until that keep's release. The two releases do not overlap here: the
+   stateful below reaches that. *)
+let test_releases_beside_drain () =
+  let first = B.create Rig.host 64 and second = B.create Rig.host 64 in
+  let keeper = B.keep [ second ] in
+  let keep = ref (Some (B.keep [ first; second ])) in
+  equal ~msg:"a take under the keep" string "refused" (take_of [ first ]);
+  let entered = Atomic.make false and go = Atomic.make false in
+  Rig.on_drain (fun () ->
+      Atomic.set entered true;
+      Rig_support.await "the other domain's release" (fun () -> Atomic.get go));
+  let held =
+    Domain.spawn (fun () ->
+        B.release (Option.get !keep);
+        ignore (Sys.opaque_identity (B.create Rig.host 8)))
+  in
+  Fun.protect
+    ~finally:(fun () ->
+      Atomic.set go true;
+      Domain.join held)
+    (fun () ->
+      Rig_support.await "the held drain" (fun () -> Atomic.get entered);
+      B.release (Option.get !keep);
+      equal ~msg:"a take after the releases" string "taken" (take_of [ first ]);
+      keep := None;
+      Gc.full_major ();
+      equal ~msg:"the second memory while the drain is held" string "refused"
+        (take_of [ second ]));
+  equal ~msg:"the second memory once the drain returned" string "refused"
+    (take_of [ second ]);
+  B.release keeper;
+  equal ~msg:"once the other keep is released" string "taken"
+    (take_of [ second ])
 
-type kept_pair = {
-  first : B.t;
-  second : B.t;
-  keep : B.keep option Atomic.t;
-  keeper : B.keep;
-}
+(* Two domains: releases of one keep of two memories, and takes of each. Another
+   keep holds the second memory to the end. Each release returns once the keep's
+   holds have ended, also beside another domain's release that is ending them,
+   so a take after any release succeeds; the second memory is never taken. That
+   overlap lies inside the one C step that ends a hold, which no hook holds: the
+   branches reach it by chance, on each of a program's 50 runs. With no
+   collection a program costs little. Its rarest cover, "a take after a
+   release", marks 27.5% of 12000 cases, at least 26.7%: [~count:70] misses it
+   with odds 4e-10. *)
+type releases = { mutable released : bool; mutable took : bool }
+type kept_pair = { first : B.t; second : B.t; keep : B.keep; keeper : B.keep }
 
 let kept_pair =
   abstract
@@ -418,35 +449,13 @@ let kept_pair =
 
 let make_pair () =
   let first = B.create Rig.host 64 and second = B.create Rig.host 64 in
-  let keep = Atomic.make (Some (B.keep [ first; second ])) in
+  let keep = B.keep [ first; second ] in
   { first; second; keep; keeper = B.keep [ second ] }
-
-let release_pair p = Option.iter B.release (Atomic.get p.keep)
-
-(* A drop releases the keep before it empties the cell, so a release that finds
-   the cell empty follows the drop's. *)
-let drop_pair p =
-  match Atomic.get p.keep with
-  | None -> ()
-  | Some k ->
-      B.release k;
-      Atomic.set p.keep None
-
-(* A collection that drains: a minor collection finalises a token dropped while
-   young, and the allocation drains the list of holds, on which a release or the
-   finaliser put the keep's record. *)
-let collect_pair (_ : kept_pair) =
-  Gc.minor ();
-  ignore (Sys.opaque_identity (B.create Rig.host 8))
 
 let release_model r =
   cover "a release of a released keep" r.released;
   r.released <- true
 
-let collect_model r = cover "a collection after a release" r.released
-
-(* Of two releases of one keep, each returns once the keep's holds have
-   ended. *)
 let judge_take_first r taken =
   cover "a take after a release" r.released;
   match (taken, r.took, r.released) with
@@ -465,9 +474,10 @@ let release_commands =
       (Gen.unit @-> makes kept_pair)
       (fun () -> { released = false; took = false })
       make_pair;
-    command "release" (kept_pair ^-> returns unit) release_model release_pair;
-    command "drop" (kept_pair ^-> returns unit) release_model drop_pair;
-    command "collect" (kept_pair ^-> returns unit) collect_model collect_pair;
+    command "release"
+      (kept_pair ^-> returns unit)
+      release_model
+      (fun p -> B.release p.keep);
     command "take"
       (kept_pair ^-> judges string)
       judge_take_first
@@ -1684,9 +1694,12 @@ let tests =
         test "a release ends a keep before its collection" test_release;
         test "a later release and the collection of a released keep end nothing"
           test_release_once;
-        stateful ~count:37 ~steps:3 ~domains:2
+        test
           "releases of one keep on two domains beside its collection end it \
            once"
+          test_releases_beside_drain;
+        stateful ~count:70 ~steps:1 ~domains:2
+          "releases of one keep on two domains return once its holds have ended"
           release_commands;
         stateful ~domains:2
           "keeps beside takes of one memory are ordered with them" keep_commands;
