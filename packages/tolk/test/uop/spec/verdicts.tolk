@@ -157,7 +157,7 @@ an after after a store	True	True	True	True	True
 a constant after a store	True	True	False	True	None
 a load after a store	True	True	False	True	None
 an int32 load after a range	True	True	True	True	None
-a range bounded by a load after a range	True	True	True	True	True
+a range bounded by a load after a range	True	True	True	True	False
 custom code	True	True	True	True	True
 inline custom code	True	True	True	True	True
 a void custom statement	True	True	True	True	True

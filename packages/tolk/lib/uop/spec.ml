@@ -574,9 +574,11 @@ let kernel_graph : t =
         (fun x -> size_only x && addrspace x = Some Dtype.Global);
       accept (pat [ Op.Bitcast ]);
       (* A loop range runs the calls an end closes it around. Its one source
-         is its bound. *)
+         is its bound, which a view's bounds are made of. *)
       check (pat [ Op.Range ] ~name:"r") "r" (fun r ->
-          List.compare_length_with (src r) 1 = 0 && loop r);
+          List.compare_length_with (src r) 1 = 0
+          && loop r
+          && loop_bound (nth r 0));
       check (pat [ Op.End ] ~name:"e") "e" (fun e ->
           op (nth e 0) = Op.Call
           && List.for_all (fun r -> op r = Op.Range && loop r) (List.tl (src e)));
