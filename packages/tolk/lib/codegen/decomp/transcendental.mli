@@ -41,14 +41,21 @@ val shl : Ops.t -> int -> Ops.t
 
 val shr : Ops.t -> int -> Ops.t
 (** [shr x n] is [x // 2]{^ [n]}, the division rounding towards negative
-    infinity: [x] shifted right by [n] bits if [x] is an integer.
+    infinity: [x] shifted right by [n] bits if [x] is an integer. The divisor
+    [2]{^ [n]} is read in [x]'s type, so at [n] one below a signed type's width
+    it is [-2]{^ [n]}. For a float, the quotient is rounded in [x]'s type before
+    it is floored, so a negative one that underflows to [-0.] gives [-0.].
 
     Raises [Invalid_argument] if [n] is negative. *)
 
 val rintk : Ops.t -> Ops.t
-(** [rintk d] is the float [d] rounded to the nearest integer, halves away from
-    zero, as the signed integer of [d]'s width: {!Dtype.Int16}, {!Dtype.Int32}
-    or {!Dtype.Int64}. *)
+(** [rintk d] is [d] plus a half of its sign, rounded in [d]'s type, then
+    truncated towards zero, as the signed integer of [d]'s width:
+    {!Dtype.Int16}, {!Dtype.Int32} or {!Dtype.Int64}. That is [d] rounded to the
+    nearest integer, halves away from zero, except where the sum rounds: the
+    float below a half gives [1] and its negation [-1], and an odd integer whose
+    magnitude is from [2]{^ [p-1]} to [2]{^ [p]}, [p] being [d]'s precision,
+    gives the even one next to it away from zero. *)
 
 val pow2if : Ops.t -> Dtype.t -> Ops.t
 (** [pow2if q dt] is 2{^ [q]} as a float, for [q] an integer in the range of
@@ -77,11 +84,16 @@ val payne_hanek_reduction : Ops.t -> Ops.t * Ops.t
     keeps [r] within an ulp of the exact remainder whatever [d]'s magnitude. *)
 
 val cody_waite_reduction : Ops.t -> Ops.t * Ops.t
-(** [cody_waite_reduction d] is [(r, q)] with [d = q * pi/2 + r] and [|r|] about
-    [pi/4] at most, for [|d| <= 39800]. [r] has [d]'s type and [q] is a
-    {!Dtype.Int32} whose value modulo 4 is the quadrant of [d]. It subtracts
-    [q * pi/2] in several parts whose products are exact, which is precise only
-    while [q] is small. *)
+(** [cody_waite_reduction d] is [(r, q)] with [d = q * pi/2 + r] and
+    [|r| <= pi/4 + (pi/2) u], for [|d| <= 39800]: [q] is [d * 2/pi] rounded by
+    {!rintk}, that product computed in [d]'s type ({!Dtype.Float32} for a
+    {!Dtype.Float16}), and [u] is its error, half an ulp of the product and [d]
+    times the error of [2/pi] in that type, and at the float below a half, which
+    {!rintk} rounds to [1], that float's distance from a half: [u] is below
+    [2.1e-3] in {!Dtype.Float32} and [4e-12] in {!Dtype.Float64}. [r] has [d]'s
+    type and [q] is a {!Dtype.Int32} whose value modulo 4 is the quadrant of
+    [d]. It subtracts [q * pi/2] in several parts whose products are exact,
+    which is precise only while [q] is small. *)
 
 (** {1:functions Functions} *)
 

@@ -49,9 +49,11 @@ val simplifying_patterns : Op.Set.t -> (unit, Ops.t) Ops.Pattern_matcher.t
       signs can differ;
     - {!Op.Threefry} to {!threefry2x32} if [ops] lacks it.
 
-    A division or remainder of a committed integer reads a weak constant
-    divisor in the integer's type, here and in {!late_patterns}: on int8, a
-    divisor of 128 is [-128].
+    A division or remainder of a committed integer reads a weak constant divisor
+    in the integer's type, here and in {!late_patterns}: on int8, a divisor of
+    128 is [-128]. A constant divisor, factor or bound these rules read is an
+    integer: a boolean, float or invalid one leaves its node as it is, here and
+    in {!late_patterns}.
 
     A set equal to an earlier call's gives that call's matcher. *)
 
@@ -62,11 +64,14 @@ val late_patterns :
 (** [late_patterns ~disable_fast_idiv ops] rewrites, for a target with the
     operations [ops] and rendered by the context:
     - a minimum of a minimum against one value [c], or a maximum of a maximum,
-      each a selection of its comparison's operands, to one selection: the
-      inner one where it picks [c] where its comparison is false, at a tie or
-      a NaN, or where the two pick alike, and otherwise the selection of the
-      inner one's other operand [v] that picks [c] there, [where (v < c) v c]
-      for minima and [where (c < v) v c] for maxima;
+      each a selection of its comparison's operands, to one selection, seen
+      through a 16-bit float computed in {!Dtype.Float32}: each operand of the
+      inner selection a widening of it, a constant it holds or a selection of
+      such, and the result narrowed back. The selection is the inner one where
+      it picks [c] where its comparison is false, at a tie or a NaN, or where
+      the two pick alike, and otherwise the selection of the inner one's other
+      operand [v] that picks [c] there, [where (v < c) v c] for minima and
+      [where (c < v) v c] for maxima;
     - {!Op.Max} to a comparison and a selection if [ops] lacks it and has
       {!Op.Cmplt};
     - the conjunction of two negated booleans to the negated disjunction if
