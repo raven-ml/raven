@@ -9707,10 +9707,15 @@ let looped =
 (* Cases each run reaches, which draws reach in 5 to 14 % of the cases: a
    complex64 Exp and Pow of 2^34 elements, past the call's budget; a scan
    stepping by one, its chunks of 16 threads; a sum of rows of 2^18 terms under
-   the least budget, merged apart. And one draws reach too rarely: a map under a
-   budget of 0.1 us, below a launch's fixed cost, which no group fits. *)
+   the least budget, merged apart. And those draws reach too rarely: a map under
+   a budget of 0.1 us, below a launch's fixed cost, which no group fits; a
+   reduction and a scan of 130 values held, of 2^16 elements, under a budget of
+   0.2 ms, near the least they plan under, in several launches; and a float32
+   Exp and Pow of 3 * 2^27 elements under 50 us, whose 131072 launches pass
+   {!Plan.part_launches} long before a part's seconds. *)
 let looped_examples =
-  let c ?(lbudget = Library) ?(lstep = false) family kind ldt lshape =
+  let c ?(lbudget = Library) ?(lstep = false) ?(lheld = false) family kind ldt
+      lshape =
     {
       family;
       kind;
@@ -9719,7 +9724,7 @@ let looped_examples =
       lbudget;
       lholds = 1024;
       lpadded = false;
-      lheld = false;
+      lheld;
       lstep;
     }
   in
@@ -9728,6 +9733,9 @@ let looped_examples =
     c ~lstep:true 2 0 0 [| 3; 5000 |];
     c ~lbudget:Least 1 0 0 [| 2; 1 lsl 18 |];
     c ~lbudget:(Bound 1e-7) 0 0 0 [| 1000 |];
+    c ~lbudget:(Bound 2e-4) ~lheld:true 1 0 0 [| 16; 4096 |];
+    c ~lbudget:(Bound 2e-4) ~lheld:true 2 0 0 [| 16; 4096 |];
+    c ~lbudget:(Bound 5e-5) 0 3 0 [| 3; 1 lsl 27 |];
   ]
 
 (* The plan of [c]'s call over broadcast host arrays: a map of a kind of one
@@ -9858,9 +9866,10 @@ let loop_plan c =
       (bounded t plan, t)
 
 (* plan.mli: each launch of a loop keeps within the time budget and each part of
-   several launches within a part's, the loop split into launches, or declined
-   where a group's least work does not fit; a core holds no more groups than the
-   threads Metal lets a group have. *)
+   several launches within a part's, and of at most {!Plan.part_launches}
+   launches, the loop split into launches, or declined where a group's least
+   work does not fit; a core holds no more groups than the threads Metal lets a
+   group have. *)
 let law_loop_budget c =
   let plan, allowed = loop_plan c in
   let n = Array.fold_left ( * ) 1 c.lshape in
@@ -9890,6 +9899,14 @@ let law_loop_budget c =
                 p.slots));
       cover "a scan of 16 threads a chunk"
         (c.lstep && c.lshape.(Array.length c.lshape - 1) >= 16);
+      cover "130 values held in several launches under a smaller budget"
+        (c.lheld && c.family > 0
+        && (match c.lbudget with Bound _ -> true | Library | Least -> false)
+        && Array.length p.launches > 1);
+      cover "a part of the most launches"
+        (Array.exists
+           (fun (q : Plan.part) -> Array.length q.run = Plan.part_launches)
+           p.parts);
       let time (l : Plan.launch) =
         Plan.seconds
           ~threads:(Nx_metal.Kernels.threads l.kernel)
@@ -9905,6 +9922,8 @@ let law_loop_budget c =
         p.launches;
       Array.iter
         (fun (q : Plan.part) ->
+          at_most ~msg:"a part's launches" int ~than:Plan.part_launches
+            (Array.length q.run);
           if Array.length q.run > 1 then
             at_most ~msg:"a part's launches together" float_exact
               ~than:Plan.part_budget
