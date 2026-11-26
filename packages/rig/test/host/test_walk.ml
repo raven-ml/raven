@@ -5,11 +5,11 @@
 
 (* A failure walk of linking. A child process of the suite limits its address
    space to [n] bytes above what it maps, so that the mapping of an image's
-   executable memory fails while the limit is below the image's size, and
-   loads an image on the host, for [n] from none to more than the image needs.
-   The load answers an image or [Error], the failure leaves no mapping behind,
-   and the load succeeds once the limit is lifted. On Linux only: the limit
-   bounds no mapping elsewhere. *)
+   executable memory fails while the limit is below the image's size, and loads
+   an image on the host, for [n] from none to more than the image needs. The
+   load answers an image or [Error], the failure leaves no mapping behind, and
+   the load succeeds once the limit is lifted. On Linux only: the limit bounds
+   no mapping elsewhere. *)
 
 open Windtrap
 module S = Rig_host_support
@@ -24,17 +24,21 @@ let exe =
   let e = Sys.executable_name in
   if Filename.is_relative e then Filename.concat (Sys.getcwd ()) e else e
 
-let obj = lazy (S.fixture ~dir:"../fixtures" "affine")
+let obj =
+  lazy
+    (S.fixture
+       ~dir:(Filename.concat Filename.parent_dir_name "fixtures")
+       "affine")
 
 let lines path = In_channel.with_open_text path In_channel.input_lines
 
-(* The process's status, read into [status] without a channel. The child
-   reads it right before it sets its limit, and nothing it frees after may
-   return memory to the system, as musl's C library does with a free block:
-   a channel's buffer, the C library's memory, is freed at the channel's
-   close, after its bytes were counted, and so is a block too large for the
-   minor heap, which the collector frees once unreachable. [status], made
-   as the program starts, stays reachable. *)
+(* The process's status, read into [status] without a channel. The child reads
+   it right before it sets its limit, and nothing it frees after may return
+   memory to the system, as musl's C library does with a free block: a channel's
+   buffer, the C library's memory, is freed at the channel's close, after its
+   bytes were counted, and so is a block too large for the minor heap, which the
+   collector frees once unreachable. [status], made as the program starts, stays
+   reachable. *)
 let status = Bytes.create 8192
 
 let read_status () =
@@ -60,7 +64,7 @@ let mapped () =
   in
   let rec kib i k =
     match Bytes.get status i with
-    | ' ' | '\t' when k = 0 -> kib (i + 1) k
+    | (' ' | '\t') when k = 0 -> kib (i + 1) k
     | '0' .. '9' as c -> kib (i + 1) ((10 * k) + Char.code c - Char.code '0')
     | _ -> k
   in
@@ -68,8 +72,8 @@ let mapped () =
 
 let mappings () = List.length (lines "/proc/self/maps")
 
-(* Collects, then drains the host: an unreachable image unloads at a drain,
-   once the host's work before it is done. *)
+(* Collects, then drains the host: an unreachable image unloads at a drain, once
+   the host's work before it is done. *)
 let collect () =
   for _ = 1 to 3 do
     Gc.full_major ();
@@ -89,8 +93,8 @@ let linked () =
 (* The child: links once uncounted, then under a limit [room] bytes above what
    it maps, and prints what the link answered, whether its mappings came back
    once collected, and what a link answers with the limit lifted. It collects
-   between counting its mappings and reading what it maps, so that no memory
-   of the count returns to the system under the limit ([status]). *)
+   between counting its mappings and reading what it maps, so that no memory of
+   the count returns to the system under the limit ([status]). *)
 let child room =
   ignore (linked ());
   collect ();
@@ -131,9 +135,11 @@ let () =
       exit
         (run "rig_host.walk"
            [
-             group "a link whose mapping fails answers Error and leaves nothing"
-               (List.map
-                  (fun room ->
-                    test (strf "%d bytes of room" room) (walked room))
-                  rooms);
+             group "linking"
+               [
+                 cases
+                   "a load whose mapping the system refuses is Error and \
+                    leaves no mapping, with room of"
+                   ~id:(strf "%d bytes") rooms (fun room -> walked room ());
+               ];
            ])
