@@ -468,15 +468,15 @@ The suite is `Tolk.Opt` (`codegen/opt/opt/`), written `P` below.
 tinygrad orders two optimisations as the tuples `(op, axis, arg)`, and cannot
 compare two splits of one axis and amount into different targets, a host
 accident recorded in the README's CPython rows: `comparisons.golden` leaves
-those pairs out, and `P › order › compare is a total order` covers them. A split that is not from
+those pairs out, and `P › compare › is a total order` covers them. A split that is not from
 the top is `(amount, target)` in tinygrad whether or not it spells the
 `False`; the heuristic never spells it, and tolk prints it the same way.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `Opt.__repr__` | `P › printing › pp is tinygrad's repr` (every row); `P › printing › a split that is not from the top prints without its flag` |
-| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | the axis an optimisation acts on | `P › printing › axis is the axis tinygrad prints` (every row) |
-| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `dataclass(order=True)` and `OptOps.__lt__` | `P › order › compare agrees with tinygrad where tinygrad orders` (every row); `P › order › compare is a total order`; `P › order › compare is 0 exactly on equal optimisations`; `P › order › splits into different targets are different` |
+| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `Opt.__repr__` | `P › pp › formats an optimisation as reprs.golden states` (every row, the splits not from the top among them); `P › pp › names a split's target by the role it gives, as Axis_type.pp does` |
+| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | the axis an optimisation acts on | `P › axis is the axis an optimisation acts on` (every row) |
+| tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `dataclass(order=True)` and `OptOps.__lt__` | `P › compare › orders optimisations as comparisons.golden states` (every row); `P › compare › is a total order`; `P › equal holds exactly of the same optimisations`; `P › compare › orders splits otherwise equal by target: global, local, upcast` |
 | tinygrad: `codegen/opt/__init__.py` (no test file targets it) | `check` and `KernelOptError` | Postrange's section: a refusal is `Scheduler.apply_opt`'s `Error`, and `apply_opts` raises it as `Invalid_argument`, so `Opt` holds the types alone |
 | tinygrad: `runtime/test_kernel_opts.py`, `runtime/test_linearizer.py`, `null/test_linearizer.py`, `runtime/test_opt_gemm.py`, `runtime/test_tensor_cores.py`, `null/test_uops.py`, `null/test_uops_stats.py`, `null/test_gen_float4.py`, `null/test_linearizer_rewrite.py`, `runtime/test_custom_kernel.py`, `null/test_custom_kernel.py` | optimisations applied to kernels, and the `KernelOptError` of those that do not apply | Postrange's section: `apply_opt` makes the checks and returns a refusal as an `Error` |
 
