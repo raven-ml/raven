@@ -40,7 +40,7 @@ val actions : unit -> Opt.t list
     - tensor cores on the axis [0] with the level [tc_opt] [0], then on the axes
       [0] to [8] with the level [2], which admits every kernel a tensor core
       fits, each with the first core that fits and the level [use_tc] of
-      {!Setting.use_tc};
+      {!Setting.use_tc}; these levels do not follow {!Setting.tc_opt};
     - swaps of each two of the axes [0] to [4]. *)
 
 val get_kernel_actions :
@@ -103,7 +103,7 @@ val beam_search :
     A kernel is compiled for [k]'s renderer named ["test"], as the compile
     of the kernel it chooses lowers it: staged and, on the host, in blocks. A
     launch's member is compiled and timed as a kernel of its own, outside its
-    launch, whose threads are the most any of its members has.
+    launch ({!Codegen.to_program}).
     It is first linearized ({!Codegen.linearize} [~optimize:true]), so its
     binary is the one that runs with its optimisations, and dropped if it has
     {!Setting.beam_uops_max}
@@ -181,7 +181,8 @@ val beam_search :
     searched again, as one never kept.
 
     When the setting {!Setting.debug} is [2] or more, the progress of the search
-    is printed on standard output, and {!Setting.beam_debug} prints more.
+    is printed on standard output, from [4] each compilation's [Failure] too,
+    and {!Setting.beam_debug} prints more.
 
     Raises [Invalid_argument] if [amt] is not positive or as
     {!get_kernel_actions} does, and [Failure] if the kept optimisations are
