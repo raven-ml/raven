@@ -1,17 +1,7 @@
-; The DEBUG_LINEARIZE group runs in a process of its own, with the variable
-; set, since the variable is read once per process.
-
 (test
  (name test_linearizer)
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
   (glob_files *.golden)
-  (glob_files *.tolk))
- (action
-  (progn
-   (run %{test} --exclude-tag debug_linearize)
-   (setenv
-    DEBUG_LINEARIZE
-    1
-    (run %{test} --tag debug_linearize)))))
+  (glob_files *.tolk)))

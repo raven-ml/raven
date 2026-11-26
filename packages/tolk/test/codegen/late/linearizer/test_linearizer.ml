@@ -8,8 +8,8 @@ let split u =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
     (After_sources Linearizer.pm_split_ends)
 
-(* Hardware ranges become indices once the ends are split, before the loops
-   are chained. *)
+(* Hardware ranges become indices once the ends are split, before the loops are
+   chained. *)
 let to_special u =
   Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
     (After_sources Gpudims.pm_range_to_special)
@@ -19,8 +19,8 @@ let chain sink =
     ~ctx:(Linearizer.cfg_context sink)
     sink (Before_sources Linearizer.pm_add_control_flow)
 
-(* A linearization is written as the sources of a [LINEAR], tinygrad's node for
-   a program in execution order. *)
+(* A linearization is written as the sources of a [LINEAR], a program in
+   execution order. *)
 let linear sink = Ops.v Op.Linear ~src:(Linearizer.linearize sink)
 let toposorted f = Setting.context [ B (Setting.tuple_order, false) ] f
 
@@ -28,17 +28,15 @@ let toposorted f = Setting.context [ B (Setting.tuple_order, false) ] f
 let case file cell =
   List.nth (Ops.src (Golden.sink file)) (int_of_string (cell "src"))
 
-(* Kernels compiled by tinygrad, with the passes their goldens record besides
-   linearization: [`Split] for pm_split_ends, [`Chain] for pm_add_control_flow.
-   The CPU kernels are compiled for Clang; [sum_group] and [matmul_local] for
-   CUDA, with workgroup memory and barriers; [dependent_loop_bound] for no
-   target in particular. [late_bias_load] and the three after it are the kernels
-   of tinygrad's runtime/test_linearizer.py, whose claims are about the order: a
-   bias loaded after the reduction's loop ends, a load and its index between two
-   ranges, a load hoisted before the range, register stores inside the loop;
-   [sibling_loops_shared_value], a value two loops in a loop read, placed
-   before both. The
-   loops are the do-while kernels of tinygrad's test_wait_loop. *)
+(* Kernels recorded by gen/codegen/late/linearizer.py, with the passes their
+   goldens record besides linearization: [`Split] for pm_split_ends, [`Chain]
+   for pm_add_control_flow. The CPU kernels are compiled for Clang; [sum_group]
+   and [matmul_local] for CUDA, with workgroup memory and barriers;
+   [dependent_loop_bound] for no target in particular. [late_bias_load] and the
+   three after it pin an order: a bias loaded after the reduction's loop ends, a
+   load and its index between two ranges, a load hoisted before the range,
+   register stores inside the loop; [sibling_loops_shared_value], a value two
+   loops in a loop read, placed before both. The loops are do-while kernels. *)
 let kernels =
   [
     ("matmul", [ `Split; `Chain ]);
@@ -92,14 +90,14 @@ let is_end u = match Ops.op u with Op.End | Op.Backedge -> true | _ -> false
 
 let is_topological sink order =
   let at = positions order in
-  equal (slist Uops.uop Ops.compare) (Ops.toposort ~calls:Enter sink) order;
+  equal (slist Uops.uop Ops.compare) (Ops.toposort ~calls:Skip sink) order;
   equal Uops.uop sink (List.hd (List.rev order));
   List.iter
     (fun u ->
       List.iter
         (fun s ->
           less ~msg:"a source is placed after its user" int ~than:(at u) (at s))
-        (Ops.src u))
+        (Ops.src_without_body u))
     order
 
 (* Each loop end closes the innermost range still open. *)
@@ -264,85 +262,102 @@ let cover_small_ranges k =
 let unsplit_kernels =
   List.map (fun name -> sink name "_unsplit") (recorded `Split)
 
-let linearize_inputs = List.map (fun (name, _) -> sink name "") kernels
+(* A store of a call to custom code: the code's own nodes are its body, which
+   the program does not list. *)
+let calling =
+  let code =
+    Ops.custom_function ~dtype:Float32 ~fmt:true "f({0})"
+      [ Ops.float ~dtype:Float32 2.0 ]
+  in
+  let value = Ops.call ~inline:true code [ Ops.float ~dtype:Float32 3.0 ] in
+  Ops.sink [ Ops.store (Ops.index (fbuf 0) [ Ops.int 0 ]) value ]
 
-let laws =
-  group "laws"
+let linearize_inputs =
+  calling :: List.map (fun (name, _) -> sink name "") kernels
+
+(* The order a kernel compiles to: its ends split, its loops chained, then
+   linearized. *)
+let loops =
+  group "a linearized kernel"
     [
-      prop "linearize is a topological order of the sink's nodes, the sink last"
-        ~examples:linearize_inputs kernels_gen (fun k ->
-          is_topological k (Linearizer.linearize k));
-      prop "without the structural tie-break, it is still a topological order"
-        ~examples:linearize_inputs kernels_gen (fun k ->
-          toposorted (fun () -> is_topological k (Linearizer.linearize k)));
-      prop "after splitting and chaining, loops nest" ~examples:unsplit_kernels
-        kernels_gen (fun k -> loops_nest (compiled k));
-      prop "after splitting and chaining, a range's body runs inside its loop"
-        ~examples:unsplit_kernels kernels_gen (fun k ->
+      prop "nests its loops" ~examples:unsplit_kernels kernels_gen (fun k ->
+          loops_nest (compiled k));
+      prop "runs a range's body inside its loop" ~examples:unsplit_kernels
+        kernels_gen (fun k ->
           cover_small_ranges k;
           bodies_inside_loops (compiled k));
-      prop "after splitting and chaining, the rest runs outside each loop"
-        ~examples:unsplit_kernels kernels_gen (fun k ->
+      prop "runs the rest outside each loop" ~examples:unsplit_kernels
+        kernels_gen (fun k ->
           cover_small_ranges k;
           others_outside_loops (compiled k));
-      prop "pm_split_ends leaves each end closing one range"
-        ~examples:unsplit_kernels kernels_gen (fun k ->
-          ends_are_single (split k));
-      prop "pm_split_ends is idempotent" ~examples:unsplit_kernels kernels_gen
-        (Law.idempotent Uops.uop split);
-      prop "pm_split_ends closes the ranges it was given" kernels_gen (fun k ->
-          let closed u =
-            List.concat_map Ops.ended_ranges (Ops.toposort ~calls:Enter u)
-            |> List.sort_uniq Ops.compare
-          in
-          equal (list Uops.uop) (closed k) (closed (split k)));
     ]
 
 (* Tests *)
 
+let ops lines =
+  List.map (fun (i, u) -> (i, Format.asprintf "%a" Op.pp (Ops.op u))) lines
+
+(* The position and operation that begin each printed line. *)
+let printed_ops text =
+  String.split_on_char '\n' text
+  |> List.filter (fun l -> String.trim l <> "")
+  |> List.map (fun l ->
+      match String.split_on_char ' ' l |> List.filter (( <> ) "") with
+      | i :: op :: _ -> (int_of_string i, op)
+      | _ -> failf "%S names no position and operation" l)
+
+let printing setting k =
+  ignore (output ());
+  let order =
+    Setting.context
+      [ B (Setting.debug_linearize, setting); B (Setting.no_color, true) ]
+      (fun () -> Linearizer.linearize k)
+  in
+  flush stdout;
+  (order, output ())
+
 let linearize =
   group "linearize"
-    ([
-       Golden.cases "orders.golden" (fun cell ->
-           equal Uops.uop
-             (case "orders_output.golden" cell)
-             (linear (case "orders_input.golden" cell)));
-       Golden.graph "matmul_linear_toposort.golden" (fun () ->
-           toposorted (fun () -> linear (sink "matmul" "")));
-       Golden.graph "conv_linear_toposort.golden" (fun () ->
-           toposorted (fun () -> linear (sink "conv" "")));
-       Golden.graph "orders_output_toposort.golden" (fun () ->
-           let cases = Ops.src (Golden.sink "orders_input.golden") in
-           toposorted (fun () -> Ops.sink (List.map linear cases)));
-       test "without DEBUG_LINEARIZE, nothing is printed" (fun () ->
-           ignore (output ());
-           ignore (Linearizer.linearize (sink "dependent_loop_bound" ""));
-           flush stdout;
-           equal string "" (output ()));
-     ]
-    @ List.map (fun (name, _) -> linearized name) kernels)
+    [
+      prop "is a topological order of the sink's nodes, the sink last"
+        ~examples:linearize_inputs kernels_gen (fun k ->
+          is_topological k (Linearizer.linearize k));
+      prop "without the structural tie-break, is a topological order"
+        ~examples:linearize_inputs kernels_gen (fun k ->
+          toposorted (fun () -> is_topological k (Linearizer.linearize k)));
+      group "orders each kernel as its golden states"
+        (Golden.cases "orders.golden" (fun cell ->
+             equal Uops.uop
+               (case "orders_output.golden" cell)
+               (linear (case "orders_input.golden" cell)))
+        :: List.map (fun (name, _) -> linearized name) kernels);
+      group
+        "without the structural tie-break, orders each kernel as its golden \
+         states"
+        [
+          Golden.graph "matmul_linear_toposort.golden" (fun () ->
+              toposorted (fun () -> linear (sink "matmul" "")));
+          Golden.graph "conv_linear_toposort.golden" (fun () ->
+              toposorted (fun () -> linear (sink "conv" "")));
+          Golden.graph "orders_output_toposort.golden" (fun () ->
+              let cases = Ops.src (Golden.sink "orders_input.golden") in
+              toposorted (fun () -> Ops.sink (List.map linear cases)));
+        ];
+      test "under debug_linearize, prints each node's position and operation"
+        (fun () ->
+          let order, text = printing true (sink "dependent_loop_bound" "") in
+          equal
+            (list (pair int string))
+            (ops (List.mapi (fun i u -> (i, u)) order))
+            (printed_ops text));
+      test "without debug_linearize, prints nothing" (fun () ->
+          let _, text = printing false (sink "dependent_loop_bound" "") in
+          equal string "" text);
+    ]
 
-(* DEBUG_LINEARIZE is read once per process, so the stanza runs this group in a
-   process of its own, with the variable set. *)
-let printed () =
-  equal ~msg:"the suite runs this test with DEBUG_LINEARIZE=1" (option string)
-    (Some "1")
-    (Sys.getenv_opt "DEBUG_LINEARIZE");
-  ignore (output ());
-  Setting.context
-    [ B (Setting.no_color, true) ]
-    (fun () -> ignore (Linearizer.linearize (sink "dependent_loop_bound" "")));
-  flush stdout;
-  output ()
-
-let debug_linearize =
-  tag "debug_linearize"
-  @@ group "DEBUG_LINEARIZE" [ Golden.text "debug_linearize.golden" printed ]
-
-(* The README's CPython row on do_split_ends: tinygrad's sort of range arguments
-   raises when two identities tie up to an axis type, or when one is a prefix of
-   the other. tolk orders identities lexicographically, a prefix first, then
-   axis types in declaration order, the greatest innermost. *)
+(* Identities are ordered lexicographically, a prefix first, then axis types in
+   declaration order, the greatest innermost: two identities that tie up to an
+   axis type, or one that is a prefix of the other, still nest. *)
 let untied_order () =
   let range axis_type id = Ops.range ~axis_type (Int 4) id in
   let u = Ops.store (Ops.index (fbuf 0) [ Ops.int 0 ]) (Ops.float 1.0) in
@@ -361,8 +376,7 @@ let untied_order () =
    parts each: the axis type decides the order before the identity. *)
 let range_order () =
   let types =
-    Ops.Axis_type.
-      [ Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
+    Ops.Axis_type.[ Global; Local; Warp; Weak; Loop; Upcast; Placeholder ]
   in
   let ranges =
     List.concat
@@ -382,30 +396,44 @@ let range_order () =
 
 let pm_split_ends =
   group "pm_split_ends"
-    (Golden.cases "splits.golden" (fun cell ->
-         equal Uops.uop
-           (case "splits_output.golden" cell)
-           (split (case "splits_input.golden" cell)))
-    :: test "ranges of one identity and different axis types nest by axis type"
-         untied_order
-    :: test "ranges nest by axis type, then identity" range_order
-    :: List.map split_kernel (recorded `Split))
+    [
+      group "splits each kernel's ends as its golden states"
+        (Golden.cases "splits.golden" (fun cell ->
+             equal Uops.uop
+               (case "splits_output.golden" cell)
+               (split (case "splits_input.golden" cell)))
+        :: List.map split_kernel (recorded `Split));
+      test "ranges of one identity and different axis types nest by axis type"
+        untied_order;
+      test "ranges nest by axis type, then identity" range_order;
+      prop "leaves each end closing one range" ~examples:unsplit_kernels
+        kernels_gen (fun k -> ends_are_single (split k));
+      prop "is idempotent" ~examples:unsplit_kernels kernels_gen
+        (Law.idempotent Uops.uop split);
+      prop "closes the ranges it was given" kernels_gen (fun k ->
+          let closed u =
+            List.concat_map Ops.ended_ranges (Ops.toposort ~calls:Enter u)
+            |> List.sort_uniq Ops.compare
+          in
+          equal (list Uops.uop) (closed k) (closed (split k)));
+    ]
 
 let pm_add_control_flow =
   group "pm_add_control_flow"
-    ([
-       Golden.cases "chains.golden" (fun cell ->
-           equal Uops.uop
-             (case "chains_output.golden" cell)
-             (chain (case "chains_input.golden" cell)));
-       test "a range that would run after a loop depending on it is rejected"
-         (fun () ->
-           rejects (fun () ->
-               Linearizer.cfg_context (Golden.sink "cyclic.golden")));
-     ]
-    @ List.map chained_kernel (recorded `Chain))
+    [
+      group "chains each kernel's loops as its golden states"
+        (Golden.cases "chains.golden" (fun cell ->
+             equal Uops.uop
+               (case "chains_output.golden" cell)
+               (chain (case "chains_input.golden" cell)))
+        :: List.map chained_kernel (recorded `Chain));
+      test "a range that would run after a loop depending on it is rejected"
+        (fun () ->
+          rejects (fun () ->
+              Linearizer.cfg_context (Golden.sink "cyclic.golden")));
+    ]
 
 let () =
   exit
     (run "Tolk.Linearizer"
-       [ linearize; pm_split_ends; pm_add_control_flow; laws; debug_linearize ])
+       [ loops; linearize; pm_add_control_flow; pm_split_ends ])
