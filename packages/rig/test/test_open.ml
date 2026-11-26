@@ -1092,7 +1092,7 @@ let test_bus () =
        ])
 
 (* rig.mli: [None] for "a device of another machine", whatever its driver
-   states. Today rig answers the driver's fact. *)
+   states. *)
 let test_remote_bus () =
   let d = remote ~bus:"0000:03:00.0" "bus" "open:bus-far" in
   equal (option string) None (Rig.bus d)
@@ -1879,13 +1879,10 @@ let () =
                "bus is the driver's address, None for the host, software and \
                 io devices"
                test_bus;
-             xfail
-               ~reason:
-                 "rig answers the driver's bus for a device of another machine"
-               (test
-                  "a device of another machine has no bus, whatever its driver \
-                   states"
-                  test_remote_bus);
+             test
+               "a device of another machine has no bus, whatever its driver \
+                states"
+               test_remote_bus;
            ];
          group "computes"
            [ test "every device but an io device computes" test_computes ];

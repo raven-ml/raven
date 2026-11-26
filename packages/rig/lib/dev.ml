@@ -1392,11 +1392,14 @@ let driver_device (type a) (module D : Rig_edge.Driver with type t = a)
     let slot = Nativeint.to_int (c_slot_word index) in
     if (D.locate f.word).host = Some slot then slot else 0
   in
+  (* A bus address names a PCI function of this machine: another machine's
+     is none of this one's. *)
+  let bus = match machine with Here -> f.bus | Hosts _ | On _ -> None in
   let c = c_new index name f.may_block f.edge opened in
   let d =
     make_device ~index ~name ~machine
       ~kind:(Driver { m; h; rid })
-      ~c ~arch:f.arch ~bus:f.bus ~queues ~copy_engine:f.copy_engine
+      ~c ~arch:f.arch ~bus ~queues ~copy_engine:f.copy_engine
       ~completion:f.completion
       ~waits:f.waits ~hang_ms:f.hang_ms ~maps_host:f.maps_host
       ~alignment:f.alignment ~granules:f.granules ~cache_bytes:f.cache_bytes
