@@ -1080,7 +1080,13 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
     | P.In _ | Coord _ | Const _ -> true
     | Op1 (Bitcast, _, i) -> ok i
     | _ when not (has_nan (dtype_of node)) -> true
-    | Op1 ((Copy | Cast | Unary (Neg | Abs)), _, i) -> ok i
+    | Op1 ((Copy | Unary (Neg | Abs)), _, i) -> ok i
+    (* A cast of a NaN into another dtype is any NaN, quiet or not where the
+       operand is signalling (Prog.Cast): a cast settles from a dtype without
+       NaNs, or into its operand's own. *)
+    | Op1 (Cast, D.Any y, i) ->
+        let (D.Any x) = List.nth !tys i in
+        ok i && ((not (has_nan (D.Any x))) || D.equal x y)
     | Op3 (Where, _, i, j) -> ok i && ok j
     | _ -> false
   in
