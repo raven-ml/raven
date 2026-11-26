@@ -816,7 +816,7 @@ let reports_the_first_rejected () =
   let c, table, _ = batched () in
   raises (Renderer.Compiler.Compile_error "rejected bad1") (fun () ->
       Renderer.Compiler.compile_all c [ "a"; "bad1"; "bad0" ]);
-  equal (option string) None (get table "a")
+  equal (option string) (Some "lib:a") (get table "a")
 
 (* A compiler whose call of several sources fails for none of them. *)
 let fails_together () =
@@ -959,7 +959,9 @@ let compilers =
         compiles_all_at_once;
       test "compile_all calls nothing when the table holds every source"
         compiles_nothing_held;
-      test "compile_all raises for the first source the toolchain rejects"
+      test
+        "compile_all raises for the first source the toolchain rejects, keeping \
+         those before it"
         reports_the_first_rejected;
       test "compile_all compiles each source alone when a call of several fails for none"
         fails_together;

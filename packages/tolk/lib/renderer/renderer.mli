@@ -158,7 +158,8 @@ module Compiler : sig
   (** [compile_all c srcs] is [List.map (compile_cached c) srcs], with the
       sources that [c]'s disk cache does not hold, each once, compiled by one
       call of [c]'s function: one of {!batch}'s compiles them in one run of its
-      toolchain.
+      toolchain. Where that call raises {!Compile_error}, each is compiled
+      alone, in the order of [srcs].
 
       Raises as {!compile_cached} does, for the first of [srcs] that raises. *)
 

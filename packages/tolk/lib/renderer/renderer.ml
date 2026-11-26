@@ -208,9 +208,10 @@ module Compiler = struct
     Option.bind (table c) read
 
   (* The sources not kept are compiled in one call, each once. When that call
-     raises, each is compiled alone, in order, so that the first that raises is
-     the one reported, as [List.map] would, and a call that failed for none of
-     them still compiles them. *)
+     raises, each is compiled alone, in order, and kept as it is made, so that
+     the first that raises is the one reported and those before it are kept, as
+     [List.map] would, and a call that failed for none of them still compiles
+     them. *)
   let compile_all c srcs =
     let table = table c in
     let found = List.map (fun src -> (src, kept c src)) srcs in
@@ -224,28 +225,28 @@ module Compiler = struct
       invalid_arg
         ("tried to compile with ASSERT_COMPILE set\n"
         ^ fst (List.find (fun (_, lib) -> Option.is_none lib) found));
-    let libs =
-      if missing = [] then []
-      else if List.compare_length_with missing 1 = 0 then c.compile missing
-      else
-        try c.compile missing
-        with Compile_error _ ->
-          let alone = Hashtbl.create 8 in
-          List.iter
-            (fun (src, lib) ->
-              if Option.is_none lib && not (Hashtbl.mem alone src) then
-                Hashtbl.replace alone src (compile c src))
-            found;
-          List.map (Hashtbl.find alone) missing
-    in
-    if List.compare_lengths libs missing <> 0 then
-      invalid_arg "a compiler returns one binary per source";
     let made = Hashtbl.create (List.length missing) in
-    List.iter2
-      (fun src lib ->
-        Hashtbl.replace made src lib;
-        Option.iter (fun table -> Helpers.Diskcache.put ~table src lib) table)
-      missing libs;
+    let keep src lib =
+      Hashtbl.replace made src lib;
+      Option.iter (fun table -> Helpers.Diskcache.put ~table src lib) table
+    in
+    let alone () =
+      List.iter
+        (fun (src, lib) ->
+          if Option.is_none lib && not (Hashtbl.mem made src) then
+            keep src (compile c src))
+        found
+    in
+    (match missing with
+    | [] -> ()
+    | [ _ ] -> alone ()
+    | _ -> (
+        match c.compile missing with
+        | libs ->
+            if List.compare_lengths libs missing <> 0 then
+              invalid_arg "a compiler returns one binary per source";
+            List.iter2 keep missing libs
+        | exception Compile_error _ -> alone ()));
     List.map
       (fun (src, lib) ->
         match lib with Some lib -> lib | None -> Hashtbl.find made src)
