@@ -149,11 +149,12 @@ let check_alone (b : Support.backend) r ~dt ?(result = dt) ~rows ~cols ~spoil
   | _ -> fail "declined the batch or the matrix alone, not both"
 
 (* The classes a law's cases fall in: each dtype, an order past 0, past a block
-   of 64, and a Subnormal scale. *)
-let classes c =
+   of 64 unless [~past_block:false] (a library that computes no order past it),
+   and a Subnormal scale. *)
+let classes ?(past_block = true) c =
   List.iter (fun d -> cover (Format.asprintf "%a" pp_dtype d) (c.dt = d)) dtypes;
   cover "an order past 0" (c.n > 0);
-  cover "an order past a block of 64" (c.n > 64);
+  if past_block then cover "an order past a block of 64" (c.n > 64);
   cover "a Subnormal scale" (c.scale = Subnormal)
 
 (* The cases the laws draw: orders below a block of 64, of 1 one time in
@@ -265,9 +266,9 @@ let law_eig_fails ?(vectors = true) (b : Support.backend) c =
       (if vectors then [ Eig true; Eig false ] else [ Eig false ])
 
 (* NaN or an infinity anywhere. *)
-let law_svd_fails (b : Support.backend) c =
+let law_svd_fails ?past_block (b : Support.backend) c =
   let c = one c in
-  classes c;
+  classes ?past_block c;
   let m, n, x = svd_operand c in
   cover "wide" (m < n);
   cover "tall" (m > n);
@@ -703,7 +704,8 @@ let metal (d : Support.declared) =
          every dtype"
         (run (fun b () -> test_metal_declines b ()));
       prop "a matrix eigh fails on is NaN alone" case (any law_eigh_fails);
-      prop "a matrix svd fails on is NaN alone" case (svd_jacobi law_svd_fails);
+      prop "a matrix svd fails on is NaN alone" case
+        (svd_jacobi (law_svd_fails ~past_block:false));
       prop "a matrix eig's values fail on is NaN alone" case
         (any (fun b c -> law_eig_fails ~vectors:false b c));
       prop "eigh reads the lower triangle and the diagonal's real parts" case
