@@ -10,6 +10,7 @@ This document compares the Nx library (OCaml) with NumPy (Python), highlighting 
   - [3. Array Operations](#3-array-operations)
     - [Basic Operations](#basic-operations)
     - [Array Manipulation](#array-manipulation)
+    - [Integer Arithmetic and Rounding](#integer-arithmetic-and-rounding)
   - [4. Element Access and Slicing](#4-element-access-and-slicing)
   - [5. Statistical Functions](#5-statistical-functions)
   - [6. Linear Algebra](#6-linear-algebra)
@@ -159,6 +160,36 @@ flattened = arr.flatten()
 concat = np.concatenate([arr1, arr2], axis=0)
 ```
 
+### Integer arithmetic and rounding
+
+Nx rounds and divides as C does. `round` takes a half away from zero, and `roundeven` rounds as `np.round` does. On integers, `div` truncates toward zero, and `mod_` takes the sign of the dividend, as `np.fmod` does. A negative integer power is `0`, but `1` at a base of `1` and `1` or `-1` at a base of `-1`, where NumPy raises.
+
+**Nx:**
+```ocaml
+# let x = Nx.create Nx.float32 [| 4 |] [| 0.5; 1.5; 2.5; -2.5 |] in
+  (Nx.to_array (Nx.round x), Nx.to_array (Nx.roundeven x));;
+- : float array * float array = ([|1.; 2.; 3.; -3.|], [|0.; 2.; 2.; -2.|])
+# let a = Nx.create Nx.int32 [| 2 |] [| -7l; 7l |]
+  and b = Nx.create Nx.int32 [| 2 |] [| 2l; -2l |] in
+  (Nx.to_array (Nx.div a b), Nx.to_array (Nx.mod_ a b));;
+- : int32 array * int32 array = ([|-3l; -3l|], [|-1l; 1l|])
+# Nx.to_array
+    (Nx.pow (Nx.create Nx.int32 [| 3 |] [| 2l; 1l; -1l |])
+       (Nx.full Nx.int32 [| 3 |] (-1l)));;
+- : int32 array = [|0l; 1l; -1l|]
+```
+
+**NumPy:**
+```python
+x = np.array([0.5, 1.5, 2.5, -2.5], dtype=np.float32)
+np.round(x)                  # [ 0.,  2.,  2., -2.]
+a, b = np.array([-7, 7]), np.array([2, -2])
+a // b                       # [-4, -4]
+a % b                        # [ 1, -1]
+np.fmod(a, b)                # [-1,  1]
+np.array([2, 1, -1]) ** -1   # ValueError
+```
+
 ## 4. Element access and slicing
 
 **Nx:**
@@ -186,10 +217,40 @@ arr[0, 1] = 5.0
 slice = arr[0]
 ```
 
+`take` reads `0` at a position outside the axis it reads, where `np.take` raises `IndexError`:
+
+```ocaml
+# Nx.to_array
+    (Nx.take (Nx.create Nx.int64 [| 2 |] [| 0L; 5L |])
+       (Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]));;
+- : float array = [|1.; 0.|]
+```
+
+```python
+np.take(np.array([1., 2., 3.]), [0, 5])   # IndexError
+```
+
 ## 5. Statistical functions
 
 `Nx.quantile` sorts NaN last, so a NaN reaches only the upper quantiles, where
 `np.quantile` gives NaN for every quantile of a lane that holds one.
+
+Over integers, `mean` is the exact mean truncated toward zero, in the input's dtype, where `np.mean` returns a `float64`. `sum` wraps in the input's dtype, where `np.sum` widens a small integer to `int64`. `argmax` and `argmin` order `-0.` below `+0.`; NumPy treats the two as equal.
+
+```ocaml
+# Nx.item [] (Nx.mean (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]));;
+- : int32 = 1l
+# Nx.item [] (Nx.sum (Nx.create Nx.int8 [| 2 |] [| 100; 100 |]));;
+- : int = -56
+# Nx.item [] (Nx.argmax (Nx.create Nx.float32 [| 2 |] [| -0.; 0. |]));;
+- : int64 = 1L
+```
+
+```python
+np.mean(np.array([1, 2], dtype=np.int32))    # 1.5
+np.sum(np.array([100, 100], dtype=np.int8))  # 200
+np.argmax(np.array([-0.0, 0.0]))             # 0
+```
 
 **Nx:**
 <!-- $MDX skip -->
