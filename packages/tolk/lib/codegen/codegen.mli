@@ -59,7 +59,13 @@ val full_rewrite_to_sink :
     Its tensor cores' operands are then staged through shared memory
     ({!Stage.operands}), and on the host its decoded operand through a panel
     ({!Stage.decodes}), and on the host its largest output loop runs in
-    blocks ({!Ops.kernel_info.split}). The settings {!Setting.disable_fast_idiv}
+    blocks ({!Ops.kernel_info.split}). A float sum then adds its terms, in
+    each thread, into running sums of at most 256 terms, which it adds in
+    order. The last running sum of a range whose trips the blocks do not
+    divide is padded with trips that add [+0]. A range whose trips no literal,
+    nor a selection between literals, states keeps one running sum, and so
+    does a GPU thread whose accumulators take more than 320 bytes, which a
+    second running sum would spill. The settings {!Setting.disable_fast_idiv}
     and {!Setting.transcendental} choose how divisions by constants and
     transcendental functions are decomposed ({!Decomp_op.late_patterns},
     {!Transcendental.val-patterns}). When the setting {!Setting.spec} is [1] or
@@ -74,6 +80,24 @@ val full_rewrite_to_sink :
     ({!Renderer.t.fma}) and its multiply-add in a float32 does not already, it
     is computed in a float32 and rounded once from there.
 
+    The lowered kernel computes what [ast] computes, each operation on floats
+    but a sum's additions rounded once to its type, except that a
+    transcendental function is within the bound of its decomposition
+    ({!Transcendental.val-patterns}) and a target that flushes subnormals
+    reads and writes them as zeros of their sign. A float sum adds its terms
+    in the order its optimisations give it: an unrolled reduce adds its lanes
+    in place and adds that partial into the thread's running sum (above); a
+    tensor core's step adds its products at once, aligning and truncating
+    them; a workgroup adds its threads' partials in order; and a sum the
+    schedule splits into two kernels adds the second's partials in order.
+    Where [ren] writes a multiply-add of float32 or float64 values, a product
+    is added into its running sum, or into its unrolled lanes' partial, as one
+    multiply-add, rounded once, the first lane's product of a partial rounded
+    alone. A term of a sum of [n] terms so passes at most
+    [⌈5 min(n, 256) / 4⌉ + ⌈n / 128⌉] roundings, a core's step counting [5/4]
+    a product, and [s - 1] more where the schedule splits the sum into [s]
+    partials.
+
     Once its workgroup barriers are placed, the kernel is checked
     ({!Uniform.check}) whatever the setting {!Setting.spec}: a barrier or a
     matrix multiply-accumulate in a loop whose trips may differ between a
@@ -82,7 +106,8 @@ val full_rewrite_to_sink :
     Raises [Invalid_argument] if [optimize] holds and [ast]'s argument is not a
     {!Ops.type-kernel_info}, if its beam search is asked for without [beam], if
     an optimisation its argument lists does not apply, with the reason, if a
-    check fails, or if a pass does. *)
+    check fails, or if a pass does, as {!Postrange.apply_opts} does for a
+    store that breaks a weak range's promise. *)
 
 (** {1:linearizing Linearizing} *)
 
@@ -128,7 +153,14 @@ val to_program :
       its slot [N] unless the kernel's name is one of these names. Kernels
       whose sources differ in those alone, as kernels of one operation over
       two extents or over buffers of two sizes may, take one binary, which
-      each launch runs over its own sizes.
+      each launch runs over its own sizes. On the host, {!symbol} is the
+      entry the host's launches call, [f (p, first, end)], [p] pointing to
+      the kernel's arguments laid out as {!Device.Tiny_elf.layout} lays them:
+      a split program's call runs its loop's trips from [first] to [end - 1],
+      up to its last.
+
+    Lowering adds no access past a buffer: the trips that padding adds, as a
+    padded running sum's ({!full_rewrite_to_sink}), are gated.
 
     A call of a sink inside [ast] runs its body as part of the program: before
     [ast] is lowered, each such body, its own calls first, is lowered alone
@@ -233,8 +265,10 @@ val to_programs :
     When a kernel, or a member of a launch, asks for a beam search, whose
     timings concurrent compiles would disturb, each kernel is made in turn,
     in order, by {!to_program}.
-    A kernel another domain is making at once may be made twice, and the
-    first made is kept.
+    A kernel another domain is making at once may be made twice, and one
+    program is kept: a {!to_program} call holds the kernel's key from when it
+    begins making the program, and [to_programs] keeps a program only where
+    no other call holds or has kept its key once it has compiled it.
 
     Raises what {!to_program} raises. A call that raises may have kept some
     of the programs, in memory or on disk, and a later call makes the
