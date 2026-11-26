@@ -257,9 +257,21 @@ type dir_model = {
    the file it was loaded from. *)
 type held_model = { loaded : int * int; dir : dir_model; file : int }
 
-let dir = abstract "dir"
-let held = abstract "held"
 let path d = Filename.concat d "x"
+
+(* [remove_dir d] removes [d]'s file, if any, then [d]: the runner removes a
+   test's directories when the test ends, and a test runs its programs many
+   times, each with directories of its own, which would otherwise fill a small
+   tmpfs. A save leaves nothing else in [d], so [Sys.rmdir] raises if one did.
+   On Windows a file whose pages a reachable value maps cannot be removed
+   ([commands]), and the runner removes the directories. *)
+let remove_dir d =
+  if Sys.file_exists (path d) then Sys.remove (path d);
+  Sys.rmdir d
+
+let release = if Sys.win32 then None else Some remove_dir
+let dir = abstract ?release "dir"
+let held = abstract "held"
 let holds (d : dir_model) = Option.is_some d.file
 
 (* [ends d e] records that [d]'s file ended by [e]. *)
@@ -358,14 +370,16 @@ let loaded =
 
 (* Concurrent loads and saves *)
 
-(* The archive [seed] saves: one entry of 1000 bytes of [seed]. *)
+(* The archive [seed] saves: one entry of one byte, [seed]. A file that is not
+   whole fails to load at any size: the archive's directory ends it and states
+   its entry's CRC-32. *)
 let archive_of seed =
-  Archive.of_list [ ("z", Nx.P (Nx.full Nx.uint8 [| 1000 |] seed)) ]
+  Archive.of_list [ ("z", Nx.P (Nx.full Nx.uint8 [| 1 |] seed)) ]
 
 (* The reference: the archive last saved, if any. *)
 type saved = { mutable last : int option }
 
-let shared : (saved, string) abstract = abstract "dir"
+let shared : (saved, string) abstract = abstract ?release "dir"
 let which = Gen.int_range 0 1
 
 let concurrent_commands =
