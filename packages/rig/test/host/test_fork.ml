@@ -3,9 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A forked child of a process whose host ran launches on the pool's workers:
-   the host is never lost, so the child runs host code as its parent did. Its
-   own suite: a process that ran a domain cannot fork. *)
+(* rig.mli's Stops and forks, for the host: a forked child of a process whose
+   host ran launches on the pool's workers finds the host not lost, and runs
+   host code as its parent did. Its own suite, as test/README.md asks of a test
+   that forks. *)
 
 open Windtrap
 module B = Rig.Buffer
@@ -20,8 +21,8 @@ let status = function
 (* Runs [child] in a forked child and is what it returned: the child writes its
    answer to a pipe and leaves without running this process's exit. *)
 let in_child child =
-  let r, w = Unix.pipe () in
   Rig_support.needs_fork ();
+  let r, w = Unix.pipe () in
   match Unix.fork () with
   | 0 ->
       Unix.close r;
@@ -38,13 +39,20 @@ let in_child child =
       let _, status = Unix.waitpid [] pid in
       (lines, status)
 
-let obj = lazy (S.fixture ~dir:"../fixtures" "affine")
+let obj =
+  lazy
+    (S.fixture
+       ~dir:(Filename.concat Filename.parent_dir_name "fixtures")
+       "affine")
+
 let load o = Result.get_ok (Rig.Image.load Rig.host o)
+
 let entry image =
   Rig.Image.entry (require_some (Rig.Image.resolve image "affine"))
 
 (* Whether a launch of affine.c over [n] words, in groups of 64 threads, writes
-   [a * i + c] at each [i]: enough groups that the pool's workers run some. *)
+   [a * i + c] at each [i]: ["right"], or the first word it got wrong. Enough
+   groups that the pool's workers run some. *)
 let affine image ~n ~a ~c =
   let inb = S.words n and out = S.words n in
   for i = 0 to n - 1 do
@@ -70,16 +78,20 @@ let affine image ~n ~a ~c =
     (Rig.submit s
        ~buffers:[| B.of_bigarray out; B.of_bigarray inb |]
        ~args:[| args |]);
-  let right = ref true in
-  for i = 0 to n - 1 do
-    if out.{i} <> Int64.of_int ((a * i) + c) then right := false
-  done;
-  if !right then "right" else "wrong"
+  let rec first_wrong i =
+    if i = n then "right"
+    else if out.{i} <> Int64.of_int ((a * i) + c) then
+      Printf.sprintf "word %d is %Ld" i out.{i}
+    else first_wrong (i + 1)
+  in
+  first_wrong 0
 
 let n = 1 lsl 16
 
 let test_child () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  (* Skips on Windows before any setup; [in_child] asks again once the pool's
+     threads run. *)
+  Rig_support.needs_fork ();
   let image = load (Lazy.force obj) in
   equal ~msg:"the parent's launch" string "right" (affine image ~n ~a:3 ~c:1);
   (* The child links an object of its own, which no image of its parent's
@@ -101,7 +113,7 @@ let () =
   exit
     (run "rig_host.fork"
        [
-         group "fork"
+         group "forks"
            [
              test "a forked child runs host code, its parent's and its own"
                test_child;
