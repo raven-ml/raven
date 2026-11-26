@@ -1,17 +1,7 @@
-; DMC is read once per process, so its group runs in a process of its own,
-; with the variable set.
-
 (test
  (name test_coalesce)
  (package tolk)
  (libraries windtrap tolk tolk_test)
  (deps
   (glob_files *.golden)
-  (glob_files *.tolk))
- (action
-  (progn
-   (run %{test} --exclude-tag dmc)
-   (setenv
-    DMC
-    1
-    (run %{test} --tag dmc)))))
+  (glob_files *.tolk)))

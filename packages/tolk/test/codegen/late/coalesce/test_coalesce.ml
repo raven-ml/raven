@@ -9,21 +9,22 @@ let host count bytes =
   Renderer.v ~registers:(fun () -> Some { Renderer.count; bytes }) cpu
 
 let vector = host 16 16
-let tinygrad = Renderer.v cpu
+
+(* The CPU device's renderer, whose vector registers are not known. *)
+let cpu_unknown = Renderer.v cpu
 let scalar = Renderer.v ~supports_float4:false cpu
 
 (* A GPU's vectors are aligned to their size, so its merges read where storage
    starts; the CPU device's are aligned to their element. *)
-let gpu = Renderer.v (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
+let gpu =
+  Renderer.v (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
 
-(* A GPU that writes a vector of bytes as one integer word, as CUDA's
-   renderer does. *)
+(* A GPU that writes a vector of bytes as one integer word ([byte_words]). *)
 let gpu_words =
   Renderer.v ~byte_words:true
     (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
 
-(* A GPU that writes vectors of eight 16-bit floats, as CUDA's renderer
-   does. *)
+(* A GPU that writes vectors of eight 16-bit floats ([half8]). *)
 let gpu8 =
   Renderer.v ~half8:true
     (Result.get_ok (Helpers.Target.of_string "CUDA:CUDA:sm_89"))
@@ -75,8 +76,7 @@ let accesses op sink =
 
 let runs = slist (pair int int) compare
 
-(* Loads and stores of [width] elements of [dtype], as test_gen_float4.py counts
-   them. *)
+(* The counts of loads and of stores of [width] elements of [dtype]. *)
 let vectors ?(dtype = Dtype.Float32) ?(width = 4) sink =
   let wide u = Shape.shape u = [ Ops.Int width ] in
   let count op f =
@@ -90,7 +90,9 @@ let vectors ?(dtype = Dtype.Float32) ?(width = 4) sink =
         let v = Ops.nth u 1 in
         Dtype.equal (Ops.dtype v) dtype && wide v) )
 
-(* Kernels compiled by tinygrad *)
+(* Kernels recorded by gen/codegen/late/coalesce.py: the sinks memory_coalescing
+   receives when a kernel compiles, for Clang, and for CUDA where the kernel
+   needs workgroups. *)
 
 let kernels =
   [
@@ -124,72 +126,14 @@ let kernels =
 let kernel name = Golden.sink (name ^ ".golden")
 
 let compiled name =
-  group name
-    [
-      Golden.graph (name ^ "_coalesced.golden") (fun () ->
-          coalesce (kernel name));
-      Golden.graph (name ^ "_scalar.golden") (fun () ->
-          coalesce ~renderer:scalar (kernel name));
-    ]
-
-let float4 name expected =
-  test
-    (Printf.sprintf "%s has (%d, %d) loads and stores of four floats" name
-       (fst expected) (snd expected))
-    (fun () -> equal (pair int int) expected (vectors (coalesce (kernel name))))
-
-let gen_float4 =
-  group "test_gen_float4.py"
-    [
-      float4 "basic" (2, 1);
-      float4 "multidim" (4, 2);
-      float4 "unaligned_load" (0, 1);
-      float4 "multidim_unaligned_load" (0, 2);
-      float4 "sometimes_unaligned" (0, 0);
-      test
-        "multidim_sometimes_unaligned: one vector store, a vector load or not"
-        (fun () ->
-          mem (pair int int)
-            (vectors (coalesce (kernel "multidim_sometimes_unaligned")))
-            [ (0, 1); (1, 1) ]);
-      float4 "expand" (0, 1);
-      float4 "heterogeneous" (1, 1);
-      float4 "aligned_variable" (2, 1);
-      float4 "unaligned_variable" (1, 1);
-    ]
-
-let linearizer =
-  let count op sink =
-    List.length
-      (List.filter (fun u -> Ops.op u = op) (Ops.toposort ~calls:Enter sink))
-  in
-  group "test_linearizer.py"
-    [
-      test "load_dedup: one to four loads of three overlapping elements"
-        (fun () ->
-          let n = count Op.Load (coalesce (kernel "load_dedup")) in
-          at_least int ~than:1 n;
-          at_most int ~than:4 n);
-      test "grouped_store: every store to local or global memory is a vector"
-        (fun () ->
-          List.iter
-            (fun u ->
-              if Ops.op u = Op.Store && Ops.addrspace (Ops.nth u 0) <> Some Reg
-              then
-                at_least ~msg:(Graph.to_string u) int ~than:2
-                  (Shape.max_numel (Ops.nth u 1)))
-            (Ops.toposort ~calls:Enter (coalesce (kernel "grouped_store"))));
-    ]
+  Golden.graph (name ^ "_coalesced.golden") (fun () -> coalesce (kernel name))
 
 (* Hand-built accesses *)
 
 let hand_built file renderer =
-  group file
-    [
-      Golden.cases "accesses.golden" (fun cell ->
-          equal Uops.uop (case file cell)
-            (coalesce ~renderer (case "accesses_input.golden" cell)));
-    ]
+  Golden.cases "accesses.golden" (fun cell ->
+      equal Uops.uop (case file cell)
+        (coalesce ~renderer (case "accesses_input.golden" cell)))
 
 (* Loads of [buf] at [x * 4 + k] for each [k] of [ks], or at [k] alone, in
    integers of [dtype]: the weak integer's constants are bare, any other's are
@@ -223,7 +167,8 @@ let lengths =
           equal runs
             [ (0, 4); (4, 4) ]
             (accesses Op.Load
-               (coalesce ~renderer:tinygrad (loads half (List.init 8 Fun.id)))));
+               (coalesce ~renderer:cpu_unknown
+                  (loads half (List.init 8 Fun.id)))));
       cases "eight consecutive stores fill registers of"
         ~id:(fun (name, _, dtype, _) ->
           Format.asprintf "%s, %a" name Dtype.pp dtype)
@@ -244,14 +189,15 @@ let lengths =
           let b = Shape.param ~shape:[ Int 64 ] 0 dtype
           and src = Shape.param ~shape:[ Int 64 ] 1 dtype in
           let copy i =
-            Ops.store (at b (Ops.int i)) (Ops.load (at src (Ops.int (2 * i))) [])
+            Ops.store
+              (at b (Ops.int i))
+              (Ops.load (at src (Ops.int (2 * i))) [])
           in
           equal runs expected
             (accesses Op.Store
                (coalesce ~renderer (Ops.sink (List.init 8 copy)))));
       cases "on a GPU, eight consecutive loads are two loads of four, of"
-        ~id:(Format.asprintf "%a" Dtype.pp)
-        [ Dtype.Float16; Dtype.Bfloat16 ]
+        ~id:(Format.asprintf "%a" Dtype.pp) [ Dtype.Float16; Dtype.Bfloat16 ]
         (fun dtype ->
           let b = Shape.param ~shape:[ Int 64 ] 0 dtype in
           equal runs
@@ -309,7 +255,7 @@ let lengths =
             (accesses Op.Load (coalesce ~renderer sink)));
       cases "without known registers, byte loads stay apart, on"
         ~id:(fun (name, _) -> name)
-        [ ("the CPU device", tinygrad); ("a GPU", gpu) ]
+        [ ("the CPU device", cpu_unknown); ("a GPU", gpu) ]
         (fun (_, renderer) ->
           let b = Shape.param ~shape:[ Int 64 ] 0 Dtype.Uint8 in
           equal runs
@@ -333,12 +279,11 @@ let lengths =
           let b = Shape.param ~shape:[ Int 64 ] 0 dtype in
           equal runs expected
             (accesses Op.Store
-               (coalesce ~renderer:(host 16 32)
-                  (stores b (List.init 8 Fun.id)))));
+               (coalesce ~renderer:(host 16 32) (stores b (List.init 8 Fun.id)))));
     ]
 
 (* A buffer whose first element lies [phase] bytes past a multiple of [align]
-  . *)
+   . *)
 let phased ?(dtype = Dtype.Float32) ?align phase =
   Shape.param ~shape:[ Int 64 ] ~phase ?align 0 dtype
 
@@ -407,14 +352,21 @@ let phases =
                   vector)));
     ]
 
+(* Four consecutive loads in the body of a call. *)
+let called_loads =
+  let body =
+    loads (Shape.param ~shape:[ Int 16 ] 0 Float32) (List.init 4 Fun.id)
+  in
+  Ops.sink [ Ops.call body [ Shape.param ~shape:[ Int 16 ] 5 Float32 ] ]
+
 let left_alone =
   let same name sink =
     test name (fun () -> equal Uops.uop sink (coalesce sink))
   in
   let f4 = List.init 4 Fun.id in
-  group "left alone"
+  group "leaves as it is"
     [
-      same "register memory"
+      same "register memory where the renderer computes no vectors"
         (loads (Shape.placeholder ~slot:3 ~addrspace:Reg [ 16 ] Float32) f4);
       same "a volatile parameter"
         (loads (Shape.param ~volatile:true ~shape:[ Int 16 ] 4 Float32) f4);
@@ -431,6 +383,7 @@ let left_alone =
           equal runs
             [ (0, 1) ]
             (accesses Op.Store (coalesce (Ops.sink [ s; s ]))));
+      same "the body of a call" called_loads;
     ]
 
 let errors =
@@ -449,9 +402,7 @@ let errors =
       rejects "a load through a shrink"
         (Ops.sink
            [ Ops.load (Ops.v ~src:[ buf; Ops.int 0; Ops.int 4 ] Op.Shrink) [] ]);
-      rejects
-        "a load through an index of two indices (unstated: tinygrad unpacks \
-         one)"
+      rejects "a load through an index of two indices"
         (Ops.sink [ Ops.load (Ops.index buf [ Ops.int 0; Ops.int 1 ]) [] ]);
       rejects "two stores to one element"
         (Ops.sink [ Ops.store first (value 0); Ops.store first (value 1) ]);
@@ -517,51 +468,44 @@ let dependencies =
           equal int 2 (stores_in Local (Ops.sink [ s0; s1; t0; t1 ])));
     ]
 
-let memory_coalescing =
-  group "memory_coalescing"
-    [
-      group "kernels" (List.map compiled kernels);
-      gen_float4;
-      linearizer;
-      group "accesses"
-        [
-          hand_built "accesses_coalesced.golden" vector;
-          hand_built "accesses_scalar.golden" scalar;
-        ];
-      lengths;
-      left_alone;
-      dependencies;
-      errors;
-    ]
-
-(* The law *)
-
 (* Generated kernels copy runs of consecutive elements of [input] into [output]
    inside a loop of four, adding up one or two runs of [input] per run of
    [output]. A run's elements are at constant offsets or at offsets from the
-   loop's index, gated by a condition on it or not; its start is any offset, so
-   that runs start aligned or not, and overlap. *)
-type place = { scale : int; gated : bool; start : int }
+   loop's index, gated by a condition on it or not, and ordered after a store or
+   not; its start is any offset, so that runs start aligned or not, and
+   overlap. *)
+type place = { scale : int; gated : bool; ordered : bool; start : int }
 type run = { dst : place; count : int; srcs : place list }
 
 let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
 
-let index { scale; gated; start } j =
+(* The store an ordered index waits on. *)
+let ordering_store =
+  Ops.store
+    (Ops.index (Shape.param ~shape:[ Int 1 ] 2 Int32) [ Ops.int 0 ])
+    (Ops.int ~dtype:Int32 7)
+
+let index { scale; gated; ordered; start } j =
   let i =
     match (scale, start + j) with
     | 0, k -> Ops.int k
     | s, 0 -> Ops.O.(r * int s)
     | s, k -> Ops.O.((r * int s) + int k)
   in
+  let i = if ordered then Ops.after i [ ordering_store ] else i in
   if gated then Shape.valid i Ops.O.(r < int 2) else i
 
 let size = 40
 
-let generated ?(phases = ((0, 16), (0, 16))) (dtype, runs) =
+let generated ?(phases = ((0, 16), (0, 16))) ?(local = false) (dtype, runs) =
   let buffer slot (phase, align) =
     Shape.param ~shape:[ Int size ] ~phase ~align slot dtype
   in
-  let input = buffer 0 (fst phases) and output = buffer 1 (snd phases) in
+  let input = buffer 0 (fst phases) in
+  let output =
+    if local then Shape.placeholder ~slot:1 ~addrspace:Local [ size ] dtype
+    else buffer 1 (snd phases)
+  in
   (* A second store of one element under the same key is refused; the first
      store of each element is kept. *)
   let stores, _ =
@@ -569,7 +513,7 @@ let generated ?(phases = ((0, 16), (0, 16))) (dtype, runs) =
       (fun (stores, seen) { dst; count; srcs } ->
         List.fold_left
           (fun (stores, seen) j ->
-            let key = (dst.scale, dst.gated, dst.start + j) in
+            let key = (dst.scale, dst.gated, dst.ordered, dst.start + j) in
             if List.mem key seen then (stores, seen)
             else
               let read p = Ops.load (Ops.index input [ index p j ]) [] in
@@ -585,13 +529,16 @@ let generated ?(phases = ((0, 16), (0, 16))) (dtype, runs) =
   in
   Ops.sink [ Ops.end_ (Ops.group (List.rev stores)) [ r ] ]
 
+let graph_pp ppf u = Format.pp_print_string ppf (Graph.to_string u)
+
 let kernels_of_runs =
   let open Gen in
   let place =
     let+ scale = of_list [ 0; 4; 8 ]
     and+ gated = bool
+    and+ ordered = frequency [ (3, constant false); (1, constant true) ]
     and+ start = int_range 0 7 in
-    { scale; gated; start }
+    { scale; gated; ordered; start }
   in
   let run =
     let+ dst = place
@@ -599,9 +546,12 @@ let kernels_of_runs =
     and+ srcs = list ~size:(int_range 1 2) place in
     { dst; count; srcs }
   in
-  let dtype = of_list [ Dtype.Float32; Float16; Int32; Int8 ] in
+  let dtype =
+    of_list
+      Dtype.[ Float32; Float16; Bfloat16; Fp8e4m3; Float64; Int32; Int8; Uint8 ]
+  in
   with_pp
-    (fun ppf k -> Format.pp_print_string ppf (Graph.to_string (generated k)))
+    (fun ppf k -> graph_pp ppf (generated k))
     (pair dtype (list ~size:(int_range 1 3) run))
 
 (* Kernels whose buffers start known modulo any alignment, any whole number of
@@ -618,29 +568,61 @@ let phased_kernels =
   in
   ((known input, known output), k)
 
+(* The input's elements are distinct, so that a merged access reading the wrong
+   elements writes other values. Each type drawn holds them exactly: the floats
+   have three bits of mantissa and exponents from -3 to 1, normal in every 8-bit
+   float. Sums need no exactness: both sides add the same values in the same
+   type. *)
 let elements dtype =
   Array.init size (fun i ->
-      if Dtype.is_float dtype then `Float (Float.of_int i +. 0.5)
+      if Dtype.is_float dtype then
+        `Float
+          (Float.ldexp (1. +. (Float.of_int (i mod 8) /. 8.)) ((i / 8) - 3))
       else `Int (Bigint.of_int ((3 * i) + 1)))
 
 let write = triple int int Dtypes.value
 
-let preserves_writes ?phases renderer (dtype, runs) =
-  let k = generated ?phases (dtype, runs) in
+let writes dtype u =
+  Interpreter.writes ~buffers:[ (0, elements dtype); (1, [||]); (2, [||]) ] u
+
+let merged op u =
+  List.exists
+    (fun u -> Ops.op u = op && Ops.op (Ops.nth u 0) = Op.Shrink)
+    (Ops.toposort ~calls:Enter u)
+
+(* The renderers that merge accesses. *)
+let merging =
+  [
+    ("16-byte registers", vector);
+    ("32-byte registers", host 16 32);
+    ("64-byte registers", host 32 64);
+    ("a GPU", gpu);
+    ("a GPU writing bytes as words", gpu_words);
+    ("a GPU writing eight 16-bit floats", gpu8);
+  ]
+
+let preserves_writes ((name, renderer), (phases, (dtype, runs))) =
+  let k = generated ~phases (dtype, runs) in
   let coalesced = coalesce ~renderer k in
-  let merged op =
-    List.exists
-      (fun u -> Ops.op u = op && Ops.op (Ops.nth u 0) = Op.Shrink)
-      (Ops.toposort ~calls:Enter coalesced)
-  in
-  if renderer.supports_float4 then begin
-    cover "loads were merged" (merged Op.Load);
-    cover "stores were merged" (merged Op.Store)
-  end;
-  let writes u =
-    Interpreter.writes ~buffers:[ (0, elements dtype); (1, [||]) ] u
-  in
-  equal (list write) (writes k) (writes coalesced)
+  List.iter
+    (fun (n, _) ->
+      cover ("merged on " ^ n)
+        (n = name && (merged Op.Load coalesced || merged Op.Store coalesced)))
+    merging;
+  cover "an ordered index merged"
+    (List.exists
+       (fun u ->
+         Ops.op u = Op.Load
+         && Ops.op (Ops.nth u 0) = Op.Shrink
+         && Ops.op (Ops.get_idx (Ops.nth (Ops.nth u 0) 1)) = Op.After)
+       (Ops.toposort ~calls:Enter coalesced));
+  equal (list write) (writes dtype k) (writes dtype coalesced)
+
+let merging_kernels =
+  Gen.(
+    pair
+      (of_list ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n) merging)
+      phased_kernels)
 
 (* The elements of a merged access from the boundary behind its buffer, a
    multiple of its alignment, for each value of the loop's range. *)
@@ -661,55 +643,246 @@ let from_boundary u =
 
 let aligned (phases, k) =
   let coalesced = coalesce ~renderer:gpu (generated ~phases k) in
+  let vector_accesses =
+    List.filter
+      (fun u ->
+        (Ops.op u = Op.Load || Ops.op u = Op.Store)
+        && Ops.op (Ops.nth u 0) = Op.Shrink)
+      (Ops.toposort ~calls:Enter coalesced)
+  in
+  cover "a vector access" (vector_accesses <> []);
   List.iter
     (fun u ->
+      let width = int_of (Ops.nth (Ops.nth u 0) 2) in
+      let buf = Ops.nth (Ops.nth u 0) 0 in
+      (match Ops.arg (Ops.buf_uop buf) with
+      | Param q ->
+          at_most ~msg:"bytes within the alignment" int ~than:q.align
+            (width * Dtype.itemsize (Ops.dtype buf))
+      | _ -> ());
+      List.iter
+        (fun e ->
+          equal ~msg:(Format.asprintf "%a" Ops.pp u) int 0 (e mod width))
+        (from_boundary u))
+    vector_accesses
+
+(* Kernels whose every store copies an element of global memory into local
+   memory, which a GPU merges by rules of its own: 16-bit floats into eight
+   where it writes vectors of eight, bytes into sixteen where it writes them as
+   words. Runs start on a 16-byte boundary often. *)
+let copies =
+  let open Gen in
+  let place =
+    let+ start =
+      frequency [ (1, constant 0); (1, constant 8); (2, int_range 0 15) ]
+    in
+    { scale = 0; gated = false; ordered = false; start }
+  in
+  let run =
+    let+ dst = place
+    and+ count =
+      frequency [ (1, constant 8); (1, constant 16); (2, int_range 1 16) ]
+    and+ src = place in
+    { dst; count; srcs = [ src ] }
+  in
+  let target =
+    of_list
+      ~pp:(fun ppf (name, _, _) -> Format.pp_print_string ppf name)
+      [
+        ("a GPU writing eight 16-bit floats", gpu8, Dtype.[ Float16; Bfloat16 ]);
+        ("a GPU writing bytes as words", gpu_words, Dtype.[ Uint8 ]);
+      ]
+  in
+  let* ((_, _, dtypes) as t) = target in
+  let+ dtype = of_list dtypes and+ runs = list ~size:(int_range 1 3) run in
+  (t, (dtype, runs))
+
+let widest u =
+  List.fold_left
+    (fun w u ->
       if
         (Ops.op u = Op.Load || Ops.op u = Op.Store)
         && Ops.op (Ops.nth u 0) = Op.Shrink
-      then begin
-        let width = int_of (Ops.nth (Ops.nth u 0) 2) in
-        let buf = Ops.nth (Ops.nth u 0) 0 in
-        (match Ops.arg (Ops.buf_uop buf) with
-        | Param q ->
-            at_most ~msg:"bytes within the alignment" int ~than:q.align
-              (width * Dtype.itemsize (Ops.dtype buf))
-        | _ -> ());
-        cover "a vector access" true;
-        List.iter
-          (fun e ->
-            equal ~msg:(Format.asprintf "%a" Ops.pp u) int 0 (e mod width))
-          (from_boundary u)
-      end)
-    (Ops.toposort ~calls:Enter coalesced)
+      then max w (int_of (Ops.nth (Ops.nth u 0) 2))
+      else w)
+    1
+    (Ops.toposort ~calls:Enter u)
+
+let copies_keep_writes ((_, renderer, _), (dtype, runs)) =
+  let k = generated ~local:true (dtype, runs) in
+  let coalesced = coalesce ~renderer k in
+  let width = widest coalesced in
+  cover "eight 16-bit floats merged" (Dtype.itemsize dtype = 2 && width = 8);
+  cover "sixteen bytes merged" (Dtype.itemsize dtype = 1 && width = 16);
+  equal (list write) (writes dtype k) (writes dtype coalesced)
+
+let generated_sinks = Gen.with_pp graph_pp (Gen.map generated kernels_of_runs)
+
+(* The recorded kernels and the hand-built accesses. *)
+let recorded_sinks =
+  List.map kernel kernels @ Ops.src (Golden.sink "accesses_input.golden")
 
 let laws =
-  group "laws"
+  [
+    prop ~count:600
+      "keeps the kernel's writes, on every renderer that merges, for every \
+       phase and alignment"
+      merging_kernels preserves_writes;
+    prop ~count:300
+      "keeps the kernel's writes, where its stores copy into local memory"
+      copies copies_keep_writes;
+    prop
+      "aligns every vector access to its width, within its buffer's alignment"
+      phased_kernels aligned;
+  ]
+
+(* The kernels memory_coalescing returns as they are *)
+
+let left_as_it_is =
+  [
+    prop "without vector accesses, returns the kernel as it is"
+      ~examples:recorded_sinks generated_sinks (fun k ->
+        equal Uops.uop k (coalesce ~renderer:scalar k));
+    prop "under Setting.dmc, returns the kernel as it is"
+      ~examples:recorded_sinks generated_sinks (fun k ->
+        equal Uops.uop k
+          (Setting.context [ B (Setting.dmc, true) ] (fun () -> coalesce k)));
+    test "under Setting.dmc, returns a kernel it would refuse as it is"
+      (fun () ->
+        let gated =
+          Ops.sink
+            [
+              Ops.load
+                (at buf (Ops.int 0))
+                [ Ops.float ~dtype:Float32 0.; Ops.bool true ];
+            ]
+        in
+        equal Uops.uop gated
+          (Setting.context [ B (Setting.dmc, true) ] (fun () -> coalesce gated)));
+  ]
+
+(* An index ordered after effects: four loads of [buf] at [index k], each index
+   read after the effects [order k] gives, as a staged tile's read waits on the
+   next trip's copies. Loads ordered after other effects, or not ordered, must
+   not merge: a merged read would move before a copy it waits on. *)
+let ordered_loads index order =
+  let at k =
+    match order k with [] -> index k | effects -> Ops.after (index k) effects
+  in
+  Ops.sink (List.init 4 (fun k -> Ops.load (Ops.index buf [ at k ]) []))
+
+let ordered_cases =
+  let x = Ops.variable "x" (`Int Bigint.zero) (`Int (Bigint.of_int 8)) in
+  [
+    ( "x * 4 + k after a store",
+      (fun k -> Ops.O.((x * int 4) + int k)),
+      (fun _ -> [ ordering_store ]),
+      [ 4 ] );
+  ]
+
+let widths op sink =
+  List.filter_map
+    (fun u ->
+      if Ops.op u = op then
+        Some
+          (match Ops.op (Ops.nth u 0) with
+          | Op.Shrink -> int_of (Ops.nth (Ops.nth u 0) 2)
+          | _ -> 1)
+      else None)
+    (Ops.toposort ~calls:Enter sink)
+
+(* A register of four floats read in full, on a renderer that computes vectors
+   of four. *)
+let register_loads =
+  loads
+    (Shape.placeholder ~slot:3 ~addrspace:Reg [ 16 ] Float32)
+    (List.init 4 Fun.id)
+
+let merges_as_values =
+  [
+    cases "loads at indices ordered after a store merge as at their values, at"
+      ~id:(fun (name, _, _, _) -> name)
+      ordered_cases
+      (fun (_, index, order, expected) ->
+        equal (list int) expected
+          (widths Op.Load (coalesce (ordered_loads index order))));
+    test "register memory merges where the renderer computes vectors" (fun () ->
+        equal (list int) [ 4 ]
+          (widths Op.Load
+             (coalesce
+                ~renderer:(Renderer.v ~vector_lanes:4 cpu)
+                register_loads)));
+  ]
+
+(* merges_four *)
+
+let stored_dtypes =
+  List.filter
+    (fun d -> not (List.mem d Dtype.[ Void; Weak_int; Weak_float ]))
+    Dtypes.declared
+
+(* Renderers whose vector registers are not known. *)
+let unknown_registers =
+  [
+    ("the CPU device", cpu_unknown);
+    ("a GPU", gpu);
+    ("a GPU writing bytes as words", gpu_words);
+    ("a renderer without vector accesses", scalar);
+  ]
+
+(* The types the interface lists for [r]. *)
+let listed (r : Renderer.t) =
+  let always =
+    Dtype.
+      [
+        Uint8;
+        Uint32;
+        Int32;
+        Fp8e4m3;
+        Fp8e5m2;
+        Fp8e4m3fnuz;
+        Fp8e5m2fnuz;
+        Float16;
+        Bfloat16;
+        Float32;
+      ]
+  in
+  List.filter
+    (fun dt ->
+      r.supports_float4 && List.mem dt always
+      && (dt <> Bfloat16 || r.target.device <> "CPU")
+      && (dt <> Uint8 || r.byte_words))
+    stored_dtypes
+
+let four_merge r dt =
+  let b = Shape.param ~shape:[ Int 64 ] 0 dt in
+  widths Op.Load (coalesce ~renderer:r (loads b (List.init 4 Fun.id))) = [ 4 ]
+
+let merges_four =
+  group "merges_four"
     [
-      prop
-        "every vector access is aligned to its width and within the alignment, \
-         for every phase and alignment"
-        phased_kernels aligned;
-      prop
-        "coalescing preserves the kernel's writes, for every phase and \
-         alignment"
-        phased_kernels (fun (phases, k) -> preserves_writes ~phases gpu k);
-      prop "coalescing preserves the kernel's writes" kernels_of_runs
-        (preserves_writes vector);
-      prop "without vector accesses, coalescing preserves the kernel's writes"
-        kernels_of_runs (preserves_writes scalar);
+      cases "holds for the types the interface lists, on" ~id:fst
+        unknown_registers (fun (_, r) ->
+          equal (list Dtypes.dtype) (listed r)
+            (List.filter (Coalesce.merges_four r) stored_dtypes));
+      cases "is whether four consecutive loads merge into one, on" ~id:fst
+        unknown_registers (fun (_, r) ->
+          equal (list Dtypes.dtype)
+            (List.filter (Coalesce.merges_four r) stored_dtypes)
+            (List.filter (four_merge r) stored_dtypes));
     ]
 
-(* indexing_simplify *)
-
-(* A gather through a pad: element [r] of slot 2 is [xs.(ids.(r - 4))] from
-   [r = 4] and [0] before it. Slot 0's index is loaded under the pad's gate. *)
+(* A gather through a pad: element [r] of slot 2 is [xs.(ids.(r - 4))] from [r =
+   4] and [0] before it. Slot 0's index is loaded under the pad's gate. *)
 let padded_gather =
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let ids = Shape.param ~shape:[ Int 4 ] 0 Int32 in
   let xs = Shape.param ~shape:[ Int 4 ] 1 Float32 in
   let out = Shape.param ~shape:[ Int 8 ] 2 Float32 in
   let inside = Ops.O.(int 3 < r) in
-  let id = Ops.load (Ops.index ids [ Shape.valid Ops.O.(r - int 4) inside ]) [] in
+  let id =
+    Ops.load (Ops.index ids [ Shape.valid Ops.O.(r - int 4) inside ]) []
+  in
   let at_id = Shape.valid (Ops.cast id Weak_int) inside in
   let x = Ops.load (Ops.index xs [ at_id ]) [] in
   Ops.sink [ Ops.end_ (Ops.store (Ops.index out [ r ]) x) [ r ] ]
@@ -722,10 +895,13 @@ let gathered_writes u =
 let indexing_simplify =
   group "indexing_simplify"
     [
-      Golden.cases "indices.golden" (fun cell ->
-          equal Uops.uop
-            (case "indices_simplified.golden" cell)
-            (simplify (case "indices_input.golden" cell)));
+      group "simplifies each index as its golden states"
+        [
+          Golden.cases "indices.golden" (fun cell ->
+              equal Uops.uop
+                (case "indices_simplified.golden" cell)
+                (simplify (case "indices_input.golden" cell)));
+        ];
       (* A load in an index runs whatever the index's gate, so its own index
          keeps its gate. *)
       test "a gather through a pad reads its indices only inside the pad"
@@ -735,9 +911,9 @@ let indexing_simplify =
             (gathered_writes (simplify padded_gather)));
     ]
 
-(* Elements of [dt] accessed in each way a kernel accesses memory: each
-   case's name, element type, sink, and runs of loads and of stores on a GPU
-   that writes vectors of eight 16-bit floats. *)
+(* Elements of [dt] accessed in each way a kernel accesses memory: each case's
+   name, element type, sink, and runs of loads and of stores on a GPU that
+   writes vectors of eight 16-bit floats. *)
 let sixteen_bits dt =
   let global = Shape.param ~shape:[ Int 64 ] 2 dt
   and other = Shape.param ~shape:[ Int 64 ] 3 dt
@@ -752,10 +928,7 @@ let sixteen_bits dt =
       dt,
       Ops.sink (copy local),
       ([ (0, 8) ], [ (0, 8) ]) );
-    ( "a copy between global buffers",
-      dt,
-      Ops.sink (copy other),
-      (fours, fours) );
+    ("a copy between global buffers", dt, Ops.sink (copy other), (fours, fours));
     ("loads of global memory", dt, loads global eight, (fours, []));
     ("stores into global memory", dt, stores global eight, ([], fours));
     ("loads of local memory", dt, loads local eight, (fours, []));
@@ -778,8 +951,8 @@ let sixteen_bits dt =
            (fun i -> Ops.store (at local (Ops.int i)) (load_at global i))
            (List.init 16 Fun.id)
         @ [ load_at global 15 ]),
-      ( [ (0, 4); (4, 4); (8, 4); (12, 4) ],
-        [ (0, 4); (4, 4); (8, 4); (12, 4) ] ) );
+      ([ (0, 4); (4, 4); (8, 4); (12, 4) ], [ (0, 4); (4, 4); (8, 4); (12, 4) ])
+    );
   ]
 
 (* A GPU that writes vectors of eight 16-bit floats merges 16 bytes of them
@@ -791,11 +964,12 @@ let half8 =
   in
   group "vectors of eight 16-bit floats"
     [
-      on_gpu8 "half";
-      on_gpu8 "half8";
-      hand_built "accesses_cuda.golden" gpu8;
-      prop "coalescing preserves the kernel's writes" kernels_of_runs
-        (preserves_writes gpu8);
+      group "merge each kernel's accesses as its golden states"
+        [
+          on_gpu8 "half";
+          on_gpu8 "half8";
+          hand_built "accesses_cuda.golden" gpu8;
+        ];
       cases "the runs of eight 16-bit floats' loads and stores"
         ~id:(fun (name, dt, _, _) -> name ^ ", " ^ Dtype.name dt)
         (List.concat_map sixteen_bits [ Dtype.Float16; Dtype.Bfloat16 ])
@@ -810,40 +984,18 @@ let half8 =
                (coalesce ~renderer:gpu8 (loads buf (List.init 8 Fun.id)))));
     ]
 
-(* DMC is read once per process, so the stanza runs this group in a process
-   of its own, with the variable set. *)
-
-let dmc =
-  let same name sink =
-    test name (fun () -> equal Uops.uop sink (coalesce sink))
-  in
-  tag "dmc"
-  @@ group "DMC"
-       ([
-          test "the suite runs this group with DMC=1" (fun () ->
-              equal (option string) (Some "1") (Sys.getenv_opt "DMC"));
-          same "the hand-built accesses are left alone"
-            (Golden.sink "accesses_input.golden");
-          same "a gated load is left alone, and not rejected"
-            (Ops.sink
-               [
-                 Ops.load
-                   (at buf (Ops.int 0))
-                   [ Ops.float ~dtype:Float32 0.; Ops.bool true ];
-               ]);
-        ]
-       @ List.map
-           (fun name -> same (name ^ " is left alone") (kernel name))
-           kernels)
+let memory_coalescing =
+  group "memory_coalescing"
+    ([
+       group "merges each kernel's accesses as its golden states"
+         (hand_built "accesses_coalesced.golden" vector
+         :: List.map compiled kernels);
+       lengths;
+       half8;
+     ]
+    @ merges_as_values @ [ phases; left_alone ] @ left_as_it_is
+    @ [ dependencies; errors ] @ laws)
 
 let () =
   exit
-    (run "Tolk.Coalesce"
-       [
-         memory_coalescing;
-         phases;
-         laws;
-         indexing_simplify;
-         half8;
-         dmc;
-       ])
+    (run "Tolk.Coalesce" [ indexing_simplify; merges_four; memory_coalescing ])

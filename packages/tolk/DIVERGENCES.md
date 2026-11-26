@@ -1438,17 +1438,17 @@ A selection or a pad by `-0.` keeps `-0.`: tinygrad's tests for 0 take
   data read from its sixth double failed verification through a stage made the
   view (`Loop.cut`); on the CPU device those types are now aligned to their
   element.
-- **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `phase ›
-  one float past a boundary, eight loads are of one, two, four and one`, `›
+- **Pinned by:** the `Coalesce` suite (`test/codegen/late/coalesce`): `memory_coalescing ›
+  phase › one float past a boundary, eight loads are of one, two, four and one`, `›
   three floats past a boundary, a load of four starts at element 1`, `› stores
   start where loads would`, `› two halves past a boundary, a load of four
   starts at element 2`, `› floats known to start on 4 bytes alone are not
   merged`, `› floats known to start on 8 bytes merge in twos`, `› halves three
   past 8 bytes merge no wider than 8 bytes, from element 1` and `› on the CPU
-  device, floats past a boundary merge as from one`, and the laws `every
-  vector access is aligned to its width and within the alignment, for every
-  phase and alignment` and `coalescing preserves the kernel's writes, for
-  every phase and alignment`; the `Ops` suite: `param_arg takes a phase that
+  device, floats past a boundary merge as from one`, and the laws `aligns every
+  vector access to its width, within its buffer's alignment` and `keeps the
+  kernel's writes, on every renderer that merges, for every phase and
+  alignment`; the `Ops` suite: `param_arg takes a phase that
   is a multiple of the element size below 16`, `param_arg takes an alignment
   that is a power of two up to 16, and a phase below it`, `pp_arg writes a
   parameter's phase that is not 0 and alignment that is not 16`, `equal_arg
