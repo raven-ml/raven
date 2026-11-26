@@ -901,6 +901,33 @@ let test_roundeven () =
   at f32;
   at f64
 
+(* A cast to an 8-bit float compiles to eager's bits at its format's bounds
+   (Nx.cast): its greatest finite value, the tie past it, the floats either
+   side of the tie, the first value past it, the infinities and NaN, of both
+   signs, from float32 and from float64. Past its greatest finite value
+   float8_e5m2 gives an infinity and float8_e4m3fn saturates to 448, an
+   infinity included. *)
+let fp8_bounds =
+  let e4m3 = [ 448.; 464. -. 0x1p-15; 464.; 464. +. 0x1p-15; 480. ] in
+  let e5m2 = [ 57344.; 61440. -. 0x1p-8; 61440.; 61440. +. 0x1p-8; 65536. ] in
+  let xs = e4m3 @ e5m2 @ [ 1e39; Float.infinity; Float.nan ] in
+  xs @ List.map Float.neg xs
+
+let test_fp8_bounds () =
+  Compiled.here ();
+  let at (type s t) (src : (float, s) Nx.dtype) (dt : (float, t) Nx.dtype) =
+    let n = List.length fp8_bounds in
+    let x = Nx.create src [| n |] (Array.of_list fp8_bounds) in
+    let f x = Nx.cast f64 (Nx.cast dt x) in
+    let msg = Format.asprintf "%a to %a" Nx.pp_dtype src Nx.pp_dtype dt in
+    let y = compiled (fun () -> bits (Rune.jit' f x)) in
+    equal ~msg (outcome_t bits_t) (Value (bits (f x))) y
+  in
+  at f32 Nx.float8_e4m3fn;
+  at f64 Nx.float8_e4m3fn;
+  at f32 Nx.float8_e5m2;
+  at f64 Nx.float8_e5m2
+
 (* Nx.nan_to_num compiles to eager's bits at every dtype, by its defaults and by
    values given: it selects among its operand and constants, which rune.mli
    states exact. *)
@@ -6887,6 +6914,8 @@ let () =
              test "a selection of a minimum against its constant is exact"
                test_nested_minimum;
              test "roundeven is exact" test_roundeven;
+             test "a cast to an 8-bit float gives eager's bits at its bounds"
+               test_fp8_bounds;
              prop ~count:13 "nan_to_num gives eager's bits at every dtype"
                (Batch.drawn 8 nan_cases) law_nan_to_num;
              test "special values are exact" test_specials;
