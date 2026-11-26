@@ -7815,8 +7815,9 @@ into D342, which holds its rule, its reason and its pins.
 - **Pinned by:** the Prepare suite's `prepare_rangeify › calls compiled on
   their own`; the Tolk_engine suite's `calls of views` (by a kernel and a
   precompiled call; `› a call writes through a run of storage wherever it
-  starts`; the refusals of a loop's column and of rows off 16 bytes with the
-  specification checks on); the Spec suite's `tensor › accepts a call
+  starts`); the Schedule suite's `create_linear_with_vars › calls of views`
+  (the refusals, of a loop's column and of rows off 16 bytes among them,
+  with the specification checks on); the Spec suite's `tensor › accepts a call
   whatever its arguments' starts` and `verdicts.tolk`'s shrink rows, a
   shrink of storage in the kernel graph; the Rangeify suite's `custom_kernel_of_views`
   recordings.
@@ -8589,9 +8590,10 @@ a view names its storage again (D426).
   run of bytes that cuts elements writes the value's bytes into it, the others
   kept`, against `Tensors`, on the host and in each GPU group;
   `Tolk_engine › a store through a bitcast of a view that is no run writes
-  the value's bits through the view` and `› a store through bytes that are
-  no run, or that may cut elements where a bound variable places an end, is
-  refused`; `Tolk.Launch_law › create_linear_with_vars › launches › on the
+  the value's bits through the view`; `Tolk.Schedule ›
+  create_linear_with_vars › stores through bytes › a store through bytes
+  that are no run, or that may cut elements where a bound variable places an
+  end, is refused`; `Tolk.Launch_law › create_linear_with_vars › launches › on the
   host, a schedule's launches write what its graph states` and the same on
   each GPU, whose programs store through bytes of states.
 
@@ -8746,11 +8748,12 @@ one reads what the other left, and then they form a chain (D474).
   value through a bound variable`, `› a state over a view that is no run is read
   each trip`, `› a kernel body takes a value computed each trip`, `› a back edge's
   value is computed each trip`, `› a contiguous value of a written read is read
-  each trip`, `› a value moving with a loop in a call is refused`, `› a loop
-  reading a state older than its listing reads it as it was`, `› a loop reads a
-  join of its own states each trip`, `› a loop in a body reads its parameter's
-  run each trip`, `› a loop in a body reads its parameters as each trip
-  starts`.
+  each trip`, `› a loop reading a state older than its listing reads it as it
+  was`, `› a loop reads a join of its own states each trip`, `› a loop in a
+  body reads its parameter's run each trip`, `› a loop in a body reads its
+  parameters as each trip starts`; the Schedule suite's
+  `create_linear_with_vars › calls of views › a value moving with a loop in a
+  call is refused` and `› a stored value moving with a loop is refused`.
 
 ## D466. A long host kernel is written as several functions
 
@@ -9182,11 +9185,12 @@ D466.
   computes; `Tolk.Launch › create_schedule › an After's stores › an After of
   a state and one of a view of it raise, in either listing`; the `Tolk_engine`
   suite's `calls of views › a whole state
-  holds the sibling store its own store reads`, and the refusals beside it:
-  `› a read of a whole state beside a sibling After is refused`, `› a value
-  reading a join of sibling writes is refused`, `› a loop reading a join of
-  sibling writes is refused`, `› a loop reading a sibling state's run is
-  refused` and `› Afters over runs of a bitcast of one state are
+  holds the sibling store its own store reads`, and the refusals beside it
+  in the `Tolk.Schedule` suite's `create_linear_with_vars › two writes over
+  one state`: `› a read of a whole state beside a sibling After is refused`,
+  `› a value reading a join of sibling writes is refused`, `› a loop reading
+  a join of sibling writes is refused`, `› a loop reading a sibling state's
+  run is refused` and `› Afters over runs of a bitcast of one state are
   refused`; rune's suites, whose loops write over their carries' first
   states.
 

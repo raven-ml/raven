@@ -3352,43 +3352,6 @@ let loop_reads_store_target_older () =
        [| 1.; 2.; 5.; 6.; 4.; 5.; 6.; 7.; 4.; 5.; 6.; 7.; 13.; 14.; 15.; 16. |])
     (leaves1 b (Ops.sink [ Ops.after s1 [ Ops.end_ c [ r ] ] ]))
 
-(* Two writes over one state
-
-   An After over the whole of a buffer and one over a view of it, both over
-   its first state, are two writes over one state, which a program is refused
-   for, whatever reads it makes: which lands last would be undecided. A store
-   that reads the other's result is ordered after it. *)
-let two_writes sink =
-  raises_match
-    (Exn.invalid_arg ~sub:"two writes over one state")
-    (fun () -> Schedule.create_linear_with_vars ~cores:Cores.host sink)
-
-let sibling_whole_state () =
-  let b = Ops.new_buffer "CPU" 16 Float32 in
-  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
-  let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
-  let s2 = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
-  (b, s1, s2)
-
-let sibling_read_of_a_whole_state () =
-  let _, s1, s2 = sibling_whole_state () in
-  let x = Ops.new_buffer "CPU" 4 Float32 in
-  two_writes (Ops.sink [ s1; s2; Ops.after x [ Ops.store x (run_at 8 s1) ] ])
-
-let sibling_loop_read_of_a_whole_state () =
-  let _, s1, s2 = sibling_whole_state () in
-  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
-  let c = Ops.call ~precompile:true add1_body [ row4 s2 r; run_at 8 s1 ] in
-  two_writes (Ops.sink [ s1; Ops.after s2 [ Ops.end_ c [ r ] ] ])
-
-let sibling_read_of_a_later_state () =
-  let _, s1, s2 = sibling_whole_state () in
-  let x = Ops.new_buffer "CPU" 4 Float32 in
-  let s3 = Ops.after s1 [ Ops.store (run_at 0 s1) (Ops.float 6.) ] in
-  two_writes
-    (Ops.sink
-       [ s3; s2; Ops.after x [ Ops.store x Ops.O.(run_at 8 s3 + run_at 0 s2) ] ])
-
 (* A whole state's store that reads a sibling lands after it, and the state
    holds it. *)
 let sibling_a_state_reads_is_part_of_it () =
@@ -3404,88 +3367,7 @@ let sibling_a_state_reads_is_part_of_it () =
   in
   equal (list values) [ floats (Array.make 16 1.); floats (Array.make 4 1.) ] got
 
-(* A whole state listing a sibling state, after its own store. *)
-let sibling_listed_is_part_of_it () =
-  let b = Ops.new_buffer "CPU" 16 Float32 in
-  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
-  let s2 = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
-  two_writes (Ops.sink [ Ops.after b [ Ops.store (half 0) (Ops.float 5.); s2 ] ])
-
-(* A state above the first listing a sibling of the first. *)
-let sibling_followed_above_the_first_state () =
-  let _, s1, t = sibling_whole_state () in
-  two_writes
-    (Ops.sink [ Ops.after s1 [ Ops.store (run_at 0 s1) (Ops.float 6.); t ] ])
-
-(* A store reading a sibling and the older state beside it. *)
-let sibling_read_beside_older_state () =
-  let _, s1, t = sibling_whole_state () in
-  let v = run_at 0 s1 in
-  two_writes
-    (Ops.sink
-       [ Ops.after s1 [ Ops.store v Ops.O.(run_at 8 s1 + run_at 0 t) ]; t ])
-
-(* A call loading through the argument it stores through, beside a sibling. *)
-let sibling_read_through_written_argument () =
-  let _, s1, t = sibling_whole_state () in
-  let p = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
-  let body =
-    Ops.sink [ Ops.store (run_at 0 p) Ops.O.(run_at 8 p + float 1.) ]
-  in
-  two_writes
-    (Ops.sink [ t; Ops.after s1 [ Ops.call ~precompile:true body [ s1 ] ] ])
-
-(* A call loading through what it stores through, given a run of a sibling of
-   the state it writes. *)
-let sibling_followed_by_a_written_load () =
-  let _, s1, t = sibling_whole_state () in
-  let p16 = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
-  let body = Ops.sink [ Ops.store (run_at 0 p16) Ops.O.(run_at 4 p16 + p4 1) ] in
-  let k = Ops.call ~precompile:true body [ s1; run_at 0 t ] in
-  two_writes (Ops.sink [ t; Ops.after s1 [ k ] ])
-
-(* A sibling reading storage a call loading through its written argument
-   overwrites. *)
-let sibling_reads_what_a_written_load_overwrites () =
-  let b = Ops.new_buffer "CPU" 16 Float32 and y = Ops.new_buffer "CPU" 8 Float32 in
-  let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
-  let s1 = Ops.after b [ Ops.store (half 0) (Ops.float 5.) ] in
-  let t = Ops.after (half 8) [ Ops.store (half 8) Ops.O.(y + float 2.) ] in
-  let p16 = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
-  let p8 = Shape.param ~shape:[ Int 8 ] ~device:"CPU" 1 Float32 in
-  let body =
-    Ops.sink
-      [
-        Ops.store (run_at 0 p16) Ops.O.(run_at 8 p16 + float 1.);
-        Ops.store p8 (Ops.float 3.);
-      ]
-  in
-  let k = Ops.call ~precompile:true body [ s1; y ] in
-  two_writes (Ops.sink [ t; Ops.after s1 [ k ]; Ops.after y [ k ] ])
-
-(* A nested call that only stores through its argument, beside a sibling. *)
-let sibling_nested_store_is_no_load () =
-  let _, s1, t = sibling_whole_state () in
-  let p16 = Shape.param ~shape:[ Int 16 ] ~device:"CPU" 0 Float32 in
-  let inner = Ops.sink [ Ops.store (run_at 0 p16) Ops.O.(p4 1 + float 1.) ] in
-  let outer =
-    Ops.v Op.Linear ~src:[ Ops.call ~precompile:true inner [ p16; p4 1 ] ]
-  in
-  let k = Ops.call ~precompile:true outer [ s1; run_at 0 t ] in
-  two_writes (Ops.sink [ t; Ops.after s1 [ k ] ])
-
 let int_bits_of_10 = 0x41200000
-let int_bits_of_20 = 0x41A00000
-
-(* Afters over two runs of a bitcast of one buffer. *)
-let sibling_runs_of_a_bitcast () =
-  let b = Ops.new_buffer "CPU" 16 Float32 in
-  let c = Ops.bitcast b Int32 in
-  let run lo = Shape.shrink c [ Some (Int lo, Int (lo + 8)) ] in
-  let write lo bits =
-    Ops.after (run lo) [ Ops.store (run lo) (Ops.int ~dtype:Int32 bits) ]
-  in
-  two_writes (Ops.sink [ write 0 int_bits_of_10; write 8 int_bits_of_20 ])
 
 let store_through_run_of_a_bitcast_state () =
   let b = Ops.new_buffer "CPU" 8 Float32 in
@@ -3971,37 +3853,6 @@ let loop_contiguous_each_trip () =
        [| 17.; 21.; 25.; 29.; 17.; 21.; 25.; 29.; 35.; 43.; 51.; 59.; 24.; 26.;
           28.; 30. |])
     (values_of_doubled (fun b1 -> Ops.contiguous Ops.O.(run_at 4 b1 * float 2.)))
-
-(* A contiguous value of a moving row of a state older than the listing: the
-   stage would be made before the loop. *)
-let moving_stage_refused () =
-  let b = Ops.new_buffer "CPU" 16 Float32 in
-  let x1 = Ops.after b [ Ops.store b Ops.O.(b + float 1.) ] in
-  let x2 = Ops.after x1 [ Ops.store x1 Ops.O.(x1 * float 2.) ] in
-  let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
-  let c =
-    Ops.call ~precompile:true add1_body
-      [ row4 x1 r; Ops.contiguous Ops.O.(row4 x1 r * float 2.) ]
-  in
-  raises_match
-    (Exn.invalid_arg ~sub:"moves with a loop")
-    (fun () ->
-      Schedule.create_linear_with_vars ~cores:Cores.host
-        (Ops.sink [ Ops.after x2 [ Ops.end_ c [ r ] ] ]))
-
-let moving_value_refused () =
-  let b, b1 = doubled () in
-  let r = loop3 () in
-  let c =
-    Ops.call ~precompile:true add1_body
-      [ row4 b1 r; Ops.O.(run_at 4 b1 * Ops.cast r Float32) ]
-  in
-  ignore b;
-  raises_match
-    (Exn.invalid_arg ~sub:"moves with a loop")
-    (fun () ->
-      Schedule.create_linear_with_vars ~cores:Cores.host
-        (Ops.sink [ Ops.after b1 [ Ops.end_ c [ r ] ] ]))
 
 (* A state over a view a loop moves, ordered after a store of other storage:
    the view of the state the loop writes over, read each trip, and the store
@@ -4987,71 +4838,6 @@ let stores_through_bitcast_views () =
       equal values ~msg (Array.map bits want) (Run.values Int32 bx))
     [ ("reversed", fun u -> Shape.flip u [ 0 ]); ("columns", columns) ]
 
-(* A store through bytes that are no run of the storage, such as columns of
-   its bytes or its bytes reversed, or a run whose bound start or end may
-   lie inside an element, is refused. [x] holds 16 floats, as 4 rows of 16
-   bytes. *)
-let refuses_byte_columns () =
-  let x = Ops.new_buffer "CPU" 16 Float32 in
-  let fill c shape =
-    Shape.expand (Shape.reshape c (List.map (fun _ -> Ops.Int 1) shape)) shape
-  in
-  let rows = Shape.reshape (Ops.bitcast x Uint8) [ Int 4; Int 16 ] in
-  let columns = Shape.shrink rows [ None; Some (Int 0, Int 8) ] in
-  let floats_of_columns =
-    ( Ops.bitcast columns Float32,
-      fill (Ops.cast (Ops.float 2.5) Float32) [ Int 4; Int 2 ] )
-  in
-  let float_columns =
-    Shape.shrink
-      (Shape.reshape x [ Int 4; Int 4 ])
-      [ None; Some (Int 0, Int 2) ]
-  in
-  let bytes_of_columns =
-    ( Shape.reshape (Ops.bitcast float_columns Uint8) [ Int 32 ],
-      fill (Ops.const ~dtype:Uint8 (`Int (Bigint.of_int 7))) [ Int 32 ] )
-  in
-  let floats_of_reversed =
-    ( Ops.bitcast (Shape.flip (Ops.bitcast x Uint8) [ 0 ]) Float32,
-      fill (Ops.cast (Ops.float 2.5) Float32) [ Int 16 ] )
-  in
-  let bytes_from_bound =
-    let v =
-      Shape.bind
-        (Ops.variable "first" (`Int Bigint.zero) (`Int (Bigint.of_int 60)))
-        (`Int (Bigint.of_int 2))
-    in
-    ( Shape.shrink (Ops.bitcast x Uint8)
-        [ Some (Ops.Sym v, Ops.Sym Ops.O.(v + int 4)) ],
-      fill (Ops.const ~dtype:Uint8 (`Int (Bigint.of_int 7))) [ Int 4 ] )
-  in
-  let bytes_to_bound =
-    let v =
-      Shape.bind
-        (Ops.variable "last" (`Int (Bigint.of_int 2)) (`Int (Bigint.of_int 60)))
-        (`Int (Bigint.of_int 4))
-    in
-    ( Shape.shrink (Ops.bitcast x Uint8) [ Some (Ops.Int 1, Ops.Sym v) ],
-      Ops.const ~dtype:Uint8 (`Int (Bigint.of_int 7)) )
-  in
-  List.iter
-    (fun (target, value) ->
-      let sink = Ops.sink [ Ops.after x [ Ops.store target value ] ] in
-      raises
-        (Invalid_argument
-           "a store through a bitcast to a type of another size writes a run \
-            of its storage's bytes, which begins and ends on whole elements \
-            of the storage where a bound variable places either end; these \
-            bytes are no such run: store each run apart, or whole elements")
-        (fun () -> Schedule.create_linear_with_vars ~cores:Cores.host sink))
-    [
-      floats_of_columns;
-      bytes_of_columns;
-      floats_of_reversed;
-      bytes_from_bound;
-      bytes_to_bound;
-    ]
-
 (* Calls of views
 
    A call compiled on its own takes flat storage at each argument: a kernel
@@ -5131,17 +4917,6 @@ let row r b =
   let at = Ops.O.(r * int 4) in
   Shape.shrink b [ Some (Sym at, Sym Ops.O.(at + int 4)) ]
 
-(* The column [r] of [ys] seen as 4 rows of 3. *)
-let column ys r =
-  let m = Shape.reshape ys (dims [ 4; 3 ]) in
-  Shape.shrink m [ None; Some (Ops.Sym r, Ops.Sym Ops.O.(r + int 1)) ]
-
-(* Four floats from [5 r]: rows 20 bytes apart, off 16 bytes on trips 1 and
-   2. *)
-let row_off r b =
-  let at = Ops.O.(r * int 5) in
-  Shape.shrink b [ Some (Ops.Sym at, Ops.Sym Ops.O.(at + int 4)) ]
-
 let calls_of_views =
   let reads (call : copy) view expected () =
     let a = Ops.new_buffer "CPU" 8 Float32
@@ -5156,26 +4931,6 @@ let calls_of_views =
     let sink = Ops.sink [ Ops.after a [ call [ view a; y ] ] ] in
     run_copy ~into:a ~init:a_values ~from:y y_values sink
     |> equal ~msg values (floats expected)
-  in
-  let refused ~msg sink =
-    raises_match ~msg
-      (Exn.invalid_arg ~sub:"a call writes its argument")
-      (fun () -> Schedule.create_linear_with_vars ~cores:Cores.host sink)
-  in
-  let unwritable =
-    [
-      ("a run off 16 bytes", off_boundary);
-      ("every other element", every_other);
-      ("a transpose", transposed);
-      ( "a broadcast",
-        fun a ->
-          let first = Shape.shrink a [ Some (Ops.Int 0, Ops.Int 1) ] in
-          Shape.expand (Shape.reshape first []) [ Int 4 ] );
-      ("a computed value", fun a -> Ops.exp2 (first_four a));
-      ( "a constant",
-        fun _ ->
-          Shape.expand (Ops.const ~dtype:Float32 (`Float 0.)) [ Int 4 ] );
-    ]
   in
   group "calls of views"
     [
@@ -5216,12 +4971,9 @@ let calls_of_views =
       test "a back edge's value is computed each trip" backedge_value_each_trip;
       test "a contiguous value of a written read is read each trip"
         loop_contiguous_each_trip;
-      test "a value moving with a loop in a call is refused"
-        moving_value_refused;
       test "a state over a view a loop moves, ordered after effects, is read \
             each trip"
         moving_state_after_effects;
-      test "a stored value moving with a loop is refused" moving_stage_refused;
       test "a value ordered after effects is the value" value_after_effects;
       test "a loop's fixed read of an After state it writes is read each trip"
         reads_after_run_each_trip;
@@ -5256,30 +5008,8 @@ let calls_of_views =
       test "a loop reading a run of the state under a store through it keeps \
             the store"
         loop_reads_store_target_older;
-      test "a read of a whole state beside a sibling After is refused"
-        sibling_read_of_a_whole_state;
-      test "a loop's read of a whole state beside a sibling After is refused"
-        sibling_loop_read_of_a_whole_state;
-      test "a read of a later whole state beside a sibling After is refused"
-        sibling_read_of_a_later_state;
       test "a whole state holds the sibling store its own store reads"
         sibling_a_state_reads_is_part_of_it;
-      test "a whole state listing a sibling state is refused"
-        sibling_listed_is_part_of_it;
-      test "a state above the first beside a sibling is refused"
-        sibling_followed_above_the_first_state;
-      test "a store reading a sibling and the older state beside it is refused"
-        sibling_read_beside_older_state;
-      test "a call loading through what it stores through beside a sibling is refused"
-        sibling_read_through_written_argument;
-      test "a written load beside a sibling is refused"
-        sibling_followed_by_a_written_load;
-      test "a sibling reading what a written load overwrites is refused"
-        sibling_reads_what_a_written_load_overwrites;
-      test "a nested call storing through a state beside a sibling is refused"
-        sibling_nested_store_is_no_load;
-      test "Afters over runs of a bitcast of one state are refused"
-        sibling_runs_of_a_bitcast;
       test "a store through a run of a bitcast of a state"
         store_through_run_of_a_bitcast_state;
       test "a weak value through a run of a bitcast"
@@ -5295,53 +5025,6 @@ let calls_of_views =
         later_state_over_bitcast_read_each_trip;
       test "a loop reads a run of a state of a bitcast each trip"
         loop_reads_run_of_a_bitcast_state;
-      test "a value reading a join of sibling writes is refused"
-        (fun () ->
-          let b = Ops.new_buffer "CPU" 16 Float32 in
-          let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
-          let s1 = Ops.after (half 0) [ Ops.store (half 0) (Ops.float 5.) ] in
-          let s2 = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
-          let j = Ops.after b [ s1; s2 ] in
-          let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
-          let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + float 1.) ] in
-          let c =
-            Ops.call ~precompile:true body
-              [ row4 j r; Ops.O.(float 2. * Shape.shrink j [ Some (Int 4, Int 8) ]) ]
-          in
-          raises_match
-            (Exn.invalid_arg ~sub:"two writes over one state")
-            (fun () ->
-              Schedule.create_linear_with_vars ~cores:Cores.host
-                (Ops.sink [ Ops.after j [ Ops.end_ c [ r ] ] ])));
-      test "a loop reading a join of sibling writes is refused"
-        (fun () ->
-          let b = Ops.new_buffer "CPU" 16 Float32 in
-          let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
-          let s1 = Ops.after (half 0) [ Ops.store (half 0) (Ops.float 5.) ] in
-          let s2 = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
-          let j = Ops.after b [ s1; s2 ] in
-          let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
-          let body = Ops.sink [ Ops.store (p4 0) Ops.O.(p4 1 + float 1.) ] in
-          let c =
-            Ops.call ~precompile:true body
-              [ row4 j r; Shape.shrink j [ Some (Int 4, Int 8) ] ]
-          in
-          raises_match
-            (Exn.invalid_arg ~sub:"two writes over one state")
-            (fun () ->
-              Schedule.create_linear_with_vars ~cores:Cores.host
-                (Ops.sink [ Ops.after j [ Ops.end_ c [ r ] ] ])));
-      test "a loop reading a sibling state's run is refused"
-        (fun () ->
-          let b = Ops.new_buffer "CPU" 16 Float32 in
-          let half lo = Shape.shrink b [ Some (Int lo, Int (lo + 8)) ] in
-          let s1 = Ops.after (half 0) [ Ops.store (half 0) (Ops.float 5.) ] in
-          let s2 = Ops.after (half 8) [ Ops.store (half 8) (Ops.float 7.) ] in
-          let r = Ops.range ~axis_type:Loop (Int 2) [ 100 ] in
-          let c =
-            Ops.call ~precompile:true add1_body [ row4 s2 r; run_at 4 s1 ]
-          in
-          two_writes (Ops.sink [ s1; Ops.after s2 [ Ops.end_ c [ r ] ] ]));
       test "an older state's run stays as it was" reads_older_run;
       test "a call's fixed read sees what its loop wrote"
         reads_what_its_loop_wrote;
@@ -5359,20 +5042,6 @@ let calls_of_views =
               reads call every_other [| 0.; 2.; 4.; 6. |] ();
               reads call transposed [| 0.; 4.; 1.; 5. |] ())
             copies);
-      test "a call that reads a constant is refused" (fun () ->
-          List.iter
-            (fun (msg, (call : copy)) ->
-              let d = Ops.new_buffer "CPU" 4 Float32 in
-              let three =
-                Shape.expand (Ops.const ~dtype:Float32 (`Float 3.)) [ Int 4 ]
-              in
-              raises_match ~msg
-                (Exn.invalid_arg
-                   ~sub:"its argument 1, of shape (4,), a constant")
-                (fun () ->
-                  Schedule.create_linear_with_vars ~cores:Cores.host
-                    (Ops.sink [ Ops.after d [ call [ d; three ] ] ])))
-            copies);
       test "a call reads storage off its parameter's start through a copy"
         (fun () ->
           List.iter
@@ -5384,39 +5053,6 @@ let calls_of_views =
                 y_values sink
               |> equal ~msg values (floats y_values))
             copies);
-      test "a call that writes storage off its parameter's start is refused"
-        (fun () ->
-          List.iter
-            (fun (msg, (call : copy)) ->
-              let a = Ops.new_buffer ~phase:4 "CPU" 4 Float32
-              and y = Ops.new_buffer "CPU" 4 Float32 in
-              raises_match ~msg
-                (Exn.invalid_arg
-                   ~sub:
-                     "writes its argument 0, of shape (4,), which starts 4 \
-                      bytes past a 16-byte boundary, where its parameter \
-                      assumes a start on a 16-byte boundary") (fun () ->
-                  Schedule.create_linear_with_vars ~cores:Cores.host
-                    (Ops.sink [ Ops.after a [ call [ a; y ] ] ])))
-            copies);
-      test
-        "a call whose parameter starts off 16 bytes is refused a view stored \
-         whole" (fun () ->
-          let a = Ops.new_buffer "CPU" 8 Float32
-          and d = Ops.new_buffer "CPU" 4 Float32 in
-          let p ?phase slot =
-            Shape.param ~shape:[ Int 4 ] ~device:"CPU" ?phase slot Float32
-          in
-          let body = Ops.sink [ Ops.store (p 0) (p ~phase:4 1) ] in
-          let call = Ops.call ~precompile:true body [ d; every_other a ] in
-          raises_match
-            (Exn.invalid_arg
-               ~sub:
-                 "reads its argument 1, of shape (4,), which would be stored \
-                  whole on a 16-byte boundary, where its parameter assumes a \
-                  start 4 bytes past a 16-byte boundary") (fun () ->
-              Schedule.create_linear_with_vars ~cores:Cores.host
-                (Ops.sink [ Ops.after d [ call ] ])));
       test "a call reads a state of a view at its elements" (fun () ->
           List.iter
             (fun (msg, (call : copy)) ->
@@ -5427,21 +5063,6 @@ let calls_of_views =
               let sink = Ops.sink [ Ops.after d [ call [ d; state ] ] ] in
               run_copy ~into:d ~init:(Array.make 4 0.) ~from:a a_values sink
               |> equal ~msg values (floats [| 0.; 1.; 2.; 3. |]))
-            copies);
-      test "a call that writes a view it would write a copy of is refused"
-        (fun () ->
-          List.iter
-            (fun (call, (make : copy)) ->
-              List.iter
-                (fun (view, v) ->
-                  let msg = call ^ ", " ^ view in
-                  let a = Ops.new_buffer "CPU" 8 Float32
-                  and y = Ops.new_buffer "CPU" 4 Float32 in
-                  refused ~msg (Ops.sink [ Ops.after a [ make [ v a; y ] ] ]);
-                  refused ~msg
-                    (Ops.sink
-                       [ Ops.after a [ make ~dst:1 ~src:0 [ y; v a ] ] ]))
-                unwritable)
             copies);
       test "a call writes through a run of storage from its first element"
         (fun () ->
@@ -5554,78 +5175,6 @@ let calls_of_views =
               in
               run_copy ~into:ys ~init:(Array.make 12 0.) ~from:xs xs_values sink
               |> equal ~msg values (floats xs_values))
-            copies);
-      test "a kernel in a loop that reads a value of its row is refused"
-        (fun () ->
-          let _, _, sink =
-            looped ~n:3 kernel_copy (fun ys xs r ->
-                [ row r ys; Ops.exp2 (row r xs) ])
-          in
-          raises_match
-            (Exn.invalid_arg ~sub:"moves with a loop and is no row")
-            (fun () -> Schedule.create_linear_with_vars
-                         ~cores:Cores.host sink));
-      test "a call in a loop that writes a column of storage is refused"
-        (fun () ->
-          List.iter
-            (fun (msg, (call : copy)) ->
-              let _, _, sink =
-                looped ~n:3
-                  (fun args -> call args)
-                  (fun ys xs r -> [ column ys r; row r xs ])
-              in
-              raises_match ~msg (Exn.invalid_arg ~sub:"writes its argument 0")
-                (fun () -> Schedule.create_linear_with_vars
-                             ~cores:Cores.host sink))
-            copies);
-      test "a call in a loop that reads a column of storage is refused"
-        (fun () ->
-          List.iter
-            (fun (msg, (call : copy)) ->
-              let _, _, sink =
-                looped ~n:3
-                  (fun args -> call args)
-                  (fun ys xs r -> [ row r ys; column xs r ])
-              in
-              raises_match ~msg
-                (Exn.invalid_arg
-                   ~sub:
-                     "reads its argument 1, of shape (4, 1), which moves with \
-                      a loop and is no row") (fun () ->
-                  Schedule.create_linear_with_vars ~cores:Cores.host sink))
-            copies);
-      test "a call in a loop that writes rows off 16 bytes is refused"
-        (fun () ->
-          List.iter
-            (fun (msg, (call : copy)) ->
-              let _, _, sink =
-                looped ~size:15 ~n:3
-                  (fun args -> call args)
-                  (fun ys xs r -> [ row_off r ys; row r xs ])
-              in
-              raises_match ~msg
-                (Exn.invalid_arg
-                   ~sub:
-                     "writes its argument 0, of shape (4,), which starts on a \
-                      4-byte boundary, where its parameter assumes a start on \
-                      a 16-byte boundary") (fun () ->
-                  Schedule.create_linear_with_vars ~cores:Cores.host sink))
-            copies);
-      test "a call in a loop that reads rows off 16 bytes is refused" (fun () ->
-          List.iter
-            (fun (msg, (call : copy)) ->
-              let _, _, sink =
-                looped ~size:15 ~n:3
-                  (fun args -> call args)
-                  (fun ys xs r -> [ row r ys; row_off r xs ])
-              in
-              raises_match ~msg
-                (Exn.invalid_arg
-                   ~sub:
-                     "reads its argument 1, of shape (4,), which starts on a \
-                      4-byte boundary, where its parameter assumes a start on \
-                      a 16-byte boundary") (fun () ->
-                  Schedule.create_linear_with_vars ~cores:Cores.host sink))
             copies);
     ]
 
@@ -7479,10 +7028,6 @@ let () =
            "a store through a bitcast of a view that is no run writes the \
             value's bits through the view"
            stores_through_bitcast_views;
-         test
-           "a store through bytes that are no run, or that may cut elements \
-            where a bound variable places an end, is refused"
-           refuses_byte_columns;
          calls_of_views;
          group "aranges" [ arange_windows "CPU" ];
          refusals;
