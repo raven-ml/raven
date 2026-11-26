@@ -1,7 +1,7 @@
 (* Tests of Tolk.Uniform: which values may differ between a workgroup's threads,
    and a kernel whose barrier or matrix multiply-accumulate runs in a loop whose
-   trips may differ, refused where it is lowered. Kernels that may diverge are
-   lowered, never run. *)
+   trips may differ, refused. Kernels that may diverge are checked, never
+   run. *)
 
 open Windtrap
 open Tolk
@@ -25,20 +25,6 @@ let n = Ops.variable "n" (Dtype.Value.of_int 0) (Dtype.Value.of_int 8)
 
 let kernel name effects =
   Ops.sink ~kernel:(Ops.kernel_info ~name ~opts_to_apply:[] ()) effects
-
-(* HIP's renderer, which lowering needs and compiling would not. *)
-let hip =
-  lazy
-    (Cstyle.without_compiler
-       {
-         Helpers.Target.device = "AMD";
-         renderer = "HIP";
-         arch = "gfx1100";
-         interface = "";
-         indices = "";
-       })
-
-let lowered k = Codegen.full_rewrite_to_sink k (Lazy.force hip)
 
 (* Values *)
 
@@ -82,88 +68,141 @@ let read_then_written, written_again =
   let b, read = staged_read 42 ~barrier:true in
   (read, st (Ops.after b [ read ]) l (i32 1))
 
-let value_cases =
+(* A register written at each thread's slot, or at slot 0 under a gate that
+   reads the thread index, then read at slot 0. *)
+let register_written slot store =
+  let acc = reg slot ls Int32 in
+  ld (Ops.after acc [ store acc ]) (int 0)
+
+let at_lane = register_written 34 (fun acc -> st acc l (i32 1))
+
+let under_lane_gate =
+  register_written 35 (fun acc ->
+      Ops.store ~gate:O.(l < int 3) (Ops.index acc [ int 0 ]) (i32 1))
+
+(* Custom code, called with a register buffer it may write. *)
+let custom = Ops.custom_function ~dtype:Int32 ~fmt:true "f()" []
+
+let called_on =
+  register_written 36 (fun acc -> Ops.call ~inline:true custom [ acc ])
+
+(* A product of uniform operands on a tensor core. *)
+let product =
+  let elements n = Shape.stack (List.init n (fun _ -> ld x g)) in
+  Ops.wmma
+    (Ops.cast (elements 8) Bfloat16)
+    (Ops.cast (elements 4) Bfloat16)
+    ~acc:(Shape.stack (List.init 4 (fun _ -> Ops.float ~dtype:Float32 0.)))
+    ~dims:(8, 16, 16) ~threads:32
+
+let uniform_values =
   [
-    ("a constant", i32 3, false);
-    ("a variable", n, false);
-    ("a workgroup index", g, false);
-    ("a thread index", l, true);
-    ("a warp's lane", range Warp (Int 32) 5, true);
-    ("a vector lane", range Upcast (Int 4) 6, true);
-    ("a workgroup index named gidx", Ops.special (Int gs) "gidx0", false);
-    ("a thread index named lidx", Ops.special (Int ls) "lidx0", true);
-    ("a loop's index of a uniform bound", serial (weak (ld x g)) 7, false);
-    ("a loop's index of a varying bound", serial O.(l + int 1) 8, true);
-    ("arithmetic of uniform values", O.((g * int ls) + n), false);
-    ("arithmetic reading a thread index", at g l, true);
-    ("a load of a read-only buffer at a uniform index", ld x g, false);
-    ("a load at a thread index", ld x (at g l), true);
-    ( "a load under a gate reading a thread index",
-      Ops.load (Ops.index x [ Ops.where O.(l < int 3) g Ops.invalid ]) [],
-      true );
-    ("a load of a buffer the kernel writes", ld y g, true);
-    ("a load of a volatile parameter", ld v (int 0), true);
+    ("a constant", i32 3);
+    ("a variable", n);
+    ("a launched kernel's parameter", Shape.param 6 Int32);
+    ("a workgroup index", g);
+    ("a workgroup index named gidx", Ops.special (Int gs) "gidx0");
+    ("a loop's index of a uniform bound", serial (weak (ld x g)) 7);
+    ( "a weak range's index of a uniform bound",
+      range Weak (Sym (weak (ld x g))) 11 );
+    ("arithmetic of uniform values", O.((g * int ls) + n));
+    ("a selection of uniform values", Ops.where O.(g < int 2) (ld x g) (i32 2));
+    ("a vector of uniform values", Shape.stack [ i32 1; ld x g ]);
+    ("a load of a read-only buffer at a uniform index", ld x g);
     ( "an after of a uniform value, ordered after a thread's store",
-      Ops.after (ld x g) [ wrote_y ],
-      false );
-    ( "a maximum over the thread index",
-      Ops.reduce (ld x (at g l)) Max [ l ],
-      false );
-    ( "a sum over a loop of a varying bound",
-      Ops.reduce (ld x g) Add [ serial O.(l + int 1) 9 ],
-      true );
+      Ops.after (ld x g) [ wrote_y ] );
+    ("a maximum over the thread index", Ops.reduce (ld x (at g l)) Max [ l ]);
     ( "a sum over a loop of a uniform bound",
-      Ops.reduce (ld x g) Add [ range Loop (Int 4) 10 ],
-      false );
-    ("a register carrying uniform values", uniform_sum, false);
-    ("a register carrying a thread's values", lane_sum, true);
-    ("a register carried through a loop of varying trips", tripped_sum, true);
-    ("a register fed from a varying register", fed_sum, true);
-    ("workgroup memory read after a barrier", read_after_barrier, false);
-    ("workgroup memory read without a barrier", read_without_barrier, true);
-    ("workgroup memory written again after it is read", read_then_written, true);
+      Ops.reduce (ld x g) Add [ range Loop (Int 4) 10 ] );
+    ("a register carrying uniform values", uniform_sum);
+    ("workgroup memory read after a barrier", read_after_barrier);
   ]
 
+let varying_values =
+  [
+    ("a thread index", l);
+    ("a warp's lane", range Warp (Int 32) 5);
+    ("a vector lane", range Upcast (Int 4) 6);
+    ("a thread index named lidx", Ops.special (Int ls) "lidx0");
+    ("a tensor core's product", product);
+    ("custom code", Ops.call ~inline:true custom []);
+    ( "an instruction",
+      Ops.v Op.Ins ~arg:(Code { code = "s_nop"; dtype = Int32 }) );
+    ("a loop's index of a varying bound", serial O.(l + int 1) 8);
+    ( "a sum over a loop of a varying bound",
+      Ops.reduce (ld x g) Add [ serial O.(l + int 1) 9 ] );
+    ("arithmetic reading a thread index", at g l);
+    ("a load at a thread index", ld x (at g l));
+    ( "a load under a gate reading a thread index",
+      Ops.load (Ops.index x [ Ops.where O.(l < int 3) g Ops.invalid ]) [] );
+    ("a load of a buffer the kernel writes", ld y g);
+    ("a load of a volatile parameter", ld v (int 0));
+    ("workgroup memory read without a barrier", read_without_barrier);
+    ("workgroup memory written again after it is read", read_then_written);
+    ("a register carrying a thread's values", lane_sum);
+    ("a register stored at a thread's slot", at_lane);
+    ("a register stored under a gate reading a thread index", under_lane_gate);
+    ("a register carried through a loop of varying trips", tripped_sum);
+    ("a register a call may write", called_on);
+    ("a register fed from a varying register", fed_sum);
+  ]
+
+(* A vector is stored by its first lane. *)
+let scalar u = match Shape.shape u with [] -> u | _ -> Ops.index u [ i32 0 ]
+
 let values_kernel =
-  let out = buffer 0 (List.length value_cases) Int32 in
+  let all = uniform_values @ varying_values in
+  let out = buffer 0 (List.length all) Int32 in
   kernel "values"
     (wrote_y :: written_again
     :: List.mapi
-         (fun k (_, u, _) -> st out (int k) (Ops.cast u Int32))
-         value_cases)
+         (fun k (_, u) -> st out (int k) (Ops.cast (scalar u) Int32))
+         all)
 
-let custom_values =
-  let custom =
-    Ops.call ~inline:true
-      (Ops.custom_function ~dtype:Int32 ~fmt:true "f()" [])
-      []
-  in
-  let ins = Ops.v Op.Ins ~arg:(Code { code = "s_nop"; dtype = Int32 }) in
-  [ ("custom code", custom); ("an instruction", ins) ]
+type verdict = Uniform | Varying
+
+let verdict =
+  Testable.make
+    ~pp:(fun ppf v ->
+      Format.pp_print_string ppf
+        (match v with Uniform -> "uniform" | Varying -> "varying"))
+    ~equal:( = )
+
+let verdict_of k u = if Uniform.varying k u then Varying else Uniform
+
+(* A loop repeated while [cond] holds, around a store of [cond]'s loop index: it
+   runs as many trips in every thread only if [cond] is uniform. *)
+let repeated cond =
+  let r = Ops.range ~axis_type:Loop ~dtype:Void (Sym (Ops.v Op.Noop)) [ 2 ] in
+  let w = st y (at g l) (ld (Ops.after x [ r ]) g) in
+  (r, kernel "repeated" [ Ops.end_ (Ops.backedge w ~loop:r ~cond) [ g; l ] ])
+
+let thread_flag = O.(ld x (at g l) <> i32 0)
+let workgroup_flag = O.(ld x g <> i32 0)
 
 let values =
   group "varying"
     [
-      cases "decides from what a value reads"
-        ~id:(fun (s, _, _) -> s)
-        value_cases
-        (fun (_, u, expected) ->
-          equal bool expected (Uniform.varying values_kernel u));
-      cases "custom code and instructions vary" ~id:fst custom_values
-        (fun (_, u) ->
-          let k = kernel "custom" [ st y g u ] in
-          equal bool true (Uniform.varying k u));
-      cases "a body another kernel calls takes as varying its" ~id:fst
+      cases "is uniform for" ~id:fst uniform_values (fun (_, u) ->
+          equal verdict Uniform (verdict_of values_kernel u));
+      cases "is varying for" ~id:fst varying_values (fun (_, u) ->
+          equal verdict Varying (verdict_of values_kernel u));
+      cases "an unbounded loop's index is, repeated while" ~id:fst
+        [
+          ("a thread's flag holds, varying", (thread_flag, Varying));
+          ("its workgroup's flag holds, uniform", (workgroup_flag, Uniform));
+        ]
+        (fun (_, (cond, expected)) ->
+          let r, k = repeated cond in
+          equal verdict expected (verdict_of k r));
+      cases "is varying, in a body another kernel calls, for its" ~id:fst
         [ ("parameter", Shape.param 0 Int32); ("variable", n) ]
         (fun (_, p) ->
           let body = Ops.sink [ st y g (Ops.cast p Int32) ] in
-          let launched = kernel "launched" [ st y g (Ops.cast p Int32) ] in
-          equal bool ~msg:"in a body" true (Uniform.varying body p);
-          equal bool ~msg:"in a launched kernel" false
-            (Uniform.varying launched p));
+          equal verdict Varying (verdict_of body p));
     ]
 
-(* Lowered kernels *)
+(* Kernels with barriers *)
 
 (* [out[g*ls + l]] is [inp] at thread [l]'s neighbour, staged through workgroup
    memory in a loop of [bound] trips: each trip, each thread writes its slot, a
@@ -173,6 +212,7 @@ let staged_loop ?(writes = []) name bound =
   let t = range Loop (Sym bound) 2 in
   let b = local 10 ls Float32 in
   let w = st b l (ld (Ops.after inp [ t ]) (at g l)) in
+  let w = Ops.barrier w [] in
   let read = ld (Ops.after b [ w ]) O.((l + int 1) % int ls) in
   let loop = Ops.end_ (st out (at g l) read) [ t ] in
   kernel name [ Ops.end_ (Ops.group (loop :: writes)) [ g; l ] ]
@@ -181,7 +221,7 @@ let staged_loop ?(writes = []) name bound =
    as slot 0 of workgroup memory holds after a barrier. *)
 let after_barrier () =
   let b = local 12 ls Int32 in
-  let w = st b l (ld x (at g l)) in
+  let w = Ops.barrier (st b l (ld x (at g l))) [] in
   weak (ld (Ops.after b [ w ]) (int 0))
 
 (* A register counting the trips of a loop of [l + 1] trips. *)
@@ -272,52 +312,51 @@ let product_loop name bound =
 
 let inp_of_loop = buffer 1 (gs * ls) Float32
 
+(* A call of a body holding a barrier, in a loop of [l + 1] trips. *)
+let calling_loop () =
+  let t = range Loop (Sym O.(l + int 1)) 2 in
+  let b = local 10 ls Float32 in
+  let body =
+    Ops.sink [ Ops.barrier (st b (int 0) (Ops.float ~dtype:Float32 1.)) [] ]
+  in
+  let call = Ops.call body [ Ops.after inp_of_loop [ t ] ] in
+  kernel "calling"
+    [ Ops.end_ (Ops.end_ (Ops.after (ld x g) [ call ]) [ t ]) [ g; l ] ]
+
+let refuses ~sub k =
+  raises_match (Exn.invalid_arg ~sub) (fun () -> Uniform.check k)
+
 let checks =
   group "check"
     [
       cases "refuses a barrier in a loop whose bound is" ~id:fst refused
-        (fun (_, k) ->
-          raises_match (Exn.invalid_arg ~sub:"a barrier runs in loop")
-            (fun () -> lowered (k ())));
+        (fun (_, k) -> refuses ~sub:"a barrier runs in loop" (k ()));
       cases "accepts a barrier in a loop whose bound is" ~id:fst accepted
-        (fun (_, k) -> ignore (lowered (k ())));
-      test "the refusal names the kernel, the operation and the loop" (fun () ->
-          raises_match
-            (Exn.invalid_arg
-               ~sub:
-                 "kernel plus_one: a barrier runs in loop 2, whose trips may \
-                  differ between the threads of a workgroup") (fun () ->
-              lowered (staged_loop "plus_one" O.(l + int 1))));
+        (fun (_, k) -> Uniform.check (k ()));
+      test "names the kernel, the operation and the loop in its refusal"
+        (fun () ->
+          refuses
+            ~sub:
+              "kernel plus_one: a barrier runs in loop 2, whose trips may \
+               differ between the threads of a workgroup"
+            (staged_loop "plus_one" O.(l + int 1)));
       test "refuses a matrix multiply-accumulate in a loop bounded by x[lane]"
         (fun () ->
-          let k =
-            product_loop "lane_product" (fun lane -> weak (ld flags lane))
-          in
-          raises_match
-            (Exn.invalid_arg
-               ~sub:"kernel lane_product: a matrix multiply-accumulate runs")
-            (fun () -> lowered k));
+          refuses ~sub:"kernel lane_product: a matrix multiply-accumulate runs"
+            (product_loop "lane_product" (fun lane -> weak (ld flags lane))));
       test "accepts a matrix multiply-accumulate in a loop bounded by x[gidx]"
         (fun () ->
-          ignore
-            (lowered
-               (product_loop "workgroup_product" (fun _ -> weak (ld flags g)))));
-      test "checks the kernel it is given, after its barriers are placed"
+          Uniform.check
+            (product_loop "workgroup_product" (fun _ -> weak (ld flags g))));
+      test "refuses a call whose body holds a barrier in a loop bounded by lidx"
         (fun () ->
-          let t = range Loop (Sym O.(l + int 1)) 2 in
-          let b = local 10 ls Float32 in
-          let w = st b l (ld (Ops.after x [ t ]) l) in
-          let k =
-            kernel "placed"
-              [ Ops.end_ (Ops.end_ (Ops.barrier w []) [ t ]) [ g; l ] ]
-          in
-          raises_match (Exn.invalid_arg ~sub:"kernel placed: a barrier")
-            (fun () -> Uniform.check k));
+          refuses ~sub:"kernel calling: a call holding a barrier"
+            (calling_loop ()));
       cases "an unbounded loop holding a barrier, repeated while"
         ~id:(fun (s, _, _) -> s)
         [
-          ("a thread's flag holds, is refused", O.(ld x (at g l) <> i32 0), true);
-          ("its workgroup's flag holds, is accepted", O.(ld x g <> i32 0), false);
+          ("a thread's flag holds, is refused", thread_flag, true);
+          ("its workgroup's flag holds, is accepted", workgroup_flag, false);
         ]
         (fun (_, cond, refused) ->
           let r =
@@ -327,17 +366,14 @@ let checks =
           let w = st b l (ld (Ops.after inp_of_loop [ r ]) l) in
           let loop = Ops.backedge (Ops.barrier w []) ~loop:r ~cond in
           let k = kernel "repeated" [ Ops.end_ loop [ g; l ] ] in
-          if refused then
-            raises_match (Exn.invalid_arg ~sub:"kernel repeated: a barrier")
-              (fun () -> Uniform.check k)
+          if refused then refuses ~sub:"kernel repeated: a barrier" k
           else Uniform.check k);
       test "names a called body, which has no name, in its refusal" (fun () ->
           let t = range Loop (Sym O.(l + int 1)) 2 in
           let b = local 10 ls Float32 in
           let w = st b l (ld (Ops.after x [ t ]) l) in
           let body = Ops.sink [ Ops.end_ (Ops.barrier w []) [ t ] ] in
-          raises_match (Exn.invalid_arg ~sub:"a called body: a barrier")
-            (fun () -> Uniform.check body));
+          refuses ~sub:"a called body: a barrier" body);
     ]
 
 let () = exit (run "Tolk.Uniform" [ values; checks ])
