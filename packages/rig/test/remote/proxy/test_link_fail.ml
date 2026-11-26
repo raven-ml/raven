@@ -23,9 +23,12 @@ let k_beat = 8
 let k_abort = 9
 
 (* The seconds this suite's links bear a silent peer or one that reads nothing,
-   their job's silence bound, shortened from link.mli's 10. It is below an
-   observation's 5, so one observation sees a stalled send's end. *)
-let bound = 0.5
+   their job's silence bound, shortened from link.mli's 10. The test's peers
+   beat every tenth of it, so their silence fails a job before the fault a scene
+   makes only if the test stalls for 1.1 s, past the few tenths of a second a
+   loaded host stalls a process for. It is below an observation's 5, so one
+   observation sees a stalled send's end. *)
+let bound = 1.25
 
 (* The silence bound of a scene whose fault is a severed connection: link.mli's
    10 seconds. Its faulted link's peer sends nothing, so a process slowed past
@@ -192,9 +195,9 @@ let frames ?(wait = false) fd =
   in
   go wait []
 
-(* The seconds between a peer's beats, a quarter of the bound, as a link's
-   own come at a tenth, and between its thread's looks at whether to stop. *)
-let beat_every = bound /. 4.
+(* The seconds between a peer's beats, a tenth of the bound, as a link's own
+   come, and between its thread's looks at whether to stop. *)
+let beat_every = bound /. 10.
 let look_every = 0.02
 
 (* Writes a beat to [fd] every [beat_every] until the result is called: a peer
@@ -617,10 +620,11 @@ let drained_until_bound () =
     ~than:(bound -. skew)
     (refused_after t0 s.p)
 
-(* The silence bound of [drained_until_silent], whose close returns half of it
-   before the bound after the failure would end it: a process stalled for that
-   half, as a loaded host stalls it, no longer tells the two apart. [bound]'s
-   half, 0.25 s, is within such a stall. *)
+(* The silence bound of the scenes whose peer sends nothing for half of it
+   before the job fails: a process stalled for that half, as a loaded host
+   stalls it, would fail the job of that silence first, or end the read of a
+   silent peer at the bound after the failure. [bound]'s half is within such a
+   stall. *)
 let silent_bound = 2.
 
 (* After the abort the link reads a peer that sends nothing, as a stopped
@@ -654,9 +658,9 @@ let drained_until_silent () =
    abort lasts. *)
 let drained_while_beating () =
   let d, p = connected () in
-  let job = Link.job ~silence:bound () in
+  let job = Link.job ~silence:silent_bound () in
   ignore (Link.make job d ~name:"peer" ~peer:(Wire.Agent 1));
-  Thread.delay (bound /. 2.);
+  Thread.delay (silent_bound /. 2.);
   let t_fail = Unix.gettimeofday () in
   Link.fail job why;
   let stop = beating p in
@@ -665,15 +669,13 @@ let drained_while_beating () =
         Link.close job;
         Unix.gettimeofday ())
   in
-  Thread.delay (bound /. 2.);
+  Thread.delay (silent_bound /. 2.);
   stop ();
   let t = closed () -. t_fail in
   Unix.close p;
   equal ~msg:"the job" state (Link.Failed why) (Link.wait job ~ms:0);
   at_least ~msg:"the seconds from the failure until the close returned"
-    float_exact
-    ~than:(bound -. skew)
-    t
+    float_exact ~than:(silent_bound -. skew) t
 
 (* An abort that leaves after the bound since the failure, as one behind a
    long frame does: the link reads its peer for the bound after the abort, so
