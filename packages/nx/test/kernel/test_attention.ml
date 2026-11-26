@@ -442,12 +442,13 @@ let exact x y =
 
 let slack n mag = Float.of_int (2 * n * (n + 2)) *. 0x1p-106 *. mag
 
-(* [err] at most [bound]: the subtractions that computed [err] round it by at
-   most a relative [2{^-52}]. A NaN error, of a NaN result, is past every bound,
-   though windtrap orders NaN below every float. *)
-let within ~msg ~bound err =
-  let err = if Float.is_nan err then Float.infinity else err in
-  at_most ~msg float_exact ~than:(bound *. (1. +. 0x1p-51)) err
+(* [got] within [bound] of [want], by {!Nx_array_support.gap}, which no bound
+   passes at a NaN: the subtractions that computed the error round it by at most
+   a relative [2{^-52}]. *)
+let within ~msg ~bound got want =
+  at_most ~msg float_exact
+    ~than:(bound *. (1. +. 0x1p-51))
+    (Nx_array_support.gap got want)
 
 (* The lse a library's [ε] reads: the computed one where finite, else the
    reference [l], so that a NaN or infinite result leaves the bound a number. *)
@@ -479,7 +480,8 @@ let law_sum (b : Support.backend) (a : Support.attention) c =
     within
       ~msg:(Printf.sprintf "o at %d, %h against the mean %h" j o.(j) (hi /. n))
       ~bound:((factor *. mag /. n) +. (slack t mag /. n))
-      (Float.abs (o.(j) -. (hi /. n) -. (lo /. n)))
+      (o.(j) -. (hi /. n))
+      (lo /. n)
   done
 
 (* With one key, the exact log-sum-exp is the score, [q·k] times the scale [1],
@@ -499,7 +501,8 @@ let law_dot (b : Support.backend) (a : Support.attention) c =
   within
     ~msg:(Printf.sprintf "lse %h against q·k %h" lse.(0) hi)
     ~bound
-    (Float.abs (lse.(0) -. hi -. lo))
+    (lse.(0) -. hi)
+    lo
 
 (* [lse]'s cases: a float32 accumulator, a call of 512 or 1024 keys, whose row
    of one head nx.cuda cuts into parts of at least 256 keys, and a length past
@@ -548,8 +551,7 @@ let law_lse (b : Support.backend) (a : Support.attention) c =
   in
   within
     ~msg:(Printf.sprintf "lse %h against %h, %d keys" lse.(0) l t)
-    ~bound
-    (Float.abs (lse.(0) -. l))
+    ~bound lse.(0) l
 
 (* A float dtype. *)
 type floats = Floats : (float, 's) D.t -> floats
