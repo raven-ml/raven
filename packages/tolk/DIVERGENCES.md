@@ -10327,3 +10327,26 @@ D466.
   `› a selection between a value and -0. keeps each zero's sign, at` (every
   row) and rune's test above, under every Clang that
   compiles.
+
+## D506. Under CHECK_OOB, an access through a shrink is proved in bounds
+
+- **tinygrad:** `uop/spec.py` `validate_index` (skips every access whose
+  `INDEX` or `SHRINK` has other than two sources, a shrink's three among
+  them: "skip for non final index").
+- **tolk:** `Spec.validate_shrink`, which `Spec.shared`'s loads and stores
+  call through `validate_index`.
+- **Differs:** with `CHECK_OOB`, a load or store through a shrink passes only
+  where, on each axis, the start's least value is at least 0 and the start's
+  and size's greatest values add up to at most the source's size; otherwise
+  it fails, whatever its gate, and prints the axis's bounds and the gate.
+  Without `CHECK_OOB` nothing changes. Accesses through an index of more than
+  one integer, and at the invalid index, are still not checked, as
+  tinygrad's are not.
+- **Reason:** (e): coalescing merges a run of accesses into one through a
+  shrink, programs keep it and the renderers read it, so a shrink past its
+  source is a program reading or writing outside its buffer, which the check
+  exists to catch and tinygrad's lets through: `bounds.golden`'s `a load of a
+  shrink` and `a store to a shrink past the last element`, elements 20 to 23
+  of 16, pass tinygrad's check.
+- **Pinned by:** the Spec suite: `bounds › bounds.golden`, through
+  `bounds.tolk`'s two rows.

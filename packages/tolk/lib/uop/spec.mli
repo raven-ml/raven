@@ -46,10 +46,13 @@ val shared : t
 
     When {!Setting.check_oob} holds, a load or store through an index into
     storage must be proved in bounds: the bounds of the index ({!Ops.vmin},
-    {!Ops.vmax}) must lie within the storage's {!Shape.max_numel}. An index they
-    do not prove fails, whatever its gate, and its bounds, the index and the
-    gate are printed on standard error, saying that the bound cannot be proven
-    without a solver. *)
+    {!Ops.vmax}) must lie within the storage's {!Shape.max_numel}. A load or
+    store through a shrink must be proved within the shrink's source: on each
+    axis, its start's least value at least [0], and its start's and size's
+    greatest values together at most the axis's size ({!Shape.max_shape}). An
+    access they do not prove fails, whatever its gate, and its bounds, its index
+    if it has one, and the gate are printed on standard error, saying that the
+    bound cannot be proven without a solver. *)
 
 val tensor : t
 (** [tensor] is {!shared} with the operations of tensor graphs: float-only unary

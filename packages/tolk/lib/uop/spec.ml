@@ -24,8 +24,34 @@ let decide p name f = Pattern_matcher.rule p (fun m -> f (m name))
 
 (* Helpers *)
 
+(* A shrink's run lies within its source when, on each axis, its start is at
+   least 0 and its start and size are at most the axis's size. *)
+let validate_shrink ~gate s =
+  let bounds = function
+    | Int n -> (Dtype.Value.of_int n, Dtype.Value.of_int n)
+    | Sym u -> (vmin u, vmax u)
+  in
+  let within (start, size) n =
+    let lo, hi = bounds start and _, most = bounds size in
+    let last = Dtype.Value.(hi + most) in
+    Dtype.Value.(of_int 0 <= lo && last <= of_int n)
+    || begin
+      Format.eprintf
+        "# SHRINK NOT PROVEN IN BOUNDS: [%a, %a) is not within 0 - %d, and the \
+         bound cannot be proven without a solver@.mask=%s@."
+        Dtype.pp_const lo Dtype.pp_const last n
+        (Render.render ~simplify:false gate);
+      false
+    end
+  in
+  match marg s with
+  | Shrink axes -> List.for_all2 within axes (max_shape (nth s 0))
+  | _ -> true
+
 let validate_index ?(gate = bool true) uidx =
   match src uidx with
+  | _ when op uidx = Op.Shrink && Setting.value Setting.check_oob ->
+      validate_shrink ~gate uidx
   | [ buf; idx ]
     when (not (is_invalid idx)) && Setting.value Setting.check_oob
     ->
