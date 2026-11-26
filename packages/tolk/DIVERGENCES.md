@@ -4556,8 +4556,8 @@ its float bound`, hold.
   source; rune's `Lower_linalg › eigh ›
   compiled for 32 rows of float64 gives eager's eigenvalues`; rune's compile
   bench `linalg/eigh-f64-32x32`. These three fail without the fix only under a
-  Clang of LLVM 22 or 23. comgr: `Tolk.Compiler_amd › comgr › a loop that exits
-  on its data stays a loop: idioms are off`, which ROCm 7.0.0's comgr turns into
+  Clang of LLVM 22 or 23. comgr: `Tolk.Compiler_amd › hip › a loop that exits
+  on its data is computed as written`, which ROCm 7.0.0's comgr turns into
   `s_bcnt1` without the option.
 
 ## D168. Withdrawn
@@ -7930,7 +7930,7 @@ reason and its pins.
   instruction selection. The verifier costs 1.9% and 2.5% of the compile
   time in two runs of gpt-oss-20b's first call and a beam search (comgr 3.0,
   nonnormal), and every code object is unchanged.
-- **Pinned by:** `Tolk.Compiler_amd › LLVM's verifier › invalid IR raises
+- **Pinned by:** `Tolk.Compiler_amd › hip › invalid IR raises
   Compile_error with the verifier's finding`, a call of an intrinsic with an
   argument it does not take, which comgr 3.0 compiles without the
   verifier.

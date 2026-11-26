@@ -1291,17 +1291,19 @@ against NVRTC 12.8 on Linux arm64 and 13.4 on Linux x86_64.
 
 The suite is `Tolk.Compiler_amd` (`runtime/support/compiler_amd/`),
 written `AMD` below. The tests tagged `no-library` run in a second process,
-where `COMGR_PATH` names a file that is no library, which the compiler finds. The tests of comgr itself
-are slow and skip without it; no machine here has ROCm, so they have not run.
+where `COMGR_PATH` names a file that is no library, which the compiler finds,
+and the one tagged `no-spawn` in a third. The claims every compiler's workers
+share are `CUDA`'s. The tests of comgr itself skip without it; no machine of
+the default run has ROCm.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: `runtime/support/compiler_amd.py` `compile_hip` (no test) | HIP to a code object; `.text` sources assembled | slow: `AMD › comgr › compiles a kernel to a code object`, `assembles a source whose first line is .text`, `compiles from several domains at once` |
-| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.compile` | comgr's failure is a `CompileError` | slow: `AMD › comgr › a rejected source raises Compile_error with comgr's log` |
-| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.__init__` cache key | `compile_hip_<arch>` | `AMD › cache` (2 tests) |
-| tinygrad: `runtime/support/compiler_amd.py` `disassemble` | `llvm-objdump` of the code object | slow: `AMD › comgr › disassembles a code object` |
-| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.__init__` | making the compiler without comgr fails | `AMD › without comgr on the machine › making a compiler raises Failure naming comgr and COMGR_PATH` |
-| D5 | compiles in processes of their own, which load the library and serve in turn: a library found that does not load is a `Compile_error` at each compile, a crash is a `Compile_error` naming LLVM's error and fails that compile only, a rejected source or another architecture leaves the next compile its own, a killed idle process is replaced | `AMD › a library that does not load` (5 tests); slow: `AMD › compiles in processes of their own` (every test) |
+| tinygrad: `runtime/support/compiler_amd.py` `compile_hip` (no test) | HIP to a code object; `.text` sources assembled | `AMD › hip › compiles a kernel to a code object`, `assembles a source whose first line is .text`; `AMD › compiles in processes of their own › kernels compiled on several domains at once are the bytes they are compiled to in turn` |
+| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.compile` | comgr's failure is a `CompileError` | `AMD › hip › a rejected source raises Compile_error with comgr's step and log`, `a source comgr rejects raises Compile_error` (5 rows) |
+| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.__init__` cache key | `compile_hip_<arch>` | `AMD › hip › the table` (3 tests) |
+| tinygrad: `runtime/support/compiler_amd.py` `disassemble` | `llvm-objdump` of the code object | `AMD › hip › disassembles a code object as llvm-objdump does` |
+| tinygrad: `runtime/support/compiler_amd.py` `HIPCompiler.__init__` | making the compiler without comgr fails; comgr under `ROCM_PATH` | `AMD › hip › without comgr, making a compiler raises Failure naming COMGR_PATH`, `finds libamd_comgr.so in lib of the directory Setting.rocm_path names` |
+| D5 | compiles in processes of their own, which load the library and serve in turn: a library found that does not load is a `Compile_error`, a crash is a `Compile_error` naming LLVM's error and fails that compile only, a rejected source or another architecture leaves the next compile its own, comgr's own cache stays empty, a crash leaves no temporary file, a worker in a compile ends with its parent and removes its directory with comgr's files | `AMD › hip › a library that does not load raises Compile_error naming the file`, `a source that ends its process raises Compile_error with how it ended and LLVM's error`, `a process that cannot start raises Failure naming the worker`; `AMD › compiles in processes of their own` (every test) |
 | tinygrad: `external/external_test_hip_compile.py` | compile time against a reference | dropped: benchmarks |
 | tinygrad: `amd/hw/*` (`HIPCompiler` through `amd/hw/helpers.py`) | instructions on AMD hardware | dropped: they run on the device, the executor's |
 | tinygrad: `device/amd/test_llvm.py` | `AMDLLVMCompiler` | dropped: the LLVM compilers are excluded (README) |

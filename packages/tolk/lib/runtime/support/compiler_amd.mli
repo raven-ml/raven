@@ -53,8 +53,9 @@ val hip : string -> Renderer.Compiler.t
     links with: a code object is read back only for its source, compiled by the
     same comgr with the same options. Raises [Failure] naming [COMGR_PATH] if no comgr is found.
     {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
-    comgr's status and log if comgr rejects the source, with the reason if
-    comgr cannot be loaded, and with how
+    the step that failed, as [compile failed], and comgr's log if comgr rejects
+    the source, with comgr's status if one of its calls fails, with the reason
+    if comgr cannot be loaded, and with how
     the process ended and what it printed if it ends without answering, and
     [Failure] if the process cannot be started. {!Renderer.Compiler.disassemble}
     prints what [llvm-objdump -d] prints ({!Helpers.amdgpu_disassemble}). *)
