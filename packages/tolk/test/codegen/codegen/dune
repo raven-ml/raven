@@ -48,3 +48,30 @@
     CC
     ./clang_no_elementwise
     (run %{exe:test_codegen.exe} --tag no-elementwise)))))
+
+; The laws on Metal run again under Metal's API validation, which aborts a
+; launch whose bound arguments break the rules of the function it calls.
+; GitHub's macOS machines have a device without residency sets, and there
+; the validation layer aborts in the call that opens it.
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (enabled_if
+  (and
+   (= %{system} macosx)
+   (<> %{env:GITHUB_ACTIONS=false} true)))
+ (deps
+  (sandbox always)
+  (glob_files *.golden)
+  (glob_files *.tolk))
+ (action
+  (setenv
+   MTL_DEBUG_LAYER
+   1
+   (run
+    %{exe:test_codegen.exe}
+    -f
+    "casts to an 8-bit float › on each GPU › Metal"
+    -f
+    "constants past the width › on each GPU › Metal"))))

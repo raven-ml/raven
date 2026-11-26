@@ -7572,9 +7572,10 @@ C's undefined behaviour.
   host (`clang › on the host`) and on each GPU (`metal › on Metal`, `cuda
   › on CUDA` and `› on NV`, `hip › on AMD`, run on fudge's CUDA and NV),
   and `an 8- or 16-bit integer shifted by a uint32 count is what
-  Ops.exec_alu computes`, beside them; the Tolk_engine suite's `a shift by
-  a literal or weak count of any size computes the shift`, compiled and
-  through the interpreter, on the host and each GPU; the Decomp_dtype
+  Ops.exec_alu computes`, beside them; the Codegen suite's `constants past
+  the width › on the host › a shift by a literal or weak count of any size
+  computes the shift`, compiled and through the interpreter, and `› on each
+  GPU ›` the same; the Decomp_dtype
   suite's `pm_dtype_decomps › 64-bit integers › an emulated 64-bit shift
   reads the whole of its count`, compiled with 64-bit integers emulated, by
   counts of the operand's type, of `Uint32`, weak literals and weak
@@ -7929,7 +7930,7 @@ reason and its pins.
   tinygrad computes it wrapped and takes a power by the wrong number.
 - **Reason:** (e): at the pinned commit, `Cast(uint16, 0) ** 65536` folds to 1,
   where it is 0, and a uint8 to a weak exponent of 256 is 1.
-- **Pinned by:** the Tolk_engine suite's `a power by an exponent of any size
+- **Pinned by:** the Codegen suite's `a power by an exponent of any size
   computes the power`, compiled and through the interpreter, for each integer
   type; the Symbolic suite's `a power of constants folds by its exponent, of
   any size`, `a float power of a constant reads its exponent in the float`, `a
@@ -10480,9 +10481,9 @@ D466.
   infinity the greatest value of its sign` and `pm_dtype_decomps › narrow
   floats › an infinity and an overflow are e5m2's infinity and e4m3's
   greatest value; an fnuz format saturates an overflow and makes an infinity
-  its NaN`; the Tolk_engine suite's `kernels on the host › a cast to an
-  8-bit float at its bounds computes as truncate`, emulated, and `GPUs ›` the
-  same, native on fudge's CUDA and NV, from float32, float64, float16 and
+  its NaN`; the Codegen suite's `casts to an 8-bit float › on the host ›
+  give the value Dtype.truncate gives, at the formats' bounds`, emulated,
+  and `› on each GPU ›` the same, native on fudge's CUDA and NV, from float32, float64, float16 and
   int32, with e5m2 infinity constants; the Cstyle suite's `cuda_*fp8e5m2`,
   `cuda_constants` and OCP `hip_*` goldens' `.tolk` files.
 

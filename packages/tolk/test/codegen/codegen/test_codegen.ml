@@ -8033,6 +8033,122 @@ let long_casts =
        [ 1; 2; 4; 8 ])
     (fun (lanes, from) -> rounds_once lanes from)
 
+(* Casts to an 8-bit float at its bounds
+
+   A cast to Fp8e4m3 or Fp8e5m2 gives the value Dtype.truncate gives, folded,
+   emulated or native: past the greatest finite value, Fp8e5m2's infinity from
+   61440, the tie to even past 57344, and Fp8e4m3's 448, an infinity included.
+   A kernel casts [fp8_values src] of each source type into both formats, and
+   stores Fp8e5m2's infinities as constants into an Fp8e5m2 buffer, which a
+   target writes through its own conversion. *)
+
+(* Values compare as floats within a relative [1e-5] or an absolute [1e-6], a
+   NaN equal to any NaN, and as themselves otherwise. *)
+let near_value =
+  let close = Testable.float_rel ~rel:1e-5 ~abs:1e-6 in
+  Testable.make ~pp:(Testable.pp Dtypes.value) ~equal:(fun v0 v1 ->
+      match (v0, v1) with
+      | `Float x, `Float y ->
+          (Float.is_nan x && Float.is_nan y) || Testable.equal close x y
+      | v0, v1 -> Testable.equal Dtypes.value v0 v1)
+
+let near_values = array near_value
+
+(* [on_each_device law] is [law d] for the host and for each GPU, whose
+   tests skip without one. *)
+let on_each_device law =
+  [
+    group "on the host" [ law (fun () -> Rig.host) ];
+    group "on each GPU"
+      (List.map
+         (fun kind -> group kind [ law (fun () -> Gpus.gpu kind) ])
+         Gpus.kinds);
+  ]
+
+let fp8_sources = Dtype.[ Float32; Float64; Float16; Int32 ]
+
+let fp8_values src =
+  let floats =
+    [ 448.; 464. -. 0x1p-15; 464.; 464. +. 0x1p-15; 480.; 57344.;
+      61440. -. 0x1p-8; 61440.; 61440. +. 0x1p-8; 65536.; 1e10;
+      Float.infinity ]
+  in
+  let xs =
+    match (src : Dtype.t) with
+    | Float64 -> floats @ [ Float.pred 61440.; Float.succ 61440.; 1e300 ]
+    | Float16 -> [ 448.; 464.; 480.; 57344.; 61440.; 65504.; Float.infinity ]
+    | Int32 -> [ 448.; 464.; 480.; 57344.; 61439.; 61440.; 65536.; 0x1p31 -. 1. ]
+    | _ -> floats
+  in
+  let xs = xs @ List.map Float.neg xs in
+  let xs = if Dtype.is_float src then Float.nan :: xs else xs in
+  Array.of_list
+    (List.map
+       (fun x ->
+         if Dtype.is_float src then Dtype.truncate src (`Float x)
+         else `Int (Bigint.of_float x))
+       xs)
+
+(* A narrow type's elements move as the unsigned integers of their width,
+   which an emulating target stores them as. *)
+let held dt = if Dtype.equal dt Float16 then Dtype.Uint16 else dt
+
+let fp8_kernel src n =
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at slot dt = Ops.index (Shape.placeholder ~slot [ n ] dt) [ i ] in
+  let x = at 2 (held src) in
+  let x = if Dtype.equal (held src) src then x else Ops.bitcast x src in
+  let code y = Ops.bitcast y Uint8 in
+  let infinity s = Ops.float ~dtype:Fp8e5m2 (Float.copy_sign Float.infinity s) in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"fp8_casts" ~opts_to_apply:[] ())
+    [
+      Ops.end_
+        (Ops.group
+           [
+             Ops.store (at 0 Uint8) (code (Ops.cast x Fp8e4m3));
+             Ops.store (at 1 Uint8) (code (Ops.cast x Fp8e5m2));
+             Ops.store (at 3 Fp8e5m2) (infinity 1.);
+             Ops.store (at 4 Fp8e5m2) (infinity (-1.));
+           ])
+        [ i ];
+    ]
+
+let casts_to_fp8 d src =
+  let supported = Renderer.supported_dtypes (Run.renderer d) in
+  if Dtype.equal src Float64 && not (List.mem src supported) then
+    skip ~reason:"no float64 on this target" ();
+  let xs = fp8_values src in
+  let n = Array.length xs in
+  let prg = Codegen.to_program (fp8_kernel src n) (Run.renderer d) in
+  let held_xs = Array.map (Dtype.bitcast src (held src)) xs in
+  let held_xs = if Dtype.equal (held src) src then xs else held_xs in
+  let out = Run.on d prg [ (2, held_xs) ] in
+  (* An Fp8e5m2 buffer an emulating target holds as codes reads as bytes. *)
+  let read dt slot =
+    Array.map
+      (function `Int _ as c -> Dtype.bitcast Uint8 dt c | v -> v)
+      (List.assoc slot out)
+  in
+  let truncated dt = Array.map (Dtype.truncate dt) xs in
+  let msg dt = Format.asprintf "%a to %a" Dtype.pp src Dtype.pp dt in
+  equal ~msg:(msg Fp8e4m3) near_values (truncated Fp8e4m3) (read Fp8e4m3 0);
+  equal ~msg:(msg Fp8e5m2) near_values (truncated Fp8e5m2) (read Fp8e5m2 1);
+  equal ~msg:"an Fp8e5m2 infinity constant" near_values
+    (Array.make n (`Float Float.infinity))
+    (read Fp8e5m2 3);
+  equal ~msg:"an Fp8e5m2 negative infinity constant" near_values
+    (Array.make n (`Float Float.neg_infinity))
+    (read Fp8e5m2 4)
+
+let fp8_cases name d =
+  cases name ~id:Dtype.name fp8_sources (fun src -> casts_to_fp8 (d ()) src)
+
+let fp8_casts =
+  group "casts to an 8-bit float"
+    (on_each_device
+       (fp8_cases "give the value Dtype.truncate gives, at the formats' bounds"))
+
 (* Selections between bfloat16 vectors *)
 
 (* The kernel that stores into slot 0, of bfloat16, element [i] of slot 2 where
@@ -8504,13 +8620,200 @@ let shift_counts_past_64_bits () =
   equal ~msg:"all past the width" Dtypes.value (`Int Bigint.zero)
     (List.assoc 0 (Run.on_host ~vars:[ ("b", 1) ] prg [ (1, xs) ])).(0)
 
+let of_int dt n = Dtype.truncate dt (`Int (Bigint.of_int n))
+
+(* The least and greatest values, their neighbours, and -1 to 2. *)
+let edges dt =
+  let near v d = Dtype.truncate dt Dtype.Value.(v + of_int d) in
+  [ Dtype.min dt; near (Dtype.min dt) 1; of_int dt (-1); of_int dt 0;
+    of_int dt 1; of_int dt 2; near (Dtype.max dt) (-1); Dtype.max dt ]
+
+(* Shifts by counts of any size
+
+   A count is a number of bits, not a value of its operand's type: a weak
+   literal or a weak expression past the type's range, or past the width, must
+   not wrap there. Written against what a count means: past the width of [dt]
+   a left shift is 0 and a right shift the sign fill; below it, [x 2^k] modulo
+   [2^w] and the floor of [x / 2^k]. [shifted] computes it on the type's bits. *)
+
+let shifted dt op x k : Dtype.value =
+  let past = Bigint.geq k (Bigint.of_int (Dtype.bitsize dt)) in
+  match (op : Op.t) with
+  | Shl when past -> `Int Bigint.zero
+  | Shl -> Dtype.truncate dt (`Int (Bigint.shift_left x (Bigint.to_int k)))
+  | _ when past ->
+      `Int (if Bigint.sign x < 0 then Bigint.minus_one else Bigint.zero)
+  | _ -> `Int (Bigint.shift_right x (Bigint.to_int k))
+
+(* A power of two and its neighbours. *)
+let around p = Bigint.[ pred p; p; succ p ]
+
+let power n = Bigint.shift_left Bigint.one n
+
+(* Counts either side of the width and of 2^8, 2^16, 2^32, 2^63 and 2^64. *)
+let count_literals dt =
+  let w = Bigint.of_int (Dtype.bitsize dt) in
+  List.sort_uniq Bigint.compare
+    (List.concat_map around
+       (w :: List.map power [ 8; 16; 32; 63; 64 ]))
+
+(* A weak expression [v + c - 2], at [v] = 2. *)
+let count_expressions dt =
+  let two = Bigint.of_int 2 in
+  List.filter (fun c -> Bigint.geq c two) (count_literals dt)
+
+let shift_lanes = 8
+let wide_bound = max_int - 1
+let v_name = "shift_v" and wide_name = "shift_wide"
+
+(* The kernel's shifts: literal counts, weak expressions [v + c - 2] of a
+   variable bound at 2, and [wide + 1] of a variable whose bounds exceed every
+   type's width but a 64-bit one's. Its slot 0 holds the shifted values. *)
+let shift_counts_kernel dt =
+  let open Ops.O in
+  let i = Ops.range ~axis_type:Weak (Int shift_lanes) [ 0 ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ shift_lanes ] dt) [ i ] in
+  let x = at 0 in
+  let lit c = Ops.const (`Int c) in
+  let v = Ops.variable v_name (`Int Bigint.zero) (`Int (Bigint.of_int 3)) in
+  let wide =
+    Ops.variable wide_name (`Int Bigint.zero) (`Int (Bigint.of_int wide_bound))
+  in
+  let expr c = v + lit (Bigint.sub c (Bigint.of_int 2)) in
+  let wide_count = wide + Ops.int 1 in
+  let ops = Op.[ Shl; Shr ] in
+  let shifts k = List.map (fun o -> Ops.alu x o [ k ]) ops in
+  let values =
+    List.concat_map (fun c -> shifts (lit c)) (count_literals dt)
+    @ List.concat_map (fun c -> shifts (expr c)) (count_expressions dt)
+    @ shifts wide_count
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"shift_counts" ~opts_to_apply:[] ())
+    [
+      Ops.end_
+        (Ops.group (List.mapi (fun j v -> Ops.store (at (succ j)) v) values))
+        [ i ];
+    ]
+
+(* Each store's reference, in slot order, as [shift_counts_kernel dt] writes
+   them. *)
+let shift_counts_references dt ~wide =
+  let ops = Op.[ Shl; Shr ] in
+  let each c = List.map (fun o -> (o, c)) ops in
+  List.concat_map each (count_literals dt)
+  @ List.concat_map each (count_expressions dt)
+  @ each (Bigint.of_int (wide + 1))
+
+let shift_counts_program =
+  let compiled = Hashtbl.create 16 in
+  fun d dt ->
+    let key = (Run.target d, dt) in
+    match Hashtbl.find_opt compiled key with
+    | Some prg -> prg
+    | None ->
+        let prg =
+          Codegen.to_program (shift_counts_kernel dt) (Run.renderer d)
+        in
+        Hashtbl.replace compiled key prg;
+        prg
+
+let shift_counts_compute d (dt, xs, wide) =
+  let w = Dtype.bitsize dt in
+  let shifted_by o c x =
+    shifted dt o (Dtype.Value.to_z x) c
+  in
+  let references = shift_counts_references dt ~wide in
+  let count_past =
+    List.exists (fun (_, c) -> Bigint.geq c (Bigint.of_int w)) references
+  in
+  cover "a count at or past the width" count_past;
+  cover "a signed type" (List.mem dt Dtype.sints);
+  cover "an unsigned type" (Dtype.is_unsigned dt);
+  cover "a variable count past the width" (wide + 1 >= w);
+  let vars = [ (v_name, 2); (wide_name, wide) ] in
+  let zeros = Array.make shift_lanes (of_int dt 0) in
+  let in_buffers =
+    (0, xs) :: List.mapi (fun j _ -> (j + 1, zeros)) references
+  in
+  let out = Run.on d ~vars (shift_counts_program d dt) in_buffers in
+  let expected (o, c) = Array.map (shifted_by o c) xs in
+  List.iteri
+    (fun j r ->
+      let o, c = r in
+      let msg =
+        Format.asprintf "%a %a by %s" Dtype.pp dt Op.pp o (Bigint.to_string c)
+      in
+      equal ~msg near_values (expected r) (List.assoc (j + 1) out))
+    references;
+  (* The same kernel through the interpreter. *)
+  let bound =
+    [ (v_name, `Int (Bigint.of_int 2)); (wide_name, `Int (Bigint.of_int wide)) ]
+  in
+  let writes =
+    Interpreter.writes ~vars:bound ~buffers:[ (0, xs) ]
+      (shift_counts_kernel dt)
+  in
+  let want =
+    List.concat
+      (List.mapi
+         (fun j r ->
+           Array.to_list
+             (Array.mapi (fun i v -> (j + 1, i, v)) (expected r)))
+         references)
+  in
+  let pp_write ppf (s, i, v) =
+    Format.fprintf ppf "(%d,%d,%a)" s i Dtype.pp_const (v :> Dtype.const)
+  in
+  equal
+    ~msg:(Format.asprintf "%a through the interpreter" Dtype.pp dt)
+    (Testable.list (Testable.make ~pp:pp_write ~equal:( = )))
+    want writes
+
+let shift_counts_gen =
+  let open Gen in
+  let* dt = of_list ~pp:Dtype.pp Dtype.ints in
+  let e = edges dt in
+  let any = map (of_int dt) int in
+  let+ xs = array ~size:(constant shift_lanes) (frequency [ (3, of_list e); (1, any) ])
+  and+ wide =
+    frequency
+      [
+        ( 3,
+          of_list
+            (List.map
+               (fun c -> c - 1)
+               [
+                 Dtype.bitsize dt - 1;
+                 Dtype.bitsize dt;
+                 Dtype.bitsize dt + 1;
+                 256;
+                 65536;
+                 1 lsl 32;
+                 1 lsl 40;
+               ]) );
+        (1, int_range 0 wide_bound);
+      ]
+  in
+  (dt, xs, wide)
+
+let shift_counts_prop name d =
+  prop name ~count:40
+    (Gen.with_pp
+       (fun ppf (dt, xs, wide) ->
+         Format.fprintf ppf "%a, wide %d: %a" Dtype.pp dt wide
+           (Testable.pp (array Dtypes.value))
+           xs)
+       shift_counts_gen)
+    (fun c -> shift_counts_compute (d ()) c)
+
 let square_wrapping =
   let by_type name kernels check =
     cases name ~id:Dtype.name integer_types
       (compiled_table kernels integer_types check)
   in
   group "constants past the width"
-    [
+    ([
       by_type "a square of a product whose constant squares to 0 is 0"
         (fun dt -> List.map (fun (_, _, k) -> k) (squares dt))
         square_wraps;
@@ -8530,6 +8833,9 @@ let square_wrapping =
       test "a shift by a weak count past 64 bits is refused or past the width"
         shift_counts_past_64_bits;
     ]
+    @ on_each_device
+        (shift_counts_prop
+           "a shift by a literal or weak count of any size computes the shift"))
 
 (* An accumulator no lane adds to *)
 
@@ -9959,6 +10265,176 @@ let int_powers =
       equal (array Dtypes.value)
         (column (fun (a, b) -> int32_power a b))
         (List.assoc 0 (Run.on_host prg [ (1, column fst); (2, column snd) ])))
+
+(* Powers by exponents of any size
+
+   An exponent is a number, not a value of its base's type: a weak literal or a
+   weak expression past the base's type must not wrap there. [powered dt b e] is
+   the power on [dt]'s bits, by squares and products at the type's width: an
+   integer to a negative power truncates towards 0, so it is 0 but for 1 and,
+   in a signed type, -1. Its kernel is one per type, compiled once; Clang
+   takes most of two seconds for the eight, cold. *)
+
+let powered dt b e : Dtype.value =
+  let two = Bigint.of_int 2 in
+  if Bigint.sign e >= 0 then begin
+    let m = Bigint.shift_left Bigint.one (Dtype.bitsize dt) in
+    let rec go acc b e =
+      if Bigint.sign e = 0 then acc
+      else
+        let acc = if Bigint.divisible e two then acc else Bigint.(rem (mul acc b) m) in
+        go acc Bigint.(rem (mul b b) m) (Bigint.shift_right e 1)
+    in
+    Dtype.truncate dt (`Int (go Bigint.one (Bigint.rem b m) e))
+  end
+  else if Bigint.equal b Bigint.one then `Int Bigint.one
+  else if Dtype.mem dt Dtype.sints && Bigint.equal b Bigint.minus_one then
+    `Int (if Bigint.divisible e two then Bigint.one else Bigint.minus_one)
+  else `Int Bigint.zero
+
+(* Exponents around 0, 1, -1, the width, and 2^8, 2^16 and 2^32. *)
+let pow_exponents dt =
+  let width = Bigint.of_int (Dtype.bitsize dt) in
+  List.sort_uniq Bigint.compare
+    (List.concat_map around
+       (Bigint.of_int (-1) :: Bigint.zero :: Bigint.one :: width
+       :: List.map power [ 8; 16; 32 ]))
+
+let pow_lanes = 8
+let pow_v = "pow_v"
+
+(* The kernel's powers: of the base in slot 0, by the exponents in slot 1, by
+   each literal exponent, and by each as a weak expression [v + e - 2] of a
+   variable bound at 2. Each power is stored to its own slot from 2. *)
+let pow_kernel dt =
+  let i = Ops.range ~axis_type:Weak (Int pow_lanes) [ 0 ] in
+  let at slot = Ops.index (Shape.placeholder ~slot [ pow_lanes ] dt) [ i ] in
+  let x = at 0 and loaded = at 1 in
+  let v = Ops.variable pow_v (`Int Bigint.zero) (`Int (Bigint.of_int 3)) in
+  let lit c = Ops.const (`Int c) in
+  let pow e = Ops.alu x Op.Pow [ e ] in
+  let es = pow_exponents dt in
+  let values =
+    pow loaded
+    :: List.map (fun e -> pow (lit e)) es
+    @ List.map
+        (fun e -> Ops.pow x Ops.O.(v + lit (Bigint.sub e (Bigint.of_int 2))))
+        es
+  in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"powers" ~opts_to_apply:[] ())
+    [
+      Ops.end_
+        (Ops.group
+           (List.mapi (fun j p -> Ops.store (at (j + 2)) p) values))
+        [ i ];
+    ]
+
+let pow_program =
+  let compiled = Hashtbl.create 16 in
+  fun d dt ->
+    let key = (Run.target d, dt) in
+    match Hashtbl.find_opt compiled key with
+    | Some prg -> prg
+    | None ->
+        let prg = Codegen.to_program (pow_kernel dt) (Run.renderer d) in
+        Hashtbl.replace compiled key prg;
+        prg
+
+let pow_compute d (dt, xs, es) =
+  let literals = pow_exponents dt in
+  let two = Bigint.of_int 2 in
+  let n_stores = 1 + (2 * List.length literals) in
+  cover "an exponent past the width"
+    (List.exists
+       (fun e -> Bigint.gt e (Bigint.of_int (Dtype.bitsize dt)))
+       literals);
+  cover "a signed type" (List.mem dt Dtype.sints);
+  cover "an unsigned type" (Dtype.is_unsigned dt);
+  cover "a base of 0, 1 or -1"
+    (Array.exists
+       (fun x -> Bigint.leq (Bigint.abs (Dtype.Value.to_z x)) Bigint.one)
+       xs);
+  let zeros = Array.make pow_lanes (of_int dt 0) in
+  let out =
+    Run.on ~vars:[ (pow_v, 2) ] d (pow_program d dt)
+      ((0, xs) :: (1, es) :: List.init n_stores (fun j -> (j + 2, zeros)))
+  in
+  let by e x = powered dt (Dtype.Value.to_z x) e in
+  let expected =
+    Array.map2 (fun x e -> by (Dtype.Value.to_z e) x) xs es
+    :: List.map (fun e -> Array.map (by e) xs) literals
+    @ List.map (fun e -> Array.map (by e) xs) literals
+  in
+  let exponent_name j =
+    if j = 0 then "the loaded exponents"
+    else if j <= List.length literals then
+      Bigint.to_string (List.nth literals (j - 1))
+    else
+      Printf.sprintf "v + %s - 2"
+        (Bigint.to_string (List.nth literals (j - 1 - List.length literals)))
+  in
+  List.iteri
+    (fun j want ->
+      let msg =
+        Format.asprintf "%a ** %s" Dtype.pp dt (exponent_name j)
+      in
+      equal ~msg near_values want (List.assoc (j + 2) out))
+    expected;
+  (* The same kernel through the interpreter. *)
+  let bound = [ (pow_v, `Int two) ] in
+  let writes =
+    Interpreter.writes ~vars:bound ~buffers:[ (0, xs); (1, es) ] (pow_kernel dt)
+  in
+  let want =
+    List.concat
+      (List.mapi
+         (fun j vs -> Array.to_list (Array.mapi (fun i v -> (j + 2, i, v)) vs))
+         expected)
+  in
+  let pp_write ppf (s, i, v) =
+    Format.fprintf ppf "(%d,%d,%a)" s i Dtype.pp_const (v :> Dtype.const)
+  in
+  equal
+    ~msg:(Format.asprintf "%a through the interpreter" Dtype.pp dt)
+    (Testable.list (Testable.make ~pp:pp_write ~equal:( = )))
+    want writes
+
+let pow_gen =
+  let open Gen in
+  let* dt = of_list ~pp:Dtype.pp Dtype.ints in
+  let bases =
+    edges dt
+    @ List.map (of_int dt) [ 3; 5; -2 ]
+  in
+  let any = map (of_int dt) int in
+  let exponents =
+    (* Exponents of the base's type: 0, 1, -1, 2, the width and the type's
+       greatest value, those its type holds. *)
+    List.filter_map
+      (fun n ->
+        let e = Dtype.Value.of_int n in
+        if Dtype.Value.(e >= Dtype.min dt && e <= Dtype.max dt) then Some e
+        else None)
+      [ 0; 1; -1; 2; Dtype.bitsize dt; 127; 255 ]
+    @ [ Dtype.max dt ]
+  in
+  let+ xs =
+    array ~size:(constant pow_lanes) (frequency [ (3, of_list bases); (1, any) ])
+  and+ es =
+    array ~size:(constant pow_lanes) (of_list exponents)
+  in
+  (dt, xs, es)
+
+let pow_prop =
+  prop "a power by an exponent of any size computes the power" ~count:40
+    (Gen.with_pp
+       (fun ppf (dt, xs, es) ->
+         Format.fprintf ppf "%a: %a ** %a" Dtype.pp dt
+           (Testable.pp (array Dtypes.value)) xs
+           (Testable.pp (array Dtypes.value)) es)
+       pow_gen)
+    (fun c -> pow_compute Rig.host c)
 
 (* Effects run as often as written
 
@@ -12257,6 +12733,7 @@ let () =
            bfloat16_casts;
            half_casts;
            long_casts;
+           fp8_casts;
            test "a selection between bfloat16 vectors takes each lane's arm"
              selects_bfloat16_lanes;
            test
@@ -12265,6 +12742,7 @@ let () =
              takes_bfloat16;
            square_wrapping;
            int_powers;
+           pow_prop;
            stacks;
            (* its effects *)
            effects;
