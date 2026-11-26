@@ -53,7 +53,8 @@
   rig
   windtrap)
  (link_flags
-  (:include ../metal/support/plist_flags.sexp))
+  (:standard
+   (:include ../metal/support/plist_flags.sexp)))
  (deps
   (glob_files golden/kinds/*.golden))
  (action

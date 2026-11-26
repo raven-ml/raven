@@ -10,7 +10,8 @@
  (modules test_metal test_metal_sorts)
  (link_deps support/nx-metal-tests.plist)
  (link_flags
-  (:include support/plist_flags.sexp))
+  (:standard
+   (:include support/plist_flags.sexp)))
  (libraries
   nx_array
   nx_array_support
@@ -31,7 +32,8 @@
  (modules test_pipelines)
  (link_deps support/nx-metal-tests.plist)
  (link_flags
-  (:include support/plist_flags.sexp))
+  (:standard
+   (:include support/plist_flags.sexp)))
  (libraries
   nx_array
   nx_array_support
@@ -63,7 +65,8 @@
  (modules test_fft_kernels)
  (link_deps support/nx-metal-tests.plist)
  (link_flags
-  (:include support/plist_flags.sexp))
+  (:standard
+   (:include support/plist_flags.sexp)))
  (libraries
   nx_array
   nx_array_support
@@ -80,7 +83,8 @@
  (modules test_metal_factor)
  (link_deps support/nx-metal-tests.plist)
  (link_flags
-  (:include support/plist_flags.sexp))
+  (:standard
+   (:include support/plist_flags.sexp)))
  (libraries
   nx_array
   nx_kernel
@@ -99,7 +103,8 @@
  (modules test_metal_product)
  (link_deps support/nx-metal-tests.plist)
  (link_flags
-  (:include support/plist_flags.sexp))
+  (:standard
+   (:include support/plist_flags.sexp)))
  (libraries
   nx_array
   nx_array_support
@@ -117,7 +122,8 @@
  (modules test_metal_moves)
  (link_deps support/nx-metal-tests.plist)
  (link_flags
-  (:include support/plist_flags.sexp))
+  (:standard
+   (:include support/plist_flags.sexp)))
  (libraries
   nx_array
   nx_array_support

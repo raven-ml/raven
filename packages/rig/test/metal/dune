@@ -53,7 +53,8 @@
     (:include objc_flags.sexp))))
  (link_deps rig-metal-cache-tests.plist)
  (link_flags
-  (:include plist_flags.sexp))
+  (:standard
+   (:include plist_flags.sexp)))
  (libraries rig_edge rig_metal rig_metal_support threads.posix unix windtrap))
 
 (rule
