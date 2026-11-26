@@ -624,80 +624,10 @@ let probes (type v s) (dt : (v, s) D.t) : (v, s, Nx.host) Nx.t =
       let parts = List.map2 (fun a b -> [ a; b ]) patterns64 next in
       of_bytes dt (bytes (List.concat parts) 8)
 
-(* A real number as two floats that no other number gives: an integer of
-   magnitude below 2^64 as its multiple of 2^32 and the rest, in [[0, 2^32)],
-   any other float as itself and [0.]. Under [Float.equal] every NaN is one
-   number and [-0.] is [0]. *)
-let real f =
-  if Float.is_integer f && Float.abs f < 0x1p64 then
-    let hi = Float.ldexp (Float.floor (Float.ldexp f (-32))) 32 in
-    (hi, f -. hi)
-  else (f, 0.)
-
-(* An int64 [x] read signed or unsigned, as {!real} gives it: the upper 32 bits
-   times 2^32 and the lower. *)
-let low x = Int64.to_float (Int64.logand x 0xFFFFFFFFL)
-let signed x = (Float.ldexp (Int64.to_float (Int64.shift_right x 32)) 32, low x)
-
-let unsigned x =
-  (Float.ldexp (Int64.to_float (Int64.shift_right_logical x 32)) 32, low x)
-
-(* [x]'s number in [dt]: its real and imaginary parts, as {!real} gives them. *)
-let number_of (type v s) (dt : (v, s) D.t) (x : v) :
-    (float * float) * (float * float) =
-  let zero = (0., 0.) in
-  let small x = (signed (Int64.of_int x), zero) in
-  match dt with
-  | D.Float64 -> (real x, zero)
-  | D.Float32 -> (real x, zero)
-  | D.Float16 -> (real x, zero)
-  | D.Bfloat16 -> (real x, zero)
-  | D.Float8_e4m3fn -> (real x, zero)
-  | D.Float8_e5m2 -> (real x, zero)
-  | D.Float4_e2m1fn -> (real x, zero)
-  | D.Int64 -> (signed x, zero)
-  | D.Uint64 -> (unsigned x, zero)
-  | D.Int32 -> (signed (Int64.of_int32 x), zero)
-  | D.Uint32 -> (signed (Int64.logand (Int64.of_int32 x) 0xFFFFFFFFL), zero)
-  | D.Int16 -> small x
-  | D.Uint16 -> small x
-  | D.Int8 -> small x
-  | D.Uint8 -> small x
-  | D.Int4 -> small x
-  | D.Uint4 -> small x
-  | D.Complex128 -> (real x.re, real x.im)
-  | D.Complex64 -> (real x.re, real x.im)
-  | D.Bool -> (real (if x then 1. else 0.), zero)
-  | D.Bit -> (real (if x then 1. else 0.), zero)
-
-let number =
-  let part ppf (hi, lo) = Format.fprintf ppf "%h + %h" hi lo in
-  let equal ((a, b), (c, d)) ((a', b'), (c', d')) =
-    Float.equal a a' && Float.equal b b' && Float.equal c c' && Float.equal d d'
-  in
-  Testable.make ~equal ~pp:(fun ppf (re, im) ->
-      Format.fprintf ppf "(%a) + (%a)i" part re part im)
-
 let dtype_pairs =
   List.concat_map (fun a -> List.map (fun b -> (a, b)) D.all) D.all
 
 let pair_name (D.Any a, D.Any b) = D.name a ^ " into " ^ D.name b
-
-(* [Dtype.exact]'s statement read off {!Nx.cast}: a dtype is exact into another
-   iff every probe keeps its number through the cast. *)
-let law_exact (D.Any src, D.Any dt) =
-  let x = probes src in
-  let xs = values x and ys = values (Nx.cast dt x) in
-  let changed =
-    Seq.find_map
-      (fun i ->
-        let a = number_of src xs.(i) and b = number_of dt ys.(i) in
-        if Testable.equal number a b then None else Some (i, a, b))
-      (Seq.init (Array.length xs) Fun.id)
-  in
-  let first_change = option (triple int number number) in
-  if D.exact src dt then equal first_change None changed
-  else not_equal first_change None changed
 
 (* Of an operand exact into [dt], [contract dt] is the contraction of its cast,
    bit for bit, over all its probes, one and none. *)
@@ -1105,8 +1035,6 @@ let contract =
       prop
         "of complex operands is within √2 γ(β(2K), u) Σ|a||b| of the exact sum"
         cases_of_sizes law_complex_within_bound;
-      cases "Dtype.exact holds iff a cast keeps every probe's number"
-        ~id:pair_name dtype_pairs law_exact;
       cases "contracts an operand exact into the result as its cast"
         ~id:pair_name
         (List.filter

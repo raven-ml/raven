@@ -173,10 +173,10 @@ let pp_case ppf (Case (dt, s, l, _, _)) =
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
     l
 
-(* Matrices of up to 5 rows and columns, square ones where [square], behind a
-   batch of none, one or two, of the four dtypes, each element's parts in [-1,
-   1]. A broadcast layout has a batch of two. *)
-let matrices ?(square = false) () =
+(* Matrices of up to 5 rows, [columns m] columns for [m] rows, behind a batch of
+   none, one or two, of the four dtypes, each element's parts in [-1, 1]. A
+   broadcast layout has a batch of two. *)
+let shaped columns =
   Gen.with_pp pp_case
     (let open Gen in
      let* (D.Any dt) = of_list fulls in
@@ -186,25 +186,29 @@ let matrices ?(square = false) () =
        else of_list [ [||]; [| 0 |]; [| 1 |]; [| 2 |] ]
      in
      let* m = int_range 0 5 in
-     let* n = if square then constant m else int_range 0 5 in
+     let* n = columns m in
      let s = Array.append lead [| m; n |] in
      let k = numel s in
      let+ re = array ~size:(constant k) (float_range (-1.) 1.)
      and+ im = array ~size:(constant k) (float_range (-1.) 1.) in
      Case (dt, s, layout, re, im))
 
-(* Demands that a law meet each shape the generator draws: wide, tall and square
-   matrices (square ones alone where [square]), an empty one, and a batch of
-   two. *)
-let cover_shapes ?(square = false) s =
-  let r = Array.length s in
-  if not square then begin
-    cover "wide" (rows s < cols s);
-    cover "tall" (rows s > cols s)
-  end;
+(* Matrices of up to 5 rows and columns, and square ones. *)
+let matrices () = shaped (fun _ -> Gen.int_range 0 5)
+let square_matrices () = shaped Gen.constant
+
+(* Demands that a law of square matrices meet each shape the generator draws: a
+   square matrix, an empty one, and a batch of two. *)
+let cover_square_shapes s =
   cover "square" (rows s = cols s);
   cover "empty" (Array.exists (( = ) 0) s);
-  cover "a batch of two" (r = 3 && s.(0) = 2)
+  cover "a batch of two" (Array.length s = 3 && s.(0) = 2)
+
+(* The same, and wide and tall matrices. *)
+let cover_shapes s =
+  cover "wide" (rows s < cols s);
+  cover "tall" (rows s > cols s);
+  cover_square_shapes s
 
 let cover_layout l =
   cover "a transposed view" (l = Transposed);
@@ -284,8 +288,8 @@ let not_negative ~msg x =
 
 let test_rounded_once =
   prop "a result in dt is its operand's precision's, rounded once"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       let g = operand dt s re im in
       let a = Nx.add g (adj g) in
       let (Any_float r) = real_of dt in
@@ -478,8 +482,8 @@ let test_cholesky =
   prop
     "L Lᴴ is the matrix its lower triangle and diagonal's real parts name, \
      within γ(n + 1)"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       let n = cols s in
       let x = with_noise (definite (operand dt s re im)) re im in
       let l = Nx.cholesky x in
@@ -502,8 +506,8 @@ let test_cholesky_form =
   prop
     "the other triangle is +0, the diagonal real and positive, and Upper's U \
      is Lᴴ"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       let x = with_noise (definite (operand dt s re im)) re im in
       let l = Nx.cholesky x in
       let above = parts (Nx.triu ~k:1 l) in
@@ -830,8 +834,8 @@ let test_eig =
   prop
     "a v is v diag w within γ(16n), its columns of unit norm, of a matrix \
      balancing leaves alone"
-    (matrices ~square:true ()) (fun (Case (dt, s, layout, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, layout, re, im)) ->
+      cover_square_shapes s;
       cover_layout layout;
       let n = cols s in
       let re, im = mirrored s re im in
@@ -902,8 +906,8 @@ let least_singular n a w =
    sums' rounding. *)
 let test_eigvals =
   prop "each is an eigenvalue of a matrix within γ(16n) of a, with multiplicity"
-    (matrices ~square:true ()) (fun (Case (dt, s, layout, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, layout, re, im)) ->
+      cover_square_shapes s;
       cover_layout layout;
       let n = cols s in
       let re, im = mirrored s re im in
@@ -957,8 +961,8 @@ let sorted_by_real n x =
    eig's lie within 2δ of each other. *)
 let test_eigvals_hermitian =
   prop "of a Hermitian matrix, they are eig's w in some order"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       let n = cols s in
       let g' = operand dt s re im in
       let h = Nx.add g' (adj g') in
@@ -1012,8 +1016,8 @@ let test_eigh =
   prop ~examples:[ twice_identity ]
     "v diag w vᴴ is the matrix its lower triangle and diagonal's real parts \
      name, within γ(16n), v orthonormal, w ascending"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       let n = cols s in
       let g' = operand dt s re im in
       let x = with_noise (Nx.add g' (adj g')) re im in
@@ -1067,8 +1071,8 @@ let test_eigh_raises () =
    one (nx_cpu.mli): the two within twice that. *)
 let test_eigvalsh =
   prop "eigvalsh is eigh's w within its bound, ascending, from the same part"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       let n = cols s in
       let g' = operand dt s re im in
       let x = with_noise (Nx.add g' (adj g')) re im in
@@ -1141,8 +1145,8 @@ let pivots (type v s) (a : (v, s, Nx.host) Nx.t) =
    normal number. *)
 let test_det =
   prop "det is the product of lu's u diagonal, negated once per interchange"
-    (matrices ~square:true ()) (fun (Case (dt, s, layout, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, layout, re, im)) ->
+      cover_square_shapes s;
       cover_layout layout;
       let n = cols s in
       let a = laid dt layout s re im in
@@ -1214,9 +1218,9 @@ let test_det_raises () =
    near 0; their sum in the dtype adds γ(n) of the sum of their magnitudes. Each
    complex sign is within 3 u ({!Nx.sign}), their product within γ(2n) more. *)
 let test_slogdet =
-  prop "sign and logabs are those of lu's pivots" (matrices ~square:true ())
+  prop "sign and logabs are those of lu's pivots" (square_matrices ())
     (fun (Case (dt, s, layout, re, im)) ->
-      cover_shapes ~square:true s;
+      cover_square_shapes s;
       cover_layout layout;
       let n = cols s in
       let a = laid dt layout s re im in
@@ -1427,8 +1431,8 @@ let test_solve_triangular =
   prop
     "x solves its triangle within γ(2n) under each transpose and unit_diag, \
      reading that triangle alone"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       (* Complex values off the diagonal tell aᵀ from aᴴ. *)
       let a = definite (operand dt s re im) in
       let b = operand dt s im re in
@@ -1457,8 +1461,8 @@ let first x = Nx.slice [ Nx.R (0, 1) ] x
 
 let test_solve_triangular_shapes =
   prop "a vector b gives x of its shape, and a's and b's leading axes broadcast"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       let a = definite (operand dt s re im) in
       let v = vector_of dt s im re in
       let x = Nx.solve_triangular a v in
@@ -1542,8 +1546,8 @@ let test_solve =
   prop
     "a x is b within γ(6n), vector or columns, leading axes of a and b \
      broadcast"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       let a = conditioned (operand dt s re im) in
       let b = operand dt s im re in
       solved ~msg:"columns" a b (Nx.solve a b);
@@ -1578,9 +1582,9 @@ let test_solve_raises () =
 (* inv *)
 
 let test_inv =
-  prop "a inv a is the identity within solve's bound" (matrices ~square:true ())
+  prop "a inv a is the identity within solve's bound" (square_matrices ())
     (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+      cover_square_shapes s;
       let a = conditioned (operand dt s re im) in
       solved ~msg:"a inv a" a (identity dt (lead s) (cols s)) (Nx.inv a))
 
@@ -1854,8 +1858,8 @@ let test_pinv =
    times 2 for the second order. *)
 let test_pinv_hermitian =
   prop "under ~hermitian it is pinv, of a definite or an indefinite matrix"
-    (matrices ~square:true ()) (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+    (square_matrices ()) (fun (Case (dt, s, _, re, im)) ->
+      cover_square_shapes s;
       let n = cols s in
       cover "indefinite" (n >= 2);
       let a = conditioned (operand dt s re im) in
@@ -2293,9 +2297,9 @@ let test_matrix_rank_raises () =
    rounding to the dtype from those, and one at float64 for the check. *)
 (* As matrix_norm's, about one case in six is empty: 200 cases reach it. *)
 let test_cond =
-  prop ~count:200 "each p is its definition" (matrices ~square:true ())
+  prop ~count:200 "each p is its definition" (square_matrices ())
     (fun (Case (dt, s, _, re, im)) ->
-      cover_shapes ~square:true s;
+      cover_square_shapes s;
       assume (cols s > 0);
       cover "complex" (D.is D.Complex dt);
       let x = conditioned (operand dt s re im) in
