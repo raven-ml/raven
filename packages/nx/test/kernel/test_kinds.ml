@@ -1060,14 +1060,13 @@ let complex_kinds =
     "atanh";
   ]
 
-(* |z' - z| / |z| of the moduli alone, in units of [u], infinite where a part of
-   [z'] is NaN, as [normwise] reads it, so that no bound passes it. *)
+(* The distance of [z']'s modulus from [z]'s over [z]'s, in units of [u]:
+   infinite where a part of [z'] is NaN, or [z'] is infinite, beside a finite
+   [z]. *)
 let modulus_error u (re, im)
     (((zr, _), (zi, _)) : (float * float) * (float * float)) =
-  if Float.is_nan re || Float.is_nan im then Float.infinity
-  else
-    let m = Float.hypot zr zi in
-    Float.abs (Float.hypot re im -. m) /. m /. u
+  let m = Float.hypot zr zi in
+  Nx_array_support.gap (Float.hypot re im) m /. m /. u
 
 (* C99 Annex G's special values, G.6.1 to G.6.4, at c128 and c64. Where it
    leaves a sign unspecified, the value is nx_kinds.h's choice. A NaN part is
@@ -1461,17 +1460,22 @@ let test_complex_log_circle =
 let dd_of (re, im) = ((re, 0.), (im, 0.))
 let modulus (re, im) = Float.hypot re im
 
+(* [|log z|] in float64, the bound's own scale: from the reference, so that an
+   infinite result of log does not widen its own bound. *)
+let log_modulus ((re, im) as z) =
+  Float.hypot (Float.log (modulus z)) (Float.atan2 im re)
+
 let test_complex_exp_log =
   prop "exp (log z) is z within (5 + 4 |log z|)u" parts (fun z ->
       let l = c128_call "log" [ z ] in
       at_most float_exact
-        ~than:(5. +. (4. *. modulus l))
+        ~than:(5. +. (4. *. log_modulus z))
         ~msg:"c128"
         (normwise 0x1p-53 (c128_call "exp" [ l ]) (dd_of z));
       let z = f32_pair z in
       let l = c64_call "log" [ z ] in
       at_most float_exact
-        ~than:(5. +. (4. *. modulus l))
+        ~than:(5. +. (4. *. log_modulus z))
         ~msg:"c64"
         (normwise 0x1p-24 (c64_call "exp" [ l ]) (dd_of z)))
 
