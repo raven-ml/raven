@@ -2229,12 +2229,14 @@ let symbolic_simple =
                ())
             (fun m -> Some (m "x"));
           rule Upat.(var "x" * int 1) (fun m -> Some (m "x"));
-          (* x // x is 1 but at 0, where it is 0 *)
+          (* x // x is 1, but for a committed x at 0, where it is 0; a weak x
+             is assumed not 0 *)
           rule
             Upat.(var "x" // var "x")
             (fun m ->
               let x = m "x" in
-              if V.(vmin x <= zero && zero <= vmax x) then None
+              let weak = Dtype.equal (dtype x) Dtype.Weak_int in
+              if (not weak) && V.(vmin x <= zero && zero <= vmax x) then None
               else Some (const_v x one));
           rule Upat.(var "x" // int 1) (fun m -> Some (m "x"));
           rule

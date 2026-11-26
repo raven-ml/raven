@@ -1113,12 +1113,12 @@ let exec_alu =
           satisfies ~claim:"0 or of the divisor's sign" int
             (fun s -> s = 0 || s = sign b)
             (sign r));
-      cases "a quotient by 0 is 0 and a remainder by 0 the dividend"
+      cases
+        "a committed integer's quotient by 0 is 0 and its remainder by 0 the \
+         dividend"
         ~id:(fun (o, _) -> str Op.pp o)
         Op.[ (Truncdiv, i 0); (Div, i 0); (Truncmod, i 7); (Mod, i 7) ]
-        (fun (o, expected) ->
-          equal const expected (exact Weak_int o [ i 7; i 0 ]);
-          equal const expected (alu Int32 o [ i 7; i 0 ]));
+        (fun (o, expected) -> equal const expected (alu Int32 o [ i 7; i 0 ]));
       cases "raises for an operation it does not compute, Threefry included"
         ~id:(str Op.pp) not_computed (fun o ->
           rejects (fun () -> alu Uint64 o [ i 1; i 2 ]));

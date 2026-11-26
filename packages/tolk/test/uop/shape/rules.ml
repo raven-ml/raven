@@ -350,8 +350,13 @@ let identities =
         folds;
       test "x // x is 1 where x's bounds hold no 0" (fun () ->
           folds_to Ops.O.(p // p) (Ops.int 1));
-      test "x // x stays where x's bounds hold 0" (fun () ->
-          folds_to Ops.O.(a // a) Ops.O.(a // a));
+      test "a weak x // x is 1, its divisor assumed not 0, whatever its bounds"
+        (fun () ->
+          folds_to Ops.O.(a // a) (Ops.int 1);
+          by_symbolic Ops.O.(a // a) (Ops.int 1));
+      test "a committed x // x stays where x's bounds hold 0" (fun () ->
+          folds_to Ops.O.(x // x) Ops.O.(x // x);
+          stays_under_symbolic Ops.O.(x // x));
       test "(x lxor y) lxor y is x for a weak y" (fun () ->
           folds_to Ops.O.(a lxor b lxor b) a);
       test "(x lxor y) lxor y stays for a committed y" (fun () ->

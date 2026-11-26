@@ -7594,15 +7594,18 @@ C's undefined behaviour.
   load of a constant table.
 - **Differs:** C leaves an integer division by zero undefined, its
   quotient's and its remainder's; CUDA, HIP and Metal follow C++, which does
-  the same. x86 traps on it, scalar or in a lane. tolk's integer quotient by
-  0 is 0 and its remainder the dividend (`Ops.exec_alu`), as nx states its
-  values and as tinygrad's interpreter computes them.
+  the same. x86 traps on it, scalar or in a lane. tolk's committed integer
+  quotient by 0 is 0 and its remainder the dividend (`Op.Div`,
+  `Ops.exec_alu`), as nx states its values and as tinygrad's interpreter
+  computes them.
   - A `Truncdiv` or `Truncmod` of an integer type whose divisor's bounds
     (`Ops.operand_bounds`) reach 0 divides by `where (d <> 0) d 1` and
     selects 0, or the dividend, where the divisor is 0; where D346 divides
     magnitudes, it divides by the divisor's magnitude made so. The rule
     reads such a divisor as nonzero, which its bounds cannot show.
-  - `x // x` folds to 1 only where `x`'s bounds hold no 0; a floored
+  - A committed integer's `x // x` folds to 1 only where `x`'s bounds hold
+    no 0. A weak integer's division by 0 is unspecified (`Op.Div`), so its
+    `x // x` folds to 1 whatever its bounds, as tinygrad's does. A floored
     division's correction of a negative dividend skips a divisor of 0; an
     emulated 64-bit quotient selects 0 where both words of the divisor are
     0. A division whose divisor's bounds hold no 0, as an index's by a
@@ -7619,7 +7622,8 @@ C's undefined behaviour.
   extremes compute as the interpreter`, on the host (`kernels on the host`)
   and on each GPU (`GPUs ›`, run on fudge's CUDA and NV), with 0 among the
   divisors, `a // a` and a constant 0, against `Ops.exec_alu`; the Symbolic
-  suite's `identities › x // x is 1 where x's bounds hold no 0`; the
+  suite's `identities › x // x is 1 where x's bounds hold no 0` and `› a
+  committed x // x stays where x's bounds hold 0`; the
   Decomp_dtype suite's `pm_dtype_decomps › 64-bit integers › an emulated
   quotient by 0 is 0` and its neighbours; rune's `jit › integer arithmetic at its type's
   edges gives eager's values`, its GPU suite's `integers ›` the same law,

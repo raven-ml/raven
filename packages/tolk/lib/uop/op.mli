@@ -84,7 +84,9 @@ type t =
   | Shl  (** Shifts [x] left by [y] bits. *)
   | Shr  (** Shifts [x] right by [y] bits. *)
   | Truncdiv
-      (** Integer division rounding toward zero; a quotient by [0] is [0]. *)
+      (** Integer division rounding toward zero; a quotient of a committed
+          integer by [0] is [0], and one of a weak integer by [0] is
+          unspecified. *)
   | Max
       (** The greater of [x] and [y], computed as [y] where [x < y] and as [x]
           elsewhere. Where neither is less than the other, a NaN against any
@@ -94,7 +96,8 @@ type t =
           which gives the number; a caller that needs one tests for NaN. *)
   | Truncmod
       (** The remainder of {!Truncdiv}: it has the sign of [x], and is [x] by
-          [0]. *)
+          [0] for a committed integer; a weak integer's by [0] is
+          unspecified. *)
   | Cmplt  (** [x < y]. *)
   | Cmpne  (** [x <> y]. *)
   | Cmpeq  (** [x = y]. *)
@@ -107,11 +110,12 @@ type t =
   | Fdiv  (** Floating-point division. *)
   | Pow  (** [x]{^ [y]}. *)
   | Div
-      (** Integer division rounding toward negative infinity; a quotient by
-          [0] is [0]. *)
+      (** Integer division rounding toward negative infinity; a quotient of a
+          committed integer by [0] is [0], and one of a weak integer by [0] is
+          unspecified. *)
   | Mod
-      (** The remainder of {!Div}: it has the sign of [y], and is [x] by
-          [0]. *)
+      (** The remainder of {!Div}: it has the sign of [y], and is [x] by [0]
+          for a committed integer; a weak integer's by [0] is unspecified. *)
   | Where  (** [y] where [x] holds, [z] otherwise. *)
   | Mulacc  (** [x * y + z]. *)
   (* Control flow, constants and target code *)

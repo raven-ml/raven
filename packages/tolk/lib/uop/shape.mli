@@ -706,9 +706,13 @@ val launch_dims : Ops.program_info -> (string * int) list -> int list * int list
     no value it computes wraps ({!Ops.exact}); a weak integer, such as an index,
     never wraps.
 
-    {b Division by zero.} A rewrite keeps a node's value wherever no divisor is
-    [0]: the rules that divide a divisor out of a quotient's operands, as
-    {!div_and_mod_symbolic} makes [x // x] [1], assume it is not [0].
+    {b Division by zero.} A weak integer's quotient or remainder by [0] is
+    unspecified ({!Op.Div}): a rewrite may assume every weak divisor is not
+    [0], and a weak expression divided by [0] has no value it must keep, as
+    {!symbolic_simple} and {!div_and_mod_symbolic} make [x // x] [1] whatever
+    [x]'s bounds. A committed integer's quotient by [0] is [0] and its remainder
+    the dividend, and {!symbolic_simple} makes its [x // x] [1] only where
+    [x]'s bounds hold no [0].
 
     {b Invalid values.} An index that is {!Ops.invalid} where a condition fails,
     [where cond x invalid], is a {e gated} value ({!invalid_gate}). The rewrites
@@ -743,8 +747,8 @@ val symbolic_simple : (unit, Ops.t) Ops.Pattern_matcher.t
       nothing, and a load from one is its alternative value, or [0];
     - {b identities}: [x + 0], [x lxor 0], [x lor 0], [x lsl 0], [x lsr 0],
       [x * 1] and [x // 1] are [x], a float [x + 0] only for [-0.]; [x // -1] is
-      [-x] for a signed or weak [x]; [x // x] is [1] where [x]'s bounds hold no
-      [0], which {!div_and_mod_symbolic} does not check; [(x lxor y) lxor y] is
+      [-x] for a signed or weak [x]; [x // x] is [1] for a weak [x], and for a
+      committed [x] where its bounds hold no [0]; [(x lxor y) lxor y] is
       [x] for a weak [y]; [(x % y) % y] is [x % y];
       a boolean [x land c] and [x lor c] with [c] constant are [x] or [c];
       [x = true], [x <> false], a double negation, [where x true false] and an
