@@ -87,6 +87,17 @@ val run_rangeify : cores:(Ops.device * Heuristic.cores) list -> Ops.t -> Ops.t
     each product in its own order. A product the other reads, inside its
     sum or not, stays.
 
+    Stored values of one shape and device that loop, stored into different
+    storage, share their loops, and end as one kernel, when the nodes each
+    computes before it reads storage or another stored value share a computed
+    node, they read no computed node through different views, as two slices of
+    one product do, neither reads what the other writes or waits for a write
+    over storage the other reads as it was, and neither reads the other through
+    a third's stores. A reduction in one of them alone keeps them apart.
+    Reductions whose outputs are indexed by the same ranges and that reduce axes
+    of the same sizes take the same ranges when neither reads the other, so the
+    nodes their sources share are computed once.
+
     Walking from [sink] to its leaves, each node then gets the ranges that
     index its output:
 

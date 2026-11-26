@@ -1560,7 +1560,8 @@ renderer.
   before it wrote.
 - **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
   `get_kernel_graph › loops of calls › a loop of a precompiled call is no
-  kernel` and `› a loop's call reads views that move with its range`; the
+  kernel`, `› a loop of a call ends over the loop's range` and `› a loop's
+  call reads views that move with its range`; the
   `Schedule` suite (`test/schedule/schedule`): `create_schedule › rules › an
   end of a call over a loop schedules the call in its loop`, `› a loop runs
   after the call that writes what it reads`, `› a loop runs before the call
@@ -1772,8 +1773,8 @@ view of any value, as `uop/ops.py` `UOp.contiguous_view` does.
 - **Pinned by:** the Rangeify suite's `gathers` programs (`index_rows`,
   `index_rows_computed`, `index_read_twice`, `index_under_reduce`,
   `index_broadcast`, `index_view_source`, `index_zip`, `index_of_index`,
-  `index_zero_fill`, `index_assign_self`) and their kernel counts,
-  `gather_kernel_counts`; the Prepare suite's `gather_of_self`,
+  `index_zero_fill`, `index_assign_self`) and their kernel graphs; the
+  Prepare suite's `gather_of_self`,
   `gather_by_self` and `gather_of_reshape`, and `pm_mops › an index
   that loads from a storage state moves with the state as it is`;
   `Tolk.Codegen › index_lane › a window's lane is the movement rules' index,
@@ -1960,10 +1961,10 @@ the width, and devectorizes no expanded scalar into a stack; with it
   `exp_dead_axis` (a kept exponential of a row expanded to a matrix is stored
   as the row), `exp_cheap_consumer` (a value that reads a kept exponential is
   inlined) and `rope_decode` (a decode step's rotated query reads its gathered
-  rows of a cosine table and is not stored) rows of `kernel_counts.golden` and
-  their kernel goldens, `selected_scaled` (a heavy value a selecting sum
-  reads, which this rule leaves to D163; D106 stores it) of
-  `kernel_counts.tolk`, and its `get_kernel_graph › gathers read where
+  rows of a cosine table and is not stored) kernel goldens,
+  `selected_scaled_kernels.tolk` (a heavy value a selecting sum reads, which
+  this rule leaves to D163; D106 stores it), and its `get_kernel_graph ›
+  gathers read where
   broadcast`, `› gathers that read more than their table
   holds`, `› broadcast exponentials` and `› a spelled exponential selected
   and broadcast`; rune's `jit ›
@@ -2621,8 +2622,8 @@ A matrix-vector workgroup's rows were the matrix's own; merged into D89.
   fudge's RTX 5000 Ada, rune's `Cuda/finite-selects-148-float16` takes
   295-302 us against 5.0 ms with each consumer reducing again.
 - **Pinned by:** the Rangeify suite's `sum_all_broadcast` and `finite_checks`
-  rows of `kernel_counts.golden` and their kernel goldens, and its
-  `reduce_expand_child` and `preserve_multistage_reduce` rows; the Jit suite's
+  kernel goldens, and its `reduce_expand_child` and
+  `preserve_multistage_reduce` kernel goldens; the Jit suite's
   `nonzero` and `masked_select` goldens. On rune: missing (the old rune's
   `lower_linalg` goldens `qr_q` and `qr_r` went with its rewrite).
 
@@ -2795,10 +2796,10 @@ scalar, for rune's staged scan, which now replaces it by zeros in the step
   map that weighs attention's output reads, are computed in that map (D77).
 - **Pinned by:** the Rangeify suite's `normed_vecmat` (a normalised vector
   read by a product), `normed_vecmats` (by two products, stored once),
-  `normed_matmul` (a normalised matrix, stored), `selected_scaled`
-  (stored), `rope_decode`, `gather_rotary` and `prefix_sum_broadcast`
-  (values within the budget, inlined) rows of `kernel_counts.golden` and
-  their kernel goldens, `variable_read_twice`
+  `normed_matmul` (a normalised matrix, stored), `rope_decode`,
+  `gather_rotary` and `prefix_sum_broadcast` (values within the budget,
+  inlined) kernel goldens, `selected_scaled_kernels.tolk` (stored),
+  `variable_read_twice`
   (a value two full reductions read, inlined), its `get_kernel_graph ›
   gathers that read more than their table holds`, `get_kernel_graph ›
   values a reduction reads again` and `get_kernel_graph › broadcast
@@ -3380,35 +3381,34 @@ driver signals its own (D146).
   gradient, three products of one cotangent in one SIMT kernel. Splitting
   them is owed its GPU measurement.
 - **Pinned by:** for stores, the Rangeify suite (`test/schedule/rangeify`):
-  `get_kernel_graph › outputs that share a computation` (every test, `slices
-  of one product through two views run as two kernels`, `slices that also
-  share a computation run as two kernels`, `outputs that read a product
-  through one view run as one kernel` and `outputs that store their own
-  storage back are no kernel` among them); its recorded
-  `read_around_assign_kernels`, `crossed_pairs_kernels` and `kernel_counts`,
-  and the Postrange suite's `where_max_multioutput`, `padto_where_multioutput`
-  and `axes` cases. On rune: the `compile/special/betainccinv-grad-f32` bench
-  row, and `rune jit › fully sharded` for the views and `rune scan ›
-  transformations › derivatives and maps over views are the fold's` for an
-  emptied group (the old rune's `Rune nx.wide › kernels` went with its
-  rewrite). For reductions, the Rangeify suite: `get_kernel_graph ›
-  reductions that share a domain` (every test), and its law over generated
-  programs, whose `sum k + max k` and `x - sum k` steps cover reductions that
-  share a loop; its recorded `multireduce_*` and `ugly_reduceop_pairing`
-  kernel graphs and `kernel_counts`; the Indexing suite's recorded
+  `get_kernel_graph › outputs that share a computation` (every test, `slices of
+  one product through two views run as two kernels`, `slices that also share a
+  computation run as two kernels`, `outputs that read a product through one view
+  run as one kernel` and `outputs that store their own storage back are no
+  kernel` among them); its recorded `read_around_assign_kernels` and
+  `crossed_pairs_kernels`, and the Postrange suite's `where_max_multioutput`,
+  `padto_where_multioutput` and `axes` cases. On rune: the
+  `compile/special/betainccinv-grad-f32` bench row, and `rune jit › fully
+  sharded` for the views and `rune scan › transformations › derivatives and maps
+  over views are the fold's` for an emptied group (the old rune's `Rune nx.wide
+  › kernels` went with its rewrite). For reductions, the Rangeify suite:
+  `get_kernel_graph › reductions that share a domain` (every test), and its law
+  over generated programs, whose `sum k + max k` and `x - sum k` steps cover
+  reductions that share a loop; its recorded `multireduce_*` and
+  `ugly_reduceop_pairing` kernel graphs; the Indexing suite's recorded
   `two_consumers` graph; the Postrange suite's `sum_and_max_grouped`,
   `ten_shared_sums_group` and `ten_shared_sums_group_unfit` cases, and the
-  Codegen suite's `two_grouped_stores_local`. The Codegen suite's
-  `reductions that share a range › a range two reductions close at two depths
-  runs as two loops`. On rune: missing (went with the old rune's rewrite):
-  its Packed suite's bit example of `a compiled call computes eager's values`;
-  its Jit suite's `transformations › a compiled gradient of a parameter
-  broadcast over a grid is its gradient`; and its bench row
+  Codegen suite's `two_grouped_stores_local`. The Codegen suite's `reductions
+  that share a range › a range two reductions close at two depths runs as two
+  loops`. On rune: missing (went with the old rune's rewrite): its Packed
+  suite's bit example of `a compiled call computes eager's values`; its Jit
+  suite's `transformations › a compiled gradient of a parameter broadcast over a
+  grid is its gradient`; and its bench row
   `reverse/jit-of-grad-clipped-disc-float64-104x104-host`. For products a core
   takes, rune's Lower_reduce suite: `sums of products` (every test), and the
   Rangeify suite's `get_kernel_graph › products a core takes` (every test,
-  `products of 24 rows by codes of 64 run a kernel each` and `products of
-  codes of 24 by codes of 64 run a kernel each` among them).
+  `products of 24 rows by codes of 64 run a kernel each` and `products of codes
+  of 24 by codes of 64 run a kernel each` among them).
 
 ## D138. A load's index is simplified without the loads in it assuming its gate
 
@@ -4000,8 +4000,9 @@ rule, its reason and its pins.
   of size 2 and step 2 on its last axis, whose every term the crop drops,
   raised: rune's `a fold wraps integers and holds its float bound` failed.
 - **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
-  `get_kernel_graph › dead reads › a staged value read only in padding reads
-  0 there`; rune's `Lower_index › folds and assemblies › a fold wraps
+  `get_kernel_graph › writes what its tensor graph writes › for a hand-built
+  function` (row `a staged value read only in padding, which reads 0 there`);
+  rune's `Lower_index › folds and assemblies › a fold wraps
   integers and holds its float bound`.
 
 ## D159. A captured schedule tells the settings it compiles under
@@ -4285,51 +4286,49 @@ A divisor past its operand's width was read in its operand's type
   chain of scalars each read by a kernel of its own, as rune's chain of outputs
   reads it, was quadratic in its length and is linear. The row's wall-clock
   baseline is pending the scheduled re-record.
-- **Pinned by:** the Rangeify suite's rows of `kernel_counts.tolk` and their
-  kernel goldens: across kernels, `scalar_read_by_two` (computed in each),
-  `long_scalar_read_by_two` (stored) and `scalar_chain` (one stored);
-  `read_at_offsets` (stored), `windowed_chain` (stored), `windowed_pair`
-  (stored), `windowed_scaled` (inlined), `windowed_scaled_long` (inlined into
-  its windows of 16), `read_by_two` (inlined), `long_read_by_two` (stored),
-  `routed_product_2` (inlined), `routed_product_64` (stored) and
-  `routed_product_wide` (the gather's positions inlined), `selected_scaled`
-  (stored by D106, which an enclosing sum's outputs decide),
-  `blocked_product_16` (read at `r // 16`, inlined) and
-  `dense_decoded_64` (read at `r % 4`, inlined), `tiled_chain` (inlined) and
-  `padded_pair` (inlined); `cost › levels each read twice make kernels that stop
-  growing with depth`; the `copies` group: `a value of 1200 nodes read at one
-  index is inlined`, `› a value read twice whose second copy is the budget is
-  inlined`, `› a value read twice whose second copy passes the budget is
-  stored`, `› a value of 600 nodes outside its ranges read twice is inlined` and
-  `› reads of a stage sharing a range are not the other's`; the `recomputation`
-  group: `a value of 1200 nodes reduced once an element is inlined`, `› a cheap
-  value reduced in windows is inlined`, `› a value reduced in windows whose work
-  is under the budget is inlined`, `› a value reduced in windows whose work
-  passes the budget is stored`, `› a value of no storage reduced in windows past
-  the budget is stored`, `› two windowed reads of a stage add up`, `› a value of
-  symbolic size counts at its largest`, `› a value reduced in windows counts no
-  axis it does not vary along`, `› a read counts at most the trips of its
-  reductions`, `› a value reduced through padding counts the padding's trips`,
-  `› a value inlined into a windowed stage counts in its copies`, `› a value
-  broadcast through a reshape is inlined`, `› a value read through padding is
-  inlined`, `› a view of storage read past the budget is inlined`, `› a gather
-  at loaded positions read past the budget is stored`, `› a mask of positions
-  read past the budget is stored` and `› stores through a stage of their
-  destination write the destination`; the Launch suite's `launches › on the
-  host, the stores of one state write each piece's values` and `› on CUDA, the
-  stores of one state write each piece's values`, up to 160 stores; `work bound
-  › a stage is stored when its copies beyond the first pass the budget`, over
-  values read once, twice, in windows and by routed rows; the `dropped digits`
-  group: `a dropped digit's reuse is no copy` (every case), `› a read of merged
-  outputs decides as one of them split` and `› a digit a selection runs in stays
+- **Pinned by:** the Rangeify suite's kernel goldens and their `.tolk`s: across
+  kernels, `scalar_read_by_two` (computed in each), `long_scalar_read_by_two`
+  (stored) and `scalar_chain` (one stored); `read_at_offsets` (stored),
+  `windowed_chain` (stored), `windowed_pair` (stored), `windowed_scaled`
+  (inlined), `windowed_scaled_long` (inlined into its windows of 16),
+  `read_by_two` (inlined), `long_read_by_two` (stored), `routed_product_2`
+  (inlined), `routed_product_64` (stored) and `routed_product_wide` (the
+  gather's positions inlined), `selected_scaled_kernels.tolk` (stored by D106,
+  which an enclosing sum's outputs decide), `blocked_product_16` (read at `r //
+  16`, inlined) and `dense_decoded_64` (read at `r % 4`, inlined), `tiled_chain`
+  (inlined) and `padded_pair` (inlined); the `copies of a stage a store reads`
+  group: `a value of 1200 nodes read at one index is inlined`, `› a value of 600
+  nodes outside its ranges read twice is inlined`, `› reads of a stage sharing a
+  range are not the other's` and `› levels each read twice make kernels that
+  stop growing with depth`; the `copies of a stage a reduction reads` group: `a
+  value of 1200 nodes reduced once an element is inlined`, `› a cheap value
+  reduced in windows is inlined`, `› a value of no storage reduced in windows
+  past the budget is stored`, `› two windowed reads of a stage add up`, `› a
+  value of symbolic size counts at its largest`, `› a value reduced in windows
+  counts no axis it does not vary along`, `› a read counts at most the trips of
+  its reductions`, `› a value reduced through padding counts the padding's
+  trips`, `› a value inlined into a windowed stage counts in its copies`, `› a
+  value broadcast through a reshape is inlined`, `› a value read through padding
+  is inlined`, `› a view of storage read past the budget is inlined`, `› a
+  gather at loaded positions read past the budget is stored`, `› a mask of
+  positions read past the budget is stored` and `› stores through a stage of
+  their destination write the destination`; the Launch suite's `launches › on
+  the host, the stores of one state write each piece's values` and `› on CUDA,
+  the stores of one state write each piece's values`, up to 160 stores; `an
+  inlinable stage › is stored when its copies beyond the first pass 360 nodes`,
+  over values read once, twice, in windows and by routed rows, its examples read
+  twice and in windows of 16 either side of the budget; the `dropped digits`
+  group: `a dropped digit's reuse is no copy` (every case), `› outputs of a
+  symbolic size stay counted at their largest`, `› a read of merged outputs
+  decides as one of them split` and `› a digit a selection runs in stays
   counted`; `selections › a read a sum selects decides as one at the selected
-  index`; `own ranges › a removable stage has a range no other stage has`;
-  rune's `Lower_reduce › work › a Rows contraction's work is one slice's over
-  256 contracted` and `› a scaled float4 Rows contraction's work is one slice's
-  over 256`; rune's `rune jit › classes › an associative scan over a tuple gives
-  eager's bits` and `› a value stored or computed again in its readers gives
-  eager's bits`; on fudge, the `scan/tridiagonal-100` row of rune's compile
-  bench, the `Jit/cumsum-neg-log-uniform-8x1024`,
+  index`; `Indexing.run_rangeify › gives a removable stage a range no other
+  stage has`; rune's `Lower_reduce › work › a Rows contraction's work is one
+  slice's over 256 contracted` and `› a scaled float4 Rows contraction's work is
+  one slice's over 256`; rune's `rune jit › classes › an associative scan over a
+  tuple gives eager's bits` and `› a value stored or computed again in its
+  readers gives eager's bits`; on fudge, the `scan/tridiagonal-100` row of
+  rune's compile bench, the `Jit/cumsum-neg-log-uniform-8x1024`,
   `Jit/experts-mxfp4-16x4of32-256` and `Cuda/sin-read-by-two-float64-1000` rows
   of its bench, jera's `root-newton-kepler-1k/compiled` and
   `root-bracket-kepler-1k/compiled`, gpt-oss's `GptOss/prefill-512` and
@@ -5653,7 +5652,7 @@ field (D12), and `of_program` and `Tiny_elf.t` went with it.
   axes give eager's values`; `rune jit › classes › a running operation's prefix
   is the prefix of its result`, on the host and, in `Rune.jit on a GPU`, on the
   GPU; the Rangeify suite's `long_cumsum`, `windowed_chain` and
-  `windowed_scaled_long` rows of `kernel_counts.golden` and their goldens, and
+  `windowed_scaled_long` kernel goldens, and
   the Codegen and Heuristic suites' `cumsum` kernels; on fudge, rune's bench
   rows `Jit/cumsum-float64-100x50500`, `Jit/cumsum-scaled-float32-100x400`,
   `Jit/cumsum-neg-log-uniform-8x1024`, `Cuda/cumsum-float32-100x400`,
@@ -7226,9 +7225,11 @@ rule, its reason and its pins.
   of SMC, which stores a value gathered from its destination beside a
   loop's call whose argument another kernel reads, failed the check and
   raised.
-- **Pinned by:** `Tolk.Rangeify › get_kernel_graph › recorded ›
-  assign_flipped_beside_call_1_kernels.golden` and the kernel-graph laws
-  over `assign_flipped_beside_call_1`; norn's `Norn.Smc › evidence › a
+- **Pinned by:** `Tolk.Rangeify › get_kernel_graph › makes each recorded
+  program's kernel graph as its golden states ›
+  assign_flipped_beside_call_1_kernels.golden` and the rows for
+  `assign_flipped_beside_call_1` of `› kernels`, `› storage it makes`, `›
+  calls` and `› arguments`; norn's `Norn.Smc › evidence › a
   conjugate normal`.
 
 ## D333. A weak range is its builder's promise, refused where a store breaks it
@@ -9219,9 +9220,9 @@ D466.
   1.83 stored once.
 - **Pinned by:** the `Tolk.Schedule` suite's `create_linear_with_vars ›
   outputs that hold a stored value`; the Rangeify suite's `get_kernel_graph ›
-  laws › a scheduled function writes what its tensors compute`, whose
-  programs return values along the way, and its `, for` rows `[2], then
-  sum 0, expand, max 0` and `[4; 4], then sum 1, return, x - sum 0`; rune's
+  writes what its tensor graph writes › for a generated function`, whose
+  programs return values along the way, and its examples `[2], then sum 0,
+  expand, max 0` and `[4; 4], then sum 1, return, x - sum 0`; rune's
   `Rune.jit on a GPU › a reduction another reads › returned too is stored
   once`; the row above.
 
@@ -9372,11 +9373,11 @@ D466.
   1.80 to 1.71 ms, its allocated words unchanged; its fudge baseline holds words only, so the entry is to
   re-measure on fudge until the scheduled re-record gives it a wall
   baseline there. AMD and Metal take the rule unmeasured.
-- **Pinned by:** the Rangeify suite's `get_kernel_graph › buffer limit`
-  (a value of four storages a store reads in halves is one kernel, and one a
-  materialisation reads in halves is computed there; one that stages read,
-  one a reduction reads in halves and one read where it is broadcast stay
-  stored), and the bench row `GptOss/experts-at-prefill-512`.
+- **Pinned by:** the Rangeify suite's `get_kernel_graph › the storages an
+  inlined stage reads` (a value of four storages a store reads in halves is one
+  kernel, and one a materialisation reads in halves is computed there; one that
+  stages read, one a reduction reads in halves and one read where it is
+  broadcast stay stored), and the bench row `GptOss/experts-at-prefill-512`.
 
 ## D482. CUDA merges byte loads and stores into words
 

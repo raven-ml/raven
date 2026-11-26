@@ -21,14 +21,16 @@ val get_kernel_graph :
     no core and running them in turn. In turn:
 
     {ol
-     {- ranges index the graph ({!Indexing.run_rangeify}, given [cores]);
+     {- ranges index the graph ({!Indexing.run_rangeify}, given [cores]), which
+        decides which stores end as one kernel;
      }
      {- the graph is simplified ({!Shape.val-symbolic},
         {!Simplify.pm_reduce_simplify}), and storage that need not exist is
         removed:
-        - a stage ({!Op.Stage}) that a later pass may inline drops the axes its
-          value does not vary along, and a stage of a constant is the constant;
-        - an index of a stage by the stage's own ranges is the stage's value;
+        - a stage ({!Op.Stage}) of a constant is the constant, and one that a
+          later pass may inline drops the axes its value does not vary along;
+        - a stage of a read of storage, or of another stage, at the stage's own
+          ranges is the run of that storage or stage the ranges read;
         - an index of a stage that a later pass may inline back is the staged
           value, recomputed at the index, unless it reads more than three
           storages, a reduction in it reads one, or its copies beyond the first
@@ -47,11 +49,16 @@ val get_kernel_graph :
           each distinct index, and in a reduction one per trip of the
           reduction's ranges its index runs in, but at most its trips per
           element of the stage: a running sum's windows of [w] compute each
-          element [w] times, and a sum computes each element once. A read
-          whose index runs in no reduction range makes one copy, as a
-          broadcast through an expand, a reshape or padding does. Trips in
-          padding count, since inlined there the value's loads are skipped and
-          its arithmetic is not. A sum over
+          element [w] times, and a sum computes each element once. Outputs
+          whose index reads a range of a constant size only through floor
+          divisions and remainders by constants that divide the size of what
+          they apply to, in components that read no other range, read the
+          value at one index across the digits these drop, which makes no
+          copy, unless another component of the index or a sum computed at
+          one trip also runs in that range. A read whose index runs in no reduction range makes one
+          copy, as a broadcast through an expand, a reshape or padding does.
+          Trips in padding count, since inlined there the value's loads are
+          skipped and its arithmetic is not. A sum over
           one range that selects one trip, where an index equals the range
           ({!Simplify.load_collapse}), is computed at that index alone, once for
           each point of the ranges the index runs in, so its range counts as
@@ -69,6 +76,23 @@ val get_kernel_graph :
           each range of the stage, taking the least count, and stages over one
           device range share it: two such stages read once each, with no range
           of their own, count as read twice;
+        - a stage kept for being read where it is broadcast ({!Ops.type-keep})
+          stays stored where its value runs a transcendental operation
+          ({!Op.Exp2}, {!Op.Log2}, {!Op.Sin}, {!Op.Pow}), or does at least the
+          work of tolk's float32 exponential ({!Transcendental.xexp2}),
+          simplified, inside its ranges at a read outside a sum that selects one
+          trip, a multiply-add counting as two elementwise operations and
+          positions as none. On a device whose kernels run their points at once
+          it is inlined all the same where its reads compute each of its
+          elements at most once and no reduction reads it again at outputs its
+          index does not run in;
+        - such a stage of more than one storage also stays stored where every
+          output of a reduction reads it, its index running only along the
+          reduction's ranges;
+        - such a stage of more than one storage that a reduction reads again at
+          outputs its index does not run in stays stored, unless it holds more
+          bytes than it reads or its elements times the work of one element are
+          within 360;
         - an index of storage whose every write is invalid is invalid;
         - a store of a value into itself does nothing;
      }
@@ -98,7 +122,8 @@ val get_kernel_graph :
         reads;
      }
      {- each stage becomes a store into new storage ({!Op.Alloc}) of its
-        committed type ({!Ops.commit_dtype}), closed by an {!Op.End} over its
+        committed type ({!Ops.commit_dtype}), as large as the stage is at the
+        largest size of each of its ranges, closed by an {!Op.End} over its
         ranges and read after it; a stage of storage that effects write ends
         those writes instead. Where an item of the sink stores a stage
         whole, in its order, type and device, into a parameter or buffer
@@ -112,16 +137,18 @@ val get_kernel_graph :
      {- each store or end whose ranges are all closed becomes a call to a
         kernel of its own: each state of storage it reads or writes becomes a
         parameter that names no device, the kernel running on its call's
-        arguments' devices, numbered from [0] in the order the kernel reaches
-        them, its
-        ranges are renumbered from [0], and the call's arguments are those
+        arguments' devices, numbered from [0], the call passing at slot [k]
+        its [k]th argument, its ranges are renumbered from [0], and the call's arguments are those
         states, a state read through a join ({!Ops.is_join}) being the state
         under it, after what the join waits for. An end of a call over {!Ops.Axis_type.Loop}
         ranges is a loop that runs the call once per trip, and no kernel;
      }
      {- the calls' arguments and the storage lose their indices and their views,
-        but for the views a loop's call reads that move with the loop's
-        ranges.
+        but for the views a loop's call reads that move with the loop's ranges,
+        and a run of storage passed to a call compiled on its own
+        ({!Shape.run_of_storage}), which the call takes where the run starts.
+        The bodies of calls [sink] already holds, as kernels given as code, are
+        left as they are.
      }
     }
 
@@ -136,13 +163,6 @@ val get_kernel_graph :
 (**/**)
 
 val transcendental_work : unit -> int
-(** [transcendental_work ()] is the work, in elementwise operations, at which
-    {!get_kernel_graph} keeps a value read where it is broadcast stored: that
-    of tolk's float32 exponential ({!Transcendental.xexp2}), simplified, a
-    multiply-add counting as two and positions as none. On a device whose
-    kernels run their points at once ({!Heuristic.cores}) such a value is kept
-    only where a thread would compute an element again: where its reads
-    compute an element more than once, in a reduction or at more positions
-    than it holds, or where a reduction reads again at outputs a stage that
-    may inline it; read once at each point, it is computed there. For the
-    suites. *)
+(** [transcendental_work ()] is the work, in elementwise operations, of tolk's
+    float32 exponential, the bound of {!get_kernel_graph}'s step 2 for a stage
+    kept for being read where it is broadcast. For the suites. *)

@@ -187,7 +187,7 @@ to that module's section; each is listed here once, with its owner.
 | tinygrad: null/test_uop_graph.py::TestUOpGraph::test_backedge_preserves_outer_range | a backedge closes its loop only | `O › ranges › a backedge closes its loop and keeps the condition's other ranges` |
 | tinygrad: null/test_uop_graph.py::TestReduceCollapse (2 tests) | `pm_reduce_collapse`, `full_rewrite` | Codegen's section |
 | tinygrad: null/test_uop_graph.py::TestMovementOps (2 tests) | `pm_mops` folds reshapes into indices | `Tolk.Prepare › pm_mops ›` "an index of a reshape's added leading axis is its source" (`test_pm_mops_partial_reshape_index_removes_reshape`), "an index of a reshape whose trailing axes change is left as it is" (`…_suffix_mismatch_does_nothing`) |
-| tinygrad: null/test_uop_graph.py::TestConstBufferize (2 tests) | `pm_const_buffer_folding` | `Tolk.Rangeify › get_kernel_graph › recorded ›` `setitem_column_kernels.golden` and `setitem_cube_kernels.golden` (Rangeify's rows left by other sections); `bufferize` itself is `O › arguments › reprs.golden` (name=bufferize) and `O › shapes › a stage puts its ranges' sizes in front` |
+| tinygrad: null/test_uop_graph.py::TestConstBufferize (2 tests) | `pm_const_buffer_folding` | `Tolk.Rangeify › get_kernel_graph › makes each recorded program's kernel graph as its golden states ›` `setitem_column_kernels.golden` and `setitem_cube_kernels.golden` (Rangeify's rows left by other sections); `bufferize` itself is `O › arguments › reprs.golden` (name=bufferize) and `O › shapes › a stage puts its ranges' sizes in front` |
 | tinygrad: null/test_uop_graph.py::TestUOpGetItem (18 tests) | `UOp.__getitem__` | dropped: `__getitem__` is not ported (README exclusions); its shrink, permute and index are `O › graphs › movement.golden` and `O › graphs › kernel_nodes.golden` |
 | tinygrad: null/test_uop_graph.py::TestUOpBroadcast::test_broadcast_row, test_broadcast_col, test_broadcast_lower_dim, test_broadcast_scalar, test_broadcast_symbolic_same_shape | elementwise operations broadcast shapes | `O › shapes › an elementwise operation broadcasts its sources' shapes`; `O › shapes › an elementwise operation keeps a symbolic shape` |
 | tinygrad: null/test_uop_graph.py::TestUOpBroadcast::test_broadcast_axes | `broadcast_axes`, symbolic sizes, rejection | `O › shapes › broadcast_axes is the axes broadcasting adds or expands`; `O › shapes › broadcast_axes compares symbolic sizes` |
@@ -1599,18 +1599,20 @@ lasts only while the index carries it, and a caller masks padded values.
 ## Rangeify
 
 The suite is `Tolk.Rangeify` (`schedule/rangeify/`), written `RA` below.
-`RA › get_kernel_graph › recorded` holds the kernel graph tinygrad's
-`get_kernel_graph` makes of the graph that scheduling a `Tensor` program on the
-CPU hands it (`<program>_kernels.golden`), and `kernel_counts.golden` its
-number of kernels per graph, each a test of its own. `RA › get_kernel_graph ›
-values` states, on each single-device graph Tensors can run, that running the
-kernels (`Kernel_graphs`, each kernel reading its arguments in the states they
-name) writes into the function's parameters what the tensor graph does, and
-`RA › get_kernel_graph › laws` the same end to end, through Prepare, on
-generated functions. `RA › get_kernel_graph › kernel graphs` states over every
-recorded graph that each kernel's storage and ranges are numbered from 0, that
-calls pass storage, that new storage has a committed type, and that storage a
-kernel writes is read after.
+`RA › get_kernel_graph › makes each recorded program's kernel graph as its
+golden states` holds the kernel graph tinygrad's `get_kernel_graph` makes of
+the graph that scheduling a `Tensor` program on the CPU hands it
+(`<program>_kernels.golden`), its kernels included. `RA › get_kernel_graph ›
+writes what its tensor graph writes › for each recorded program` states, on
+each single-device graph Tensors can run, that running the kernels
+(`Kernel_graphs`, each kernel reading its arguments in the states they name)
+writes into the function's parameters what the tensor graph does, and `› for a
+generated function` the same end to end, through Prepare, on generated
+functions. `RA › get_kernel_graph › kernels`, `› storage it makes`, `› calls`
+and `› arguments` state over every recorded graph that each kernel carries
+kernel information and holds no movements, that each kernel's storage and
+ranges are numbered from 0, that calls pass storage, that new storage has a
+committed type, and that storage a kernel writes is read after.
 
 Coverage of `rangeify.ml` is 85%. The code no test reaches is reached by no
 tinygrad program either: the stage of storage that effects write
@@ -1646,27 +1648,27 @@ observable in a kernel graph of any program or hand-built graph tried:
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: runtime/test_flip.py::TestFlip::test_symbolic_partial_store | a store through a flip of a view whose size is a variable's, from 0, writes the view's elements alone | `RA › get_kernel_graph › values › flipped_store writes what its tensors write`, `› store_into_flipped …` (concrete sizes); `RA › get_kernel_graph › recorded › variable_flipped_store_kernels.golden`, whose store gates its index; the rules are `PR › pm_mops › a store through a padded view of a gated index gates it twice` and `› a store through a selection of an index gates the index` |
-| tinygrad: null/test_schedule.py::TestSchedule (the kernel-count tests) | how many kernels a program schedules | `RA › kernel_counts.golden` and `RA › get_kernel_graph › recorded`, on ports: `arange_sum`, `permute_arange`, `expand_before_cast`, `push_pads_elementwise`, `allow_push_permutes`, `div_collapse`, `reduce_same_size`, `reduce_multiple_paths`, `reduce_ext_reduce_child`, `reduce_expand_child`, `reduce_broadcast_not_recomputed`, `ugly_reduceop_pairing`, `reduce_expand_reduce`, `multireduce_parallel`, `std`, `multireduce_diffops_parallel`, `multimatmul`, `multireduce_push_shrink_chase`, `multireduce_midreduce_nochase`, `partial_fuse`, `pad_reduce_safe`, `pad_reduce_unsafe`, `shrink_pad_unsafe`, `base_change_expand_pad`, `base_change_pad_expand`, `zero_size_children`, `preserve_multistage_reduce`, `clone`; their values |
+| tinygrad: runtime/test_flip.py::TestFlip::test_symbolic_partial_store | a store through a flip of a view whose size is a variable's, from 0, writes the view's elements alone | `RA › get_kernel_graph › writes what its tensor graph writes › for each recorded program › flipped_store`, `› store_into_flipped` (concrete sizes); `RA › get_kernel_graph › makes each recorded program's kernel graph as its golden states › variable_flipped_store_kernels.golden`, whose store gates its index; the rules are `PR › pm_mops › a store through a padded view of a gated index gates it twice` and `› a store through a selection of an index gates the index` |
+| tinygrad: null/test_schedule.py::TestSchedule (the kernel-count tests) | how many kernels a program schedules | `RA › get_kernel_graph › makes each recorded program's kernel graph as its golden states` (the kernels of each graph), on ports: `arange_sum`, `permute_arange`, `expand_before_cast`, `push_pads_elementwise`, `allow_push_permutes`, `div_collapse`, `reduce_same_size`, `reduce_multiple_paths`, `reduce_ext_reduce_child`, `reduce_expand_child`, `reduce_broadcast_not_recomputed`, `ugly_reduceop_pairing`, `reduce_expand_reduce`, `multireduce_parallel`, `std`, `multireduce_diffops_parallel`, `multimatmul`, `multireduce_push_shrink_chase`, `multireduce_midreduce_nochase`, `partial_fuse`, `pad_reduce_safe`, `pad_reduce_unsafe`, `shrink_pad_unsafe`, `base_change_expand_pad`, `base_change_pad_expand`, `zero_size_children`, `preserve_multistage_reduce`, `clone`; their values |
 | tinygrad: null/test_schedule.py::TestSchedule, the other tests | | dropped here: the realized-buffer, gradient and jit tests are the `Tensor` surface and L8; the Tensor programs above stand for their kernel counts |
-| tinygrad: null/test_schedule.py::TestInvalidTensor::test_full_invalid_is_zero_kernels | | `RA › … › full_invalid_kernels.golden` (no kernel); `RA › get_kernel_graph › rules › a store of invalid values runs no kernel`; `invalids_read`, `partially_invalid` |
-| tinygrad: null/test_schedule.py::TestLimitBufs | the buffers of one kernel | `many_inputs_kernels.golden`, `many_inputs_limited_kernels.golden`, `many_matrices_limited_kernels.golden`, `many_cubes_limited_kernels.golden`, `many_sums_limited_kernels.golden`; `RA › … ›` "a kernel accesses at most max_kernel_buffers storages", "without a limit, one kernel reads every storage"; the scaling test is dropped: a timing |
+| tinygrad: null/test_schedule.py::TestInvalidTensor::test_full_invalid_is_zero_kernels | | `RA › … › full_invalid_kernels.golden` (no kernel); `RA › get_kernel_graph › drops invalid writes › a store of invalid values runs no kernel`; `invalids_read`, `partially_invalid` |
+| tinygrad: null/test_schedule.py::TestLimitBufs | the buffers of one kernel | `many_inputs_kernels.golden`, `many_inputs_limited_kernels.golden`, `many_matrices_limited_kernels.golden`, `many_cubes_limited_kernels.golden`, `many_sums_limited_kernels.golden`; `RA › get_kernel_graph › max_kernel_buffers ›` "of 4 keeps each kernel to 4 storages", "at 0 lets one kernel read every storage"; the scaling test is dropped: a timing |
 | tinygrad: null/test_schedule.py::TestCopyFolding | | `copy_kernels.golden`, `clone_kernels.golden`; the copy kernels' lowering is the schedule's |
-| tinygrad: null/test_assign.py (4 tests), null/test_setitem_schedule.py (3 tests) | kernel counts of assigns and setitems | `assign`, `assign_permuted`, `assign_double_diamond`, `assigned_read_twice`, `assigned_contiguous`, `stage_of_assigned`, `setitem`, `setitem_tensor`: their kernel graphs, counts and values |
+| tinygrad: null/test_assign.py (4 tests), null/test_setitem_schedule.py (3 tests) | kernel counts of assigns and setitems | `assign`, `assign_permuted`, `assign_double_diamond`, `assigned_read_twice`, `assigned_contiguous`, `stage_of_assigned`, `setitem`, `setitem_tensor`: their kernel graphs and values |
 | tinygrad: null/test_multitensor.py::TestBackendMultiTensor::test_shard_invalids_contiguous | one kernel | dropped: the multi-device rewrite is excluded (README) |
-| tinygrad: runtime/test_rangeify.py::test_double_matmul, test_assign_permuted, test_variable_stack_data, test_variable_data_and_shape, test_matmul_relu_cat, test_multi_gather | | `double_matmul`, `assign_permuted`, `variable_*`: graphs and counts; the rest of those programs are Indexing's section |
+| tinygrad: runtime/test_rangeify.py::test_double_matmul, test_assign_permuted, test_variable_stack_data, test_variable_data_and_shape, test_matmul_relu_cat, test_multi_gather | | `double_matmul`, `assign_permuted`, `variable_*`: their kernel graphs; the rest of those programs are Indexing's section |
 | tinygrad: runtime/test_rangeify.py, the `*_match` tests (7) | kernel structure after codegen | dropped here: the codegen pipeline's (L4) |
-| tinygrad: runtime/test_custom_kernel.py, runtime/test_function.py | custom kernels and functions | `custom_kernel`, `custom_kernel_permuted`, `custom_kernel_in_place`, `custom_kernel_of_views`, `inline_function`, `precompiled_function`, `precompiled_function_1`: graphs and counts |
-| tinygrad: schedule/rangeify.py `SPEC` | | `RA › get_kernel_graph › spec › with spec checks on, every recorded kernel graph passes them` |
+| tinygrad: runtime/test_custom_kernel.py, runtime/test_function.py | custom kernels and functions | `custom_kernel`, `custom_kernel_permuted`, `custom_kernel_in_place`, `custom_kernel_of_views`, `inline_function`, `precompiled_function`, `precompiled_function_1`: their kernel graphs |
+| tinygrad: schedule/rangeify.py `SPEC` | | `RA › get_kernel_graph › with Setting.spec at 1 › each recorded program's kernel graph passes Spec.kernel_graph` |
 | tinygrad: schedule/rangeify.py `check_buf_states` | a kernel reading one storage in two states | D160: a parameter for each state, the kernel cut and given a copy, `RA › get_kernel_graph › buffer states` and `SC › create_linear_with_vars › orders and copies` |
-| tinygrad: schedule/rangeify.py `bufferize_to_store`'s size assertion | a symbolic stage | `RA › get_kernel_graph › rules › a materialisation of a symbolic size takes its greatest size`: as in tinygrad, the stage's size is its greatest, and nothing raises |
+| tinygrad: schedule/rangeify.py `bufferize_to_store`'s size assertion | a symbolic stage | `RA › get_kernel_graph › storage it makes › of a symbolic size holds its greatest size`: as in tinygrad, the stage's size is its greatest, and nothing raises |
 | tinygrad: schedule/rangeify.py `DEVICE_MAX_BUFS` | WebGPU's limit | dropped: excluded (README) |
 
 ### Rows other sections left to Rangeify's
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| Ops: tinygrad `null/test_uop_graph.py::TestConstBufferize` (2 tests) | `pm_const_buffer_folding`: a constant staged over one range or several folds to the constant | `RA › get_kernel_graph › recorded ›` `setitem_column_kernels.golden` (the mask of a setitem into a column, staged over one range) and `setitem_cube_kernels.golden` (into a cube, staged over a range and two constant indices); a constant staged over several live ranges, which tinygrad's test builds by hand, never comes out of scheduling a program, so the rule is pinned where tinygrad's own flow reaches it; the dead-axis cleanup runs first there, as in tinygrad's matcher |
+| Ops: tinygrad `null/test_uop_graph.py::TestConstBufferize` (2 tests) | `pm_const_buffer_folding`: a constant staged over one range or several folds to the constant | `RA › get_kernel_graph › makes each recorded program's kernel graph as its golden states ›` `setitem_column_kernels.golden` (the mask of a setitem into a column, staged over one range) and `setitem_cube_kernels.golden` (into a cube, staged over a range and two constant indices); a constant staged over several live ranges, which tinygrad's test builds by hand, never comes out of scheduling a program, so the rule is pinned where tinygrad's own flow reaches it; the dead-axis cleanup runs first there, as in tinygrad's matcher |
 
 ## Schedule
 
