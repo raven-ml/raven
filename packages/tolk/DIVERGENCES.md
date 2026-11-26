@@ -1772,7 +1772,7 @@ view of any value, as `uop/ops.py` `UOp.contiguous_view` does.
   `index_broadcast`, `index_view_source`, `index_zip`, `index_of_index`,
   `index_zero_fill`, `index_assign_self`) and their kernel counts,
   `gather_kernel_counts`; the Prepare suite's `gather_of_self`,
-  `gather_by_self` and `gather_of_reshape`, and `pm_mops › rules › an index
+  `gather_by_self` and `gather_of_reshape`, and `pm_mops › an index
   that loads from a storage state moves with the state as it is`;
   `Tolk.Codegen › index_lane › a window's lane is the movement rules' index,
   with its state` (both cases); rune's
@@ -4960,7 +4960,7 @@ its rule, its reason and its pins.
   unstored (`Indexing.pm_apply_rangeify` rewrites no index), and
   `Rangeify.cleanup_dead_axes` then raises on rune's complex contractions
   ("cannot reshape (2,) to (1,)").
-- **Pinned by:** `Tolk.Prepare › pm_mops › rules › an index of a reshape's
+- **Pinned by:** `Tolk.Prepare › pm_mops › an index of a reshape's
   added leading axis is its source`; rune's `contractions › complex
   contractions hold their bound`.
 
@@ -6157,7 +6157,7 @@ union, as fast on CUDA, on the host and in compile time.
   › a loop given two states of one value reads the older as it was`, and `›
   laws › a schedule writes what its tensors compute`, whose programs repeat
   their statements, constants included; the `Tolk.Prepare` suite:
-  `prepare_rangeify › earliest rewrites › two equal stores into one storage
+  `prepare_rangeify › from the leaves up › two equal stores into one storage
   are two states`.
 
 ## D255. A kernel whose loop's bound reads memory is not searched
@@ -7633,12 +7633,12 @@ C's undefined behaviour.
   `Repeated_elements`), and nx and rune write a donated value in place only
   where it is C-contiguous.
 - **Pinned by:** the Prepare suite's `prepare_rangeify › broadcast stores`:
-  the refusals of the broadcast, its transpose, bitcast, detach and
+  the refusals of the broadcast, a broadcast to a symbolic size, its transpose, bitcast, detach and
   gradient marker, a gated store, a broadcast of a state and a state of a
   broadcast, one row of it, an index of its first axis, and an inline call
   that writes a broadcast argument; the stores through an expand that only
   adds axes of one and through a transpose, against the values they write;
-  and an expand that empties an axis, not refused.
+  and an expand that empties an axis, whose store is dropped.
 
 ## D346. Withdrawn
 

@@ -58,14 +58,20 @@ val expand_bitcast : Ops.t -> Ops.t option
 
 val prepare_rangeify : Ops.t -> Ops.t
 (** [prepare_rangeify sink] is the tensor graph of the function [sink] in the
-    form ranges index. In turn:
+    form ranges index. Running it leaves in the function's parameters and
+    buffers what running [sink] leaves there, up to the rounding of the
+    reductions it splits. Call-local storage ({!Op.Alloc}) holds scratch values,
+    which it may add or remove. In turn:
 
     {ol
      {- each output that stores a value into storage stores it in place: a value
         computed into new storage ({!Op.Alloc}) of the output's size is computed
         into the output's storage directly, and every other use of it reads the
         output. So is a value materialised by an {!Op.Stage}, or storage, when
-        the output is the store itself rather than storage ordered after it;
+        the output is the store itself rather than storage ordered after it. A
+        value that reads the output's storage keeps storage of its own. A value
+        stored into several outputs is placed in the first output the sink lists
+        that takes it, and the others store that output;
      }
      {- movements move towards storage ({!pm_mops}), except that a gather, an
         index by a value with axes ({!Indexing.is_gather}), is left whole; each
@@ -87,10 +93,13 @@ val prepare_rangeify : Ops.t -> Ops.t
           split by the largest divisor from [256] down to [8] that keeps the
           first reduction's output within [2]{^ n} elements, [n] the setting
           {!Setting.reduceop_split_size}, and the first reduction is
-          materialised. It applies when the input's shape is known and the input
-          has at least {!Setting.reduceop_split_threshold} times as many
-          elements as the output, and only to an axis the input is not broadcast
-          along;
+          materialised. Where no such divisor divides a reduced axis, the
+          longest reduced axis of at least eight times the largest split those
+          bounds allow is padded at its end with the reduction's identity
+          ({!Ops.identity_element}) to a multiple of that split, and split by
+          it. It applies when the input's shape is known and the input has at
+          least {!Setting.reduceop_split_threshold} times as many elements as
+          the output, and only to an axis the input is not broadcast along;
         - {!Op.Detach} and {!Op.Contiguous_backward} are their source;
         - a call compiled on its own, a kernel given as code or a precompiled
           call, takes an argument that is a run of storage's elements, or of
@@ -102,7 +111,6 @@ val prepare_rangeify : Ops.t -> Ops.t
           ({!Shape.storage_phase}), and that the call does not write through
           another argument ({!Shape.reads_storage_written}), is stored into new
           storage, where new storage starts as the parameter assumes;
-        - the sink's sources lose their movements;
         - a copy to the device the value is on is the value; a store of a copy
           into storage on the copy's device, or into a run of its elements
           that shrinks and reshapes view ({!contiguous_view}), stores the
@@ -129,8 +137,9 @@ val prepare_rangeify : Ops.t -> Ops.t
         - a reduction of an empty axis to a non-empty result is the operation's
           identity ({!Ops.identity_element}), and any other value with an empty
           axis is [0];
-        - the effects that a sink or an {!Op.After} lists lose their movements,
-          and {!Op.Noop}s among them are dropped.
+        - the items a sink lists, and the effects an {!Op.After} lists, lose the
+          movements, indices and bitcasts around them and around the storage of
+          each {!Op.After} among them, and {!Op.Noop}s among them are dropped.
      }
     }
 
