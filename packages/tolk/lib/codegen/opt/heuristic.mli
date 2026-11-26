@@ -102,17 +102,16 @@
     workgroup's most ({!Renderer.t.local_threads_max}) over a SIMD group's,
     32 on CUDA, fewer down to 8 with few outputs, and 2 upcast lanes, and the
     first reduce axis into the least power of two of local threads that makes
-    32768 threads, at most what a workgroup's most leaves beside those across
-    the axis, or the largest that divides it, halved until the workgroup's
-    shared memory, through which those threads sum their outputs, holds
-    them. An axis the local threads and lanes do not divide is padded to a
-    multiple of them, its padded columns loading nothing and stored nowhere,
-    where that holds at most 6/5 of its size, the ratio a tensor core's
-    padded work is bounded by ({{!section-cores}below}): a padded column
-    idles a lane and moves no byte. It does not apply when more than 32768
-    outputs are left after the upcast, or when such a pad passes that
-    bound; 32768 threads is [sm_89]'s bound, fixed for every target as the
-    tensor core's floor is.
+    the renderer's {!Renderer.t.stream_threads} threads, at most what a
+    workgroup's most leaves beside those across the axis, or the largest that
+    divides it, halved until the workgroup's shared memory, through which
+    those threads sum their outputs, holds them. An axis the local threads
+    and lanes do not divide is padded to a multiple of them, its padded
+    columns loading nothing and stored nowhere, where that holds at most 6/5
+    of its size, the ratio a tensor core's padded work is bounded by
+    ({{!section-cores}below}): a padded column idles a lane and moves no
+    byte. It does not apply when more than [stream_threads] outputs are left
+    after the upcast, or when such a pad passes that bound.
 
     {1:cores Tensor cores}
 
@@ -128,13 +127,11 @@
     and only a pad's own bound, at most four times the axis
     ({!Postrange.Scheduler.apply_opt}), holds it. Its [M] and [N] axes are
     upcast by the first of 5, 4, 3 and 2 that divides them, and [N] splits
-    locally by the largest of 4 and 2 that divides it and leaves at least 256
-    workgroups. Each upcast
-    applies only when it leaves at least [16384 / t] workgroups, [t] the
-    threads of the core, a workgroup's, and each split when the count is not
-    known. The floors move the order of a sum, so they are one for every
-    device of a target: 16384 threads and 256 workgroups, the bounds of
-    [sm_89]'s parts, which every target takes. With
+    locally by the largest of 4 and 2 that divides it and leaves at least
+    {!Renderer.t.local_workgroups} workgroups. Each upcast applies only when
+    it leaves at least [core_threads / t] workgroups
+    ({!Renderer.t.core_threads}), [t] the threads of the core, a
+    workgroup's, and each split when the count is not known. With
     {!Setting.tc_min_globals}, [M] is upcast and [N] split locally whatever
     the workgroups, and [N] upcast only while that many workgroups remain.
 
@@ -327,7 +324,9 @@
 
 val hand_coded_optimizations : Postrange.Scheduler.t -> Postrange.Scheduler.t
 (** [hand_coded_optimizations k] is a copy of [k] with the optimisations these
-    rules pick; [k] itself is left as it is. *)
+    rules pick; [k] itself is left as it is. It raises nothing, and each
+    optimisation it records applies ({!Postrange.Scheduler.apply_opt}), so the
+    copy keeps each effect of [k] ({!Postrange.apply_opts}). *)
 
 (** The type for what a device's renderer tells a schedule of its kernels. *)
 type cores = {
