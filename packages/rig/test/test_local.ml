@@ -10,7 +10,11 @@ let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 
 (* A name no other case opened. *)
 let names = Atomic.make 0
-let fresh what = Printf.sprintf "local:%s-%d" what (Atomic.fetch_and_add names 1)
+
+let fresh what =
+  Printf.sprintf "local:%s-%d" what (Atomic.fetch_and_add names 1)
+
+let software what = Result.get_ok (Rig.software (fresh what))
 
 (* A value whose collection a weak pointer shows: a fresh block each time. *)
 type value = { id : int }
@@ -18,13 +22,16 @@ type value = { id : int }
 let ids = Atomic.make 0
 let made () = { id = Atomic.fetch_and_add ids 1 }
 
-(* Gets, closes and reopens *)
+(* The id of the value a weak pointer holds, while it holds one. *)
+let held w = Option.map (fun v -> v.id) (Weak.get w 0)
 
-(* The model of a device: whether it is closed, whether a reopen replaced it
-   as its name's device, the value its gets answer once one answered, and the
-   values of the devices its name had before. *)
+(* Values per device *)
+
+(* The model of a device: why it is lost, once it is, whether an open of its
+   name replaced it, the value its gets answer once one answered, and the values
+   of the devices its name had before. *)
 type model = {
-  mutable closed : bool;
+  mutable lost : string option;
   mutable replaced : bool;
   mutable value : int option;
   before : int list;
@@ -34,92 +41,238 @@ type model = {
 type device = { name : string; d : Rig.t }
 
 let device_t =
-  abstract "d" ~release:(fun s -> Rig.close s.d) ~pp:(fun ppf m ->
+  abstract "d"
+    ~release:(fun s -> Rig.close s.d)
+    ~pp:(fun ppf m ->
       Format.fprintf ppf "%s, %s"
-        (if m.closed then "closed" else "open")
+        (Option.value m.lost ~default:"open")
         (match m.value with None -> "no value" | Some v -> string_of_int v))
 
+(* Made once, as rig.mli asks of a key. *)
 let key = L.new_key (fun _ -> made ())
 
 let open_named () =
   let name = fresh "model" in
   { name; d = Result.get_ok (Rig.software name) }
 
-(* Closes the name's device if open, then opens the name anew. *)
+(* Opens the name anew: an open of a lost device's name runs its owed stop, and
+   a device still open is closed first. *)
 let reopen s =
-  Rig.close s.d;
+  if Rig.lost s.d = None then Rig.close s.d;
   { s with d = Result.get_ok (Rig.software s.name) }
 
+let lose m = if m.lost = None then m.lost <- Some "given up"
+
 let get_judged m outcome =
-  match (outcome, m.closed) with
-  | Error (Rig.Lost (_, why)), true -> equal string "closed" why
-  | Ok v, false -> (
+  match (outcome, m.lost) with
+  | Error (Rig.Lost (_, why)), Some why' -> equal string why' why
+  | Ok v, None -> (
       match m.value with
       | Some v' -> equal ~msg:"the value every get answers" int v' v
       | None ->
-          equal ~msg:"a value of the name's earlier devices" bool false
-            (List.mem v m.before);
+          equal ~msg:"values of the name's earlier devices" (list int) []
+            (List.filter (( = ) v) m.before);
           m.value <- Some v)
-  | Ok v, true -> failf "a closed device's get answered %d" v
+  | Ok v, Some why -> failf "the get of a device lost (%s) answered %d" why v
   | Error e, _ -> raise e
 
 let model_commands =
   [
-    command "open" (Gen.unit @-> makes device_t)
-      (fun () -> { closed = false; replaced = false; value = None; before = [] })
+    command "open"
+      (Gen.unit @-> makes device_t)
+      (fun () -> { lost = None; replaced = false; value = None; before = [] })
       open_named;
-    command "reopen" (device_t ^-> makes device_t)
+    command "reopen"
+      (device_t ^-> makes device_t)
       ~pre:(fun m -> not m.replaced)
       (fun m ->
         let before = Option.to_list m.value @ m.before in
-        m.closed <- true;
+        if m.lost = None then m.lost <- Some "closed";
         m.replaced <- true;
-        { closed = false; replaced = false; value = None; before })
+        { lost = None; replaced = false; value = None; before })
       reopen;
-    command "get" (device_t ^-> judges int) get_judged (fun s ->
-        (L.get key s.d).id);
-    command "close" (device_t ^-> returns unit)
-      (fun m -> m.closed <- true)
+    command "get"
+      (device_t ^-> judges int)
+      get_judged
+      (fun s -> (L.get key s.d).id);
+    command "lose"
+      (device_t ^-> returns unit)
+      lose
+      (fun s -> Rig.lose s.d "given up");
+    command "close"
+      (device_t ^-> returns unit)
+      (fun m -> if m.lost = None then m.lost <- Some "closed")
       (fun s -> Rig.close s.d);
   ]
 
-(* Racing gets *)
+(* Gets [k] on [d] into [w], and leaves no other reference to the value. *)
+let[@inline never] [@local never] get_weak k d w =
+  let v = L.get k d in
+  Weak.set w 0 (Some v);
+  v.id
 
-(* Every device a domain's get draws from, opened once for every case: a
-   program makes keys, which cost no device. *)
-let racing_devices =
-  Array.init 2 (fun _ -> Result.get_ok (Rig.software (fresh "racing")))
+(* The ways that run a device's stop. *)
+let stops =
+  [
+    ("a close", fun _ d -> Rig.close d);
+    ( "a loss, then a close",
+      fun _ d ->
+        Rig.lose d "given up";
+        Rig.close d );
+    ( "a loss, then an open of its name",
+      fun name d ->
+        Rig.lose d "given up";
+        Rig.close (Result.get_ok (Rig.software name)) );
+  ]
 
-(* The model of a key: the value its gets answer on each device, once one
-   answered. *)
-let key_t = abstract "k"
-let device_index = Gen.int_range 0 (Array.length racing_devices - 1)
+let test_dropped_at_stop (_, stop) =
+  let name = fresh "dropped" in
+  let d = Result.get_ok (Rig.software name) in
+  let k = L.new_key (fun _ -> made ()) in
+  let w = Weak.create 1 in
+  let id = get_weak k d w in
+  Gc.full_major ();
+  equal ~msg:"while open" (option int) (Some id) (held w);
+  stop name d;
+  Gc.full_major ();
+  equal ~msg:"once stopped" (option int) None (held w)
 
-let racing_judged values i outcome =
+(* An init that closes its device: the store comes after the stop. *)
+let test_init_stops () =
+  let d = software "races" in
+  let w = Weak.create 1 in
+  let k =
+    L.new_key (fun d ->
+        Rig.close d;
+        let v = made () in
+        Weak.set w 0 (Some v);
+        v)
+  in
+  raises_match (lost d) (fun () -> L.get k d);
+  Gc.full_major ();
+  equal (option int) None (held w)
+
+(* The init closes its device and opens another, which continues its slot, and
+   gets the key there: the outer get must not answer that device's value. *)
+let test_init_reopens () =
+  let d = software "first" in
+  ignore (Rig.submit (Rig.Submission.make d [||]) ~buffers:[||] ~args:[||]);
+  let key = ref None and other = ref None in
+  let k =
+    L.new_key (fun dev ->
+        if Rig.equal dev d then (
+          Rig.close d;
+          let e = software "second" in
+          equal ~msg:"e continues d's slot" int (Rig.submitted d)
+            (Rig.submitted e);
+          other := Some (e, L.get (Option.get !key) e));
+        made ())
+  in
+  key := Some k;
+  raises_match (lost d) (fun () -> L.get k d);
+  let e, v = Option.get !other in
+  equal ~msg:"e's value" int v.id (L.get k e).id;
+  Rig.close e
+
+(* Local.get *)
+
+let test_keys () =
+  let d = software "keys" and e = software "keys" in
+  let k = L.new_key (fun d -> Rig.name d)
+  and k' = L.new_key (fun _ -> made ()) in
+  equal string (Rig.name d) (L.get k d);
+  equal string (Rig.name e) (L.get k e);
+  not_equal int (L.get k' d).id (L.get k' e).id;
+  equal string "CPU" (L.get k Rig.host);
+  Rig.close d;
+  Rig.close e
+
+let test_hit_words () =
+  let d = software "words" in
+  let k = L.new_key (fun _ -> made ()) in
+  ignore (L.get k d);
+  equal int 0
+    (Rig_support.allocated_bytes (fun () ->
+         for _ = 1 to 10_000 do
+           ignore (Sys.opaque_identity (L.get k d))
+         done));
+  Rig.close d
+
+let test_init_domain () =
+  let d = software "domain" in
+  let k = L.new_key (fun _ -> (Domain.self () :> int)) in
+  let caller, value =
+    Domain.join (Domain.spawn (fun () -> ((Domain.self () :> int), L.get k d)))
+  in
+  equal int caller value;
+  Rig.close d
+
+let test_init_gets_other () =
+  let d = software "other" in
+  let inner = L.new_key (fun _ -> made ()) in
+  let outer = L.new_key (fun d -> (L.get inner d).id) in
+  let v = L.get outer d in
+  equal ~msg:"the other key's value" int (L.get inner d).id v;
+  Rig.close d
+
+(* Two domains get one key on one device with no value. A's init waits until B's
+   get, whose init ran and stored, has returned: A's value comes second. *)
+let test_race_held () =
+  let d = software "held" in
+  let a_in_init = Semaphore.Binary.make false
+  and b_returned = Semaphore.Binary.make false in
+  let first = Atomic.make true in
+  let k =
+    L.new_key (fun _ ->
+        if Atomic.exchange first false then (
+          Semaphore.Binary.release a_in_init;
+          Semaphore.Binary.acquire b_returned);
+        made ())
+  in
+  let b =
+    Domain.spawn (fun () ->
+        Semaphore.Binary.acquire a_in_init;
+        let v = L.get k d in
+        Semaphore.Binary.release b_returned;
+        v)
+  in
+  let a = L.get k d in
+  let b = Domain.join b in
+  equal ~msg:"A's get answers B's value" int b.id a.id;
+  equal ~msg:"a later get" int b.id (L.get k d).id;
+  Rig.close d
+
+(* Two keys made once, and two devices per program, so a get's walk stays at
+   most two keys long. Gets of both keys on one device race their stores. *)
+let racing_keys =
+  [| L.new_key (fun _ -> made ()); L.new_key (fun _ -> made ()) |]
+
+let pair_t = abstract "p" ~release:(Array.iter Rig.close)
+let index = Gen.int_range 0 1
+
+(* The value of key [k] on device [i], at [values.(k).(i)]. *)
+let racing_judged values k i outcome =
   match outcome with
   | Error e -> raise e
   | Ok v -> (
-      match values.(i) with
+      match values.(k).(i) with
       | Some v' -> equal ~msg:"the value every get answers" int v' v
-      | None -> values.(i) <- Some v)
+      | None -> values.(k).(i) <- Some v)
 
 let racing_commands =
   [
-    command "key" (Gen.unit @-> makes key_t)
-      (fun () -> Array.make (Array.length racing_devices) None)
-      (fun () -> L.new_key (fun _ -> made ()));
+    command "devices"
+      (Gen.unit @-> makes pair_t)
+      (fun () -> Array.init 2 (fun _ -> [| None; None |]))
+      (fun () -> Array.init 2 (fun _ -> software "racing"));
     command "get"
-      (key_t ^-> device_index @-> judges int)
+      (pair_t ^-> index @-> index @-> judges int)
       racing_judged
-      (fun k i -> (L.get k racing_devices.(i)).id);
+      (fun ds k i -> (L.get racing_keys.(k) ds.(i)).id);
   ]
 
-(* Values *)
-
-(* An init that gets its own key on its device runs a nested init, whose value
-   both answer. *)
 let test_nested () =
-  let d = Result.get_ok (Rig.software (fresh "nested")) in
+  let d = software "nested" in
   let depth = ref 0 in
   let rec k =
     lazy
@@ -134,9 +287,8 @@ let test_nested () =
   equal ~msg:"the nested value" int outer.id (L.get k d).id;
   Rig.close d
 
-(* An init that raises stores nothing: the next get runs init again. *)
 let test_init_raises () =
-  let d = Result.get_ok (Rig.software (fresh "raises")) in
+  let d = software "raises" in
   let inits = ref 0 in
   let k =
     L.new_key (fun _ ->
@@ -149,115 +301,51 @@ let test_init_raises () =
   equal ~msg:"the stored value" int v.id (L.get k d).id;
   Rig.close d
 
-(* Keys are independent, and a device's value is its own. *)
-let test_keys () =
-  let d = Result.get_ok (Rig.software (fresh "keys"))
-  and e = Result.get_ok (Rig.software (fresh "keys")) in
-  let k = L.new_key (fun d -> Rig.name d) and k' = L.new_key (fun _ -> made ()) in
-  equal string (Rig.name d) (L.get k d);
-  equal string (Rig.name e) (L.get k e);
-  not_equal int (L.get k' d).id (L.get k' e).id;
-  equal string "CPU" (L.get k Rig.host);
-  Rig.close d;
-  Rig.close e
+let losses =
+  [
+    ("by a close", fun d -> Rig.close d);
+    ("by lose", fun d -> Rig.lose d "given up");
+  ]
 
-(* A get that finds its value allocates nothing. *)
-let test_hit_words () =
-  let d = Result.get_ok (Rig.software (fresh "words")) in
-  let k = L.new_key (fun _ -> made ()) in
-  ignore (L.get k d);
-  equal int 0
-    (Rig_support.allocated_bytes (fun () ->
-         for _ = 1 to 10_000 do
-           ignore (Sys.opaque_identity (L.get k d))
-         done));
-  Rig.close d
-
-(* Lifetime *)
-
-let[@inline never] get_weak k d w = Weak.set w 0 (Some (L.get k d))
-
-(* A closed device's value is collected: close drops it. *)
-let test_closed_collected () =
-  let d = Result.get_ok (Rig.software (fresh "collected")) in
-  let k = L.new_key (fun _ -> made ()) in
-  let w = Weak.create 1 in
-  get_weak k d w;
-  Gc.full_major ();
-  equal ~msg:"while open" bool true (Weak.check w 0);
-  Rig.close d;
-  Gc.full_major ();
-  equal ~msg:"once closed" bool false (Weak.check w 0);
-  raises_match (lost d) (fun () -> L.get k d)
-
-(* A value whose init raced the stop is dropped too, and the get raises Lost:
-   here the init closes its device. *)
-let test_init_races_stop () =
-  let d = Result.get_ok (Rig.software (fresh "races")) in
-  let w = Weak.create 1 in
-  let k =
-    L.new_key (fun d ->
-        Rig.close d;
-        let v = made () in
-        Weak.set w 0 (Some v);
-        v)
-  in
-  raises_match (lost d) (fun () -> L.get k d);
-  Gc.full_major ();
-  equal bool false (Weak.check w 0)
-
-(* An init that closes its device and opens another in its slot leaves the
-   get raising Lost: the other device's value is its own. *)
-let test_init_reopens () =
-  let d = Result.get_ok (Rig.software (fresh "first")) in
-  ignore (Rig.submit (Rig.Submission.make d [||]) ~buffers:[||] ~args:[||]);
-  let key = ref None and other = ref None in
-  let k =
-    L.new_key (fun dev ->
-        if Rig.equal dev d then (
-          Rig.close d;
-          let e = Result.get_ok (Rig.software (fresh "second")) in
-          equal ~msg:"e continues d's slot" int (Rig.submitted d)
-            (Rig.submitted e);
-          ignore (L.get (Option.get !key) e);
-          other := Some e);
-        made ())
-  in
-  key := Some k;
-  raises_match (lost d) (fun () -> L.get k d);
-  Option.iter Rig.close !other
-
-(* A lost device's get raises, whether it had a value or not. *)
-let test_lost () =
-  let d = Result.get_ok (Rig.software (fresh "lost")) in
+let test_lost (_, lose) =
+  let d = software "lost" in
   let k = L.new_key (fun _ -> made ()) and k' = L.new_key (fun _ -> made ()) in
   ignore (L.get k d);
-  Rig.close d;
+  lose d;
   raises_match ~msg:"with a value" (lost d) (fun () -> L.get k d);
-  raises_match ~msg:"without" (lost d) (fun () -> L.get k' d)
+  raises_match ~msg:"without" (lost d) (fun () -> L.get k' d);
+  Rig.close d
 
 let tests =
   [
-    group "values"
+    group "values per device"
       [
+        stateful "a device's gets answer one value, its own, until it is lost"
+          model_commands;
+        cases ~id:fst "a device's value is collected once its stop has run"
+          stops test_dropped_at_stop;
+        test "a get whose init closes its device keeps nothing" test_init_stops;
+        test
+          "a get whose init closes its device raises Lost, and a later device \
+           of its slot keeps its own value"
+          test_init_reopens;
+      ];
+    group "Local.get"
+      [
+        test "each key and device has its own value" test_keys;
+        test "a get that finds its value allocates nothing" test_hit_words;
+        test "an init runs on the calling domain" test_init_domain;
+        test "an init may get another key" test_init_gets_other;
+        test "a get racing another's init answers the first value stored"
+          test_race_held;
+        stateful ~domains:2 ~steps:1
+          "gets racing on a device with no value all answer one value"
+          racing_commands;
         test "an init that gets its own key answers the nested value"
           test_nested;
         test "an init that raises stores nothing" test_init_raises;
-        test "each key and device has its own value" test_keys;
-        test "a get that finds its value allocates nothing" test_hit_words;
-        test "a lost device's get raises Lost" test_lost;
-        stateful "gets answer one value per device until it closes"
-          model_commands;
-        stateful ~domains:2 "racing first gets answer one value"
-          racing_commands;
-      ];
-    group "lifetime"
-      [
-        test "a closed device's value is collected" test_closed_collected;
-        test "a value whose init raced the stop is collected"
-          test_init_races_stop;
-        test "an init that reopens the slot leaves the get lost"
-          test_init_reopens;
+        cases ~id:fst "a lost device's get raises Lost, with a value or not"
+          losses test_lost;
       ];
   ]
 
