@@ -15,12 +15,12 @@ let cores = P.cores ()
 let kinds = [ P.Compute; P.Blocking ]
 let kind_name = function P.Compute -> "compute" | P.Blocking -> "blocking"
 
-(* Bodies on a worker *)
+(* Bodies *)
 
 let test_worker_mask kind =
   P.needs_two_cores ();
   let worked, mask = T.worker_mask kind in
-  equal ~msg:"a worker ran a chunk" bool true worked;
+  satisfies ~claim:"a worker ran a chunk" bool Fun.id worked;
   equal ~msg:"(signal, blocked)"
     (list (pair string bool))
     (List.map (fun (s, _) -> (s, not (List.mem s T.faults))) mask)
@@ -49,28 +49,28 @@ let test_faults kind =
     (List.mapi (fun k s -> (s, v.(1) land (1 lsl k) <> 0)) T.faults)
 
 let worker_tests =
-  group "workers"
+  group "bodies"
     [
       cases
         "a body on a compute worker has 8 MiB of stack, on a blocking worker \
          256 KiB"
-        ~id:kind_name kinds
-        test_stack;
+        ~id:kind_name kinds test_stack;
       cases "workers block every signal but those a body raises itself"
         ~id:kind_name kinds test_worker_mask;
       cases "a fault signal a body raises on a worker runs its handler there"
         ~id:kind_name kinds test_faults;
     ]
 
-(* Threads *)
+(* The life of the pool *)
 
 let needs_thread_states () =
   if T.running_threads () < 0 then
     skip ~reason:"the system does not report its threads' states" ()
 
-(* [settle_to n] polls until at most [n] threads other than this one run, and is
-   their count. *)
-let settle_to n = P.settle T.running_threads (fun k -> k <= n)
+(* [settle why n] waits until at most [n] threads other than this one run; a
+   pool whose threads never settle there fails at the test's limit, naming
+   [why]. *)
+let settle why n = P.await why (fun () -> T.running_threads () <= n)
 
 let test_made_once () =
   P.needs_two_cores ();
@@ -94,9 +94,9 @@ let test_grown () =
     [ 1; 1; 2; cores + 3 ]
     (List.map (fun n -> n - v.(0)) [ v.(1); v.(2); v.(3); v.(4) ])
 
-(* The child limits its own threads to none, so a blocking job of eight
-   threads makes no worker and runs every chunk on the calling thread. Once
-   the limit is lifted, the next such job makes its workers. *)
+(* The child limits its own threads to none, so a blocking job of eight threads
+   makes no worker and runs every chunk on the calling thread. Once the limit is
+   lifted, the next such job makes its workers. *)
 let test_limited_blocking () =
   if not (T.limits_threads ()) then
     skip ~reason:"the system cannot limit a process's own threads" ();
@@ -113,7 +113,7 @@ let test_parks kind =
   needs_thread_states ();
   P.needs_two_cores ();
   ignore (P.record ~kind ~threads:cores ~total:64L ~chunks:8L ());
-  equal ~msg:"threads running once the pool is idle" int 0 (settle_to 0);
+  settle "the idle pool's threads did not park" 0;
   P.reset ();
   let finished = Atomic.make false in
   let caller =
@@ -124,12 +124,11 @@ let test_parks kind =
   in
   P.await "a parked worker was not woken for the job" (fun () ->
       P.hold_arrived () = 2);
-  equal ~msg:"threads running while a worker holds the job: the caller parked"
-    int 1 (settle_to 1);
+  settle "the caller did not park while a worker held its job" 1;
   P.hold_release ();
   P.await "the parked caller was not woken at the job's end" (fun () ->
       Atomic.get finished);
-  equal ~msg:"the job was released" bool true (Domain.join caller)
+  satisfies ~claim:"the job was released" bool Fun.id (Domain.join caller)
 
 (* The child answers after a job of the parent's on every core; the parent's
    pool then runs a job that needs a worker. *)
@@ -138,17 +137,17 @@ let test_fork_child kind =
   let v = in_child ~kind T.Job in
   equal ~msg:"(a worker ran a chunk, units not run once)" (pair int int) (1, 0)
     (v.(0), v.(1));
-  equal ~msg:"in the parent, a job's two chunks ran at once" bool true
+  satisfies ~claim:"in the parent, a job's two chunks ran at once" bool Fun.id
     (P.finishes "the parent's job after the fork" (fun () -> P.meet kind))
 
-(* fork returns while another thread's blocking job of more threads than
-   cores runs, and the child runs such a blocking job of its own on its own
+(* fork returns while another thread's blocking job of more threads than cores
+   runs, and the child runs such a blocking job of its own on its own
    workers. *)
 let test_fork_beside_blocking () =
   P.needs_fork ();
   let during, status = T.fork_beside_blocking (cores + 2) in
   equal ~msg:"how the child ended" string "exit 0" status;
-  equal ~msg:"fork returned while the blocking job ran" bool true during
+  satisfies ~claim:"fork returned while the blocking job ran" bool Fun.id during
 
 (* The child limits its own threads to none, so the pool makes no worker. Its
    jobs run on the calling thread, and the pool makes none once the limit is
@@ -164,11 +163,11 @@ let test_unmade () =
   equal ~msg:"threads after both jobs" int 1 v.(3)
 
 let thread_tests =
-  group "threads"
+  group "life of the pool"
     [
       test
-        "the compute workers are made at its first job of more than one \
-         thread and live until the process exits"
+        "the compute workers are made at its first job of more than one thread \
+         and live until the process exits"
         test_made_once;
       test
         "a blocking job makes the blocking workers it asks for that the pool \
