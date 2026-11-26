@@ -9,9 +9,9 @@ let move u =
 let case file cell =
   List.nth (Ops.src (Golden.sink file)) (int_of_string (cell "src"))
 
-(* Kernels compiled by tinygrad: padding reads through gated indices, on the CPU
-   and on CUDA; a convolution with padding; a CUDA sum whose partial sums go
-   through workgroup memory under a gated store. *)
+(* Kernels recorded by gen/codegen/late/gater.py: padding reads through gated
+   indices, on the CPU and on CUDA; a convolution with padding; a CUDA sum whose
+   partial sums go through workgroup memory under a gated store. *)
 let kernels = [ "pad"; "pad_value"; "conv"; "pad_cuda"; "sum_group" ]
 
 let kernel name =
@@ -46,26 +46,76 @@ let access { indices; store; select } =
     let l = Ops.load at [] in
     match select with Some gate -> Ops.where gates.(gate) l x | None -> l
 
-let accesses =
+let index =
   let open Gen in
-  let index =
-    frequency
-      [
-        (1, map (fun n -> Plain n) (int_range 0 1));
-        ( 3,
-          let+ gate = int_range 0 2 and+ n = int_range 0 1 in
-          Gated (gate, n) );
-      ]
-  in
+  frequency
+    [
+      (1, map (fun n -> Plain n) (int_range 0 1));
+      ( 3,
+        let+ gate = int_range 0 2 and+ n = int_range 0 1 in
+        Gated (gate, n) );
+    ]
+
+let sink_of ~indices =
+  let open Gen in
   let access =
-    let+ indices = list ~size:(int_range 1 3) index
+    let+ indices = list ~size:indices index
     and+ store = bool
     and+ select = option (int_range 0 2) in
     access { indices; store; select }
   in
+  map Ops.sink (list ~size:(int_range 1 3) access)
+
+let graph_pp ppf u = Format.pp_print_string ppf (Graph.to_string u)
+let accesses = Gen.with_pp graph_pp (sink_of ~indices:(Gen.int_range 1 3))
+
+(* Accesses of one index, which the interpreter evaluates, with values of the
+   gates, the indices and the stored value. *)
+type binding = { g : bool; h : bool; i0 : int; i1 : int }
+
+let evaluated =
+  let open Gen in
+  let binding =
+    let+ g = bool
+    and+ h = bool
+    and+ i0 = int_range 0 63
+    and+ i1 = int_range 0 63 in
+    { g; h; i0; i1 }
+  in
   with_pp
-    (fun ppf u -> Format.pp_print_string ppf (Graph.to_string u))
-    (map Ops.sink (list ~size:(int_range 1 3) access))
+    (fun ppf (u, b) ->
+      Format.fprintf ppf "%a@.at g=%b h=%b i0=%d i1=%d" graph_pp u b.g b.h b.i0
+        b.i1)
+    (pair (sink_of ~indices:(constant 1)) binding)
+
+let write = triple int int Dtypes.value
+let elements = Array.init 64 (fun i -> `Float (Float.of_int i +. 0.5))
+
+let vars b =
+  [
+    ("g", `Bool b.g);
+    ("h", `Bool b.h);
+    ("i0", `Int (Bigint.of_int b.i0));
+    ("i1", `Int (Bigint.of_int b.i1));
+    ("x", `Float 0.25);
+  ]
+
+(* What the accesses under [u] compute: the value of each load, and the writes
+   of the stores. *)
+let computed b u =
+  let vars = vars b and buffers = [ (0, elements) ] in
+  let loads = List.filter (fun a -> Ops.op a <> Op.Store) (Ops.src u) in
+  ( List.map (Interpreter.eval ~vars ~buffers) loads,
+    Interpreter.writes ~vars ~buffers u )
+
+(* Whether an access of [u] reads through an index whose gate fails at [b]. *)
+let gate_fails b u =
+  List.exists
+    (fun a ->
+      Ops.op a = Op.Where
+      && Ops.is_invalid (Ops.nth a 2)
+      && Interpreter.eval ~vars:(vars b) (Ops.nth a 0) = `Bool false)
+    (Ops.toposort ~calls:Enter u)
 
 (* A load or a store through an index whose first index is gated by an invalid
    alternative, which no target renders. *)
@@ -105,6 +155,8 @@ let keeps_value ~buffers u =
    drawn often, or a float conversion of a constant of any type. A NaN or an
    infinity has no integer value, and an integer of a wide type may round to an
    infinity in a narrow float. *)
+let is_non_finite = function `Float f -> not (Float.is_finite f) | _ -> false
+
 let converted_selections =
   let open Gen in
   let non_finite =
@@ -140,20 +192,8 @@ let converted_selections =
     (fun ppf (_, u) -> Format.pp_print_string ppf (Graph.to_string u))
     selected
 
-let laws =
-  group "laws"
-    [
-      prop "no access through a first index gated by invalid remains" accesses
-        (fun u ->
-          is_false ~msg:"an access still reads through a gated index"
-            (List.exists gated_first_index (Ops.toposort ~calls:Enter (move u))));
-      prop "moving the gates is idempotent" accesses
-        (Law.idempotent Uops.uop move);
-      prop "a moved selection of a converted gated load keeps its value"
-        ~count:500 converted_selections (fun (d, u) ->
-          let one = Dtype.truncate d (`Int Bigint.one) in
-          keeps_value ~buffers:[ (0, Array.make 64 one) ] u);
-    ]
+let gated_accesses u =
+  List.filter gated_first_index (Ops.toposort ~calls:Enter u)
 
 (* A selection of a gated load converted to another type, [where g (cast l) a],
    read where the gate fails and holds: the moved load computes the selection,
@@ -168,8 +208,9 @@ let converted =
       (1, Array.make 64 (`Float 3.)); (2, Array.make 64 (`Int (Bigint.of_int 3)));
     ]
   in
-  cases "a selection of a converted gated load keeps its value"
-    ~id:(fun (buf, a) -> Format.asprintf "%a %h" Dtype.pp (Ops.dtype buf) a)
+  cases "keeps the value of a selection of a converted gated load of"
+    ~id:(fun (buf, a) ->
+      Format.asprintf "%a with %h" Dtype.pp (Ops.dtype buf) a)
     [
       (narrow, 2.);
       (narrow, 0x1p-149);
@@ -187,12 +228,46 @@ let converted =
       keeps_value ~buffers
         (selection buf Float32 (Ops.const ~dtype:Float32 (`Float a))))
 
+(* The constant a selection's alternative holds, through a cast or not. *)
+let rec alternative_value u =
+  match Ops.op u with
+  | Op.Cast -> alternative_value (Ops.nth u 0)
+  | _ -> Interpreter.eval u
+
 let pm_move_gates_from_index =
   group "pm_move_gates_from_index"
-    (Golden.cases "moves.golden" (fun cell ->
-         equal Uops.uop
-           (case "moves_output.golden" cell)
-           (move (case "moves_input.golden" cell)))
-    :: converted :: List.map kernel kernels)
+    [
+      group "moves each access's gate as its golden states"
+        (Golden.cases "moves.golden" (fun cell ->
+             equal Uops.uop
+               (case "moves_output.golden" cell)
+               (move (case "moves_input.golden" cell)))
+        :: List.map kernel kernels);
+      prop "leaves no access through a first index gated by invalid" accesses
+        (fun u ->
+          cover "an access reads through a gated first index"
+            (gated_accesses u <> []);
+          equal (list Uops.uop) [] (gated_accesses (move u)));
+      prop "keeps each load's value and each store's writes" evaluated
+        (fun (u, b) ->
+          cover "an access reads where its gate fails" (gate_fails b u);
+          equal
+            (pair (list Dtypes.const) (list write))
+            (computed b u)
+            (computed b (move u)));
+      prop "is idempotent" accesses (Law.idempotent Uops.uop move);
+      converted;
+      prop
+        "keeps the value of a selection of a gated load of any type converted \
+         to any other"
+        ~count:500 converted_selections (fun (d, u) ->
+          let w = Ops.dtype u and a = Ops.nth u 2 in
+          cover "the alternative is not finite"
+            (is_non_finite (alternative_value a));
+          cover "the load's type is narrower than the selection's"
+            (Dtype.itemsize d < Dtype.itemsize w);
+          let one = Dtype.truncate d (`Int Bigint.one) in
+          keeps_value ~buffers:[ (0, Array.make 64 one) ] u);
+    ]
 
-let () = exit (run "Tolk.Gater" [ pm_move_gates_from_index; laws ])
+let () = exit (run "Tolk.Gater" [ pm_move_gates_from_index ])
