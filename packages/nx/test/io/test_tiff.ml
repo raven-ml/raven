@@ -1691,7 +1691,12 @@ let ranges_merge =
 (* One partial file of [strips] shared between domains, against the bytes it
    holds: a call's reference is the same call on a partial file made afresh, on
    one domain, from those bytes. Every command but start takes a partial file,
-   which start makes with no precondition. *)
+   which start makes with no precondition.
+
+   Only the prefix makes values, so add runs only in a case whose prefix calls
+   start and then add. With add listed once that is 0.28 of the cases, and 20
+   cases missed add in one run of 770; listed three times it is 0.41, and 50
+   cases miss add with 0.59^50 = 4e-12. The other commands run more often. *)
 let part = abstract "p"
 
 let held_range =
@@ -1713,20 +1718,25 @@ let whole_window p =
   | Refused m -> Refused m
 
 let shared_partial =
-  stateful ~domains:2 ~count:20 ~steps:4
+  let add =
+    command "add"
+      (held_range @-> part ^-> makes part)
+      (fun (at, len) held ->
+        let held = Array.copy held in
+        Array.fill held at len true;
+        held)
+      (fun (at, len) p -> P.add p ~at (String.sub strips at len))
+  in
+  stateful ~domains:2 ~count:50 ~steps:4
     "a partial file shared between domains reads as one made afresh"
     [
       command "start"
         (Gen.unit @-> makes part)
         (fun () -> Array.make (String.length strips) false)
         (fun () -> P.v ~name:"part" ~length:(String.length strips));
-      command "add"
-        (held_range @-> part ^-> makes part)
-        (fun (at, len) held ->
-          let held = Array.copy held in
-          Array.fill held at len true;
-          held)
-        (fun (at, len) p -> P.add p ~at (String.sub strips at len));
+      add;
+      add;
+      add;
       command "decode"
         (part ^-> returns ifds)
         (fun held -> tags (decode_of (partial strips held)))

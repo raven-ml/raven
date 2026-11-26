@@ -518,7 +518,13 @@ let seeking =
    branches share a load and a pass, which two calls make, so the prefix and the
    suffix make at most four. A pass's blocks hold 4 rows or more: a pass of the
    file's 128 rows has at most 32 nodes, and its blocks still end inside the
-   16-row frames. Blocks of 1 row are the single-domain laws'. *)
+   16-row frames. Blocks of 1 row are the single-domain laws'.
+
+   Only the prefix makes values, so force runs only in a case whose prefix calls
+   load and then blocks. With blocks listed once that is 0.26 of the cases, and
+   20 cases missed force in one run of 400; listed three times it is 0.37, and
+   50 cases miss force with 0.63^50 = 1e-10. The other commands run more
+   often. *)
 let audio = abstract "a"
 let pass = abstract "p"
 
@@ -534,19 +540,24 @@ let block_rows = Gen.with_pp Format.pp_print_int (Gen.int_range 1 50)
 let dropped = Gen.with_pp Format.pp_print_int (Gen.int_range 0 4)
 
 let shared =
+  let blocks =
+    command "blocks"
+      (pass_rows @-> audio ^-> makes pass)
+      (fun rows () -> slices rows)
+      (fun rows a -> Audio.blocks a ~rows)
+  in
   group "Audio.t"
     [
-      stateful ~domains:2 ~count:20 ~steps:4
+      stateful ~domains:2 ~count:50 ~steps:4
         "a file and its passes shared between domains"
         [
           command "load"
             (Gen.unit @-> makes audio)
             (fun () -> ())
             (fun () -> Nx_io.load_audio seek);
-          command "blocks"
-            (pass_rows @-> audio ^-> makes pass)
-            (fun rows () -> slices rows)
-            (fun rows a -> Audio.blocks a ~rows);
+          blocks;
+          blocks;
+          blocks;
           command "force"
             (dropped @-> pass ^-> returns (list packed))
             (fun k bs -> List.filteri (fun i _ -> i >= k) bs)
