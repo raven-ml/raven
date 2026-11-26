@@ -8,19 +8,23 @@
 (** Applying kernel optimisations.
 
     A kernel's axes are its ranges ({!Op.Range}) with a positive count, except
-    serial loops, listed by argument ({!Ops.compare_range_arg}), the weak and upcast ranges that a reduction
-    closes last. A range's role in a reduction is that a reduction
-    ({!Op.Reduce}) closes it: its axis is a reduce axis, and an upcast of it
-    unrolls the reduction into the thread's lanes. An optimisation
+    serial loops, listed by argument ({!Ops.compare_range_arg}), the weak and
+    upcast ranges that a reduction closes last. A range's role in a reduction is
+    that a reduction ({!Op.Reduce}) closes it: its axis is a reduce axis, and an
+    upcast of it unrolls the reduction into the thread's lanes. An optimisation
     ({!Opt.t}) names an axis by its position in that list, and rewrites the
     kernel: a split replaces an axis [r] of size [n] by [r'] of size [n / a] and
     a new axis [s] of size [a], and every use of [r] by [r' * a + s], or
-    [s * (n / a) + r'] from the top; a pad grows an axis to a multiple and
-    makes the steps it adds no-ops, guarding each access whose index reads the
-    axis and each store and loop back edge ({!Op.Backedge}) that runs along
-    it; a swap exchanges two global axes' identities; a tensor core
-    replaces a reduction of products by a matrix multiply-accumulate
-    ({!Op.Wmma}). *)
+    [s * (n / a) + r'] from the top; a pad grows an axis to a multiple and makes
+    the steps it adds no-ops, guarding each access whose index reads the axis
+    and each store and loop back edge ({!Op.Backedge}) that runs along it; a
+    swap exchanges two global axes' identities; a tensor core replaces a
+    reduction of products by a matrix multiply-accumulate ({!Op.Wmma}).
+
+    On the [CPU] device, a pad of an axis that no reduction closes and no loop's
+    bound reads guards a load only at an index a store writes or ordered after
+    an effect: any other load reads a padded step at the axis's last real index,
+    a value that reaches only the guarded stores of padded steps. *)
 
 (** {1:schedulers Schedulers} *)
 
@@ -174,9 +178,10 @@ module Scheduler : sig
     Ops.t * Ops.t
   (** [shift_to k r amount target] splits the axis [r] into [(r', s)]: [r'] of
       [r]'s size divided by [amount], and [s], of size [amount] and [target]'s
-      role, a new range unless [new_rng] is given. [r] becomes
-      [r' * amount + s], or [s * size r' + r'] if [top] (default [false]), and
-      the ranges reductions and ends close stay flat.
+      role, a new range numbered after every range of [k]'s kernel unless
+      [new_rng] is given. [r] becomes [r' * amount + s], or [s * size r' + r']
+      if [top] (default [false]), and the ranges reductions and ends close stay
+      flat.
 
       Raises [Invalid_argument] if [amount] is not greater than [1], if [r]'s
       role is not among [split_targets target], if [r]'s trips are not known at
@@ -198,6 +203,15 @@ module Scheduler : sig
       optimisations if [append_opt] (default [true]), and is [Ok] the axes it
       made: a split's [[r'; s]] ({!shift_to}), a pad's grown axis, a tensor
       core's three axes [N], [M] and [K], and [[]] for a swap.
+
+      A group, a local split of a reduce axis whose reductions no reduce axis
+      encloses, also splits by its amount, into the same new axis, an axis of
+      each sibling: each other reduction no reduce axis encloses that reads no
+      grouped reduction and that no grouped reduction reads. The axis is the
+      sibling's first weak reduce axis that the amount divides and that only
+      such reductions close, while the group's buffers fit in shared memory. The
+      group's threads then share each sibling, which each thread would otherwise
+      run whole.
 
       It is [Error] with the reason if [opt] does not apply, leaving [k] as it
       was unless a tensor core's reduction is found ambiguous after its axes are
