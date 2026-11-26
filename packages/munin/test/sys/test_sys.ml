@@ -58,27 +58,38 @@ let burn s =
 let ticks = 0.04
 
 (* [window read] calls the new reading [read] twice, computing [ticks] seconds
-   between the calls, and is the second call's pairs with the CPU seconds the
-   process spent between them. *)
+   between the calls, and is the second call's pairs with the lesser of the CPU
+   seconds the process spent and the wall clock's seconds between them. *)
 let window read =
   ignore (read ());
   let a = cpu_seconds () in
+  let wall_a = Unix.gettimeofday () in
   burn ticks;
   let b = cpu_seconds () in
-  (read (), b -. a)
+  let wall_b = Unix.gettimeofday () in
+  (read (), Float.min (b -. a) (wall_b -. wall_a))
 
-(* How far the CPU seconds two [Unix.times] readings count can pass the wall
-   time between them, for a process that computes on one thread. Each reading
-   rounds to the microsecond. Windows, Cygwin's included, also charges a whole
-   clock tick to the thread that runs when the tick's interrupt comes, and a
-   span of wall time [w] holds at most [w / tick + 1] interrupts; a tick lasts
-   at most 1/64 s, the default and longest interval of its timer. *)
-let cpu_slack = 2e-6 +. if Sys.win32 || Sys.cygwin then 1. /. 64. else 0.
+(* How far the seconds [window] counts can pass the time between its readings.
+   Each clock can count more than passed, for its own reason. The wall clock
+   counts a step forward, as NTP can make. The CPU seconds of a process that
+   computes on one thread pass its run time on FreeBSD: getrusage splits the
+   exact run time into user and system time in the ratio of the statistical
+   clock's ticks, and keeps each part from decreasing when the ratio moves, so
+   their sum can pass the run time by an amount no number of ticks bounds. The
+   lesser of the two passes the time only where both do.
 
-(* The CPU seconds the process spent between the calls cannot pass their wall
-   time, which the window spans, by more than [cpu_slack]. *)
-let at_least_cpu key (got, spent) =
-  at_least ~msg:key float_exact ~than:(spent -. cpu_slack) (value key got)
+   Each reading rounds to the microsecond. Windows, Cygwin's included, also
+   counts both in clock ticks: it charges a whole tick of CPU time to the thread
+   that runs when the tick's interrupt comes, and its wall clock advances a tick
+   at a time. A span of wall time [w] holds at most [w / tick + 1] interrupts,
+   and a tick lasts at most 1/64 s, the default and longest interval of its
+   timer. *)
+let slack = 2e-6 +. if Sys.win32 || Sys.cygwin then 1. /. 64. else 0.
+
+(* The time between the calls, which the window spans, is at least the seconds
+   [window] counts less [slack]. *)
+let at_least_spent key (got, spent) =
+  at_least ~msg:key float_exact ~than:(spent -. slack) (value key got)
 
 (* Readings *)
 
@@ -148,7 +159,7 @@ let test_host_ranges () =
     in_range ~low:0. ~high:100. "sys/disk_busy_pct" got
 
 let test_host_interval () =
-  at_least_cpu "sys/interval_s" (window (Munin_sys.host ()))
+  at_least_spent "sys/interval_s" (window (Munin_sys.host ()))
 
 (* A /proc/stat text whose aggregate line holds [fields]: user, nice, system,
    idle, iowait, irq, softirq, steal, guest, guest_nice, or a prefix. *)
@@ -398,7 +409,7 @@ let test_process_cores () =
     spent
 
 let test_process_interval () =
-  at_least_cpu "sys/proc_interval_s" (window (Munin_sys.process ()))
+  at_least_spent "sys/proc_interval_s" (window (Munin_sys.process ()))
 
 let block_bytes = 32 * 1024 * 1024
 
@@ -546,7 +557,7 @@ let () =
            [
              test "a second call gives the system's keys" test_host_keys;
              test "its levels and rates lie in their ranges" test_host_ranges;
-             test "sys/interval_s spans the CPU time spent within it"
+             test "sys/interval_s spans the time spent within it"
                test_host_interval;
              test_busy_cases;
              test_guest_ignored;
@@ -560,7 +571,7 @@ let () =
              test "a second call gives the process's keys" test_process_keys;
              test "proc_cpu_cores times the window is the CPU time it spent"
                test_process_cores;
-             test "proc_interval_s spans the CPU time spent within it"
+             test "proc_interval_s spans the time spent within it"
                test_process_interval;
              test "proc_rss_bytes counts memory the process wrote"
                test_process_rss;
