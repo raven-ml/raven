@@ -510,6 +510,27 @@ let construction =
           match cell "accepted" with
           | "True" -> ignore (make ())
           | _ -> rejects make);
+      cases "a refusal starts with the field at fault" ~id:fst
+        [
+          ( "frag_c",
+            ( metal.frag_a,
+              metal.frag_b,
+              fragment Tc.[ N 1; M 0; M 1; N 2; M 2 ] [] ) );
+          ( "frag_a",
+            ( fragment Tc.[ K 1; M 0; M 1; K 2 ] Tc.[ K 0; M 2 ],
+              metal.frag_b,
+              metal.frag_c ) );
+          ( "frag_b",
+            ( metal.frag_a,
+              fragment Tc.[ N 1; K 1; K 0; N 2; K 2 ] Tc.[ N 0 ],
+              metal.frag_c ) );
+        ]
+        (fun (field, (frag_a, frag_b, frag_c)) ->
+          raises_match
+            (Exn.invalid_arg ~sub:(field ^ ": "))
+            (fun () ->
+              Tc.v ~dtype_in:Dtype.Float32 ~dtype_out:Dtype.Float32 ~frag_a
+                ~frag_b ~frag_c));
     ]
 
 let () =

@@ -87,29 +87,32 @@ let threads tc = 1 lsl List.length tc.frag_c.lanes
 let check tc =
   let coords = axis_coords tc in
   let subset bs0 bs1 = List.for_all (fun b -> List.mem b bs1) bs0 in
-  let check_fragment f ds =
+  (* Each refusal starts with the field at fault: "frag_a: ...". C's lanes are
+     the warp's, so C is checked first, and a lane count other than C's is A's
+     or B's fault. *)
+  let check_fragment name f ds =
     let own = of_dims ds coords and all = bits f in
     let distinct = List.length (List.sort_uniq compare all) = List.length all in
     if List.length f.lanes <> List.length tc.frag_c.lanes then
       invalid_arg
-        (Format.asprintf "fragment %a has the wrong lane count" pp_fragment f);
+        (Format.asprintf "%s: %a has the wrong lane count" name pp_fragment f);
     if
       not
         (distinct && subset f.elements own && subset own all
         && subset all (own @ of_dims "mn" coords))
     then
       invalid_arg
-        (Format.asprintf "fragment %a isn't distinct bits covering %s"
+        (Format.asprintf "%s: %a isn't distinct bits covering %s" name
            pp_fragment f ds)
   in
-  check_fragment tc.frag_a "mk";
-  check_fragment tc.frag_b "kn";
-  check_fragment tc.frag_c "mn";
+  check_fragment "frag_c" tc.frag_c "mn";
+  check_fragment "frag_a" tc.frag_a "mk";
+  check_fragment "frag_b" tc.frag_b "kn";
   let ks f = of_dims "k" (f.elements @ f.lanes) in
   if ks tc.frag_a <> ks tc.frag_b then
     invalid_arg
-      (Format.asprintf "A holds its k bits as %a and B as %a" (pp_tuple pp_bit)
-         (ks tc.frag_a) (pp_tuple pp_bit) (ks tc.frag_b))
+      (Format.asprintf "frag_b: holds its k bits as %a, where frag_a holds %a"
+         (pp_tuple pp_bit) (ks tc.frag_b) (pp_tuple pp_bit) (ks tc.frag_a))
 
 let v ~dtype_in ~dtype_out ~frag_a ~frag_b ~frag_c =
   let tc = { dtype_in; dtype_out; frag_a; frag_b; frag_c } in

@@ -63,12 +63,16 @@ val v :
     these types and fragments. The bits of the tile are those {!axis_coords}
     derives.
 
-    Raises [Invalid_argument] naming the fragment at fault unless:
-    - the three fragments have as many lanes;
+    Raises [Invalid_argument] unless:
+    - [A] and [B] have as many lanes as [C], whose lanes are the warp's;
     - each fragment's bits are distinct, its elements are bits of its own
       dimensions, it has every bit of its own dimensions, and its other bits are
-      [M] or [N] bits;
-    - [A] and [B] hold the [K] bits in the same order, elements first. *)
+      the tile's [M] or [N] bits;
+    - [B] holds the [K] bits in [A]'s order, elements first.
+
+    The message starts with the field at fault (["frag_a: ..."]): the first of
+    [frag_c], [frag_a] and [frag_b] whose own condition fails, or [frag_b] if
+    only the order of [K] does. *)
 
 val dims : t -> int * int * int
 (** [dims tc] is [(n, m, k)], the tile's dimensions [N], [M] and [K]. *)
