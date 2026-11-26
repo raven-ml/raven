@@ -537,9 +537,7 @@ let law_complex_within_bound c =
       in
       at_most float_exact
         ~than:((1. +. u) *. g *. abs)
-        (Float.hypot
-           (Nx_support.gap y.(o).re exact.re)
-           (Nx_support.gap y.(o).im exact.im)))
+        (Nx_support.complex_gap y.(o) exact))
     (terms c.meaning)
 
 (* [x] and [y] are the same value of [dt]: a float by its bits, NaNs as one
