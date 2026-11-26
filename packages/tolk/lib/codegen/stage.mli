@@ -110,26 +110,24 @@ val admits : Renderer.t -> Ops.t -> bool
     ({!Heuristic.hand_coded_optimizations}). *)
 
 val stages_product : Renderer.t -> Ops.t -> bool
-(** [stages_product ren sink] is [true] iff {!operands} stages a sum of
-    products of [sink] that a thread computes in its registers, a
-    multiplication a sum of [Add] reduces, and every such product it stages
-    takes two stages ({!depth}). It stages one where [ren] copies
-    asynchronously ({!Renderer.t.async_copy}), the kernel holds no other
-    shared memory and reduces across no threads, neither operand is
-    {!decoded}, and each tile it copies reads the sum's lanes in its
-    innermost dimension, contiguous, while every other dimension of the
-    tile moves first with a thread: adjacent threads read adjacent rows,
-    16 bytes along the sum, which {!layout} places on different banks. Such
-    a product is staged as a core is: its operands' tiles copied as
-    {!operands} copies a core's, the product reading them back. Its loop
-    takes trips of several steps: the most, at most 32 values of the sum a
-    trip, that leave two trips, keep the blocks of the sum's running sums
-    whole ({!Chains.block}) and whose two stages fit
-    {!Renderer.t.shared_max}. The steps are a loop inside the trips that
-    the tiles take whole, so each output adds the same terms in the same
-    order as the loop unstaged. A load that two products read, as a SwiGLU's
-    two projections read one input, is copied once, by the first, and the
-    second reads that tile. *)
+(** [stages_product ren sink] is [true] iff {!operands} stages a sum of products
+    of [sink] that a thread computes in its registers, a multiplication a sum of
+    [Add] reduces, and every such product it stages takes two stages ({!depth}).
+    It stages one where [ren] copies asynchronously ({!Renderer.t.async_copy}),
+    the kernel holds no other shared memory and reduces across no threads,
+    neither operand is {!decoded}, and each tile it copies reads the sum's lanes
+    in its innermost dimension, contiguous, while every other dimension of the
+    tile moves first with a thread: adjacent threads read adjacent rows, a
+    copy's run along the sum ({!product_tile}), which {!layout} places on
+    different banks. Such a product is staged as a core is: its operands' tiles
+    copied as {!operands} copies a core's, the product reading them back. Its
+    loop takes trips of several steps: the most, at most 32 values of the sum a
+    trip, that leave two trips, keep the blocks of the sum's running sums whole
+    ({!Chains.block}) and whose two stages fit {!Renderer.t.shared_max}. The
+    steps are a loop inside the trips that the tiles take whole, so each output
+    adds the same terms in the same order as the loop unstaged. A load that two
+    products read, as a SwiGLU's two projections read one input, is copied once,
+    by the first, and the second reads that tile. *)
 
 val stages_every_product : Renderer.t -> Ops.t -> bool
 (** [stages_every_product ren sink] is {!stages_product} of [sink] with its
@@ -148,14 +146,16 @@ type product_tile = {
 val product_tile :
   Renderer.t -> itemsize:int -> k:int -> short:bool -> product_tile option
 (** [product_tile ren ~itemsize ~k ~short] is the tile of a staged product
-    ({!stages_product}) of operands of [itemsize] bytes laid out along K, of
-    [k] values; [None] where [ren] copies no tile in two stages, or [k] holds
-    fewer than two runs of a copy of [16] bytes or does not divide into them.
-    A workgroup takes 16 threads along M and 8 along N, a thread holds 8 by 8
-    outputs, 4 by 4 where [short], and K is unrolled by a copy's run. Each
-    output axis splits into its threads first, so that they take its
-    adjacent rows, then its outputs, and is padded to their product where
-    that does not divide it. *)
+    ({!stages_product}) of operands of [itemsize] bytes laid out along K, of [k]
+    values; [None] where [ren] copies no tile in two stages, or where [k] takes
+    neither run below. A workgroup takes 16 threads along M and 8 along N, a
+    thread holds 8 by 8 outputs, 4 by 4 where [short], and K is unrolled by a
+    copy's run: the values of a copy of [16] bytes where they divide [k] at
+    least twice, else of a copy of [8] bytes where they divide [k] and [k]'s
+    values take at least [256] bytes, since such a copy moves half as much. Each
+    output axis splits into its threads first, so that they take its adjacent
+    rows, then its outputs, and is padded to their product where that does not
+    divide it. *)
 
 val steps : Renderer.t -> Ops.t -> k:Ops.t -> int
 (** [steps ren sink ~k] is the least count of steps of the range [k] a trip
@@ -237,11 +237,13 @@ val tile :
 
 val layout : itemsize:int -> cols:int -> Ops.t -> Ops.t -> Ops.t
 (** [layout ~itemsize ~cols col row] is the offset in a staged tile of the
-    element at [col] in [row], rows of [cols] elements of [itemsize] bytes:
-    each row's [16]-byte chunks permuted by an XOR with bits of [row], so that
-    the [16]-byte chunks of eight consecutive rows at one column, and eight
-    consecutive chunks of the tile in row order, fall on eight different
-    [16]-byte slots of a [128]-byte line of shared memory's banks. *)
+    element at [col] in [row], rows of [cols] elements of [itemsize] bytes: each
+    row's [16]-byte chunks permuted by an XOR with bits of [row], so that the
+    [16]-byte chunks of eight consecutive rows at one column, and eight
+    consecutive chunks of the tile in row order from a multiple of eight, fall
+    on eight different [16]-byte slots of a [128]-byte line of shared memory's
+    banks. A row that is no whole number of [16]-byte chunks, or of items of
+    more than [16] bytes, is laid out in order, [row · cols + col]. *)
 
 (**/**)
 
