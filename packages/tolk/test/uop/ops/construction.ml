@@ -14,9 +14,7 @@ let param ?device shape slot dt = Shape.param ?device ~shape:(ints shape) slot d
 let graph_goldens =
   group "graphs"
     (List.map
-       (fun (name, build, minted) ->
-         Golden.graph (name ^ ".golden") (fun () ->
-             if minted then Goldens.minted (build ()) else build ()))
+       (fun (name, build) -> Golden.graph (name ^ ".golden") build)
        Goldens.all)
 
 (* Elementwise *)

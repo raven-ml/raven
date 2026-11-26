@@ -8,6 +8,16 @@ open Common
 let cpu = "CPU"
 let param ?device shape slot dt = Shape.param ?device ~shape:(ints shape) slot dt
 
+(* Graphs *)
+
+let graph_goldens =
+  group "graphs"
+    (List.map
+       (fun (name, build, minted) ->
+         Golden.graph (name ^ ".golden") (fun () ->
+             if minted then Goldens.minted (build ()) else build ()))
+       Goldens.all)
+
 (* Constants and stacks *)
 
 let constants =

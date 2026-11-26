@@ -9,6 +9,7 @@ let () =
          Values.inference;
          Values.compilation;
          Values.exact_compilation;
+         Construction.graph_goldens;
          Construction.constants;
          Construction.kernel_nodes;
          Construction.movement;
