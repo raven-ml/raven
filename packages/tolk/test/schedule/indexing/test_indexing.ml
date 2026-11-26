@@ -921,6 +921,11 @@ let run_rangeify =
           equal (list Uops.uop) [ pad ]
             (all Pad
                (Indexing.run_rangeify ~cores:Cores.host (Ops.sink [ pad ]))));
+      test "a reshape that gets no ranges stays a reshape" (fun () ->
+          let reshape = Shape.reshape (p 1 [ 4; 3 ]) (ints [ 12 ]) in
+          mem Uops.uop reshape
+            (all Reshape
+               (Indexing.run_rangeify ~cores:Cores.host (Ops.sink [ reshape ]))));
       test "raises on a reduction of leading axes without ranges" (fun () ->
           let sink = Ops.sink [ Shape.rop (p 1 [ 4; 8 ]) Add [ 1 ] ] in
           raises_match Exn.invalid_arg (fun () ->

@@ -47,11 +47,12 @@ val memory_plan_rewrite : ?held_bufs:Ops.t list -> Ops.t -> Ops.t
     appear: each at the start of the smallest gap that holds it between the
     buffers already placed whose lives meet its, else past the last byte of
     those, two lives meeting where one's first call is at or before the
-    other's last; placing keeps the placed buffers sorted by offset, so a lane
-    of [b] buffers costs [O(b²)]. Placed so, an arena is often exactly the
-    bytes its buffers take at once, the least any placement needs, though
-    never promised to be. Each planned buffer is replaced wherever [linear]
-    reaches it outside call bodies, inside views
+    other's last. The bytes below the lowest of those buffers count as a gap,
+    and of equal gaps the lowest is taken. Placing keeps the placed buffers
+    sorted by offset, so a lane of [b] buffers costs [O(b²)]. Placed so, an
+    arena is often exactly the bytes its buffers take at once, the least any
+    placement needs, though never promised to be. Each planned buffer is
+    replaced wherever [linear] reaches it outside call bodies, inside views
     included, by the bytes of its arena from its phase past its place
     ({!Shape.shrink}), viewed as its type ({!Ops.bitcast}), so that it keeps
     its phase. New arenas take the next slots ({!Ops.unique_num}).

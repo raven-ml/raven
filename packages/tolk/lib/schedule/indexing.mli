@@ -130,7 +130,9 @@ val run_rangeify : cores:(Ops.device * Heuristic.cores) list -> Ops.t -> Ops.t
       an {!Op.End} over its ranges;
     - storage read by an indexed node is indexed by that node's ranges;
     - a gather reads its gathered source at the element its index holds,
-      followed by the gather's trailing ranges;
+      followed by the gather's trailing ranges, and an {!Op.Index} of a value
+      by scalars reads the value at the element they select on its leading
+      axes, [0] where a pad added that element;
     - a reduction of leading axes becomes a reduction over their ranges,
       those of one element left out, and its own;
     - a {!Op.Pad} becomes a selection of its source where its index is valid,
@@ -138,7 +140,8 @@ val run_rangeify : cores:(Ops.device * Heuristic.cores) list -> Ops.t -> Ops.t
     - a {!Op.Stack} becomes a selection of its sources by its leading range:
       {!stack_select}, a tree of selections on the bits of the range, whose
       depth is logarithmic in the number of sources;
-    - movements are removed;
+    - a movement that gets ranges, or whose source is an index, is removed,
+      and any other is left as it is;
     - a stage without a device gets the device of the nearest node above it
       that has one, where the kernel that reads it computes: read on several
       devices, it is a stage on each. One that no such node reads, or that
