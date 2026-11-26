@@ -41,16 +41,20 @@ let rec each g = function
         let+ v = g v and+ vs = each g vs in
         v :: vs)
 
-let within (lo, hi) = Gen.int_range lo hi
+(* A scenario's leaves span at most a few values. *)
+let within (lo, hi) =
+  Gen.map
+    (fun d -> Bigint.(lo + of_int d))
+    (Gen.int_range 0 (Bigint.to_int Bigint.(hi - lo)))
 
 type binding = {
   s : Expressions.scenario;
-  values : int list;  (** Of [a], [b] and [c]. *)
-  divisors : int list;  (** Of [d] and [e]. *)
+  values : Bigint.t list;  (** Of [a], [b] and [c]. *)
+  divisors : Bigint.t list;  (** Of [d] and [e]. *)
 }
 
 let pp_bound ppf r =
-  let ints = Format.(pp_print_list ~pp_sep:pp_print_space pp_print_int) in
+  let ints = Format.(pp_print_list ~pp_sep:pp_print_space Bigint.pp_print) in
   Format.fprintf ppf "%a at a b c = %a, d e = %a" Expressions.pp_scenario r.s
     ints r.values ints r.divisors
 
@@ -62,13 +66,14 @@ let binding =
      { s; values; divisors })
 
 let env r =
-  List.map2 (fun n v -> (n, i v)) [ "a"; "b"; "c" ] r.values
-  @ List.map2 (fun n v -> (n, i v)) [ "d"; "e" ] r.divisors
+  List.map2 (fun n v -> (n, `Int v)) [ "a"; "b"; "c" ] r.values
+  @ List.map2 (fun n v -> (n, `Int v)) [ "d"; "e" ] r.divisors
 
 (* [r]'s variables, each with its value, as [Expressions.node] builds them. *)
 let variables r =
   List.map2
-    (fun (name, (lo, hi)) v -> (var ~dtype:r.s.dtype name lo hi, v))
+    (fun (name, (lo, hi)) v ->
+      (Ops.variable ~dtype:r.s.dtype name (`Int lo) (`Int hi), v))
     (List.combine [ "a"; "b"; "c" ] r.s.vars)
     r.values
 
@@ -80,15 +85,16 @@ let holds r u = Testable.equal Dtypes.const (`Bool true) (eval r u)
 (* A clause of form [form] on [(x, v)] that holds where [x] is [v], its bound
    [slack] away, or, in the last form, on [x] and another variable [(y, w)]. *)
 let clause form slack (x, v) (y, w) =
-  let above = Ops.int (v + 1 + slack) and below = Ops.int (v - 1 - slack) in
-  let least = Ops.int (v - slack) and greatest = Ops.int (v + slack) in
+  let c d = Ops.const (`Int Bigint.(v + of_int d)) in
+  let above = c (1 + slack) and below = c (-1 - slack) in
+  let least = c (-slack) and greatest = c slack in
   Ops.O.(
     match form with
     | 0 -> x < above
     | 1 -> below < x
     | 2 -> lnot (x < least)
     | 3 -> lnot (greatest < x)
-    | _ -> if Stdlib.(v < w) then x < y else lnot (x < y))
+    | _ -> if Bigint.lt v w then x < y else lnot (x < y))
 
 let given_valid_case =
   Gen.(
@@ -124,15 +130,17 @@ let keeps_value_where_valid (r, forms, (sum, try_simplex)) =
 
 (* An int8 sum of a and b that wraps to 1, so no term of it is at least 1. *)
 let wrapping_sum =
+  let z = Bigint.of_int in
   let s : Expressions.scenario =
     {
       dtype = Int8;
-      vars = [ (-128, -128); (-128, -127); (-128, -128) ];
-      divisors = [ (1, 1); (1, 1) ];
+      vars =
+        [ (z (-128), z (-128)); (z (-128), z (-127)); (z (-128), z (-128)) ];
+      divisors = [ (z 1, z 1); (z 1, z 1) ];
       expr = Add (Add (Mod (Add (Var 1, Var 0), 2), Var 0), Var 0);
     }
   in
-  ( { s; values = [ -128; -127; -128 ]; divisors = [ 1; 1 ] },
+  ( { s; values = [ z (-128); z (-127); z (-128) ]; divisors = [ z 1; z 1 ] },
     [ (0, 0); (0, 0); (0, 0) ],
     (true, true) )
 
@@ -1030,7 +1038,11 @@ let laws =
         scenario (fun s ->
           let e = node s in
           let checked = keeps_value ~name:"sym" e (sym e) in
-          cover ~share:0.9 "a binding was checked" (checked > 0));
+          (* About nine cases in ten check a binding: a committed variable at
+             its type's extreme often wraps at every binding, which this law
+             skips. 0.8 keeps the decision clear of that share and far above the
+             2 to 9 % a law that checks nothing would reach. *)
+          cover ~share:0.8 "a binding was checked" (checked > 0));
       prop ~count:1000
         "keeps the value of an integer expression at a committed width, \
          wrapping included"
@@ -1038,11 +1050,22 @@ let laws =
           let e = node s in
           let checked = keeps_value ~wrapping:true ~name:"sym" e (sym e) in
           cover ~share:0.9 "a binding was checked" (checked > 0);
-          cover "an unsigned type" (Dtype.is_unsigned s.dtype));
+          List.iter
+            (fun dt -> cover (Dtype.name dt) (Dtype.equal dt s.dtype))
+            Dtype.[ Int8; Uint8; Int16; Uint16; Int32; Uint32; Int64; Uint64 ];
+          let least, greatest = Dtypes.int_bounds s.dtype in
+          cover "a variable at the type's extreme"
+            (List.exists
+               (fun (lo, hi) ->
+                 Bigint.equal lo least || Bigint.equal hi greatest)
+               s.vars));
       prop "keeps a float expression's value bit for bit at special values"
-        float_scenario (fun e ->
-          let e = float_node e in
-          keeps_float_value ~name:"sym" e (sym e));
+        float_scenario (fun (dt, e) ->
+          List.iter
+            (fun t -> cover (Dtype.name t) (Dtype.equal t dt))
+            Dtype.[ Float16; Bfloat16; Float32; Float64 ];
+          let e = float_node dt e in
+          keeps_float_value ~dtype:dt ~name:"sym" e (sym e));
       prop "is idempotent" scenario (fun s -> Law.idempotent uop sym (node s));
     ]
 

@@ -189,25 +189,42 @@ let keeps_value ?(count = 16) ?(wrapping = false) ~name before after =
 
 let float32 x = Dtype.truncate Float32 (`Float x)
 
-let specials =
-  List.map float32
+(* The mantissa bits and the least and greatest exponents of a normal float of
+   [dt]. *)
+let format (dt : Dtype.t) =
+  match dt with
+  | Float16 -> (10, -14, 15)
+  | Bfloat16 -> (7, -126, 127)
+  | Float32 -> (23, -126, 127)
+  | Float64 -> (52, -1022, 1023)
+  | _ -> invalid_arg "Simplification.specials_of: not a float type"
+
+let specials_of dt =
+  let m, emin, emax = format dt in
+  let greatest = Float.ldexp (2. -. Float.ldexp 1. (-m)) emax in
+  let least_subnormal = Float.ldexp 1. (emin - m) in
+  let greatest_subnormal = Float.ldexp 1. emin -. least_subnormal in
+  List.map
+    (fun x -> Dtype.truncate dt (`Float x))
     [
       0.;
       -0.;
       Float.infinity;
       Float.neg_infinity;
       Float.nan;
-      Int32.float_of_bits 0x7f7fffffl;
-      Int32.float_of_bits 0xff7fffffl;
-      Int32.float_of_bits 1l;
-      Int32.float_of_bits 0x80000001l;
-      Int32.float_of_bits 0x007fffffl;
+      greatest;
+      -.greatest;
+      least_subnormal;
+      -.least_subnormal;
+      greatest_subnormal;
       1.;
       -1.;
       0.5;
       3.;
       1e30;
     ]
+
+let specials = specials_of Float32
 
 let same_float : Dtype.const Testable.t =
   let nan = function `Float x -> Float.is_nan x | _ -> false in
@@ -218,8 +235,10 @@ let same_float : Dtype.const Testable.t =
    value at [count] bindings of the scalar parameters of slots [0] to [2] to
    specials: the first binds each of them to each special in turn, the others at
    random. *)
-let keeps_float_value ?(count = 24) ~name before after =
+let keeps_float_value ?(count = 24) ?(dtype = Dtype.Float32) ~name before after
+    =
   let rng = Random.State.make [| Hashtbl.hash (name, Ops.key before) |] in
+  let specials = specials_of dtype in
   let n = List.length specials in
   for k = 0 to count - 1 do
     let pick slot =

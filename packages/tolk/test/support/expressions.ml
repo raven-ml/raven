@@ -24,8 +24,8 @@ type t =
 (* An expression with the type and the bounds of its variables and divisors. *)
 type scenario = {
   dtype : Dtype.t;
-  vars : (int * int) list;
-  divisors : (int * int) list;
+  vars : (Bigint.t * Bigint.t) list;
+  divisors : (Bigint.t * Bigint.t) list;
   expr : t;
 }
 
@@ -48,7 +48,9 @@ let rec pp ppf = function
 let pp_scenario ppf s =
   let pp_bounds names ppf l =
     List.iteri
-      (fun i (lo, hi) -> Format.fprintf ppf "%c in [%d, %d]; " names.[i] lo hi)
+      (fun i (lo, hi) ->
+        Format.fprintf ppf "%c in [%a, %a]; " names.[i] Bigint.pp_print lo
+          Bigint.pp_print hi)
       l
   in
   Format.fprintf ppf "%a: %a%a%a" Dtype.pp s.dtype (pp_bounds "abc") s.vars
@@ -83,14 +85,17 @@ let build leaf s =
   node s.expr
 
 let node s =
-  build (fun name (lo, hi) -> Simplification.var ~dtype:s.dtype name lo hi) s
+  build
+    (fun name (lo, hi) -> Ops.variable ~dtype:s.dtype name (`Int lo) (`Int hi))
+    s
 
 (* [constants s] is [s]'s expression over committed constants of its type in
    place of its variables: a variable's least value, a divisor's greatest. *)
 let constants s =
   build
     (fun name (lo, hi) ->
-      Ops.int ~dtype:s.dtype (if name = "d" || name = "e" then hi else lo))
+      Ops.const ~dtype:s.dtype
+        (`Int (if name = "d" || name = "e" then hi else lo)))
     s
 
 (* Generators *)
@@ -146,21 +151,34 @@ let rec expr depth =
           Select (a, c, b) );
       ]
 
-let dtypes = Dtype.[ Weak_int; Int8; Uint8; Int16; Int32; Uint32 ]
+let dtypes =
+  Dtype.[ Weak_int; Int8; Uint8; Int16; Uint16; Int32; Uint32; Int64; Uint64 ]
 
-(* Bounds within [dtype]'s: an unsigned variable is never negative. *)
+(* Bounds within [dtype]'s, near 0 or, for a committed type, at either of its
+   extremes: an unsigned variable is never negative. *)
 let bounds dtype =
   let open Gen in
-  let low = if Dtype.is_unsigned dtype then 0 else -10 in
-  let+ lo = int_range low 10 and+ span = int_range 0 20 in
-  (lo, lo + span)
+  let least, greatest = Dtypes.int_bounds dtype in
+  let near_zero =
+    let low = if Dtype.is_unsigned dtype then 0 else -10 in
+    let+ lo = int_range low 10 and+ span = int_range 0 20 in
+    Bigint.(of_int lo, of_int (Stdlib.( + ) lo span))
+  in
+  let span = map Bigint.of_int (int_range 0 20) in
+  let at_least = map (fun d -> (least, Bigint.(least + d))) span in
+  let at_greatest = map (fun d -> (Bigint.(greatest - d), greatest)) span in
+  if Dtype.equal dtype Weak_int then near_zero
+  else frequency [ (3, near_zero); (1, at_least); (1, at_greatest) ]
 
 (* A divisor's bounds exclude 0: division by 0 is undefined. *)
 let divisor_bounds dtype =
   let open Gen in
   let+ lo = int_range 1 6 and+ span = int_range 0 6 and+ negative = bool in
-  if negative && not (Dtype.is_unsigned dtype) then (-(lo + span), -lo)
-  else (lo, lo + span)
+  let lo, hi =
+    if negative && not (Dtype.is_unsigned dtype) then (-(lo + span), -lo)
+    else (lo, lo + span)
+  in
+  (Bigint.of_int lo, Bigint.of_int hi)
 
 (* [scenario_of dtype] draws an expression over variables of type [dtype]. *)
 let scenario_of dtype =
@@ -183,9 +201,9 @@ let committed_scenario = scenario_of (Gen.of_list (List.tl dtypes))
 (* Floats *)
 
 type float_expr =
-  | Param of int  (** The scalar float32 parameter of slot [i]. *)
+  | Param of int  (** The scalar parameter of slot [i]. *)
   | Special of int
-      (** The [i]th of {!Simplification.specials}, as a constant. *)
+      (** The [i]th of {!Simplification.specials_of}, as a constant. *)
   | Fneg of float_expr
   | Fadd of float_expr * float_expr
   | Fsub of float_expr * float_expr
@@ -195,34 +213,39 @@ type float_expr =
   | Fselect of float_expr * float_expr * float_expr
       (** [Fselect (a, c, b)] is [where (a < c) b a]. *)
 
-let rec pp_float ppf = function
+let rec pp_float dt ppf = function
   | Param i -> Format.fprintf ppf "p%d" i
-  | Special i -> Dtype.pp_const ppf (List.nth Simplification.specials i)
-  | Fneg a -> Format.fprintf ppf "-%a" pp_float a
-  | Fadd (a, b) -> Format.fprintf ppf "(%a + %a)" pp_float a pp_float b
-  | Fsub (a, b) -> Format.fprintf ppf "(%a - %a)" pp_float a pp_float b
-  | Fmul (a, b) -> Format.fprintf ppf "(%a * %a)" pp_float a pp_float b
-  | Fdiv (a, b) -> Format.fprintf ppf "(%a / %a)" pp_float a pp_float b
-  | Fmax (a, b) -> Format.fprintf ppf "max(%a, %a)" pp_float a pp_float b
+  | Special i -> Dtype.pp_const ppf (List.nth (Simplification.specials_of dt) i)
+  | Fneg a -> Format.fprintf ppf "-%a" (pp_float dt) a
+  | Fadd (a, b) ->
+      Format.fprintf ppf "(%a + %a)" (pp_float dt) a (pp_float dt) b
+  | Fsub (a, b) ->
+      Format.fprintf ppf "(%a - %a)" (pp_float dt) a (pp_float dt) b
+  | Fmul (a, b) ->
+      Format.fprintf ppf "(%a * %a)" (pp_float dt) a (pp_float dt) b
+  | Fdiv (a, b) ->
+      Format.fprintf ppf "(%a / %a)" (pp_float dt) a (pp_float dt) b
+  | Fmax (a, b) ->
+      Format.fprintf ppf "max(%a, %a)" (pp_float dt) a (pp_float dt) b
   | Fselect (a, c, b) ->
-      Format.fprintf ppf "where(%a < %a, %a, %a)" pp_float a pp_float c pp_float
-        b pp_float a
+      Format.fprintf ppf "where(%a < %a, %a, %a)" (pp_float dt) a (pp_float dt)
+        c (pp_float dt) b (pp_float dt) a
 
-let rec float_node e =
+let rec float_node dt e =
+  let node = float_node dt in
   Ops.O.(
     match e with
-    | Param i -> Shape.param i Float32
+    | Param i -> Shape.param i dt
     | Special i ->
-        Ops.const ~dtype:Float32
-          (List.nth Simplification.specials i :> Dtype.const)
-    | Fneg a -> ~-(float_node a)
-    | Fadd (a, b) -> float_node a + float_node b
-    | Fsub (a, b) -> float_node a - float_node b
-    | Fmul (a, b) -> float_node a * float_node b
-    | Fdiv (a, b) -> float_node a / float_node b
-    | Fmax (a, b) -> Ops.maximum (float_node a) (float_node b)
-    | Fselect (a, c, b) ->
-        Ops.where (float_node a < float_node c) (float_node b) (float_node a))
+        Ops.const ~dtype:dt
+          (List.nth (Simplification.specials_of dt) i :> Dtype.const)
+    | Fneg a -> ~-(node a)
+    | Fadd (a, b) -> node a + node b
+    | Fsub (a, b) -> node a - node b
+    | Fmul (a, b) -> node a * node b
+    | Fdiv (a, b) -> node a / node b
+    | Fmax (a, b) -> Ops.maximum (node a) (node b)
+    | Fselect (a, c, b) -> Ops.where (node a < node c) (node b) (node a))
 
 let rec float_expr depth =
   let open Gen in
@@ -257,4 +280,9 @@ let rec float_expr depth =
           Fselect (a, c, b) );
       ]
 
-let float_scenario = Gen.with_pp pp_float (float_expr 4)
+let float_dtypes = Dtype.[ Float16; Bfloat16; Float32; Float64 ]
+
+let float_scenario =
+  Gen.with_pp
+    (fun ppf (dt, e) -> Format.fprintf ppf "%a: %a" Dtype.pp dt (pp_float dt) e)
+    Gen.(pair (of_list float_dtypes) (float_expr 4))

@@ -68,19 +68,28 @@ val keeps_value :
 val float32 : float -> Dtype.value
 (** [float32 x] is [x] rounded to {!Dtype.Float32}. *)
 
+val specials_of : Dtype.t -> Dtype.value list
+(** [specials_of dt] is IEEE's special values of the float type [dt] and a few
+    ordinary ones, in this order: [0.], [-0.], the infinities, NaN, the greatest
+    finite value and its negation, the least subnormal and its negation, the
+    greatest subnormal, [1.], [-1.], [0.5], [3.] and [1e30] rounded to [dt].
+
+    Raises [Invalid_argument] if [dt] is not {!Dtype.Float16},
+    {!Dtype.Bfloat16}, {!Dtype.Float32} or {!Dtype.Float64}. *)
+
 val specials : Dtype.value list
-(** [specials] is IEEE's special float32 values and a few ordinary ones: the
-    zeros, the infinities, NaN, the greatest finite values, the least
-    subnormals, the greatest subnormal, [1.], [-1.], [0.5], [3.] and [1e30]. *)
+(** [specials] is [specials_of Float32]. *)
 
 val same_float : Dtype.const testable
 (** [same_float] compares constants bit for bit, any NaN equal to any NaN:
     neither nx nor a target fixes a computed NaN's bits. *)
 
-val keeps_float_value : ?count:int -> name:string -> Ops.t -> Ops.t -> unit
-(** [keeps_float_value ~count ~name before after] checks that [after] has
+val keeps_float_value :
+  ?count:int -> ?dtype:Dtype.t -> name:string -> Ops.t -> Ops.t -> unit
+(** [keeps_float_value ~count ~dtype ~name before after] checks that [after] has
     [before]'s value, as {!same_float} compares, at [count] (default [24])
-    bindings of the float32 parameters of slots [0] to [2] to {!specials}: the
-    first [List.length specials] bindings bind each slot to each special in
+    bindings of the parameters of slots [0] to [2], of type [dtype] (default
+    {!Dtype.Float32}), to [specials_of dtype]: the first
+    [List.length (specials_of dtype)] bindings bind each slot to each special in
     turn, the others to specials drawn from a state seeded by [name] and
     [before]. *)

@@ -3,8 +3,9 @@
     Integer expressions are index arithmetic as kernels compute it, weak or at a
     committed width, over three bounded variables [a], [b] and [c], with
     divisions by constants and by two variables [d] and [e] whose bounds exclude
-    [0]. Float expressions are float32 arithmetic over the scalar parameters of
-    slots [0] to [2] and {!Simplification.specials}. *)
+    [0]. Float expressions are arithmetic of one float type over the scalar
+    parameters of slots [0] to [2] and {!Simplification.specials_of} that type.
+*)
 
 open Windtrap
 open Tolk
@@ -29,8 +30,8 @@ type t =
 
 type scenario = {
   dtype : Dtype.t;  (** The type of the variables and divisors. *)
-  vars : (int * int) list;  (** The bounds of [a], [b] and [c]. *)
-  divisors : (int * int) list;  (** The bounds of [d] and [e]. *)
+  vars : (Bigint.t * Bigint.t) list;  (** The bounds of [a], [b] and [c]. *)
+  divisors : (Bigint.t * Bigint.t) list;  (** The bounds of [d] and [e]. *)
   expr : t;
 }
 (** The type for an expression with the type and bounds of its leaves. *)
@@ -49,28 +50,30 @@ val constants : scenario -> Ops.t
 
 val scenario_of : Dtype.t Gen.t -> scenario Gen.t
 (** [scenario_of dtype] draws an expression of depth at most [4] over leaves of
-    a type [dtype] draws, variables within \[[-10];[30]\] (\[[0];[30]\]
-    unsigned) and divisors within \[[1];[12]\] or, signed, \[[-12];[-1]\]. *)
+    a type [dtype] draws. A variable spans at most [21] values: within
+    \[[-10];[30]\] (\[[0];[30]\] unsigned), or, for a committed type, one time
+    in five at its least value and one time in five at its greatest. A divisor
+    is within \[[1];[12]\] or, signed, \[[-12];[-1]\]. *)
 
 val scenario : scenario Gen.t
 (** [scenario] is {!scenario_of} over {!Dtype.Weak_int} three times in five, and
-    otherwise over {!Dtype.Int8}, {!Dtype.Uint8}, {!Dtype.Int16}, {!Dtype.Int32}
-    or {!Dtype.Uint32}, each as likely. *)
+    otherwise over each committed integer type, {!Dtype.Int8} to
+    {!Dtype.Uint64}, as likely. *)
 
 val weak_scenario : scenario Gen.t
 (** [weak_scenario] is {!scenario_of} over {!Dtype.Weak_int}. *)
 
 val committed_scenario : scenario Gen.t
-(** [committed_scenario] is {!scenario_of} over the committed types of
-    {!scenario}. *)
+(** [committed_scenario] is {!scenario_of} over each committed integer type as
+    likely. *)
 
 (** {1:floats Float expressions} *)
 
 (** The type for float32 expressions. *)
 type float_expr =
-  | Param of int  (** The scalar float32 parameter of slot [i]. *)
+  | Param of int  (** The scalar parameter of slot [i]. *)
   | Special of int
-      (** The [i]th of {!Simplification.specials}, as a constant. *)
+      (** The [i]th of {!Simplification.specials_of} the type, as a constant. *)
   | Fneg of float_expr
   | Fadd of float_expr * float_expr
   | Fsub of float_expr * float_expr
@@ -80,8 +83,10 @@ type float_expr =
   | Fselect of float_expr * float_expr * float_expr
       (** [Fselect (a, c, b)] is [where (a < c) b a]. *)
 
-val float_node : float_expr -> Ops.t
-(** [float_node e] is [e]'s graph. *)
+val float_node : Dtype.t -> float_expr -> Ops.t
+(** [float_node dt e] is [e]'s graph at the float type [dt]. *)
 
-val float_scenario : float_expr Gen.t
-(** [float_scenario] draws a float expression of depth at most [4]. *)
+val float_scenario : (Dtype.t * float_expr) Gen.t
+(** [float_scenario] draws a float type, {!Dtype.Float16}, {!Dtype.Bfloat16},
+    {!Dtype.Float32} or {!Dtype.Float64} as likely, and an expression of depth
+    at most [4]. *)
