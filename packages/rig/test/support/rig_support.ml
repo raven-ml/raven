@@ -104,7 +104,6 @@ external set_address_space : int -> int = "rig_test_set_address_space"
 external shares : ('a, 'b, 'c) Bigarray.Array1.t -> int = "rig_test_shares"
 [@@noalloc]
 
-external host_held : unit -> int = "rig_test_host_held"
 external heap_bytes : unit -> int = "rig_test_heap_bytes"
 external gcc_asan : unit -> bool = "rig_test_gcc_asan" [@@noalloc]
 external load : int -> int = "rig_test_load"

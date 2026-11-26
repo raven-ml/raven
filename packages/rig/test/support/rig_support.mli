@@ -527,10 +527,6 @@ val move : dst:int -> src:int -> int -> unit
 (** [move ~dst ~src n] copies the [n] bytes at host address [src] to host
     address [dst]. *)
 
-val host_held : unit -> int
-(** [host_held ()] is the bytes that count in the host's budget: host buffers
-    not yet returned, and devices' pinned host memory. *)
-
 val heap_bytes : unit -> int option
 (** [heap_bytes ()] is the bytes the C heap holds allocated, as its allocator
     counts them, or [None] where it does not say. On glibc it first fills the

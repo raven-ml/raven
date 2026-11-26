@@ -2053,14 +2053,6 @@ value rig_test_shares(value v_ba) {
   return Val_long(p == NULL ? 0 : (intnat)atomic_load(&p->refcount));
 }
 
-/* Rig's own: the bytes host buffers hold in the host's budget. */
-extern intnat rig_heap_held(void);
-
-value rig_test_host_held(value unit) {
-  (void)unit;
-  return Val_long(rig_heap_held());
-}
-
 #if defined(__GLIBC__) && !defined(RIG_TEST_SANITIZER)
 /* glibc keeps a cache per thread of the chunks it freed last, up to 7 of
    each size from 32 to 1040 bytes by its defaults, and counts them as
