@@ -309,33 +309,6 @@ let substitution () =
       substitute ~calls:Skip ~pass:Fixed_point (sin (sin x)) [ (sin x, sqrt x) ];
     ]
 
-(* Each golden and the graph built for it. *)
-let all =
-  [
-    ("typed_constants", typed_constants);
-    ("ccast", ccast);
-    ("subtraction", subtraction);
-    ("negation", negation);
-    ("weak_promotion", weak_promotion);
-    ("division", division);
-    ("constant_division", constant_division);
-    ("comparisons", comparisons);
-    ("bitwise", bitwise);
-    ("extrema", extrema);
-    ("selection", selection);
-    ("unary", unary);
-    ("powers", powers);
-    ("sums_and_products", sums_and_products);
-    ("casts", casts);
-    ("bitcasts", bitcasts);
-    ("kernel_nodes", kernel_nodes);
-    ("validity", validity);
-    ("sets", sets);
-    ("instructions", instructions);
-    ("wmmas", wmmas);
-    ("substitution", substitution);
-  ]
-
 (* The nodes of pretty.golden, in order. *)
 let printed_nodes () =
   let forty_two = int 42 and one = int 1 and n = weak_var "n" 1 8 in

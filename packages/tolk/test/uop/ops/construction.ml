@@ -11,11 +11,79 @@ let param ?device shape slot dt = Shape.param ?device ~shape:(ints shape) slot d
 
 (* Graphs *)
 
-let graph_goldens =
-  group "graphs"
-    (List.map
-       (fun (name, build) -> Golden.graph (name ^ ".golden") build)
-       Goldens.all)
+(* [golden value claim file build] is the group [value] › [claim] holding the
+   test that [build] makes the graph golden [file]. *)
+let golden value claim file build =
+  group value [ group claim [ Golden.graph file build ] ]
+
+let construction_goldens =
+  [
+    golden "const" "builds each constant as typed_constants.golden states"
+      "typed_constants.golden" Goldens.typed_constants;
+    golden "ccast" "builds each constant cast as ccast.golden states"
+      "ccast.golden" Goldens.ccast;
+    golden "kernel constructors"
+      "end_, after, barrier, loop, range, backedge, index and group build \
+       each node as kernel_nodes.golden states"
+      "kernel_nodes.golden" Goldens.kernel_nodes;
+    golden "ins" "builds each instruction as instructions.golden states"
+      "instructions.golden" Goldens.instructions;
+    golden "wmma" "builds each product as wmmas.golden states" "wmmas.golden"
+      Goldens.wmmas;
+    golden "get_idx and get_valid"
+      "split each validity as validity.golden states" "validity.golden"
+      Goldens.validity;
+    golden "set" "stores through each pointer as sets.golden states"
+      "sets.golden" Goldens.sets;
+  ]
+
+let elementwise_goldens =
+  [
+    golden "sub" "builds each difference as subtraction.golden states"
+      "subtraction.golden" Goldens.subtraction;
+    golden "neg" "builds each negation as negation.golden states"
+      "negation.golden" Goldens.negation;
+    golden "add"
+      "promotes its operands, a weak constant staying weak, as \
+       weak_promotion.golden states"
+      "weak_promotion.golden" Goldens.weak_promotion;
+    group "div, mod_ and fmod"
+      [
+        group "build each quotient and remainder as division.golden states"
+          [ Golden.graph "division.golden" Goldens.division ];
+        group
+          "build each quotient and remainder by a constant as \
+           constant_division.golden states"
+          [ Golden.graph "constant_division.golden" Goldens.constant_division ];
+      ];
+    golden "lt, gt, le, ge, eq and ne"
+      "build each comparison as comparisons.golden states"
+      "comparisons.golden" Goldens.comparisons;
+    golden "the bitwise operations"
+      "build each node as bitwise.golden states" "bitwise.golden"
+      Goldens.bitwise;
+    golden "maximum and minimum" "build each node as extrema.golden states"
+      "extrema.golden" Goldens.extrema;
+    golden "where" "builds each selection as selection.golden states"
+      "selection.golden" Goldens.selection;
+    golden "the unary operations" "build each node as unary.golden states"
+      "unary.golden" Goldens.unary;
+    golden "pow" "builds each power as powers.golden states" "powers.golden"
+      Goldens.powers;
+    golden "usum and uprod"
+      "build each sum and product as sums_and_products.golden states"
+      "sums_and_products.golden" Goldens.sums_and_products;
+    golden "cast" "builds each cast as casts.golden states" "casts.golden"
+      Goldens.casts;
+    golden "bitcast" "builds each bitcast as bitcasts.golden states"
+      "bitcasts.golden" Goldens.bitcasts;
+  ]
+
+let substitute_goldens =
+  [
+    golden "substitute" "replaces each node as substitution.golden states"
+      "substitution.golden" Goldens.substitution;
+  ]
 
 (* Elementwise *)
 
@@ -475,14 +543,8 @@ let calls =
     ]
 
 let groups =
-  [
-    graph_goldens;
-    elementwise;
-    constants;
-    kernel_nodes;
-    movement;
-    devices;
-    storage;
-    variables;
-    calls;
-  ]
+  (elementwise :: elementwise_goldens)
+  @ [ constants; kernel_nodes ]
+  @ construction_goldens
+  @ [ movement; devices; storage; variables; calls ]
+  @ substitute_goldens
