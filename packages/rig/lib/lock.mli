@@ -69,3 +69,8 @@ external broadcast : t -> unit = "caml_rig_lock_broadcast"
 [@@noalloc]
 (** [broadcast l] wakes every {!await} that waits on [l]. It is a call to C, as
     {!release} is. *)
+
+external timeouts : t -> int = "caml_rig_lock_timeouts"
+[@@noalloc]
+(** [timeouts l] is the number of {!await}'s waits on [l] that its 200 ms
+    ended, rather than a broadcast or a spurious wake-up. *)

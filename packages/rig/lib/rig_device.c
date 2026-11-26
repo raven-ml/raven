@@ -15,6 +15,7 @@
 
 #define _GNU_SOURCE
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -81,10 +82,11 @@ static void cond_init(rig_cond *c) {
 #endif
 }
 static void cond_broadcast(rig_cond *c) { pthread_cond_broadcast(c); }
-static void cond_wait_ms(rig_cond *c, rig_mutex *m, int ms) {
+/* Waits on [c] for at most [ms] ms: whether the time ran out. */
+static int cond_wait_ms(rig_cond *c, rig_mutex *m, int ms) {
   struct timespec t = {ms / 1000, (long)(ms % 1000) * 1000000};
 #if defined(__APPLE__) || defined(_WIN32)
-  pthread_cond_timedwait_relative_np(c, m, &t);
+  return pthread_cond_timedwait_relative_np(c, m, &t) == ETIMEDOUT;
 #else
   struct timespec now;
   clock_gettime(CLOCK_MONOTONIC, &now);
@@ -94,12 +96,12 @@ static void cond_wait_ms(rig_cond *c, rig_mutex *m, int ms) {
     t.tv_sec += 1;
     t.tv_nsec -= 1000000000;
   }
-  pthread_cond_timedwait(c, m, &t);
+  return pthread_cond_timedwait(c, m, &t) == ETIMEDOUT;
 #endif
 }
 
 static void cv_wait_ms(struct rig_device *d, int ms) {
-  cond_wait_ms(&d->cv, &d->mu, ms);
+  (void)cond_wait_ms(&d->cv, &d->mu, ms);
 }
 
 static void mu_init(struct rig_device *d) {
@@ -359,10 +361,12 @@ value caml_rig_lost(value v_p) {
 
 /* A lock of rig's OCaml state, with a condition, owned by a custom block
    and freed with it. Every lock is on one list, under [locks_mu], so a
-   forked child can make each anew. */
+   forked child can make each anew. [timeouts] counts the waits on it that
+   the still interval ended. */
 struct rig_lock {
   rig_mutex mu;
   rig_cond cv;
+  _Atomic intnat timeouts;
   struct rig_lock *prev, *next;
 };
 
@@ -507,6 +511,7 @@ value caml_rig_lock_new(value unit) {
   if (l == NULL) caml_raise_out_of_memory();
   mutex_init(&l->mu);
   cond_init(&l->cv);
+  atomic_init(&l->timeouts, 0);
   value v = caml_alloc_custom(&lock_ops, sizeof l, 0, 1);
   Lock_val(v) = l;
   mutex_lock(&locks_mu);
@@ -564,11 +569,17 @@ value caml_rig_lock_wait(value v_l) {
   CAMLparam1(v_l);
   struct rig_lock *l = Lock_val(v_l);
   caml_enter_blocking_section_no_pending();
-  cond_wait_ms(&l->cv, &l->mu, STILL_MS);
+  if (cond_wait_ms(&l->cv, &l->mu, STILL_MS))
+    atomic_fetch_add_explicit(&l->timeouts, 1, memory_order_relaxed);
   mutex_unlock(&l->mu);
   rig_unhold();
   caml_leave_blocking_section();
   CAMLreturn(Val_unit);
+}
+
+value caml_rig_lock_timeouts(value v_l) {
+  return Val_long(
+      atomic_load_explicit(&Lock_val(v_l)->timeouts, memory_order_relaxed));
 }
 
 value caml_rig_lock_broadcast(value v_l) {

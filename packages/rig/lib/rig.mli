@@ -2934,6 +2934,13 @@ val on_drain : (unit -> unit) -> unit
     so a move in [f] runs without it. For rig's tests, which hold a move there
     while another domain releases, collects or moves. *)
 
+val open_timeouts : unit -> int
+(** [open_timeouts ()] is the number of waits for opens in flight that rig's
+    200 ms period ended, rather than a wake-up: an open's wait for another
+    open of its name ({!open_}), and a close's for the opens on its host's
+    machine ({!close}). For rig's tests, which tell a wait an open's end woke
+    from one the period ended. *)
+
 val x86_levels : string list
 (** [x86_levels] is the x86-64 psABI's levels, in order, as {!arch} names
     them. *)

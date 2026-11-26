@@ -118,6 +118,10 @@ val open_io : machine:machine -> string -> (device, string) result
 (** [open_io ~machine name] is {!Rig.open_io} on [machine]. Concurrent opens
     of one name wait for the first. *)
 
+val open_timeouts : unit -> int
+(** [open_timeouts ()] is {!Rig.open_timeouts}[ ()]: the waits on the
+    table's lock that its 200 ms ended ({!Lock.timeouts}). *)
+
 (** {1:local Values per device} *)
 
 type 'a key

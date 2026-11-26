@@ -11,6 +11,7 @@ external take : t -> unit = "caml_rig_lock_take"
 external release : t -> unit = "caml_rig_lock_give" [@@noalloc]
 external wait : t -> unit = "caml_rig_lock_wait"
 external broadcast : t -> unit = "caml_rig_lock_broadcast" [@@noalloc]
+external timeouts : t -> int = "caml_rig_lock_timeouts" [@@noalloc]
 
 let hold l = if not (try_take l) then take l
 let protect l f x =

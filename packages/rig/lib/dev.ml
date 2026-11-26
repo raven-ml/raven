@@ -1529,6 +1529,8 @@ let start_close (d : device) m =
       ignore (Atomic.Loc.fetch_and_add [%atomic.loc d.closing] (-1));
       Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
 
+let open_timeouts () = Lock.timeouts table_lock
+
 (* A close inside a counted call or a claimed stop of its thread, such as
    from a signal's handler in a wait, from [stores]'s function or from a
    finaliser in a stop, would wait for that call or stop to end, which comes

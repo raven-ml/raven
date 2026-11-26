@@ -486,14 +486,14 @@ let test_handled_in_open_wait () =
 
 (* [unpark_on_signal f] is [f ()], run while a SIGINT, which
    {!Support.interrupt_in_wait} raises once the calling thread blocks in a
-   condition wait, unparks the parked thread instead of raising, at the time
-   [unparked_at] records: the parked thread then goes on while the caller
-   waits. *)
-let unparked_at = ref 0.
+   condition wait, unparks the parked thread instead of raising, with
+   {!Rig.open_timeouts} then in [timeouts_at_unpark]: the parked thread then
+   goes on while the caller waits. *)
+let timeouts_at_unpark = ref 0
 
 let unpark_on_signal f =
   let unpark _ =
-    unparked_at := Unix.gettimeofday ();
+    timeouts_at_unpark := Rig.open_timeouts ();
     Support.unpark ()
   in
   let before = Sys.signal Sys.sigint (Sys.Signal_handle unpark) in
@@ -508,11 +508,10 @@ let parks_then_raises ~word:_ =
 
 (* An open that an exception ends wakes the opens of its name waiting for it,
    and the next one opens. The first opener raises only once the second open
-   waits. The time runs from the unpark: a wait runs no signal handler, so the
+   waits. The count runs from the unpark: a wait runs no signal handler, so the
    handler unparks when the open's wait returns to OCaml, and the open starts
-   its next wait right after. Unwoken, that wait returns 200 ms after its start,
-   rig's period; the end wakes it well within 150 ms. rig shows no count of the
-   waits its period ended, so the time is what tells a missed wake-up. *)
+   its next wait right after. Unwoken, that wait ends at rig's 200 ms period,
+   which {!Rig.open_timeouts} counts. *)
 let test_ended_wakes_waiter () =
   if not Support.sees_waits then
     skip ~reason:"the system shows no thread's blocking call" ();
@@ -531,12 +530,12 @@ let test_ended_wakes_waiter () =
   in
   Support.await "the first opener" Support.parked;
   let second, waited = unpark_on_signal (fun () -> Rig.open_ (polled name)) in
-  let took = Unix.gettimeofday () -. !unparked_at in
+  let timeouts = Rig.open_timeouts () - !timeouts_at_unpark in
   Thread.join opener;
   equal ~msg:"the first open, and whether the second waited" (pair string bool)
     ("raised Exit", true) (!first, waited);
-  less ~msg:"seconds from the end to the second open's return" float_exact
-    ~than:0.15 took;
+  equal ~msg:"the second open's waits its period ended after the end" int 0
+    timeouts;
   Rig.close (opened second)
 
 (* [open_io] *)
