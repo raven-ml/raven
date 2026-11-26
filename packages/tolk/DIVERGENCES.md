@@ -402,22 +402,23 @@ stamps nothing (D146).
 - **Pinned by:** `Tolk.Dtype › truncate › truncation.golden` (the near-tie
   rows), `Tolk.Dtype › truncate › bfloat16 rounds once, to the nearest, ties
   to even` and `Tolk.Dtype › truncate › an integer rounds to a narrower float
-  once, from its value`; for emulation, in `Tolk.Decomp_dtype › narrow float
-  conversions are IEEE conversions`: `an emulated narrow float keeps its
+  once, from its value`; for emulation, in `Tolk.Decomp_dtype ›
+  pm_dtype_decomps › narrow floats`: `an emulated narrow float keeps its
   subnormals, both ways`, `a double, or an integer more precise than a
   float32, rounds once`, `an emulated 64-bit integer converts to a float32
   once`, `an fnuz format stores an underflow to negative zero as positive
-  zero`; `Tolk.Decomp_dtype › NaNs › f2f narrows a quiet NaN to a quiet NaN`
-  and `› an emulated cast of a quiet float32 or double NaN is a quiet NaN`;
-  `Tolk.Decomp_dtype › goldens`; in rune, `rune jit › jit › an integer cast
+  zero`; `Tolk.Decomp_dtype › f2f › narrowing keeps a quiet NaN quiet` and
+  `› pm_dtype_decomps › narrow floats › an emulated cast of a quiet float32 or
+  double NaN is a quiet NaN`; `Tolk.Decomp_dtype › pm_dtype_decomps ›
+  rewrites each kernel as its golden states, f2f's conversions in place`; in
+  rune, `rune jit › jit › an integer cast
   to a float gives eager's bits` and `Rune.jit on a GPU › integers › an
   integer cast to a float gives eager's bits`, whose ties with a bit below
   float32's precision a cast that rounds twice gets wrong. The 8-bit facets:
-  the e4m3, e5m2 and fnuz cases of `Tolk.Decomp_dtype › narrow float
-  conversions are IEEE
-  conversions › an emulated narrow float keeps its subnormals, both ways`,
-  and `Tolk.Decomp_dtype › emulated narrow floats › an emulated cast of
-  doubles near every <format> tie rounds once` for each 8-bit format.
+  the e4m3, e5m2 and fnuz cases of `Tolk.Decomp_dtype › pm_dtype_decomps ›
+  narrow floats › an emulated narrow float keeps its subnormals, both ways`,
+  and `Tolk.Decomp_dtype › pm_dtype_decomps › narrow floats › an emulated
+  cast of a double rounds it once`, at every 8-bit format's ties.
   Clang's double to half cast: `Tolk.Codegen › a double rounds once to half
   on the host` and `Tolk.Cstyle › extra_matcher`'s `rewritten.tolk`.
 
@@ -597,9 +598,9 @@ Withdrawn: multi-device is out of scope, see README.
   2^31 to an int32 word, which C leaves undefined.
 - **Reason:** (b): rune's kernels on a target without 64-bit integers cast
   floats to longs through this emulation, and must give the long nx gives.
-- **Pinned by:** `Tolk.Decomp_dtype › emulated 64-bit integers › an
-  emulated cast of a float32 to a 64-bit integer converts no float to a word
-  that cannot hold it`.
+- **Pinned by:** `Tolk.Decomp_dtype › pm_dtype_decomps › 64-bit integers ›
+  an emulated cast of a float32 converts no float to a word that cannot hold
+  it`.
 
 ## D23. Withdrawn
 
@@ -957,10 +958,12 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   `bfloat16` or `float16` storage on a target that emulates it: `bfloat16` on
   a riscv64 host, on an Apple GPU before family 6 and on CUDA before sm_80.
 - **Pinned by:** the `Decomp_dtype` suite (`test/codegen/decomp/decomp_dtype`):
-  `NaNs › an emulated copy keeps every NaN code, a signalling one's included`
-  and `› an emulated selection keeps every NaN code, a signalling one's
-  included`, on every emulated float, and the goldens of the `where`, `flip`,
-  `gather` and `pad` kernels; the Codegen suite's `emulated floats' vectors on
+  `pm_dtype_decomps › narrow floats › an emulated copy keeps every code, a
+  signalling NaN's included`, `› an emulated selection keeps every code, a
+  signalling NaN's included` and `› a bit reinterpretation reads a narrow
+  float's storage`, on every emulated float, and the goldens of the
+  `where`, `flip`, `gather` and `pad` kernels; the
+  Codegen suite's `emulated floats' vectors on
   CUDA › a copy of every code, a thread's lanes moved together, keeps it`
   (`bfloat16` on sm_75, `fp8e4m3` on sm_80 and `fp8e4m3fnuz` on sm_89) and
   `› writes an sm_75 copy of bfloat16 lanes with its vector declared`. On
@@ -7566,8 +7569,8 @@ C's undefined behaviour.
   and on each GPU (`GPUs ›`, run on fudge's CUDA and NV), with 0 among the
   divisors, `a // a` and a constant 0, against `Ops.exec_alu`; the Symbolic
   suite's `identities › x // x is 1 where x's bounds hold no 0`; the
-  Decomp_dtype suite's `emulated 64-bit integers › i64 quotient by 0, which
-  is 0` and its neighbours; rune's `jit › integer arithmetic at its type's
+  Decomp_dtype suite's `pm_dtype_decomps › 64-bit integers › an emulated
+  quotient by 0 is 0` and its neighbours; rune's `jit › integer arithmetic at its type's
   edges gives eager's values`, its GPU suite's `integers ›` the same law,
   and `Lower_arith › divisions by constants give eager's bits`; the
   Symbolic suite's `bounds › a gated load of a constant table may read its
