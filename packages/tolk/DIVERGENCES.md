@@ -400,10 +400,10 @@ stamps nothing (D146).
   `0x39`. Clang's double to half cast: (e), as the rounding to odd; rune
   hands tolk no double to cast to half, but without it `65520 - 2^-20` is
   infinity where one rounding gives `65504`.
-- **Pinned by:** `Tolk.Dtype › truncate › truncation.golden` (the near-tie
-  rows), `Tolk.Dtype › truncate › bfloat16 rounds once, to the nearest, ties
-  to even` and `Tolk.Dtype › truncate › an integer rounds to a narrower float
-  once, from its value`; for emulation, in `Tolk.Decomp_dtype ›
+- **Pinned by:** `Tolk.Dtype › Casts › truncate › rounds or wraps each value
+  as its golden states › truncation.golden` (the near-tie rows), `Tolk.Dtype ›
+  Casts › truncate › rounds once to Bfloat16, to the nearest, ties to even` and
+  `› rounds an integer to a narrower float once, from its value`; for emulation, in `Tolk.Decomp_dtype ›
   pm_dtype_decomps › narrow floats`: `an emulated narrow float keeps its
   subnormals, both ways`, `a double, or an integer more precise than a
   float32, rounds once`, `an emulated 64-bit integer converts to a float32
@@ -935,16 +935,18 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   different bits`; `Tolk.Ops › exec_alu › an invalid operation's
   NaN is the canonical positive quiet NaN, whatever the host gives`;
   `Tolk.Symbolic › symbolic_simple › casts › a bitcast round trip of every
-  8- and 16-bit word folds to its value`; `Tolk.Dtype › const › const keeps
-  the bits of every 8- and 16-bit float word`; `Tolk.Dtype › storage ›
-  storage moves a NaN of a float with infinities, with its sign and as much of
-  its payload as it holds`, `› storage holds an Fp8e4m3 NaN as 0x7F or 0xFF,
-  of its sign, and an fnuz NaN as 0x80`, `› a decoded Bfloat16 or Fp8e5m2 NaN
-  has the sign and payload of its bits`, `› a decoded Fp8e4m3 NaN has the sign
-  of its bits, and an fnuz NaN is positive` and `› truncation.golden` (the
-  `fp8e5m2` rows of `nan` and `-nan`); `Tolk.Dtype › bitcast ›
-  bitcasts.golden` (the rows from an `fp8e5m2` `nan`); `Tolk.Dtype › storage
-  › a bitcast through a float gives back every 8- and 16-bit word`;
+  8- and 16-bit word folds to its value`; `Tolk.Dtype › Data types › const ›
+  keeps the bits of every word of an 8- or 16-bit float`; `Tolk.Dtype › Casts ›
+  to_storage_scalar › moves a NaN of a float with infinities, with its sign and
+  as much of its payload as it holds`, `› stores an Fp8e4m3 NaN as 0x7F or
+  0xFF, of its sign, and an fnuz NaN as 0x80` and `› stores each value as its
+  golden states › truncation.golden` (the `fp8e5m2` rows of `nan` and
+  `-nan`); `Tolk.Dtype › Casts › from_storage_scalar › gives a Bfloat16 or
+  Fp8e5m2 NaN the sign and payload of its bits` and `› gives an Fp8e4m3 NaN
+  the sign of its bits, and an fnuz NaN positive`; `Tolk.Dtype › Casts ›
+  bitcast › reads each value's bits as its golden states › bitcasts.golden`
+  (the rows from an `fp8e5m2` `nan`) and `› gives back every word through an
+  8- or 16-bit float`;
   `Tolk.Cstyle › sources › by default › cuda_inf_nan_fp8e5m2.golden`,
   `› hip_rdna4_inf_nan_fp8e5m2.golden` and
   `› hip_cdna4_inf_nan_fp8e5m2.golden`.

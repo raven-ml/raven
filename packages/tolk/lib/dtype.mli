@@ -50,11 +50,12 @@ val pp_const : Format.formatter -> [< const ] -> unit
 (** {2:arith Arithmetic on values} *)
 
 (** Arithmetic and comparison on values, as on numbers: a [`Bool] counts as [0]
-    or [1], an operation on two integers gives an exact integer, and one that
-    involves a float gives a float, in which an integer that rounds past the
-    greatest double is the infinity of its sign. The operators compare an
-    integer and a float exactly, without rounding the integer, and a comparison
-    with NaN is [false], except [<>], which is [true]. *)
+    or [1], and an operation on two integers gives an exact integer. An
+    operation that involves a float rounds the other operand to a double, as
+    {!to_float} does, so that an integer that rounds past the greatest double is
+    the infinity of its sign, and gives the double IEEE 754 gives. The operators
+    compare an integer and a float exactly, without rounding the integer, and a
+    comparison with NaN is [false], except [<>], which is [true]. *)
 module Value : sig
   type t = value
   (** The type for values. *)
@@ -243,11 +244,11 @@ val const : t -> [< const ] -> const
     rounded towards zero, then, for an integer [dt] of known width, wrapped to
     it modulo 2{^ bitsize}, as its arithmetic does: [const Uint8 (`Int (-1))] is
     [`Int 255] and [const Int8 (`Int 300)] is [`Int 44]; NaN is [0] of such a
-    [dt], and an infinity its least or greatest value. A weak integer keeps the
-    value.
+    [dt], and an infinity its least or greatest value. A weak integer and
+    {!Void} keep the value.
 
     Raises [Invalid_argument] if [c] is a NaN or an infinity and [dt] is
-    {!Weak_int}. *)
+    {!Weak_int} or {!Void}. *)
 
 val equal : t -> t -> bool
 (** [equal d0 d1] is [true] iff [d0] and [d1] are the same data type. *)

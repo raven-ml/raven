@@ -177,19 +177,6 @@ def decode():
     return ["dtype", "storage", "value"], rows + [(dtypes.bfloat16, b, from_storage_scalar(b, dtypes.bfloat16)) for b in bf16]
 
 
-@table
-def reencode():
-    """A word bitcast to a float and back, for every NaN word of the 8-bit floats and a few others."""
-    word = {1: dtypes.uint8, 2: dtypes.uint16}
-    def nan_words(dt):
-        return [w for w in range(256) if math.isnan(bitcast(w, dtypes.uint8, dt))]
-    words = {dt: sorted({0x00, 0x7E, 0x80, *nan_words(dt)}) for dt in dtypes.fp8s}
-    words[dtypes.bfloat16] = [0x0000, 0x3F80, 0x7F80, 0x7FC0, 0x7FC1, 0x7F81, 0xFF81, 0xFFC5, 0x7FFF, 0xFFFF]
-    words[dtypes.float16] = [0x0000, 0x3C00, 0x7C00, 0x7E00, 0x7E01, 0x7C01, 0xFC01, 0xFE05, 0x7FFF, 0xFFFF]
-    return ["dtype", "word", "reencoded"], [
-        (dt, w, bitcast(bitcast(w, word[dt.itemsize], dt), dt, word[dt.itemsize])) for dt, ws in words.items() for w in ws]
-
-
 def bitcast_values(dt):
     if dt == dtypes.bool: return [False, True, 0.0, -0.0, 1.5, -2.0, float("inf"), float("nan")]
     if dtypes.is_int(dt): return [*sorted({0, 1, dt.max, dt.min, dt.max // 3, -1 if dt.min else 2, dt.max + 1, dt.min - 1}), 1.5]
