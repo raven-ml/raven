@@ -394,16 +394,23 @@ let log_batch lo hi =
        (Gen.array ~size:(Gen.constant size)
           (Gen.float_range (Stdlib.log lo) (Stdlib.log hi))))
 
-(* [close tol expected actual]: elementwise, within [tol] absolutely. *)
+(* [close ~than i got want]: element [i]'s [got] within [than] of [want]. *)
+let close ~than i got want =
+  at_most
+    ~msg:(Printf.sprintf "the error at element %d" i)
+    float_exact ~than (Nx_support.gap got want)
+
+(* A bound scaled by a result where it is finite, else 0. A wrong infinite
+   result would widen its own bound to infinity, which its infinite distance
+   from a finite reference then meets; a right one lies at distance 0 from a
+   reference of the same infinity. *)
+let finite b = if Float.is_finite b then b else 0.
+let finite_all b = Nx.where (Nx.isfinite b) b (Nx.zeros_like b)
+
+(* [close_all tol expected actual]: elementwise, within [tol] absolutely. *)
 let close_all tol expected actual =
   let e = values expected and a = values actual and t = values tol in
-  Array.iteri
-    (fun i e ->
-      at_most
-        ~msg:(Printf.sprintf "the error at element %d" i)
-        float_exact ~than:t.(i)
-        (Nx_support.gap a.(i) e))
-    e
+  Array.iteri (fun i e -> close ~than:t.(i) i a.(i) e) e
 
 (* [x] on a grid of [2^-20], where [x + 1] and [1 - x] are exact. *)
 let grid x = Nx.div_s (Nx.round (Nx.mul_s x 0x1p20)) 0x1p20
@@ -450,11 +457,6 @@ let linear f =
 let elementwise f a b c =
   let a = values a and b = values b and c = values c in
   Array.iteri (fun i a -> f i a b.(i) c.(i)) a
-
-let close ~than i got want =
-  at_most
-    ~msg:(Printf.sprintf "the error at element %d" i)
-    float_exact ~than (Nx_support.gap got want)
 
 let pairs = Gen.pair (log_batch 1e-3 1e4) (log_batch 1e-3 1e4)
 
@@ -505,7 +507,9 @@ let erfc =
         ];
       prop "erfc (-x) is 2 - erfc x" (batch 0. 30.) (fun x ->
           let open Nx in
-          let tol = mul_s (add (erfc (neg x)) (erfc x)) (17. *. eps) in
+          let tol =
+            finite_all (mul_s (add (erfc (neg x)) (erfc x)) (17. *. eps))
+          in
           close_all tol (rsub_s 2. (erfc x)) (erfc (neg x)));
     ]
 
@@ -578,7 +582,10 @@ let log_ndtr =
       prop "is log ndtr where ndtr is normal" (batch (-37.) 9.) (fun x ->
           let open Nx in
           let l = log_ndtr x in
-          close_all (mul_s (add_s (abs l) 1.) (48. *. eps)) (log (ndtr x)) l);
+          close_all
+            (finite_all (mul_s (add_s (abs l) 1.) (48. *. eps)))
+            (log (ndtr x))
+            l);
       prop "increases" (batch (-50.) 50.) (fun x ->
           increasing ~error:(in_ulps 32.) Nx.log_ndtr x (Nx.add_s x 1e-3));
     ]
@@ -654,7 +661,9 @@ let lgamma =
           let open Nx in
           let x = grid x in
           let l = lgamma x and lx = log x in
-          let tol = mul_s (add_s (add (abs l) (abs lx)) 1.) (40. *. eps) in
+          let tol =
+            finite_all (mul_s (add_s (add (abs l) (abs lx)) 1.) (40. *. eps))
+          in
           close_all tol (add l lx) (lgamma (add_s x 1.)));
       prop "lgamma x + lgamma (1 - x) is log (pi / sin (pi x)) on (0, 1)"
         (batch 1e-3 0.999) (fun x ->
@@ -687,7 +696,9 @@ let digamma =
           let open Nx in
           let x = grid x in
           let d = digamma x and r = recip x in
-          let tol = mul_s (add_s (add (abs d) (abs r)) 1.) (40. *. eps) in
+          let tol =
+            finite_all (mul_s (add_s (add (abs d) (abs r)) 1.) (40. *. eps))
+          in
           close_all tol (add d r) (digamma (add_s x 1.)));
       prop "digamma (1 - x) - digamma x is pi cot (pi x) on (0, 1)"
         (batch 1e-3 0.999) (fun x ->
@@ -867,7 +878,7 @@ let gammainc =
       prop "gammainc + gammaincc is 1" pairs (fun (a, x) ->
           elementwise
             (fun i p q _ ->
-              close i ~than:(linear p +. linear q +. eps) (p +. q) 1.)
+              close i ~than:(finite (linear p +. linear q +. eps)) (p +. q) 1.)
             (Nx.gammainc a x) (Nx.gammaincc a x) x);
       prop "increases in x and decreases in a"
         (Gen.pair pairs (log_batch 1e-6 1.))
@@ -932,8 +943,9 @@ let log_gammainc =
               if q < 0.5 then
                 close i
                   ~than:
-                    ((16. *. eps *. Float.max 1. (Float.abs lp))
-                    +. (2. *. linear q))
+                    (finite
+                       ((16. *. eps *. Float.max 1. (Float.abs lp))
+                       +. (2. *. linear q)))
                   lp (Stdlib.log1p (-.q)))
             (Nx.log_gammainc a x) (Nx.gammaincc a x) x);
       prop "gammainc is exp log_gammainc" pairs (fun (a, x) ->
@@ -945,7 +957,9 @@ let log_gammainc =
               let moved =
                 ((16. *. Float.max 1. (Float.abs lp)) +. 1.) *. 1.01
               in
-              close i ~than:(in_ulps (log_ulps 16 p) p +. in_ulps moved e) p e)
+              close i
+                ~than:(finite (in_ulps (log_ulps 16 p) p +. in_ulps moved e))
+                p e)
             (Nx.gammainc a x) lp (Nx.exp lp));
       prop "tends to a log x - lgamma (a + 1) as x goes to 0"
         (Gen.pair (log_batch 1e-3 1e3) (log_batch 1e-300 1e-200))
@@ -972,8 +986,9 @@ let log_gammaincc =
               if p < 0.5 then
                 close i
                   ~than:
-                    ((16. *. eps *. Float.max 1. (Float.abs lq))
-                    +. (2. *. linear p))
+                    (finite
+                       ((16. *. eps *. Float.max 1. (Float.abs lq))
+                       +. (2. *. linear p)))
                   lq (Stdlib.log1p (-.p)))
             (Nx.log_gammaincc a x) (Nx.gammainc a x) x);
     ]
