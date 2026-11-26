@@ -498,15 +498,106 @@ let as_tinygrad dt cell = function
    Excluded (README): CPython's struct packing every float16 NaN as the
    canonical 0x7e00, of its sign, and its conversions between float32 and double
    quieting a signalling NaN, which tinygrad's bfloat16 storage goes through. *)
-let nan_word dt word =
+let moved_nan dt word =
   let bits mask = Bigint.to_int (Bigint.logand word (Bigint.of_int mask)) in
   match dt with
   | Dtype.Float16 -> bits 0x7C00 = 0x7C00 && bits 0x3FF <> 0
   | Bfloat16 -> bits 0x7F80 = 0x7F80 && bits 0x7F <> 0
+  | Fp8e5m2 -> bits 0x7C = 0x7C && bits 0x3 <> 0
+  | Fp8e4m3 -> bits 0x7F = 0x7F
   | _ -> false
 
 let reencoded dt word tinygrad =
-  if nan_word dt word then `Int word else tinygrad
+  if moved_nan dt word then `Int word else tinygrad
+
+(* D27: storage moves an Fp8e5m2 NaN's sign and the top two bits of its payload,
+   quiet bit first, a quiet NaN's where those are zero, where tinygrad stores
+   every NaN as S.11111.11. *)
+let e5m2_nan_word x =
+  let top = Int64.(to_int (shift_right_logical (bits_of_float x) 50)) land 3 in
+  (if Float.sign_bit x then 0x80 else 0) lor 0x7C lor if top = 0 then 2 else top
+
+let is_e5m2_nan dt = function
+  | `Float f -> Dtype.equal dt Dtype.Fp8e5m2 && Float.is_nan f
+  | _ -> false
+
+let nan_of_bits = Int64.float_of_bits
+
+(* Whether [x] is a NaN, and of which sign. *)
+let nan_sign x =
+  if not (Float.is_nan x) then "not a NaN"
+  else if Float.sign_bit x then "-nan"
+  else "+nan"
+
+(* The word that stores [v] as a [dt] value, unsigned. *)
+let word dt v =
+  let w =
+    match Dtype.itemsize dt with
+    | 1 -> Dtype.Uint8
+    | 2 -> Dtype.Uint16
+    | 4 -> Dtype.Uint32
+    | _ -> Dtype.Uint64
+  in
+  match Dtype.bitcast dt w v with
+  | `Int n -> n
+  | v -> failf "%a" (Testable.pp value) v
+
+let ones n = Bigint.pred (Bigint.shift_left Bigint.one n)
+
+(* The word of a NaN of [dt], a float format with infinities, as the .mli states
+   it: the sign of the double NaN [x], and as much of its payload as [dt] holds,
+   quiet bit first, with the quiet bit set if [quiet] or if all that is zero. *)
+let nan_word ~quiet dt x =
+  let b = 8 * Dtype.itemsize dt and m = snd (Dtype.finfo dt) in
+  let x = Bigint.extract (Bigint.of_int64 (Int64.bits_of_float x)) 0 64 in
+  let negative = Bigint.extract x 63 1
+  and payload = Bigint.extract x (52 - m) m in
+  let payload =
+    if quiet || Bigint.equal payload Bigint.zero then
+      Bigint.logor payload (Bigint.shift_left Bigint.one (m - 1))
+    else payload
+  in
+  let exponent = Bigint.shift_left (ones (b - 1 - m)) m in
+  Bigint.(logor (shift_left negative (Int.sub b 1)) (logor exponent payload))
+
+let with_infinities = Dtype.[ Fp8e5m2; Float16; Bfloat16; Float32; Float64 ]
+let without_infinities = Dtype.[ Fp8e4m3; Fp8e4m3fnuz; Fp8e5m2fnuz ]
+
+(* Quiet and signalling NaNs of both signs, with payloads at the top and at the
+   bottom. *)
+let nan_inputs =
+  [
+    0x7FF8_0000_0000_0000L;
+    0xFFF8_0000_0000_0000L;
+    0x7FF0_0000_0000_0001L;
+    0x7FF4_0000_0000_0000L;
+    0xFFF0_0000_0000_0001L;
+    0x7FFF_FFFF_FFFF_FFFFL;
+  ]
+
+let nan_rows dts =
+  List.concat_map (fun dt -> List.map (fun b -> (dt, b)) nan_inputs) dts
+
+let nan_row_id (dt, b) = Printf.sprintf "%s 0x%016LX" (alias dt) b
+
+(* The NaN an 8-bit float without infinities holds for one of sign
+   [negative]. *)
+let one_nan dt ~negative =
+  if Dtype.equal dt Dtype.Fp8e4m3 && negative then "-nan" else "+nan"
+
+let word_id (dt, w) = Printf.sprintf "%s 0x%X" (alias dt) w
+
+let decoded dt w =
+  as_float (Dtype.from_storage_scalar dt (`Int (Bigint.of_int w)))
+
+(* Floats compared and printed by their bits, NaNs included. Only for values
+   that are moved, never computed: every host keeps a moved NaN's bits. *)
+let bits =
+  Testable.make
+    ~pp:(fun ppf x ->
+      Format.fprintf ppf "%h (0x%016LX)" x (Int64.bits_of_float x))
+    ~equal:(fun x y ->
+      Int64.equal (Int64.bits_of_float x) (Int64.bits_of_float y))
 
 (* [row w read cell dt v f] checks [f v] against the golden row of [dt] and [v],
    or, where tolk's IEEE conversions of the narrow floats depart from
@@ -618,45 +709,20 @@ let truncation =
             (fun inf -> is_true (Float.is_nan (truncated dt inf)))
             [ Float.infinity; Float.neg_infinity ]);
       cases
-        "truncate quiets a signalling NaN, and a 16-bit or wider float or e5m2 \
-         keeps its sign"
-        ~id:alias
-        Dtype.floats (fun dt ->
-          let w = word_of dt in
-          List.iter
-            (fun bits ->
-              let msg = Printf.sprintf "0x%LX" bits in
-              let negative = Int64.compare bits 0L < 0 in
-              let v = Dtype.truncate dt (`Float (Int64.float_of_bits bits)) in
-              is_true ~msg (Float.is_nan (as_float v));
-              let word =
-                match Dtype.bitcast dt w v with `Int n -> n | _ -> fail msg
-              in
-              let has mask =
-                not (Bigint.equal (Bigint.logand word mask) Bigint.zero)
-              in
-              let bit n = Bigint.shift_left Bigint.one n in
-              match dt with
-              | Dtype.Fp8e4m3fnuz | Fp8e5m2fnuz ->
-                  equal ~msg z (Bigint.of_int 0x80) word
-              | Fp8e4m3 -> equal ~msg z (Bigint.of_int 0x7F) word
-              | Fp8e5m2 ->
-                  equal ~msg z
-                    (Bigint.of_int (if negative then 0xFF else 0x7F))
-                    word
-              | Float64 ->
-                  is_true ~msg:"quiet" (has (bit 51));
-                  equal ~msg:"sign" bool negative (Bigint.sign word < 0)
-              | _ ->
-                  let bits = 8 * Dtype.itemsize dt in
-                  let mantissa = snd (Dtype.finfo dt) in
-                  is_true ~msg:"quiet" (has (bit (mantissa - 1)));
-                  equal ~msg:"sign" bool negative (has (bit (bits - 1))))
-            [
-              0x7FF0_0000_0000_0001L;
-              0x7FF4_0000_0000_0000L;
-              0xFFF0_0000_0000_0001L;
-            ]);
+        "truncate quiets a NaN of a float with infinities, keeping its sign \
+         and the top of its payload"
+        ~id:nan_row_id (nan_rows with_infinities) (fun (dt, b) ->
+          let x = nan_of_bits b in
+          equal z
+            (nan_word ~quiet:true dt x)
+            (word dt (Dtype.truncate dt (`Float x))));
+      cases
+        "truncate keeps the sign of an Fp8e4m3 NaN, and makes an fnuz NaN \
+         positive"
+        ~id:nan_row_id (nan_rows without_infinities) (fun (dt, b) ->
+          equal string
+            (one_nan dt ~negative:(Int64.compare b 0L < 0))
+            (nan_sign (truncated dt (nan_of_bits b))));
       prop "a finite float stays finite in an 8-bit float"
         (Gen.pair (dtype_list Dtype.fp8s) finite_float)
         (fun (dt, f) -> is_true (Float.is_finite (truncated dt f)));
@@ -672,8 +738,71 @@ let storage =
       Golden.cases "truncation.golden" ~key:[ "dtype"; "value" ] (fun cell ->
           let dt = dtype_of_cell (cell "dtype")
           and v = value_of_cell (cell "value") in
-          row value value_of_cell (cell "storage") dt v
-            (Dtype.to_storage_scalar dt));
+          if is_e5m2_nan dt v then
+            equal value
+              (`Int (Bigint.of_int (e5m2_nan_word (as_float v))))
+              (Dtype.to_storage_scalar dt v)
+          else
+            row value value_of_cell (cell "storage") dt v
+              (Dtype.to_storage_scalar dt));
+      cases
+        "storage moves a NaN of a float with infinities, with its sign and as \
+         much of its payload as it holds"
+        ~id:nan_row_id (nan_rows with_infinities) (fun (dt, b) ->
+          let x = nan_of_bits b in
+          equal z (nan_word ~quiet:false dt x) (word dt (`Float x)));
+      cases
+        "storage holds an Fp8e4m3 NaN as 0x7F or 0xFF, of its sign, and an \
+         fnuz NaN as 0x80"
+        ~id:nan_row_id (nan_rows without_infinities) (fun (dt, b) ->
+          let expected =
+            if not (Dtype.equal dt Dtype.Fp8e4m3) then 0x80
+            else if Int64.compare b 0L < 0 then 0xFF
+            else 0x7F
+          in
+          equal value
+            (`Int (Bigint.of_int expected))
+            (Dtype.to_storage_scalar dt (`Float (nan_of_bits b))));
+      cases
+        "a decoded Bfloat16 or Fp8e5m2 NaN has the sign and payload of its bits"
+        ~id:word_id
+        Dtype.
+          [
+            (Bfloat16, 0x7FC0);
+            (Bfloat16, 0xFFC0);
+            (Bfloat16, 0x7F81);
+            (Bfloat16, 0xFFFF);
+            (Fp8e5m2, 0x7D);
+            (Fp8e5m2, 0x7E);
+            (Fp8e5m2, 0x7F);
+            (Fp8e5m2, 0xFD);
+            (Fp8e5m2, 0xFE);
+          ]
+        (fun (dt, w) ->
+          let m = snd (Dtype.finfo dt) and b = 8 * Dtype.itemsize dt in
+          let sign = Int64.of_int (w lsr (b - 1))
+          and payload = Int64.of_int (w land ((1 lsl m) - 1)) in
+          let expected =
+            Int64.(
+              logor (shift_left sign 63)
+                (logor 0x7FF0_0000_0000_0000L (shift_left payload (52 - m))))
+          in
+          equal bits (nan_of_bits expected) (decoded dt w));
+      cases
+        "a decoded Fp8e4m3 NaN has the sign of its bits, and an fnuz NaN is \
+         positive"
+        ~id:word_id
+        Dtype.
+          [
+            (Fp8e4m3, 0x7F);
+            (Fp8e4m3, 0xFF);
+            (Fp8e4m3fnuz, 0x80);
+            (Fp8e5m2fnuz, 0x80);
+          ]
+        (fun (dt, w) ->
+          equal string
+            (one_nan dt ~negative:(w = 0xFF))
+            (nan_sign (decoded dt w)));
       Golden.cases "decode.golden" ~key:[ "dtype"; "storage" ] (fun cell ->
           equal value
             (value_of_cell (cell "value"))
@@ -696,9 +825,7 @@ let storage =
             (Dtype.to_storage_scalar dt)
             (Dtype.from_storage_scalar dt)
             v);
-      cases
-        "a bitcast through a float gives back every 8- and 16-bit word but an \
-         8-bit float's NaN codes"
+      cases "a bitcast through a float gives back every 8- and 16-bit word"
         ~id:alias
         Dtype.
           [
@@ -718,15 +845,10 @@ let storage =
           for word = 0 to (1 lsl (8 * Dtype.itemsize dt)) - 1 do
             let word = `Int (Bigint.of_int word) in
             let v = Dtype.bitcast unsigned dt word in
-            let fp8_nan =
-              List.mem dt Dtype.fp8s
-              && match v with `Float f -> Float.is_nan f | _ -> false
-            in
-            if not fp8_nan then
-              equal
-                ~msg:(Format.asprintf "%a" (Testable.pp value) word)
-                value word
-                (Dtype.bitcast dt unsigned v)
+            equal
+              ~msg:(Format.asprintf "%a" (Testable.pp value) word)
+              value word
+              (Dtype.bitcast dt unsigned v)
           done);
       prop "a bitcast through a float gives back every 32- and 64-bit word"
         ~examples:
@@ -765,7 +887,12 @@ let bitcasts =
           let a = dtype_of_cell (cell "from")
           and b = dtype_of_cell (cell "to") in
           let v = value_of_cell (cell "value") in
-          row value value_of_cell (cell "bitcast") a v (Dtype.bitcast a b));
+          if is_e5m2_nan a v then
+            equal value
+              (Dtype.bitcast Dtype.Uint8 b
+                 (`Int (Bigint.of_int (e5m2_nan_word (as_float v)))))
+              (Dtype.bitcast a b v)
+          else row value value_of_cell (cell "bitcast") a v (Dtype.bitcast a b));
       prop "a bitcast to an integer and back is the identity" integer_bitcast
         (fun (a, b, v) ->
           Law.round_trip value value (Dtype.bitcast a b) (Dtype.bitcast b a) v);
@@ -802,21 +929,13 @@ let consts =
           | `Invalid -> equal const `Invalid (Dtype.const dt c));
       prop "const is idempotent" constable (fun (dt, c) ->
           Law.idempotent const (Dtype.const dt) c);
-      cases
-        "const keeps the bits of every 8- and 16-bit float word but an 8-bit \
-         float's NaN codes"
-        ~id:alias
+      cases "const keeps the bits of every 8- and 16-bit float word" ~id:alias
         Dtype.[ Fp8e4m3; Fp8e5m2; Fp8e4m3fnuz; Fp8e5m2fnuz; Float16; Bfloat16 ]
         (fun dt ->
           let w = word_of dt in
           for word = 0 to (1 lsl (8 * Dtype.itemsize dt)) - 1 do
             let word = `Int (Bigint.of_int word) in
-            let fp8_nan = function
-              | `Float f -> List.mem dt Dtype.fp8s && Float.is_nan f
-              | _ -> false
-            in
             match Dtype.const dt (Dtype.bitcast w dt word) with
-            | #Dtype.value as v when fp8_nan v -> ()
             | #Dtype.value as v ->
                 equal
                   ~msg:(Format.asprintf "%a" (Testable.pp value) word)

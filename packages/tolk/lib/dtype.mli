@@ -237,14 +237,14 @@ val const : t -> [< const ] -> const
 (** [const dt c] is [c] as a constant of [dt]. [`Invalid] is itself. For a float
     [dt] it is a [`Float], [c] truncated to [dt] ({!truncate}), except that a
     NaN keeps its sign and the payload [dt] holds, a signalling NaN staying one,
-    in a float of 16 bits or more; an integer is rounded once, from its exact
-    value, as a finite value. For {!Bool} it is [`Bool], [true] iff [c] is
-    nonzero. Otherwise it is an [`Int]:
-    a float rounded towards zero, then, for an integer [dt] of known width,
-    wrapped to it modulo 2{^ bitsize}, as its arithmetic does: [const Uint8
-    (`Int (-1))] is [`Int 255] and [const Int8 (`Int 300)] is [`Int 44]; NaN is
-    [0] of such a [dt], and an infinity its least or greatest value. A weak
-    integer keeps the value.
+    in a float that has infinities, and its sign in {!Fp8e4m3}; an integer is
+    rounded once, from its exact value, as a finite value. For {!Bool} it is
+    [`Bool], [true] iff [c] is nonzero. Otherwise it is an [`Int]: a float
+    rounded towards zero, then, for an integer [dt] of known width, wrapped to
+    it modulo 2{^ bitsize}, as its arithmetic does: [const Uint8 (`Int (-1))] is
+    [`Int 255] and [const Int8 (`Int 300)] is [`Int 44]; NaN is [0] of such a
+    [dt], and an infinity its least or greatest value. A weak integer keeps the
+    value.
 
     Raises [Invalid_argument] if [c] is a NaN or an infinity and [dt] is
     {!Weak_int}. *)
@@ -417,11 +417,12 @@ val truncate : t -> value -> value
       float is its greatest finite value of the same sign. An infinity is itself
       where the format has infinities, and its NaN where it has none. A NaN is
       quiet, as a conversion makes it: a signalling NaN becomes quiet with the
-      same payload. A 16-bit or wider float keeps its sign and the top of its
-      payload; {!Fp8e5m2} has one NaN of each sign, and the other 8-bit floats
-      one positive NaN. An integer is rounded once, from its exact value, as a
-      finite value: one that rounds past the greatest double is the infinity of
-      its sign in {!Float64}, and overflows a narrower float.
+      same payload. A float that has infinities keeps its sign and the top of
+      its payload, one bit in {!Fp8e5m2}; {!Fp8e4m3} has one NaN of each sign,
+      and an [fnuz] format one positive NaN. An integer is rounded once, from
+      its exact value, as a finite value: one that rounds past the greatest
+      double is the infinity of its sign in {!Float64}, and overflows a narrower
+      float.
     - for an integer of known width, [v] wrapped to [dt]'s width in two's
       complement;
     - for {!Bool}, [true] iff [v] is nonzero;
@@ -439,16 +440,19 @@ val to_storage_scalar : t -> value -> value
 (** [to_storage_scalar dt v] is the value that stores [v] in {!storage_fmt}: [v]
     rounded to {!Float16}, the [`Int] of the bits that encode [v] for
     {!Bfloat16} and the 8-bit floats, and [v] itself otherwise. Storage moves a
-    16-bit NaN's bits and does not quiet it: a NaN keeps its sign and as much of
-    its payload, quiet bit included, as the format holds. An 8-bit NaN is its
-    format's NaN of its sign, the one NaN of an [fnuz] format. *)
+    NaN's bits and does not quiet it: in a float that has infinities a NaN keeps
+    its sign and as much of its payload, quiet bit included, as the format
+    holds, and is quiet where the format holds none of it, since those bits
+    encode an infinity. {!Fp8e4m3} stores a NaN as [0x7F], or [0xFF] if it is
+    negative, and an [fnuz] format as [0x80], the code of a negative zero. *)
 
 val from_storage_scalar : t -> value -> value
 (** [from_storage_scalar dt s] is the value stored by [s], the inverse of
     {!to_storage_scalar}: the [`Float] that the low bits of [s] encode for
-    {!Bfloat16} and the 8-bit floats, and [s] itself otherwise. A {!Bfloat16}
-    NaN has the sign and payload of its bits, an {!Fp8e5m2} NaN the sign of
-    its bits, and the other 8-bit floats' NaN is positive.
+    {!Bfloat16} and the 8-bit floats, and [s] itself otherwise. A {!Bfloat16} or
+    {!Fp8e5m2} NaN has the sign and payload of its bits, a signalling one
+    included, an {!Fp8e4m3} NaN the sign of its bits, and an [fnuz] NaN is
+    positive.
 
     Raises [Invalid_argument] if [dt] is {!Bfloat16} or an 8-bit float and [s]
     is not an [`Int]. *)
@@ -456,9 +460,7 @@ val from_storage_scalar : t -> value -> value
 val bitcast : t -> t -> value -> value
 (** [bitcast d0 d1 v] is the [d1] value stored by the bits that store [v] as a
     [d0] value. Its bits are kept exactly, a signalling NaN's included, so
-    [bitcast d1 d0 (bitcast d0 d1 c) = c] for every [c] that [d0] stores, but
-    where [d1] is an 8-bit float and [c]'s bits are one of its NaN codes, which
-    read as {!from_storage_scalar} reads them.
+    [bitcast d1 d0 (bitcast d0 d1 c) = c] for every [c] that [d0] stores.
 
     Raises [Invalid_argument] if [d0] and [d1] have different {!itemsize}s, if
     either has no {!storage_fmt}, if [v] is a float and [d0] an integer, or if

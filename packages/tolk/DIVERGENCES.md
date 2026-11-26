@@ -374,9 +374,9 @@ stamps nothing (D146).
   - emulation keeps subnormals, both ways.
 
   A NaN converts as the NaN rule allows, which no golden distinguishes:
-  `Dtype.truncate`, the folder, quiets it and, in a 16-bit or wider float, keeps
-  its sign and the top of its payload (an 8-bit float's is its format's NaN, D10
-  and D20); the bfloat16 cast of Clang and HIP (`Cstyle.pm_manual_bf16_cast`)
+  `Dtype.truncate`, the folder, quiets it and, in a float that has
+  infinities, keeps its sign and the top of its payload (an `Fp8e4m3` NaN its
+  sign, and an fnuz format's is its one NaN, D27); the bfloat16 cast of Clang and HIP (`Cstyle.pm_manual_bf16_cast`)
   shifts a float32's bits, so a signalling NaN may stay signalling; `f2f`
   narrows every NaN to its format's quiet NaN of its sign, as tinygrad's does.
   Each gives a NaN, signalling only from a signalling one, so a folded NaN and
@@ -898,15 +898,23 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
 ### Constants keep a NaN's bits
 
 - **tinygrad:** `dtype.py` (`DType.const` makes every NaN `math.nan`),
-  `dtype.py` (`ConstFloat` compares every NaN equal to every other), and
-  `uop/symbolic.py` (`fold_bitcast` converts the constant with
-  `truncate` before reading its bits).
+  `dtype.py` (`ConstFloat` compares every NaN equal to every other),
+  `dtype.py` (`float_to_fp8` stores every E5M2 NaN as `S.11111.11`, and
+  `fp8_to_float` reads every 8-bit NaN code as a NaN of no payload, positive
+  but in E5M2), and `uop/symbolic.py` (`fold_bitcast` converts the constant
+  with `truncate` before reading its bits).
 - **tolk:** `Dtype.equal_const`, `Dtype.hash_const` and `Dtype.const`;
-  `Ops.key`; `Shape.fold_bitcast`.
+  `Dtype.to_storage_scalar` and `Dtype.from_storage_scalar`; `Ops.key`;
+  `Shape.fold_bitcast`.
 - **Differs:** a float constant is its bits. `Dtype.const` keeps a NaN's sign
-  and the payload its type holds, a signalling NaN staying one, in a float of
-  16 bits or more (an 8-bit float's NaN is the one its storage holds, D10 and
-  D20). Constants compare and hash by their bits, so NaNs of different bits
+  and the payload its type holds, a signalling NaN staying one, in a float
+  that has infinities, and its sign in `Fp8e4m3`; an fnuz format has one NaN.
+  Storage moves an 8-bit NaN's bits as nx stores them: an `Fp8e5m2` NaN keeps
+  its sign, its quiet bit and the top bit of its payload, `S.11111.qp`, as a
+  16-bit NaN keeps as much as its format holds, so `Dtype.nan` stores as
+  `0x7E` where tinygrad stores `0x7F`; an `Fp8e4m3` NaN keeps its sign both
+  ways. Every 8- and 16-bit word then comes back through a bitcast to its
+  float. Constants compare and hash by their bits, so NaNs of different bits
   are different nodes with different keys: a schedule cached under one NaN's
   key is never the schedule of another's. A parameter's bounds and value key
   by their bits too. No golden reads a key; tinygrad's writes every NaN
@@ -920,15 +928,26 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   NaN rule leaves that NaN's bits free, so this part follows tinygrad.
 - **Reason:** (b): under the NaN rule a bitcast keeps a NaN's bits, as a
   kernel's and nx's do, so a bitcast that rune folds must keep them, which a
-  constant can only if it holds them; a rewrite must keep a graph's value.
+  constant can only if it holds them, and in the bits nx stores for it; a
+  rewrite must keep a graph's value.
 - **Pinned by:** `Tolk.Ops › identity › NaN constants of different bits
   are different nodes`; `Tolk.Ops › key › tells apart NaN constants of
   different bits`; `Tolk.Ops › exec_alu › an invalid operation's
   NaN is the canonical positive quiet NaN, whatever the host gives`;
   `Tolk.Symbolic › symbolic_simple › casts › a bitcast round trip of every
   8- and 16-bit word folds to its value`; `Tolk.Dtype › const › const keeps
-  the bits of every 8- and 16-bit float word but an 8-bit float's NaN
-  codes`.
+  the bits of every 8- and 16-bit float word`; `Tolk.Dtype › storage ›
+  storage moves a NaN of a float with infinities, with its sign and as much of
+  its payload as it holds`, `› storage holds an Fp8e4m3 NaN as 0x7F or 0xFF,
+  of its sign, and an fnuz NaN as 0x80`, `› a decoded Bfloat16 or Fp8e5m2 NaN
+  has the sign and payload of its bits`, `› a decoded Fp8e4m3 NaN has the sign
+  of its bits, and an fnuz NaN is positive` and `› truncation.golden` (the
+  `fp8e5m2` rows of `nan` and `-nan`); `Tolk.Dtype › bitcast ›
+  bitcasts.golden` (the rows from an `fp8e5m2` `nan`); `Tolk.Dtype › storage
+  › a bitcast through a float gives back every 8- and 16-bit word`;
+  `Tolk.Cstyle › sources › by default › cuda_inf_nan_fp8e5m2.golden`,
+  `› hip_rdna4_inf_nan_fp8e5m2.golden` and
+  `› hip_cdna4_inf_nan_fp8e5m2.golden`.
 
 ### A move of an emulated float keeps its bits (D62)
 

@@ -487,7 +487,7 @@ let float_format dt =
   | Float16 -> f 16 10 15 0x7BFF 0x7E00 Ieee
   | Bfloat16 -> f 16 7 127 0x7F7F 0x7FC0 Ieee
   | Fp8e4m3 -> f 8 3 7 0x7E 0x7F Nan_only
-  | Fp8e5m2 -> f 8 2 15 0x7B 0x7F Ieee
+  | Fp8e5m2 -> f 8 2 15 0x7B 0x7E Ieee
   | Fp8e4m3fnuz -> f 8 3 8 0x7F 0x80 Fnuz
   | Fp8e5m2fnuz -> f 8 2 16 0x7F 0x80 Fnuz
   | dt -> invalid_arg (Format.asprintf "%a is not a narrow float" pp dt)
@@ -522,10 +522,9 @@ let decode_format f code =
   if f.specials = Fnuz && code = f.nan then nan
   else if f.specials = Ieee && q = f.top + 1 then
     Float.copy_sign Float.infinity sign
-  else if f.bits = 16 && q > f.top then
+  else if f.specials = Ieee && q > f.top then
     nan_of_payload ~mant:f.mant ~negative (q land ((1 lsl f.mant) - 1))
-  else if f.specials = Ieee && q > f.top then Float.copy_sign nan sign
-  else if q > f.top then nan
+  else if q > f.top then Float.copy_sign nan sign
   else
     let exp = q lsr f.mant and m = q land ((1 lsl f.mant) - 1) in
     let v =
@@ -553,12 +552,13 @@ let nearest ~mant ~emin x =
 
 (* Past the greatest finite value, 16-bit formats give their infinity and 8-bit
    ones saturate to it. An infinity stays one where the format has infinities,
-   and is its NaN where it has none. A 16-bit NaN keeps the leading bits of its
-   payload, so that a bitcast through the format keeps every word; an 8-bit NaN
-   is its format's NaN of its sign. *)
+   and is its NaN where it has none. A NaN of a format with infinities keeps its
+   sign and the leading bits of its payload, so that a bitcast through the
+   format keeps every word; Fp8e4m3's is its NaN of its sign, and an fnuz
+   format's its one NaN. *)
 let encode_format f x =
   let sign = if Float.sign_bit x then 1 lsl (f.bits - 1) else 0 in
-  if Float.is_nan x && f.bits = 16 then
+  if Float.is_nan x && f.specials = Ieee then
     sign lor (f.top + 1) lor nan_payload ~mant:f.mant x
   else if Float.is_nan x || (f.specials <> Ieee && not (Float.is_finite x)) then
     if f.specials = Fnuz then f.nan else sign lor f.nan
