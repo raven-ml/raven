@@ -8153,9 +8153,10 @@ reason and its pins.
   run time, so the rest matters for jera on a GPU only, which no row
   measures.
 - **Pinned by:** `Tolk.Launch_law` (`test/schedule/schedule`,
-  `test_launch_law.ml`): `launches › a schedule's launches write what its graph
-  states, in either order of their members` and `› a write marked disjoint runs
-  its columns as one launch`; the `Tolk.Launch` suite
+  `test_launch_law.ml`): `create_linear_with_vars › launches › a schedule's
+  launches write what its graph states, in either order of their members` and
+  `› an assembly's columns run as one launch only where their write is marked
+  disjoint`; the `Tolk.Launch` suite
   (`test/schedule/schedule/test_launch.ml`): `launches › on the host, …` and
   `› on CUDA, the stores of one state run as one launch and write what their
   kernels apart write`, `cases › … alike members compile one body`, `› on the
@@ -8185,8 +8186,9 @@ reason and its pins.
   many elements at the top level run as one`, `› a call of many elements at
   the top level joins the launch of the call before it only where no step
   holds more than the schedule's peak`, `› calls beside a loop's temporaries
-  grow no plan`, the Launch_law suite's `launches › a one-element store and a
-  store of many run as one launch`, rune's `programs › a data-parallel step's
+  grow no plan`, the Launch_law suite's `create_linear_with_vars › launches ›
+  a one-element store and a store of many run as one launch, whichever is
+  listed or built first`, rune's `programs › a data-parallel step's
   programs do not grow over 2 to 16` and `Tolk_engine › custom kernels of
   many elements run as one that read one name at two values read each its
   own`. The loop body's rule:
@@ -8229,10 +8231,11 @@ reason and its pins.
   lines and reads fewer regions.
 - **Pinned by:** rune's `Jit › assemblies give eager's bits`'s test of the
   launch count (`a concatenation along a later axis runs as one launch`, the
-  mark kept through rangeify and the disk cache), `Tolk.Launch_law › a write
-  marked disjoint runs its columns as one launch`, `› a schedule read back
-  keeps a marked write's launch`, `› marked writes of two calls run in turn`
-  and `› a marked write of no stores marks nothing`, and the
+  mark kept through rangeify and the disk cache), `Tolk.Launch_law ›
+  create_linear_with_vars › launches › an assembly's columns run as one launch
+  only where their write is marked disjoint`, `› a schedule read back keeps a
+  marked write's launch`, `› marked writes of two calls run in turn` and `› a
+  marked write of no stores marks nothing`, and the
   `create_linear_with_vars › writes over states › stores crossed into two
   buffers write both` pin of D330.
 
@@ -8341,7 +8344,8 @@ reason and its pins.
   pass that orders them is D473's cost.
 - **Pinned by:** `Tolk.Launch › an After lists its stores in the order they
   land`, among them `› a store listed twice lands at its first place`;
-  `Tolk.Launch_law › a schedule's launches write what its graph states`.
+  `Tolk.Launch_law › create_linear_with_vars › launches › a schedule's
+  launches write what its graph states, in either order of their members`.
 
 ## D428. A loop's call reads a fixed run of storage it writes each trip
 
@@ -8507,8 +8511,9 @@ a view names its storage again (D426).
   `Tolk_engine › a store through a bitcast of a view that is no run writes
   the value's bits through the view` and `› a store through bytes that are
   no run, or that may cut elements where a bound variable places an end, is
-  refused`; `Tolk.Launch_law › compiled` and `› GPUs`, whose programs store
-  through bytes of states.
+  refused`; `Tolk.Launch_law › create_linear_with_vars › launches › on the
+  host, a schedule's launches write what its graph states` and the same on
+  each GPU, whose programs store through bytes of states.
 
 ## D460. A compiled schedule is kept on disk whole
 
@@ -8912,8 +8917,8 @@ D466.
   parameter, past the parameters`; `Tolk_engine › link and run › a kernel
   reads one name of two ranges as one value` and `› a kernel reads one name
   of two types as one value`, and the same on each GPU; the law
-  `Tolk.Launch_law › GPUs › on NV, a schedule's launches write what its graph
-  states`, whose launches join members that read one name at two ranges.
+  `Tolk.Launch_law › create_linear_with_vars › launches › on NV, a schedule's
+  launches write what its graph states`, whose launches join members that read one name at two ranges.
 
 ## D471. A tensor core's trip reads a reduce axis inside its own K unrolled
 
