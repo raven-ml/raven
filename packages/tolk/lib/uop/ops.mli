@@ -1058,7 +1058,7 @@ val addrspace : t -> Dtype.addr_space option
     live where those of their sources that live somewhere do, and nowhere
     ([None]) if those differ. Any other node, a copy, a stage or a call among
     them, lives nowhere: an address space places a kernel's values, and such a
-    node is none. *)
+    node is no kernel value. *)
 
 val whole : t -> t
 (** [whole p] is the parameter of the storage the {!Op.Param} [p] views, its
