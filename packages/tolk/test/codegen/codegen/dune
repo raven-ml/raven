@@ -1,9 +1,9 @@
 ; The tests of programs on disk make their caches under the working directory,
-; which the sandbox makes fresh. The suite runs as three shards, which dune
-; runs in parallel. Its tensor-core tests run on the first CUDA GPU and skip
-; without one. Those tagged no-elementwise run in a fourth process, where CC
-; names a script that runs the suite's Clang, which it passes as TOLK_CLANG,
-; without its elementwise builtins.
+; which the sandbox makes fresh. The suite runs in three worker processes. Its
+; tensor-core tests run on the first CUDA GPU and skip without one. Those
+; tagged no-elementwise run in a process of their own, where CC names a script
+; that runs the suite's Clang, which it passes as TOLK_CLANG, without its
+; elementwise builtins.
 
 (executable
  (name test_codegen)
@@ -30,27 +30,7 @@
   (glob_files *.golden)
   (glob_files *.tolk))
  (action
-  (run %{exe:test_codegen.exe} --shard 1/3 --exclude-tag no-elementwise)))
-
-(rule
- (alias runtest)
- (package tolk)
- (deps
-  (sandbox always)
-  (glob_files *.golden)
-  (glob_files *.tolk))
- (action
-  (run %{exe:test_codegen.exe} --shard 2/3 --exclude-tag no-elementwise)))
-
-(rule
- (alias runtest)
- (package tolk)
- (deps
-  (sandbox always)
-  (glob_files *.golden)
-  (glob_files *.tolk))
- (action
-  (run %{exe:test_codegen.exe} --shard 3/3 --exclude-tag no-elementwise)))
+  (run %{exe:test_codegen.exe} -j 3 --exclude-tag no-elementwise)))
 
 (rule
  (alias runtest)

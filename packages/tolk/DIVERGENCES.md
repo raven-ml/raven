@@ -1084,9 +1084,9 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
   System V's (D178). The copy is inline because Clang compiles a copy of
   many bytes as a call of the process's `memcpy`, which a remote Windows
   host's object, whose target names no system (D178), would call by System V.
-- **Pinned by:** the `Codegen` suite, `programs › a host program's binary
-  holds rig's host entry after the kernel` and `› a host program runs as a
-  launch of rig's host, with ten scalars past the argument registers` and
+- **Pinned by:** the `Codegen` suite, `programs › a split host program's
+  calls run the trips of its loop they cover, none past its end` and `› a
+  host program runs as a launch of rig's host, with ten scalars past the argument registers` and
   `› a split host program calls no function it does not define`; the
   Tolk_engine suite, `host programs in blocks › a program writes the same
   bits in any blocks` and `link and run › custom kernels with
@@ -1372,7 +1372,7 @@ A selection or a pad by `-0.` keeps `-0.`: tinygrad's tests for 0 take
 - **Reason:** (b). `Nx.pad` fills with the value given, `-0.` included, and
   rune's compiled pad must compute eager nx's bits.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros ›
-  a pad with -0. fill renders and computes -0.` and `› a pad and a selection
+  a pad with -0. fill computes -0.` and `› a pad and a selection
   of signed zeros keep the interpreter's bits`; in rune, `Lower › padded loads
   give eager's bits`, whose examples fill with `-0.`.
 
@@ -3444,7 +3444,7 @@ driver signals its own (D146).
   28 rows past its second operand on CUDA and faulted on NV.
 - **Pinned by:** the Coalesce suite (`test/codegen/late/coalesce`):
   `indexing_simplify › a gather through a pad reads its indices only inside
-  the pad`; the `codegen` suite's `stages › every access of global memory is
+  the pad`; the `codegen` suite's `recorded kernels › every access of global memory is
   gated or within its buffer`.
 
 ## D139. Construction checks no specification
@@ -3649,7 +3649,7 @@ driver signals its own (D146).
   computes vectors of 64`, `› a host program of 80 lanes computes vectors of
   64 and 16`, `› a host program of 65 lanes computes vectors of 33 and 32`, `›
   a host operation of any lanes computes vectors of at most 64 and writes what
-  its kernel writes` (every case), `› a host selection by a broadcast of
+  its kernel writes` (each of its four laws, every case), `› a host selection by a broadcast of
   computed lanes computes no lane apart` and `› a host sum of a product's
   unrolled lanes multiplies vectors of its output lanes` (every case), `› a
   host sum whose last lane axis holds one lane multiplies vectors of the axis
@@ -3657,10 +3657,8 @@ driver signals its own (D146).
   multiplies vectors of the widest`, rune's `Lower_reduce`'s `GGUF's MXFP4
   blocks › by one row, in runs of 4 rows on an AVX2 host, decode their
   codes whole`, `› a host product of operands stored along its sum gathers its
-  vectors by a transpose of two-vector shuffles` (every case), `› a host selection of
-  8, 16 or 32 lanes by a comparison of integers takes each lane's arm` and `›
-  a host selection of 3, 6, 12, 24 or 48 lanes by a comparison of integers
-  takes each lane's arm` (every case), `› a weak constant stored into four
+  vectors by a transpose of two-vector shuffles` (every case), `› a host selection
+  by a comparison of integers takes each lane's arm` (every table and case), `› a weak constant stored into four
   lanes of half on the host converts them` and `multiply-adds` (every test);
   `Tolk.Uop_weak › pm_commit_weak › a cast of a stack of weak constants
   commits them at its type, signalling NaN bits kept`; rune's `Lower › padded
@@ -6506,7 +6504,7 @@ against 2.77).
   suite's `the host's lanes › on AVX2 a recorded host kernel's program
   declares vectors of at most 64 lanes`, and the Codegen suite's `vectors in
   programs › a host operation of any lanes computes vectors of at most 64 and
-  writes what its kernel writes`.
+  writes what its kernel writes` (each of its four laws).
 
 ## D260. A tensor core accumulates its running sum at the reduce
 
@@ -6537,7 +6535,7 @@ against 2.77).
   in float32 has the same bits whether the core takes one or two steps of K
   a trip` (fails unfolded), `tensor-core accumulators › the running sum
   replaces a zero accumulator` (fails unfolded, on every target's cores),
-  and `stages › … › matmul_{half,half_big,half_tile,bf16_tile,tc}_{cuda,hip}`
+  and `recorded kernels › … › matmul_{half,half_big,half_tile,bf16_tile,tc}_{cuda,hip}`
   and `matmul_tc_unroll_metal`; the cstyle and renderer goldens of each core.
 
 ## D261. 16-bit floats and bytes copied into shared memory merge to 16 bytes
@@ -9355,7 +9353,7 @@ D466.
   bound` and `› a weight gradient holds the blocked bound`, which fail with
   one running sum (terms that lose half an ulp each in it), and `Rune.jit on
   a GPU › a long sum and a weight gradient hold the blocked bound`; the
-  `codegen` suite's `stages › every long float sum is in blocks of 256
+  `codegen` suite's `recorded kernels › every long float sum is in blocks of 256
   terms`, over every kernel it lowers, and its `› a padded block's trips
   read nothing past the buffer`, `› a padded trip reads nothing past a held
   tile of scales` (shared memory, on sm_89) and `› a padded trip reads

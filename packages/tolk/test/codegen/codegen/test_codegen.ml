@@ -17,10 +17,15 @@ let kernel_info u =
 
 let first n u = Ops.replace u ~src:(List.filteri (fun i _ -> i < n) (Ops.src u))
 
+(* The source of the program [prg]. *)
 let source prg =
-  match Ops.arg (Ops.nth prg 2) with
-  | String src -> src
-  | _ -> invalid_arg "a program's third source is its source"
+  List.find_map
+    (fun u ->
+      match (Ops.op u, Ops.arg u) with
+      | Source, String text -> Some text
+      | _ -> None)
+    (Ops.toposort ~calls:Enter prg)
+  |> require_some
 
 (* Targets *)
 
@@ -58,7 +63,7 @@ let kernel_of name = kernel (row_named name)
 let renderer_of_row row =
   renderer_for (target (row "device") (row "renderer") (row "arch"))
 
-(* tinygrad's goldens name kernels without colour, and stage no tensor core's
+(* The goldens name kernels without colour, and stage no tensor core's
    operands. *)
 let under row f =
   Setting.context
@@ -70,11 +75,22 @@ let under row f =
 let optimize k =
   match Ops.arg k with Kernel { optimized; _ } -> not optimized | _ -> true
 
-let lowered row =
+let lower row =
   let k = kernel row in
   under row (fun () ->
       Codegen.full_rewrite_to_sink ~optimize:(optimize k) k
         (renderer_of_row row))
+
+(* Each row's lowered kernel, made once by the tests that read it. *)
+let lowerings = Hashtbl.create 64
+
+let lowered row =
+  match Hashtbl.find_opt lowerings (row "name") with
+  | Some u -> u
+  | None ->
+      let u = lower row in
+      Hashtbl.add lowerings (row "name") u;
+      u
 
 let program row =
   under row (fun () -> Codegen.to_program (kernel row) (renderer_of_row row))
@@ -125,15 +141,18 @@ let gates_padded_trips () =
   let is o u = Op.equal (Ops.op u) o in
   let reads_a u =
     is Op.Index u
-    && (match Ops.arg (Ops.nth u 0) with Param p -> p.slot = 1 | _ -> false)
+    && match Ops.arg (Ops.nth u 0) with Param p -> p.slot = 1 | _ -> false
   in
   let past u =
     let i = Ops.nth u 1 in
     (not (is Op.Where i))
-    && match Ops.vmax i with `Int z -> Bigint.(geq z (of_int 1920)) | _ -> true
+    &&
+    match Ops.vmax i with
+    | `Int z -> Bigint.(geq z (of_int 1920))
+    | _ -> true
   in
   let reads = List.filter reads_a (Ops.toposort ~calls:Skip sink) in
-  is_true ~msg:"reads of A" (reads <> []);
+  not_equal (list Uops.uop) ~msg:"reads of A" [] reads;
   equal (list Uops.uop) [] (List.filter past reads)
 
 (* Each index of [sink]'s blocked sums into any buffer that its index's bounds
@@ -197,10 +216,10 @@ let past_reads ast ren =
   let indexes =
     List.filter (fun u -> is Op.Index u && List.length (Ops.src u) = 2) nodes
   in
-  is_true ~msg:"indexes" (indexes <> []);
-  is_true ~msg:"split ranges" (blocks <> []);
-  is_true ~msg:"padded terms gated"
-    (List.for_all (fun (_, c) -> Option.is_some c) blocks);
+  not_equal (list Uops.uop) ~msg:"indexes" [] indexes;
+  not_equal (list Uops.uop) ~msg:"split ranges" [] (List.map fst blocks);
+  equal (list Uops.uop) ~msg:"split ranges whose padded terms nothing drops" []
+    (List.filter_map (fun (b, c) -> if c = None then Some b else None) blocks);
   equal (list Uops.uop) [] (List.filter past indexes)
 
 (* A dense MXFP4 product, Stage's [dense_kernel]: [t] rows of bfloat16 by [n]
@@ -298,9 +317,7 @@ let int_at env u =
   | _ -> failwith "an address is an integer"
 
 let holds_at env u =
-  match value_at env u with
-  | `Bool b -> b
-  | _ -> failwith "a gate is a boolean"
+  match value_at env u with `Bool b -> b | _ -> failwith "a gate is a boolean"
 
 (* The accesses of global memory of the program [prg] past their buffer where
    their gates hold, at each trip of its loops, for each thread of the first
@@ -413,95 +430,49 @@ let recorded_lowering row = Ops.nth (recorded row) 0
 let recorded_program row = Ops.nth (recorded row) 1
 let compiles row = row "outcome" = "ok"
 
-(* Every row runs, but for `compile completes linearize`, which draws from the
-   rows [by_default] picks. A row it leaves out is tagged [slow], which keeps it
-   from windtrap's slow report: all but one of a case's targets, the one taken
-   in turn so that every target stays reported, and every target of the kernels
-   that take long to compile. A refused optimisation costs nothing and stays
-   reported. *)
-let heavy =
-  [
-    "add_big";
-    "big_sum";
-    "matmul_big";
-    "matmul_half_big";
-    "matvec";
-    "conv_big";
-    "matmul_half_tc_shaped";
-  ]
-
-let by_default =
-  let chosen = Hashtbl.create 128 in
-  let cases =
-    List.fold_left
-      (fun seen row ->
-        if List.mem (row "case") seen then seen else row "case" :: seen)
-      [] rows
-    |> List.rev
-  in
-  List.iteri
-    (fun i case ->
-      let targets =
-        List.filter_map
-          (fun row ->
-            if row "case" = case && compiles row then Some (row "target")
-            else None)
-          rows
-      in
-      if targets <> [] then
-        Hashtbl.replace chosen case
-          (List.nth targets (i mod List.length targets)))
-    cases;
-  fun row ->
-    (not (compiles row))
-    || (not (List.mem (row "case") heavy))
-       && Hashtbl.find_opt chosen (row "case") = Some (row "target")
-
-let per_row ?(only = fun _ -> true) ?(default = by_default) check =
+(* A test of each row [only] keeps, named after the row. *)
+let per_row ?(only = fun _ -> true) check =
   List.filter_map
     (fun row ->
-      if not (only row) then None
-      else
-        let mark = if default row then Fun.id else slow in
-        Some (mark @@ test (row "name") (fun () -> check row)))
+      if only row then Some (test (row "name") (fun () -> check row)) else None)
     rows
 
-(* A law that lowers a kernel again stays reported on a few kernels only: an
-   elementwise one, a reduction, a gated store, a symbolic shape and an
-   unroll. *)
-let sample row =
-  List.mem (row "case")
-    [
-      "elementwise_add"; "reduce_rows"; "gated_store"; "symbolic"; "sum_unroll";
-    ]
-
-(* An emulated float8 converts as IEEE does, where tinygrad saturates and
-   flushes, so the graphs of these programs differ from tinygrad's in their
-   conversions; `values on the host` pins what they compute. *)
+(* An emulated float8 converts as IEEE does, where the goldens' programs
+   saturate and flush (D9), so these programs' graphs differ from their goldens'
+   in their conversions; `values on the host` pins what they compute. *)
 let emulated_fp8 = [ "fp8_clang"; "fp8_metal"; "fp8_hip" ]
 let d9 row = List.mem (row "name") emulated_fp8
 
 (* Stages *)
 
-let lowers_as_tinygrad row = same_graph (recorded_lowering row) (lowered row)
-
-(* A program is compared without its binary; its source is compared apart. *)
-let programs_as_tinygrad row =
-  same_graph (first 2 (recorded_program row)) (first 2 (program row))
+let lowers_as_recorded row = same_graph (recorded_lowering row) (lowered row)
 
 let program_info u =
   match Ops.arg u with
   | Program _ as arg -> Format.asprintf "%a" Ops.pp_arg arg
   | _ -> invalid_arg "a program holds its program information"
 
-let launches_as_tinygrad row =
+let estimates_of p =
+  match (kernel_info (Ops.nth p 0)).estimates with
+  | Some e -> Format.asprintf "%a" Ops.pp_estimates e
+  | None -> "none"
+
+(* A program is compared without its binary, and without its lowered sink's
+   graph, which the lowering rows compare; its source is compared apart. *)
+let programs_as_recorded row =
+  let recorded = recorded_program row and made = program row in
+  same_graph ~msg:"instructions" (Ops.nth recorded 1) (Ops.nth made 1);
+  equal string ~msg:"argument" (program_info recorded) (program_info made);
+  equal string ~msg:"estimates" (estimates_of recorded) (estimates_of made)
+
+let launches_as_recorded row =
   equal string
     (program_info (recorded_program row))
     (program_info (program row))
 
-(* A narrowed program's source is tinygrad's for its instructions with the
-   casts that narrow, its golden <name>_narrowed. *)
-let writes_as_tinygrad row =
+(* A narrowed program's source is its golden's for its instructions with the
+   casts that narrow, <name>_narrowed. *)
+let writes_as_recorded row =
   equal text (source (recorded_program row)) (source (program row))
 
 let sources =
@@ -514,12 +485,12 @@ let sources =
             Golden.text
               (row "name" ^ "_narrowed.golden")
               (fun () -> source (program row))
-          else test (row "name") (fun () -> writes_as_tinygrad row)
+          else test (row "name") (fun () -> writes_as_recorded row)
         in
-        Some (if by_default row then t else slow @@ group (row "name") [ t ]))
+        Some t)
     rows
 
-let refuses_as_tinygrad row =
+let refuses_with_its_reason row =
   let message =
     String.sub (row "outcome") 16 (String.length (row "outcome") - 16)
   in
@@ -545,17 +516,22 @@ let recorded_outputs =
     ]
 
 let stages =
-  group "stages"
+  group "recorded kernels"
     [
-      group "full_rewrite_to_sink lowers each kernel as recorded"
+      group
+        "full_rewrite_to_sink lowers each recorded kernel as its golden states"
         (per_row
            ~only:(fun row -> compiles row && not (d9 row))
-           lowers_as_tinygrad);
-      group "to_program makes each program as recorded"
+           lowers_as_recorded);
+      group
+        "to_program makes each recorded kernel's instructions, argument and \
+         estimates as its golden states"
         (per_row
            ~only:(fun row -> compiles row && not (d9 row))
-           programs_as_tinygrad);
-      group "each program is rendered as recorded" sources;
+           programs_as_recorded);
+      group
+        "to_program writes each recorded kernel's source as its golden states"
+        sources;
       group "every long float sum is in blocks of 256 terms"
         (test "96 lanes over 5 trips pad to blocks of 2 trips" pads_odd_trips
         :: test "a padded block's trips read nothing past the buffer"
@@ -572,36 +548,15 @@ let stages =
           test "a staged product of float16 cast to bfloat16 over K = 440"
             (staged_cast_product ~src:Float16 ~n:1792);
         ];
-      group "an emulated float8 program launches as recorded"
-        (per_row ~only:d9 launches_as_tinygrad);
-      group "an optimisation that does not apply raises tinygrad's error"
-        (per_row ~only:(fun row -> not (compiles row)) refuses_as_tinygrad);
+      group "an emulated float8 program's argument is as its golden states"
+        (per_row ~only:d9 launches_as_recorded);
+      group
+        "an optimisation that does not apply raises Invalid_argument with its \
+         reason"
+        (per_row ~only:(fun row -> not (compiles row)) refuses_with_its_reason);
     ]
 
 (* Values *)
-
-(* A kernel is interpretable when it writes through stores alone: no memory of
-   its own, no hardware index, no code the interpreter cannot read. A group,
-   the empty stack ordered after effects, only merges them. *)
-let opaque =
-  Op.
-    [
-      Alloc;
-      Buffer;
-      After;
-      Special;
-      Wmma;
-      Custom_function;
-      Barrier;
-      If;
-      Endif;
-      Backedge;
-    ]
-
-let interpretable u =
-  List.for_all
-    (fun v -> Ops.is_group v || not (List.mem (Ops.op v) opaque))
-    (Ops.toposort ~calls:Enter u)
 
 let bound k =
   List.map
@@ -640,40 +595,112 @@ let keeps_writes row =
    read, each with its reason. *)
 let not_interpreted =
   let fdiv = "divides with Ops.FDIV, which the interpreter does not compute" in
-  [
-    ("softmax", fdiv);
-    ("exp_log", fdiv);
-    ("exp_log_transcendental", fdiv);
-    ("pow", fdiv);
-    ("rmsnorm", fdiv);
-    ("layernorm", fdiv);
-    ("attention", fdiv);
-    ("llama_ffn_gate", fdiv);
-    ("llama_vector_scale", fdiv);
-    ("threefry", "computes Ops.THREEFRY, which the interpreter does not compute");
-    ("custom_eye", "stores through two indices");
-    ("flip_contract", "stores through two indices");
-    ("fp8", "reads its float8 storage as bytes");
-    ("comparison_extrema", "reads a scalar parameter");
-    ( "where_fold",
-      "writes the element it reads, and the lowered kernel skips the store of \
-       the value the element holds" );
-    ("long_emulated", "reads its 64-bit storage as pairs of 32-bit words");
-  ]
-  @ List.map (fun case -> (case, "takes long to interpret")) heavy
+  let accumulates = "accumulates in storage of its own, Ops.ALLOC and AFTER" in
+  let orders = "orders its accesses with Ops.AFTER" in
+  let buffers = "holds storage of its own, Ops.BUFFER" in
+  List.map
+    (fun case -> (case, accumulates))
+    [
+      "sum";
+      "sum_all";
+      "readout";
+      "matmul_half";
+      "matmul_half_tile";
+      "matmul_bf16_tile";
+      "cumsum";
+      "conv";
+      "ffn";
+      "symbolic_sum";
+      "sum_acc_bool";
+      "sum_acc_short";
+      "sum_acc_half";
+      "sum_acc_bf16";
+      "matmul_acc_half";
+      "upcast_with_locals";
+      "rewrite_reduction";
+      "two_nested_range";
+      "three_nested_range";
+      "range_outer_op_before_phi_nested_range";
+      "sum_reduce";
+      "max_reduce";
+      "dot_product";
+      "uniform_gate_reduce";
+      "uniform_gate_store";
+      "parallel_reduce";
+      "linearizer_fail_1";
+      "shared_reduce_range";
+      "shared_reduce_ranges";
+      "invalid_lanes";
+      "reg_stage_then_reduce";
+      "sum_unroll";
+      "matmul_opts";
+      "matmul_noopt";
+      "rewrite_reduction_opts";
+      "matmul_noopt_setting";
+      "matmul_half_no_tc";
+    ]
+  @ List.map
+      (fun case -> (case, orders))
+      [
+        "max_pool";
+        "outer";
+        "transpose";
+        "triu";
+        "triu_noopt";
+        "dependent_loop_bound";
+        "custom_sum";
+        "custom_gemm";
+      ]
+  @ List.map
+      (fun case -> (case, buffers))
+      [
+        "slice_sum";
+        "simple_qkv";
+        "reg_placeholder_then_reduce";
+        "split_range_id_free_of_loop";
+      ]
+  @ [
+      ("softmax", fdiv);
+      ("exp_log", fdiv);
+      ("exp_log_transcendental", fdiv);
+      ("pow", fdiv);
+      ("rmsnorm", fdiv);
+      ("layernorm", fdiv);
+      ("attention", fdiv);
+      ("llama_ffn_gate", fdiv);
+      ("llama_vector_scale", fdiv);
+      ( "threefry",
+        "computes Ops.THREEFRY, which the interpreter does not compute" );
+      ("custom_eye", "stores through two indices");
+      ("flip_contract", "stores through two indices");
+      ("fp8", "reads its float8 storage as bytes");
+      ("comparison_extrema", "reads a scalar parameter");
+      ( "where_fold",
+        "writes the element it reads, and the lowered kernel skips the store \
+         of the value the element holds" );
+      ("long_emulated", "reads its 64-bit storage as pairs of 32-bit words");
+    ]
+  @ List.map
+      (fun case -> (case, "takes long to interpret"))
+      [
+        "add_big";
+        "big_sum";
+        "matmul_big";
+        "matmul_half_big";
+        "matvec";
+        "conv_big";
+        "matmul_half_tc_shaped";
+      ]
 
-let clang_rows_lowered_to_stores =
-  List.filter
-    (fun row ->
-      row "target" = "clang"
-      && compiles row
-      && interpretable (kernel row)
-      && interpretable (recorded_lowering row)
-      && not (List.mem_assoc (row "case") not_interpreted))
-    rows
+(* The host rows whose kernels the interpreter reads: those that lower to stores
+   alone, on no storage of their own and no hardware index. *)
+let interpreted row =
+  row "target" = "clang"
+  && compiles row
+  && not (List.mem_assoc (row "case") not_interpreted)
 
-(* The host's program is linearized for the host, then compiled by
-   [Run.program]. *)
+(* The host's renderer, and the same renderer compiling nothing, for programs
+   read and not run. *)
 let host = lazy (Cstyle.clang (host_target ()))
 let host_uncompiled = lazy (renderer_for (host_target ()))
 
@@ -771,26 +798,16 @@ let read_back ~kernel ~program buffers =
 let runs_as_interpreted name () =
   let row = row_named (name ^ "_clang") in
   let k = kernel row in
-  let prg =
-    under row (fun () -> Codegen.to_program k (Lazy.force host_uncompiled))
-  in
+  let prg = under row (fun () -> Codegen.to_program k (Lazy.force host)) in
   let kernel = buffer_dtypes (Ops.toposort ~calls:Enter k)
   and program = buffer_dtypes (Shape.kernel_params prg) in
-  let linearized =
-    Ops.v Op.Program ~src:[ Ops.nth prg 0; Ops.nth prg 1 ] ~arg:(Ops.arg prg)
-  in
   let outputs =
-    Run.on_host ~vars:(Kernel_opts.variables k)
-      (Codegen.compile linearized (Lazy.force host))
+    Run.on_host ~vars:(Kernel_opts.variables k) prg
       (stored ~kernel ~program (Kernel_opts.inputs k))
   in
   let expected = Kernel_opts.writes k in
   equal (list Kernel_opts.write) expected
     (written_by_run k ~expected (read_back ~kernel ~program outputs))
-
-(* Each kernel is compiled by the host's C compiler: a few of them stay
-   reported, the others are tagged [slow]. *)
-let run_by_default = [ "add"; "gated_store"; "fp8"; "padto_idiv_upcast" ]
 
 let run_on_host =
   [
@@ -852,30 +869,10 @@ let values =
   group "values"
     [
       group "the lowered sink writes what the kernel writes"
-        (per_row
-           ~only:(fun row -> List.memq row clang_rows_lowered_to_stores)
-           keeps_writes);
-      test
-        "the interpreter reads elementwise, gated, symbolic and unrolled \
-         kernels" (fun () ->
-          let read =
-            List.map (fun row -> row "case") clang_rows_lowered_to_stores
-          in
-          equal (list string) []
-            (List.filter
-               (fun case -> not (List.mem case read))
-               [
-                 "add";
-                 "gated_store";
-                 "symbolic";
-                 "idiv_fast";
-                 "zero_fold_upcast";
-               ]));
+        (per_row ~only:interpreted keeps_writes);
       group "on the host, a program writes what its kernel writes"
         (List.map
-           (fun name ->
-             (if List.mem name run_by_default then Fun.id else slow)
-             @@ test name (runs_as_interpreted name))
+           (fun name -> test name (runs_as_interpreted name))
            run_on_host);
     ]
 
@@ -926,7 +923,8 @@ let beam_search =
               Codegen.full_rewrite_to_sink
                 (asking ~beam:3 (Lazy.force add_kernel))
                 clang));
-      test "to_program raises Invalid_argument too" (fun () ->
+      test "to_program raises Invalid_argument when a kernel asks for a beam"
+        (fun () ->
           rejects (fun () ->
               Codegen.to_program (asking ~beam:5 (Lazy.force add_kernel)) clang));
       test "a beam of width 1 is a search" (fun () ->
@@ -974,17 +972,20 @@ let fresh_kernel ?opts_to_apply () =
   in
   Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ()) [ Ops.end_ store [ r ] ]
 
-(* A compiler that counts its compilations, each taking long enough that domains
-   calling at once all reach it before the first returns. *)
+(* A compiler that counts its compilations. *)
 let counting () =
   let compiled = Atomic.make 0 in
   let compiler =
     Renderer.Compiler.v (fun src ->
         Atomic.incr compiled;
-        Unix.sleepf 0.02;
         src)
   in
   (compiled, renderer_for ~compiler clang_target)
+
+(* A table of binaries that no other test or run names: after a directory made
+   for this test alone. *)
+let fresh_table () =
+  "test_codegen_" ^ Digest.to_hex (Digest.string (temp_dir ()))
 
 let keeps_its_programs () =
   let compiled, r = counting () in
@@ -1012,18 +1013,34 @@ let serves_renderers () =
   same_graph p (Codegen.to_program k r');
   equal int ~msg:"compilations" 1 (Atomic.get compiled)
 
-let compiles_once_across_domains () =
-  let compiled, r = counting () in
-  let k = fresh_kernel () in
-  let programs =
-    List.init 4 (fun _ -> Domain.spawn (fun () -> Codegen.to_program k r))
-    |> List.map Domain.join
-  in
-  List.iteri
-    (fun i p ->
-      same_graph ~msg:(Printf.sprintf "domain %d" i) (List.hd programs) p)
-    programs;
-  equal int ~msg:"compilations" 1 (Atomic.get compiled)
+(* Calls of to_program from two domains at once, over two fresh kernels and a
+   renderer whose compiler counts: the model is the kernels made so far, each
+   compiled once, whatever the order of the calls. *)
+type kernels_made = {
+  kernels : Ops.t array;
+  ren : Renderer.t;
+  made : int Atomic.t;
+}
+
+let making = abstract "m"
+
+let makes_each_once =
+  [
+    command "start"
+      (Gen.unit @-> makes making)
+      (fun () -> Array.make 2 false)
+      (fun () ->
+        let made, ren = counting () in
+        { kernels = Array.init 2 (fun _ -> fresh_kernel ()); ren; made });
+    command "to_program"
+      (Gen.int_range 0 1 @-> making ^-> returns unit)
+      (fun i made -> made.(i) <- true)
+      (fun i m -> ignore (Codegen.to_program m.kernels.(i) m.ren));
+    command "compilations"
+      (making ^-> returns int)
+      (fun made -> Array.fold_left (fun n m -> if m then n + 1 else n) 0 made)
+      (fun m -> Atomic.get m.made);
+  ]
 
 (* to_programs over [n] fresh kernels with [parallel] domains, by a compiler of
    several sources at once that records how many each call compiles. *)
@@ -1077,9 +1094,10 @@ let rendering_with render (r : Renderer.t) =
 (* Two kernels that differ in their names alone, which have two keys and one
    compiled text, for a renderer whose compiler is [compile], and the call of
    to_programs that makes them on two domains. Each render waits until both
-   kernels are being rendered, so that each of two workers takes one; a
-   deadline keeps a lone domain from waiting for ever, and the call then fails
-   on the domains that rendered. *)
+   kernels are being rendered, so that each of two workers takes one: it holds
+   the renders, not the compiles that follow them. Where to_programs renders
+   both on one domain, the wait does not end, and the test's time limit names
+   it. *)
 let one_text_twice compile =
   let compiler = Renderer.Compiler.batch compile in
   let base = renderer_for ~compiler clang_target in
@@ -1088,9 +1106,8 @@ let one_text_twice compile =
     Atomic.incr started;
     Mutex.protect lock (fun () ->
         domains := (Domain.self () :> int) :: !domains);
-    let deadline = Unix.gettimeofday () +. 10. in
-    while Atomic.get started < 2 && Unix.gettimeofday () < deadline do
-      Unix.sleepf 0.001
+    while Atomic.get started < 2 do
+      Domain.cpu_relax ()
     done;
     base.render uops
   in
@@ -1221,23 +1238,55 @@ let raising_keeps_nothing () =
   | Some q -> same_graph p q
   | None -> fail "the made program is not returned"
 
-(* The heuristic upcasts a sum of 64 rows of 64 by 4 rows and unrolls it by 4,
-   and NOOPT keeps it from both; the kernel is renamed so that no other test
-   compiles it. *)
-let separates_settings () =
-  let sum = kernel_of "sum_clang" in
-  let k = Ops.replace sum ~arg:(Kernel (Ops.kernel_info ~name:"settings" ())) in
-  let optimised = Codegen.to_program k clang in
-  let unoptimised =
-    Setting.context
-      [ B (Setting.noopt, true) ]
-      (fun () -> Codegen.to_program k clang)
+(* A kernel a domain is making, its compile held until to_programs on this
+   domain has compiled the kernel again: the compiler tags each binary with its
+   call's number. *)
+let keeps_the_first_made () =
+  let calls = Atomic.make 0 and again = Atomic.make false in
+  let compiler =
+    Renderer.Compiler.v (fun src ->
+        let call = Atomic.fetch_and_add calls 1 + 1 in
+        if call = 1 then
+          while not (Atomic.get again) do
+            Domain.cpu_relax ()
+          done
+        else Atomic.set again true;
+        string_of_int call ^ src)
   in
-  let applied p = (kernel_info (Ops.nth p 0)).applied_opts in
-  let up axis = Opt.Split { axis; amount = 4; target = Upcast; top = false } in
-  equal (list Kernel_opts.opt) ~msg:"with the heuristic" [ up 0; up 2 ]
-    (applied optimised);
-  equal (list Kernel_opts.opt) ~msg:"under NOOPT" [] (applied unoptimised)
+  let r = renderer_for ~compiler clang_target and k = fresh_kernel () in
+  let making = Domain.spawn (fun () -> Codegen.to_program k r) in
+  while Atomic.get calls = 0 do
+    Domain.cpu_relax ()
+  done;
+  Setting.context
+    [ B (Setting.parallel, 1) ]
+    (fun () -> Codegen.to_programs [ (k, r) ]);
+  let first = Domain.join making in
+  equal int ~msg:"compilations" 2 (Atomic.get calls);
+  equal char ~msg:"the call that made the first" '1' (Uops.binary_of first).[0];
+  equal string ~msg:"the binary kept" (Uops.binary_of first)
+    (Uops.binary_of (require_some (Codegen.read k r)))
+
+(* Kernels whose programs are kept: to_programs finds them all on the calling
+   domain. *)
+let spawns_no_domain () =
+  let ks = List.init 3 (fun _ -> fresh_kernel ()) in
+  List.iter (fun k -> ignore (Codegen.to_program k clang)) ks;
+  let before = Worker.spawns () in
+  Setting.context
+    [ B (Setting.parallel, 4) ]
+    (fun () -> Codegen.to_programs (List.map (fun k -> (k, clang)) ks));
+  equal int ~msg:"domains spawned" before (Worker.spawns ())
+
+(* Three kernels asking for beams of widths 1, 2 and 3, made with a beam search
+   that records the widths it is asked for. *)
+let beams_in_order () =
+  let asked, beam = recording () in
+  let ks = List.map (fun w -> asking ~beam:w (fresh_kernel ())) [ 1; 2; 3 ] in
+  Setting.context
+    [ B (Setting.parallel, 4) ]
+    (fun () -> Codegen.to_programs ~beam (List.map (fun k -> (k, clang)) ks));
+  equal (list int) [ 1; 2; 3 ] (List.rev !asked)
 
 (* Every setting a program depends on keeps a program made under another value
    from being returned: the program is made, and compiled, again. Among them, a
@@ -1252,20 +1301,10 @@ let separates setting () =
   ignore (Setting.context [ setting ] (fun () -> Codegen.to_program k r));
   equal int ~msg:"compilations" 2 (Atomic.get compiled)
 
-(* The source of the program [prg]. *)
-let source prg =
-  List.find_map
-    (fun u ->
-      match (Ops.op u, Ops.arg u) with
-      | Source, String text -> Some text
-      | _ -> None)
-    (Ops.toposort ~calls:Enter prg)
-  |> require_some
-
-(* Kernels that read a buffer at [r0 + r1], at [r1 + r0], or at [r0 + 2 r1]
-   that one does not, and add a fresh constant. Two kernels share a key only
-   where they render one source: the two orders of the commutative sum share
-   both, and one program, made once; the other index differs in both. *)
+(* Kernels that read a buffer at [r0 + r1], at [r1 + r0], or at [r0 + 2 r1] that
+   one does not, and add a fresh constant. Two kernels share a key only where
+   they render one source: the two orders of the commutative sum share both, and
+   one program, made once; the other index differs in both. *)
 let serves_commuted_index () =
   let compiled, r = counting () in
   let value = Float.of_int (Atomic.fetch_and_add fresh 1) in
@@ -1332,21 +1371,6 @@ let separates_compilers_without_ccache () =
                (renderer_for ~compiler:(compiler options) clang_target)))
         [ "-O1"; "-O2" ]);
   equal int ~msg:"compilations" 2 (Atomic.get compiled)
-
-(* The compiler rejects its first source and accepts the next. *)
-let makes_anew_after_a_failure () =
-  let calls = Atomic.make 0 in
-  let compiler =
-    Renderer.Compiler.v (fun src ->
-        if Atomic.fetch_and_add calls 1 = 0 then
-          raise (Renderer.Compiler.Compile_error "once")
-        else src)
-  in
-  let r = renderer_for ~compiler clang_target and k = fresh_kernel () in
-  raises (Renderer.Compiler.Compile_error "once") (fun () ->
-      Codegen.to_program k r);
-  ignore (Codegen.to_program k r);
-  equal int ~msg:"compilations" 2 (Atomic.get calls)
 
 (* [read] waits for no program being made: a compiler that starts compiling,
    then holds the compilation, and with it the program's entry, until [read]
@@ -1417,9 +1441,7 @@ let gpu_extents_keep_the_binary () =
    named apart, compile once. *)
 let gpu_buffer_sizes_compile_once () =
   let compiled = Atomic.make 0 in
-  let table =
-    Printf.sprintf "test_codegen_buffer_sizes_%.6f" (Unix.gettimeofday ())
-  in
+  let table = fresh_table () in
   let compiler =
     Renderer.Compiler.v ~cachekey:(fun () -> table) (fun src ->
         Atomic.incr compiled;
@@ -1516,9 +1538,7 @@ let host_extents_share_a_binary () =
    kept: the second finds the first's. *)
 let compiles_once_per_source () =
   let compiled = Atomic.make 0 in
-  let table =
-    Printf.sprintf "test_codegen_one_binary_%.6f" (Unix.gettimeofday ())
-  in
+  let table = fresh_table () in
   let compiler =
     Renderer.Compiler.v ~cachekey:(fun () -> table) (fun src ->
         Atomic.incr compiled;
@@ -1551,22 +1571,17 @@ let compiled code = Uops.binary_of (Codegen.to_program (coded code) clang)
    backslash before C++17) join or end comments before C reads them. *)
 let apart =
   [
-    ("a line comment holding a block comment's opener",
-     "// /*\n{0}[0] = HOLE; /* */");
-    ("a string holding a block comment's opener",
-     "(void)\"/*\"; {0}[0] = HOLE; /* */");
-    ("a raw string holding a quote",
-     "(void)R\"x(\"/*)x\"; {0}[0] = HOLE; /* */");
-    ("a splice opening a line comment",
-     "/\\\n/ see /*\n{0}[0] = HOLE;\n/* 4 */");
-    ("a splice closing a block comment",
-     "/* a *\\\n/ {0}[0] = HOLE; /* b */");
-    ("a backslash, a blank and a newline after a line comment",
-     "// a \\ \n/*\n{0}[0] = HOLE;\n/* 4 */");
-    ("a backslash continuing a line comment",
-     "// a \\\n{0}[0] = HOLE; /* */");
-    ("a trigraph in a string",
-     "{0}[0] = sizeof(\"??/\" /* HOLE */ \");");
+    ( "a line comment holding a block comment's opener",
+      "// /*\n{0}[0] = HOLE; /* */" );
+    ( "a string holding a block comment's opener",
+      "(void)\"/*\"; {0}[0] = HOLE; /* */" );
+    ("a raw string holding a quote", "(void)R\"x(\"/*)x\"; {0}[0] = HOLE; /* */");
+    ("a splice opening a line comment", "/\\\n/ see /*\n{0}[0] = HOLE;\n/* 4 */");
+    ("a splice closing a block comment", "/* a *\\\n/ {0}[0] = HOLE; /* b */");
+    ( "a backslash, a blank and a newline after a line comment",
+      "// a \\ \n/*\n{0}[0] = HOLE;\n/* 4 */" );
+    ("a backslash continuing a line comment", "// a \\\n{0}[0] = HOLE; /* */");
+    ("a trigraph in a string", "{0}[0] = sizeof(\"??/\" /* HOLE */ \");");
   ]
 
 (* [template] with each [HOLE] written [v]. *)
@@ -1630,8 +1645,9 @@ let caching =
       test "read waits for no program being made" read_waits_for_none;
       test "a second call with an equal kernel compiles nothing"
         keeps_its_programs;
-      test "calls from several domains at once make one program, compiled once"
-        compiles_once_across_domains;
+      stateful ~count:16 ~steps:6 ~domains:2
+        "calls from two domains at once make each program once, compiled once"
+        makes_each_once;
       test "a call that raises keeps nothing, and the next makes the program"
         raising_keeps_nothing;
       test
@@ -1646,8 +1662,17 @@ let caching =
         shared_text_raises;
       test "to_programs after a call that raised makes the rest"
         remakes_after_raise;
-      test "a program made under one setting is not returned under another"
-        separates_settings;
+      test "to_programs over kernels whose programs are kept spawns no domain"
+        spawns_no_domain;
+      test
+        "to_programs makes again a kernel to_program is making on another \
+         domain, and keeps to_program's"
+        keeps_the_first_made;
+      test
+        "to_programs makes kernels that ask for a beam search in turn, in order"
+        beams_in_order;
+      test "read raises Invalid_argument on a node that is no kernel" (fun () ->
+          rejects (fun () -> Codegen.read (Ops.int 1) clang));
       group "a program is made again under another value of"
         (List.map
            (fun (name, setting) -> test name (separates setting))
@@ -1677,18 +1702,21 @@ let caching =
         separates_targets;
       test "two renderers of one target make one program" serves_renderers;
       test
-        "kernels share a key where they render one source, as a sum of \
-         ranges in either order does"
+        "kernels share a key where they render one source, as a sum of ranges \
+         in either order does"
         serves_commuted_index;
-      test "a failed compilation is not kept: the next call compiles anew"
-        makes_anew_after_a_failure;
     ]
 
 (* Linearizing *)
 
+(* Drawn from every recorded kernel that compiles, with one that packs its
+   arguments, a split host kernel and one on tensor cores as examples. *)
 let completes_linearize =
-  let rows = List.filter (fun row -> compiles row && by_default row) rows in
-  prop ~count:20 "compile completes linearize into the program to_program makes"
+  let rows = List.filter compiles rows in
+  prop ~count:20
+    ~examples:
+      (List.map row_named [ "add_metal"; "conv_clang"; "matmul_tc_cuda" ])
+    "compile completes linearize into the program to_program makes"
     Gen.(
       with_pp
         (fun ppf row -> Format.pp_print_string ppf (row "name"))
@@ -1698,8 +1726,58 @@ let completes_linearize =
           let k = kernel row and ren = renderer_of_row row in
           let lin = Codegen.linearize k ren in
           let prg = Codegen.to_program k ren in
+          cover "packed arguments" ren.packed_args;
+          cover "a split host kernel"
+            (Option.is_some (kernel_info (Ops.nth prg 0)).split);
+          cover "tensor cores"
+            (List.exists
+               (fun u -> Op.equal (Ops.op u) Wmma)
+               (Ops.src (Ops.nth prg 1)));
           same_graph ~msg:"its first two" (first 2 prg) lin;
           same_graph prg (Codegen.compile lin ren)))
+
+(* A kernel optimised by hand, as a search optimises its candidates: the
+   scheduler of its prepared kernel with [upcast4] applied. *)
+let optimised_by_hand k ren =
+  let s = Postrange.Scheduler.v (Codegen.prepared k) ren in
+  Postrange.Scheduler.convert_loop_to_global s;
+  ignore (Result.get_ok (Postrange.Scheduler.apply_opt s upcast4));
+  Postrange.Scheduler.get_optimized_ast s
+
+let linearizes_as_listed () =
+  let k = fresh_kernel () in
+  same_graph
+    (first 2
+       (Codegen.to_program (asking ~opts_to_apply:[ upcast4 ] ~beam:0 k) clang))
+    (Codegen.linearize ~optimize:true (optimised_by_hand k clang) clang)
+
+(* Under ASSERT_COMPILE, compile still compiles, and its binary is not kept in
+   its compiler's table. The compiler returns the text it compiles, so the
+   binary is that text, the key [kept] looks up; the binary compile_cached then
+   keeps, [kept] finds. *)
+let compile_keeps_no_binary () =
+  let compiled = Atomic.make 0 in
+  let table = fresh_table () in
+  let compiler =
+    Renderer.Compiler.v
+      ~cachekey:(fun () -> table)
+      (fun src ->
+        Atomic.incr compiled;
+        src)
+  in
+  let r = renderer_for ~compiler clang_target in
+  let lin = Codegen.linearize (fresh_kernel ()) r in
+  let p =
+    Setting.context
+      [ B (Setting.assert_compile, true) ]
+      (fun () -> Codegen.compile lin r)
+  in
+  let text = Uops.binary_of p in
+  equal int ~msg:"compilations" 1 (Atomic.get compiled);
+  is_none ~msg:"the binary kept" (Renderer.Compiler.kept compiler text);
+  ignore (Renderer.Compiler.compile_cached compiler text);
+  is_some ~msg:"the binary compile_cached keeps"
+    (Renderer.Compiler.kept compiler text)
 
 let linearizing =
   group "linearize and compile"
@@ -1722,6 +1800,12 @@ let linearizing =
       test "to_program refuses a program" (fun () ->
           let lin = Codegen.linearize (fresh_kernel ()) clang in
           rejects (fun () -> Codegen.to_program lin clang));
+      test
+        "linearize of a kernel optimised by hand is the program of the kernel \
+         that lists its optimisations"
+        linearizes_as_listed;
+      test "compile under ASSERT_COMPILE compiles and keeps no binary"
+        compile_keeps_no_binary;
     ]
 
 (* Programs on disk
@@ -1738,6 +1822,31 @@ let kept = renderer_for ~compiler:(bytes_in "test_codegen_bytes") clang_target
 let printed ?(kernel = add_kernel) ren () =
   print_string (Graph.to_string (Codegen.to_program (Lazy.force kernel) ren))
 
+(* [text], a program's graph, with its packed arguments' parameter naming a
+   device. *)
+let args = {|ParamArg(slot=0, dtype=dtypes.u8, name="args")|}
+
+let named_args =
+  {|ParamArg(slot=0, dtype=dtypes.u8, name="args", device="CPU")|}
+
+let name_device text =
+  let n = String.length args in
+  let rec at i = if String.sub text i n = args then i else at (i + 1) in
+  let i = at 0 in
+  String.sub text 0 i ^ named_args
+  ^ String.sub text (i + n) (String.length text - i - n)
+
+(* Replaces the entry of add_clang's program for [kept] with its program naming
+   a device, and prints it. *)
+let plant () =
+  let key = Codegen.program_key (Lazy.force add_kernel) kept in
+  match Helpers.Diskcache.get ~table:"to_program" key with
+  | None -> failwith "no program is kept"
+  | Some text ->
+      let named = name_device text in
+      Helpers.Diskcache.put ~table:"to_program" key named;
+      print_string named
+
 let parts =
   [
     ("program", printed kept);
@@ -1750,6 +1859,12 @@ let parts =
     ( "other compiler",
       printed
         (renderer_for ~compiler:(bytes_in "test_codegen_other") clang_target) );
+    ( "beam",
+      fun () ->
+        let _, beam = recording () in
+        let k = asking ~beam:1 (Lazy.force add_kernel) in
+        print_string (Graph.to_string (Codegen.to_program ~beam k kept)) );
+    ("name a device", plant);
   ]
 
 let made ?env ?(part = "program") db = Disk_cache.child ?env ~cachedb:db part
@@ -1757,7 +1872,7 @@ let made ?env ?(part = "program") db = Disk_cache.child ?env ~cachedb:db part
 let read_from_disk ?(env = []) ?part db =
   made ~env:(("ASSERT_COMPILE", "1") :: env) ?part db
 
-let compiled = Error "tried to compile with ASSERT_COMPILE set"
+let compile_refused = Error "tried to compile with ASSERT_COMPILE set"
 let outcome = Disk_cache.outcome
 
 let the_program () =
@@ -1792,7 +1907,7 @@ let takes_its_binary () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
   List.iter Sys.remove (Disk_cache.entries ~table:"test_codegen_bytes" db);
-  equal outcome ~msg:"binaries removed" compiled (read_from_disk db);
+  equal outcome ~msg:"binaries removed" compile_refused (read_from_disk db);
   equal outcome ~msg:"made again" (the_program ()) (made db);
   equal outcome ~msg:"then read back" (the_program ()) (read_from_disk db)
 
@@ -1838,12 +1953,41 @@ let read_reads_back () =
 let keeps_no_uncached () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made ~part:"uncached" db);
-  equal outcome compiled (read_from_disk ~part:"uncached" db)
+  equal outcome compile_refused (read_from_disk ~part:"uncached" db)
 
 let other_compiler () =
   let db = Disk_cache.fresh () in
   equal outcome ~msg:"made" (the_program ()) (made db);
-  equal outcome compiled (read_from_disk ~part:"other compiler" db)
+  equal outcome compile_refused (read_from_disk ~part:"other compiler" db)
+
+(* A child keeps the program in place of add_clang's, its packed arguments'
+   parameter naming a device: Spec.program accepts the program made and refuses
+   this one. A child under SPEC=1 reads it back as it is. *)
+let reads_back_unchecked () =
+  let db = Disk_cache.fresh () in
+  equal outcome ~msg:"made" (the_program ()) (made db);
+  let planted =
+    match made ~part:"name a device" db with
+    | Ok text -> Graph.of_string text
+    | Error err -> failf "the child failed: %s" err
+  in
+  let made = Codegen.to_program (Lazy.force add_kernel) kept in
+  Spec.type_verify ~calls:Enter Spec.program (Ops.nth made 0);
+  raises_match (Exn.invalid_arg ?sub:None) (fun () ->
+      Spec.type_verify ~calls:Enter Spec.program (Ops.nth planted 0));
+  match read_from_disk ~env:[ ("SPEC", "1") ] db with
+  | Ok out -> contains ~sub:named_args out
+  | Error err -> failf "the child failed: %s" err
+
+(* A child makes the program of add_clang's kernel asking for a beam search,
+   with a search that upcasts. *)
+let keeps_no_searched () =
+  let db = Disk_cache.fresh () in
+  (match made ~part:"beam" db with
+  | Ok _ -> ()
+  | Error err -> failf "the child failed: %s" err);
+  equal (list string) ~msg:"programs kept" []
+    (Disk_cache.entries ~table:"to_program" db)
 
 let races () =
   let db = Disk_cache.fresh () in
@@ -1904,6 +2048,10 @@ let on_disk =
         ignores_other_builds;
       test "a program of a compiler that caches no binaries is not kept"
         keeps_no_uncached;
+      test "a program of a kernel that asks for a beam search is not kept"
+        keeps_no_searched;
+      test "a program read back is not checked against Spec.program again"
+        reads_back_unchecked;
       test "a program is not read back for a compiler of another table"
         other_compiler;
       test "processes making one program at once all get it" races;
@@ -1954,7 +2102,7 @@ let counts_its_instructions row =
           (Renderer.Estimates.of_uops ~ignore_indexing:true uops)))
     (estimates row)
 
-let lowers_the_same_twice row = same_graph (lowered row) (lowered row)
+let lowers_the_same_twice row = same_graph (lower row) (lower row)
 
 (* A kernel that stores the sum of ten int variables: on arm64, the ones past
    the eighth argument register go on the stack at 4 bytes each. *)
@@ -2097,6 +2245,69 @@ let uncommented src =
   from 0;
   Buffer.contents b
 
+(* [sum_of 1], a split host program over 1024 elements, launched as rig's host
+   launches it over twice its loop's trips in four groups: the calls of the last
+   two groups start at or past the loop's end, which their end is cut to, and
+   run nothing, so the output past element 1023 keeps its sentinel. The
+   arguments lie as [Device.Tiny_elf.layout] lays them out. *)
+let runs_its_blocks () =
+  let p = Codegen.to_program (sum_of 1) (Lazy.force host) and sentinel = -7. in
+  let info = match Ops.arg p with Program info -> info | _ -> assert false in
+  let split = require_some (kernel_info (Ops.nth p 0)).split in
+  let trips =
+    match split.iterations with Int n -> n | Sym _ -> assert false
+  in
+  let layout = Device.Tiny_elf.layout info.params in
+  let size =
+    List.fold_left (fun n (at, dt) -> max n (at + Dtype.itemsize dt)) 0 layout
+  in
+  let hi =
+    List.find_map
+      (fun (u, (at, _)) ->
+        match Ops.arg u with
+        | Param q when q.slot = split.hi -> Some at
+        | _ -> None)
+      (List.combine info.params layout)
+    |> require_some
+  in
+  let params = Bytes.make size '\000' in
+  Bytes.set_int32_le params hi (Int32.of_int trips);
+  (* Buffers of twice the loop's elements, so that a call that ran past its end
+     would write the sentinels and touch no memory past them. *)
+  let n = 2 * 1024 in
+  let out = Bigarray.(Array1.init float32 c_layout n (fun _ -> sentinel))
+  and x =
+    Bigarray.(
+      Array1.init float32 c_layout n (fun i ->
+          if i < n / 2 then Float.of_int i +. 0.5 else 0.))
+  in
+  (match Rig.Image.load Rig.host (Uops.binary_of p) with
+  | Error why -> fail why
+  | Ok image ->
+      let fn = require_some (Rig.Image.resolve image Codegen.symbol) in
+      let s =
+        Rig.Submission.(
+          make Rig.host
+            [| launch ~refs:[| write 0 ~at:0; read 1 ~at:8 |] fn ~params:size |])
+      in
+      let args =
+        {
+          Rig.Submission.groups = (4, 1, 1);
+          threads = (trips / 2, 1, 1);
+          shared = 0;
+          params;
+        }
+      in
+      ignore
+        (Rig.submit s
+           ~buffers:[| Rig.Buffer.of_bigarray out; Rig.Buffer.of_bigarray x |]
+           ~args:[| args |]
+          : Rig.Point.t));
+  equal (array float_exact)
+    (Array.init n (fun i ->
+         if i < n / 2 then Float.of_int i +. 0.5 else sentinel))
+    (Array.init n (Bigarray.Array1.get out))
+
 let scalars_of (p : Ops.program_info) =
   List.filter (fun u -> Ops.addrspace u = Some Alu) p.params
 
@@ -2120,8 +2331,10 @@ let programs =
           equal (list int) [ 1 ] (variable_slots prg));
       group "the estimates count the instructions, leaving out index arithmetic"
         (per_row ~only:compiles counts_its_instructions);
-      group "full_rewrite_to_sink lowers a kernel the same each time"
-        (per_row ~only:on_clang ~default:sample lowers_the_same_twice);
+      cases "full_rewrite_to_sink lowers a kernel the same each time"
+        ~id:(fun row -> row "name")
+        (List.filter on_clang rows)
+        lowers_the_same_twice;
       test
         "a device program's binary is its source compiled by the renderer's \
          compiler, its comments dropped, its kernel named symbol and its \
@@ -2132,26 +2345,10 @@ let programs =
                (renamed "args_24" ~into:"tolk_arg0"
                   (renamed "E_2_32_4" (source p))))
             (Uops.binary_of p));
-      test "a host program's binary holds rig's host entry after the kernel"
-        (fun () ->
-          let p = Codegen.to_program (Lazy.force add_kernel) clang in
-          equal string
-            (String.concat "\n"
-               [
-                 "#define tolk_kernel tolk_kernel_";
-                 renamed "args_40" ~into:"tolk_arg0"
-                   (renamed "E_16_16" (source p));
-                 "#undef tolk_kernel";
-                 "void tolk_kernel(const void *p, long long first, long long \
-                  end) { unsigned char a[32] __attribute__((aligned(8))); \
-                  __builtin_memcpy_inline(a, p, sizeof a); int hi; \
-                  __builtin_memcpy_inline(&hi, a + 28, sizeof hi); if (end > \
-                  hi) end = hi; if (first < end) { int lo = first; hi = end; \
-                  __builtin_memcpy_inline(a + 24, &lo, sizeof lo); \
-                  __builtin_memcpy_inline(a + 28, &hi, sizeof hi); \
-                  tolk_kernel_(a); } }";
-               ])
-            (Uops.binary_of p));
+      test
+        "a split host program's calls run the trips of its loop they cover, \
+         none past its end"
+        runs_its_blocks;
       test
         "a host program runs as a launch of rig's host, with ten scalars past \
          the argument registers"
@@ -2174,7 +2371,7 @@ let programs =
             (program_info p));
     ]
 
-(* tinygrad's claims on programs *)
+(* Claims on the programs of recorded kernels *)
 
 let instructions row = Ops.src (Ops.nth (program row) 1)
 let is op u = Op.equal (Ops.op u) op
@@ -2212,13 +2409,15 @@ let stages_through_locals row =
   | first :: last :: _ ->
       equal int ~msg:"lanes of the local store" 4
         (Shape.max_numel (Ops.nth first 1));
-      is_true ~msg:"the first store is to local memory"
-        (List.exists (in_space Local) (Ops.toposort ~calls:Enter first));
+      satisfies ~claim:"the first store is to local memory" Uops.uop
+        (fun u -> List.exists (in_space Local) (Ops.toposort ~calls:Enter u))
+        first;
       equal int ~msg:"lanes of the global store" 1
         (Shape.max_numel (Ops.nth last 1));
       equal Dtypes.dtype Float32 (Ops.dtype (Ops.nth last 1));
-      is_true ~msg:"the last store is to a parameter"
-        (List.exists (is Param) (Ops.toposort ~calls:Enter last))
+      satisfies ~claim:"the last store is to a parameter" Uops.uop
+        (fun u -> List.exists (is Param) (Ops.toposort ~calls:Enter u))
+        last
   | stores ->
       failf "a local then a global store, not %d stores" (List.length stores)
 
@@ -2260,8 +2459,10 @@ let arange_without_phis row =
     | Some i -> List.filteri (fun j _ -> j < i) uops
     | None -> uops
   in
-  is_false ~msg:"both hardware indices and loops"
-    (List.exists (is Special) uops && List.exists (is Range) uops);
+  satisfies ~claim:"hardware indices or loops, not both" (list Uops.uop)
+    (fun uops ->
+      not (List.exists (is Special) uops && List.exists (is Range) uops))
+    uops;
   equal int ~msg:"stores to registers" 0
     (List.length
        (List.filter (fun u -> is Store u && in_space Reg (Ops.nth u 0)) uops));
@@ -2280,12 +2481,12 @@ let estimated_ops row =
   | _ -> invalid_arg "a program's estimates count its operations"
 
 let claims =
-  group "tinygrad's claims on programs"
+  group "the programs of recorded kernels"
     [
       claim "load_dedup_upcast" "loads each element at most once" (fun row ->
           let loads = count Load (instructions row) in
           at_most 4 "loads" loads;
-          is_true ~msg:"a load" (loads >= 1));
+          greater ~msg:"loads" int ~than:0 loads);
       claim "zero_fold_upcast" "stacks two values without arithmetic"
         (fun row -> equal (list Uops.uop) [] (alu (instructions row)));
       claim "stack_select_noopt"
@@ -2346,7 +2547,7 @@ let claims =
                (fun u -> match Ops.arg u with Const c -> Some c | _ -> None)
                nodes));
       claim "long" "computes a long in 64 bits" (fun row ->
-          is_true ~msg:"a 64-bit operation" (wide_alu row > 0));
+          greater ~msg:"64-bit operations" int ~than:0 (wide_alu row));
       claim "fancy_index" "indexes without 64-bit arithmetic" (fun row ->
           equal int 0 (wide_alu row));
       claim "cat" "concatenates in 20 operations an element" (fun row ->
@@ -2371,7 +2572,7 @@ let claims =
           equal string "custom" (kernel_info (Ops.nth p 0)).name);
     ]
 
-(* tinygrad's claims on lowered kernels *)
+(* Claims on the lowered recorded kernels *)
 
 let lowered_nodes row = Ops.toposort ~calls:Enter (lowered row)
 
@@ -2385,7 +2586,10 @@ let ends_with_a_barrier ending row =
   let barrier = Ops.nth e 0 in
   equal (Testable.make ~pp:Op.pp ~equal:Op.equal) Op.Barrier (Ops.op barrier);
   equal int ~msg:"sources of the barrier" 1 (List.length (Ops.src barrier));
-  is_false ~msg:"a barrier around a barrier" (is Barrier (Ops.nth barrier 0))
+  not_equal
+    (Testable.make ~pp:Op.pp ~equal:Op.equal)
+    ~msg:"what the barrier waits on" Op.Barrier
+    (Ops.op (Ops.nth barrier 0))
 
 let slots_of op nodes =
   List.filter_map
@@ -2410,7 +2614,7 @@ let stored_constants row =
     (lowered_nodes row)
 
 let lowering_claims =
-  group "tinygrad's claims on lowered kernels"
+  group "the lowered recorded kernels"
     [
       claim "shared_loop_barrier"
         "a loop that reads the local memory it writes ends with a barrier"
@@ -2422,7 +2626,10 @@ let lowering_claims =
           equal Uops.uop ~msg:"the condition" (Shape.param 2 Bool) (Ops.nth e 2));
       claim "shared_backedge_two_buffers"
         "a loop that reads another local buffer needs no barrier" (fun row ->
-          is_false (is Barrier (Ops.nth (one_ending Backedge row) 0)));
+          not_equal
+            (Testable.make ~pp:Op.pp ~equal:Op.equal)
+            ~msg:"what the loop's end waits on" Op.Barrier
+            (Ops.op (Ops.nth (one_ending Backedge row) 0)));
       claim "shared_backedge_barrier_kept"
         "a barrier already there is kept alone"
         (ends_with_a_barrier Backedge);
@@ -2473,8 +2680,8 @@ let lowering_claims =
 
 (* Whole graphs *)
 
-(* tinygrad's tests lower a sink of values with a renderer that writes nothing,
-   without checking the specification. *)
+(* A sink of values lowered with a renderer that writes nothing, without
+   checking the specification. *)
 let plain = Renderer.v (target "" "" "")
 
 let full_rewrite ?(ren = plain) uops =
@@ -2493,11 +2700,13 @@ let const_value u =
   | Const c -> c
   | _ -> failf "a constant, not %a" Op.pp (Ops.op u)
 
-let floats xs = Shape.stack (List.map (Ops.float ~dtype:Float32) xs)
-let ints ?(dtype = Dtype.Int32) xs = Shape.stack (List.map (Ops.int ~dtype) xs)
+let float_stack xs = Shape.stack (List.map (Ops.float ~dtype:Float32) xs)
+
+let int_stack ?(dtype = Dtype.Int32) xs =
+  Shape.stack (List.map (Ops.int ~dtype) xs)
 
 let whole_graphs =
-  let v = floats [ 1.; 2.; 3.; 4. ] in
+  let v = float_stack [ 1.; 2.; 3.; 4. ] in
   group "full_rewrite_to_sink folds whole graphs"
     [
       test "log2 of -1 is NaN and the reciprocal of 0 is infinity" (fun () ->
@@ -2527,39 +2736,40 @@ let whole_graphs =
             (apply_rewrite
                (Shape.stack (List.init 4 (fun i -> Ops.index v [ Ops.int i ])))));
       test "a comparison of lanes keeps the lanes apart" (fun () ->
+          (* [lidx + 256 k < 2] holds only where [k] is 0, as [lidx] < 32 *)
           let lidx = Ops.special (Int 32) "lidx0" in
           let lhs =
             Ops.add
               (Shape.stack [ lidx; lidx; lidx; lidx ])
-              (ints ~dtype:Weak_int [ 0; 256; 512; 768 ])
+              (int_stack ~dtype:Weak_int [ 0; 256; 512; 768 ])
           in
-          let folded =
-            apply_rewrite (Ops.lt lhs (ints ~dtype:Weak_int [ 2; 2; 2; 2 ]))
-          in
-          if is Stack folded then
-            match Ops.src folded with
-            | first :: rest ->
-                is_false ~msg:"every lane is the first"
-                  (List.for_all (Ops.equal first) rest)
-            | [] -> fail "a stack of four lanes");
+          let no = Ops.bool false in
+          equal Uops.uop
+            (apply_rewrite
+               (Shape.stack
+                  [ Ops.lt lidx (Ops.int ~dtype:Weak_int 2); no; no; no ]))
+            (apply_rewrite
+               (Ops.lt lhs (int_stack ~dtype:Weak_int [ 2; 2; 2; 2 ]))));
       test "a bitcast of constants folds lane by lane" (fun () ->
           let bits =
-            full_rewrite [ Ops.bitcast (ints [ -1; -0x80000000; 75 ]) Uint32 ]
+            full_rewrite
+              [ Ops.bitcast (int_stack [ -1; -0x80000000; 75 ]) Uint32 ]
           in
           let expected =
-            full_rewrite [ ints ~dtype:Uint32 [ 0xffffffff; 0x80000000; 75 ] ]
+            full_rewrite
+              [ int_stack ~dtype:Uint32 [ 0xffffffff; 0x80000000; 75 ] ]
           in
           equal (list Uops.uop) (Ops.src expected) (Ops.src bits));
       test "a cast of constants folds lane by lane" (fun () ->
           equal (list Uops.uop)
-            (Ops.src (full_rewrite [ floats [ 1.; 2. ] ]))
-            (Ops.src (full_rewrite [ Ops.cast (ints [ 1; 2 ]) Float32 ])));
+            (Ops.src (full_rewrite [ float_stack [ 1.; 2. ] ]))
+            (Ops.src (full_rewrite [ Ops.cast (int_stack [ 1; 2 ]) Float32 ])));
     ]
 
 (* Instructions of values *)
 
-(* tinygrad's test helper: the instructions of the kernel that computes [uops],
-   each of their ranges ended, lowered for [ren] without optimising. *)
+(* The instructions of the kernel that computes [uops], each of their ranges
+   ended, lowered for [ren] without optimising. *)
 let instructions_of ?(ren = clang) uops =
   let sink = Ops.sink uops in
   let sink = Ops.end_ sink (Ops.Nodes.to_list (Ops.ranges sink)) in
@@ -2595,7 +2805,7 @@ let between_if uops =
 let gated_store_inside_its_if stores =
   match between_if (instructions_of ~ren:(metal ()) stores) with
   | [ st ] ->
-      is_true ~msg:"a store" (is Store st);
+      equal op ~msg:"the instruction inside the if" Op.Store (Ops.op st);
       equal int ~msg:"sources of the store" 2 (List.length (Ops.src st))
   | inside ->
       failf "one store inside the if, not %d instructions" (List.length inside)
@@ -2613,7 +2823,7 @@ let loaded ?(slot = 0) ?(size = 3) dt i =
 
 let fast_idiv = [ Setting.B (Setting.disable_fast_idiv, false) ]
 
-(* Clang's operations without a maximum, as tinygrad's base C renderer. *)
+(* Clang's operations without a maximum, as a C renderer that has none. *)
 let without_max =
   Renderer.v
     ~code_for_op:
@@ -2669,8 +2879,7 @@ let divisions =
           lacks Truncmod uops);
       test "a dividend that can wrap keeps the correction of a floor division"
         (fun () ->
-          (* tinygrad's test divides max x 0 + 1, which is negative at the
-             greatest int, where tolk's int32 wraps. *)
+          (* max x 0 + 1, negative at the greatest int, where int32 wraps *)
           let x =
             Ops.add (Ops.maximum (loaded Int32 2) (Ops.int 0)) (Ops.int 1)
           in
@@ -2776,8 +2985,8 @@ let divisions =
 
 (* Range shrinking *)
 
-(* tinygrad's test: the ranges left after lowering [uops] without optimising,
-   and the constant a range of [n] iterations ends at once lowered. *)
+(* The ranges left after lowering [uops] without optimising, and the constant a
+   range of [n] iterations ends at once lowered. *)
 let ranges_left uops =
   Setting.context
     [ B (Setting.noopt, true) ]
@@ -3341,7 +3550,7 @@ let selects_codes (dt, arch) =
   let d, r = if arch = "sm_89" then on_cuda () else older_cuda arch in
   let x = Array.init 64 (fun j -> ((j * 37) + 11) mod 256)
   and y = Array.init 64 (fun j -> ((j * 101) + 3) mod 256)
-  and sel = Array.init 64 (fun j -> (j * 7) mod 3) in
+  and sel = Array.init 64 (fun j -> j * 7 mod 3) in
   let prg = compiled_for r (selected_codes dt) in
   let words =
     List.filter
@@ -3352,8 +3561,11 @@ let selects_codes (dt, arch) =
   let codes a = Array.map (fun v -> `Int (Bigint.of_int v)) a in
   let out =
     Run.on d prg
-      [ (1, codes x); (2, codes y);
-        (3, Array.map (fun v -> `Int (Bigint.of_int v)) sel) ]
+      [
+        (1, codes x);
+        (2, codes y);
+        (3, Array.map (fun v -> `Int (Bigint.of_int v)) sel);
+      ]
   in
   equal (list int)
     (List.init 64 (fun j -> if sel.(j) <> 0 then x.(j) else y.(j)))
@@ -3853,23 +4065,21 @@ let tensor_cores_on_cuda =
         ~id:(fun (m, k, n) -> Printf.sprintf "[%d; %d] by [%d; %d]" m k k n)
         [ (16, 16, 16); (64, 64, 64) ]
         mixed_on_cuda;
-      cases "a product of one tile is the exact product"
-        ~id:(Format.asprintf "%a" Dtype.pp) [ Dtype.Float16; Dtype.Bfloat16 ]
-        (fun dt ->
-          product_on_cuda ~opts_to_apply:core (dt, (1, 1, 1), 0));
       cases
         "a product summed in one step of the core, with the splits after it, \
          is the exact product"
         ~id:(Format.asprintf "%a" Dtype.pp) [ Dtype.Float16; Dtype.Bfloat16 ]
         (fun dt -> product_on_cuda (dt, (16, 1, 16), 0));
       prop ~count:24
+        ~examples:
+          [ (Dtype.Float16, (1, 1, 1), 0); (Dtype.Bfloat16, (1, 1, 1), 0) ]
         "a float16 or bfloat16 product of 1 to 4 tiles a side, summed in \
          float32 from 0, is the exact product"
         products_gen covered;
       prop ~count:12
         ~examples:[ (Dtype.Bfloat16, 1, 7); (Dtype.Float16, 3, 11) ]
-        "a product summed in float32 has the same bits whether the core \
-         takes one or two steps of K a trip"
+        "a product summed in float32 has the same bits whether the core takes \
+         one or two steps of K a trip"
         sums_gen sum_bits;
     ]
 
@@ -3978,9 +4188,7 @@ let words_gen =
        [
          (3, Gen.int_range 0 0xffff_ffff);
          (* Quiet and signalling NaNs, infinities, a subnormal and -0. *)
-         ( 1,
-           Gen.of_list [ 0x7fc0_ffc1; 0xff80_7f80; 0x8000_0001; 0x7fbf_ffbf ]
-         );
+         (1, Gen.of_list [ 0x7fc0_ffc1; 0xff80_7f80; 0x8000_0001; 0x7fbf_ffbf ]);
        ])
 
 let bitcast_halves run words =
@@ -4011,8 +4219,9 @@ let tensor_cores_by_hand =
              Run.on_host
                (Codegen.to_program (halves ()) (Lazy.force host))
                [ (1, words_values words) ]));
-      prop ~count:20 "a bitcast of words to bfloat16 lanes takes each word's \
-            low half first, on CUDA"
+      prop ~count:20
+        "a bitcast of words to bfloat16 lanes takes each word's low half \
+         first, on CUDA"
         words_gen
         (bitcast_halves (fun words ->
              let d, r = on_cuda () in
@@ -4163,6 +4372,23 @@ module Fixed = struct
     in
     kernel "product"
       [ Ops.end_ (Ops.end_ (Ops.group stores) [ s ]) [ g; lane ] ]
+
+  (* [neighbours ~guarded:true] under its thread's flag in place of its
+     workgroup's: the loop that holds the barrier may run a different number of
+     trips in each thread of a workgroup. *)
+  let by_thread () =
+    let out = param 0 fixed_n Float32
+    and inp = param 1 fixed_n Float32
+    and flags = param 2 fixed_ls Int32 in
+    let g = workgroup () and l = thread () in
+    let row j = (g * int fixed_ls) + j in
+    let s = guard (ld flags l <> i32 0) in
+    let w =
+      st (local fixed_ls) l (ld (Ops.after inp [ s ]) (row l) * Ops.float 2.)
+    in
+    let back = ld (Ops.after (local fixed_ls) [ w ]) (next l) in
+    kernel "by_thread"
+      [ Ops.end_ (Ops.end_ (st out (row l) back) [ s ]) [ g; l ] ]
 end
 
 let fixed_kernels =
@@ -4212,6 +4438,80 @@ let fixed_threads =
         [ true; false ] neighbours_on_cuda;
     ]
 
+(* Lowering's choices and checks *)
+
+(* The heuristic's optimisations of [k] for [ren], chosen on the kernel that
+   lowering optimises: [k] prepared, its weak output axes made global. *)
+let heuristic_of k ren =
+  let s = Postrange.Scheduler.v (Codegen.prepared k) ren in
+  Postrange.Scheduler.convert_loop_to_global s;
+  Postrange.Scheduler.applied_opts (Heuristic.hand_coded_optimizations s)
+
+let applied u = (kernel_info u).applied_opts
+
+(* A recorded kernel listing no optimisation, named so that no other test makes
+   its program. *)
+let unlisted name row_name =
+  Ops.replace (kernel_of row_name) ~arg:(Kernel (Ops.kernel_info ~name ()))
+
+let takes_the_heuristic () =
+  let k = unlisted "heuristic" "sum_clang" in
+  let chosen = heuristic_of k clang in
+  not_equal (list Kernel_opts.opt) ~msg:"the heuristic's" [] chosen;
+  equal (list Kernel_opts.opt) ~msg:"applied" chosen
+    (applied (Codegen.full_rewrite_to_sink k clang));
+  equal (list Kernel_opts.opt) ~msg:"applied under NOOPT" []
+    (applied
+       (Setting.context
+          [ B (Setting.noopt, true) ]
+          (fun () -> Codegen.full_rewrite_to_sink k clang)))
+
+let buffering_takes_none () =
+  let k = unlisted "buffered" "reg_stage_then_reduce_clang" in
+  not_equal (list Kernel_opts.opt) ~msg:"the heuristic's" []
+    (heuristic_of k clang);
+  equal (list Kernel_opts.opt) ~msg:"applied" []
+    (applied (Codegen.full_rewrite_to_sink k clang))
+
+let prints_at_debug_5 () =
+  let k = fresh_kernel () in
+  let shown () = Render.render_uir (Ops.toposort ~calls:Enter k) in
+  let colourless = [ Setting.B (Setting.no_color, true) ] in
+  let printed = Setting.context colourless shown in
+  ignore
+    (Setting.context
+       (B (Setting.debug, 5) :: colourless)
+       (fun () -> Codegen.full_rewrite_to_sink k clang));
+  contains ~sub:printed (output ())
+
+let sm_89 () = renderer_for (target "CUDA" "CUDA" "sm_89")
+
+let lowering =
+  group "full_rewrite_to_sink"
+    [
+      test
+        "a kernel that lists no optimisation and asks for no beam takes the \
+         heuristic's, or none under NOOPT"
+        takes_the_heuristic;
+      test "a kernel that buffers values takes none of the heuristic's"
+        buffering_takes_none;
+      test "prints the kernel it lowers from DEBUG 5" prints_at_debug_5;
+      test
+        "refuses a barrier it places in a loop whose trips may differ between \
+         a workgroup's threads" (fun () ->
+          raises_match
+            (Exn.invalid_arg ~sub:"kernel by_thread: a barrier runs in loop")
+            (fun () ->
+              Codegen.full_rewrite_to_sink (Fixed.by_thread ()) (sm_89 ())));
+      test
+        "accepts a barrier it places in a loop whose trips are its workgroup's"
+        (fun () ->
+          ignore
+            (Codegen.full_rewrite_to_sink
+               (Fixed.neighbours ~guarded:true)
+               (sm_89 ())));
+    ]
+
 (* Reduces under a uniform gate
 
    [out[i, j]] is the sum, or the maximum, over [k] of [a[i, k] * b[k, j]] where
@@ -4250,9 +4550,10 @@ module Gated = struct
   let f32 x =
     if Dtype.equal (Ops.dtype x) Float32 then x else Ops.cast x Float32
 
-  (* [gated gate ~fl ~i r] is [r] under [gate], read at row [i]. *)
-  let gated gate ~fl ~i r =
-    let count = ld fl (i // int gate_block) in
+  (* [gated gate ~fl ~i r] is [r] under [gate], read at row [i] of blocks of
+     [block] rows. *)
+  let gated ?(block = gate_block) gate ~fl ~i r =
+    let count = ld fl (i // int block) in
     let on = count <> i32 0 in
     let rest = Ops.float ~dtype:Float32 rest_value in
     let none = Shape.const_like r `Invalid in
@@ -4261,23 +4562,23 @@ module Gated = struct
     | Selected -> Ops.where on r rest
     | Rejected -> Ops.where (Ops.eq count (i32 0)) rest r
     | Per_row ->
-        let row = Ops.cast (i % int gate_block) Int32 in
+        let row = Ops.cast (i % int block) Int32 in
         Ops.where (on land (row < count)) r none
 
   let kernel ?opts_to_apply stores =
     Ops.sink ~kernel:(Ops.kernel_info ?opts_to_apply ()) stores
 
-  let product ?opts_to_apply gate ~dt (m, k, n) =
+  let product ?opts_to_apply ?(block = gate_block) gate ~dt (m, k, n) =
     let out = param 0 Stdlib.(m * n) Float32
     and a = param 1 Stdlib.(m * k) dt
     and b = param 2 Stdlib.(k * n) dt
-    and fl = param 3 Stdlib.(m / gate_block) Int32 in
+    and fl = param 3 Stdlib.(m / block) Int32 in
     let i = Ops.range ~axis_type:Weak (Int m) [ 0 ]
     and j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
     let kk = Ops.range ~axis_type:Weak (Int k) [ 2 ] in
     let x = f32 (ld a ((i * int k) + kk)) * f32 (ld b ((kk * int n) + j)) in
     let rop = match gate with Maximum -> Op.Max | _ -> Op.Add in
-    let v = gated gate ~fl ~i (Ops.reduce x rop [ kk ]) in
+    let v = gated ~block gate ~fl ~i (Ops.reduce x rop [ kk ]) in
     let store = Ops.store (Ops.index out [ (i * int n) + j ]) v in
     kernel ?opts_to_apply [ Ops.end_ store [ i; j ] ]
 
@@ -4350,11 +4651,12 @@ module Gated = struct
     kernel ~opts_to_apply:[] [ Ops.end_ store [ i; j ] ]
 end
 
-(* Whether row [i] holds a value under [gate] and the counts [fl]. *)
-let holds gate fl i =
-  let count = fl.(i / gate_block) in
+(* Whether row [i] holds a value under [gate] and the counts [fl] of blocks of
+   [block] rows. *)
+let holds ?(block = gate_block) gate fl i =
+  let count = fl.(i / block) in
   match gate with
-  | Per_row -> count <> 0 && i mod gate_block < count
+  | Per_row -> count <> 0 && i mod block < count
   | Stored | Selected | Rejected | Maximum -> count <> 0
 
 (* [size] of -2, -1, 1 and 2: no product is a zero, whose sign a maximum of
@@ -4363,66 +4665,91 @@ let nonzero seed size =
   let st = Random.State.make [| seed |] in
   Array.init size (fun _ -> [| -2.; -1.; 1.; 2. |].(Random.State.int st 4))
 
-(* [m] rows of [k] {!nonzero}, NaN and infinities in the rows that hold no value
-   under [gate] if [poisoned]. *)
-let gated_rows ?(poisoned = true) gate fl (m, k) seed =
+(* The operands of a product of a shape [(m, k, n)]: [m] rows of [k] {!nonzero}
+   and [k] rows of [n], each of a seed the shape gives. *)
+let operands (m, k, n) = (nonzero (m + k + n) (m * k), nonzero (k + n) (k * n))
+
+(* [a], of rows of [k], with NaN and infinities in the rows that hold no value
+   under [gate] and the counts [fl], which no value read may show. *)
+let poisoned ?block gate fl k a =
   let poison = [| Float.nan; Float.infinity; Float.neg_infinity |] in
   Array.mapi
-    (fun e x ->
-      if (not poisoned) || holds gate fl (e / k) then x else poison.(e mod 3))
-    (nonzero seed (m * k))
+    (fun e x -> if holds ?block gate fl (e / k) then x else poison.(e mod 3))
+    a
 
-(* [out[i, j]] of [gate] over [a] and [b], the sum of [k] products, or their
-   maximum, from the reduce's identity. *)
-let gated_expected gate fl (m, k, n) a b =
-  Array.init (m * n) (fun e ->
-      let i = e / n and j = e mod n in
-      let reduce f identity =
-        let acc = ref identity in
-        for q = 0 to k - 1 do
-          acc := f !acc (a.((i * k) + q) *. b.((q * n) + j))
-        done;
-        `Float !acc
-      in
-      match gate with
-      | (Selected | Rejected) when not (holds gate fl i) -> `Float rest_value
-      | _ when not (holds gate fl i) -> `Float sentinel
-      | Maximum -> reduce Float.max Float.neg_infinity
-      | _ -> reduce ( +. ) 0.)
+let reduce_of = function Maximum -> Op.Max | _ -> Op.Add
+
+(* Each element of the product of [a] by [b], of [shape], reduced by [rop] from
+   its identity: their sum, or their maximum. The operands are whole numbers of
+   at most 2, so a sum of a row is exact in any order, and [Sys.opaque_identity]
+   keeps the compiler from fusing a product into its sum. *)
+let reduced rop (m, k, n) a b =
+  let identity = match rop with Op.Max -> Float.neg_infinity | _ -> 0. in
+  let out = Array.make (m * n) identity in
+  for i = 0 to m - 1 do
+    for j = 0 to n - 1 do
+      let acc = ref identity in
+      for q = 0 to k - 1 do
+        let x = Sys.opaque_identity (a.((i * k) + q) *. b.((q * n) + j)) in
+        acc := if rop = Op.Max then Float.max !acc x else !acc +. x
+      done;
+      out.((i * n) + j) <- !acc
+    done
+  done;
+  out
+
+(* What [out] holds under [gate] and the counts [fl]: each row's [reduced] where
+   it holds a value, else [-1] for a selection and the sentinel the output
+   started with for a gated store. *)
+let gated_expected ?block gate fl n reduced =
+  Array.mapi
+    (fun e x ->
+      if holds ?block gate fl (e / n) then `Float x
+      else
+        match gate with
+        | Selected | Rejected -> `Float rest_value
+        | _ -> `Float sentinel)
+    reduced
 
 (* The counts of [blocks] blocks: none, all, or one off and the others some or
    all of their rows. *)
 type pattern = All_off | All_on | One_off
 
-let pattern_counts blocks = function
+let pattern_counts ?(block = gate_block) blocks = function
   | All_off -> Array.make blocks 0
-  | All_on -> Array.make blocks gate_block
+  | All_on -> Array.make blocks block
   | One_off ->
       Array.init blocks (fun b ->
           if b = 1 mod blocks then 0
-          else if b mod 2 = 0 then gate_block
-          else 23 + b)
+          else if b mod 2 = 0 then block
+          else min (block - 1) (23 + b))
 
 let floats a = Array.map (fun x -> `Float x) a
 let ints a = Array.map (fun n -> `Int (Bigint.of_int n)) a
 
-(* [gated_run run gate (m, k, n) fl] checks the product [run] of [gate] and the
-   shape against the reference, on the counts [fl]. *)
-let gated_run run gate (m, k, n) fl =
-  let a = gated_rows gate fl (m, k) (m + k + n) in
-  let b = nonzero (k + n) (k * n) in
+(* [gated_run run gate shape ~reduced a b fl] checks the product [run] of [gate]
+   over [a], poisoned for the counts [fl], and [b] against its reference
+   [reduced]. *)
+let gated_run ?block run gate (m, k, n) ~reduced a b fl =
   equal ~msg:"out" (array Dtypes.value)
-    (gated_expected gate fl (m, k, n) a b)
+    (gated_expected ?block gate fl n reduced)
     (List.assoc 0
        (run
           [
             (0, floats (Array.make (m * n) sentinel));
-            (1, floats a);
+            (1, floats (poisoned ?block gate fl k a));
             (2, floats b);
             (3, ints fl);
           ]))
 
 type gated_device = Host | Cuda
+
+let renderer_on = function Host -> Lazy.force host | Cuda -> snd (on_cuda ())
+
+(* The rows of a block on [device]. A GPU's block holds a workgroup's rows, so
+   that the gate is the same for its threads; the host has no workgroups, and
+   its blocks of 16 rows keep the operands, which the runs copy, small. *)
+let block_on = function Host -> 16 | Cuda -> gate_block
 
 (* The run of a program of the kernel [k] on [device]. *)
 let gated_runner device k =
@@ -4434,32 +4761,58 @@ let gated_runner device k =
 
 let gated_n = 16
 
-(* Each device's run of each gate's product of a type and shape, compiled
-   once. *)
-let gated_programs = Hashtbl.create 16
-
-let gated_program device gate dt shape =
-  let key = (device, gate, Format.asprintf "%a" Dtype.pp dt, shape) in
-  match Hashtbl.find_opt gated_programs key with
-  | Some run -> run
-  | None ->
-      let run = gated_runner device (Gated.product gate ~dt shape) in
-      Hashtbl.add gated_programs key run;
-      run
-
 let gated_id (g, blocks, k) =
   Printf.sprintf "%s, %d blocks, k = %d" (gate_name g) blocks k
 
-let gated_shapes ks =
+(* Each gate over several blocks, and a stored sum over one, for sums of [k]
+   terms. On the host, 4 blocks of 16 rows: the heuristic upcasts the rows by 4,
+   so that a lane group stays within a block, where 3 blocks are upcast by 3 and
+   straddle them. Then at k = 256 and 2900 every gate but a gate per row, whose
+   clause differs between a block's rows, bounds the loop. *)
+let gated_shapes device =
+  let blocks = match device with Host -> 4 | Cuda -> 3 in
   List.concat_map
-    (fun k -> List.map (fun g -> (g, 3, k)) gates @ [ (Stored, 1, k) ])
-    ks
+    (fun k -> List.map (fun g -> (g, blocks, k)) gates @ [ (Stored, 1, k) ])
+    [ 16; 17; 256; 2900 ]
 
-let equals_reference device dt (g, blocks, k) =
-  let m = blocks * gate_block in
-  let run = gated_program device g dt (m, k, gated_n) in
+let gated_kernel device dt (g, blocks, k) =
+  let block = block_on device in
+  Gated.product ~block g ~dt (blocks * block, k, gated_n)
+
+(* The programs of every row of [gated_shapes device], made by one call of
+   to_programs on one domain, which compiles their sources in one run of the
+   compiler where it can; to_program then finds each. *)
+let gated_programs device dt =
+  lazy
+    (let ren = renderer_on device in
+     match
+       Setting.context
+         [ B (Setting.parallel, 1) ]
+         (fun () ->
+           Codegen.to_programs
+             (List.map
+                (fun s -> (gated_kernel device dt s, ren))
+                (gated_shapes device)))
+     with
+     | () -> ()
+     | exception Renderer.Compiler.Compile_error m
+       when says "cannot open source file" m ->
+         skip ~reason:("a header is missing, set CUDA_PATH: " ^ m) ())
+
+let host_float32 = gated_programs Host Float32
+let cuda_float32 = gated_programs Cuda Float32
+let cuda_bfloat16 = gated_programs Cuda Bfloat16
+
+let equals_reference device dt made ((g, blocks, k) as s) =
+  Lazy.force made;
+  let block = block_on device in
+  let shape = (blocks * block, k, gated_n) in
+  let a, b = operands shape in
+  let reduced = reduced (reduce_of g) shape a b in
+  let run = gated_runner device (gated_kernel device dt s) in
   List.iter
-    (fun p -> gated_run run g (m, k, gated_n) (pattern_counts blocks p))
+    (fun p ->
+      gated_run ~block run g shape ~reduced a b (pattern_counts ~block blocks p))
     [ All_off; All_on; One_off ]
 
 (* Counts of 8 blocks, each off, on, or on for some rows; every block off, and
@@ -4488,19 +4841,27 @@ let counts_gen =
 let gate_gen =
   Gen.of_list ~pp:(fun ppf g -> Format.pp_print_string ppf (gate_name g)) gates
 
+(* Every block off and every block on, drawn a sixth of the time each. *)
+let counts_examples =
+  [ (Stored, Array.make 8 0); (Maximum, Array.make 8 gate_block) ]
+
 let random_counts device dt (gate, fl) =
   cover "every block off" (Array.for_all (( = ) 0) fl);
   cover "every block on" (Array.for_all (( <> ) 0) fl);
   cover "some blocks off and some on"
     (Array.exists (( = ) 0) fl && Array.exists (( <> ) 0) fl);
   let shape = (8 * gate_block, 64, gated_n) in
-  gated_run (gated_program device gate dt shape) gate shape fl
+  let a, b = operands shape in
+  let reduced = reduced (reduce_of gate) shape a b in
+  gated_run
+    (gated_runner device (Gated.product gate ~dt shape))
+    gate shape ~reduced a b fl
 
 (* Two sums over one loop, one gated: neither changes the other. *)
 let shared_sums device =
   let m, k, n = (3 * gate_block, 64, gated_n) in
   let fl = pattern_counts 3 One_off in
-  let a = gated_rows ~poisoned:false Stored fl (m, k) 1 in
+  let a = nonzero 1 (m * k) in
   let b = Array.map Float.of_int (small_integers 2 (k * n)) in
   let b2 = Array.map Float.of_int (small_integers 3 (k * n)) in
   let out =
@@ -4515,10 +4876,10 @@ let shared_sums device =
       ]
   in
   equal ~msg:"gated" (array Dtypes.value)
-    (gated_expected Stored fl (m, k, n) a b)
+    (gated_expected Stored fl n (reduced Add (m, k, n) a b))
     (List.assoc 0 out);
   equal ~msg:"ungated" (array Dtypes.value)
-    (gated_expected Selected (Array.make 3 gate_block) (m, k, n) a b2)
+    (floats (reduced Add (m, k, n) a b2))
     (List.assoc 4 out)
 
 (* The rows from [h] of a product whose loads the same condition gates, on the
@@ -4528,13 +4889,11 @@ let some_rows_shape = (3 * gate_block, 64, gated_n)
 let some_rows side h =
   let ((m, k, n) as shape) = some_rows_shape in
   let a = nonzero 6 (m * k) and b = nonzero 7 (k * n) in
-  let all = Array.make m gate_block in
-  let reference = gated_expected Selected all shape a b in
   let holds row = match side with `First -> row < h | `Last -> row >= h in
   let expected =
     Array.mapi
-      (fun e x -> if holds (e / n) then x else `Float rest_value)
-      reference
+      (fun e x -> `Float (if holds (e / n) then x else rest_value))
+      (reduced Add shape a b)
   in
   equal (array Dtypes.value) expected
     (List.assoc 0
@@ -4563,26 +4922,26 @@ let group_opt top = Opt.Split { axis = 1; amount = 16; target = Local; top }
 let grouped_sum opts_to_apply =
   let m, k = (3 * gate_block, 256) in
   let fl = pattern_counts 3 One_off in
-  let a = gated_rows Stored fl (m, k) 4 in
+  let a = nonzero 4 (m * k) in
   let x = Array.map Float.of_int (small_integers 5 k) in
   let out =
     gated_runner Cuda
       (Gated.matvec ?opts_to_apply (m, k))
       [
         (0, floats (Array.make m sentinel));
-        (1, floats a);
+        (1, floats (poisoned Stored fl k a));
         (2, floats x);
         (3, ints fl);
       ]
   in
   equal (array Dtypes.value)
-    (gated_expected Stored fl (m, k, 1) a x)
+    (gated_expected Stored fl 1 (reduced Add (m, k, 1) a x))
     (List.assoc 0 out)
 
 (* The lowered program of [k] for the renderer [r]: its loops whose bound
    selects between their trips and none, its matrix multiply-accumulates, and
    its source. *)
-let lowered r k =
+let gated_loops r k =
   let prg = Codegen.compile (Codegen.linearize k r) r in
   let linear = Ops.src (Ops.nth prg 1) in
   (* a bound may wait, through an after, for what the loop reads *)
@@ -4611,17 +4970,18 @@ let selected_bound src =
     (List.filter_map bound lines)
 
 let bounded_loop (_, r, k, cores) =
-  let gated, wmmas, src = lowered (r ()) (k ()) in
+  let gated, wmmas, src = gated_loops (r ()) (k ()) in
   if cores then less ~msg:"tensor cores" int ~than:(List.length wmmas) 0;
   equal ~msg:"loops bounded by the gate" int 1 (List.length gated);
-  equal ~msg:"a loop's bound in the source is selected" bool true
-    (selected_bound src)
+  satisfies ~claim:"a loop's bound in the source is selected" string
+    selected_bound src
 
 let unbounded_loop (_, r, k) =
-  let gated, _, src = lowered (r ()) (k ()) in
+  let gated, _, src = gated_loops (r ()) (k ()) in
   equal ~msg:"loops bounded by the gate" int 0 (List.length gated);
-  equal ~msg:"a loop's bound in the source is selected" bool false
-    (selected_bound src)
+  satisfies ~claim:"no loop's bound in the source is selected" string
+    (fun src -> not (selected_bound src))
+    src
 
 (* A bfloat16 product a staged tensor core takes, as rune's kernels read their
    operands, gated by blocks of [staged_block] rows: a staged core's workgroup
@@ -4665,11 +5025,21 @@ let barrier_inside linear r =
       List.exists (fun u -> is Barrier u && at u > at r && at u < at e) linear)
     ends
 
+let staged_shape = (16 * staged_block, 256, 256)
+
+(* The operands of [staged_product] and their product, made once for the three
+   patterns. *)
+let staged_operands =
+  lazy
+    (let a = nonzero 8 (16 * staged_block * 256)
+     and b = nonzero 9 (256 * 256) in
+     (a, b, reduced Add staged_shape a b))
+
 let staged_on_cuda pattern =
   let d, r = on_cuda () in
-  let m, k, n = (16 * staged_block, 256, 256) in
+  let ((m, _, n) as shape) = staged_shape in
   let blocks = m / staged_block in
-  let prg = compiled_for r (staged_product (m, k, n)) in
+  let prg = compiled_for r (staged_product shape) in
   let linear = Ops.src (Ops.nth prg 1) in
   let rec bound u = if is After u then bound (Ops.nth u 0) else u in
   let gated =
@@ -4679,25 +5049,19 @@ let staged_on_cuda pattern =
     ~than:(List.length (List.filter (is Wmma) linear))
     0;
   equal ~msg:"loops bounded by the gate" int 1 (List.length gated);
-  equal ~msg:"a barrier runs in the bounded loop" bool true
-    (barrier_inside linear (List.hd gated));
+  satisfies ~claim:"a barrier runs in the bounded loop" Uops.uop
+    (barrier_inside linear) (List.hd gated);
   let counts =
     match pattern with
     | All_off -> Array.make blocks 0
     | All_on -> Array.make blocks 1
     | One_off -> Array.init blocks (fun b -> if b = 1 then 0 else 1)
   in
-  let a = nonzero 8 (m * k) and b = nonzero 9 (k * n) in
+  let a, b, product = Lazy.force staged_operands in
   let expected =
     Array.init (m * n) (fun e ->
-        let i = e / n and j = e mod n in
-        if counts.(i / staged_block) = 0 then `Float sentinel
-        else
-          let acc = ref 0. in
-          for q = 0 to k - 1 do
-            acc := !acc +. (a.((i * k) + q) *. b.((q * n) + j))
-          done;
-          `Float !acc)
+        `Float
+          (if counts.(e / n / staged_block) = 0 then sentinel else product.(e)))
   in
   equal (array Dtypes.value) expected
     (List.assoc 0
@@ -4738,18 +5102,19 @@ let reduces_under_gates =
       cases
         "on the host, equal the reference with every block off, every block \
          on, and one off"
-        ~id:gated_id
-        (gated_shapes [ 16; 17; 256; 2900 ])
-        (equals_reference Host Float32);
+        ~id:gated_id (gated_shapes Host)
+        (equals_reference Host Float32 host_float32);
       cases
         "on CUDA, equal the reference with every block off, every block on, \
          and one off"
         ~id:(fun (dt, s) -> Format.asprintf "%a, %s" Dtype.pp dt (gated_id s))
         (List.concat_map
-           (fun dt ->
-             List.map (fun s -> (dt, s)) (gated_shapes [ 16; 17; 256; 2900 ]))
+           (fun dt -> List.map (fun s -> (dt, s)) (gated_shapes Cuda))
            [ Dtype.Float32; Dtype.Bfloat16 ])
-        (fun (dt, s) -> equals_reference Cuda dt s);
+        (fun (dt, s) ->
+          equals_reference Cuda dt
+            (if Dtype.equal dt Float32 then cuda_float32 else cuda_bfloat16)
+            s);
       cases
         "a product a staged core takes, its barriers in the bounded loop, \
          equals the reference on CUDA with"
@@ -4759,10 +5124,12 @@ let reduces_under_gates =
           | One_off -> "one block off")
         [ All_off; All_on; One_off ]
         staged_on_cuda;
-      prop "on the host, equal the reference for any counts"
+      prop ~count:30 ~examples:counts_examples
+        "on the host, equal the reference for any counts"
         (Gen.pair gate_gen counts_gen)
         (random_counts Host Float32);
-      prop "on CUDA, equal the reference for any counts"
+      prop ~count:30 ~examples:counts_examples
+        "on CUDA, equal the reference for any counts"
         (Gen.pair gate_gen counts_gen)
         (random_counts Cuda Dtype.Bfloat16);
       cases "two sums over one loop, one gated, are each the reference, on"
@@ -4818,8 +5185,8 @@ let reduces_under_gates =
         ]
         bounded_loop;
       test
-        "a sum of 2880 terms a row runs in blocks, the gate bounding their \
-         loop" gated_blocks;
+        "a sum of 2880 terms a row runs in blocks, the gate bounding their loop"
+        gated_blocks;
       test "a padded trip of a sum of 2900 terms reads nothing past the buffer"
         (fun () ->
           past_reads
@@ -4940,13 +5307,35 @@ let few_trips device f =
     (List.assoc 0
        (run ((0, floats (Array.make (m * n) sentinel)) :: buffers)))
 
+(* The examples reach every cover; the draws add new kernels each run. Drawn
+   alone, 32 cases miss a reduce of no trip or of one trip with odds 8e-4, a
+   buffer of no element 5e-10 and a typed index 2e-10. *)
+let few_examples =
+  [
+    {
+      shape = (2, 0, 2);
+      index = Int32;
+      rop = Add;
+      gate = Some Stored;
+      heuristic = false;
+    };
+    {
+      shape = (2, 1, 4);
+      index = Weak_int;
+      rop = Max;
+      gate = None;
+      heuristic = true;
+    };
+  ]
+
 let few_trips_tests =
   group "kernels of few trips"
     [
-      prop "on the host, write what they compute node by node" few_gen
+      prop ~count:32 ~examples:few_examples
+        "on the host, write what they compute node by node" few_gen
         (few_trips Host);
-      prop "on CUDA, write what they compute node by node" few_gen
-        (few_trips Cuda);
+      prop ~count:32 ~examples:few_examples
+        "on CUDA, write what they compute node by node" few_gen (few_trips Cuda);
     ]
 
 (* Reductions over a variable size
@@ -5055,6 +5444,40 @@ let variable_sizes =
    and (1 + 2^-12)^2 = 1 + 2^-11 + 2^-24, added in that order: the second,
    fused, keeps the 2^-24 that rounding the product alone would lose. *)
 
+(* The contents of a buffer of floats, and of one of integers. *)
+let float_values xs = Array.map (fun x -> `Float x) xs
+let int_values l = Array.of_list (List.map (fun n -> `Int (Bigint.of_int n)) l)
+
+(* The integers [0] to [n - 1]. *)
+let iota_values n = Array.init n (fun i -> `Int (Bigint.of_int i))
+
+(* The host programs of [kernels], made in one run of the host's compiler on the
+   calling domain and kept, so that a table's rows find theirs made: one
+   compiler start for a table, where each row would start one. *)
+let compiled_together kernels =
+  Setting.context
+    [ B (Setting.parallel, 0) ]
+    (fun () ->
+      Codegen.to_programs (List.map (fun k -> (k, Lazy.force host)) kernels))
+
+(* A table over [rows] whose programs, [kernels] of each row, are made together
+   at its first row. *)
+let compiled_table kernels rows check =
+  (* A kernel the batch cannot make is made again by its row's check, which then
+     fails that row alone, with its own error. *)
+  let made =
+    lazy
+      (try compiled_together (List.concat_map kernels rows)
+       with Invalid_argument _ | Failure _ | Renderer.Compiler.Compile_error _ ->
+         ())
+  in
+  fun row ->
+    Lazy.force made;
+    check row
+
+let integer_types =
+  Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+
 let dot n =
   let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
   let a = Shape.param ~shape:[ Int n ] 1 Float32 in
@@ -5098,15 +5521,17 @@ let tile n =
     Ops.index a [ (i * int n) + k ] * Ops.index b [ (k * int 4) + j ]
   in
   let sum = Ops.reduce product Op.Add [ k ] in
-  let whole axis = Opt.Split { axis; amount = 0; target = Upcast; top = false } in
+  let whole axis =
+    Opt.Split { axis; amount = 0; target = Upcast; top = false }
+  in
   Ops.sink
     ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole 0; whole 0 ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ (i * int 4) + j ]) sum) [ i; j ] ]
 
 (* [out[i] = sum_k 2^(e[i, k] - 127) * b[k]], the power decoded from the byte
    [e] by a bitcast of its bits, as an e8m0 scale is, for [i] below [rows]
-   upcast by 4 and [k] unrolled by 4: a sum of products whose operand is
-   decoded through a bitcast. *)
+   upcast by 4 and [k] unrolled by 4: a sum of products whose operand is decoded
+   through a bitcast. *)
 let decoded_matvec ~rows n =
   let out = Shape.param ~shape:[ Int rows ] 0 Float32 in
   let e = Shape.param ~shape:[ Int (rows * n) ] 1 Uint8 in
@@ -5123,11 +5548,10 @@ let decoded_matvec ~rows n =
       (Ops.kernel_info ~opts_to_apply:[ split 0 Upcast; split 2 Upcast ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
 
-(* [out[i] = sum_k f a[i, k] * b[k]] for [i] below [rows] and [k] below [n],
-   [f] the reciprocal, or nothing where [plain]: a sum of products whose
-   left factor a producer computes, as a fused prologue does. [f 0] is
-   infinite, so a padded step that multiplied it by its other factor's 0
-   would sum a NaN. *)
+(* [out[i] = sum_k f a[i, k] * b[k]] for [i] below [rows] and [k] below [n], [f]
+   the reciprocal, or nothing where [plain]: a sum of products whose left factor
+   a producer computes, as a fused prologue does. [f 0] is infinite, so a padded
+   step that multiplied it by its other factor's 0 would sum a NaN. *)
 let producer_matvec ?(plain = false) ~opts ~rows n =
   let out = Shape.param ~shape:[ Int rows ] 0 Float32 in
   let a = Shape.param ~shape:[ Int (rows * n) ] 1 Float32 in
@@ -5141,26 +5565,25 @@ let producer_matvec ?(plain = false) ~opts ~rows n =
     ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) sum) [ i ] ]
 
-(* Floats of magnitudes from [2^-4] to [2^4], none zero: products of them
-   round, so that a multiply-add and a product rounded alone differ. *)
+(* Floats of magnitudes from [2^-4] to [2^4], none zero: products of them round,
+   so that a multiply-add and a product rounded alone differ. *)
 let nonzero_fractions st size =
   Array.init size (fun _ ->
       let f = Float.of_int (Random.State.int st 1023 + 1) /. 1024. in
       let f = if Random.State.bool st then f else -.f in
       Float.ldexp f (Random.State.int st 9 - 4))
 
-(* A sum of products padded from [n] terms to [padded] computes the bits of
-   the same sum over its factors with zeros appended, its producer applied
-   before: each padded step adds [+0] as a multiply-add, as an appended zero
-   does. *)
+(* A sum of products padded from [n] terms to [padded] computes the bits of the
+   same sum over its factors with zeros appended, its producer applied before:
+   each padded step adds [+0] as a multiply-add, as an appended zero does. *)
 let padded_appended seed =
   let rows = 8 and n = 37 and padded = 48 in
   let st = Random.State.make [| seed |] in
   let a = nonzero_fractions st (rows * n) and b = nonzero_fractions st n in
   let run k inputs =
     let prg = Codegen.to_program k (Lazy.force host) in
-    let floats (slot, x) = (slot, Array.map (fun f -> `Float f) x) in
-    List.assoc 0 (Run.on_host prg (List.map floats inputs))
+    let as_floats (slot, x) = (slot, float_values x) in
+    List.assoc 0 (Run.on_host prg (List.map as_floats inputs))
   in
   let pad = [ Opt.Padto { axis = 1; amount = 16 } ] in
   let appended_a =
@@ -5169,8 +5592,13 @@ let padded_appended seed =
         if k < n then 1. /. a.((i * n) + k) else 0.)
   and appended_b = Array.init padded (fun k -> if k < n then b.(k) else 0.) in
   let got = run (producer_matvec ~opts:pad ~rows n) [ (1, a); (2, b) ] in
-  is_true ~msg:"finite"
-    (Array.for_all (function `Float f -> Float.is_finite f | _ -> false) got);
+  let infinite =
+    List.filter
+      (fun i ->
+        match got.(i) with `Float f -> not (Float.is_finite f) | _ -> true)
+      (List.init rows Fun.id)
+  in
+  equal ~msg:"rows not finite" (list int) [] infinite;
   equal (array Dtypes.value)
     (run
        (producer_matvec ~plain:true ~opts:[] ~rows padded)
@@ -5184,13 +5612,6 @@ let muladd n =
   let value = Ops.add (Ops.mul (x 1 [ i ]) (x 2 [ i ])) (x 3 [ i ]) in
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) value) [ i ] ]
-
-let mentions sub s =
-  let n = String.length sub in
-  let rec go i =
-    i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
-  in
-  go 0
 
 let occurrences sub s =
   let n = String.length sub in
@@ -5214,8 +5635,7 @@ let multiply_adds =
       cases "a sum of products adds each into its running sum rounded once, of"
         ~id:string_of_int [ 2; 64 ] (fun n ->
           let prg = Codegen.to_program (dot n) (Lazy.force host) in
-          is_true ~msg:"__builtin_fmaf"
-            (mentions "__builtin_fmaf(" (source prg));
+          contains ~sub:"__builtin_fmaf(" (source prg);
           let x = 1. +. 0x1p-12 in
           let terms first second =
             Array.init n (fun i ->
@@ -5259,8 +5679,9 @@ let multiply_adds =
           let x = 1. +. 0x1p-12 in
           let a = [| -.(1. +. 0x1p-11); x; -.(1. +. 0x1p-11); x |] in
           let b = Array.concat [ Array.make 4 1.; Array.make 4 x ] in
-          let floats = Array.map (fun f -> `Float f) in
-          let out = Run.on_host prg [ (1, floats a); (2, floats b) ] in
+          let out =
+            Run.on_host prg [ (1, float_values a); (2, float_values b) ]
+          in
           equal (array Dtypes.value)
             (Array.make 8 (`Float 0x1p-24))
             (List.assoc 0 out));
@@ -5271,14 +5692,14 @@ let multiply_adds =
           let prg =
             Codegen.to_program (decoded_matvec ~rows n) (Lazy.force host)
           in
-          (* each step's 4 running sums are one vector, which adds a product
-             and 3 multiply-adds of the decoded powers' vectors *)
+          (* each step's 4 running sums are one vector, which adds a product and
+             3 multiply-adds of the decoded powers' vectors *)
           equal int ~msg:"multiply-adds of vectors" 3
             (occurrences "__builtin_elementwise_fma(" (source prg));
           equal int ~msg:"multiply-adds of one lane" 0
             (occurrences "__builtin_fmaf(" (kernel_source prg));
-          (* row [i] holds the powers [2^(i mod 3)], [b] the integers [k]:
-             every sum is exact, [2^(i mod 3)] times 120 *)
+          (* row [i] holds the powers [2^(i mod 3)], [b] the integers [k]: every
+             sum is exact, [2^(i mod 3)] times 120 *)
           let e =
             Array.init (rows * n) (fun j ->
                 `Int (Bigint.of_int (127 + (j / n mod 3))))
@@ -5287,12 +5708,14 @@ let multiply_adds =
           equal (array Dtypes.value)
             (Array.init rows (fun i -> `Float (Float.ldexp 120. (i mod 3))))
             (List.assoc 0 out));
-      cases
-        "a sum of products padded computes the bits of its factors with \
-         zeros appended" ~id:string_of_int [ 1; 2; 3 ] padded_appended;
+      prop ~count:20 ~examples:[ 1; 2; 3 ]
+        "a sum of products padded computes the bits of its factors with zeros \
+         appended"
+        (Gen.int_range 0 0x3fffffff)
+        padded_appended;
       test "a product and a sum outside a reduction are not fused" (fun () ->
           let prg = Codegen.to_program (muladd 4) (Lazy.force host) in
-          is_false ~msg:"fma" (mentions "fma" (source prg)));
+          not_contains ~sub:"fma" (source prg));
     ]
 
 (* Multiply-adds of narrow floats
@@ -5314,12 +5737,12 @@ type narrow = {
   specials : int list;
       (** the bits of its NaNs, infinities and negative zero, those it has *)
   midpoints : ((int * int) * (int * int)) option;
-      (** the bounds of [q] in a product [o m 2^q] on a midpoint whose
-          float32 a value of the type cannot move, and of [j] that keep
-          [m 2^j] normal; [None] where no such product is finite *)
+      (** the bounds of [q] in a product [o m 2^q] on a midpoint whose float32 a
+          value of the type cannot move, and of [j] that keep [m 2^j] normal;
+          [None] where no such product is finite *)
 }
 
-let halves =
+let float16s =
   {
     dt = Float16;
     storage = Uint16;
@@ -5367,8 +5790,8 @@ let e5m2fnuzs =
     midpoints = Some ((6, 11), (-13, 13));
   }
 
-(* A float32 resolves every sum of these near a midpoint: a value that leaves
-   a product's float32 on a midpoint has too few bits to land that far below
+(* A float32 resolves every sum of these near a midpoint: a value that leaves a
+   product's float32 on a midpoint has too few bits to land that far below
    it. *)
 let e4m3s =
   {
@@ -5447,14 +5870,14 @@ let narrow_value f greatest =
   let signed = magnitude <> 0 || List.mem sign f.specials in
   of_bits f (if negative && signed then magnitude lor sign else magnitude)
 
-(* Values whose product is a midpoint of [f], [o m 2^q], as [o 2^i] times
-   [m 2^(q - i)] with [o] and [m] odd and [o m] of one bit more than [f]'s
+(* Values whose product is a midpoint of [f], [o m 2^q], as [o 2^i] times [m
+   2^(q - i)] with [o] and [m] odd and [o m] of one bit more than [f]'s
    significand, and [q]. *)
 let on_midpoint f (products, scales) =
   let open Gen in
   let p = f.precision in
-  (* the odd [m] of [p] bits whose product by [o] has [p + 1] bits are
-     [2k + 1] for [k] in [ks o] *)
+  (* the odd [m] of [p] bits whose product by [o] has [p + 1] bits are [2k + 1]
+     for [k] in [ks o] *)
   let ks o =
     let lo = ((1 lsl p) + o - 1) / o and hi = ((1 lsl (p + 1)) - 1) / o in
     (lo / 2, (hi - 1) / 2)
@@ -5521,8 +5944,8 @@ let infinities f =
     (fun v -> Float.abs v = Float.infinity)
     (List.map (of_bits f) f.specials)
 
-(* A value of [f]'s least normal binade of either sign, whose half is
-   subnormal, beside an infinity, in either order, and an addend. *)
+(* A value of [f]'s least normal binade of either sign, whose half is subnormal,
+   beside an infinity, in either order, and an addend. *)
 let beside_infinity f =
   let open Gen in
   let p = f.precision in
@@ -5531,9 +5954,7 @@ let beside_infinity f =
   and+ infinity = of_list (infinities f)
   and+ swapped = bool
   and+ z = narrow_value f f.greatest in
-  let x =
-    Float.ldexp (1. +. Float.ldexp (Float.of_int j) (1 - p)) f.emin
-  in
+  let x = Float.ldexp (1. +. Float.ldexp (Float.of_int j) (1 - p)) f.emin in
   let x = if negative then -.x else x in
   if swapped then (infinity, x, z) else (x, infinity, z)
 
@@ -5553,9 +5974,7 @@ let narrow_triples f =
     | None -> []
     | Some bounds -> [ (3, off_midpoint f bounds) ]
   in
-  let infinite =
-    if infinities f = [] then [] else [ (1, beside_infinity f) ]
-  in
+  let infinite = if infinities f = [] then [] else [ (1, beside_infinity f) ] in
   let lane =
     frequency
       ([
@@ -5581,7 +6000,8 @@ let narrow_muladd dt ~lanes n =
   let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let opts =
     if lanes = 1 then []
-    else [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
+    else
+      [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
   in
   let value = Ops.alu (x 1 [ i ]) Op.Mulacc [ x 2 [ i ]; x 3 [ i ] ] in
   Ops.sink
@@ -5601,8 +6021,7 @@ let exempt least (x, y, z) h =
 let muladd_rounds_once f run lanes =
   let n = 8 in
   let prg = lazy (run (narrow_muladd f.dt ~lanes n)) in
-  prop ~count:200 (Printf.sprintf "in %d lanes" lanes)
-    (narrow_triples f)
+  prop ~count:200 (Printf.sprintf "in %d lanes" lanes) (narrow_triples f)
     (fun triples ->
       let saturates, flushes, run = Lazy.force prg in
       let column g = Array.map (fun t -> `Float (g t)) triples in
@@ -5645,12 +6064,14 @@ let muladd_rounds_once f run lanes =
            expected);
       let top = Float.ldexp 1. (snd (Float.frexp g) - 1)
       and least = Float.ldexp 1. f.emin in
-      cover "a product on a midpoint of the top binade beside an addend of the \
-             least normal binade"
+      cover
+        "a product on a midpoint of the top binade beside an addend of the \
+         least normal binade"
         (Array.exists
            (fun (x, y, z) ->
              let p = x *. y in
-             Float.abs p >= top && is_midpoint f p && z <> 0.
+             Float.abs p >= top
+             && is_midpoint f p && z <> 0.
              && Float.abs z < 2. *. least)
            triples);
       if infinities f <> [] then
@@ -5695,8 +6116,7 @@ let compiled_on d (r : Renderer.t) k =
   let kernel = buffer_dtypes (Ops.toposort ~calls:Enter k)
   and program = buffer_dtypes (Shape.kernel_params prg) in
   fun buffers ->
-    read_back ~kernel ~program
-      (Run.on d prg (stored ~kernel ~program buffers))
+    read_back ~kernel ~program (Run.on d prg (stored ~kernel ~program buffers))
 
 let on_host k = (false, None, compiled_on Rig.host (Lazy.force host) k)
 
@@ -5735,7 +6155,7 @@ let opened_gpu (_, device, _, _) =
       | r -> (d, r)
       | exception Failure why -> skip ~reason:why ())
 
-let on_gpu ((_, _, saturates, flushes) as gpu) f k =
+let on_narrow_gpu ((_, _, saturates, flushes) as gpu) f k =
   let d, r = opened_gpu gpu in
   ( saturates && Dtype.mem f.dt Dtype.fp8s,
     (if flushes then Some (Float.ldexp 1. f.emin) else None),
@@ -5751,14 +6171,14 @@ let narrow_multiply_adds =
              (List.map (muladd_rounds_once f (on_arm64 arch)) widths))
          [ "arm64,generic"; "arm64,generic,fp16" ]
     @ List.map
-         (fun ((kind, _, _, _) as gpu) ->
-           group ("on " ^ kind)
-             (List.map (muladd_rounds_once f (on_gpu gpu f)) widths))
-         gpus
+        (fun ((kind, _, _, _) as gpu) ->
+          group ("on " ^ kind)
+            (List.map (muladd_rounds_once f (on_narrow_gpu gpu f)) widths))
+        gpus
   in
   group "a multiply-add of narrow floats rounds once"
     [
-      group "of halves" (on halves);
+      group "of halves" (on float16s);
       group "of bfloat16s" (on bfloat16s);
       group "of float8 e5m2s" (on e5m2s);
       group "of float8 e5m2fnuzs" (on e5m2fnuzs);
@@ -5794,7 +6214,6 @@ let without_elementwise =
         done;
         `Float (Float.sqrt !s))
   in
-  let floats = Array.map (fun f -> `Float f) in
   let shell_only run k =
     if Sys.win32 then skip ~reason:"CC is a shell script" ();
     run k
@@ -5807,7 +6226,7 @@ let without_elementwise =
        @ [
            group "a multiply-add of halves rounds once, at arm64,generic,fp16"
              [
-               muladd_rounds_once halves
+               muladd_rounds_once float16s
                  (shell_only (on_arm64 "arm64,generic,fp16"))
                  4;
              ];
@@ -5819,7 +6238,9 @@ let without_elementwise =
                in
                contains ~sub:"__builtin_elementwise_fma(" (source prg);
                contains ~sub:"__builtin_elementwise_sqrt(" (source prg);
-               let out = Run.on_host prg [ (1, floats a); (2, floats b) ] in
+               let out =
+                 Run.on_host prg [ (1, float_values a); (2, float_values b) ]
+               in
                equal (array Dtypes.value) roots (List.assoc 0 out));
            (* [(1 + e) (1 - e) - 1] for [e = k 2^-30] is [-k^2 2^-60] rounded
               once; through a double product, whose [1 - k^2 2^-60] rounds to
@@ -5850,34 +6271,30 @@ let without_elementwise =
 
 (* Gated loads
 
-   A kernel of [waves] workgroups of [wave] threads, thread [t] being thread
-   [l] of workgroup [w], reads [a] where a gate holds and takes 7 where it
-   fails, storing each value as a float32, in one of seven ways:
-   - [Uniform n]: [out0[t * trips + k] = g ? a[w + k] : 7] for each trip [k]
-     of a loop over [a] of [n] elements, where [g] holds when [on[t]] is not 0
-     and [w + k] indexes [a]: scalar loads at an address every thread of a
-     workgroup shares, of its workgroup's id and the loop's variable, under a
-     gate each thread holds;
-   - [Paged n]: [out0[t * trips + k] = g ? a[iw[w] + k] : 7], [g] as for
-     [Uniform]: scalar loads in a loop at an address a workgroup shares, read
-     from memory, as a page table gives;
-   - [Fixed n]: [out0[t] = g ? a[w] : 7], where [g] holds when [on[t]] is not 0
-     and [w] indexes [a]: a scalar load at an address a workgroup shares,
-     outside any loop;
-   - [Gather n]: [out0[t] = g0 ? a[ix[t]] : 7] and [out1[t] = g1 ? a[iw[w]] :
-     7] over [a] of [n] elements, where [g0] holds when [on[t]] is not 0 and
-     [ix[t]] indexes [a], and [g1] when [on[t]] is not 0 and [iw[w]] indexes
-     [a]: scalar loads at an address loaded from memory;
-   - [Shifted]: [out0[t] = g ? a[t - 1] : 7], where [g] holds when [on[t]] is
-     not 0 and [t] is not 0: scalar loads at an address of each thread's id;
-   - [Rows lanes]: [out0[e] = on[e / lanes] ? a[e] : 7] over the [lanes]
-     elements [e] of each thread, which a GPU loads as vectors where [a]'s
-     phase lets it;
-   - [Shared]: each thread stores [a[t]] in workgroup memory [s], and
-     [out0[t] = g0 ? s[ix[t]] : 7] and [out1[t] = g1 ? s[iw[w]] : 7] read it
-     back, the gates as for [Gather] over the workgroup's [wave] elements.
-   [a] lies [phase] bytes past a multiple of 16. On a GPU a workgroup is one
-   wave; on the host both ranges are loops. *)
+   A kernel of [waves] workgroups of [wave] threads, thread [t] being thread [l]
+   of workgroup [w], reads [a] where a gate holds and takes 7 where it fails,
+   storing each value as a float32, in one of seven ways: - [Uniform n]: [out0[t
+   * trips + k] = g ? a[w + k] : 7] for each trip [k] of a loop over [a] of [n]
+   elements, where [g] holds when [on[t]] is not 0 and [w + k] indexes [a]:
+   scalar loads at an address every thread of a workgroup shares, of its
+   workgroup's id and the loop's variable, under a gate each thread holds; -
+   [Paged n]: [out0[t * trips + k] = g ? a[iw[w] + k] : 7], [g] as for
+   [Uniform]: scalar loads in a loop at an address a workgroup shares, read from
+   memory, as a page table gives; - [Fixed n]: [out0[t] = g ? a[w] : 7], where
+   [g] holds when [on[t]] is not 0 and [w] indexes [a]: a scalar load at an
+   address a workgroup shares, outside any loop; - [Gather n]: [out0[t] = g0 ?
+   a[ix[t]] : 7] and [out1[t] = g1 ? a[iw[w]] : 7] over [a] of [n] elements,
+   where [g0] holds when [on[t]] is not 0 and [ix[t]] indexes [a], and [g1] when
+   [on[t]] is not 0 and [iw[w]] indexes [a]: scalar loads at an address loaded
+   from memory; - [Shifted]: [out0[t] = g ? a[t - 1] : 7], where [g] holds when
+   [on[t]] is not 0 and [t] is not 0: scalar loads at an address of each
+   thread's id; - [Rows lanes]: [out0[e] = on[e / lanes] ? a[e] : 7] over the
+   [lanes] elements [e] of each thread, which a GPU loads as vectors where [a]'s
+   phase lets it; - [Shared]: each thread stores [a[t]] in workgroup memory [s],
+   and [out0[t] = g0 ? s[ix[t]] : 7] and [out1[t] = g1 ? s[iw[w]] : 7] read it
+   back, the gates as for [Gather] over the workgroup's [wave] elements. [a]
+   lies [phase] bytes past a multiple of 16. On a GPU a workgroup is one wave;
+   on the host both ranges are loops. *)
 
 module Gated_loads = struct
   let wave = 32
@@ -6038,15 +6455,15 @@ module Gated_loads = struct
     equal ~msg:"widths of the vector loads read ungated" (list int) []
       (List.map Shape.max_numel (List.filter (fun u -> not (gated u)) vectors))
 
-  (* Read ungated, the loads of a gather issue together and hold their
-     addresses and values at once, which a kernel short of registers spills. *)
+  (* Read ungated, the loads of a gather issue together and hold their addresses
+     and values at once, which a kernel short of registers spills. *)
   let divergent_keep_gates (arch, dt, access) =
     let loads = hip_loads arch dt ~phase:0 access in
     less ~msg:"gated loads" int ~than:(List.length (List.filter gated loads)) 0
 
   (* Ungated, a load whose address a workgroup shares issues with the other
-     loads of its loop's trip; its address stays the workgroup's where the
-     gate, which each thread holds, fails. *)
+     loads of its loop's trip; its address stays the workgroup's where the gate,
+     which each thread holds, fails. *)
   let shared_lose_gates (arch, dt, phase, access) =
     let loads = of_a access (hip_loads arch dt ~phase access) in
     less ~msg:"loads of a" int ~than:(List.length loads) 0;
@@ -6103,8 +6520,7 @@ module Gated_loads = struct
                  ])
              archs)
           vectors_keep_gates;
-        cases "a load at an address of a thread's id keeps its gate"
-          ~id
+        cases "a load at an address of a thread's id keeps its gate" ~id
           (List.concat_map
              (fun arch ->
                Dtype.
@@ -6144,8 +6560,9 @@ module Gated_loads = struct
   (* An access, [a]'s phase, then [on], [ix], [iw] and [a]: indices from one
      below what they index to one past it, a page's first index from [trips]
      below, so that as many pages start below [a] as end past it, elements from
-     1 to 100, which every type holds. Where [a]'s phase does not change how it is read, at a
-     thread's id or from workgroup memory, it lies on a 16-byte boundary. *)
+     1 to 100, which every type holds. Where [a]'s phase does not change how it
+     is read, at a thread's id or from workgroup memory, it lies on a 16-byte
+     boundary. *)
   let draw dt ~shared =
     let accesses =
       let shared = if shared then [ Shared ] else [] in
@@ -6186,6 +6603,27 @@ module Gated_loads = struct
                      (array ~size:(constant threads) (int_range (-1) indexed))
                      (array ~size:(constant waves) (int_range first indexed))
                      (array ~size:(constant n) (int_range 1 100)))))))
+
+  (* A case of [access] at [phase]: every third thread's gate off, indices from
+     one below what they index to one past it, a page starting [trips] below [a]
+     and one ending past it. The examples hold the covers a draw reaches least
+     often: a page below [a] and past its end, vectors on a 16-byte boundary,
+     one element, a load outside any loop, at each thread's id and from
+     workgroup memory. *)
+  let example access phase =
+    let n = size access in
+    let indexed = match access with Shared -> wave | _ -> n in
+    let on = Array.init threads (fun t -> t mod 3 <> 0) in
+    let ix = Array.init threads (fun t -> (t mod (indexed + 2)) - 1) in
+    let iw = [| -trips; indexed - 1; 0; 1 |] in
+    let a = Array.init n (fun i -> 1 + (i mod 100)) in
+    (access, phase, (on, ix, iw, a))
+
+  let examples ~shared =
+    List.map
+      (fun access -> example access 0)
+      ([ Paged 5; Rows 2; Uniform 1; Fixed 5; Shifted ]
+      @ if shared then [ Shared ] else [])
 
   (* What the kernel stores where it reads [a]. *)
   let expected access (on, ix, iw, a) =
@@ -6234,9 +6672,7 @@ module Gated_loads = struct
     let some_wave p = List.exists p (List.init waves Fun.id) in
     let all_off gs = not (List.mem true gs) in
     let mixed gs = List.mem true gs && List.mem false gs in
-    let uniform p =
-      match access with Uniform _ -> some_wave p | _ -> false
-    in
+    let uniform p = match access with Uniform _ -> some_wave p | _ -> false in
     let gather p = match access with Gather _ -> some_wave p | _ -> false in
     let at_trip k t = on.(t) && (t / wave) + k < n in
     let at_thread t = on.(t) && ix.(t) >= 0 && ix.(t) < n in
@@ -6283,8 +6719,8 @@ module Gated_loads = struct
           p
     in
     let ints xs = Array.map (fun x -> `Int (Bigint.of_int x)) xs in
-    prop ~count:200 (Dtype.name dt) (draw dt ~shared)
-      (fun (access, phase, ((on, ix, iw, a) as data)) ->
+    prop ~count:200 ~examples:(examples ~shared) (Dtype.name dt)
+      (draw dt ~shared) (fun (access, phase, ((on, ix, iw, a) as data)) ->
         covers access phase data ~shared;
         let elements =
           if Dtype.is_float dt then
@@ -6334,11 +6770,11 @@ end
 
 (* Reductions that share a range
 
-   [out[0] = max_{i,k} (a[k] + i) + sum_k a[k]] for [i] below 3 and [k] below
-   5: the two reductions close the range [k], the maximum within [i]'s loop and
-   the sum alone, as a sum over [i] of a source that does not read [i] leaves
-   it. No optimisation applies, so both stay loops. With [a[k] = k + 1], it is
-   [(5 + 2) + 15]. *)
+   [out[0] = max_{i,k} (a[k] + i) + sum_k a[k]] for [i] below 3 and [k] below 5:
+   the two reductions close the range [k], the maximum within [i]'s loop and the
+   sum alone, as a sum over [i] of a source that does not read [i] leaves it. No
+   optimisation applies, so both stay loops. With [a[k] = k + 1], it is [(5 + 2)
+   + 15]. *)
 
 let max_and_sum () =
   let out = Shape.param ~shape:[ Int 1 ] 0 Float32 in
@@ -6381,9 +6817,8 @@ let lanes =
   group "lanes of an unrolled reduce"
     [
       test
-        "a reduce whose lanes all read an Invalid index is rendered as \
-         recorded" (fun () ->
-          writes_as_tinygrad (row_named "invalid_lanes_metal"));
+        "a reduce whose lanes all read an Invalid index is rendered as recorded"
+        (fun () -> writes_as_recorded (row_named "invalid_lanes_metal"));
       test "a reduce whose lanes all read an Invalid index sums to zero"
         (sums_zeros "invalid_lanes" [| `Float 1.; `Float 2. |] (`Float 0.));
       test "a sum of int8 lanes that all read an Invalid index is zero"
@@ -6506,9 +6941,7 @@ let six_lanes_kernel () =
   let l = Ops.range ~axis_type:Weak (Int 3) [ 0 ] in
   let r = Ops.range ~axis_type:Weak (Int 2) [ 1 ] in
   let byte = Ops.index x [ (l * int 2) + r ] in
-  let nibble =
-    (byte lsr Ops.int ~dtype:Uint8 4) land Ops.int ~dtype:Uint8 15
-  in
+  let nibble = (byte lsr Ops.int ~dtype:Uint8 4) land Ops.int ~dtype:Uint8 15 in
   let sum = Ops.reduce nibble Op.Add [ r ] in
   let whole axis target = Opt.Split { axis; amount = 0; target; top = false } in
   let opts = [ whole 0 Upcast; whole 1 Upcast ] in
@@ -6546,14 +6979,14 @@ let selects_rows rows cols () =
   in_vectors (rows * cols) prg;
   let x = Array.init (rows * cols) (fun k -> Float.of_int ((k * 7 mod 11) - 5))
   and y = Array.init cols (fun k -> Float.of_int ((k * 5 mod 9) - 4)) in
-  let floats = Array.map (fun f -> `Float f) in
   let expected =
     Array.mapi
       (fun k a -> if a < y.(k mod cols) then y.(k mod cols) -. a else a)
       x
   in
-  equal (array Dtypes.value) (floats expected)
-    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
+  equal (array Dtypes.value) (float_values expected)
+    (List.assoc 0
+       (Run.on_host prg [ (1, float_values x); (2, float_values y) ]))
 
 (* A selection of [y - x] where [x] is below [y] and of [x] elsewhere, over [n]
    float32 elements upcast whole: a body of [n] lanes. *)
@@ -6563,7 +6996,9 @@ let lanes_kernel n =
   let out = param 0 and x = param 1 and y = param 2 in
   let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let a = Ops.index x [ i ] and b = Ops.index y [ i ] in
-  let whole = Opt.Split { axis = 0; amount = 0; target = Upcast; top = false } in
+  let whole =
+    Opt.Split { axis = 0; amount = 0; target = Upcast; top = false }
+  in
   Ops.sink
     ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole ] ())
     [
@@ -6578,7 +7013,8 @@ let selects_lanes n () =
   let prg = Codegen.to_program (lanes_kernel n) (Lazy.force host) in
   let uops = Ops.src (Ops.nth prg 1) in
   in_vectors n prg;
-  equal (list op_w) Op.[ Cmplt; Sub; Where ]
+  equal (list op_w)
+    Op.[ Cmplt; Sub; Where ]
     (List.sort_uniq compare
        (List.map (fun (o, _, _) -> o) (vector_operations uops)));
   let apart u =
@@ -6589,10 +7025,10 @@ let selects_lanes n () =
   equal (list Uops.uop) [] (List.filter apart uops);
   let x = Array.init n (fun k -> Float.of_int ((k * 7 mod 11) - 5))
   and y = Array.init n (fun k -> Float.of_int ((k * 5 mod 9) - 4)) in
-  let floats = Array.map (fun f -> `Float f) in
   let expected = Array.map2 (fun a b -> if a < b then b -. a else a) x y in
-  equal (array Dtypes.value) (floats expected)
-    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
+  equal (array Dtypes.value) (float_values expected)
+    (List.assoc 0
+       (Run.on_host prg [ (1, float_values x); (2, float_values y) ]))
 
 (* A step of [rows * cols] float32 lanes that a flag per column holds: where
    [y], the column's flag, is below 1 in square, [x * x - 3] twice, and [x]
@@ -6622,8 +7058,8 @@ let held_kernel rows cols =
 
 (* Each operation of the steps computes the vectors of at most 64 lanes of all
    lanes ([host_vectors]), the flag's one vector of the columns' lanes, and no
-   lane apart: a selection by a flag broadcast across lanes keeps the
-   operations after it on vectors. *)
+   lane apart: a selection by a flag broadcast across lanes keeps the operations
+   after it on vectors. *)
 let holds_lanes rows cols () =
   let n = rows * cols in
   let prg = Codegen.to_program (held_kernel rows cols) (Lazy.force host) in
@@ -6653,7 +7089,6 @@ let holds_lanes rows cols () =
     (vector_operations uops);
   let x = Array.init n (fun k -> Float.of_int ((k * 7 mod 11) - 5) /. 2.)
   and y = Array.init cols (fun k -> Float.of_int ((k * 5 mod 9) - 4) /. 2.) in
-  let floats = Array.map (fun f -> `Float f) in
   let step v = (v *. v) -. 3. in
   let expected =
     Array.mapi
@@ -6662,11 +7097,12 @@ let holds_lanes rows cols () =
         if flag *. flag < 1. then step (step a) else a)
       x
   in
-  equal (array Dtypes.value) (floats expected)
-    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
+  equal (array Dtypes.value) (float_values expected)
+    (List.assoc 0
+       (Run.on_host prg [ (1, float_values x); (2, float_values y) ]))
 
-(* A dot product of 2 rows of [n] float64 pairs, the rows' axis upcast whole
-   and the reduce unrolled: a sum of each row's [n] lanes of products. *)
+(* A dot product of 2 rows of [n] float64 pairs, the rows' axis upcast whole and
+   the reduce unrolled: a sum of each row's [n] lanes of products. *)
 let dot_kernel n =
   let size = 2 * n in
   let open Ops.O in
@@ -6683,11 +7119,26 @@ let dot_kernel n =
       (Ops.kernel_info ~opts_to_apply:[ whole 0 Upcast; whole 1 Upcast ] ())
     [ Ops.end_ (Ops.store (Ops.index out [ l ]) sum) [ l ] ]
 
-(* Each unrolled lane's products of the two rows are one vector of the rows:
-   the first lane's a product, each other's a multiply-add into the running
-   sums, so each row adds its products in order, each rounded once with its
-   sum. The inputs are drawn so that rounding each product apart gives another
-   sum in every row. *)
+(* The factors of the [k]th product of sums of groups of [n] products, each
+   product needing more bits than a double holds: a group's first products are
+   small and the rest come in pairs of opposite sign, so the group's sum stays
+   small and keeps the bits of its last product that a product rounded alone
+   loses. A sum that rounds each product apart then differs in every output,
+   which each test checks as its inputs' witness. *)
+let separating_factors n k =
+  let t = k mod n and small = if n mod 2 = 0 then 2 else 1 in
+  let scale = if t < small then 0x1p-10 else 1. in
+  let sign = if t < small || (t - small) mod 2 = 0 then 1. else -1. in
+  ( sign *. scale *. (1. +. Float.ldexp (Float.of_int ((2 * k) + 3)) (-30)),
+    1. +. Float.ldexp (Float.of_int ((4 * k) + 7)) (-30) )
+
+(* A product rounded alone: [Sys.opaque_identity] keeps a compiler from fusing
+   it with the sum it is added to, as arm64's would. *)
+let rounded_product a b = Sys.opaque_identity (a *. b)
+
+(* Each unrolled lane's products of the two rows are one vector of the rows: the
+   first lane's a product, each other's a multiply-add into the running sums, so
+   each row adds its products in order, each rounded once with its sum. *)
 let sums_products n () =
   let prg = Codegen.to_program (dot_kernel n) (Lazy.force host) in
   let uops = Ops.src (Ops.nth prg 1) in
@@ -6697,24 +7148,29 @@ let sums_products n () =
     (List.filter
        (fun (o, _, _) -> Op.equal o Op.Mul || Op.equal o Op.Mulacc)
        (vector_operations uops));
-  let f = Float.of_int in
-  let x = Array.init (2 * n) (fun k -> Float.sin (f (k + 1)) *. f (k + 1))
-  and y = Array.init (2 * n) (fun k -> Float.cos (f ((2 * k) + 1))) in
-  let row i =
+  let x = Array.init (2 * n) (fun k -> fst (separating_factors n k))
+  and y = Array.init (2 * n) (fun k -> snd (separating_factors n k)) in
+  let row add i =
     let s = ref (x.(i * n) *. y.(i * n)) in
     for k = 1 to n - 1 do
-      s := Float.fma x.((i * n) + k) y.((i * n) + k) !s
+      s := add x.((i * n) + k) y.((i * n) + k) !s
     done;
     `Float !s
   in
-  let floats = Array.map (fun f -> `Float f) in
-  equal (array Dtypes.value) [| row 0; row 1 |]
-    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats y) ]))
+  let fused = Array.init 2 (row Float.fma)
+  and apart = Array.init 2 (row (fun a b s -> s +. rounded_product a b)) in
+  equal ~msg:"rows whose products rounded apart give the same sum" (list int) []
+    (List.filter
+       (fun i -> Testable.equal Dtypes.value fused.(i) apart.(i))
+       [ 0; 1 ]);
+  equal (array Dtypes.value) fused
+    (List.assoc 0
+       (Run.on_host prg [ (1, float_values x); (2, float_values y) ]))
 
-(* [out[i, j] = sum_k x[i, k] * w[j, k]] for [i] and [j] below 8 and [k]
-   below [n], both float64 operands stored along the sum, as a linear layer's
-   input and its matrix stored [out; in], [i] and [j] upcast whole and [k]
-   unrolled by 4. *)
+(* [out[i, j] = sum_k x[i, k] * w[j, k]] for [i] and [j] below 8 and [k] below
+   [n], both float64 operands stored along the sum, as a linear layer's input
+   and its matrix stored [out; in], [i] and [j] upcast whole and [k] unrolled by
+   4. *)
 let transposed_kernel n =
   let out = Shape.param ~shape:[ Int 64 ] 0 Float64 in
   let x = Shape.param ~shape:[ Int (8 * n) ] 1 Float64 in
@@ -6728,7 +7184,7 @@ let transposed_kernel n =
   in
   let sum = Ops.reduce product Op.Add [ k ] in
   let split axis amount target =
-    Opt.Split { axis; amount; target = target; top = false }
+    Opt.Split { axis; amount; target; top = false }
   in
   Ops.sink
     ~kernel:
@@ -6737,8 +7193,8 @@ let transposed_kernel n =
          ())
     [ Ops.end_ (Ops.store (Ops.index out [ (i * int 8) + j ]) sum) [ i; j ] ]
 
-(* [out[i, j] = sum_k x[i, k] * w[j, k]] for [i] below 8 and [j] below 2 and
-   [k] below [n], float32, [i] and [j] upcast whole and [k] unrolled by 4: the
+(* [out[i, j] = sum_k x[i, k] * w[j, k]] for [i] below 8 and [j] below 2 and [k]
+   below [n], float32, [i] and [j] upcast whole and [k] unrolled by 4: the
    expander numbers the lane axes [i] then [j], so the last is the narrower. *)
 let widest_kernel n =
   let out = Shape.param ~shape:[ Int 16 ] 0 Float32 in
@@ -6763,8 +7219,8 @@ let widest_kernel n =
     [ Ops.end_ (Ops.store (Ops.index out [ (i * int 2) + j ]) sum) [ i; j ] ]
 
 (* The sum runs along its widest lane axis, [i]'s 8, not its last, [j]'s 2:
-   every multiply-add is a vector of 8 lanes, and every output adds its
-   products in order, exact on small integers. *)
+   every multiply-add is a vector of 8 lanes, and every output adds its products
+   in order, exact on small integers. *)
 let runs_widest () =
   let n = 16 in
   let prg = Codegen.to_program (widest_kernel n) (Lazy.force host) in
@@ -6772,7 +7228,8 @@ let runs_widest () =
   equal (list int) ~msg:"lanes of the multiply-adds" [ 8 ]
     (List.sort_uniq compare
        (List.filter_map
-          (fun (o, lanes, _) -> if Op.equal o Op.Mulacc then Some lanes else None)
+          (fun (o, lanes, _) ->
+            if Op.equal o Op.Mulacc then Some lanes else None)
           (vector_operations uops)));
   let x = Array.init (8 * n) (fun k -> Float.of_int ((k mod 7) - 3))
   and w = Array.init (2 * n) (fun k -> Float.of_int ((k mod 5) - 2)) in
@@ -6784,9 +7241,9 @@ let runs_widest () =
     done;
     `Float !s
   in
-  let floats = Array.map (fun f -> `Float f) in
   equal (array Dtypes.value) (Array.init 16 out)
-    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats w) ]))
+    (List.assoc 0
+       (Run.on_host prg [ (1, float_values x); (2, float_values w) ]))
 
 (* Each step's vectors of [w] along [j] are the columns of the 8 rows of 4 lanes
    it loads along the sum: they are computed by a transpose, in pieces of 2
@@ -6828,18 +7285,18 @@ let transposes n () =
   equal int ~msg:"stacks of lanes of more than two vectors, out of their order"
     0
     (List.length (List.filter gathered uops));
-  let f = Float.of_int in
-  let x = Array.init (8 * n) (fun k -> Float.sin (f (k + 1)) *. f (k + 1))
-  and w = Array.init (8 * n) (fun k -> Float.cos (f ((2 * k) + 1))) in
+  let x = Array.init (8 * n) (fun k -> fst (separating_factors 4 k))
+  and w = Array.init (8 * n) (fun k -> snd (separating_factors 4 k)) in
   (* each step of 4 is a product and 3 multiply-adds, added to the sum *)
-  let out i j =
+  let out add e =
+    let i = e / 8 and j = e mod 8 in
     let step b =
       let p t = (x.((i * n) + (4 * b) + t), w.((j * n) + (4 * b) + t)) in
       let a0, b0 = p 0 in
       List.fold_left
         (fun c t ->
           let a, b = p t in
-          Float.fma a b c)
+          add a b c)
         (a0 *. b0) [ 1; 2; 3 ]
     in
     let s = ref 0. in
@@ -6848,10 +7305,16 @@ let transposes n () =
     done;
     `Float !s
   in
-  let floats = Array.map (fun f -> `Float f) in
-  equal (array Dtypes.value)
-    (Array.init 64 (fun e -> out (e / 8) (e mod 8)))
-    (List.assoc 0 (Run.on_host prg [ (1, floats x); (2, floats w) ]))
+  let fused = Array.init 64 (out Float.fma)
+  and apart = Array.init 64 (out (fun a b c -> c +. rounded_product a b)) in
+  equal ~msg:"outputs whose products rounded apart give the same sum" (list int)
+    []
+    (List.filter
+       (fun e -> Testable.equal Dtypes.value fused.(e) apart.(e))
+       (List.init 64 Fun.id));
+  equal (array Dtypes.value) fused
+    (List.assoc 0
+       (Run.on_host prg [ (1, float_values x); (2, float_values w) ]))
 
 (* The kernel that stores into slot 0, of [dt], element [i] of slot 3 where
    element [i] of slot 1 is below that of slot 2, both of [cmp], and of slot 4
@@ -6918,9 +7381,8 @@ let comparisons cmps dts lanes =
       List.concat_map (fun dt -> List.map (fun n -> (cmp, dt, n)) lanes) dts)
     cmps
 
-let widths = Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
-let signed = Dtype.[ Int8; Int16; Int32; Int64 ]
-let unsigned = Dtype.[ Uint8; Uint16; Uint32; Uint64 ]
+let signed_widths = Dtype.[ Int8; Int16; Int32; Int64 ]
+let unsigned_widths = Dtype.[ Uint8; Uint16; Uint32; Uint64 ]
 
 (* A fold of an int8 [2; 2] to [2; 1], kernel [1; 2], dilation [1; 2] and
    padding [(0, 0); (1, 1)], every window in the padding. In devectorize, the
@@ -6965,116 +7427,218 @@ let half_zeros_kernel () =
     ~kernel:(Ops.kernel_info ~opts_to_apply:[ whole ] ())
     [ Ops.end_ store [ r0; r1 ] ]
 
-(* A selection of [b - a] where [a] is below [b] and of [a * c] elsewhere,
-   over [rows * cols] elements of [dt], [c] a factor of each column, which
-   keeps the axes apart, both upcast whole (an upcast takes at most 16):
-   operations of [rows * cols] lanes. *)
-let wide_kernel dt (rows, cols) =
-  let n = rows * cols in
+(* An elementwise kernel of many lanes on the host: a selection of [b - a] where
+   [a] is below [b] and of [a * c] elsewhere, over [planes * rows * cols]
+   elements of [dt], [c] a factor of each plane's column, which keeps the axes
+   apart, every axis upcast whole (an upcast takes at most 16): operations of up
+   to 512 lanes, the most an iteration on the host computes. Where [gathered],
+   [b] is read at indices loaded from slot 4, as a gather reads; where [to_] is
+   another type, the result is converted to it. *)
+type wide = {
+  dt : Dtype.t;
+  to_ : Dtype.t;
+  gathered : bool;
+  planes : int;
+  rows : int;
+  cols : int;
+}
+
+let pp_wide ppf w =
+  Format.fprintf ppf "%a to %a, %d by %d by %d%s" Dtype.pp w.dt Dtype.pp w.to_
+    w.planes w.rows w.cols
+    (if w.gathered then ", b gathered" else "")
+
+let wide_lanes w = w.planes * w.rows * w.cols
+
+let wide_kernel w =
+  let n = wide_lanes w in
+  (* The axes of one element fold away. An upcast moves its axis past the
+     others, so the axes are upcast last first. *)
+  let axes = List.filter (fun size -> size > 1) [ w.planes; w.rows; w.cols ] in
+  let opts =
+    List.rev
+      (List.mapi
+         (fun k _ ->
+           Opt.Split { axis = k; amount = 0; target = Upcast; top = false })
+         axes)
+  in
+  let columns = w.planes * w.cols in
   let open Ops.O in
-  let param slot = Shape.param ~shape:[ Int n ] slot dt in
-  let out = param 0 and a = param 1 and b = param 2 in
-  let c = Shape.param ~shape:[ Int cols ] 3 dt in
-  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ]
-  and j = Ops.range ~axis_type:Weak (Int cols) [ 1 ] in
-  let at p =
-    if p == c then Ops.index c [ j ] else Ops.index p [ (i * int cols) + j ]
+  let param slot dt = Shape.param ~shape:[ Int n ] slot dt in
+  let out = param 0 w.to_ and a = param 1 w.dt and b = param 2 w.dt in
+  let c = Shape.param ~shape:[ Int columns ] 3 w.dt in
+  let p = Ops.range ~axis_type:Weak (Int w.planes) [ 0 ]
+  and i = Ops.range ~axis_type:Weak (Int w.rows) [ 1 ]
+  and j = Ops.range ~axis_type:Weak (Int w.cols) [ 2 ] in
+  let e = (((p * int w.rows) + i) * int w.cols) + j in
+  let at_a = Ops.index a [ e ]
+  and at_c = Ops.index c [ (p * int w.cols) + j ] in
+  let at_b =
+    if not w.gathered then Ops.index b [ e ]
+    else Ops.index b [ Ops.cast (Ops.index (param 4 Int32) [ e ]) Weak_int ]
   in
-  let whole axis =
-    Opt.Split { axis; amount = 0; target = Upcast; top = false }
-  in
-  let opts = if rows = 1 then [ whole 0 ] else [ whole 1; whole 0 ] in
+  let value = Ops.where (at_a < at_b) (at_b - at_a) (at_a * at_c) in
+  let value = if Dtype.equal w.to_ w.dt then value else Ops.cast value w.to_ in
   Ops.sink
     ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+    [ Ops.end_ (Ops.store (Ops.index out [ e ]) value) [ p; i; j ] ]
+
+let floats_and_integers =
+  Dtype.
     [
-      Ops.end_
-        (Ops.store (at out)
-           (Ops.where (at a < at b) (at b - at a) (at a * at c)))
-        [ i; j ];
+      Float32; Float64; Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64;
     ]
 
-let wide_gen =
+(* The types [dt]'s values convert to: a negative float has no value of an
+   unsigned type. *)
+let converts_to dt =
+  if Dtype.is_float dt then
+    List.filter (fun t -> not (Dtype.is_unsigned t)) floats_and_integers
+  else floats_and_integers
+
+(* The kernels of [shapes], each a [(planes, rows, cols)], of any type,
+   conversion and gather. *)
+let wide_gen shapes =
   let open Gen in
-  (* 65 lanes, the only count up to 256 of a rest of one, is drawn three times
-     so that every run reaches it. *)
   let shape =
     of_list
-      ~pp:(fun ppf (r, c) -> Format.fprintf ppf "%d by %d" r c)
-      [
-        (1, 2); (1, 16); (3, 11); (3, 16); (4, 16); (8, 16); (12, 16);
-        (16, 16); (5, 13); (13, 5); (5, 13); (5, 16); (9, 9); (7, 14);
-        (13, 10); (11, 12);
-      ]
+      ~pp:(fun ppf (p, r, c) -> Format.fprintf ppf "%d by %d by %d" p r c)
+      shapes
   in
-  let dtype =
-    of_list ~pp:Dtype.pp
-      Dtype.
-        [
-          Float32; Float64; Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32;
-          Uint64;
-        ]
-  in
-  pair dtype shape
+  let* dt = of_list ~pp:Dtype.pp floats_and_integers in
+  let+ to_ = of_list ~pp:Dtype.pp (converts_to dt)
+  and+ gathered = bool
+  and+ planes, rows, cols = shape in
+  { dt; to_; gathered; planes; rows; cols }
 
 (* The elements [seed] draws for slot [slot] of [n] of [dt]: small values, not
    negative where [dt] is unsigned, whose products fit it. *)
 let wide_values dt n seed =
   let st = Random.State.make [| seed |] in
   Array.init n (fun _ ->
-      let v = Random.State.int st 7 - (if Dtype.is_unsigned dt then 0 else 3) in
+      let v = Random.State.int st 7 - if Dtype.is_unsigned dt then 0 else 3 in
       if Dtype.is_float dt then `Float (Float.of_int v)
       else `Int (Bigint.of_int v))
 
-(* On the host, an operation of any lanes computes vectors of at most 64 of
-   them ([host_vectors]), none apart, and the program writes what its kernel
-   writes, node by node. *)
-let computes_wide (dt, (rows, cols)) =
-  let n = rows * cols in
-  cover "an operation of at most 64 lanes" (n <= host_lanes);
-  cover "vectors of 64 lanes alone" (n > host_lanes && n mod host_lanes = 0);
-  cover "vectors of 64 lanes and a rest of one lane"
-    (n > host_lanes && n mod host_lanes = 1);
-  cover "vectors of 64 lanes and a vector of the rest"
-    (n > host_lanes && n mod host_lanes > 1);
-  let k = wide_kernel dt (rows, cols) in
+let wide_case dt to_ gathered (planes, rows, cols) =
+  { dt; to_; gathered; planes; rows; cols }
+
+(* Each clause of the host's vector lanes ({!Renderer.t.vector_lanes}): its
+   draws, 20 in all, its shapes, and two examples, one converting a gathered
+   operand and one converting nothing in place, which a few draws would miss. *)
+let wide_classes =
+  Dtype.
+    [
+      ( "an operation of at most 64 lanes computes one vector",
+        6,
+        [ (1, 1, 2); (1, 1, 16); (1, 3, 11); (1, 3, 16); (1, 4, 16) ],
+        [
+          wide_case Float32 Int32 true (1, 2, 16);
+          wide_case Int16 Int16 false (1, 3, 16);
+        ] );
+      ( "an operation of a multiple of 64 lanes computes vectors of 64",
+        3,
+        [ (1, 8, 16); (1, 12, 16) ],
+        [
+          wide_case Int32 Int8 true (2, 16, 16);
+          wide_case Uint16 Uint16 false (1, 8, 16);
+        ] );
+      ( "an operation of 64k + 1 lanes computes its last 65 as vectors of 33 \
+         and 32",
+        6,
+        [ (1, 5, 13); (1, 13, 5) ],
+        [
+          wide_case Int16 Float64 true (1, 5, 13);
+          wide_case Uint8 Uint8 false (1, 13, 5);
+        ] );
+      ( "an operation of other lanes computes vectors of 64 and one of the rest",
+        5,
+        [
+          (1, 5, 16);
+          (1, 9, 9);
+          (1, 7, 14);
+          (1, 13, 10);
+          (1, 11, 12);
+          (2, 13, 16);
+          (2, 16, 9);
+          (2, 11, 13);
+        ],
+        [
+          wide_case Float64 Float32 true (1, 5, 16);
+          wide_case Float32 Float32 false (1, 7, 14);
+        ] );
+    ]
+
+(* On the host, an operation of any lanes, a conversion among them, computes
+   vectors of at most 64 of them ([host_vectors]), none apart, and the program
+   writes what its kernel writes, node by node. *)
+let computes_wide w =
+  let n = wide_lanes w in
+  cover "a conversion" (not (Dtype.equal w.dt w.to_));
+  cover "no conversion" (Dtype.equal w.dt w.to_);
+  cover "a gathered operand" w.gathered;
+  cover "operands read in place" (not w.gathered);
+  let k = wide_kernel w in
   let prg = Codegen.to_program k (Lazy.force host) in
   let widths = List.map fst (host_vectors n) in
   let ops = vector_operations (Ops.src (Ops.nth prg 1)) in
-  equal (list (triple op_w int int)) []
+  equal
+    (list (triple op_w int int))
+    []
     (List.filter (fun (_, l, _) -> not (List.mem l widths)) ops);
-  (* The selection's vectors hold all its lanes: none is computed apart. *)
+  (* The selection's vectors hold all its lanes, none computed apart: each of
+     its operations computes [n] lanes, or a multiple of [n] where a conversion
+     computes it too, as an int64's conversion to a float32 compares its
+     words. *)
   let lanes o =
     List.fold_left
       (fun t (o', l, c) -> if Op.equal o o' then t + (l * c) else t)
       0 ops
   in
-  equal (list (pair op_w int))
-    (List.map (fun o -> (o, n)) Op.[ Cmplt; Sub; Where ])
-    (List.map (fun o -> (o, lanes o)) Op.[ Cmplt; Sub; Where ]);
+  equal
+    (list (pair op_w int))
+    []
+    (List.filter
+       (fun (_, l) -> l = 0 || l mod n <> 0)
+       (List.map (fun o -> (o, lanes o)) Op.[ Cmplt; Sub; Where ]));
   equal (list int) []
     (List.filter (fun l -> l > host_lanes) (vector_types (source prg)));
+  let gathered =
+    if not w.gathered then []
+    else
+      let st = Random.State.make [| 4 |] in
+      [ (4, int_values (List.init n (fun _ -> Random.State.int st n))) ]
+  in
   let buffers =
     [
-      (1, wide_values dt n 1);
-      (2, wide_values dt n 2);
-      (3, wide_values dt cols 3);
+      (1, wide_values w.dt n 1);
+      (2, wide_values w.dt n 2);
+      (3, wide_values w.dt (w.planes * w.cols) 3);
     ]
+    @ gathered
   in
   let expected = Array.make n (`Int Bigint.zero) in
   List.iter
     (fun (slot, e, v) -> if slot = 0 then expected.(e) <- v)
     (Interpreter.writes ~buffers k);
-  equal (array Dtypes.value) expected
-    (List.assoc 0 (Run.on_host prg buffers))
+  equal (array Dtypes.value) expected (List.assoc 0 (Run.on_host prg buffers))
 
 let vectors =
   group "vectors in programs"
     [
-      test "a select of lanes whose loads all fold is devectorized" (fun () ->
-          Setting.context
-            [ B (Setting.spec, 1) ]
-            (fun () ->
-              ignore (Codegen.to_program (vector_select_kernel ()) clang)));
+      (* every window reads padding: [(3 r1 + 1) % 5 = 0] holds at [r1 = 3]
+         alone, which [r1 < 3] excludes, so each sum is 0 *)
+      test "a select of lanes whose loads all fold computes their zeros"
+        (fun () ->
+          let prg =
+            Setting.context
+              [ B (Setting.spec, 1) ]
+              (fun () ->
+                Codegen.to_program (vector_select_kernel ()) (Lazy.force host))
+          in
+          equal (array Dtypes.value)
+            (int_values [ 0; 0 ])
+            (List.assoc 0 (Run.on_host prg [ (1, int_values [ 1; 2; 3; 4 ]) ])));
       test
         "a weak constant stored into four lanes of half on the host converts \
          them" (fun () ->
@@ -7120,14 +7684,18 @@ let vectors =
       cases "a host program of n lanes computes one vector"
         ~id:(Printf.sprintf "%d lanes") [ 3; 5; 7; 9; 12; 15; 16 ] (fun n ->
           selects_lanes n ());
-      prop ~count:50
+      group
         "a host operation of any lanes computes vectors of at most 64 and \
          writes what its kernel writes"
-        wide_gen computes_wide;
+        (List.map
+           (fun (name, count, shapes, examples) ->
+             prop ~count ~examples name
+               (Gen.with_pp pp_wide (wide_gen shapes))
+               computes_wide)
+           wide_classes);
       cases
         "a host sum of a product's unrolled lanes multiplies vectors of its \
-         output lanes"
-        ~id:(Printf.sprintf "%d lanes") [ 3; 4; 9 ] (fun n ->
+         output lanes" ~id:(Printf.sprintf "%d lanes") [ 3; 4; 9 ] (fun n ->
           sums_products n ());
       test
         "a host sum whose last lane axis holds one lane multiplies vectors of \
@@ -7135,33 +7703,38 @@ let vectors =
           (* ffn_clang's sum holds 16 lanes and a last axis of one: each
              multiply-add is a vector of the 16 *)
           let row = List.find (fun row -> row "name" = "ffn_clang") rows in
-          let scalar u =
-            Ops.op u = Op.Mulacc && Shape.shape_opt u = Some []
-          in
+          let scalar u = Ops.op u = Op.Mulacc && Shape.shape_opt u = Some [] in
           equal int ~msg:"multiply-adds of one lane" 0
             (List.length
                (List.filter scalar (Ops.src (Ops.nth (program row) 1)))));
       test
         "a host sum whose widest lane axis is not its last multiplies vectors \
-         of the widest" runs_widest;
+         of the widest"
+        runs_widest;
       cases
         "a host product of operands stored along its sum gathers its vectors \
-         by a transpose of two-vector shuffles"
-        ~id:(Printf.sprintf "sum of %d") [ 16; 40 ] (fun n -> transposes n ());
-      cases
-        "a host selection of 8, 16 or 32 lanes by a comparison of integers \
-         takes each lane's arm"
-        ~id:(fun (cmp, dt, n) ->
-          Format.asprintf "%a by %a, %d lanes" Dtype.pp dt Dtype.pp cmp n)
-        (comparisons widths widths [ 8; 16; 32 ])
-        selects_by_comparison;
-      cases
-        "a host selection of 3, 6, 12, 24 or 48 lanes by a comparison of \
-         integers takes each lane's arm"
-        ~id:(fun (cmp, dt, n) ->
-          Format.asprintf "%a by %a, %d lanes" Dtype.pp dt Dtype.pp cmp n)
-        (comparisons signed unsigned [ 3; 6; 12; 24; 48 ])
-        selects_by_comparison;
+         by a transpose of two-vector shuffles" ~id:(Printf.sprintf "sum of %d")
+        [ 16; 40 ] (fun n -> transposes n ());
+      group "a host selection by a comparison of integers takes each lane's arm"
+        (List.map
+           (fun (name, cmps, dts, lanes) ->
+             let rows = comparisons cmps dts lanes in
+             cases name
+               ~id:(fun (cmp, dt, n) ->
+                 Format.asprintf "%a by %a, %d lanes" Dtype.pp dt Dtype.pp cmp n)
+               rows
+               (compiled_table
+                  (fun (cmp, dt, n) -> [ compare_select cmp dt n ])
+                  rows selects_by_comparison))
+           [
+             ("of 8 lanes", integer_types, integer_types, [ 8 ]);
+             ("of 16 lanes", integer_types, integer_types, [ 16 ]);
+             ("of 32 lanes", integer_types, integer_types, [ 32 ]);
+             ( "of 3, 6, 12, 24 or 48 lanes",
+               signed_widths,
+               unsigned_widths,
+               [ 3; 6; 12; 24; 48 ] );
+           ]);
     ]
 
 (* Signed zeros *)
@@ -7181,12 +7754,8 @@ let padded ?(flip = false) fill before after xs =
     if flip then Ops.where (Ops.logical_not mask) fill (Shape.pad x padding)
     else Ops.where mask (Shape.pad x padding) fill
   in
-  let out =
-    Ops.new_buffer ~slot:0 "CPU" (n + before + after) Float32
-  in
+  let out = Ops.new_buffer ~slot:0 "CPU" (n + before + after) Float32 in
   (Ops.sink [ Ops.after out [ Ops.store out value ] ], value)
-
-let floats xs = Array.map (fun x -> `Float x) xs
 
 (* [scheduled sink] is the one kernel of [sink]'s schedule, with the slot of the
    buffer each of its parameters stands for. *)
@@ -7196,8 +7765,9 @@ let scheduled sink =
     | Param { slot; _ } -> slot
     | _ -> invalid_arg "an argument that is not storage"
   in
-  match Ops.src (fst (Schedule.create_linear_with_vars
-                        ~cores:Cores.host sink)) with
+  match
+    Ops.src (fst (Schedule.create_linear_with_vars ~cores:Cores.host sink))
+  with
   | [ call ] -> (Ops.body call, List.map slot (Ops.src_without_body call))
   | calls -> Format.kasprintf invalid_arg "%d kernels" (List.length calls)
 
@@ -7205,7 +7775,7 @@ let scheduled sink =
    of a kernel's parameters, and [input slots xs] binds buffer 1's parameter to
    [xs]. *)
 let parameter slots b = Option.get (List.find_index (Int.equal b) slots)
-let input slots xs = [ (parameter slots 1, floats xs) ]
+let input slots xs = [ (parameter slots 1, float_values xs) ]
 
 let padding_computed ?flip fill before after xs =
   let sink, value = padded ?flip fill before after xs in
@@ -7223,9 +7793,8 @@ let padding_computed ?flip fill before after xs =
   let expected =
     Array.to_list
       (Array.map
-         (function
-           | #Dtype.value as v -> v | `Invalid -> invalid_arg "Invalid")
-         (Tensors.eval ~buffers:[ (1, floats xs) ] value))
+         (function #Dtype.value as v -> v | `Invalid -> invalid_arg "Invalid")
+         (Tensors.eval ~buffers:[ (1, float_values xs) ] value))
   in
   equal (list Dtypes.value) expected written
 
@@ -7245,14 +7814,13 @@ let signed_zero_pads =
 let signed_zeros =
   group "signed zeros"
     [
-      test "a pad with -0. fill renders and computes -0." (fun () ->
+      test "a pad with -0. fill computes -0." (fun () ->
           let sink, _ = padded (-0.) 1 1 [| 1.; 2. |] in
           let kernel, slots = scheduled sink in
           let prg = Codegen.to_program kernel (Lazy.force host) in
-          contains ~sub:"-0.0f" (source prg);
           let results = Run.on_host prg (input slots [| 1.; 2. |]) in
           equal (array Dtypes.value)
-            (floats [| -0.; 1.; 2.; -0. |])
+            (float_values [| -0.; 1.; 2.; -0. |])
             (List.assoc (parameter slots 0) results));
       test "Shape.pad by -0. computes -0. on the padding" (fun () ->
           let x = Ops.new_buffer ~slot:1 "CPU" 2 Float32 in
@@ -7266,10 +7834,18 @@ let signed_zeros =
           let prg = Codegen.to_program kernel (Lazy.force host) in
           let results = Run.on_host prg (input slots [| 1.; 2. |]) in
           equal (array Dtypes.value)
-            (floats [| -0.; 1.; 2.; -0. |])
+            (float_values [| -0.; 1.; 2.; -0. |])
             (List.assoc (parameter slots 0) results));
       prop "a pad and a selection of signed zeros keep the interpreter's bits"
         signed_zero_pads (fun (flip, fill, before, after, xs) ->
+          let negative_zero x = x = 0. && Float.sign_bit x in
+          cover "a -0. fill around elements"
+            (negative_zero fill && before + after > 0);
+          cover "a +0. fill around elements"
+            ((not (negative_zero fill)) && before + after > 0);
+          cover "a selection by the mask's negation" flip;
+          cover "a -0. element" (Array.exists negative_zero xs);
+          cover "a NaN element" (Array.exists Float.is_nan xs);
           padding_computed ~flip fill before after xs);
     ]
 
@@ -7280,7 +7856,7 @@ let signed_zeros =
 
 let word w = `Int (Bigint.of_int64_unsigned w)
 
-let unsigned dt =
+let unsigned_of dt =
   List.find (fun u -> Dtype.itemsize u = Dtype.itemsize dt) Dtype.uints
 
 (* The bits [dt] stores into each element of a kernel that stores the NaN of
@@ -7288,14 +7864,16 @@ let unsigned dt =
 let stored_nans dt words =
   let out = Shape.param ~shape:[ Int (List.length words) ] 0 dt in
   let store i w =
-    let nan = Dtype.bitcast (unsigned dt) dt (word w) in
+    let nan = Dtype.bitcast (unsigned_of dt) dt (word w) in
     Ops.store
       (Ops.index out [ Ops.int i ])
       (Ops.const ~dtype:dt (nan :> Dtype.const))
   in
   let sink = Ops.sink ~kernel:(Ops.kernel_info ()) (List.mapi store words) in
   let prg = Codegen.to_program sink (Lazy.force host) in
-  Array.map (Dtype.bitcast dt (unsigned dt)) (List.assoc 0 (Run.on_host prg []))
+  Array.map
+    (Dtype.bitcast dt (unsigned_of dt))
+    (List.assoc 0 (Run.on_host prg []))
 
 let keeps_nan_bits (dt, words) =
   equal (array Dtypes.value)
@@ -7333,10 +7911,13 @@ let cast_to ?(lanes = 1) dt from n =
   let out = Shape.param ~shape:[ Int n ] 0 dt in
   let x = Shape.param ~shape:[ Int n ] 1 from in
   let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let store = Ops.store (Ops.index out [ i ]) (Ops.cast (Ops.index x [ i ]) dt) in
+  let store =
+    Ops.store (Ops.index out [ i ]) (Ops.cast (Ops.index x [ i ]) dt)
+  in
   let opts =
     if lanes = 1 then []
-    else [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
+    else
+      [ Opt.Split { axis = 0; amount = lanes; target = Upcast; top = false } ]
   in
   Ops.sink
     ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
@@ -7391,8 +7972,8 @@ let bfloat16_casts =
 
    A cast to half from a double rounds once, from the exact value, where a cast
    through a float32 rounds twice: 1 + 2^-11 + 2^-40 is 1 + 2^-10 once, and 1
-   through the float32 1 + 2^-11, a tie that rounds to even. The subnormal
-   2^-25 + 2^-60 is 2^-24 once, and 0 through the float32 2^-25. *)
+   through the float32 1 + 2^-11, a tie that rounds to even. The subnormal 2^-25
+   + 2^-60 is 2^-24 once, and 0 through the float32 2^-25. *)
 
 let half_casts =
   let doubles =
@@ -7466,7 +8047,8 @@ let long_casts =
   cases "a 64-bit integer rounds once to float32 on the host"
     ~id:(fun (lanes, (dt, _)) ->
       Printf.sprintf "%s in %d lanes" (Dtype.name dt) lanes)
-    (List.concat_map (fun lanes -> List.map (fun l -> (lanes, l)) longs)
+    (List.concat_map
+       (fun lanes -> List.map (fun l -> (lanes, l)) longs)
        [ 1; 2; 4; 8 ])
     (fun (lanes, from) -> rounds_once lanes from)
 
@@ -7498,13 +8080,13 @@ let select_bfloat16 n =
     ~arg:(Kernel { (kernel_info k) with opts_to_apply = Some [ upcast ] })
 
 let selects_bfloat16_lanes () =
-  let floats l = Array.of_list (List.map (fun f -> `Float f) l) in
-  let c = floats [ 1.; -1.; 0.; 2.; -3.; 4.; -0.5; 0.5 ]
-  and a = floats [ 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. ]
-  and b = floats [ -1.; -2.; -3.; -4.; -5.; -6.; -7.; -8. ] in
+  let float_list l = float_values (Array.of_list l) in
+  let c = float_list [ 1.; -1.; 0.; 2.; -3.; 4.; -0.5; 0.5 ]
+  and a = float_list [ 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. ]
+  and b = float_list [ -1.; -2.; -3.; -4.; -5.; -6.; -7.; -8. ] in
   let prg = Codegen.to_program (select_bfloat16 8) (Lazy.force host) in
   equal (array Dtypes.value)
-    (floats [ 1.; -2.; -3.; 4.; -5.; 6.; -7.; 8. ])
+    (float_list [ 1.; -2.; -3.; 4.; -5.; 6.; -7.; 8. ])
     (List.assoc 0 (Run.on_host prg [ (1, c); (2, a); (3, b) ]))
 
 (* Gated bfloat16 loads *)
@@ -7526,14 +8108,14 @@ let take_bfloat16 n =
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) taken) [ i ] ]
 
 let takes_bfloat16 () =
-  let floats l = Array.of_list (List.map (fun f -> `Float f) l) in
-  let ints l = Array.of_list (List.map (fun i -> `Int (Bigint.of_int i)) l) in
+  let float_list l = float_values (Array.of_list l) in
+  let int_list l = int_values l in
   let prg = Codegen.to_program (take_bfloat16 4) (Lazy.force host) in
   equal (array Dtypes.value)
-    (floats [ 3.; 0.; 1.; 0. ])
+    (float_list [ 3.; 0.; 1.; 0. ])
     (List.assoc 0
        (Run.on_host prg
-          [ (1, floats [ 1.; 2.; 3.; 4. ]); (2, ints [ 2; 7; 0; 9 ]) ]))
+          [ (1, float_list [ 1.; 2.; 3.; 4. ]); (2, int_list [ 2; 7; 0; 9 ]) ]))
 
 (* Lanes all Invalid *)
 
@@ -7588,41 +8170,44 @@ let square_kernel ~opts dtype c =
   let i = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let c = Ops.const ~dtype (`Int c) in
   let p = Ops.index x [ i ] * c in
-  Ops.sink ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) (p * p)) [ i ] ]
 
-(* [c * c] is a multiple of [2^bits] where [c] is [2^(bits / 2)] or the
-   greatest power of two, so each square wraps to 0, a lane at a time or 8
-   lanes at once. *)
-let square_wraps () =
+(* [c * c] is a multiple of [2^bits] where [c] is [2^(bits / 2)] or the greatest
+   power of two, so each square wraps to 0, a lane at a time or 8 lanes at
+   once. *)
+let squares dtype =
   let upcast =
     Opt.Split { axis = 0; amount = 0; target = Upcast; top = false }
   in
   let power k = Bigint.shift_left Bigint.one k in
+  let bits = Dtype.bitsize dtype in
+  let top =
+    match Dtype.min dtype with
+    | `Int z when Bigint.sign z < 0 -> z
+    | _ -> power (bits - 1)
+  in
+  List.concat_map
+    (fun c ->
+      [
+        (c, [], square_kernel ~opts:[] dtype c);
+        (c, [ upcast ], square_kernel ~opts:[ upcast ] dtype c);
+      ])
+    [ power (bits / 2); top ]
+
+let square_wraps dtype =
   List.iter
-    (fun dtype ->
-      let bits = Dtype.bitsize dtype in
-      let top =
-        match Dtype.min dtype with
-        | `Int z when Bigint.sign z < 0 -> z
-        | _ -> power (bits - 1)
+    (fun (c, opts, k) ->
+      let prg = Codegen.to_program k (Lazy.force host) in
+      let msg =
+        Format.asprintf "times %s, %d opts" (Bigint.to_string c)
+          (List.length opts)
       in
-      List.iter
-        (fun (c, opts) ->
-          let k = square_kernel ~opts dtype c in
-          let prg = Codegen.to_program k (Lazy.force host) in
-          let x = Array.init 8 (fun j -> `Int (Bigint.of_int j)) in
-          let msg =
-            Format.asprintf "%a times %s, %d opts" Dtype.pp dtype
-              (Bigint.to_string c) (List.length opts)
-          in
-          equal ~msg (array Dtypes.value)
-            (Array.make 8 (`Int Bigint.zero))
-            (List.assoc 0 (Run.on_host prg [ (1, x) ])))
-        (List.concat_map
-           (fun c -> [ (c, []); (c, [ upcast ]) ])
-           [ power (bits / 2); top ]))
-    Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+      equal ~msg (array Dtypes.value)
+        (Array.make 8 (`Int Bigint.zero))
+        (List.assoc 0 (Run.on_host prg [ (1, iota_values 8) ])))
+    (squares dtype)
 
 (* The kernel that stores into slot 0 [x * c0 + x * c1] of element [i] of slot
    1, over 8 elements of [dtype], [c0] and [c1] weak. *)
@@ -7636,32 +8221,32 @@ let like_terms_kernel dtype c0 c1 =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.end_ (Ops.store (Ops.index out [ i ]) s) [ i ] ]
 
-(* Like terms whose weak factors sum past the width, the greatest value and 3
-   or 2^(bits - 1) + 1 and 2^(bits - 1) + 3: the sum of the products, which
-   wraps, is [x * (c0 + c1)] at the width. *)
-let like_terms_wrap () =
+(* Like terms whose weak factors sum past the width, the greatest value and 3 or
+   2^(bits - 1) + 1 and 2^(bits - 1) + 3: the sum of the products, which wraps,
+   is [x * (c0 + c1)] at the width. *)
+let like_terms dtype =
+  let bits = Dtype.bitsize dtype in
+  let _, hi = Dtypes.int_bounds dtype in
+  let half = Bigint.shift_left Bigint.one (bits - 1) in
+  List.map
+    (fun (c0, c1) -> (c0, c1, like_terms_kernel dtype (`Int c0) (`Int c1)))
+    Bigint.[ (hi, of_int 3); (succ half, half + of_int 3) ]
+
+let like_terms_wrap dtype =
   List.iter
-    (fun dtype ->
-      let bits = Dtype.bitsize dtype in
-      let _, hi = Dtypes.int_bounds dtype in
-      let half = Bigint.shift_left Bigint.one (bits - 1) in
-      List.iter
-        (fun (c0, c1) ->
-          let k = like_terms_kernel dtype (`Int c0) (`Int c1) in
-          let prg = Codegen.to_program k (Lazy.force host) in
-          let x = Array.init 8 (fun j -> `Int (Bigint.of_int j)) in
-          let expected =
-            Array.init 8 (fun j ->
-                Dtype.truncate dtype (`Int Bigint.(of_int j * (c0 + c1))))
-          in
-          let msg =
-            Format.asprintf "%a x * %s + x * %s" Dtype.pp dtype
-              (Bigint.to_string c0) (Bigint.to_string c1)
-          in
-          equal ~msg (array Dtypes.value) expected
-            (List.assoc 0 (Run.on_host prg [ (1, x) ])))
-        Bigint.[ (hi, of_int 3); (succ half, half + of_int 3) ])
-    Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+    (fun (c0, c1, k) ->
+      let prg = Codegen.to_program k (Lazy.force host) in
+      let expected =
+        Array.init 8 (fun j ->
+            Dtype.truncate dtype (`Int Bigint.(of_int j * (c0 + c1))))
+      in
+      let msg =
+        Format.asprintf "x * %s + x * %s" (Bigint.to_string c0)
+          (Bigint.to_string c1)
+      in
+      equal ~msg (array Dtypes.value) expected
+        (List.assoc 0 (Run.on_host prg [ (1, iota_values 8) ])))
+    (like_terms dtype)
 
 (* The kernel that stores into slot [k] the [k]th of [ops] of [x] and [c] at
    element [i] of [x], slot 4, over 8 elements of [dtype], [c] weak, with
@@ -7674,68 +8259,71 @@ let divide_kernel ~opts dtype ops c =
     let q = Ops.alu (Ops.index x [ i ]) op [ Ops.const (`Int c) ] in
     Ops.store (Ops.index out [ i ]) q
   in
-  Ops.sink ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~opts_to_apply:opts ())
     [ Ops.end_ (Ops.group (List.mapi store ops)) [ i ] ]
 
-(* A weak divisor past the width, above or below it, divides as its value in
-   the dividend's type, a lane at a time or 8 lanes at once: on int8, 128 is
-   -128, and on uint8, -3 is 253. *)
-let divisors_wrap () =
+(* A weak divisor past the width, above or below it, divides as its value in the
+   dividend's type, a lane at a time or 8 lanes at once: on int8, 128 is -128,
+   and on uint8, -3 is 253. *)
+let division_ops =
+  [
+    (Op.Div, Bigint.fdiv);
+    (Op.Mod, fun n d -> Bigint.(n - (d * fdiv n d)));
+    (Op.Truncdiv, Bigint.div);
+    (Op.Truncmod, Bigint.rem);
+  ]
+
+(* Each weak divisor of [dtype] past its width, with its value at [dtype] and
+   the kernel of each of [division_ops] by it, a lane at a time or upcast. *)
+let divisor_kernels dtype =
   let upcast =
     Opt.Split { axis = 0; amount = 0; target = Upcast; top = false }
   in
-  let ops =
-    [
-      (Op.Div, Bigint.fdiv);
-      (Op.Mod, fun n d -> Bigint.(n - (d * fdiv n d)));
-      (Op.Truncdiv, Bigint.div);
-      (Op.Truncmod, Bigint.rem);
-    ]
-  in
-  List.iter
-    (fun dtype ->
-      let bits = Dtype.bitsize dtype in
-      let lo, hi = Dtypes.int_bounds dtype in
-      let half = Bigint.shift_left Bigint.one (bits - 1) in
-      let wide = Bigint.shift_left Bigint.one bits in
-      let xs =
-        if Dtype.is_unsigned dtype then
-          Bigint.[ zero; one; of_int 2; of_int 7; of_int 100; half; pred hi; hi ]
-        else Bigint.[ lo; succ lo; minus_one; zero; one; of_int 7; pred hi; hi ]
+  let bits = Dtype.bitsize dtype in
+  let half = Bigint.shift_left Bigint.one (bits - 1) in
+  let wide = Bigint.shift_left Bigint.one bits in
+  List.concat_map
+    (fun c ->
+      let d =
+        match Dtype.truncate dtype (`Int c) with
+        | `Int d -> d
+        | _ -> failwith "an integer type truncates to an integer"
       in
-      let x = Array.of_list (List.map (fun n -> `Int n) xs) in
-      List.iter
-        (fun c ->
-          let d =
-            match Dtype.truncate dtype (`Int c) with
-            | `Int d -> d
-            | _ -> failwith "an integer type truncates to an integer"
+      List.map
+        (fun opts ->
+          (c, d, opts, divide_kernel ~opts dtype (List.map fst division_ops) c))
+        [ []; [ upcast ] ])
+    Bigint.
+      [
+        half; half + of_int 3; wide - of_int 3; wide + of_int 7; neg (succ half);
+      ]
+
+let divisors_wrap dtype =
+  let lo, hi = Dtypes.int_bounds dtype in
+  let half = Bigint.shift_left Bigint.one (Dtype.bitsize dtype - 1) in
+  let xs =
+    if Dtype.is_unsigned dtype then
+      Bigint.[ zero; one; of_int 2; of_int 7; of_int 100; half; pred hi; hi ]
+    else Bigint.[ lo; succ lo; minus_one; zero; one; of_int 7; pred hi; hi ]
+  in
+  let x = Array.of_list (List.map (fun n -> `Int n) xs) in
+  List.iter
+    (fun (c, d, opts, k) ->
+      let prg = Codegen.to_program k (Lazy.force host) in
+      let outs = Run.on_host prg [ (4, x) ] in
+      List.iteri
+        (fun slot (op, f) ->
+          let msg =
+            Format.asprintf "x %a %s, %d opts" Op.pp op (Bigint.to_string c)
+              (List.length opts)
           in
-          List.iter
-            (fun opts ->
-              let k = divide_kernel ~opts dtype (List.map fst ops) c in
-              let prg = Codegen.to_program k (Lazy.force host) in
-              let outs = Run.on_host prg [ (4, x) ] in
-              List.iteri
-                (fun slot (op, f) ->
-                  let msg =
-                    Format.asprintf "%a x %a %s, %d opts" Dtype.pp dtype Op.pp
-                      op (Bigint.to_string c) (List.length opts)
-                  in
-                  equal ~msg (array Dtypes.value)
-                    (Array.of_list
-                       (List.map
-                          (fun n -> Dtype.truncate dtype (`Int (f n d)))
-                          xs))
-                    (List.assoc slot outs))
-                ops)
-            [ []; [ upcast ] ])
-        Bigint.
-          [
-            half; half + of_int 3; wide - of_int 3; wide + of_int 7;
-            neg (succ half);
-          ])
-    Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+          equal ~msg (array Dtypes.value)
+            (Array.of_list
+               (List.map (fun n -> Dtype.truncate dtype (`Int (f n d))) xs))
+            (List.assoc slot outs))
+        division_ops)
+    (divisor_kernels dtype)
 
 (* The kernel that stores into slot [k] the [k]th of [cases], an operation and a
    literal, of [x] at element [i], slot [Array.length cases], [left] putting the
@@ -7760,7 +8348,18 @@ let int_samples dtype =
   let lo, hi = Dtypes.int_bounds dtype in
   let picks =
     Bigint.
-      [ lo; succ lo; minus_one; zero; one; of_int 2; of_int 7; of_int 100; pred hi; hi ]
+      [
+        lo;
+        succ lo;
+        minus_one;
+        zero;
+        one;
+        of_int 2;
+        of_int 7;
+        of_int 100;
+        pred hi;
+        hi;
+      ]
   in
   let held = List.filter (fun z -> Bigint.geq z lo && Bigint.leq z hi) picks in
   let held = List.sort_uniq Bigint.compare held in
@@ -7769,58 +8368,87 @@ let int_samples dtype =
 (* A literal holds its value at the type of the operation that reads it, so a
    program computes the same as with that value written: every operation that
    reads a literal, at -1, at the bounds and past them. *)
-let literals_compute () =
-  let ops =
-    Op.[ Add; Sub; Mul; And; Or; Xor; Max; Div; Mod; Truncdiv; Truncmod; Cmplt;
-         Cmpne; Cmpeq ]
+let literal_ops =
+  Op.
+    [
+      Add;
+      Sub;
+      Mul;
+      And;
+      Or;
+      Xor;
+      Max;
+      Div;
+      Mod;
+      Truncdiv;
+      Truncmod;
+      Cmplt;
+      Cmpne;
+      Cmpeq;
+    ]
+
+(* The literals of [dtype]'s check, each operation by each, and the kernels that
+   put them right then left. *)
+let literal_cases dtype =
+  let lo, hi = Dtypes.int_bounds dtype in
+  let wide = Bigint.shift_left Bigint.one (Dtype.bitsize dtype) in
+  let literals =
+    Bigint.
+      [
+        minus_one;
+        lo;
+        pred lo;
+        hi;
+        succ hi;
+        pred wide;
+        wide;
+        succ wide;
+        neg wide;
+      ]
+  in
+  Array.of_list
+    (List.concat_map
+       (fun c -> List.map (fun op -> (op, c)) literal_ops)
+       literals)
+
+let literal_kernels dtype =
+  List.map
+    (fun left -> (left, literal_kernel dtype ~left (literal_cases dtype)))
+    [ false; true ]
+
+let literals_compute dtype =
+  let xs = int_samples dtype in
+  let result = function
+    | Op.Cmplt | Op.Cmpne | Op.Cmpeq -> Dtype.Bool
+    | _ -> dtype
   in
   List.iter
-    (fun dtype ->
-      let lo, hi = Dtypes.int_bounds dtype in
-      let wide = Bigint.shift_left Bigint.one (Dtype.bitsize dtype) in
-      let literals =
-        Bigint.
-          [ minus_one; lo; pred lo; hi; succ hi; pred wide; wide; succ wide;
-            neg wide ]
-      in
-      let xs = int_samples dtype in
-      let result = function
-        | Op.Cmplt | Op.Cmpne | Op.Cmpeq -> Dtype.Bool
-        | _ -> dtype
-      in
-      List.iter
-        (fun left ->
-          let cases =
-            Array.of_list
-              (List.concat_map (fun c -> List.map (fun op -> (op, c)) ops) literals)
-          in
-          let prg =
-            Codegen.to_program (literal_kernel dtype ~left cases) (Lazy.force host)
-          in
-          let outs = Run.on_host prg [ (Array.length cases, xs) ] in
+    (fun (left, k) ->
+      let cases = literal_cases dtype in
+      let prg = Codegen.to_program k (Lazy.force host) in
+      let outs = Run.on_host prg [ (Array.length cases, xs) ] in
+      Array.iteri
+        (fun slot (op, c) ->
+          let w = (Dtype.truncate dtype (`Int c) :> Dtype.const) in
+          let got = List.assoc slot outs in
           Array.iteri
-            (fun slot (op, c) ->
-              let w = (Dtype.truncate dtype (`Int c) :> Dtype.const) in
-              let got = List.assoc slot outs in
-              Array.iteri
-                (fun j x ->
-                  let args =
-                    if left then [ w; (x :> Dtype.const) ]
-                    else [ (x :> Dtype.const); w ]
-                  in
-                  match Ops.exec_alu op (result op) args with
-                  | #Dtype.value as want ->
-                      equal
-                        ~msg:
-                          (Format.asprintf "%a %s %a %s" Dtype.pp dtype
-                             (Bigint.to_string (Dtype.Value.to_z x))
-                             Op.pp op (Bigint.to_string c))
-                        Dtypes.value want got.(j)
-                  | _ -> ())
-                xs)
-            cases)
-        [ false; true ])
-    Dtype.[ Int8; Int16; Int32; Int64; Uint8; Uint16; Uint32; Uint64 ]
+            (fun j x ->
+              let args =
+                if left then [ w; (x :> Dtype.const) ]
+                else [ (x :> Dtype.const); w ]
+              in
+              match Ops.exec_alu op (result op) args with
+              | #Dtype.value as want ->
+                  equal
+                    ~msg:
+                      (Format.asprintf "%s %a %s"
+                         (Bigint.to_string (Dtype.Value.to_z x))
+                         Op.pp op (Bigint.to_string c))
+                    Dtypes.value want got.(j)
+              | _ -> ())
+            xs)
+        cases)
+    (literal_kernels dtype)
 
 (* A literal at 0 modulo a 32-bit type: the product and conjunction fold to 0
    before the kernel is vectorized, as a 0 written directly does. *)
@@ -7830,7 +8458,9 @@ let zero_at_the_width () =
       let c = Bigint.shift_left Bigint.one 32 in
       let cases = [| (Op.Mul, c); (Op.And, c) |] in
       let prg =
-        Codegen.to_program (literal_kernel dtype ~left:false cases) (Lazy.force host)
+        Codegen.to_program
+          (literal_kernel dtype ~left:false cases)
+          (Lazy.force host)
       in
       let xs = int_samples dtype in
       let outs = Run.on_host prg [ (Array.length cases, xs) ] in
@@ -7844,8 +8474,8 @@ let zero_at_the_width () =
         cases)
     Dtype.[ Int32; Uint32 ]
 
-(* A shift built by [Ops.shl] keeps a weak expression's count weak, a number
-   its operand's type cannot wrap: [w + 3] at [w = 253] counts 256, and shifts a
+(* A shift built by [Ops.shl] keeps a weak expression's count weak, a number its
+   operand's type cannot wrap: [w + 3] at [w = 253] counts 256, and shifts a
    uint8 to 0, not by 0. *)
 let shift_count_kernel shifted =
   let n = Ops.Int 12 in
@@ -7878,29 +8508,39 @@ let shift_counts_stay_numbers () =
 (* A count [w * w] reaches 2^64 at [w = 2^32], which no machine integer holds:
    the program is refused. All past the width, it is the width, and is 0. *)
 let shift_counts_past_64_bits () =
-  let big = Ops.variable "b" (`Int Bigint.zero) (`Int (Bigint.shift_left Bigint.one 40)) in
-  let count w = Ops.O.(w * w) in
-  let kernel c =
-    shift_count_kernel (fun x _ -> Ops.shl x c)
+  let big =
+    Ops.variable "b" (`Int Bigint.zero) (`Int (Bigint.shift_left Bigint.one 40))
   in
-  raises_match
-    (Exn.invalid_arg ~sub:"shift count past 64 bits")
-    (fun () -> Codegen.to_program (kernel (count big)) (Lazy.force host));
-  let past = Ops.O.(count big + Ops.const (`Int (Bigint.shift_left Bigint.one 70))) in
+  let count w = Ops.O.(w * w) in
+  let kernel c = shift_count_kernel (fun x _ -> Ops.shl x c) in
+  raises_match (Exn.invalid_arg ~sub:"shift count past 64 bits") (fun () ->
+      Codegen.to_program (kernel (count big)) (Lazy.force host));
+  let past =
+    Ops.O.(count big + Ops.const (`Int (Bigint.shift_left Bigint.one 70)))
+  in
   let prg = Codegen.to_program (kernel past) (Lazy.force host) in
   let xs = Array.make 12 (`Int (Bigint.of_int 5)) in
   equal ~msg:"all past the width" Dtypes.value (`Int Bigint.zero)
     (List.assoc 0 (Run.on_host ~vars:[ ("b", 1) ] prg [ (1, xs) ])).(0)
 
 let square_wrapping =
+  let by_type name kernels check =
+    cases name ~id:Dtype.name integer_types
+      (compiled_table kernels integer_types check)
+  in
   group "constants past the width"
     [
-      test "a square of a product whose constant squares to 0 is 0"
+      by_type "a square of a product whose constant squares to 0 is 0"
+        (fun dt -> List.map (fun (_, _, k) -> k) (squares dt))
         square_wraps;
-      test "like terms whose factors sum past the width wrap" like_terms_wrap;
-      test "a weak divisor past the width divides as its value there"
+      by_type "like terms whose factors sum past the width wrap"
+        (fun dt -> List.map (fun (_, _, k) -> k) (like_terms dt))
+        like_terms_wrap;
+      by_type "a weak divisor past the width divides as its value there"
+        (fun dt -> List.map (fun (_, _, _, k) -> k) (divisor_kernels dt))
         divisors_wrap;
-      test "a literal computes as its value at the operation's type"
+      by_type "a literal computes as its value at the operation's type"
+        (fun dt -> List.map snd (literal_kernels dt))
         literals_compute;
       test "a product or conjunction by a literal that is 0 at its type is 0"
         zero_at_the_width;
@@ -7913,8 +8553,8 @@ let square_wrapping =
 (* An accumulator no lane adds to *)
 
 (* [x] summed into each element [l] of three, where [l² mod 3 = 2]. No [l]
-   satisfies it, but only a lane of [l] upcast whole, of one [l], shows it:
-   each lane's addition to the accumulator folds to adding 0. *)
+   satisfies it, but only a lane of [l] upcast whole, of one [l], shows it: each
+   lane's addition to the accumulator folds to adding 0. *)
 let unselected_sum_kernel () =
   let open Ops.O in
   let upcast =
@@ -7924,7 +8564,7 @@ let unselected_sum_kernel () =
   let x = Shape.param ~shape:[ Int 64 ] 1 Int32 in
   let l = Ops.range ~axis_type:Weak (Int 3) [ 1 ] in
   let r = Ops.range ~axis_type:Weak (Int 64) [ 0 ] in
-  let gate = (l * l) % int 3 > int 1 in
+  let gate = l * l % int 3 > int 1 in
   let value = Ops.where gate (Ops.index x [ r ]) (Ops.int ~dtype:Int32 0) in
   let sum = Ops.reduce value Op.Add [ r ] in
   Ops.sink
@@ -7982,9 +8622,7 @@ let unselected_sum =
 
 (* Stores a kernel orders before others *)
 
-let int32s xs = Array.of_list (List.map (fun x -> `Int (Bigint.of_int x)) xs)
-
-let run_on_host kernel =
+let stored_on_host kernel =
   List.assoc 0 (Run.on_host (Codegen.to_program kernel (Lazy.force host)) [])
 
 (* [a.(0)] gets 7 before a constant 1, which indexes the store of 9 into [a],
@@ -8022,23 +8660,26 @@ let folded_stores =
         Ops.store (Ops.index s [ Ops.invalid ]) (Ops.int ~dtype:Int32 5) );
     ("of an invalid value", fun _ s -> Ops.store (at s 1) Ops.invalid);
     ( "to an invalid index of storage before the store",
-      fun a s ->
-        Ops.store (Ops.index a [ Ops.invalid ]) (Ops.load (at s 1) []) );
+      fun a s -> Ops.store (Ops.index a [ Ops.invalid ]) (Ops.load (at s 1) [])
+    );
   ]
 
 let stores_before =
   group "stores ordered before others"
     [
       test "a store a constant index waits on is kept" (fun () ->
-          equal (array Dtypes.value) (int32s [ 7; 9 ])
-            (run_on_host (store_behind_constant ~loop:false)));
+          equal (array Dtypes.value)
+            (int_values [ 7; 9 ])
+            (stored_on_host (store_behind_constant ~loop:false)));
       test "a store a loop's constant bound waits on is kept" (fun () ->
-          equal (array Dtypes.value) (int32s [ 7; 9 ])
-            (run_on_host (store_behind_constant ~loop:true)));
+          equal (array Dtypes.value)
+            (int_values [ 7; 9 ])
+            (stored_on_host (store_behind_constant ~loop:true)));
       cases "a store that folds away keeps the stores it waits on" ~id:fst
         folded_stores (fun (_, f) ->
-          equal (array Dtypes.value) (int32s [ 7; 0; 0 ])
-            (run_on_host (folded_store f)));
+          equal (array Dtypes.value)
+            (int_values [ 7; 0; 0 ])
+            (stored_on_host (folded_store f)));
     ]
 
 (* A maximum of weak integers
@@ -8079,9 +8720,15 @@ let spec_breaking =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [ Ops.store at (Ops.int ~dtype:Int32 1); Ops.v If ~src:[ gate; at ] ]
 
-let errors =
-  group "errors"
+let kernel_information =
+  group "kernel information"
     [
+      test
+        "full_rewrite_to_sink raises Invalid_argument when optimising a sink \
+         without kernel information" (fun () ->
+          let k = Lazy.force add_kernel in
+          rejects (fun () ->
+              Codegen.full_rewrite_to_sink (Ops.sink (Ops.src k)) clang));
       test
         "to_program raises Invalid_argument on a node that is no sink or \
          program" (fun () ->
@@ -8091,42 +8738,11 @@ let errors =
          information" (fun () ->
           let k = Lazy.force add_kernel in
           rejects (fun () -> Codegen.to_program (Ops.sink (Ops.src k)) clang));
-      test
-        "full_rewrite_to_sink raises Invalid_argument when optimising a sink \
-         without kernel information" (fun () ->
-          let k = Lazy.force add_kernel in
-          rejects (fun () ->
-              Codegen.full_rewrite_to_sink (Ops.sink (Ops.src k)) clang));
-      test
-        "a lowered graph that breaks the specification raises Invalid_argument"
-        checks_what_it_lowers;
-      test
-        "with SPEC=0, a lowered graph that breaks the specification is returned"
-        (fun () ->
-          let lowered =
-            Setting.context
-              [ B (Setting.spec, 0) ]
-              (fun () ->
-                Codegen.full_rewrite_to_sink ~optimize:false
-                  (Lazy.force marker_kernel) breaking)
-          in
-          mem op Source (List.map Ops.op (Ops.toposort ~calls:Enter lowered)));
-      test "with SPEC=0, a kernel that breaks the specification is lowered"
-        (fun () ->
-          let lowered =
-            Setting.context
-              [ B (Setting.spec, 0) ]
-              (fun () ->
-                Codegen.full_rewrite_to_sink ~optimize:false spec_breaking clang)
-          in
-          mem op If (List.map Ops.op (Ops.toposort ~calls:Enter lowered)));
-      test "a kernel that breaks the specification raises Invalid_argument"
-        (fun () ->
-          Setting.context
-            [ B (Setting.spec, 1) ]
-            (fun () ->
-              raises_match (Exn.invalid_arg ~sub:"UOp verification failed")
-                (fun () -> Codegen.full_rewrite_to_sink spec_breaking clang)));
+    ]
+
+let compilers =
+  group "compilers"
+    [
       test "a compiler that rejects the source raises Compile_error" (fun () ->
           let compiler =
             Renderer.Compiler.v (fun _ ->
@@ -8196,8 +8812,47 @@ let disassembles () =
            (renderer_for ~compiler clang_target)));
   contains ~sub:"<disassembled>" (output ())
 
+let specification =
+  group "the specification"
+    [
+      test
+        "a lowered graph that breaks the specification raises Invalid_argument"
+        checks_what_it_lowers;
+      test
+        "with SPEC=0, a lowered graph that breaks the specification is returned"
+        (fun () ->
+          let lowered =
+            Setting.context
+              [ B (Setting.spec, 0) ]
+              (fun () ->
+                Codegen.full_rewrite_to_sink ~optimize:false
+                  (Lazy.force marker_kernel) breaking)
+          in
+          mem op Source (List.map Ops.op (Ops.toposort ~calls:Enter lowered)));
+      test "with SPEC=0, a kernel that breaks the specification is lowered"
+        (fun () ->
+          let lowered =
+            Setting.context
+              [ B (Setting.spec, 0) ]
+              (fun () ->
+                Codegen.full_rewrite_to_sink ~optimize:false spec_breaking clang)
+          in
+          mem op If (List.map Ops.op (Ops.toposort ~calls:Enter lowered)));
+      test "a kernel that breaks the specification raises Invalid_argument"
+        (fun () ->
+          Setting.context
+            [ B (Setting.spec, 1) ]
+            (fun () ->
+              raises_match (Exn.invalid_arg ~sub:"UOp verification failed")
+                (fun () -> Codegen.full_rewrite_to_sink spec_breaking clang)));
+      test
+        "with DBGTV set, a lowered graph that breaks the specification is \
+         printed"
+        prints_a_breaking_graph;
+    ]
+
 let diagnostics =
-  group "diagnostics"
+  group "the setting DEBUG"
     [
       cases "DEBUG=3 prints the optimisations applied"
         ~id:(fun opts -> string_of_int (List.length opts) ^ " optimisations")
@@ -8209,10 +8864,6 @@ let diagnostics =
           ];
         ]
         prints_the_optimisations;
-      test
-        "with DBGTV set, a lowered graph that breaks the specification is \
-         printed"
-        prints_a_breaking_graph;
       test "DEBUG=4 prints the source" prints_the_source;
       test "DEBUG=2 prints no optimisations" (fun () ->
           ignore
@@ -8291,8 +8942,8 @@ let line_rewrites =
     ]
 
 (* A store of 1 into the int buffer of slot 0, at the thread's index. *)
-let out = Shape.param ~shape:[ Int 4 ] 0 Int32
-let at = Ops.index out [ lidx ]
+let thread_out = Shape.param ~shape:[ Int 4 ] 0 Int32
+let thread_cell = Ops.index thread_out [ lidx ]
 let one = Ops.int ~dtype:Int32 1
 let gate = Ops.ne lidx (Ops.int 0)
 let store dst gate = Ops.v Store ~src:[ dst; one; gate ]
@@ -8306,31 +8957,32 @@ let made_conditional dst =
     [ gate; dst; if_; ungated; Ops.v Endif ~src:[ if_ ] ]
     (cleaned [ gate; dst; gated ])
 
-let pointer_cast dt = Ops.v Cast ~src:[ at ] ~arg:(Dtype dt)
+let pointer_cast dt = Ops.v Cast ~src:[ thread_cell ] ~arg:(Dtype dt)
 
 let cleanups =
   group "pm_linearize_cleanups"
     [
       test "a gated store becomes a store inside an if on its gate" (fun () ->
-          made_conditional at);
+          made_conditional thread_cell);
       test "so does a gated store through a cast of its index" (fun () ->
           made_conditional (pointer_cast Float32));
       cases "leaves alone a store it does not match" ~id:fst
         [
           ( "through a bitcast of its index",
-            store (Ops.v Bitcast ~src:[ at ] ~arg:(Dtype Float32)) gate );
+            store (Ops.v Bitcast ~src:[ thread_cell ] ~arg:(Dtype Float32)) gate
+          );
           ( "through a cast of a cast of its index",
             store
               (Ops.v Cast ~src:[ pointer_cast Float32 ] ~arg:(Dtype Int32))
               gate );
-          ("gated by a value that is no boolean", store at lidx);
-          ("without a gate", Ops.v Store ~src:[ at; one ]);
+          ("gated by a value that is no boolean", store thread_cell lidx);
+          ("without a gate", Ops.v Store ~src:[ thread_cell; one ]);
         ]
         (fun (_, st) -> equal (list Uops.uop) [ st ] (cleaned [ st ]));
       cases "raises Invalid_argument on an if already in the list" ~id:fst
         [
-          ("if", Ops.v If ~src:[ gate; at ]);
-          ("endif", Ops.v Endif ~src:[ Ops.v If ~src:[ gate; at ] ]);
+          ("if", Ops.v If ~src:[ gate; thread_cell ]);
+          ("endif", Ops.v Endif ~src:[ Ops.v If ~src:[ gate; thread_cell ] ]);
         ]
         (fun (_, u) -> rejects (fun () -> cleaned [ u ]));
     ]
@@ -8351,15 +9003,15 @@ let sint = Testable.make ~pp:Shape.Sint.pp ~equal:Shape.Sint.equal
 let in_blocks uops =
   Codegen.to_program (Ops.sink ~kernel:(Ops.kernel_info ()) uops) clang
 
-let floats n slot = Shape.param ~shape:[ Int n ] slot Float32
+let float_param n slot = Shape.param ~shape:[ Int n ] slot Float32
 
 let splits_the_output_loop () =
   let i = Ops.range ~axis_type:Weak (Int 1024) [ 0 ] in
-  let a = Ops.index (floats 1024 1) [ i ] in
+  let a = Ops.index (float_param 1024 1) [ i ] in
   let prg =
-    in_blocks [ Ops.end_ (Ops.store (Ops.index (floats 1024 0) [ i ]) a) [ i ] ]
+    in_blocks
+      [ Ops.end_ (Ops.store (Ops.index (float_param 1024 0) [ i ]) a) [ i ] ]
   in
-  is_true ~msg:"split" (Option.is_some (split_of prg));
   let names =
     match Ops.arg prg with
     | Program p -> List.map Ops.expr (scalars_of p)
@@ -8376,10 +9028,14 @@ let numbers_past_a_skipped_slot () =
     Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0)
       (Dtype.Value.of_int 100)
   in
-  let value = Ops.add (Ops.index (floats 1022 2) [ i ]) (Ops.cast n Float32) in
+  let value =
+    Ops.add (Ops.index (float_param 1022 2) [ i ]) (Ops.cast n Float32)
+  in
   let prg =
     in_blocks
-      [ Ops.end_ (Ops.store (Ops.index (floats 1022 0) [ i ]) value) [ i ] ]
+      [
+        Ops.end_ (Ops.store (Ops.index (float_param 1022 0) [ i ]) value) [ i ];
+      ]
   in
   let slots =
     match Ops.arg prg with
@@ -8406,8 +9062,8 @@ let leaves_separate_loops () =
   let copy slot r n =
     Ops.end_
       (Ops.store
-         (Ops.index (floats n slot) [ r ])
-         (Ops.index (floats n 2) [ r ]))
+         (Ops.index (float_param n slot) [ r ])
+         (Ops.index (float_param n 2) [ r ]))
       [ r ]
   in
   equal (option sint) None
@@ -8415,30 +9071,32 @@ let leaves_separate_loops () =
 
 let leaves_a_store_of_no_loop () =
   let i = Ops.range ~axis_type:Weak (Int 1024) [ 0 ] in
-  let a = Ops.index (floats 1024 2) [ i ] in
+  let a = Ops.index (float_param 1024 2) [ i ] in
   equal (option sint) None
     (split_of
        (in_blocks
           [
-            Ops.end_ (Ops.store (Ops.index (floats 1024 0) [ i ]) a) [ i ];
-            Ops.store (Ops.index (floats 1 1) [ Ops.int 0 ]) (Ops.float 1.);
+            Ops.end_ (Ops.store (Ops.index (float_param 1024 0) [ i ]) a) [ i ];
+            Ops.store (Ops.index (float_param 1 1) [ Ops.int 0 ]) (Ops.float 1.);
           ]))
 
 (* A serial loop's iterations may read what earlier ones wrote. *)
 let leaves_a_serial_loop () =
   let i = Ops.range ~axis_type:Loop (Int 1024) [ 0 ] in
-  let a = Ops.index (floats 1024 1) [ i ] in
+  let a = Ops.index (float_param 1024 1) [ i ] in
   equal (option sint) None
     (split_of
        (in_blocks
-          [ Ops.end_ (Ops.store (Ops.index (floats 1024 0) [ i ]) a) [ i ] ]))
+          [
+            Ops.end_ (Ops.store (Ops.index (float_param 1024 0) [ i ]) a) [ i ];
+          ]))
 
 let leaves_a_reduction () =
   let j = Ops.range ~axis_type:Weak (Int 4096) [ 0 ] in
-  let sum = Ops.reduce (Ops.index (floats 4096 1) [ j ]) Op.Add [ j ] in
+  let sum = Ops.reduce (Ops.index (float_param 4096 1) [ j ]) Op.Add [ j ] in
   equal (option sint) None
     (split_of
-       (in_blocks [ Ops.store (Ops.index (floats 1 0) [ Ops.int 0 ]) sum ]))
+       (in_blocks [ Ops.store (Ops.index (float_param 1 0) [ Ops.int 0 ]) sum ]))
 
 (* A store of a value valid where r < 4 shrinks its loop to 4 iterations and
    drops the guard; the split keeps both. *)
@@ -8450,7 +9108,7 @@ let keeps_a_shrunk_loop () =
       [ B (Setting.noopt, true) ]
       (fun () ->
         in_blocks
-          [ Ops.end_ (Ops.store (Ops.index (floats 204 0) [ r ]) x) [ r ] ])
+          [ Ops.end_ (Ops.store (Ops.index (float_param 204 0) [ r ]) x) [ r ] ])
   in
   equal (option sint) (Some (Int 4)) (split_of prg);
   equal int ~msg:"selections" 0 (count Where (Ops.src (Ops.nth prg 1)))
@@ -8460,9 +9118,10 @@ let keeps_a_shrunk_loop () =
 let keeps_narrow_indices () =
   let n = 1 lsl 25 in
   let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let a = Ops.index (floats n 1) [ i ] in
+  let a = Ops.index (float_param n 1) [ i ] in
   let prg =
-    in_blocks [ Ops.end_ (Ops.store (Ops.index (floats n 0) [ i ]) a) [ i ] ]
+    in_blocks
+      [ Ops.end_ (Ops.store (Ops.index (float_param n 0) [ i ]) a) [ i ] ]
   in
   (* the addresses of its buffers are 64-bit loads, no arithmetic *)
   equal (list Uops.uop) []
@@ -8475,11 +9134,14 @@ let counts_a_large_loop () =
   let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
   let j = Ops.range ~axis_type:Weak (Int n) [ 1 ] in
   let x =
-    Ops.mul (Ops.index (floats n 1) [ i ]) (Ops.index (floats n 2) [ j ])
+    Ops.mul
+      (Ops.index (float_param n 1) [ i ])
+      (Ops.index (float_param n 2) [ j ])
   in
   let sum = Ops.reduce x Op.Add [ j ] in
   let prg =
-    in_blocks [ Ops.end_ (Ops.store (Ops.index (floats n 0) [ i ]) sum) [ i ] ]
+    in_blocks
+      [ Ops.end_ (Ops.store (Ops.index (float_param n 0) [ i ]) sum) [ i ] ]
   in
   match (kernel_info (Ops.nth prg 0)).estimates with
   | Some { ops = Int ops; _ } -> at_least int ~than:(1 lsl 33) ops
@@ -8490,8 +9152,8 @@ let counts_a_large_loop () =
 
    A loop's trips may be what memory holds, as [j < x[0]], read through an
    explicit load or, as a front end writes it, a bare index. A launch computes
-   its counts of threads before the kernel runs, so such a loop stays a loop
-   of the kernel. *)
+   its counts of threads before the kernel runs, so such a loop stays a loop of
+   the kernel. *)
 
 let bounded_by_memory read =
   let x = Shape.param ~shape:[ Int 1 ] 1 Uint8 in
@@ -8503,13 +9165,12 @@ let bounded_by_memory read =
   Ops.sink ~kernel:(Ops.kernel_info ())
     [
       Ops.end_
-        (Ops.store (Ops.index (floats 255 0) [ j ]) (Ops.float 1.))
+        (Ops.store (Ops.index (float_param 255 0) [ j ]) (Ops.float 1.))
         [ j ];
     ]
 
 let memory_bounds =
-  cases
-    "a loop whose bound reads memory stays a loop of a kernel on threads"
+  cases "a loop whose bound reads memory stays a loop of a kernel on threads"
     ~id:(function `Load -> "load" | `Index -> "index")
     [ `Load; `Index ]
     (fun read ->
@@ -8544,8 +9205,8 @@ let blocks =
 
 (* Launches
 
-   A launch's members compile to one program, which states their work: the
-   sum of each member's estimates, as its own program states them, so that a
+   A launch's members compile to one program, which states their work: the sum
+   of each member's estimates, as its own program states them, so that a
    profile's line for the launch gives its throughput. *)
 
 (* [out[i] = a[i] * 2 + 1] over 4096 floats and [out[i] = a[i] * a[i]] over
@@ -8556,24 +9217,31 @@ let launch_members device =
   let a = buf 4096 in
   let i = Ops.range ~axis_type:Weak (Int 4096) [ 0 ] in
   let scaled =
-    Ops.sink ~kernel:(Ops.kernel_info ~name:"scaled" ())
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"scaled" ())
       [
         Ops.end_
           (Ops.store
-             (Ops.index (floats 4096 0) [ i ])
-             Ops.O.((Ops.index (floats 4096 1) [ i ] * float 2.) + float 1.))
+             (Ops.index (float_param 4096 0) [ i ])
+             Ops.O.(
+               (Ops.index (float_param 4096 1) [ i ] * float 2.) + float 1.))
           [ i ];
       ]
   in
   let k = Ops.range ~axis_type:Weak (Int 2048) [ 0 ] in
   let squared =
-    let x = Ops.index (floats 4096 1) [ k ] in
-    Ops.sink ~kernel:(Ops.kernel_info ~name:"squared" ())
-      [ Ops.end_ (Ops.store (Ops.index (floats 2048 0) [ k ]) Ops.O.(x * x)) [ k ] ]
+    let x = Ops.index (float_param 4096 1) [ k ] in
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"squared" ())
+      [
+        Ops.end_
+          (Ops.store (Ops.index (float_param 2048 0) [ k ]) Ops.O.(x * x))
+          [ k ];
+      ]
   in
   [ Ops.call scaled [ buf 4096; a ]; Ops.call squared [ buf 2048; a ] ]
 
-let estimates_of ren sink =
+let lowered_estimates ren sink =
   match (kernel_info (Ops.nth (Codegen.linearize sink ren) 0)).estimates with
   | Some e -> Format.asprintf "%a" Ops.pp_estimates e
   | None -> "no estimates"
@@ -8584,8 +9252,9 @@ let launch_estimates (device, ren) =
   let members =
     List.map
       (fun c ->
-        match (kernel_info (Ops.nth (Codegen.linearize (Ops.body c) ren) 0))
-                .estimates
+        match
+          (kernel_info (Ops.nth (Codegen.linearize (Ops.body c) ren) 0))
+            .estimates
         with
         | Some e -> e
         | None -> failf "a member of no estimates")
@@ -8594,31 +9263,73 @@ let launch_estimates (device, ren) =
   equal string
     (Format.asprintf "%a" Ops.pp_estimates
        (List.fold_left Renderer.Estimates.add Renderer.Estimates.zero members))
-    (estimates_of ren (Ops.body (Shape.launch calls)))
+    (lowered_estimates ren (Ops.body (Shape.launch calls)))
+
+(* [out[i] = a[i] * 2] over [i < n], [n] a variable up to 4096, beside [out[k] =
+   a[k] * a[k]] over 2048: a member whose launch dimension on a GPU, and split
+   on the host, is the variable. *)
+let symbolic_members device =
+  let buf n = Ops.new_buffer device n Float32 in
+  let a = buf 4096 in
+  let n =
+    Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 1)
+      (Dtype.Value.of_int 4096)
+  in
+  let i = Ops.range ~axis_type:Weak (Sym n) [ 0 ] in
+  let scaled =
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"scaled" ())
+      [
+        Ops.end_
+          (Ops.store
+             (Ops.index (float_param 4096 0) [ i ])
+             Ops.O.(Ops.index (float_param 4096 1) [ i ] * float 2.))
+          [ i ];
+      ]
+  in
+  let k = Ops.range ~axis_type:Weak (Int 2048) [ 0 ] in
+  let squared =
+    let x = Ops.index (float_param 4096 1) [ k ] in
+    Ops.sink
+      ~kernel:(Ops.kernel_info ~name:"squared" ())
+      [
+        Ops.end_
+          (Ops.store (Ops.index (float_param 2048 0) [ k ]) Ops.O.(x * x))
+          [ k ];
+      ]
+  in
+  [ Ops.call scaled [ buf 4096; a ]; Ops.call squared [ buf 2048; a ] ]
 
 let launches =
-  cases "a launch's estimates are its members' summed" ~id:fst
-    [ ("CUDA", lazy (cuda_renderer ())); ("CPU", lazy clang) ]
-    launch_estimates
+  let targets = [ ("CUDA", lazy (cuda_renderer ())); ("CPU", lazy clang) ] in
+  group "launches"
+    [
+      cases "a launch's estimates are its members' summed" ~id:fst targets
+        launch_estimates;
+      cases "a member of a symbolic launch dimension or split is refused"
+        ~id:fst targets (fun (device, ren) ->
+          let launch = Ops.body (Shape.launch (symbolic_members device)) in
+          raises_match (Exn.invalid_arg ~sub:"a launch's member has a symbolic")
+            (fun () -> Codegen.to_program launch (Lazy.force ren)));
+    ]
 
 (* Calls in a kernel
 
    A call of an external function calls the symbol the program is linked
    against. A call of a sink runs its body as a function of the kernel's
-   program, whose parameters, by slot, are the call's arguments. The kernels
-   are written as a front end writes them, a body's parameters taking their
+   program, whose parameters, by slot, are the call's arguments. The kernels are
+   written as a front end writes them, a body's parameters taking their
    argument's address space and one element for an index. *)
 
 let int_param ?(addrspace = Dtype.Global) ?volatile ~name slot n =
-  Shape.param ~shape:[ Int n ] ~name ~addrspace:addrspace ?volatile slot
-    Int32
+  Shape.param ~shape:[ Int n ] ~name ~addrspace ?volatile slot Int32
 
 let loop n axis = Ops.range ~axis_type:Loop ~dtype:Int32 (Int n) [ axis ]
-let at u i = Ops.index u [ i ]
-let first u = at u (Ops.int 0)
+let element u i = Ops.index u [ i ]
+let first_cell u = element u (Ops.int 0)
 let i32 n = Ops.int ~dtype:Int32 n
 
-let kernel name l =
+let named_kernel name l =
   Ops.sink ~kernel:(Ops.kernel_info ~name ~opts_to_apply:[] ()) l
 
 (* [out[i] = a[i] + 1] over [n] elements, [out] in [addrspace]. *)
@@ -8626,7 +9337,8 @@ let incr ?(addrspace = Dtype.Global) n =
   let out = int_param ~addrspace ~name:"out" 0 n
   and a = int_param ~name:"A" 1 n in
   let i = loop n 0 in
-  Ops.sink [ Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ] ]
+  Ops.sink
+    [ Ops.end_ (Ops.store (element out i) Ops.O.(element a i + i32 1)) [ i ] ]
 
 (* [c[i] = (a[i] + 1)^2 + 10]: the kernel calls [square], which calls [incr]
    twice into registers, the second after the first. *)
@@ -8643,17 +9355,18 @@ let nested_calls () =
         [ tmp1; Ops.after a [ call0 ] ]
     in
     let i = loop n 1 in
-    let v = at (Ops.after tmp1 [ call1 ]) i in
-    Ops.sink [ Ops.end_ (Ops.store (at out i) Ops.O.(v * v)) [ i ] ]
+    let v = element (Ops.after tmp1 [ call1 ]) i in
+    Ops.sink [ Ops.end_ (Ops.store (element out i) Ops.O.(v * v)) [ i ] ]
   in
   let c = int_param ~name:"C" 0 n and a = int_param ~name:"A" 1 n in
   let tmp = Shape.alloc_like ~addrspace:Reg a in
   let call = Ops.call ~name:"square" square [ tmp; a ] in
   let i = loop n 2 in
-  kernel "nested_calls"
+  named_kernel "nested_calls"
     [
       Ops.end_
-        (Ops.store (at c i) Ops.O.(at (Ops.after tmp [ call ]) i + i32 10))
+        (Ops.store (element c i)
+           Ops.O.(element (Ops.after tmp [ call ]) i + i32 10))
         [ i ];
     ]
 
@@ -8661,12 +9374,12 @@ let nested_calls () =
 let call_loop () =
   let mul =
     let p = int_param ~name:"p" 0 1 and q = int_param ~name:"q" 1 1 in
-    Ops.sink [ Ops.store (first p) Ops.O.(first q * i32 3) ]
+    Ops.sink [ Ops.store (first_cell p) Ops.O.(first_cell q * i32 3) ]
   in
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
   let i = loop 4 0 in
-  kernel "call_loop_mini"
-    [ Ops.end_ (Ops.call ~name:"mul" mul [ at c i; at a i ]) [ i ] ]
+  named_kernel "call_loop_mini"
+    [ Ops.end_ (Ops.call ~name:"mul" mul [ element c i; element a i ]) [ i ] ]
 
 (* [C[i] = A[i] * 3 + i] over 16 elements, each by a call of [mul_add] on one
    element of each and the index, in a kernel the heuristic optimises. *)
@@ -8674,12 +9387,13 @@ let call_optimised () =
   let mul_add =
     let p = int_param ~name:"p" 0 1 and q = int_param ~name:"q" 1 1 in
     let v = Shape.param ~addrspace:Alu 2 Int32 in
-    Ops.sink [ Ops.store (first p) Ops.O.((first q * i32 3) + v) ]
+    Ops.sink [ Ops.store (first_cell p) Ops.O.((first_cell q * i32 3) + v) ]
   in
   let c = int_param ~name:"C" 0 16 and a = int_param ~name:"A" 1 16 in
   let i = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
   let call =
-    Ops.call ~name:"mul_add" mul_add [ at c i; at a i; Ops.cast i Int32 ]
+    Ops.call ~name:"mul_add" mul_add
+      [ element c i; element a i; Ops.cast i Int32 ]
   in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"call_optimised" ())
@@ -8690,23 +9404,25 @@ let call_scalar () =
   let add =
     let out = int_param ~name:"out" 0 1 and src = int_param ~name:"src" 1 1 in
     let v = Shape.param ~addrspace:Alu 2 Int32 in
-    Ops.sink [ Ops.store (first out) Ops.O.(first src + v) ]
+    Ops.sink [ Ops.store (first_cell out) Ops.O.(first_cell src + v) ]
   in
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
   let i = loop 4 0 in
-  let call = Ops.call ~name:"add" add [ at c i; at a i; Ops.cast i Int32 ] in
-  kernel "call_scalar_arg" [ Ops.end_ call [ i ] ]
+  let call =
+    Ops.call ~name:"add" add [ element c i; element a i; Ops.cast i Int32 ]
+  in
+  named_kernel "call_scalar_arg" [ Ops.end_ call [ i ] ]
 
 (* [call_loop] with the body a program, linearized for the host. *)
 let program_call body =
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
   let i = loop 4 0 in
-  kernel "call_program"
-    [ Ops.end_ (Ops.call ~name:"mul" body [ at c i; at a i ]) [ i ] ]
+  named_kernel "call_program"
+    [ Ops.end_ (Ops.call ~name:"mul" body [ element c i; element a i ]) [ i ] ]
 
 let mul_kernel () =
   let p = int_param ~name:"p" 0 1 and q = int_param ~name:"q" 1 1 in
-  kernel "mul" [ Ops.store (first p) Ops.O.(first q * i32 3) ]
+  named_kernel "mul" [ Ops.store (first_cell p) Ops.O.(first_cell q * i32 3) ]
 
 (* [out[idx[0]] = 7] where [idx[0]] is in bounds, called on a register that
    holds zeros; then [c[j] = tmp[j] + 1]. *)
@@ -8715,22 +9431,23 @@ let gated_call () =
   let gated_store =
     let out = int_param ~addrspace:Reg ~name:"out" 0 n
     and idx = int_param ~name:"idx" 1 1 in
-    let i = first idx in
+    let i = first_cell idx in
     let valid = Ops.O.(i >= i32 0 land (i < i32 n)) in
-    Ops.sink [ Ops.store (at out (Shape.valid i valid)) (i32 7) ]
+    Ops.sink [ Ops.store (element out (Shape.valid i valid)) (i32 7) ]
   in
   let c = int_param ~name:"C" 0 n and a = int_param ~name:"A" 1 1 in
   let tmp = Shape.alloc_like ~addrspace:Reg c in
   let i = loop n 0 in
-  let init = Ops.end_ (Ops.store (at tmp i) (i32 0)) [ i ] in
+  let init = Ops.end_ (Ops.store (element tmp i) (i32 0)) [ i ] in
   let call =
     Ops.call ~name:"gated_store" gated_store [ Ops.after tmp [ init ]; a ]
   in
   let j = loop n 1 in
-  kernel "call_with_gated_store"
+  named_kernel "call_with_gated_store"
     [
       Ops.end_
-        (Ops.store (at c j) Ops.O.(at (Ops.after tmp [ call ]) j + i32 1))
+        (Ops.store (element c j)
+           Ops.O.(element (Ops.after tmp [ call ]) j + i32 1))
         [ j ];
     ]
 
@@ -8741,7 +9458,10 @@ let axpy k =
   let i = loop 4 0 in
   Ops.sink
     [
-      Ops.end_ (Ops.store (at out i) Ops.O.(at out i + (at x i * i32 k))) [ i ];
+      Ops.end_
+        (Ops.store (element out i)
+           Ops.O.(element out i + (element x i * i32 k)))
+        [ i ];
     ]
 
 let two_bodies () =
@@ -8749,89 +9469,100 @@ let two_bodies () =
   let c2 = Ops.after c [ Ops.call ~name:"axpy" (axpy 2) [ c; a ] ] in
   let c3 = Ops.after c [ Ops.call ~name:"axpy" (axpy 3) [ c2; a ] ] in
   let i = loop 4 1 in
-  kernel "uopfunc"
-    [ Ops.end_ (Ops.store (at c3 i) Ops.O.(at c3 i + i32 1)) [ i ] ]
+  named_kernel "uopfunc"
+    [ Ops.end_ (Ops.store (element c3 i) Ops.O.(element c3 i + i32 1)) [ i ] ]
 
-(* [c = a * 3] by a call of [mul], then [c[m] = a[m]] for [m < 3], then
-   [c[i] = a[i] + 1]. The body's loop is the node of the kernel's last loop,
-   one range of size 4 and identity 0, which the kernel's loops must not take
-   for theirs. *)
+(* [c = a * 3] by a call of [mul], then [c[m] = a[m]] for [m < 3], then [c[i] =
+   a[i] + 1]. The body's loop is the node of the kernel's last loop, one range
+   of size 4 and identity 0, which the kernel's loops must not take for
+   theirs. *)
 let call_body_range () =
   let mul =
     let out = int_param ~name:"out" 0 4 and a = int_param ~name:"A" 1 4 in
     let k = loop 4 0 in
-    Ops.sink [ Ops.end_ (Ops.store (at out k) Ops.O.(at a k * i32 3)) [ k ] ]
+    Ops.sink
+      [ Ops.end_ (Ops.store (element out k) Ops.O.(element a k * i32 3)) [ k ] ]
   in
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
   let m = loop 3 1 and i = loop 4 0 in
   let call = Ops.call ~name:"mul" mul [ c; a ] in
   let end_m =
-    Ops.end_ (Ops.store (at (Ops.after c [ call ]) m) (at a m)) [ m ]
+    Ops.end_ (Ops.store (element (Ops.after c [ call ]) m) (element a m)) [ m ]
   in
-  kernel "call_body_range"
+  named_kernel "call_body_range"
     [
       Ops.end_
-        (Ops.store (at (Ops.after c [ end_m ]) i) Ops.O.(at a i + i32 1))
+        (Ops.store
+           (element (Ops.after c [ end_m ]) i)
+           Ops.O.(element a i + i32 1))
         [ i ];
     ]
 
-(* [c[0] = a[0] + a[0]] by a call of a body of three parameters, then
-   [c[1] = c[0] + n]. *)
+(* [c[0] = a[0] + a[0]] by a call of a body of three parameters, then [c[1] =
+   c[0] + n]. *)
 let call_then_variable () =
   let add =
     let out = int_param ~name:"out" 0 1
     and x = int_param ~name:"x" 1 1
     and y = int_param ~name:"y" 2 1 in
-    Ops.sink [ Ops.store (first out) Ops.O.(first x + first y) ]
+    Ops.sink [ Ops.store (first_cell out) Ops.O.(first_cell x + first_cell y) ]
   in
   let c = int_param ~name:"C" 0 2 and a = int_param ~name:"A" 1 1 in
   let n =
     Ops.variable ~dtype:Int32 "n" (Dtype.Value.of_int 0) (Dtype.Value.of_int 9)
   in
-  let call = Ops.call ~name:"add" add [ first c; first a; first a ] in
-  kernel "call_then_variable"
-    [ Ops.store (at c (Ops.int 1)) Ops.O.(first (Ops.after c [ call ]) + n) ]
+  let call =
+    Ops.call ~name:"add" add [ first_cell c; first_cell a; first_cell a ]
+  in
+  named_kernel "call_then_variable"
+    [
+      Ops.store
+        (element c (Ops.int 1))
+        Ops.O.(first_cell (Ops.after c [ call ]) + n);
+    ]
 
-(* [c[0] = a[0] + 1] by a call of a body that computes in a register of slot
-   9, then [c[1]] the sum of [a], which the kernel accumulates in a register of
-   its own. *)
+(* [c[0] = a[0] + 1] by a call of a body that computes in a register of slot 9,
+   then [c[1]] the sum of [a], which the kernel accumulates in a register of its
+   own. *)
 let call_then_sum () =
   let incr =
     let out = int_param ~name:"out" 0 1 and x = int_param ~name:"x" 1 1 in
     let tmp = Shape.alloc ~slot:9 ~addrspace:Reg [ Int 1 ] Int32 in
-    let tmp = Ops.after tmp [ Ops.store (first tmp) Ops.O.(first x + i32 1) ] in
-    Ops.sink [ Ops.store (first out) (first tmp) ]
+    let tmp =
+      Ops.after tmp [ Ops.store (first_cell tmp) Ops.O.(first_cell x + i32 1) ]
+    in
+    Ops.sink [ Ops.store (first_cell out) (first_cell tmp) ]
   in
   let c = int_param ~name:"C" 0 2 and a = int_param ~name:"A" 1 4 in
-  let call = Ops.call ~name:"incr" incr [ first c; first a ] in
+  let call = Ops.call ~name:"incr" incr [ first_cell c; first_cell a ] in
   let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
-  kernel "call_then_sum"
+  named_kernel "call_then_sum"
     [
       call;
-      Ops.store (at c (Ops.int 1)) (Ops.reduce (at a r) Op.Add [ r ]);
+      Ops.store (element c (Ops.int 1)) (Ops.reduce (element a r) Op.Add [ r ]);
     ]
 
 (* A body's volatile parameter stays volatile in its function. *)
 let volatile_call () =
   let fence =
     let p = int_param ~volatile:true ~name:"p" 0 1 in
-    Ops.sink [ Ops.store (first p) (i32 1) ]
+    Ops.sink [ Ops.store (first_cell p) (i32 1) ]
   in
   let c = int_param ~volatile:true ~name:"C" 0 1 in
-  kernel "volatile_call" [ Ops.call ~name:"fence" fence [ first c ] ]
+  named_kernel "volatile_call" [ Ops.call ~name:"fence" fence [ first_cell c ] ]
 
 (* [p[0] = q[0] + 1], [p] in local memory. *)
 let put =
   let p = int_param ~addrspace:Local ~name:"p" 0 1
   and q = int_param ~name:"q" 1 1 in
-  Ops.sink [ Ops.store (first p) Ops.O.(first q + i32 1) ]
+  Ops.sink [ Ops.store (first_cell p) Ops.O.(first_cell q + i32 1) ]
 
 let threads = 64
 
 (* [c[t * 64 + l] = a[t * 64 + 63 - l] + 1] over 64 threads [l], for each of
-   [trips] trips [t] of a loop: each thread's call of [put] writes
-   [a[t * 64 + l] + 1] into its element of a local buffer, which a thread of
-   another warp reads back. *)
+   [trips] trips [t] of a loop: each thread's call of [put] writes [a[t * 64 +
+   l] + 1] into its element of a local buffer, which a thread of another warp
+   reads back. *)
 let local_call ~trips () =
   let n = threads in
   let l = Ops.range ~axis_type:Local ~dtype:Int32 (Int n) [ 0 ] in
@@ -8841,20 +9572,22 @@ let local_call ~trips () =
   and a = int_param ~name:"A" 1 (trips * n) in
   let row = Ops.O.(t * i32 n) and last = i32 (n - 1) in
   let shared = if trips > 1 then Ops.after shared [ t ] else shared in
-  let call = Ops.call ~name:"put" put [ at shared l; at a Ops.O.(row + l) ] in
-  let back = at (Ops.after shared [ call ]) Ops.O.(last - l) in
-  let st = Ops.store (at c Ops.O.(row + l)) back in
-  kernel "local_call" [ Ops.end_ (Ops.end_ st [ t ]) [ l ] ]
+  let call =
+    Ops.call ~name:"put" put [ element shared l; element a Ops.O.(row + l) ]
+  in
+  let back = element (Ops.after shared [ call ]) Ops.O.(last - l) in
+  let st = Ops.store (element c Ops.O.(row + l)) back in
+  named_kernel "local_call" [ Ops.end_ (Ops.end_ st [ t ]) [ l ] ]
 
 (* [p[0] = q[0]], [q] in local memory. *)
 let get =
   let p = int_param ~name:"p" 0 1
   and q = int_param ~addrspace:Local ~name:"q" 1 1 in
-  Ops.sink [ Ops.store (first p) (first q) ]
+  Ops.sink [ Ops.store (first_cell p) (first_cell q) ]
 
-(* [local_call]'s values, the other way round: each trip stores [a[t * 64 + l]
-   + 1] into its thread's element of a local buffer, and each thread's call
-   of [get] reads back another warp's. *)
+(* [local_call]'s values, the other way round: each trip stores [a[t * 64 + l] +
+   1] into its thread's element of a local buffer, and each thread's call of
+   [get] reads back another warp's. *)
 let local_get ~trips () =
   let n = threads in
   let l = Ops.range ~axis_type:Local ~dtype:Int32 (Int n) [ 0 ] in
@@ -8864,26 +9597,24 @@ let local_get ~trips () =
   and a = int_param ~name:"A" 1 (trips * n) in
   let row = Ops.O.(t * i32 n) and last = i32 (n - 1) in
   let shared = Ops.after shared [ t ] in
-  let put = Ops.store (at shared l) Ops.O.(at a (row + l) + i32 1) in
-  let back = at (Ops.after shared [ put ]) Ops.O.(last - l) in
-  let call = Ops.call ~name:"get" get [ at c Ops.O.(row + l); back ] in
-  kernel "local_get" [ Ops.end_ (Ops.end_ call [ t ]) [ l ] ]
+  let put = Ops.store (element shared l) Ops.O.(element a (row + l) + i32 1) in
+  let back = element (Ops.after shared [ put ]) Ops.O.(last - l) in
+  let call = Ops.call ~name:"get" get [ element c Ops.O.(row + l); back ] in
+  named_kernel "local_get" [ Ops.end_ (Ops.end_ call [ t ]) [ l ] ]
 
-(* A barrier lies between the first of [instructions] that is [x] and the
-   first that is [y]. *)
+(* A barrier lies between the first of [instructions] that is [x] and the first
+   that is [y]. *)
 let barrier_between instructions x y =
   let at f = Option.get (List.find_index f instructions) in
   let call = at x and read = at y in
   let barriers =
-    List.filteri
-      (fun i u -> i > call && i < read && is Barrier u)
-      instructions
+    List.filteri (fun i u -> i > call && i < read && is Barrier u) instructions
   in
   at_least int ~msg:"barriers between the call and the read" ~than:1
     (List.length barriers)
 
-(* The node that ends the loop of [k] lowered for HIP: its body, which a
-   barrier ends where the loop reads local memory it writes. *)
+(* The node that ends the loop of [k] lowered for HIP: its body, which a barrier
+   ends where the loop reads local memory it writes. *)
 let loop_body k =
   let hip = renderer_for (target "AMD" "HIP" "gfx1100") in
   let lin = Codegen.linearize k hip in
@@ -8903,19 +9634,21 @@ let reads_local u = is Load u && in_space Local (Ops.nth u 0)
 let call_out () =
   let c = int_param ~name:"C" 0 2 in
   let frexp = Ops.custom_function ~dtype:Float64 "frexp" [] in
-  let call = Ops.call frexp [ Ops.float ~dtype:Float64 8.; first c ] in
+  let call = Ops.call frexp [ Ops.float ~dtype:Float64 8.; first_cell c ] in
   let c = Ops.after c [ call ] in
-  kernel "call_out" [ Ops.store (at c (Ops.int 1)) Ops.O.(first c + i32 1) ]
+  named_kernel "call_out"
+    [ Ops.store (element c (Ops.int 1)) Ops.O.(first_cell c + i32 1) ]
 
 (* [c[0] = int (sqrt 16) * 2]. *)
 let call_ret () =
   let c = int_param ~name:"C" 0 1 in
   let sqrt = Ops.custom_function ~dtype:Float64 "sqrt" [] in
   let v = Ops.call sqrt [ Ops.float ~dtype:Float64 16. ] in
-  kernel "call_ret" [ Ops.store (first c) Ops.O.(Ops.cast v Int32 * i32 2) ]
+  named_kernel "call_ret"
+    [ Ops.store (first_cell c) Ops.O.(Ops.cast v Int32 * i32 2) ]
 
-(* [c[0] = int (sqrt 16) + int (sqrt 9)]: the kernel calls [sqrt], and so
-   does the body [root] it calls. *)
+(* [c[0] = int (sqrt 16) + int (sqrt 9)]: the kernel calls [sqrt], and so does
+   the body [root] it calls. *)
 let extern_in_body () =
   let sqrt = Ops.custom_function ~dtype:Float64 "sqrt" [] in
   let sqrt_int x =
@@ -8923,18 +9656,19 @@ let extern_in_body () =
   in
   let root =
     let p = int_param ~addrspace:Reg ~name:"p" 0 1 in
-    Ops.sink [ Ops.store (first p) (sqrt_int 9.) ]
+    Ops.sink [ Ops.store (first_cell p) (sqrt_int 9.) ]
   in
   let c = int_param ~name:"C" 0 1 in
   let tmp = Shape.alloc_like ~addrspace:Reg c in
   let call = Ops.call ~name:"root" root [ tmp ] in
-  let three = first (Ops.after tmp [ call ]) in
-  kernel "extern_in_body"
-    [ Ops.store (first c) Ops.O.(sqrt_int 16. + three) ]
+  let three = first_cell (Ops.after tmp [ call ]) in
+  named_kernel "extern_in_body"
+    [ Ops.store (first_cell c) Ops.O.(sqrt_int 16. + three) ]
 
 (* The kernel calls [h], which calls [axpy 2] and [cbrt], then [axpy 3] and
-   [sqrt]: two externs, one met first inside a body, and two bodies of one
-   name, one met first inside another body. *)
+   [sqrt]: two externs, one met first inside a body, and two bodies of one name,
+   one met first inside another body. From [c] zeros and [a = 1..4], [c] becomes
+   [2a], then [c[0] + 3], then [c + 3a], then [c[0] + 4]. *)
 let ordered_callees () =
   let cbrt = Ops.custom_function ~dtype:Float64 "cbrt" []
   and sqrt = Ops.custom_function ~dtype:Float64 "sqrt" [] in
@@ -8942,44 +9676,17 @@ let ordered_callees () =
   let h =
     let out = int_param ~name:"out" 0 4 and x = int_param ~name:"x" 1 4 in
     let out = Ops.after out [ Ops.call ~name:"axpy" (axpy 2) [ out; x ] ] in
-    Ops.sink [ Ops.store (first out) Ops.O.(first out + of_f cbrt 27.) ]
+    Ops.sink
+      [ Ops.store (first_cell out) Ops.O.(first_cell out + of_f cbrt 27.) ]
   in
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
   let c2 = Ops.after c [ Ops.call ~name:"h" h [ c; a ] ] in
   let c3 = Ops.after c [ Ops.call ~name:"axpy" (axpy 3) [ c2; a ] ] in
-  kernel "ordered_callees"
-    [ Ops.store (first c3) Ops.O.(first c3 + of_f sqrt 16.) ]
+  named_kernel "ordered_callees"
+    [ Ops.store (first_cell c3) Ops.O.(first_cell c3 + of_f sqrt 16.) ]
 
-(* The externs and the functions a program's instructions call, as a
-   toposort of their sink meets them, call bodies entered: the externs'
-   names once each, and each body's name, numbered among the bodies of its
-   name met before it. *)
-let toposort_callees instructions =
-  let all = Ops.toposort ~calls:Enter (Ops.sink instructions) in
-  let externs =
-    List.filter_map
-      (fun u ->
-        match Ops.arg u with
-        | Custom_function f when Ops.op u = Custom_function -> Some f.name
-        | _ -> None)
-      all
-  in
-  let name (met, names) b =
-    let same b' = Ops.equal_arg (Ops.arg b') (Ops.arg b) in
-    let base = match Ops.arg b with String s -> s | _ -> "" in
-    let n = List.length (List.filter same met) in
-    let name = if n = 0 then base else Printf.sprintf "%s_%d" base n in
-    (b :: met, name :: names)
-  in
-  let rec once seen = function
-    | [] -> List.rev seen
-    | x :: rest -> once (if List.mem x seen then seen else x :: seen) rest
-  in
-  let bodies = List.filter (fun u -> Ops.op u = Linear) all in
-  (once [] externs, List.rev (snd (List.fold_left name ([], []) bodies)))
-
-(* The names that follow [prefix] up to the first ['('] on [source]'s lines
-   that start with it, in order. *)
+(* The names that follow [prefix] up to the first ['('] on [source]'s lines that
+   start with it, in order. *)
 let names_after prefix source =
   List.filter_map
     (fun line ->
@@ -8992,8 +9699,6 @@ let names_after prefix source =
       else None)
     (String.split_on_char '\n' source)
 
-let int_values l = Array.of_list (List.map (fun n -> `Int (Bigint.of_int n)) l)
-
 let runs_on_host k inputs expected () =
   let prg = Codegen.to_program (k ()) (Lazy.force host) in
   equal (array Dtypes.value) (int_values expected)
@@ -9003,9 +9708,12 @@ let runs_on_host k inputs expected () =
    index in bounds. *)
 let one_lane_stack () =
   let a = int_param ~name:"a" 0 2 in
-  let lane = Ops.load (at a (Ops.int 1)) [] in
-  kernel "stack"
-    [ Ops.store (first a) (Ops.index (Ops.v Op.Stack ~src:[ i32 42 ]) [ lane ]) ]
+  let lane = Ops.load (element a (Ops.int 1)) [] in
+  named_kernel "stack"
+    [
+      Ops.store (first_cell a)
+        (Ops.index (Ops.v Op.Stack ~src:[ i32 42 ]) [ lane ]);
+    ]
 
 let stacks =
   group "stacks"
@@ -9027,7 +9735,8 @@ let reversed_on_cuda k =
   in
   let prg = compiled_for r (k ~trips ()) in
   let inputs = [ (1, int_values (Array.to_list a)) ] in
-  equal (array Dtypes.value) (int_values (Array.to_list expected))
+  equal (array Dtypes.value)
+    (int_values (Array.to_list expected))
     (List.assoc 0 (Run.on d prg inputs))
 
 let calls =
@@ -9043,19 +9752,13 @@ let calls =
           equal int 1 (occurrences "extern void sqrt();" (source prg));
           equal (array Dtypes.value) (int_values [ 7 ])
             (List.assoc 0 (Run.on_host prg [])));
+      (* C refuses a call of a function not declared before it *)
       test
-        "externs and functions are declared as a toposort of the \
-         instructions meets them"
-        (fun () ->
-          let k = ordered_callees () and ren = Lazy.force host in
-          let instructions = Ops.src (Ops.nth (Codegen.linearize k ren) 1) in
-          let src = source (Codegen.to_program k ren) in
-          let externs, functions = toposort_callees instructions in
-          equal (list string) [ "cbrt"; "sqrt" ] externs;
-          equal (list string) [ "axpy"; "h"; "axpy_1" ] functions;
-          equal (list string) externs (names_after "extern void " src);
-          equal (list string) functions
-            (names_after "static inline  void " src));
+        "a kernel whose bodies call externs and one another declares each \
+         before its first call"
+        (runs_on_host ordered_callees
+           [ (1, int_values [ 1; 2; 3; 4 ]) ]
+           [ 12; 10; 15; 20 ]);
       test "a nested call runs its body twice through registers"
         (runs_on_host nested_calls
            [ (1, int_values [ 0; 1; 2; 3 ]) ]
@@ -9070,8 +9773,8 @@ let calls =
            (List.init 16 (fun x -> 4 * x)));
       test "a call of a program not yet compiled runs its instructions"
         (fun () ->
-          (* a body another kernel calls takes its arguments as parameters,
-             and is not optimised again *)
+          (* a body another kernel calls takes its arguments as parameters, and
+             is not optimised again *)
           let k = mul_kernel () in
           let callee =
             match Ops.arg k with
@@ -9081,7 +9784,8 @@ let calls =
             | _ -> assert false
           in
           let body = Codegen.linearize callee (Lazy.force host) in
-          runs_on_host (fun () -> program_call body)
+          runs_on_host
+            (fun () -> program_call body)
             [ (1, int_values [ 1; 2; 3; 4 ]) ]
             [ 3; 6; 9; 12 ] ());
       test "a call of a program linearized for a launch is refused" (fun () ->
@@ -9101,17 +9805,19 @@ let calls =
       test "a call's gated store writes where its gate holds"
         (runs_on_host gated_call [ (1, int_values [ 2 ]) ] [ 1; 1; 8; 1 ]);
       test
-        "a kernel's variables take the slots after its own parameters, not \
-         its calls' bodies'" (fun () ->
-          let prg = Codegen.to_program (call_then_variable ()) (Lazy.force host) in
+        "a kernel's variables take the slots after its own parameters, not its \
+         calls' bodies'" (fun () ->
+          let prg =
+            Codegen.to_program (call_then_variable ()) (Lazy.force host)
+          in
           let slot v = match Ops.arg v with Param p -> p.slot | _ -> -1 in
           (match Ops.arg prg with
           | Program p -> equal (list int) [ 2 ] (List.map slot (scalars_of p))
           | _ -> fail "to_program made no program");
-          equal (array Dtypes.value) (int_values [ 6; 11 ])
+          equal (array Dtypes.value)
+            (int_values [ 6; 11 ])
             (List.assoc 0
-               (Run.on_host ~vars:[ ("n", 5) ] prg
-                  [ (1, int_values [ 3 ]) ])));
+               (Run.on_host ~vars:[ ("n", 5) ] prg [ (1, int_values [ 3 ]) ])));
       test
         "a kernel numbers the storage it makes after its own, not its calls' \
          bodies'" (fun () ->
@@ -9125,13 +9831,16 @@ let calls =
               (Ops.toposort ~calls:Skip (Ops.nth prg 1))
           in
           equal (list int) [ 0 ] registers;
-          equal (array Dtypes.value) (int_values [ 4; 10 ])
+          equal (array Dtypes.value)
+            (int_values [ 4; 10 ])
             (List.assoc 0 (Run.on_host prg [ (1, int_values [ 3; 2; 1; 4 ]) ])));
       test "a loop of a call's body is not the kernel's, though the same node"
         (fun () ->
-          (* the premise: a body's range of size 4 and identity 0 is the node
-             of the kernel's *)
-          equal bool true (loop 4 0 == loop 4 0);
+          (* the premise: a body's range of size 4 and identity 0 is the node of
+             the kernel's *)
+          satisfies ~claim:"is the node of the kernel's loop" Uops.uop
+            (fun r -> r == loop 4 0)
+            (loop 4 0);
           runs_on_host call_body_range
             [ (1, int_values [ 1; 2; 3; 4 ]) ]
             [ 2; 3; 4; 5 ] ());
@@ -9165,12 +9874,11 @@ let calls =
           equal int 2 (occurrences "  incr(" (source prg)));
       test "a call of a sink without a name is refused" (fun () ->
           let p = int_param ~name:"p" 0 1 in
-          let body = Ops.sink [ Ops.store (first p) (i32 1) ] in
+          let body = Ops.sink [ Ops.store (first_cell p) (i32 1) ] in
           let c = int_param ~name:"C" 0 1 in
-          let k = kernel "unnamed" [ Ops.call body [ first c ] ] in
-          raises_match
-            (Exn.invalid_arg ~sub:"needs a name")
-            (fun () -> Codegen.to_program k (Lazy.force host)));
+          let k = named_kernel "unnamed" [ Ops.call body [ first_cell c ] ] in
+          raises_match (Exn.invalid_arg ~sub:"needs a name") (fun () ->
+              Codegen.to_program k (Lazy.force host)));
       test "a kernel reads what a call writes to local memory after a barrier"
         (fun () ->
           let hip = renderer_for (target "AMD" "HIP" "gfx1100") in
@@ -9184,11 +9892,9 @@ let calls =
         "a loop whose call reads local memory the loop writes ends with a \
          barrier" (fun () ->
           equal op Barrier (loop_body (local_get ~trips:2 ())));
-      test
-        "threads read what other warps' calls wrote to local memory, on CUDA"
+      test "threads read what other warps' calls wrote to local memory, on CUDA"
         (fun () -> reversed_on_cuda local_call);
-      test
-        "calls read what other warps wrote to local memory, on CUDA"
+      test "calls read what other warps wrote to local memory, on CUDA"
         (fun () -> reversed_on_cuda local_get);
       test "a volatile parameter of a body is volatile in its function"
         (fun () ->
@@ -9205,27 +9911,73 @@ let int_power n () =
   and a = int_param ~name:"A" 1 n
   and b = int_param ~name:"B" 2 n in
   let i = loop n 0 in
-  kernel "int_power"
-    [ Ops.end_ (Ops.store (at c i) (Ops.alu (at a i) Op.Pow [ at b i ])) [ i ] ]
+  named_kernel "int_power"
+    [
+      Ops.end_
+        (Ops.store (element c i) (Ops.alu (element a i) Op.Pow [ element b i ]))
+        [ i ];
+    ]
+
+(* [a ** b] at int32 by repeated products: a product wraps at the type, and a
+   negative power is 0 but for the bases 1 and -1. *)
+let int32_power a b =
+  if b < 0 then
+    match a with 1 -> 1 | -1 -> if b land 1 = 0 then 1 else -1 | _ -> 0
+  else
+    let rec go acc x e =
+      if e = 0 then acc
+      else
+        go
+          (if e land 1 = 1 then Int32.mul acc x else acc)
+          (Int32.mul x x) (e lsr 1)
+    in
+    Int32.to_int (go 1l (Int32.of_int a) b)
+
+let power_lanes = 16
+
+(* Bases and powers: small and int32-wide bases, powers from -6 to 40 and up to
+   2^30. *)
+let powers =
+  let open Gen in
+  let base =
+    frequency
+      [ (3, int_range (-3) 3); (1, int_range (-0x8000_0000) 0x7fff_ffff) ]
+  and power =
+    frequency [ (3, int_range (-6) 40); (1, int_range 0 (1 lsl 30)) ]
+  in
+  array ~size:(constant power_lanes) (pair base power)
+
+(* The rows the power's fix states, padded with [2 ** 3]. *)
+let power_examples =
+  let row l =
+    Array.of_list (l @ List.init (power_lanes - List.length l) (fun _ -> (2, 3)))
+  in
+  [
+    row [ (11, 7); (3, 40); (2, 31); (-3, 21); (7, 1 lsl 30) ];
+    row [ (0, -1); (1, -5); (-1, -5); (1, -6); (-1, -6) ];
+  ]
 
 let int_powers =
-  group "integer powers"
-    [
-      test "a power wraps at its type, as repeated products do"
-        (runs_on_host (int_power 5)
-           [
-             (1, int_values [ 11; 3; 2; -3; 7 ]);
-             (2, int_values [ 7; 40; 31; 21; 1 lsl 30 ]);
-           ]
-           [ 19487171; 689956897; -2147483648; -1870418611; 1 ]);
-      test "a negative power truncates toward 0, but for 1 and -1"
-        (runs_on_host (int_power 5)
-           [
-             (1, int_values [ 0; 1; -1; 1; -1 ]);
-             (2, int_values [ -1; -5; -5; -6; -6 ]);
-           ]
-           [ 0; 1; -1; 1; 1 ]);
-    ]
+  prop ~count:30 ~examples:power_examples
+    "an integer power is the repeated product at its type" powers (fun lanes ->
+      let wraps (a, b) =
+        b > 0
+        && abs a >= 2
+        && Float.of_int b *. Float.log2 (Float.of_int (abs a)) >= 31.
+      in
+      cover "a product that wraps" (Array.exists wraps lanes);
+      cover "a negative power of 1 or -1"
+        (Array.exists (fun (a, b) -> b < 0 && abs a = 1) lanes);
+      cover "a negative power of another base"
+        (Array.exists (fun (a, b) -> b < 0 && abs a <> 1) lanes);
+      cover "a power past 31" (Array.exists (fun (_, b) -> b > 31) lanes);
+      let prg =
+        Codegen.to_program (int_power power_lanes ()) (Lazy.force host)
+      in
+      let column f = int_values (Array.to_list (Array.map f lanes)) in
+      equal (array Dtypes.value)
+        (column (fun (a, b) -> int32_power a b))
+        (List.assoc 0 (Run.on_host prg [ (1, column fst); (2, column snd) ])))
 
 (* Effects run as often as written
 
@@ -9259,11 +10011,11 @@ let ungated_index () =
   let q = effect_loop 4 0 and r = effect_loop 4 1 in
   let c = int_param ~name:"C" 0 4 and d = int_param ~name:"D" 1 16 in
   let guard = Ops.O.((q < int 2) land (r < int 2)) in
-  let d_at = at d (Shape.valid Ops.O.((q * int 4) + r) guard) in
+  let d_at = element d (Shape.valid Ops.O.((q * int 4) + r) guard) in
   effect_kernel
     [
       Ops.end_
-        (Ops.group [ Ops.store (at c q) (i32 1); Ops.store d_at (i32 1) ])
+        (Ops.group [ Ops.store (element c q) (i32 1); Ops.store d_at (i32 1) ])
         [ q; r ];
     ]
 
@@ -9278,19 +10030,19 @@ let after_domains =
   let incr cell = Ops.store cell Ops.O.(cell + i32 1) in
   [
     ( "ordered after the inner range",
-      fun _ i c _ -> incr (first (Ops.after c [ i ])) );
+      fun _ i c _ -> incr (first_cell (Ops.after c [ i ])) );
     ( "ordered after the outer range, beside a store after both",
       fun o i c a ->
         Ops.group
           [
-            incr (first (Ops.after c [ o ]));
-            Ops.store (first (Ops.after a [ o; i ])) (i32 1);
+            incr (first_cell (Ops.after c [ o ]));
+            Ops.store (first_cell (Ops.after a [ o; i ])) (i32 1);
           ] );
     ( "read after the outer range, stored after both",
       fun o i c _ ->
         Ops.store
-          (first (Ops.after c [ o; i ]))
-          Ops.O.(Ops.load (first (Ops.after c [ o ])) [] + i32 1) );
+          (first_cell (Ops.after c [ o; i ]))
+          Ops.O.(Ops.load (first_cell (Ops.after c [ o ])) [] + i32 1) );
   ]
 
 (* [C[c o] += 1] beside [B[4o + i] = 1]: [C] is indexed by [o] alone, so each of
@@ -9298,14 +10050,14 @@ let after_domains =
 let index_domain cell () =
   let o = effect_loop 4 0 and i = effect_loop 4 1 in
   let c = int_param ~name:"C" 0 2 and b = int_param ~name:"B" 1 16 in
-  let cell = at c (cell o) in
+  let cell = element c (cell o) in
   effect_kernel
     [
       Ops.end_
         (Ops.group
            [
              Ops.store cell Ops.O.(cell + i32 1);
-             Ops.store (at b Ops.O.((o * int 4) + i)) (i32 1);
+             Ops.store (element b Ops.O.((o * int 4) + i)) (i32 1);
            ])
         [ o; i ];
     ]
@@ -9317,8 +10069,9 @@ let inner_reduce () =
   let r n = Ops.range ~axis_type:Upcast (Int 4) [ n ] in
   let r0 = r 0 and r1 = r 1 and r2 = r 2 in
   let c = int_param ~name:"C" 0 1 and a = int_param ~name:"A" 1 4 in
-  let inner = Ops.reduce (at a r2) Op.Add [ r1 ] in
-  effect_kernel [ Ops.store (first c) (Ops.reduce inner Op.Add [ r0; r1; r2 ]) ]
+  let inner = Ops.reduce (element a r2) Op.Add [ r1 ] in
+  effect_kernel
+    [ Ops.store (first_cell c) (Ops.reduce inner Op.Add [ r0; r1; r2 ]) ]
 
 (* A sum over [a], [k] and [b] whose value stores [S[0] * 10 + A[2a + b]] into
    [S[0]], directly or through a call: the sum loops [a], [k], [b] in order, and
@@ -9328,20 +10081,22 @@ let reduce_order ~call () =
   let o = int_param ~name:"O" 0 1
   and s = int_param ~name:"S" 1 1
   and x = int_param ~name:"A" 2 4 in
-  let elt = at x Ops.O.((a * int 2) + b) in
-  let digit s x = Ops.store (first s) Ops.O.((first s * i32 10) + x) in
+  let elt = element x Ops.O.((a * int 2) + b) in
+  let digit s x =
+    Ops.store (first_cell s) Ops.O.((first_cell s * i32 10) + x)
+  in
   let write =
     if call then
       let update =
         let s = int_param ~name:"S" 0 1 and x = int_param ~name:"A" 1 1 in
-        Ops.sink [ digit s (first x) ]
+        Ops.sink [ digit s (first_cell x) ]
       in
       Ops.call ~name:"update" update [ Ops.after s [ k ]; elt ]
     else digit (Ops.after s [ a; k; b ]) elt
   in
   effect_kernel
     [
-      Ops.store (first o)
+      Ops.store (first_cell o)
         (Ops.reduce (Ops.after elt [ write ]) Op.Add [ a; k; b ]);
     ]
 
@@ -9351,11 +10106,12 @@ let reduce_order ~call () =
 let loop_order () =
   let x = effect_loop 2 0 and y = effect_loop 2 1 in
   let s = int_param ~name:"S" 0 1 and a = int_param ~name:"A" 1 4 in
-  let cell = first (Ops.after s [ x; y ]) in
+  let cell = first_cell (Ops.after s [ x; y ]) in
   effect_kernel
     [
       Ops.end_
-        (Ops.store cell Ops.O.((cell * i32 10) + at a Ops.O.((y * int 2) + x)))
+        (Ops.store cell
+           Ops.O.((cell * i32 10) + element a Ops.O.((y * int 2) + x)))
         [ y; x ];
     ]
 
@@ -9364,7 +10120,9 @@ let loop_order () =
 let merge_then_shrink () =
   let r0 = effect_loop 4 0 and r1 = effect_loop 2 1 in
   let c = int_param ~name:"C" 0 8 in
-  let cell = at c (Shape.valid Ops.O.((r0 * int 2) + r1) Ops.O.(r0 < int 2)) in
+  let cell =
+    element c (Shape.valid Ops.O.((r0 * int 2) + r1) Ops.O.(r0 < int 2))
+  in
   effect_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r0; r1 ] ]
 
 (* [C[0] = r] at each step of [r], beside [D[r] = 1] where [r < 2], [C]'s store
@@ -9373,8 +10131,8 @@ let ungated_store ~gated () =
   let r = effect_loop 4 0 in
   let c = int_param ~name:"C" 0 1 and d = int_param ~name:"D" 1 4 in
   let c_at =
-    if gated then at c (Shape.valid (Ops.int 0) Ops.O.(lnot (r < int 2)))
-    else first c
+    if gated then element c (Shape.valid (Ops.int 0) Ops.O.(lnot (r < int 2)))
+    else first_cell c
   in
   effect_kernel
     [
@@ -9382,7 +10140,7 @@ let ungated_store ~gated () =
         (Ops.group
            [
              Ops.store c_at (Ops.cast r Int32);
-             Ops.store (at d (Shape.valid r Ops.O.(r < int 2))) (i32 1);
+             Ops.store (element d (Shape.valid r Ops.O.(r < int 2))) (i32 1);
            ])
         [ r ];
     ]
@@ -9396,11 +10154,11 @@ let symbolic_end () =
   effect_kernel
     [
       Ops.end_
-        (Ops.store (at d (Shape.valid r Ops.O.(r < int 4))) (i32 1))
+        (Ops.store (element d (Shape.valid r Ops.O.(r < int 4))) (i32 1))
         [ r ];
     ]
 
-let code ?(dtype = Dtype.Void) c src =
+let custom_code ?(dtype = Dtype.Void) c src =
   Ops.call (Ops.custom_function ~dtype ~fmt:true c []) src
 
 (* [C[r] += 1] in the target's language, beside [D[r] = 1]. *)
@@ -9411,7 +10169,10 @@ let group_custom () =
     [
       Ops.end_
         (Ops.group
-           [ code "{0}[0] += 1;" [ at c r ]; Ops.store (at d r) (i32 1) ])
+           [
+             custom_code "{0}[0] += 1;" [ element c r ];
+             Ops.store (element d r) (i32 1);
+           ])
         [ r ];
     ]
 
@@ -9425,7 +10186,10 @@ let optimised_custom () =
     [
       Ops.end_
         (Ops.group
-           [ code "{0}[0] += 1;" [ at c r ]; Ops.store (at d r) (i32 1) ])
+           [
+             custom_code "{0}[0] += 1;" [ element c r ];
+             Ops.store (element d r) (i32 1);
+           ])
         [ r ];
     ]
 
@@ -9434,18 +10198,24 @@ let optimised_custom () =
 let collapse_custom () =
   let r = effect_loop 4 0 in
   let c = int_param ~name:"C" 0 4 and o = int_param ~name:"O" 1 1 in
-  let inc = code ~dtype:Int32 "({0}[0] += 1)" [ at c r ] in
+  let inc = custom_code ~dtype:Int32 "({0}[0] += 1)" [ element c r ] in
   let picked = Ops.where (Ops.eq (i32 2) (Ops.cast r Int32)) inc (i32 0) in
-  effect_kernel [ Ops.store (first o) (Ops.reduce picked Op.Add [ r ]) ]
+  effect_kernel [ Ops.store (first_cell o) (Ops.reduce picked Op.Add [ r ]) ]
 
 (* [D[r] = (C[0] = r)] where [r < 2]: the assignment runs at each step of [r],
    so [C[0]] ends at 3. *)
 let shrink_custom () =
   let r = effect_loop 4 0 in
   let c = int_param ~name:"C" 0 1 and d = int_param ~name:"D" 1 4 in
-  let set = code ~dtype:Int32 "({0}[0] = {1})" [ first c; Ops.cast r Int32 ] in
+  let set =
+    custom_code ~dtype:Int32 "({0}[0] = {1})" [ first_cell c; Ops.cast r Int32 ]
+  in
   effect_kernel
-    [ Ops.end_ (Ops.store (at d (Shape.valid r Ops.O.(r < int 2))) set) [ r ] ]
+    [
+      Ops.end_
+        (Ops.store (element d (Shape.valid r Ops.O.(r < int 2))) set)
+        [ r ];
+    ]
 
 let frexp x out =
   let f = Ops.custom_function ~dtype:Float64 "frexp" [] in
@@ -9460,8 +10230,8 @@ let shrink_call () =
     [
       Ops.end_
         (Ops.store
-           (at d (Shape.valid r Ops.O.(r < int 2)))
-           (Ops.cast (frexp r (first c)) Int32))
+           (element d (Shape.valid r Ops.O.(r < int 2)))
+           (Ops.cast (frexp r (first_cell c)) Int32))
         [ r ];
     ]
 
@@ -9470,11 +10240,11 @@ let shrink_call () =
 let collapse_call () =
   let r = effect_loop 4 0 in
   let c = int_param ~name:"C" 0 4 and o = int_param ~name:"O" 1 1 in
-  let call = frexp Ops.O.(r + int 1) (at c r) in
+  let call = frexp Ops.O.(r + int 1) (element c r) in
   let picked =
     Ops.where (Ops.eq r (Ops.int 2)) Ops.O.(Ops.cast call Int32 + i32 1) (i32 0)
   in
-  effect_kernel [ Ops.store (first o) (Ops.reduce picked Op.Add [ r ]) ]
+  effect_kernel [ Ops.store (first_cell o) (Ops.reduce picked Op.Add [ r ]) ]
 
 (* Stores of [A], from [0, 0, 5, 0], whose values wait on other stores of [A]:
    merged into one vector store, a store would wait on itself. *)
@@ -9483,13 +10253,14 @@ let behind_coalesced stores () =
   effect_kernel (stores a)
 
 let coalesced_stores =
-  let store a i v = Ops.store (at a (Ops.int i)) v in
+  let store a i v = Ops.store (element a (Ops.int i)) v in
   [
     ( "a value read after a store beside it",
       (fun a ->
         [
           store a 0 (i32 7);
-          store a 1 Ops.O.(first (Ops.after a [ store a 0 (i32 7) ]) + i32 5);
+          store a 1
+            Ops.O.(first_cell (Ops.after a [ store a 0 (i32 7) ]) + i32 5);
         ]),
       [ 7; 12; 5; 0 ] );
     ( "a constant after a store, beside a load",
@@ -9498,7 +10269,7 @@ let coalesced_stores =
           store a 1
             Ops.O.(
               Ops.after (i32 1) [ store a 0 (i32 7) ]
-              + Ops.load (at a (Ops.int 2)) []);
+              + Ops.load (element a (Ops.int 2)) []);
         ]),
       [ 7; 6; 5; 0 ] );
     ( "constants each after a store",
@@ -9511,10 +10282,10 @@ let coalesced_stores =
   ]
 
 (* [D[4j + e] = 2 * A[4j + e]] for [j < 2], through two copies of registers,
-   each ended over a range of [axis_type]: the first copies [A]'s row into
-   [r1], the second doubles [r1] into [r2], reading what the first stored.
-   Upcast ends close no range once expanded; loop ends close one range each,
-   the same one when [shared]. *)
+   each ended over a range of [axis_type]: the first copies [A]'s row into [r1],
+   the second doubles [r1] into [r2], reading what the first stored. Upcast ends
+   close no range once expanded; loop ends close one range each, the same one
+   when [shared]. *)
 let chained_copies (axis_type, shared) () =
   let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
   let reg slot = Shape.placeholder ~slot ~addrspace:Reg [ 4 ] Int32 in
@@ -9526,63 +10297,68 @@ let chained_copies (axis_type, shared) () =
   let open Ops.O in
   let row u = (j * int 4) + u in
   let copy =
-    Ops.end_ (Ops.store (at r1 u1) (Ops.load (at a (row u1)) [])) [ u1 ]
+    Ops.end_
+      (Ops.store (element r1 u1) (Ops.load (element a (row u1)) []))
+      [ u1 ]
   in
   let r1 = Ops.after r1 [ copy ] in
   let doubled =
     Ops.end_
-      (Ops.store (at r2 u2) (Ops.load (at r1 u2) [] * i32 2))
+      (Ops.store (element r2 u2) (Ops.load (element r1 u2) [] * i32 2))
       [ u2 ]
   in
   let r2 = Ops.after r2 [ doubled ] in
-  let out e = Ops.store (at d (row (int e))) (Ops.load (at r2 (int e)) []) in
+  let out e =
+    Ops.store (element d (row (int e))) (Ops.load (element r2 (int e)) [])
+  in
   effect_kernel [ Ops.end_ (Ops.group (List.init 4 out)) [ j ] ]
 
 (* [D[l] = A[2l] + A[2l + 1]] for [l < 4], through registers [r] that a first
-   copy fills over [l] and [m], counting its steps in [C[0]], and a second
-   copy reads over [l] alone: the second end closes a range the first closes
-   along another. The first copy runs once, so [C[0]] counts to 8. *)
+   copy fills over [l] and [m], counting its steps in [C[0]], and a second copy
+   reads over [l] alone: the second end closes a range the first closes along
+   another. The first copy runs once, so [C[0]] counts to 8. *)
 let crossed_ends () =
   let d = int_param ~name:"D" 0 4 and a = int_param ~name:"A" 1 8 in
   let c = int_param ~name:"C" 2 1 in
   let r = Shape.placeholder ~slot:3 ~addrspace:Reg [ 8 ] Int32 in
   let l = effect_loop 4 0 and m = effect_loop 2 1 in
   let open Ops.O in
-  let cell = first (Ops.after c [ m ]) in
+  let cell = first_cell (Ops.after c [ m ]) in
   let copy =
     Ops.end_
       (Ops.group
          [
-           Ops.store (at r ((l * int 2) + m))
-             (Ops.load (at a ((l * int 2) + m)) []);
+           Ops.store
+             (element r ((l * int 2) + m))
+             (Ops.load (element a ((l * int 2) + m)) []);
            Ops.store cell (cell + i32 1);
          ])
       [ l; m ]
   in
   let r = Ops.after r [ copy ] in
-  let pair k = Ops.load (at r ((l * int 2) + int k)) [] in
-  effect_kernel [ Ops.end_ (Ops.store (at d l) (pair 0 + pair 1)) [ l ] ]
+  let pair k = Ops.load (element r ((l * int 2) + int k)) [] in
+  effect_kernel [ Ops.end_ (Ops.store (element d l) (pair 0 + pair 1)) [ l ] ]
 
-(* Effects whose index is one constant at every step: the effect still runs
-   once per step of the loops its index reads. *)
+(* Effects whose index is one constant at every step: the effect still runs once
+   per step of the loops its index reads. *)
 
 let bounded_var name hi =
   Ops.variable name (`Int Bigint.zero) (`Int (Bigint.of_int hi))
 
-(* [C[r // 8] += 1] over [r < bound]: the quotient is 0 at every step, so
-   [C[0]] counts the steps. *)
+(* [C[r // 8] += 1] over [r < bound]: the quotient is 0 at every step, so [C[0]]
+   counts the steps. *)
 let quotient_count bound () =
   let r = Ops.range ~axis_type:Loop bound [ 0 ] in
-  let cell = at (int_param ~name:"C" 0 1) Ops.O.(r // int 8) in
+  let cell = element (int_param ~name:"C" 0 1) Ops.O.(r // int 8) in
   effect_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
-(* [O[r // 2] = 5] over [r < bound], a loop of at most one step: it stores
-   only when the loop steps. *)
+(* [O[r // 2] = 5] over [r < bound], a loop of at most one step: it stores only
+   when the loop steps. *)
 let skipped_store bound () =
   let r = Ops.range ~axis_type:Loop (bound ()) [ 0 ] in
   let out = int_param ~name:"O" 0 2 in
   effect_kernel
-    [ Ops.end_ (Ops.store (at out Ops.O.(r // int 2)) (i32 5)) [ r ] ]
+    [ Ops.end_ (Ops.store (element out Ops.O.(r // int 2)) (i32 5)) [ r ] ]
 
 let one_step () : Ops.sint = Sym (bounded_var "n" 1)
 
@@ -9591,7 +10367,8 @@ let one_step () : Ops.sint = Sym (bounded_var "n" 1)
 let guarded_quotient () =
   let r = effect_loop 32 0 in
   let cell =
-    at (int_param ~name:"C" 0 1) (Shape.valid Ops.O.(r // int 8) Ops.O.(r < int 8))
+    element (int_param ~name:"C" 0 1)
+      (Shape.valid Ops.O.(r // int 8) Ops.O.(r < int 8))
   in
   effect_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
@@ -9599,23 +10376,28 @@ let guarded_quotient () =
 let folded_code () =
   let r = Ops.range ~axis_type:Loop (Sym (bounded_var "n" 4)) [ 0 ] in
   let c = int_param ~name:"C" 0 1 in
-  effect_kernel [ Ops.end_ (code "{0}[0] += 1;" [ at c Ops.O.(r // int 8) ]) [ r ] ]
+  effect_kernel
+    [
+      Ops.end_
+        (custom_code "{0}[0] += 1;" [ element c Ops.O.(r // int 8) ])
+        [ r ];
+    ]
 
 (* [O[0] = r // 8] over [r < n]: the value is 0 at every step. *)
 let folded_value () =
   let r = Ops.range ~axis_type:Loop (Sym (bounded_var "n" 8)) [ 0 ] in
   let value = Ops.cast Ops.O.(r // int 8) Int32 in
   effect_kernel
-    [ Ops.end_ (Ops.store (first (int_param ~name:"O" 0 1)) value) [ r ] ]
+    [ Ops.end_ (Ops.store (first_cell (int_param ~name:"O" 0 1)) value) [ r ] ]
 
 (* A bound of [F[0] <> 0] steps, known only when the kernel runs. *)
 let flag_steps () : Ops.sint =
-  let flag = Ops.load (first (int_param ~name:"F" 1 1)) [] in
+  let flag = Ops.load (first_cell (int_param ~name:"F" 1 1)) [] in
   Sym (Ops.cast Ops.O.(flag <> i32 0) Int32)
 
 (* A loop nest whose bounds are constants, or variables, of at most [max_trips]
-   steps, and an index of one term per loop, each a constant at every step
-   given those bounds. *)
+   steps, and an index of one term per loop, each a constant at every step given
+   those bounds. *)
 
 let max_trips = 4
 
@@ -9669,7 +10451,7 @@ let folded_nest (loops, folds) () =
       (fun acc t -> Ops.O.(acc + fold_term rs t))
       (Ops.int 0) (List.combine rs folds)
   in
-  let cell = at (int_param ~name:"C" 0 8) index in
+  let cell = element (int_param ~name:"C" 0 8) index in
   effect_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) rs ]
 
 let nests =
@@ -9694,7 +10476,9 @@ let nests =
     | `Const n -> Format.fprintf ppf "%d" n
     | `Var n -> Format.fprintf ppf "n=%d" n
   in
-  let list pp = Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") pp in
+  let list pp =
+    Format.pp_print_list ~pp_sep:(fun ppf () -> Format.fprintf ppf "; ") pp
+  in
   let pp ppf (loops, folds) =
     Format.fprintf ppf "loops [%a], index terms [%a]" (list pp_loop) loops
       (list pp_fold) folds
@@ -9737,9 +10521,15 @@ let folded_effects =
         ~id:(fun (name, _, _) -> name)
         [
           ("a constant loop of 8", (fun () : Ops.sint -> Int 8), []);
-          ("a variable loop of 0", (fun () : Ops.sint -> Sym (bounded_var "n" 8)), [ ("n", 0) ]);
-          ("a variable loop of 5", (fun () : Ops.sint -> Sym (bounded_var "n" 8)), [ ("n", 5) ]);
-          ("a variable loop of 8", (fun () : Ops.sint -> Sym (bounded_var "n" 8)), [ ("n", 8) ]);
+          ( "a variable loop of 0",
+            (fun () : Ops.sint -> Sym (bounded_var "n" 8)),
+            [ ("n", 0) ] );
+          ( "a variable loop of 5",
+            (fun () : Ops.sint -> Sym (bounded_var "n" 8)),
+            [ ("n", 5) ] );
+          ( "a variable loop of 8",
+            (fun () : Ops.sint -> Sym (bounded_var "n" 8)),
+            [ ("n", 8) ] );
         ]
         (fun (_, bound, vars) ->
           let steps = match vars with [ (_, n) ] -> n | _ -> 8 in
@@ -9749,8 +10539,16 @@ let folded_effects =
         [
           ("a variable loop of 0", one_step, [ ("n", 0) ], [], [ [ 0; 0 ] ]);
           ("a variable loop of 1", one_step, [ ("n", 1) ], [], [ [ 5; 0 ] ]);
-          ("a loop of a flag that is 0", flag_steps, [], [ (1, int_values [ 0 ]) ], [ [ 0; 0 ]; [ 0 ] ]);
-          ("a loop of a flag that is 1", flag_steps, [], [ (1, int_values [ 1 ]) ], [ [ 5; 0 ]; [ 1 ] ]);
+          ( "a loop of a flag that is 0",
+            flag_steps,
+            [],
+            [ (1, int_values [ 0 ]) ],
+            [ [ 0; 0 ]; [ 0 ] ] );
+          ( "a loop of a flag that is 1",
+            flag_steps,
+            [],
+            [ (1, int_values [ 1 ]) ],
+            [ [ 5; 0 ]; [ 1 ] ] );
         ]
         (fun (_, bound, vars, inputs, expected) ->
           writes ~vars (skipped_store bound) inputs expected ());
@@ -9758,17 +10556,21 @@ let folded_effects =
         ~id:(fun (name, _, _) -> name)
         [ ("a loop of 0", 0, [ 7 ]); ("a loop of 5", 5, [ 0 ]) ]
         (fun (_, n, expected) ->
-          writes ~vars:[ ("n", n) ] folded_value
+          writes
+            ~vars:[ ("n", n) ]
+            folded_value
             [ (0, int_values [ 7 ]) ]
             [ expected ] ());
       test "a store at a guarded quotient that is 0 counts the guarded steps"
         (writes guarded_quotient [] [ [ 8 ] ]);
-      cases "code in the target's language at an index that folds runs at each step"
+      cases
+        "code in the target's language at an index that folds runs at each step"
         ~id:(fun n -> Printf.sprintf "a loop of %d" n)
         [ 0; 4 ]
         (fun n -> writes ~vars:[ ("n", n) ] folded_code [] [ [ n ] ] ());
       prop ~count:40
-        ~examples:[ ([ `Var 0 ], [ Sum_quotient ]); ([ `Const 2 ], [ Mod_one ]) ]
+        ~examples:
+          [ ([ `Var 0 ], [ Sum_quotient ]); ([ `Const 2 ], [ Mod_one ]) ]
         "a store at an index that folds runs once per step of its loops" nests
         counts_each_step;
     ]
@@ -9820,8 +10622,8 @@ let effects =
            [ [ 1; 1; 0; 0; 0; 0; 0; 0 ] ]);
       test "code in the target's language beside a store runs at each step"
         (writes group_custom [] [ [ 1; 1; 1; 1 ]; [ 1; 1; 1; 1 ] ]);
-      test "code in the target's language in an optimised kernel runs at each \
-            step"
+      test
+        "code in the target's language in an optimised kernel runs at each step"
         (writes optimised_custom []
            [ List.init 16 (fun _ -> 1); List.init 16 (fun _ -> 1) ]);
       test "code in the target's language in a collapsed sum runs at each step"
@@ -9849,8 +10651,9 @@ let effects =
             [ (1, int_values [ 1; 2; 3; 4; 5; 6; 7; 8 ]) ]
             [ [ 2; 4; 6; 8; 10; 12; 14; 16 ] ]
             ());
-      test "a copy that reads an end of its range along another range runs \
-            that end once"
+      test
+        "a copy that reads an end of its range along another range runs that \
+         end once"
         (writes crossed_ends
            [ (1, int_values [ 1; 2; 3; 4; 5; 6; 7; 8 ]) ]
            [ [ 3; 7; 11; 15 ]; [ 1; 2; 3; 4; 5; 6; 7; 8 ]; [ 8 ] ]);
@@ -9865,20 +10668,20 @@ let effects =
 
 (* Calls, custom code and stores on CUDA
 
-   A GPU runs a kernel in every thread, each at its point of the kernel's
-   thread axes. A call, or code in the target's language, runs once for each
-   point of the axes its sources read, and a store once for each point of the
-   ranges that hold it, so neither must be repeated across the threads of an
-   axis it does not read. *)
+   A GPU runs a kernel in every thread, each at its point of the kernel's thread
+   axes. A call, or code in the target's language, runs once for each point of
+   the axes its sources read, and a store once for each point of the ranges that
+   hold it, so neither must be repeated across the threads of an axis it does
+   not read. *)
 
-(* [n[0] += 1], atomic so that each run counts whatever threads run it at
-   once: by code, or by a call of a body of that code. *)
+(* [n[0] += 1], atomic so that each run counts whatever threads run it at once:
+   by code, or by a call of a body of that code. *)
 let counted o n =
-  let incr n = code "atomicAdd({0}, 1);" [ first n ] in
+  let incr n = custom_code "atomicAdd({0}, 1);" [ first_cell n ] in
   match o with
   | Op.Call ->
       let p = int_param ~name:"p" 0 1 in
-      Ops.call ~name:"incr" (Ops.sink [ incr p ]) [ first n ]
+      Ops.call ~name:"incr" (Ops.sink [ incr p ]) [ first_cell n ]
   | _ -> incr n
 
 (* [out[i] = a[i] + 1] over 64 [i], beside [n[0] += 1] ({!counted}). *)
@@ -9890,7 +10693,7 @@ let counted_beside_rows o () =
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"counted_beside_rows" ())
     [
-      Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ];
+      Ops.end_ (Ops.store (element out i) Ops.O.(element a i + i32 1)) [ i ];
       counted o n;
     ]
 
@@ -9903,71 +10706,95 @@ let counted_beside_sum o () =
   let r = Ops.range ~axis_type:Weak (Int 4096) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"counted_beside_sum" ())
-    [ Ops.store (first out) (Ops.reduce (at a r) Op.Add [ r ]); counted o n ]
+    [
+      Ops.store (first_cell out) (Ops.reduce (element a r) Op.Add [ r ]);
+      counted o n;
+    ]
 
-(* [out[i] = a[i] + 1] over [rows] [i], beside the plain store [n[0] = n[0] +
-   1], which no range holds: it runs once. [rows] makes more workgroups than
-   the GPU holds at once, so that a repeated store reads another's write. *)
-let rows = 1 lsl 20
+(* [out[i] = a[i] + 1] over [workgroup_rows] [i], beside the plain store [n[0] =
+   n[0] + 1], which no range holds: it runs once. [workgroup_rows] makes more
+   workgroups than the GPU holds at once, so that a repeated store reads
+   another's write. *)
+let workgroup_rows = 1 lsl 20
 
 let stored_beside_rows () =
-  let out = int_param ~name:"out" 0 rows
-  and a = int_param ~name:"A" 1 rows
+  let out = int_param ~name:"out" 0 workgroup_rows
+  and a = int_param ~name:"A" 1 workgroup_rows
   and n = int_param ~name:"n" 2 1 in
-  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int workgroup_rows) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"stored_beside_rows" ())
     [
-      Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ];
-      Ops.store (first n) Ops.O.(first n + i32 1);
+      Ops.end_ (Ops.store (element out i) Ops.O.(element a i + i32 1)) [ i ];
+      Ops.store (first_cell n) Ops.O.(first_cell n + i32 1);
     ]
 
-(* [out[i] = a[i] + 1] and, where [i = 5], [n[0] = 7] over [rows] [i]: the
-   index of [n] is valid where [i = 5], so it reads [i], and that point writes
-   it. *)
+(* [out[i] = a[i] + 1] and, where [i = 5], [n[0] = 7] over [workgroup_rows] [i]:
+   the index of [n] is valid where [i = 5], so it reads [i], and that point
+   writes it. *)
 let gated_beside_rows () =
-  let out = int_param ~name:"out" 0 rows
-  and a = int_param ~name:"A" 1 rows
+  let out = int_param ~name:"out" 0 workgroup_rows
+  and a = int_param ~name:"A" 1 workgroup_rows
   and n = int_param ~name:"n" 2 1 in
-  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int workgroup_rows) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"gated_beside_rows" ())
     [
       Ops.end_
         (Ops.group
            [
-             Ops.store (at out i) Ops.O.(at a i + i32 1);
+             Ops.store (element out i) Ops.O.(element a i + i32 1);
              Ops.store
-               (at n (Shape.valid (Ops.int 0) (Ops.eq i (Ops.int 5))))
+               (element n (Shape.valid (Ops.int 0) (Ops.eq i (Ops.int 5))))
                (i32 7);
            ])
         [ i ];
     ]
 
-(* [out[i] = a[i] + 1] over [rows] [i], beside [n[r // 8] = n[r // 8] + 1]
-   over a loop of 8 [r]: the index folds to [n[0]], which stays bound to [r]
-   through its storage, so the store runs once a step, in one thread. *)
+(* [out[i] = a[i] + 1] over [workgroup_rows] [i], beside [n[r // 8] = n[r // 8]
+   + 1] over a loop of 8 [r]: the index folds to [n[0]], which stays bound to
+   [r] through its storage, so the store runs once a step, in one thread. *)
 let pinned_beside_rows () =
-  let out = int_param ~name:"out" 0 rows
-  and a = int_param ~name:"A" 1 rows
+  let out = int_param ~name:"out" 0 workgroup_rows
+  and a = int_param ~name:"A" 1 workgroup_rows
   and n = int_param ~name:"n" 2 1 in
-  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int workgroup_rows) [ 0 ] in
   let r = Ops.range ~axis_type:Loop (Int 8) [ 1 ] in
-  let cell = at n Ops.O.(r // Ops.int 8) in
+  let cell = element n Ops.O.(r // Ops.int 8) in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"pinned_beside_rows" ())
     [
-      Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ];
+      Ops.end_ (Ops.store (element out i) Ops.O.(element a i + i32 1)) [ i ];
       Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ];
     ]
 
-(* The contents of slots 0 and 2 after one run of [k] on CUDA, optimised by
-   the heuristic, slot 1 holding [a]. *)
+(* The contents of slots 0 and 2 after one run of [k] on CUDA, optimised by the
+   heuristic, slot 1 holding [a]. *)
 let counted_on_cuda k a =
   let d, r = on_cuda () in
   let prg = compiled_for r (k ()) in
-  let out = Run.on d prg [ (1, int_values a) ] in
+  let out = Run.on d prg [ (1, a) ] in
   [ List.assoc 0 out; List.assoc 2 out ]
+
+(* The first eight cells of [cells] that do not hold [f i], the integer of cell
+   [i], with what they hold: a failure names a few cells of a large buffer, not
+   every one. *)
+let cells_unlike f cells =
+  let wrong = ref [] and found = ref 0 in
+  Array.iteri
+    (fun i v ->
+      let holds =
+        match v with
+        | `Int z -> Bigint.equal z (Bigint.of_int (f i))
+        | _ -> false
+      in
+      if (not holds) && !found < 8 then (
+        found := !found + 1;
+        wrong := (i, v) :: !wrong))
+    cells;
+  List.rev !wrong
+
+let no_cells = list (pair int Dtypes.value)
 
 let counted_once =
   let opaque_id o = Format.asprintf "%a" Op.pp o in
@@ -9979,101 +10806,104 @@ let counted_once =
           equal
             (list (array Dtypes.value))
             [ int_values (List.map succ a); int_values [ 1 ] ]
-            (counted_on_cuda (counted_beside_rows o) a));
+            (counted_on_cuda (counted_beside_rows o) (int_values a)));
       cases "one beside a sum runs once" ~id:opaque_id
-        [ Op.Call; Op.Custom_function ]
-        (fun o ->
+        [ Op.Call; Op.Custom_function ] (fun o ->
           let a = List.init 4096 (fun x -> x mod 7) in
           equal
             (list (array Dtypes.value))
             [ int_values [ List.fold_left ( + ) 0 a ]; int_values [ 1 ] ]
-            (counted_on_cuda (counted_beside_sum o) a));
-      test "a plain store beside stores across workgroups runs once"
-        (fun () ->
-          let a = List.init rows Fun.id in
-          match counted_on_cuda stored_beside_rows a with
+            (counted_on_cuda (counted_beside_sum o) (int_values a)));
+      test "a plain store beside stores across workgroups runs once" (fun () ->
+          match
+            counted_on_cuda stored_beside_rows (iota_values workgroup_rows)
+          with
           | [ out; n ] ->
               equal (array Dtypes.value) ~msg:"n" (int_values [ 1 ]) n;
-              equal (array Dtypes.value) ~msg:"out"
-                (int_values (List.map succ a))
-                out
+              equal no_cells ~msg:"out" [] (cells_unlike succ out)
           | _ -> assert false);
       test "a store whose folded index is bound to a loop runs once a step"
         (fun () ->
-          let a = List.init rows Fun.id in
-          match counted_on_cuda pinned_beside_rows a with
+          match
+            counted_on_cuda pinned_beside_rows (iota_values workgroup_rows)
+          with
           | [ out; n ] ->
               equal (array Dtypes.value) ~msg:"n" (int_values [ 8 ]) n;
-              equal (array Dtypes.value) ~msg:"out"
-                (int_values (List.map succ a))
-                out
+              equal no_cells ~msg:"out" [] (cells_unlike succ out)
           | _ -> assert false);
       test "a store valid at one point runs there" (fun () ->
-          let a = List.init rows Fun.id in
-          match counted_on_cuda gated_beside_rows a with
+          match
+            counted_on_cuda gated_beside_rows (iota_values workgroup_rows)
+          with
           | [ out; n ] ->
               equal (array Dtypes.value) ~msg:"n" (int_values [ 7 ]) n;
-              equal (array Dtypes.value) ~msg:"out"
-                (int_values (List.map succ a))
-                out
+              equal no_cells ~msg:"out" [] (cells_unlike succ out)
           | _ -> assert false);
     ]
 
 (* Calls and custom code beside host blocks
 
-   A host program runs the blocks of its split loop at once, each running
-   every effect of the kernel that does not depend on the loop. A loop
-   splits only when every store to memory, call and piece of custom code
-   depends on it. *)
+   A host program runs the blocks of its split loop at once, each running every
+   effect of the kernel that does not depend on the loop. A loop splits only
+   when every store to memory, call and piece of custom code depends on it. *)
 
-(* [n[cell] += 1], [cell] 0 by default, atomic so that it counts every run:
-   by code, or by a call of a body of that code. *)
+(* Rows of a host kernel that splits into several blocks: [out[i] = a[i] + 1]
+   over 2^17 int32s moves 2^20 bytes, which run as 4 blocks of 2^18 bytes, on
+   any number of cores, so an effect run in every block counts 4. *)
+let block_rows = 1 lsl 17
+
+(* [n[cell] += 1], [cell] 0 by default, atomic so that it counts every run: by
+   code, or by a call of a body of that code. *)
 let counted_on_host ?(cell = Ops.int 0) o n =
-  let incr x = code "__atomic_fetch_add({0}, 1, __ATOMIC_RELAXED);" [ x ] in
+  let incr x =
+    custom_code "__atomic_fetch_add({0}, 1, __ATOMIC_RELAXED);" [ x ]
+  in
   match o with
   | Op.Call ->
       let p = int_param ~name:"p" 0 1 in
-      Ops.call ~name:"incr" (Ops.sink [ incr (first p) ]) [ at n cell ]
-  | _ -> incr (at n cell)
+      Ops.call ~name:"incr"
+        (Ops.sink [ incr (first_cell p) ])
+        [ element n cell ]
+  | _ -> incr (element n cell)
 
-(* [out[i] = a[i] + 1] over [rows] [i], beside [n[0] += 1]
+(* [out[i] = a[i] + 1] over [workgroup_rows] [i], beside [n[0] += 1]
    ({!counted_on_host}), which does not depend on [i]. *)
 let counted_beside_blocks o () =
-  let out = int_param ~name:"out" 0 rows
-  and a = int_param ~name:"A" 1 rows
+  let out = int_param ~name:"out" 0 block_rows
+  and a = int_param ~name:"A" 1 block_rows
   and n = int_param ~name:"n" 2 1 in
-  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let i = Ops.range ~axis_type:Weak (Int block_rows) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"counted_beside_blocks" ())
     [
-      Ops.end_ (Ops.store (at out i) Ops.O.(at a i + i32 1)) [ i ];
+      Ops.end_ (Ops.store (element out i) Ops.O.(element a i + i32 1)) [ i ];
       counted_on_host o n;
     ]
 
-(* [out[i] = a[i] + 1] and [n[i] += 1] by code, over [rows] [i]: the code
+(* [out[i] = a[i] + 1] and [n[i] += 1] by code, over [block_rows] [i]: the code
    depends on [i]. *)
 let counted_in_blocks () =
-  let out = int_param ~name:"out" 0 rows
-  and a = int_param ~name:"A" 1 rows
-  and n = int_param ~name:"n" 2 rows in
-  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let out = int_param ~name:"out" 0 block_rows
+  and a = int_param ~name:"A" 1 block_rows
+  and n = int_param ~name:"n" 2 block_rows in
+  let i = Ops.range ~axis_type:Weak (Int block_rows) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"counted_in_blocks" ())
     [
       Ops.end_
         (Ops.group
            [
-             Ops.store (at out i) Ops.O.(at a i + i32 1);
-             code "{0}[0] += 1;" [ at n i ];
+             Ops.store (element out i) Ops.O.(element a i + i32 1);
+             custom_code "{0}[0] += 1;" [ element n i ];
            ])
         [ i ];
     ]
 
-(* [n[i] += 1] over [rows] [i] ({!counted_on_host}), the kernel's only
+(* [n[i] += 1] over [block_rows] [i] ({!counted_on_host}), the kernel's only
    effect, which depends on [i]. *)
 let counted_alone o () =
-  let n = int_param ~name:"n" 0 rows in
-  let i = Ops.range ~axis_type:Weak (Int rows) [ 0 ] in
+  let n = int_param ~name:"n" 0 block_rows in
+  let i = Ops.range ~axis_type:Weak (Int block_rows) [ 0 ] in
   Ops.sink
     ~kernel:(Ops.kernel_info ~name:"counted_alone" ())
     [ Ops.end_ (counted_on_host ~cell:i o n) [ i ] ]
@@ -10086,41 +10916,36 @@ let host_split k =
 
 let counted_beside_host_blocks =
   let opaque_id o = Format.asprintf "%a" Op.pp o in
-  let a = List.init rows Fun.id in
   group "calls and custom code beside host blocks"
     [
       cases "a loop beside one that does not depend on it does not split"
         ~id:opaque_id [ Op.Call; Op.Custom_function ] (fun o ->
           equal (option sint) None (host_split (counted_beside_blocks o)));
       cases "one beside a loop runs once" ~id:opaque_id
-        [ Op.Call; Op.Custom_function ]
-        (fun o ->
+        [ Op.Call; Op.Custom_function ] (fun o ->
           let k = counted_beside_blocks o in
-          match effects_of k [ (1, int_values a) ] [ 0; 2 ] with
+          match effects_of k [ (1, iota_values block_rows) ] [ 0; 2 ] with
           | [ out; n ] ->
               equal (array Dtypes.value) ~msg:"n" (int_values [ 1 ]) n;
-              equal (array Dtypes.value) ~msg:"out"
-                (int_values (List.map succ a))
-                out
+              equal no_cells ~msg:"out" [] (cells_unlike succ out)
           | _ -> assert false);
-      cases "a loop that one depends on splits, beside no store"
-        ~id:opaque_id [ Op.Call; Op.Custom_function ] (fun o ->
+      cases "a loop that one depends on splits, beside no store" ~id:opaque_id
+        [ Op.Call; Op.Custom_function ] (fun o ->
           let k = counted_alone o in
-          equal (option sint) (Some (Int rows)) (host_split k);
-          equal
-            (list (array Dtypes.value))
-            [ int_values (List.map (fun _ -> 1) a) ]
-            (effects_of k [] [ 0 ]));
+          equal (option sint) (Some (Int block_rows)) (host_split k);
+          equal no_cells []
+            (cells_unlike (fun _ -> 1) (List.hd (effects_of k [] [ 0 ]))));
       test "a loop that code depends on splits" (fun () ->
-          equal (option sint) (Some (Int rows)) (host_split counted_in_blocks);
-          match effects_of counted_in_blocks [ (1, int_values a) ] [ 0; 2 ] with
+          equal (option sint) (Some (Int block_rows))
+            (host_split counted_in_blocks);
+          match
+            effects_of counted_in_blocks
+              [ (1, iota_values block_rows) ]
+              [ 0; 2 ]
+          with
           | [ out; n ] ->
-              equal (array Dtypes.value) ~msg:"n"
-                (int_values (List.map (fun _ -> 1) a))
-                n;
-              equal (array Dtypes.value) ~msg:"out"
-                (int_values (List.map succ a))
-                out
+              equal no_cells ~msg:"n" [] (cells_unlike (fun _ -> 1) n);
+              equal no_cells ~msg:"out" [] (cells_unlike succ out)
           | _ -> assert false);
     ]
 
@@ -10142,64 +10967,64 @@ let weak_kernel ?opts l =
 
 let not_weak f = raises_match (Exn.invalid_arg ~sub:"must not be Weak") f
 
-(* Whether lowering [k ()] for the host raises that a range must not be
-   weak. *)
+(* Whether lowering [k ()] for the host raises that a range must not be weak. *)
 let refused k () = not_weak (fun () -> ignore (effects_of k [] [ 0 ]))
 
 (* [C[r // 8] += 1] over [r < 16] of [axis_type]: each cell counts 8 steps. *)
 let quotient_counter ?opts axis_type () =
   let r = Ops.range ~axis_type (Int 16) [ 0 ] in
-  let cell = at (int_param ~name:"C" 0 2) Ops.O.(r // int 8) in
+  let cell = element (int_param ~name:"C" 0 2) Ops.O.(r // int 8) in
   weak_kernel ?opts [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
 (* [C[r + s] += 1] over [r, s < 4] of [axis_type]. *)
 let sum_counter ?opts axis_type () =
   let r = Ops.range ~axis_type (Int 4) [ 0 ]
   and s = Ops.range ~axis_type (Int 4) [ 1 ] in
-  let cell = at (int_param ~name:"C" 0 7) Ops.O.(r + s) in
-  weak_kernel ?opts
-    [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r; s ] ]
+  let cell = element (int_param ~name:"C" 0 7) Ops.O.(r + s) in
+  weak_kernel ?opts [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r; s ] ]
 
 (* [C[r // 8] += 1] over a weak [r < 8]: the index is [C[0]] before any
    optimisation, the store bound to [r] through its storage. *)
 let folded_counter () =
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
-  let cell = at (int_param ~name:"C" 0 1) Ops.O.(r // int 8) in
+  let cell = element (int_param ~name:"C" 0 1) Ops.O.(r // int 8) in
   weak_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
-(* [O[r + 2s] = 1] over a weak [r < n] and a weak [s < 4 - n], [n] from 1 to
-   3: at each [n], distinct cells. *)
+(* [O[r + 2s] = 1] over a weak [r < n] and a weak [s < 4 - n], [n] from 1 to 3:
+   at each [n], distinct cells. *)
 let shared_variable () =
   let n = bounded_var "n" 3 in
   let r = Ops.range ~axis_type:Weak (Sym n) [ 0 ]
   and s = Ops.range ~axis_type:Weak (Sym Ops.O.(int 4 - n)) [ 1 ] in
   let o = int_param ~name:"O" 0 5 in
   weak_kernel
-    [ Ops.end_ (Ops.store (at o Ops.O.(r + (s * int 2))) (i32 1)) [ r; s ] ]
+    [
+      Ops.end_ (Ops.store (element o Ops.O.(r + (s * int 2))) (i32 1)) [ r; s ];
+    ]
 
 (* [O[j] = r] over a weak [r < 2] and a weak [j] of no trip: nothing runs. *)
 let no_trip () =
   let r = Ops.range ~axis_type:Weak (Int 2) [ 0 ]
   and j = Ops.range ~axis_type:Weak (Int 0) [ 1 ] in
   let o = int_param ~name:"O" 0 1 in
-  weak_kernel [ Ops.end_ (Ops.store (at o j) (Ops.cast r Int32)) [ r; j ] ]
+  weak_kernel [ Ops.end_ (Ops.store (element o j) (Ops.cast r Int32)) [ r; j ] ]
 
 (* [C[0] += 1] ordered after a weak [r < 8]. *)
 let counter_after () =
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
-  let cell = first (Ops.after (int_param ~name:"C" 0 1) [ r ]) in
+  let cell = first_cell (Ops.after (int_param ~name:"C" 0 1) [ r ]) in
   weak_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
 (* [O[cell r] = value r] over a weak [r < 16], [O] of [n] cells. *)
 let weak_store n cell value () =
   let r = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
   let o = int_param ~name:"O" 0 n in
-  weak_kernel [ Ops.end_ (Ops.store (at o (cell r)) (value r)) [ r ] ]
+  weak_kernel [ Ops.end_ (Ops.store (element o (cell r)) (value r)) [ r ] ]
 
 (* [C[16 (r // 8)] += 1] over a weak [r < 16]: two cells, 16 apart. *)
 let strided_counter () =
   let r = Ops.range ~axis_type:Weak (Int 16) [ 0 ] in
-  let cell = at (int_param ~name:"C" 0 17) Ops.O.(int 16 * (r // int 8)) in
+  let cell = element (int_param ~name:"C" 0 17) Ops.O.(int 16 * (r // int 8)) in
   weak_kernel [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
 (* [O[2i + 2j] = 1] over weak [i, j < 4]: each range alone names 4 cells, both
@@ -10209,38 +11034,38 @@ let even_sum () =
   and j = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
   let o = int_param ~name:"O" 0 16 in
   let cell = Ops.O.((i * int 2) + (j * int 2)) in
-  weak_kernel [ Ops.end_ (Ops.store (at o cell) (i32 1)) [ i; j ] ]
+  weak_kernel [ Ops.end_ (Ops.store (element o cell) (i32 1)) [ i; j ] ]
 
-(* [L[t] = A[8g + t]; O[8g + t] = L[7 - t]] over a weak [g < 4] and a local
-   [t < 8], [L] workgroup memory: every point of [g] writes [L]. *)
-let staged_under_weak () =
+(* [L[t] = A[8g + t]; O[8g + t] = L[7 - t]] over a weak [g < 4] and a local [t <
+   8], [L] workgroup memory: every point of [g] writes [L]. *)
+let staged_under_weak ?opts () =
   let a = int_param ~name:"A" 1 32 and o = int_param ~name:"O" 0 32 in
   let l = Shape.placeholder ~slot:2 ~addrspace:Local [ 8 ] Int32 in
   let g = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
   and t = Ops.range ~axis_type:Local (Int 8) [ 1 ] in
   let row x = Ops.O.((g * int 8) + x) in
-  let w = Ops.store (at l t) (Ops.load (at a (row t)) []) in
-  let back = Ops.load (at (Ops.after l [ w ]) Ops.O.(int 7 - t)) [] in
-  weak_kernel [ Ops.end_ (Ops.store (at o (row t)) back) [ g; t ] ]
+  let w = Ops.store (element l t) (Ops.load (element a (row t)) []) in
+  let back = Ops.load (element (Ops.after l [ w ]) Ops.O.(int 7 - t)) [] in
+  weak_kernel ?opts [ Ops.end_ (Ops.store (element o (row t)) back) [ g; t ] ]
 
-(* [O[i(i + 1) / 2 + j] = 1] over weak [i < 4] and [j < i + 1]: ten points,
-   ten cells. *)
+(* [O[i(i + 1) / 2 + j] = 1] over weak [i < 4] and [j < i + 1]: ten points, ten
+   cells. *)
 let packed_triangle () =
   let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let j = Ops.range ~axis_type:Weak (Sym Ops.O.(i + int 1)) [ 1 ] in
   let o = int_param ~name:"O" 0 10 in
-  let cell = Ops.O.(((i * (i + int 1)) // int 2) + j) in
-  weak_kernel [ Ops.end_ (Ops.store (at o cell) (i32 1)) [ i; j ] ]
+  let cell = Ops.O.((i * (i + int 1) // int 2) + j) in
+  weak_kernel [ Ops.end_ (Ops.store (element o cell) (i32 1)) [ i; j ] ]
 
-(* [O[0] = r] at the one point [r = 2] of a weak [r < 4], by the store's gate
-   or by its index's validity. *)
+(* [O[0] = r] at the one point [r = 2] of a weak [r < 4], by the store's gate or
+   by its index's validity. *)
 let stored_at_two ?opts ~gate () =
   let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] in
   let o = int_param ~name:"O" 0 1 in
   let two = Ops.eq r (Ops.int 2) in
   let store =
-    if gate then Ops.store ~gate:two (first o) (Ops.cast r Int32)
-    else Ops.store (at o (Shape.valid (Ops.int 0) two)) (Ops.cast r Int32)
+    if gate then Ops.store ~gate:two (first_cell o) (Ops.cast r Int32)
+    else Ops.store (element o (Shape.valid (Ops.int 0) two)) (Ops.cast r Int32)
   in
   weak_kernel ?opts [ Ops.end_ store [ r ] ]
 
@@ -10248,47 +11073,55 @@ let stored_at_two ?opts ~gate () =
 let loaded_bound () =
   let x = int_param ~name:"X" 1 1 and o = int_param ~name:"O" 0 4 in
   let j =
-    Ops.range ~axis_type:Weak ~dtype:Int32 (Sym (Ops.load (first x) [])) [ 0 ]
+    Ops.range ~axis_type:Weak ~dtype:Int32
+      (Sym (Ops.load (first_cell x) []))
+      [ 0 ]
   in
   weak_kernel
-    [ Ops.end_ (Ops.store (at o Ops.O.(j % int 4)) (Ops.cast j Int32)) [ j ] ]
+    [
+      Ops.end_
+        (Ops.store (element o Ops.O.(j % int 4)) (Ops.cast j Int32))
+        [ j ];
+    ]
 
 (* [O[r] = r] over a weak [r < n], [n <= 8]. *)
 let variable_bound () =
   let r = Ops.range ~axis_type:Weak (Sym (bounded_var "n" 8)) [ 0 ] in
   let o = int_param ~name:"O" 0 8 in
-  weak_kernel [ Ops.end_ (Ops.store (at o r) (Ops.cast r Int32)) [ r ] ]
+  weak_kernel [ Ops.end_ (Ops.store (element o r) (Ops.cast r Int32)) [ r ] ]
 
-(* [O[I[r]] = V[r]] over a weak [r < 8]: cells that memory names, distinct
-   when [I] is a permutation, as rune's scatter writes them. *)
+(* [O[I[r]] = V[r]] over a weak [r < 8]: cells that memory names, distinct when
+   [I] is a permutation, as rune's scatter writes them. *)
 let scattered () =
   let o = int_param ~name:"O" 0 8
   and idx = int_param ~name:"I" 1 8
   and v = int_param ~name:"V" 2 8 in
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
-  let cell = Ops.cast (Ops.load (at idx r) []) Weak_int in
+  let cell = Ops.cast (Ops.load (element idx r) []) Weak_int in
   weak_kernel
-    [ Ops.end_ (Ops.store (at o cell) (Ops.load (at v r) [])) [ r ] ]
+    [ Ops.end_ (Ops.store (element o cell) (Ops.load (element v r) [])) [ r ] ]
 
 (* [C[i] += 1] over a weak [i < 2] and a weak [j < 4(i + 1)], [j] upcast by
    4. *)
 let row_counted_trips () =
   let i = Ops.range ~axis_type:Weak (Int 2) [ 0 ] in
   let j = Ops.range ~axis_type:Weak (Sym Ops.O.(int 4 * (i + int 1))) [ 1 ] in
-  let cell = at (int_param ~name:"C" 0 2) i in
-  weak_kernel ~opts:[ upcast 1 4 ]
+  let cell = element (int_param ~name:"C" 0 2) i in
+  weak_kernel
+    ~opts:[ upcast 1 4 ]
     [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ i; j ] ]
 
-(* [C[0] += 1] over a serial [r < 6], valid where [r <> 3] if [gated], padded
-   to [8]. *)
+(* [C[0] += 1] over a serial [r < 6], valid where [r <> 3] if [gated], padded to
+   [8]. *)
 let padded_counter ~gated () =
   let r = effect_loop 6 0 in
   let c = Ops.after (int_param ~name:"C" 0 1) [ r ] in
   let cell =
-    if gated then at c (Shape.valid (Ops.int 0) Ops.O.(r <> int 3))
-    else first c
+    if gated then element c (Shape.valid (Ops.int 0) Ops.O.(r <> int 3))
+    else first_cell c
   in
-  weak_kernel ~opts:[ Opt.Padto { axis = 0; amount = 8 } ]
+  weak_kernel
+    ~opts:[ Opt.Padto { axis = 0; amount = 8 } ]
     [ Ops.end_ (Ops.store cell Ops.O.(cell + i32 1)) [ r ] ]
 
 (* [O[0] = max over j < 6 of A[j]], a register accumulating it along a serial
@@ -10297,15 +11130,18 @@ let padded_maximum () =
   let a = int_param ~name:"A" 1 6 and o = int_param ~name:"O" 0 1 in
   let acc = Shape.placeholder ~slot:2 ~addrspace:Reg [ 1 ] Int32 in
   let j = effect_loop 6 0 in
-  let init = Ops.store (first acc) (i32 (-1000)) in
+  let init = Ops.store (first_cell acc) (i32 (-1000)) in
   let acc_j = Ops.after acc [ init; j ] in
   let step =
-    Ops.store (first acc_j)
-      (Ops.maximum (Ops.load (first acc_j) []) (Ops.load (at a j) []))
+    Ops.store (first_cell acc_j)
+      (Ops.maximum (Ops.load (first_cell acc_j) []) (Ops.load (element a j) []))
   in
-  let total = Ops.load (first (Ops.after acc [ Ops.end_ step [ j ] ])) [] in
-  weak_kernel ~opts:[ Opt.Padto { axis = 0; amount = 8 } ]
-    [ Ops.store (first o) total ]
+  let total =
+    Ops.load (first_cell (Ops.after acc [ Ops.end_ step [ j ] ])) []
+  in
+  weak_kernel
+    ~opts:[ Opt.Padto { axis = 0; amount = 8 } ]
+    [ Ops.store (first_cell o) total ]
 
 (* The contents of slot 0 after one run of [k ()] on CUDA. *)
 let on_cuda_slot0 k =
@@ -10330,7 +11166,8 @@ let weak_ranges =
         (writes (quotient_counter Loop) [] [ [ 8; 8 ] ]);
       test "C[r // 8] += 1 over a serial r < 16 counts 8 a cell on CUDA"
         (fun () ->
-          equal (array Dtypes.value) (int_values [ 8; 8 ])
+          equal (array Dtypes.value)
+            (int_values [ 8; 8 ])
             (on_cuda_slot0 (quotient_counter Loop)));
       test "C[r + s] += 1 over weak r and s is refused, unoptimised"
         (refused (sum_counter ~opts:[] Weak));
@@ -10351,8 +11188,9 @@ let weak_ranges =
       test "O[2i + 2j] = 1 over weak i and j is refused" (refused even_sum);
       test "workgroup memory staged under a weak range is refused" (fun () ->
           not_weak (fun () ->
-              Postrange.apply_opts ~hand_coded:Fun.id (staged_under_weak ())
-                (Lazy.force host)));
+              Codegen.full_rewrite_to_sink
+                (staged_under_weak ~opts:[] ())
+                (cuda_renderer ())));
       test "a packed triangle of weak ranges writes each cell once"
         (writes packed_triangle [] [ List.init 10 (fun _ -> 1) ]);
       test "a store gated to one point of a weak range is not refused"
@@ -10368,7 +11206,9 @@ let weak_ranges =
       test "a weak range of a loaded bound is not refused"
         (writes loaded_bound [ (1, int_values [ 3 ]) ] [ [ 0; 1; 2; 0 ] ]);
       test "a weak range of a variable bound is not refused"
-        (writes ~vars:[ ("n", 5) ] variable_bound []
+        (writes
+           ~vars:[ ("n", 5) ]
+           variable_bound []
            [ [ 0; 1; 2; 3; 4; 0; 0; 0 ] ]);
       test "weak ranges whose bounds share a variable are not refused"
         (writes ~vars:[ ("n", 2) ] shared_variable [] [ [ 1; 1; 1; 1; 0 ] ]);
@@ -10381,8 +11221,7 @@ let weak_ranges =
              (2, int_values [ 10; 11; 12; 13; 14; 15; 16; 17 ]);
            ]
            [ [ 11; 13; 15; 10; 17; 16; 14; 12 ] ]);
-      test "a range whose trips another range bounds takes no lanes"
-        (fun () ->
+      test "a range whose trips another range bounds takes no lanes" (fun () ->
           raises_match (Exn.invalid_arg ~sub:"known at launch") (fun () ->
               ignore (effects_of row_counted_trips [] [ 0 ])));
       test "a serial counter padded from 6 steps to 8 counts 6"
@@ -10397,91 +11236,99 @@ let weak_ranges =
 
 (* Lanes and threads
 
-   Lanes of a range run in one thread and share its registers: a range takes
-   no lanes when a register store, or the condition of a loop inside it,
-   depends on it in data. Threads each have their own registers, but run
-   unordered with the code outside the range: a weak range stays serial on a
-   GPU when that code shares storage with its steps. *)
+   Lanes of a range run in one thread and share its registers: a range takes no
+   lanes when a register store, or the condition of a loop inside it, depends on
+   it in data. Threads each have their own registers, but run unordered with the
+   code outside the range: a weak range stays serial on a GPU when that code
+   shares storage with its steps. *)
 
 let reg slot n = Shape.placeholder ~slot ~addrspace:Reg [ n ] Int32
 let local axis amount = Opt.Split { axis; amount; target = Local; top = false }
 let no_lanes f = raises_match (Exn.invalid_arg ~sub:"takes no lanes") f
 let iota n = [ (1, int_values (List.init n Fun.id)) ]
 
-
-(* [R[cell r] = A[r] + 1; D[r] = R[cell r]] over a weak [r < 8], [R] a
-   register of [n] cells that each step uses as scratch. *)
+(* [R[cell r] = A[r] + 1; D[r] = R[cell r]] over a weak [r < 8], [R] a register
+   of [n] cells that each step uses as scratch. *)
 let scratch ?(n = 1) cell opts () =
   let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
   let rg = reg 2 n in
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
-  let set = Ops.store (at rg (cell r)) Ops.O.(at a r + i32 1) in
-  let got = Ops.load (at (Ops.after rg [ set ]) (cell r)) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) got) [ r ] ]
+  let set = Ops.store (element rg (cell r)) Ops.O.(element a r + i32 1) in
+  let got = Ops.load (element (Ops.after rg [ set ]) (cell r)) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (element d r) got) [ r ] ]
 
 let scratch_zero = scratch (fun _ -> Ops.int 0)
 let scratch_quarter = scratch ~n:2 (fun r -> Ops.O.(r // int 4))
 
-(* [R[2x + y] = A[4x + y]; D[4x + y] = R[2x + y]] over weak [x < 2] and
-   [y < 4]: two points of one step meet at a cell of [R]. *)
+(* [R[2x + y] = A[4x + y]; D[4x + y] = R[2x + y]] over weak [x < 2] and [y < 4]:
+   two points of one step meet at a cell of [R]. *)
 let scratch_two opts () =
   let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
   let rg = reg 2 8 in
   let x = Ops.range ~axis_type:Weak (Int 2) [ 0 ]
   and y = Ops.range ~axis_type:Weak (Int 4) [ 1 ] in
   let cell = Ops.O.((x * int 2) + y) and flat = Ops.O.((x * int 4) + y) in
-  let set = Ops.store (at rg cell) (at a flat) in
-  let got = Ops.load (at (Ops.after rg [ set ]) cell) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at d flat) got) [ x; y ] ]
+  let set = Ops.store (element rg cell) (element a flat) in
+  let got = Ops.load (element (Ops.after rg [ set ]) cell) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (element d flat) got) [ x; y ] ]
 
 (* [R[r] = A[r]; R[r + 1] = 100; D[r] = R[r]] over a weak [r < 8]. *)
 let scratch_next opts () =
   let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
   let rg = reg 2 9 in
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
-  let s1 = Ops.store (at rg r) (at a r) in
-  let s2 = Ops.store (at (Ops.after rg [ s1 ]) Ops.O.(r + int 1)) (i32 100) in
-  let got = Ops.load (at (Ops.after rg [ s1; s2 ]) r) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) got) [ r ] ]
+  let s1 = Ops.store (element rg r) (element a r) in
+  let s2 =
+    Ops.store (element (Ops.after rg [ s1 ]) Ops.O.(r + int 1)) (i32 100)
+  in
+  let got = Ops.load (element (Ops.after rg [ s1; s2 ]) r) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (element d r) got) [ r ] ]
 
-(* Each step of a weak [r < 8] fills a register table [T[j] = j] over a
-   serial [j < 8], then [S[0] = T[r]] and [D[r] = S[0]]: the cells of [S]
-   hold the same value at every step, but the load from [T] does not. *)
-let table opts () =
+(* Each step of a weak [r < 8] fills a register table [T[j] = j] over a serial
+   [j < 8], then [S[0] = T[r]] and [D[r] = S[0]]: the cells of [S] hold the same
+   value at every step, but the load from [T] does not. *)
+let register_table opts () =
   let d = int_param ~name:"D" 0 8 in
   let t = reg 2 8 and s = reg 3 1 in
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] and j = loop 8 1 in
   let tr = Ops.after t [ r ] in
-  let fill = Ops.end_ (Ops.store (at tr j) (Ops.cast j Int32)) [ j ] in
+  let fill = Ops.end_ (Ops.store (element tr j) (Ops.cast j Int32)) [ j ] in
   let sr = Ops.after s [ r ] in
-  let set = Ops.store (first sr) (Ops.load (at (Ops.after tr [ fill ]) r) []) in
-  let got = Ops.load (first (Ops.after sr [ set ])) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) got) [ r ] ]
+  let set =
+    Ops.store (first_cell sr) (Ops.load (element (Ops.after tr [ fill ]) r) [])
+  in
+  let got = Ops.load (first_cell (Ops.after sr [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (element d r) got) [ r ] ]
 
-(* Each step of a weak [r < 4] resets a register counter and counts while
-   [count < bound r t], [t] a register table [T[e] = e + 1] the step fills,
-   then [C[r] = A[r] + count]. *)
+(* Each step of a weak [r < 4] resets a register counter and counts while [count
+   < bound r t], [t] a register table [T[e] = e + 1] the step fills, then [C[r]
+   = A[r] + count]. *)
 let counter bound opts () =
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 4 in
   let cnt = reg 2 1 and t = reg 3 4 in
   let r = Ops.range ~axis_type:Weak (Int 4) [ 0 ] and l = Ops.loop 1 in
   let tr = Ops.after t [ r ] in
-  let fills = List.init 4 (fun e -> Ops.store (at tr (Ops.int e)) (i32 (e + 1))) in
+  let fills =
+    List.init 4 (fun e -> Ops.store (element tr (Ops.int e)) (i32 (e + 1)))
+  in
   let tw = Ops.after tr fills in
   let cnt_r = Ops.after cnt [ r ] in
-  let reset = Ops.store (first cnt_r) (i32 0) in
+  let reset = Ops.store (first_cell cnt_r) (i32 0) in
   let cnt1 = Ops.after cnt_r [ reset ] in
-  let next = Ops.O.(Ops.load (first (Ops.after cnt1 [ l ])) [] + i32 1) in
+  let next = Ops.O.(Ops.load (first_cell (Ops.after cnt1 [ l ])) [] + i32 1) in
   let step =
-    Ops.backedge (Ops.store (first cnt1) next) ~loop:l
+    Ops.backedge
+      (Ops.store (first_cell cnt1) next)
+      ~loop:l
       ~cond:Ops.O.(next < bound r tw)
   in
-  let count = Ops.load (first (Ops.after cnt1 [ step ])) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at c r) Ops.O.(at a r + count)) [ r ] ]
+  let count = Ops.load (first_cell (Ops.after cnt1 [ step ])) [] in
+  weak_kernel ~opts
+    [ Ops.end_ (Ops.store (element c r) Ops.O.(element a r + count)) [ r ] ]
 
 let to_three = counter (fun _ _ -> i32 3)
 let to_step = counter (fun r _ -> Ops.O.(Ops.cast r Int32 + i32 1))
-let to_table = counter (fun r t -> Ops.load (at t r) [])
+let to_table = counter (fun r t -> Ops.load (element t r) [])
 
 (* Each step of a weak [r < 8] fills a register table [T[j] = j + 1] over a
    serial [j < 2], then [S[0] = T[1]] through an index valid where [r < 4],
@@ -10492,123 +11339,140 @@ let valid_where_low_load opts () =
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] and j = loop 2 1 in
   let tr = Ops.after t [ r ] in
   let fill =
-    Ops.end_ (Ops.store (at tr j) Ops.O.(Ops.cast j Int32 + i32 1)) [ j ]
+    Ops.end_ (Ops.store (element tr j) Ops.O.(Ops.cast j Int32 + i32 1)) [ j ]
   in
   let low = Ops.O.(r < int 4) in
-  let cell = at (Ops.after tr [ fill ]) (Shape.valid (Ops.int 1) low) in
+  let cell = element (Ops.after tr [ fill ]) (Shape.valid (Ops.int 1) low) in
   let sr = Ops.after s [ r ] in
-  let set = Ops.store (first sr) (Ops.load cell []) in
-  let got = Ops.load (first (Ops.after sr [ set ])) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) got) [ r ] ]
+  let set = Ops.store (first_cell sr) (Ops.load cell []) in
+  let got = Ops.load (first_cell (Ops.after sr [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (element d r) got) [ r ] ]
 
-(* [R[0] = 5] through an index valid where [r < 4], at each step of a weak
-   [r < 8], then [D[r] = R[0]] there: the store's validity alone reads
-   [r]. *)
+(* [R[0] = 5] through an index valid where [r < 4], at each step of a weak [r <
+   8], then [D[r] = R[0]] there: the store's validity alone reads [r]. *)
 let valid_where_low opts () =
   let d = int_param ~name:"D" 0 8 in
   let rg = reg 2 1 in
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   let low = Ops.O.(r < int 4) in
   let valid u = Shape.valid u low in
-  let set = Ops.store (at (Ops.after rg [ r ]) (valid (Ops.int 0))) (i32 5) in
-  let got = Ops.load (first (Ops.after rg [ set ])) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at d (valid r)) got) [ r ] ]
+  let set =
+    Ops.store (element (Ops.after rg [ r ]) (valid (Ops.int 0))) (i32 5)
+  in
+  let got = Ops.load (first_cell (Ops.after rg [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (element d (valid r)) got) [ r ] ]
 
-(* [S[0] = 5] at each step of a weak [r < 8], then [R[0] = S[0] + 1] and
-   [D[r] = R[0] + A[r]]. *)
+(* [S[0] = 5] at each step of a weak [r < 8], then [R[0] = S[0] + 1] and [D[r] =
+   R[0] + A[r]]. *)
 let through_other opts () =
   let a = int_param ~name:"A" 1 8 and d = int_param ~name:"D" 0 8 in
   let s = reg 2 1 and rg = reg 3 1 in
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
-  let ss = Ops.store (first (Ops.after s [ r ])) (i32 5) in
+  let ss = Ops.store (first_cell (Ops.after s [ r ])) (i32 5) in
   let set =
-    Ops.store (first rg) Ops.O.(Ops.load (first (Ops.after s [ ss ])) [] + i32 1)
+    Ops.store (first_cell rg)
+      Ops.O.(Ops.load (first_cell (Ops.after s [ ss ])) [] + i32 1)
   in
-  let got = Ops.load (first (Ops.after rg [ set ])) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) Ops.O.(got + at a r)) [ r ] ]
+  let got = Ops.load (first_cell (Ops.after rg [ set ])) [] in
+  weak_kernel ~opts
+    [ Ops.end_ (Ops.store (element d r) Ops.O.(got + element a r)) [ r ] ]
 
-(* [G[r] = r], then [R[0] = 5] ordered after it, then [D[r] = R[0] + A[r]]
-   over a weak [r < 8]: the register store follows [r] in order only. *)
+(* [G[r] = r], then [R[0] = 5] ordered after it, then [D[r] = R[0] + A[r]] over
+   a weak [r < 8]: the register store follows [r] in order only. *)
 let ordered_after opts () =
   let d = int_param ~name:"D" 0 8 and g = int_param ~name:"G" 2 8 in
   let a = int_param ~name:"A" 1 8 in
   let rg = reg 3 1 in
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
-  let gs = Ops.store (at g r) (Ops.cast r Int32) in
-  let set = Ops.store (first (Ops.after rg [ gs ])) (i32 5) in
-  let got = Ops.load (first (Ops.after rg [ set ])) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at d r) Ops.O.(got + at a r)) [ r ] ]
+  let gs = Ops.store (element g r) (Ops.cast r Int32) in
+  let set = Ops.store (first_cell (Ops.after rg [ gs ])) (i32 5) in
+  let got = Ops.load (first_cell (Ops.after rg [ set ])) [] in
+  weak_kernel ~opts
+    [ Ops.end_ (Ops.store (element d r) Ops.O.(got + element a r)) [ r ] ]
 
-(* [R[0] = A[8i]] at each step of a weak [i < 4], then [C[i] = R[0] +
-   sum_j A[8i + j]] over a reduce [j < 8], tinygrad's
-   [reg_placeholder_then_reduce]. *)
+(* [R[0] = A[8i]] at each step of a weak [i < 4], then [C[i] = R[0] + sum_j A[8i
+   + j]] over a reduce [j < 8], tinygrad's [reg_placeholder_then_reduce]. *)
 let then_reduce opts () =
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 32 in
   let rg = reg 2 1 in
   let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
   and j = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
   let ri = Ops.after rg [ i ] in
-  let set = Ops.store (first ri) (at a Ops.O.(i * int 8)) in
-  let sum = Ops.reduce (at a Ops.O.((i * int 8) + j)) Op.Add [ j ] in
-  let got = Ops.load (first (Ops.after ri [ set ])) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at c i) Ops.O.(sum + got)) [ i ] ]
+  let set = Ops.store (first_cell ri) (element a Ops.O.(i * int 8)) in
+  let sum = Ops.reduce (element a Ops.O.((i * int 8) + j)) Op.Add [ j ] in
+  let got = Ops.load (first_cell (Ops.after ri [ set ])) [] in
+  weak_kernel ~opts
+    [ Ops.end_ (Ops.store (element c i) Ops.O.(sum + got)) [ i ] ]
 
-(* [R[0] = sum_j A[8i + j]] at each step of a weak [i < 4], over a reduce
-   [j < 8], then [C[i] = R[0]]. *)
+(* [R[0] = sum_j A[8i + j]] at each step of a weak [i < 4], over a reduce [j <
+   8], then [C[i] = R[0]]. *)
 let reduced_into opts () =
   let c = int_param ~name:"C" 0 4 and a = int_param ~name:"A" 1 32 in
   let rg = reg 2 1 in
   let i = Ops.range ~axis_type:Weak (Int 4) [ 0 ]
   and j = Ops.range ~axis_type:Weak (Int 8) [ 1 ] in
   let ri = Ops.after rg [ i ] in
-  let sum = Ops.reduce (at a Ops.O.((i * int 8) + j)) Op.Add [ j ] in
-  let set = Ops.store (first ri) sum in
-  let got = Ops.load (first (Ops.after ri [ set ])) [] in
-  weak_kernel ~opts [ Ops.end_ (Ops.store (at c i) got) [ i ] ]
+  let sum = Ops.reduce (element a Ops.O.((i * int 8) + j)) Op.Add [ j ] in
+  let set = Ops.store (first_cell ri) sum in
+  let got = Ops.load (first_cell (Ops.after ri [ set ])) [] in
+  weak_kernel ~opts [ Ops.end_ (Ops.store (element c i) got) [ i ] ]
 
 (* [G[r] = A[r]] over a weak [r < n], then [D[0] = G[n - 1]]. *)
 let read_after ?opts n () =
   let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 n in
   let g = int_param ~name:"G" 2 n in
   let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let e = Ops.end_ (Ops.store (at g r) (at a r)) [ r ] in
+  let e = Ops.end_ (Ops.store (element g r) (element a r)) [ r ] in
   weak_kernel ?opts
-    [ e; Ops.store (first d) (at (Ops.after g [ e ]) (Ops.int (n - 1))) ]
+    [
+      e;
+      Ops.store (first_cell d) (element (Ops.after g [ e ]) (Ops.int (n - 1)));
+    ]
 
 (* [R[0] = A[r]] over a weak [r < 8], then [D[0] = R[0]]. *)
 let live_out ?opts () =
   let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 8 in
   let rg = reg 2 1 in
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
-  let e = Ops.end_ (Ops.store (first rg) (at a r)) [ r ] in
+  let e = Ops.end_ (Ops.store (first_cell rg) (element a r)) [ r ] in
   weak_kernel ?opts
-    [ e; Ops.store (first d) (Ops.load (first (Ops.after rg [ e ])) []) ]
+    [
+      e;
+      Ops.store (first_cell d) (Ops.load (first_cell (Ops.after rg [ e ])) []);
+    ]
 
 (* [G[0] = 5] before a weak [r < n], then [D[r] = G[0] + A[r]]. *)
 let written_before ?opts n () =
   let d = int_param ~name:"D" 0 n and a = int_param ~name:"A" 1 n in
   let g = int_param ~name:"G" 2 1 in
   let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let set = Ops.store (first g) (i32 5) in
-  let v = Ops.O.(first (Ops.after g [ set ]) + at a r) in
-  weak_kernel ?opts [ Ops.end_ (Ops.store (at d r) v) [ r ] ]
+  let set = Ops.store (first_cell g) (i32 5) in
+  let v = Ops.O.(first_cell (Ops.after g [ set ]) + element a r) in
+  weak_kernel ?opts [ Ops.end_ (Ops.store (element d r) v) [ r ] ]
 
 (* The call of [p[0] = q[0]] on [dst] and [src]: it writes [dst] only. *)
 let copy_call dst src =
   let p = int_param ~name:"p" 0 1 and q = int_param ~name:"q" 1 1 in
-  Ops.call ~name:"copy" (Ops.sink [ Ops.store (first p) (first q) ]) [ dst; src ]
+  Ops.call ~name:"copy"
+    (Ops.sink [ Ops.store (first_cell p) (first_cell q) ])
+    [ dst; src ]
 
 (* [G[r] = A[r]] by [write] over a weak [r < n], then [D[0] = G[n - 1]]. *)
 let effect_then_read write ?opts n () =
   let d = int_param ~name:"D" 0 1 and a = int_param ~name:"A" 1 n in
   let g = int_param ~name:"G" 2 n in
   let r = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let e = Ops.end_ (write (at g r) (at a r)) [ r ] in
+  let e = Ops.end_ (write (element g r) (element a r)) [ r ] in
   weak_kernel ?opts
-    [ e; Ops.store (first d) (at (Ops.after g [ e ]) (Ops.int (n - 1))) ]
+    [
+      e;
+      Ops.store (first_cell d) (element (Ops.after g [ e ]) (Ops.int (n - 1)));
+    ]
 
 let by_call = effect_then_read copy_call
-let by_code = effect_then_read (fun g a -> code "{0}[0] = {1}[0];" [ g; a ])
+
+let by_code =
+  effect_then_read (fun g a -> custom_code "{0}[0] = {1}[0];" [ g; a ])
 
 (* [O[r] = A[r]] by a call over a weak [r < 8], then [D[0] = A[0]]: the call
    only reads [A]. *)
@@ -10617,12 +11481,14 @@ let call_beside_read ?opts () =
   let o = int_param ~name:"O" 2 8 in
   let r = Ops.range ~axis_type:Weak (Int 8) [ 0 ] in
   weak_kernel ?opts
-    [ Ops.end_ (copy_call (at o r) (at a r)) [ r ]; Ops.store (first d) (first a) ]
+    [
+      Ops.end_ (copy_call (element o r) (element a r)) [ r ];
+      Ops.store (first_cell d) (first_cell a);
+    ]
 
 (* Parameters [0] and [1] of a call's body. *)
 let p0 = int_param ~name:"p" 0 1
 let p1 = int_param ~name:"q" 1 1
-
 let cuda_target () = renderer_for (target "CUDA" "CUDA" "sm_89")
 
 (* The workgroup and thread indices of [k ()] lowered for CUDA, its calls'
@@ -10639,30 +11505,10 @@ let on_cuda_out k inputs =
   let d, r = on_cuda () in
   List.assoc 0 (Run.on d (compiled_for r (k ())) inputs)
 
-(* The register kernels above, with their inputs and a split each takes. *)
-let register_kernels =
-  [
-    ("R[0] scratch", scratch_zero, iota 8, upcast 0 4);
-    ("R[r // 4] scratch", scratch_quarter, iota 8, upcast 0 4);
-    ("R[2x + y] scratch", scratch_two, iota 8, upcast 1 4);
-    ("R[r]; R[r + 1]", scratch_next, iota 8, upcast 0 4);
-    ("S[0] = T[r]", table, [], upcast 0 4);
-    ("S[0] = T[1] valid where r < 4", valid_where_low_load, [], upcast 0 8);
-    ("R[0] = 5 valid where r < 4", valid_where_low, [], upcast 0 4);
-    ("a count to 3", to_three, iota 4, upcast 0 2);
-    ("a count to r + 1", to_step, iota 4, upcast 0 2);
-    ("a count to T[r]", to_table, iota 4, upcast 0 2);
-    ("R[0] = S[0] + 1", through_other, iota 8, upcast 0 4);
-    ("R[0] = 5 after G[r] = r", ordered_after, iota 8, upcast 0 4);
-    ("R[0] = A[8i] then a sum", then_reduce, iota 32, upcast 1 4);
-    ("R[0] = a sum", reduced_into, iota 32, upcast 1 4);
-    ("R[0] = A[8i] then a sum, i upcast", then_reduce, iota 32, upcast 0 2);
-  ]
-
-(* [T[t] = t] over local threads [t < 8], ended, then [C[t] = T[7 - t]]
-   from the threads' stores: the second end reads what the first stored. With
-   [split], [t] is [2 t0 + t1] over [t0 < 4] and [t1 < 2], and [C[t] =
-   T[2 t0 + 1 - t1]]. *)
+(* [T[t] = t] over local threads [t < 8], ended, then [C[t] = T[7 - t]] from the
+   threads' stores: the second end reads what the first stored. With [split],
+   [t] is [2 t0 + t1] over [t0 < 4] and [t1 < 2], and [C[t] = T[2 t0 + 1 -
+   t1]]. *)
 let dependent_local_ends ~split () =
   let c = int_param ~name:"C" 0 8 in
   let tmp = Shape.placeholder ~slot:10 ~addrspace:Local [ 8 ] Int32 in
@@ -10677,16 +11523,17 @@ let dependent_local_ends ~split () =
         Ops.O.((t0 * Ops.int 2) + t1),
         Ops.O.((t0 * Ops.int 2) + Ops.int 1 - t1) )
   in
-  let st = Ops.end_ (Ops.store (at tmp t) (Ops.cast t Int32)) ranges in
-  let read = at (Ops.after tmp [ st ]) back in
-  effect_kernel [ Ops.end_ (Ops.store (at c t) read) ranges ]
+  let st = Ops.end_ (Ops.store (element tmp t) (Ops.cast t Int32)) ranges in
+  let read = element (Ops.after tmp [ st ]) back in
+  effect_kernel [ Ops.end_ (Ops.store (element c t) read) ranges ]
 
 let lanes_and_threads =
   let name (n, _, _, _) = n in
   group "lanes and threads"
     [
-      cases "an end reading the stores of an end of its threads runs after it \
-             on CUDA"
+      cases
+        "an end reading the stores of an end of its threads runs after it on \
+         CUDA"
         ~id:fst
         [
           ("8 threads", (false, List.init 8 (fun i -> 7 - i)));
@@ -10695,21 +11542,16 @@ let lanes_and_threads =
         (fun (_, (split, expected)) ->
           equal (array Dtypes.value) (int_values expected)
             (on_cuda_out (dependent_local_ends ~split) []));
-      cases "a register kernel under a split computes what it does serially"
-        ~id:name register_kernels (fun (_, k, inputs, opt) ->
-          let serial = effects_of (k []) inputs [ 0 ] in
-          match effects_of (k [ opt ]) inputs [ 0 ] with
-          | split -> equal (list (array Dtypes.value)) serial split
-          | exception Invalid_argument _ -> ());
-      cases "a register store or a loop's condition along a range keeps it \
-             from lanes"
+      cases
+        "a register store or a loop's condition along a range keeps it from \
+         lanes"
         ~id:name
         [
           ("R[0] scratch", scratch_zero, iota 8, upcast 0 4);
           ("R[r // 4] scratch", scratch_quarter, iota 8, upcast 0 4);
           ("R[2x + y] scratch", scratch_two, iota 8, upcast 1 4);
           ("R[r]; R[r + 1]", scratch_next, iota 8, upcast 0 4);
-          ("S[0] = T[r]", table, [], upcast 0 4);
+          ("S[0] = T[r]", register_table, [], upcast 0 4);
           ("S[0] = T[1] valid where r < 4", valid_where_low_load, [], upcast 0 8);
           ("R[0] = 5 valid where r < 4", valid_where_low, [], upcast 0 4);
           ("a count to r + 1", to_step, iota 4, upcast 0 2);
@@ -10719,36 +11561,54 @@ let lanes_and_threads =
         (fun (_, k, inputs, opt) ->
           no_lanes (fun () -> ignore (effects_of (k [ opt ]) inputs [ 0 ])));
       cases "the axes a register store depends on are not upcastable" ~id:fst
-        [ ("R[0] scratch", (scratch_zero, [])); ("R[0] = S[0] + 1", (through_other, [ 0 ])) ]
+        [
+          ("R[0] scratch", (scratch_zero, []));
+          ("R[0] = S[0] + 1", (through_other, [ 0 ]));
+        ]
         (fun (_, (k, expected)) ->
           let s = Postrange.Scheduler.v (k [] ()) (Lazy.force host) in
           equal (list int) expected (Postrange.Scheduler.upcastable_dims s));
       test "R[0] scratch over a range made global takes no lanes" (fun () ->
           no_lanes (fun () ->
-              Codegen.to_program (scratch_zero [ upcast 0 4 ] ()) (cuda_target ())));
-      cases "a register kernel whose stores hold one value at every step takes \
-             lanes"
+              Codegen.to_program
+                (scratch_zero [ upcast 0 4 ] ())
+                (cuda_target ())));
+      cases
+        "a register kernel whose stores hold one value at every step takes \
+         lanes"
         ~id:(fun (n, _, _, _, _) -> n)
         [
           ("a count to 3", to_three, iota 4, upcast 0 2, [ 3; 4; 5; 6 ]);
-          ( "R[0] = S[0] + 1", through_other, iota 8, upcast 0 4,
+          ( "R[0] = S[0] + 1",
+            through_other,
+            iota 8,
+            upcast 0 4,
             List.init 8 (fun x -> x + 6) );
-          ( "R[0] = 5 after G[r] = r", ordered_after, iota 8, upcast 0 4,
+          ( "R[0] = 5 after G[r] = r",
+            ordered_after,
+            iota 8,
+            upcast 0 4,
             List.init 8 (fun x -> x + 5) );
-          ( "R[0] = A[8i] then a sum, j unrolled", then_reduce, iota 32,
-            upcast 1 4, List.init 4 (fun i -> (72 * i) + 28) );
-          ( "R[0] = a sum, j unrolled", reduced_into, iota 32, upcast 1 4,
+          ( "R[0] = A[8i] then a sum, j unrolled",
+            then_reduce,
+            iota 32,
+            upcast 1 4,
+            List.init 4 (fun i -> (72 * i) + 28) );
+          ( "R[0] = a sum, j unrolled",
+            reduced_into,
+            iota 32,
+            upcast 1 4,
             List.init 4 (fun i -> (64 * i) + 28) );
         ]
         (fun (_, k, inputs, opt, expected) ->
           writes (k [ opt ]) inputs [ expected ] ());
-      test "R[0] scratch on CUDA threads computes each step"
-        (fun () ->
+      test "R[0] scratch on CUDA threads computes each step" (fun () ->
           equal (array Dtypes.value)
             (int_values (List.init 8 succ))
             (on_cuda_out (scratch_zero []) (iota 8)));
-      cases "a range whose steps share storage with the code around it takes \
-             no threads on CUDA"
+      cases
+        "a range whose steps share storage with the code around it takes no \
+         threads on CUDA"
         ~id:fst
         [
           ("G[n - 1] read after", read_after 64);
@@ -10758,13 +11618,14 @@ let lanes_and_threads =
           ("G[r] written by code", by_code 64);
         ]
         (fun (_, k) -> equal (list string) [] (threads_on_cuda k));
-      test "a range whose steps share only what no code writes takes threads \
-            on CUDA"
-        (fun () ->
+      test
+        "a range whose steps share only what no code writes takes threads on \
+         CUDA" (fun () ->
           equal (list string) [ "gidx0" ]
             (threads_on_cuda (call_beside_read ~opts:[])));
-      cases "a range whose steps share storage with the code around it takes \
-             no local split"
+      cases
+        "a range whose steps share storage with the code around it takes no \
+         local split"
         ~id:fst
         [
           ("G[n - 1] read after", read_after ~opts:[ local 0 4 ] 64);
@@ -10773,12 +11634,11 @@ let lanes_and_threads =
         (fun (_, k) ->
           raises_match (Exn.invalid_arg ~sub:"shares storage with its steps")
             (fun () -> Codegen.to_program (k ()) (cuda_target ())));
-      cases
-        "a body lowered to its lines writes what its stores and calls write"
+      cases "a body lowered to its lines writes what its stores and calls write"
         ~id:fst
         [
-          ("a store", (Ops.store (first p0) (first p1), Some [ 0 ]));
-          ("code", (code "{0}[0] = 1;" [ first p1 ], Some [ 1 ]));
+          ("a store", (Ops.store (first_cell p0) (first_cell p1), Some [ 0 ]));
+          ("code", (custom_code "{0}[0] = 1;" [ first_cell p1 ], Some [ 1 ]));
         ]
         (fun (_, (line, expected)) ->
           let body = Ops.sink [ line ] in
@@ -10788,19 +11648,23 @@ let lanes_and_threads =
               ~arg:(String "f")
           in
           equal (option (list int)) expected (Shape.written_params lines));
-      cases "a range whose steps share storage with the code around it computes \
-             its serial values on CUDA"
+      cases
+        "a range whose steps share storage with the code around it computes \
+         its serial values on CUDA"
         ~id:(fun (n, _, _, _) -> n)
         [
           ("G[65535] read after", read_after 65536, iota 65536, [ 65535 ]);
           ("R[0] read after", (fun () -> live_out ()), iota 8, [ 7 ]);
-          ( "G[0] written before", written_before 65536, iota 65536,
+          ( "G[0] written before",
+            written_before 65536,
+            iota 65536,
             List.init 65536 (fun x -> x + 5) );
           ("G[65535] written by a call", by_call 65536, iota 65536, [ 65535 ]);
           ("G[65535] written by code", by_code 65536, iota 65536, [ 65535 ]);
         ]
         (fun (_, k, inputs, expected) ->
-          equal (array Dtypes.value) (int_values expected) (on_cuda_out k inputs));
+          equal (array Dtypes.value) (int_values expected)
+            (on_cuda_out k inputs));
     ]
 
 (* Threads of a workgroup
@@ -10814,16 +11678,16 @@ let lanes_and_threads =
    from the top, as tinygrad names [r_3_256_16_64_64], read the second operand
    1048576 floats apart from one [lid.x] to the next.
 
-   A map whose workgroup spans two output axes stores along the inner one,
-   the output's unit stride, from consecutive [lidx0]: each thread's elements
-   follow the previous thread's. Taking the outer axis first, as tinygrad
-   orders the splits, put [lidx0] on the rows: the threads of [rmsnorm]'s
-   scaled map stored 4 floats a thread, 64 floats apart. *)
+   A map whose workgroup spans two output axes stores along the inner one, the
+   output's unit stride, from consecutive [lidx0]: each thread's elements follow
+   the previous thread's. Taking the outer axis first, as tinygrad orders the
+   splits, put [lidx0] on the rows: the threads of [rmsnorm]'s scaled map stored
+   4 floats a thread, 64 floats apart. *)
 
 (* The value of the index [i] with [lidx0] at [t] and every other index, of a
    workgroup, a thread or a loop, at 0. *)
 let index_at i t =
-  let at u =
+  let element u =
     let value v =
       Some (u, Ops.const ~dtype:(Ops.dtype u) (`Int (Bigint.of_int v)))
     in
@@ -10832,7 +11696,7 @@ let index_at i t =
     | (Special | Range), _ -> value 0
     | _ -> None
   in
-  let subs = List.filter_map at (Ops.toposort ~calls:Skip i) in
+  let subs = List.filter_map element (Ops.toposort ~calls:Skip i) in
   Shape.sym_infer (Sym (Ops.substitute ~calls:Skip ~pass:Fixed_point i subs)) []
 
 (* The address, in elements, that the load [l] reads with [lidx0] at [t] and
@@ -10863,9 +11727,9 @@ let threads_of_workgroups =
       in
       equal (list int) [ 0; 1 ] (List.sort_uniq Int.compare steps))
 
-(* The first address, in elements, that the store [s] writes with [lidx0] at
-   [t] and every other index at 0, and how many elements it writes: one
-   through an index, a run through a shrink of its buffer. *)
+(* The first address, in elements, that the store [s] writes with [lidx0] at [t]
+   and every other index at 0, and how many elements it writes: one through an
+   index, a run through a shrink of its buffer. *)
 let stored_at s t =
   let target = Ops.nth s 0 in
   match Ops.op target with
@@ -10892,7 +11756,9 @@ let stored_by stores t =
          List.init n (( + ) a))
        stores)
 
-let map_threads =
+(* The maps of the recorded GPU programs whose workgroups span two local axes,
+   chosen in the test, since choosing them reads each row's program golden. *)
+let two_axis_maps () =
   let is_map row =
     not
       (List.exists
@@ -10906,29 +11772,34 @@ let map_threads =
         List.length (List.filter spans p.local_size) >= 2
     | _ -> false
   in
-  (* Chosen by their recorded programs: the suite compiles nothing until a
-     test runs, as its tests of the disk cache run it again in a child that
-     must not compile. *)
-  let on_gpu row = compiles row && row "target" <> "clang" && is_map row in
-  let rows =
-    List.filter
-      (fun row -> on_gpu row && two_locals (recorded_program row))
-      (Golden.rows "cases.golden")
-  in
-  cases
-    "consecutive lid.x threads of a map over two local axes store one run \
-     after another"
-    ~id:(fun row -> row "name")
-    rows
+  List.filter
     (fun row ->
-      let stores = global_stores (program row) in
-      let first = stored_by stores 0 in
-      let n = List.length first in
-      let run a = List.init n (( + ) a) in
-      let a = List.hd first in
-      equal (pair (list int) (list int))
-        (run a, run (a + n))
-        (first, stored_by stores 1))
+      compiles row
+      && row "target" <> "clang"
+      && is_map row
+      && two_locals (recorded_program row))
+    (Golden.rows "cases.golden")
+
+(* The addresses each such map stores to with [lidx0] at 0 and at 1, which are
+   two runs, one after the other. *)
+let map_threads =
+  test
+    "consecutive lid.x threads of a map over two local axes store one run \
+     after another" (fun () ->
+      let maps = two_axis_maps () in
+      at_least int ~msg:"maps over two local axes" ~than:1 (List.length maps);
+      let apart row =
+        let stores = global_stores (program row) in
+        let first = stored_by stores 0 and second = stored_by stores 1 in
+        let n = List.length first and a = List.hd first in
+        let run a = List.init n (( + ) a) in
+        if first = run a && second = run (a + n) then None
+        else Some (row "name", first, second)
+      in
+      equal
+        (list (triple string (list int) (list int)))
+        []
+        (List.filter_map apart maps))
 
 (* [o] [[r; t; h; d]] of [x] [[r; h; t; d]], bfloat16: heads of [d] channels
    merged back into their tokens, as a transformer does after attention. *)
@@ -10960,7 +11831,8 @@ let transpose_lanes () =
   in
   match Ops.arg prg with
   | Program { local_size = Ops.Int n :: _; _ } ->
-      is_true ~msg:(Printf.sprintf "%d lanes of 2 bytes" n) (n * 2 >= 16)
+      at_least int ~msg:"bytes a SIMD group's lid.x threads store together"
+        ~than:16 (n * 2)
   | _ -> fail "a program of no known lid.x threads"
 
 (* Hand-written kernels on the host
@@ -10968,10 +11840,10 @@ let transpose_lanes () =
    Kernels a builder writes whole, run on the host, each reading back what it
    stores. *)
 
-(* Three steps of [r] padded to four, each padded step a no-op:
-   [C[0] = C[0] + r + 1], read before any store, stores 3 at the last step; and
-   a loop counting a register from 0 to 3 stores 3, its padded step leaving the
-   register as it was and leaving the loop. *)
+(* Three steps of [r] padded to four, each padded step a no-op: [C[0] = C[0] + r
+   + 1], read before any store, stores 3 at the last step; and a loop counting a
+   register from 0 to 3 stores 3, its padded step leaving the register as it was
+   and leaving the loop. *)
 let padded_steps store () =
   let r = effect_loop 3 0 in
   let c = int_param ~name:"C" 0 1 in
@@ -10984,20 +11856,25 @@ let padded_stores =
   [
     ( "read before it is stored",
       fun r c ->
-        let cell = first c in
+        let cell = first_cell c in
         Ops.store cell Ops.O.(Ops.load cell [] + Ops.cast r Int32 + i32 1) );
     ( "counted by a loop",
       fun r c ->
         let cnt = Shape.placeholder ~slot:1 ~addrspace:Reg [ 1 ] Int32 in
         let l = Ops.loop 1 in
         let cnt_r = Ops.after cnt [ r ] in
-        let cnt0 = Ops.after cnt_r [ Ops.store (first cnt_r) (i32 0) ] in
-        let next = Ops.O.(Ops.load (first (Ops.after cnt0 [ l ])) [] + i32 1) in
+        let cnt0 = Ops.after cnt_r [ Ops.store (first_cell cnt_r) (i32 0) ] in
+        let next =
+          Ops.O.(Ops.load (first_cell (Ops.after cnt0 [ l ])) [] + i32 1)
+        in
         let step =
-          Ops.backedge (Ops.store (first cnt0) next) ~loop:l
+          Ops.backedge
+            (Ops.store (first_cell cnt0) next)
+            ~loop:l
             ~cond:Ops.O.(next <> i32 3)
         in
-        Ops.store (first c) (Ops.load (first (Ops.after cnt0 [ step ])) []) );
+        Ops.store (first_cell c)
+          (Ops.load (first_cell (Ops.after cnt0 [ step ])) []) );
   ]
 
 (* [C[0] = B[A[0] + A[1]]]: the sum over [k] is the index of a load. *)
@@ -11006,53 +11883,53 @@ let sum_as_index () =
   let c = int_param ~name:"C" 0 1
   and a = int_param ~name:"A" 1 2
   and b = int_param ~name:"B" 2 4 in
-  let i = Ops.reduce (Ops.load (at a k) []) Op.Add [ k ] in
-  effect_kernel [ Ops.store (first c) (Ops.load (at b i) []) ]
+  let i = Ops.reduce (Ops.load (element a k) []) Op.Add [ k ] in
+  effect_kernel [ Ops.store (first_cell c) (Ops.load (element b i) []) ]
 
 (* [C[0]] is the sum of [A[1]] over a range of one trip. *)
 let one_trip_sum () =
   let c = int_param ~name:"C" 0 1 and a = int_param ~name:"A" 1 2 in
-  let sum = Ops.reduce (at a (Ops.int 1)) Op.Add [ effect_loop 1 0 ] in
-  effect_kernel [ Ops.store (first c) sum ]
+  let sum = Ops.reduce (element a (Ops.int 1)) Op.Add [ effect_loop 1 0 ] in
+  effect_kernel [ Ops.store (first_cell c) sum ]
 
 (* [old = A[0]], then a loop storing [A[0] = 9], then [A[1] = old]: the loop
    waits on [old], so [A[1]] holds what [A[0]] held. The loop runs twice, or,
    bounded by nothing but its wait on [old], until [A[0]] is 9. *)
 let snapshot ~counted () =
   let a = int_param ~name:"A" 0 2 in
-  let old = Ops.load (first a) [] in
+  let old = Ops.load (first_cell a) [] in
   let stored =
     if counted then
       let r = effect_loop 2 0 in
-      Ops.end_ (Ops.store (first (Ops.after a [ old; r ])) (i32 9)) [ r ]
+      Ops.end_ (Ops.store (first_cell (Ops.after a [ old; r ])) (i32 9)) [ r ]
     else
       let l =
         Ops.v Range
           ~src:[ Ops.after (Ops.v Noop) [ old ] ]
           ~arg:(Range { axis_type = Weak; axis_id = [ 0 ] })
       in
-      let w = Ops.store (first (Ops.after a [ l ])) (i32 9) in
+      let w = Ops.store (first_cell (Ops.after a [ l ])) (i32 9) in
       Ops.backedge w ~loop:l
-        ~cond:Ops.O.(Ops.load (first (Ops.after a [ w ])) [] <> i32 9)
+        ~cond:Ops.O.(Ops.load (first_cell (Ops.after a [ w ])) [] <> i32 9)
   in
-  effect_kernel [ Ops.store (at (Ops.after a [ stored ]) (Ops.int 1)) old ]
+  effect_kernel [ Ops.store (element (Ops.after a [ stored ]) (Ops.int 1)) old ]
 
-(* [P[0] = 8], then [Q[0] = 64] in a loop of no trip ordered after it: the
-   loop runs no time, and the store before it runs. *)
+(* [P[0] = 8], then [Q[0] = 64] in a loop of no trip ordered after it: the loop
+   runs no time, and the store before it runs. *)
 let before_empty_loop () =
   let r = effect_loop 0 0 in
   let p = int_param ~name:"P" 0 1 and q = int_param ~name:"Q" 1 1 in
-  let q_at = first (Ops.after q [ Ops.store (first p) (i32 8); r ]) in
+  let q_at = first_cell (Ops.after q [ Ops.store (first_cell p) (i32 8); r ]) in
   effect_kernel [ Ops.end_ (Ops.store q_at (i32 64)) [ r ] ]
 
-(* [A[0] = 7], then [B[0] = A[s]] through the shrink of [A] from [s] to
-   [s + 1], [s] a 0 ordered after the store: the shrink keeps every element,
-   but its start keeps the store before the read. *)
+(* [A[0] = 7], then [B[0] = A[s]] through the shrink of [A] from [s] to [s + 1],
+   [s] a 0 ordered after the store: the shrink keeps every element, but its
+   start keeps the store before the read. *)
 let shrink_after_store () =
   let a = int_param ~name:"A" 0 1 and b = int_param ~name:"B" 1 1 in
-  let s = Ops.after (Ops.int 0) [ Ops.store (first a) (i32 7) ] in
+  let s = Ops.after (Ops.int 0) [ Ops.store (first_cell a) (i32 7) ] in
   let view = Shape.shrink a [ Some (Sym s, Sym Ops.O.(s + int 1)) ] in
-  effect_kernel [ Ops.store (first b) (Ops.load (first view) []) ]
+  effect_kernel [ Ops.store (first_cell b) (Ops.load (first_cell view) []) ]
 
 (* [X = shuffle X], the four elements of [X] reversed by code in the target's
    language whose value states its shape, a vector of four. *)
@@ -11063,53 +11940,57 @@ let reversed_by_code () =
       "__builtin_shufflevector({0}, {0}, 3, 2, 1, 0)" []
   in
   let lanes =
-    Shape.stack (List.init 4 (fun i -> Ops.load (at x (Ops.int i)) []))
+    Shape.stack (List.init 4 (fun i -> Ops.load (element x (Ops.int i)) []))
   in
   effect_kernel [ Ops.store x (Ops.call shuffle [ lanes ]) ]
 
-(* [x = 1] after [A[0] += 1] and [y = 2] after [A[1] = 8], then [B[0] =
-   (x * x * y as a bool ? x : y) % 1]: the value folds to 0, and each store
-   runs once. *)
+(* [x = 1] after [A[0] += 1] and [y = 2] after [A[1] = 8], then [B[0] = (x * x *
+   y as a bool ? x : y) % 1]: the value folds to 0, and each store runs once. *)
 let fold_of_ordered () =
   let a = int_param ~name:"A" 0 2 and b = int_param ~name:"B" 1 1 in
-  let incr = Ops.store (first a) Ops.O.(Ops.load (first a) [] + Ops.int 1) in
+  let incr =
+    Ops.store (first_cell a) Ops.O.(Ops.load (first_cell a) [] + Ops.int 1)
+  in
   let x = Ops.after (i32 1) [ incr ]
-  and y = Ops.after (i32 2) [ Ops.store (at a (Ops.int 1)) (i32 8) ] in
+  and y = Ops.after (i32 2) [ Ops.store (element a (Ops.int 1)) (i32 8) ] in
   let v = Ops.where (Ops.cast Ops.O.(x * x * y) Bool) x y in
-  effect_kernel [ Ops.store (first b) Ops.O.(v % Ops.int 1) ]
+  effect_kernel [ Ops.store (first_cell b) Ops.O.(v % Ops.int 1) ]
 
-(* [B[0] = (A[0] + 1 after A[1] = 7) * 0]: the product folds to 0, and the
-   store runs. *)
+(* [B[0] = (A[0] + 1 after A[1] = 7) * 0]: the product folds to 0, and the store
+   runs. *)
 let fold_of_unloaded () =
   let a = int_param ~name:"A" 0 2 and b = int_param ~name:"B" 1 1 in
-  let st = Ops.store (at a (Ops.int 1)) (i32 7) in
-  let v = Ops.after Ops.O.(first a + Ops.int 1) [ st ] in
-  effect_kernel [ Ops.store (first b) Ops.O.(v * Ops.int 0) ]
+  let st = Ops.store (element a (Ops.int 1)) (i32 7) in
+  let v = Ops.after Ops.O.(first_cell a + Ops.int 1) [ st ] in
+  effect_kernel [ Ops.store (first_cell b) Ops.O.(v * Ops.int 0) ]
 
 (* [B[0] = A[0] * 2], [A[0]] read after [A[0] = 7], simplified as it is
    built. *)
 let simplified_read () =
   let a = int_param ~name:"A" 0 1 and b = int_param ~name:"B" 1 1 in
-  let read = Ops.after (first a) [ Ops.store (first a) (i32 7) ] in
-  effect_kernel [ Ops.store (first b) (Shape.simplify Ops.O.(read * Ops.int 2)) ]
+  let read = Ops.after (first_cell a) [ Ops.store (first_cell a) (i32 7) ] in
+  effect_kernel
+    [ Ops.store (first_cell b) (Shape.simplify Ops.O.(read * Ops.int 2)) ]
 
-(* [B[i] = A[0 valid where g] + 1] over [i < 2], [g] a false after [A[0] =
-   7]: the load reads 0 where the gate fails, and the store runs. *)
+(* [B[i] = A[0 valid where g] + 1] over [i < 2], [g] a false after [A[0] = 7]:
+   the load reads 0 where the gate fails, and the store runs. *)
 let gate_after_store () =
   let a = int_param ~name:"A" 0 1 and b = int_param ~name:"B" 1 2 in
   let i = effect_loop 2 0 in
-  let g = Ops.after (Ops.bool false) [ Ops.store (first a) (i32 7) ] in
-  let v = Ops.O.(at a (Shape.valid (Ops.int 0) g) + Ops.int 1) in
-  effect_kernel [ Ops.end_ (Ops.store (at b i) v) [ i ] ]
+  let g = Ops.after (Ops.bool false) [ Ops.store (first_cell a) (i32 7) ] in
+  let v = Ops.O.(element a (Shape.valid (Ops.int 0) g) + Ops.int 1) in
+  effect_kernel [ Ops.end_ (Ops.store (element b i) v) [ i ] ]
 
 (* [B[0] = [2][i]], [i] a 0 after [A[0] += 1]: the lane is read after the
    store. *)
 let stack_at_ordered () =
   let a = int_param ~name:"A" 0 1 and b = int_param ~name:"B" 1 1 in
-  let incr = Ops.store (first a) Ops.O.(Ops.load (first a) [] + Ops.int 1) in
+  let incr =
+    Ops.store (first_cell a) Ops.O.(Ops.load (first_cell a) [] + Ops.int 1)
+  in
   let i = Ops.after (i32 0) [ incr ] in
   let lanes = Ops.v Op.Stack ~src:[ i32 2 ] in
-  effect_kernel [ Ops.store (first b) (Ops.index lanes [ i ]) ]
+  effect_kernel [ Ops.store (first_cell b) (Ops.index lanes [ i ]) ]
 
 (* The table [[1; 2]; [3; 4]]. *)
 let table22 () =
@@ -11120,55 +12001,61 @@ let table22 () =
 let table_two_axes () =
   let a = int_param ~name:"A" 0 4 in
   let i = effect_loop 2 0 and j = effect_loop 2 1 in
-  let st = Ops.store (at a Ops.O.((i * Ops.int 2) + j)) (Ops.index (table22 ()) [ i; j ]) in
+  let st =
+    Ops.store
+      (element a Ops.O.((i * Ops.int 2) + j))
+      (Ops.index (table22 ()) [ i; j ])
+  in
   effect_kernel [ Ops.end_ st [ j; i ] ]
 
 (* [B[0] = T[A[1]][j]], [j] a 1 after [A[0] += 1]. *)
 let table_ordered_axis () =
   let a = int_param ~name:"A" 0 2 and b = int_param ~name:"B" 1 1 in
-  let incr = Ops.store (first a) Ops.O.(Ops.load (first a) [] + Ops.int 1) in
+  let incr =
+    Ops.store (first_cell a) Ops.O.(Ops.load (first_cell a) [] + Ops.int 1)
+  in
   let j = Ops.after (i32 1) [ incr ] in
-  let row = Ops.load (at a (Ops.int 1)) [] in
-  effect_kernel [ Ops.store (first b) (Ops.index (table22 ()) [ row; j ]) ]
+  let row = Ops.load (element a (Ops.int 1)) [] in
+  effect_kernel [ Ops.store (first_cell b) (Ops.index (table22 ()) [ row; j ]) ]
 
 (* [B[0] = T[A[0]][A[1]]], one index after the other. *)
 let table_row_then_lane () =
   let a = int_param ~name:"A" 0 2 and b = int_param ~name:"B" 1 1 in
-  let load k = Ops.load (at a (Ops.int k)) [] in
+  let load k = Ops.load (element a (Ops.int k)) [] in
   let row = Ops.index (table22 ()) [ load 0 ] in
-  effect_kernel [ Ops.store (first b) (Ops.index row [ load 1 ]) ]
+  effect_kernel [ Ops.store (first_cell b) (Ops.index row [ load 1 ]) ]
 
 (* Lane [j] of [n] is [A[j]] read after [A[j] = 7 + 2j]. *)
 let stored_lanes a n =
   Shape.stack
     (List.init n (fun j ->
-         let st = Ops.store (at a (Ops.int j)) (Ops.int (7 + (2 * j))) in
-         Ops.load (at (Ops.after a [ st ]) (Ops.int j)) []))
+         let st = Ops.store (element a (Ops.int j)) (Ops.int (7 + (2 * j))) in
+         Ops.load (element (Ops.after a [ st ]) (Ops.int j)) []))
 
 (* [A[2] = L[0]], [L] two stored lanes: both stores run. *)
 let lane_of_stored () =
   let a = int_param ~name:"A" 0 3 in
   let l = stored_lanes a 2 in
-  effect_kernel [ Ops.store (at a (Ops.int 2)) (Ops.index l [ i32 0 ]) ]
+  effect_kernel [ Ops.store (element a (Ops.int 2)) (Ops.index l [ i32 0 ]) ]
 
 (* [A[4 + i] = L[i]] over [i < 2], [L] four stored lanes: every store runs. *)
 let lanes_of_stored () =
   let a = int_param ~name:"A" 0 6 in
   let i = effect_loop 2 0 in
   let l = stored_lanes a 4 in
-  let st = Ops.store (at a Ops.O.(Ops.int 4 + i)) (Ops.index l [ i ]) in
+  let st = Ops.store (element a Ops.O.(Ops.int 4 + i)) (Ops.index l [ i ]) in
   effect_kernel [ Ops.end_ st [ i ] ]
 
-(* [A[r] = B[r + o] + 1] over an upcast [r < 4], [o] a 0 after [C[0] = 5]:
-   each lane reads at its own address, after the store. *)
+(* [A[r] = B[r + o] + 1] over an upcast [r < 4], [o] a 0 after [C[0] = 5]: each
+   lane reads at its own address, after the store. *)
 let upcast_offset_after_store () =
   let a = int_param ~name:"A" 0 4
   and b = int_param ~name:"B" 1 4
   and c = int_param ~name:"C" 2 1 in
   let r = Ops.range ~axis_type:Upcast (Int 4) [ 0 ] in
-  let o = Ops.after (Ops.int 0) [ Ops.store (first c) (i32 5) ] in
-  let v = Ops.O.(at b (r + o) + Ops.int 1) in
-  effect_kernel [ Ops.end_ (Ops.store (at a r) v) [ r ] ]
+  let o = Ops.after (Ops.int 0) [ Ops.store (first_cell c) (i32 5) ] in
+  let v = Ops.O.(element b (r + o) + Ops.int 1) in
+  effect_kernel [ Ops.end_ (Ops.store (element a r) v) [ r ] ]
 
 (* [B[0] = (int32 bits of A)[1]], [A] four int16 loaded whole: lane 1 holds
    [A[2]] in its low half and [A[3]] in its high half. *)
@@ -11176,15 +12063,15 @@ let bitcast_widened () =
   let a = Shape.param ~shape:[ Int 4 ] ~name:"A" 0 Int16
   and b = int_param ~name:"B" 1 1 in
   let v = Ops.bitcast (Ops.load (Ops.index a []) []) Int32 in
-  effect_kernel [ Ops.store (first b) (Ops.index v [ Ops.int 1 ]) ]
+  effect_kernel [ Ops.store (first_cell b) (Ops.index v [ Ops.int 1 ]) ]
 
-(* [B[0] = (uint16 bits of A + 1)[3]], [A] two uint32: lane 3 is the high
-   half of [A[1] + 1]. *)
+(* [B[0] = (uint16 bits of A + 1)[3]], [A] two uint32: lane 3 is the high half
+   of [A[1] + 1]. *)
 let bitcast_narrowed () =
   let a = Shape.param ~shape:[ Int 2 ] ~name:"A" 0 Uint32
   and b = Shape.param ~shape:[ Int 1 ] ~name:"B" 1 Uint16 in
   let v = Ops.bitcast Ops.O.(Ops.index a [] + Ops.int 1) Uint16 in
-  effect_kernel [ Ops.store (first b) (Ops.index v [ Ops.int 3 ]) ]
+  effect_kernel [ Ops.store (first_cell b) (Ops.index v [ Ops.int 3 ]) ]
 
 (* [B[0] = max over r < 3 of ([2.0] reciprocal after r)[0 after r]]. *)
 let shaped_after_range () =
@@ -11193,23 +12080,23 @@ let shaped_after_range () =
   let lanes = Ops.v Op.Stack ~src:[ Ops.float ~dtype:Float32 2. ] in
   let value = Ops.after (Ops.alu lanes Op.Recip []) [ r ] in
   let read = Ops.index value [ Ops.after (i32 0) [ r ] ] in
-  effect_kernel [ Ops.store (first b) (Ops.reduce read Op.Max [ r ]) ]
+  effect_kernel [ Ops.store (first_cell b) (Ops.reduce read Op.Max [ r ]) ]
 
-(* [s = sum over i < 3 of A * (i + 1)], each term after [C[0] += 1], and
-   [B[0] = s[0] + s[1]]: the store runs once a trip. *)
+(* [s = sum over i < 3 of A * (i + 1)], each term after [C[0] += 1], and [B[0] =
+   s[0] + s[1]]: the store runs once a trip. *)
 let shaped_after_counted () =
   let a = int_param ~name:"A" 0 2
   and b = int_param ~name:"B" 1 1
   and c = int_param ~name:"C" 2 1 in
   let i = effect_loop 3 0 in
   let incr =
-    Ops.store (first c)
-      Ops.O.(Ops.load (first (Ops.after c [ i ])) [] + Ops.int 1)
+    Ops.store (first_cell c)
+      Ops.O.(Ops.load (first_cell (Ops.after c [ i ])) [] + Ops.int 1)
   in
   let term = Ops.O.(Ops.load (Ops.index a []) [] * (i + Ops.int 1)) in
   let s = Ops.reduce (Ops.after term [ incr ]) Op.Add [ i ] in
   let lane k = Ops.index s [ Ops.int k ] in
-  effect_kernel [ Ops.store (first b) Ops.O.(lane 0 + lane 1) ]
+  effect_kernel [ Ops.store (first_cell b) Ops.O.(lane 0 + lane 1) ]
 
 let hand_written =
   group "hand-written kernels on the host"
@@ -11263,7 +12150,8 @@ let hand_written =
       test "lanes read at a range keep every lane's store"
         (writes lanes_of_stored [] [ [ 7; 9; 11; 13; 7; 9 ] ]);
       test "code whose value is a vector stores each of its lanes"
-        (writes reversed_by_code [ (0, int_values [ 0; 1; 2; 3 ]) ]
+        (writes reversed_by_code
+           [ (0, int_values [ 0; 1; 2; 3 ]) ]
            [ [ 3; 2; 1; 0 ] ]);
       test "a shrink whose start waits on a store reads after it"
         (writes shrink_after_store [] [ [ 7 ]; [ 7 ] ]);
@@ -11278,10 +12166,12 @@ let hand_written =
       test "a sum over a range of one trip is its source"
         (writes one_trip_sum [ (1, int_values [ 2; 3 ]) ] [ [ 3 ] ]);
       test "a loop waiting on a load stores after it"
-        (writes (snapshot ~counted:true) [ (0, int_values [ 5; 0 ]) ]
+        (writes (snapshot ~counted:true)
+           [ (0, int_values [ 5; 0 ]) ]
            [ [ 9; 5 ] ]);
       test "a loop whose bound waits on a load stores after it"
-        (writes (snapshot ~counted:false) [ (0, int_values [ 5; 0 ]) ]
+        (writes (snapshot ~counted:false)
+           [ (0, int_values [ 5; 0 ]) ]
            [ [ 9; 5 ] ]);
       test "a store before a loop of no trip runs"
         (writes before_empty_loop [] [ [ 8 ]; [ 0 ] ]);
@@ -11289,14 +12179,14 @@ let hand_written =
 
 (* Lane indices
 
-   A lane's index starts as constants and moves through its source's
-   movements: here a window of a reshaped, permuted view, its start an integer
-   or a load from a storage state. A loaded start puts the load in the index,
-   which the reshape under the window simplifies. The state's store is gated
-   by [r % 4] where [r < 4], which only a simplification knowing the gate
-   holds reduces: rebuilt, the store would define the storage a second time.
-   Each lane of the window, through one memo, is the index the movement rules
-   make, and holds the state as it is. *)
+   A lane's index starts as constants and moves through its source's movements:
+   here a window of a reshaped, permuted view, its start an integer or a load
+   from a storage state. A loaded start puts the load in the index, which the
+   reshape under the window simplifies. The state's store is gated by [r % 4]
+   where [r < 4], which only a simplification knowing the gate holds reduces:
+   rebuilt, the store would define the storage a second time. Each lane of the
+   window, through one memo, is the index the movement rules make, and holds the
+   state as it is. *)
 let lane_indices =
   let mops u =
     Ops.graph_rewrite ~calls:Skip ~pass:Fixed_point ~ctx:() u
@@ -11357,75 +12247,87 @@ let () =
     (run "Tolk.Codegen"
        (recorded_outputs
        @ [
-             stages;
+           (* full_rewrite_to_sink: what a lowered kernel computes *)
+           stages;
            values;
-           without_elementwise;
-           claims;
-           lowering_claims;
            whole_graphs;
-           accumulators;
+           few_trips_tests;
+           variable_sizes;
            tensor_cores_on_cuda;
            group "tensor cores on each GPU" (List.map cores_on Gpus.kinds);
            tensor_cores_by_hand;
-           fixed_threads;
+           accumulators;
            bfloat16_vectors_on_cuda;
            emulated_vectors_on_cuda;
            byte_assemblies_on_cuda;
            words_on_cuda;
-           counted_once;
-           counted_beside_host_blocks;
-           weak_ranges;
-           lanes_and_threads;
-           threads_of_workgroups;
-           map_threads;
-           test "a head transpose's lid.x threads store 16 bytes together"
-             transpose_lanes;
-           variable_sizes;
-           multiply_adds;
-           narrow_multiply_adds;
-           Gated_loads.on_amd;
-           Gated_loads.law;
-           shared_ranges;
+           claims;
+           lowering_claims;
            lanes;
+           invalid_lanes;
+           shared_ranges;
+           unselected_sum;
+           weak_max;
+           vectors;
+           Gated_loads.law;
+           Gated_loads.on_amd;
+           signed_zeros;
+           nan_constants;
            bfloat16_casts;
            half_casts;
            long_casts;
            test "a selection between bfloat16 vectors takes each lane's arm"
              selects_bfloat16_lanes;
            test
-             "a gated bfloat16 load takes its alternative where its gate is false"
+             "a gated bfloat16 load takes its alternative where its gate is \
+              false"
              takes_bfloat16;
-           vectors;
-           signed_zeros;
-           nan_constants;
-           invalid_lanes;
            square_wrapping;
-           unselected_sum;
-           stores_before;
-           weak_max;
-           gated_stores;
-           divisions;
-           range_shrinking;
-           blocks;
-           launches;
-           memory_bounds;
-           beam_search;
-           caching;
-           sharing;
-           linearizing;
-           on_disk;
-           programs;
-           errors;
-           diagnostics;
-           line_rewrites;
-           cleanups;
-           calls;
-           stacks;
            int_powers;
+           stacks;
+           (* its effects *)
            effects;
            folded_effects;
+           stores_before;
            hand_written;
+           counted_once;
+           weak_ranges;
+           lanes_and_threads;
+           (* its optimisations *)
+           beam_search;
+           fixed_threads;
+           lowering;
            reduces_under_gates;
-           few_trips_tests;
+           memory_bounds;
+           threads_of_workgroups;
+           map_threads;
+           test "a head transpose's lid.x threads store 16 bytes together"
+             transpose_lanes;
+           (* host blocks, settings, checks, multiply-adds, raises *)
+           blocks;
+           counted_beside_host_blocks;
+           divisions;
+           range_shrinking;
+           specification;
+           multiply_adds;
+           narrow_multiply_adds;
+           without_elementwise;
+           kernel_information;
+           (* line_rewrite, pm_linearize_cleanups *)
+           line_rewrites;
+           gated_stores;
+           cleanups;
+           (* to_program *)
+           programs;
+           caching;
+           sharing;
+           on_disk;
+           launches;
+           calls;
+           diagnostics;
+           compilers;
+           (* linearize, compile *)
+           linearizing;
+           (* index_lane *)
            lane_indices;
          ]))
