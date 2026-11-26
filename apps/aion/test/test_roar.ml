@@ -73,8 +73,10 @@ let replay ~keys ~temperature ~reveal (target, inputs) tokens =
 
 let linear8 = [ 7; 7; 7; 7; 7; 7; 7; 6 ]
 
+(* In the compiled draws each step size is a program of its own; uneven's last
+   step reuses linear 8's. *)
 let schedules =
-  [ ("one step", [ 55 ]); ("linear 8", linear8); ("uneven", [ 1; 30; 2; 22 ]) ]
+  [ ("one step", [ 55 ]); ("linear 8", linear8); ("uneven", [ 1; 47; 7 ]) ]
 
 (* Each schedule at each temperature, as (name, reveal, temperature). *)
 let rows schedules temperatures =
