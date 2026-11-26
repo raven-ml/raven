@@ -402,7 +402,7 @@ let close_all tol expected actual =
       at_most
         ~msg:(Printf.sprintf "the error at element %d" i)
         float_exact ~than:t.(i)
-        (Float.abs (a.(i) -. e)))
+        (Nx_support.gap a.(i) e))
     e
 
 (* [x] on a grid of [2^-20], where [x + 1] and [1 - x] are exact. *)
@@ -428,11 +428,18 @@ let bits_equal (type s) (dt : (float, s) Nx.dtype) a b =
    |v|], and the least subnormal below the normal range. *)
 let in_ulps k v = k *. ((eps *. Float.abs v) +. 0x1p-1074)
 
+(* How far [a] lies above [b], infinite where either is NaN: windtrap orders NaN
+   below every float, so a bound on a NaN [a] itself would pass. *)
+let above a b =
+  if Float.is_nan a || Float.is_nan b then Float.infinity
+  else if a = b then 0.
+  else a -. b
+
 (* [f x <= f y] where [x <= y], for an increasing function: within the errors
    [error] bounds at each, its results may cross by their sum. *)
 let increasing ~error f x y =
   Array.iter2
-    (fun a b -> at_most float_exact ~than:(b +. error a +. error b) a)
+    (fun a b -> at_most float_exact ~than:(error a +. error b) (above a b))
     (values (f x))
     (values (f y))
 
@@ -444,10 +451,10 @@ let elementwise f a b c =
   let a = values a and b = values b and c = values c in
   Array.iteri (fun i a -> f i a b.(i) c.(i)) a
 
-let close ~than i error =
+let close ~than i got want =
   at_most
     ~msg:(Printf.sprintf "the error at element %d" i)
-    float_exact ~than error
+    float_exact ~than (Nx_support.gap got want)
 
 let pairs = Gen.pair (log_batch 1e-3 1e4) (log_batch 1e-3 1e4)
 
@@ -831,7 +838,7 @@ let upper_tail ~tail ~(inverse : b) a x =
           *. (log_ulps 16 t +. (Float.abs (m -. t) /. (Float.min m t *. eps)))
         in
         let own = 4. +. (kappa.(i) *. log_ulps 16 m) in
-        close i ~than:((own +. moved) *. eps *. x) (Float.abs (back.(i) -. x)))
+        close i ~than:((own +. moved) *. eps *. x) back.(i) x)
     (values x)
 
 (* [p] within [B(p)] ulps moves the quantile by [κ_p B(p)], for [κ_p = κ p / m];
@@ -846,7 +853,7 @@ let inverted ~forward ~(inverse : b) (a, x) =
         let m = Float.min p (1. -. p) in
         let moved = kappa.(i) *. p /. m *. log_ulps 16 p in
         let own = 4. +. (kappa.(i) *. log_ulps 16 m) in
-        close i ~than:((own +. moved) *. eps *. x) (Float.abs (back -. x)))
+        close i ~than:((own +. moved) *. eps *. x) back x)
     x p back
 
 let gammainc =
@@ -860,9 +867,7 @@ let gammainc =
       prop "gammainc + gammaincc is 1" pairs (fun (a, x) ->
           elementwise
             (fun i p q _ ->
-              close i
-                ~than:(linear p +. linear q +. eps)
-                (Float.abs (p +. q -. 1.)))
+              close i ~than:(linear p +. linear q +. eps) (p +. q) 1.)
             (Nx.gammainc a x) (Nx.gammaincc a x) x);
       prop "increases in x and decreases in a"
         (Gen.pair pairs (log_batch 1e-6 1.))
@@ -876,18 +881,17 @@ let gammainc =
               at_most
                 ~msg:(Printf.sprintf "P(a, x) at element %d" i)
                 float_exact
-                ~than:(q +. error p +. error q)
-                p;
+                ~than:(error p +. error q)
+                (above p q);
               at_most
                 ~msg:(Printf.sprintf "P(a', x) at element %d" i)
                 float_exact
-                ~than:(p +. error p +. error r)
-                r)
+                ~than:(error p +. error r)
+                (above r p))
             (Nx.gammainc a x) (Nx.gammainc a up) (Nx.gammainc more x));
       prop "gammainc 1/2 x is erf (sqrt x)" (log_batch 1e-6 30.) (fun x ->
           elementwise
-            (fun i p e _ ->
-              close i ~than:(linear e +. (4. *. eps *. e)) (Float.abs (p -. e)))
+            (fun i p e _ -> close i ~than:(linear e +. (4. *. eps *. e)) p e)
             (Nx.gammainc (Nx.full_like x 0.5) x)
             (Nx.erf (Nx.sqrt x))
             x);
@@ -908,8 +912,7 @@ let gammaincc =
            [ ([| -1.; 2.5 |], 0.) ]);
       prop "gammaincc 1 x is exp (-x)" (log_batch 1e-300 700.) (fun x ->
           elementwise
-            (fun i q e _ ->
-              close i ~than:(linear e +. (2. *. eps *. e)) (Float.abs (q -. e)))
+            (fun i q e _ -> close i ~than:(linear e +. (2. *. eps *. e)) q e)
             (Nx.gammaincc (Nx.ones_like x) x)
             (Nx.exp (Nx.neg x))
             x);
@@ -931,7 +934,7 @@ let log_gammainc =
                   ~than:
                     ((16. *. eps *. Float.max 1. (Float.abs lp))
                     +. (2. *. linear q))
-                  (Float.abs (lp -. Stdlib.log1p (-.q))))
+                  lp (Stdlib.log1p (-.q)))
             (Nx.log_gammainc a x) (Nx.gammaincc a x) x);
       prop "gammainc is exp log_gammainc" pairs (fun (a, x) ->
           (* [log P] within 16 ulps, or 16 eps where below 1, moves [exp] by
@@ -942,17 +945,14 @@ let log_gammainc =
               let moved =
                 ((16. *. Float.max 1. (Float.abs lp)) +. 1.) *. 1.01
               in
-              close i
-                ~than:(in_ulps (log_ulps 16 p) p +. in_ulps moved e)
-                (Float.abs (p -. e)))
+              close i ~than:(in_ulps (log_ulps 16 p) p +. in_ulps moved e) p e)
             (Nx.gammainc a x) lp (Nx.exp lp));
       prop "tends to a log x - lgamma (a + 1) as x goes to 0"
         (Gen.pair (log_batch 1e-3 1e3) (log_batch 1e-300 1e-200))
         (fun (a, x) ->
           let r = Nx.sub (Nx.mul a (Nx.log x)) (Nx.lgamma (Nx.add_s a 1.)) in
           elementwise
-            (fun i l r _ ->
-              close i ~than:(32. *. eps *. Float.abs r) (Float.abs (l -. r)))
+            (fun i l r _ -> close i ~than:(32. *. eps *. Float.abs r) l r)
             (Nx.log_gammainc a x) r x);
     ]
 
@@ -974,7 +974,7 @@ let log_gammaincc =
                   ~than:
                     ((16. *. eps *. Float.max 1. (Float.abs lq))
                     +. (2. *. linear p))
-                  (Float.abs (lq -. Stdlib.log1p (-.p))))
+                  lq (Stdlib.log1p (-.p)))
             (Nx.log_gammaincc a x) (Nx.gammainc a x) x);
     ]
 
@@ -1168,7 +1168,7 @@ let beta_inverted ~upper a b x p back =
           at_most
             ~msg:(Printf.sprintf "element %d, on the plateau, from 1/2" i)
             float_exact ~than:0.5
-            (Float.abs (back.(i) -. 0.5))
+            (Nx_support.gap back.(i) 0.5)
         else begin
           let msg = Printf.sprintf "the tail bracketing element %d" i in
           at_least ~msg float_exact ~than:floor m;
@@ -1336,7 +1336,7 @@ let betaincinv =
               if a <= 0x1p20 && bv.(i) <= 0x1p20 then
                 let m = Float.min pv.(i) (1. -. pv.(i)) in
                 let bound = 5. +. (kappa.(i) *. log_ulps 32 m) in
-                close i ~than:(bound *. 0x1p-23 *. x) (Float.abs (got -. x)))
+                close i ~than:(bound *. 0x1p-23 *. x) got x)
             a64 x got);
       test "bfloat16 at a large shape" (fun () ->
           (* The exact quantile, from mpmath: a float32 result rounds once,
@@ -1345,7 +1345,7 @@ let betaincinv =
             Array.map (Nx.scalar Nx.bfloat16) [| 67584.; 0x1p20; 0.5 |]
           in
           let got = Nx.item [] (Nx.betaincinv args.(0) args.(1) args.(2)) in
-          close 0 ~than:0x1p-12 (Float.abs (got -. 0x1.f006f71390e46p-5)));
+          close 0 ~than:0x1p-12 got 0x1.f006f71390e46p-5);
       cases "is the closed forms" ~id:fst
         [
           ("a b 1/2 is 1/2 for a = b", (3.5, 3.5, 0.5, 0.5));
@@ -1363,7 +1363,7 @@ let betaincinv =
           let kappa = Nx.item [] (beta_kappa.k args (Nx.scalar Nx.float64 x)) in
           let m = Float.min p (1. -. p) in
           let bound = 6. +. (kappa *. log_ulps 32 m) in
-          close 0 ~than:(bound *. eps *. x) (Float.abs (Nx.item [] got -. x)));
+          close 0 ~than:(bound *. eps *. x) (Nx.item [] got) x);
     ]
 
 let betainccinv =
@@ -1414,7 +1414,7 @@ let betainccinv =
                 let mirror = 4. +. (kappa.(i) *. x /. (1. -. x) *. l) in
                 close i
                   ~than:(((own *. x) +. (mirror *. c) +. c) *. eps)
-                  (Float.abs (c -. (1. -. x))))
+                  c (1. -. x))
             x q (Nx.betainccinv a b q));
       test "where one ulp of q is most of its tail" (fun () ->
           (* [q = 1 - 3 2^-53], whose tail [m] is [3 2^-53], and the exact
@@ -1432,7 +1432,7 @@ let betainccinv =
           let got = Nx.betainccinv args.(0) args.(1) args.(2) in
           let kappa = Nx.item [] (beta_kappa.k args (Nx.scalar Nx.float64 x)) in
           let bound = 5. +. (kappa *. log_ulps 32 (3. *. 0x1p-53)) in
-          close 0 ~than:(bound *. eps *. x) (Float.abs (Nx.item [] got -. x)));
+          close 0 ~than:(bound *. eps *. x) (Nx.item [] got) x);
       test "stays in [0, 1] on a plateau" (fun () ->
           (* Shapes far below 1, at a [q] of the flat tail, where the last
              step's series is read far outside its convergence. *)
@@ -1467,7 +1467,7 @@ let log_betainc =
               let moved = ((32. *. Float.max 1. (Float.abs l)) +. 1.) *. 1.01 in
               close k
                 ~than:(in_ulps (log_ulps 32 i.(k)) i.(k) +. in_ulps moved e.(k))
-                (Float.abs (i.(k) -. e.(k))))
+                i.(k) e.(k))
             (values l));
     ]
 
