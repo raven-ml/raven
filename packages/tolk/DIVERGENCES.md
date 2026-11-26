@@ -280,8 +280,9 @@ a source (`uop/upat.py` `_get_clause`).
   (every test), `› nvrtc › a library that does not load raises Compile_error
   naming the file`, `› a compile in turn is served by the idle worker, with
   its answer` and `› a process that cannot start raises Failure naming the
-  worker`; `Tolk.Compiler_cuda (fork)` (every test); `Tolk.Indexing › apply_movement_op › laws › one memo keeps the index
-  of each movement it holds`.
+  worker`; `Tolk.Compiler_cuda (fork)` (every test); `Tolk.Indexing ›
+  apply_movement_op › with a memo, each index is the one without it, at a
+  first call and a repeat`.
 
 ## D6. Devices are named, never parsed
 
@@ -4664,8 +4665,9 @@ the walk of `Rangeify.fix_store_hazard`.
 - **Reason:** (a): `Ops` builds nodes without shapes, which `Shape` computes
   over `Ops`, so `Ops.index` cannot know the shape of the `Invalid` it would
   return.
-- **Pinned by:** `Tolk.Indexing › run_rangeify › recorded graphs ›
-  select_no_lane_rangeified.golden` and `select_no_lane_rows_rangeified.golden`;
+- **Pinned by:** `Tolk.Indexing › run_rangeify › rangeifies each recorded
+  graph as its golden states › select_no_lane_rangeified.golden` and
+  `select_no_lane_rows_rangeified.golden`;
   `Tolk.Schedule › create_schedule › recorded › select_no_lane_schedule.golden`,
   `select_one_lane_schedule.golden`, `select_no_lane_rows_schedule.golden`; and
   `Tolk_engine › link and run › each recorded program writes what its
@@ -8560,7 +8562,8 @@ a view names its storage again (D426).
   loop reading a run of the state under a store through it keeps the store`;
   `Graph › a graph of any argument reads back as itself`; `Tolk.Ops › key ›
   tells apart arguments a repr prints alike`; `Tolk.Indexing › run_rangeify ›
-  recorded graphs › custom_kernel_rangeified.golden`, whose `.tolk` writes
+  rangeifies each recorded graph as its golden states ›
+  custom_kernel_rangeified.golden`, whose `.tolk` writes
   the stage `argument=True`.
 
 ## D434. A scalar value has no axis of its consumers, and stores join over what they write

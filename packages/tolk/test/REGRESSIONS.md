@@ -1338,17 +1338,19 @@ MTLCompiler itself skip elsewhere than on macOS.
 ## Indexing
 
 The suite is `Tolk.Indexing` (`schedule/indexing/`), written `IX` below.
-`IX › apply_movement_op` holds tinygrad's index of each movement on hand-built
-cases (`movement_<case>.golden`), and `IX › apply_movement_op › laws` states,
-per kind of movement over generated shapes, that the index reads the element
-the movement places there (`Tensors`, the `Interpreter`) and that the indices
-of two movements compose. `IX › run_rangeify › recorded graphs` holds, for
-each `Tensor` program, the graph tinygrad hands `run_rangeify` when it
+`IX › apply_movement_op › indexes each movement as its golden states` holds
+tinygrad's index of each movement on hand-built cases
+(`movement_<case>.golden`), and the other tests of `IX › apply_movement_op`
+state, per kind of movement over generated shapes (empty axes included), that
+the index reads the element the movement places there (`Tensors`, the
+`Interpreter`) and that the indices of two movements compose. `IX ›
+run_rangeify › rangeifies each recorded graph as its golden states` holds,
+for each `Tensor` program, the graph tinygrad hands `run_rangeify` when it
 schedules the program on the CPU and what `run_rangeify` returns
 (`<program>_rangeified.golden`), and a few hand-built graphs; `IX ›
-run_rangeify › writes` states that ranges keep what a program writes, where
-the result is one kernel; the
-other groups state the interface's rules one at a time. One mutant survives,
+run_rangeify › keeps what a recorded program of one kernel writes` states
+that ranges keep what a program writes, where the result is one kernel; the
+other tests state the interface's rules one at a time. One mutant survives,
 equivalent: `i < data_src_count` as `<=` in `indexing.ml`'s indexing of
 sources, since only a movement has storage past its data sources, and
 movements are removed afterwards.
@@ -1357,24 +1359,24 @@ movements are removed afterwards.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
-| tinygrad: runtime/test_rangeify.py::TestDoubleMatmul::test_double_matmul | two matmuls in a row | `IX › run_rangeify › recorded graphs › double_matmul_rangeified.golden`; the numbers are the executor's (`tolk.engine`) |
-| tinygrad: runtime/test_rangeify.py::TestRangeifyAssign::test_assign_permuted | an assign through a permute | `IX › run_rangeify › recorded graphs › assign_permuted_rangeified.golden`; `IX › run_rangeify › writes › assign_permuted writes what its tensors write` |
-| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_value_index_variable | an index of a value by a scalar, padded or not, reads the element it selects | `IX › run_rangeify › scalar indexes` (4 tests, by constants: a variable bound to a value indexes as the constant) |
-| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_variable_stack_data | a stack of variables used as data gets ranges | `IX › run_rangeify › recorded graphs › variable_stack_rangeified.golden` |
-| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_variable_data_and_shape | a variable read as data and as a size | `IX › run_rangeify › recorded graphs › variable_data_and_shape_rangeified.golden` |
-| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_matmul_relu_cat | a matmul concatenated to a buffer | `IX › run_rangeify › recorded graphs › matmul_relu_cat_rangeified.golden` |
-| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_multi_gather | two gathers of one table, a stage placed on a device | `IX › run_rangeify › recorded graphs › two_gathers_rangeified.golden`; `IX › run_rangeify › rewrites › a stage of a value placed nowhere lives on the sink's device` |
+| tinygrad: runtime/test_rangeify.py::TestDoubleMatmul::test_double_matmul | two matmuls in a row | `IX › run_rangeify › rangeifies each recorded graph as its golden states › double_matmul_rangeified.golden`; the numbers are the executor's (`tolk.engine`) |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyAssign::test_assign_permuted | an assign through a permute | `IX › run_rangeify › rangeifies each recorded graph as its golden states › assign_permuted_rangeified.golden`; `IX › run_rangeify › keeps what a recorded program of one kernel writes` (row `assign_permuted`) |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_value_index_variable | an index of a value by a scalar, padded or not, reads the element it selects | `IX › run_rangeify › an index of a value by scalars reads the element they select` (4 rows, by constants: a variable bound to a value indexes as the constant) |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_variable_stack_data | a stack of variables used as data gets ranges | `IX › run_rangeify › rangeifies each recorded graph as its golden states › variable_stack_rangeified.golden` |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_variable_data_and_shape | a variable read as data and as a size | `IX › run_rangeify › rangeifies each recorded graph as its golden states › variable_data_and_shape_rangeified.golden` |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_matmul_relu_cat | a matmul concatenated to a buffer | `IX › run_rangeify › rangeifies each recorded graph as its golden states › matmul_relu_cat_rangeified.golden` |
+| tinygrad: runtime/test_rangeify.py::TestRangeifyEdgeCase::test_multi_gather | two gathers of one table, a stage placed on a device | `IX › run_rangeify › rangeifies each recorded graph as its golden states › two_gathers_rangeified.golden`; `IX › run_rangeify › a stage of a value placed nowhere lives on the sink's device` |
 | tinygrad: runtime/test_rangeify.py::TestRangeifyPM (7 tests) | `pm_rangeify` | dropped: skipped upstream, the matcher no longer exists |
-| tinygrad: runtime/test_assign.py::TestAssign::test_assign_double_diamond_reduce | each store reads through a sum what the other overwrites | D198, D160: no stage; a cycle that one copy breaks, `SC › create_linear_with_vars › recorded › assign_double_diamond_linear.golden` and its values; `IX › run_rangeify › stores › a value stored into storage it reads is not stored whole here` |
-| tinygrad: runtime/test_custom_kernel.py (the kernels' sources) | a source of a kernel given as code is stored, and stays | `IX › run_rangeify › recorded graphs › custom_kernel_rangeified.golden` (its stage is not removable) |
-| tinygrad: null/test_schedule.py::TestSchedule::test_basic_binop_fusion, test_basic_binop_fusion_deep, test_mulacc_fusion, test_binop_reshape_fusion, test_binop_permute_fusion, test_reduce_reshape_binop_fusion, test_reduce_permute_binop_fusion, test_diamond_folded, test_fold_double_unary, test_push_permute_through_reshape, test_children_dont_push, test_shrink_fuse, test_reduce_permute_nofuse, test_multistage_reduce, test_two_sum, test_contiguous_add, test_reduce_shrink | what these programs store whole | `IX › run_rangeify › recorded graphs ›` `elementwise_three`, `mulacc`, `binop_reshape`, `binop_permute`, `reduce_reshape_binop`, `reduce_permute_binop`, `shared_sum`, `reduce_unary`, `permute_through_reshape`, `children_dont_push`, `shrink_fuse`, `reduce_permute_nofuse`, `multistage_reduce`, `two_consumers`, `contiguous_add`, `reduce_shrink` (`_rangeified.golden`) and the writes law on each that is one kernel; the kernel counts are Rangeify's section (L6), which splits kernels |
-| tinygrad: null/test_schedule.py::TestSchedule::test_pad_reduce_safe, test_layernorm_onelayer, test_argmax, test_argmax_one_kernel, test_conv2d, test_resnet_block | pads under reductions, norms, argmax, convolutions | `IX › run_rangeify › recorded graphs › pad_reduce`, `layernorm`, `standardize`, `rmsnorm`, `argmax`, `conv`, `conv_bn_relu` (`_rangeified.golden`); the kernel counts are Rangeify's section |
+| tinygrad: runtime/test_assign.py::TestAssign::test_assign_double_diamond_reduce | each store reads through a sum what the other overwrites | D198, D160: no stage; a cycle that one copy breaks, `SC › create_linear_with_vars › recorded › assign_double_diamond_linear.golden` and its values; `IX › run_rangeify › a value stored into a destination it reads is not stored whole` |
+| tinygrad: runtime/test_custom_kernel.py (the kernels' sources) | a source of a kernel given as code is stored, and stays | `IX › run_rangeify › rangeifies each recorded graph as its golden states › custom_kernel_rangeified.golden` (its stage is not removable) |
+| tinygrad: null/test_schedule.py::TestSchedule::test_basic_binop_fusion, test_basic_binop_fusion_deep, test_mulacc_fusion, test_binop_reshape_fusion, test_binop_permute_fusion, test_reduce_reshape_binop_fusion, test_reduce_permute_binop_fusion, test_diamond_folded, test_fold_double_unary, test_push_permute_through_reshape, test_children_dont_push, test_shrink_fuse, test_reduce_permute_nofuse, test_multistage_reduce, test_two_sum, test_contiguous_add, test_reduce_shrink | what these programs store whole | `IX › run_rangeify › rangeifies each recorded graph as its golden states ›` `elementwise_three`, `mulacc`, `binop_reshape`, `binop_permute`, `reduce_reshape_binop`, `reduce_permute_binop`, `shared_sum`, `reduce_unary`, `permute_through_reshape`, `children_dont_push`, `shrink_fuse`, `reduce_permute_nofuse`, `multistage_reduce`, `two_consumers`, `contiguous_add`, `reduce_shrink` (`_rangeified.golden`) and `IX › run_rangeify › keeps what a recorded program of one kernel writes` on each that is one kernel; the kernel counts are Rangeify's section (L6), which splits kernels |
+| tinygrad: null/test_schedule.py::TestSchedule::test_pad_reduce_safe, test_layernorm_onelayer, test_argmax, test_argmax_one_kernel, test_conv2d, test_resnet_block | pads under reductions, norms, argmax, convolutions | `IX › run_rangeify › rangeifies each recorded graph as its golden states › pad_reduce`, `layernorm`, `standardize`, `rmsnorm`, `argmax`, `conv`, `conv_bn_relu` (`_rangeified.golden`); the kernel counts are Rangeify's section |
 | tinygrad: null/test_schedule.py (the other kernel-count tests of TestSchedule, TestContiguous, TestSimpleSchedule, TestFusionOp, TestBufferView, TestLimitBufs, TestCopyFolding) | kernel counts of the whole scheduler | dropped here: Rangeify's section (L6); every behaviour of `run_rangeify` they reach is one of the rules and recorded graphs above |
-| tinygrad: null/test_arange.py, runtime/test_arange.py | aranges, gathers and embeddings compile to few operations | `IX › run_rangeify › recorded graphs › arange`, `embedding`, `gather`, `two_gathers`, `cumsum`, `triu` (`_rangeified.golden`); the operation counts are Simplify's and Codegen's sections |
+| tinygrad: null/test_arange.py, runtime/test_arange.py | aranges, gathers and embeddings compile to few operations | `IX › run_rangeify › rangeifies each recorded graph as its golden states › arange`, `embedding`, `gather`, `two_gathers`, `cumsum`, `triu` (`_rangeified.golden`); the operation counts are Simplify's and Codegen's sections |
 | tinygrad: runtime/test_arange.py::TestIndexing::test_index_collapse_float_idx, test_index_collapse_cast_wraps | a selection by a float equality or comparison, and by an equality under a cast that wraps, is not solved for the range | D24: `Tolk.Simplify › keeping values ›` "a float x + y < c is left, where moving y rounds", "x + y <> c under a narrowing cast is left" |
-| tinygrad: runtime/test_arange.py::TestIndexing::test_index_collapse_no_valid_lane | a selection that no lane takes, summed or read, is 0 | `IX › run_rangeify › recorded graphs › select_no_lane_rangeified.golden`, `select_no_lane_rows_rangeified.golden`; `SC › create_schedule › recorded › select_no_lane_kernels.golden`, `select_one_lane_kernels.golden`, `select_no_lane_rows_kernels.golden`; the values: `EN › link and run › each recorded program writes what its tensors compute › select_no_lane`, and `select_one_lane`, `select_no_lane_rows` (D172) |
+| tinygrad: runtime/test_arange.py::TestIndexing::test_index_collapse_no_valid_lane | a selection that no lane takes, summed or read, is 0 | `IX › run_rangeify › rangeifies each recorded graph as its golden states › select_no_lane_rangeified.golden`, `select_no_lane_rows_rangeified.golden`; `SC › create_schedule › recorded › select_no_lane_kernels.golden`, `select_one_lane_kernels.golden`, `select_no_lane_rows_kernels.golden`; the values: `EN › link and run › each recorded program writes what its tensors compute › select_no_lane`, and `select_one_lane`, `select_no_lane_rows` (D172) |
 | tinygrad: external/external_test_schedule_scaling.py | scheduling time grows linearly | dropped: a timing benchmark |
-| tinygrad: external/external_uop_gc.py (`apply_movement_op.cache_clear`) | the cache of indices releases its graphs | dropped: tinygrad's `functools.cache`; the port memoizes nothing |
+| tinygrad: external/external_uop_gc.py (`apply_movement_op.cache_clear`) | the cache of indices releases its graphs | dropped: tinygrad's `functools.cache`; `Indexing.memo` keeps its graphs until the memo itself is dropped, which no test observes; `IX › apply_movement_op › with a memo, each index is the one without it, at a first call and a repeat` states what a memo gives |
 
 ## Allreduce
 
