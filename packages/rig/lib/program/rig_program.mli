@@ -270,9 +270,8 @@ val footprint : t -> Rig.t iarray -> (Rig.t * int) list
     memory, host memory a move names taking {!Rig.Buffer.paged_from} bytes at
     least so that a device can borrow it, and the run's ints, kept twice on the
     host, as much each at least where a step names them, each in the budget
-    {!Rig.charged} names for its kind. [Mapped] memory that falls back at load
-    ({!Rig.charged}) is counted as [Mapped]. Loaded images' code and a rail's
-    memory are not counted. *)
+    {!Rig.charged} names for its kind. Loaded images' code and a rail's memory
+    are not counted. *)
 
 type loaded
 (** The type for loaded programs. A loaded program keeps its memory, images
