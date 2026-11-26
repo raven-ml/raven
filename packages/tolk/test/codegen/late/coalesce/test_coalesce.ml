@@ -771,13 +771,29 @@ let ordered_loads index order =
   in
   Ops.sink (List.init 4 (fun k -> Ops.load (Ops.index buf [ at k ]) []))
 
+let other_store =
+  Ops.store
+    (Ops.index (Shape.param ~shape:[ Int 1 ] 3 Int32) [ Ops.int 0 ])
+    (Ops.int ~dtype:Int32 8)
+
 let ordered_cases =
   let x = Ops.variable "x" (`Int Bigint.zero) (`Int (Bigint.of_int 8)) in
+  let constant k = Ops.int k in
+  let first_two order k = if k < 2 then [ ordering_store ] else order in
   [
     ( "x * 4 + k after a store",
       (fun k -> Ops.O.((x * int 4) + int k)),
       (fun _ -> [ ordering_store ]),
       [ 4 ] );
+    ("k after a store", constant, (fun _ -> [ ordering_store ]), [ 4 ]);
+    ( "k, 0 and 1 after a store and 2 and 3 after another",
+      constant,
+      first_two [ other_store ],
+      [ 2; 2 ] );
+    ( "k, 0 and 1 after a store and 2 and 3 unordered",
+      constant,
+      first_two [],
+      [ 2; 2 ] );
   ]
 
 let widths op sink =

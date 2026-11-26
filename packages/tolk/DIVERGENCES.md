@@ -10011,7 +10011,9 @@ D466.
   copies of 8 bytes too) and `a product summed over heads of 110 in copies
   of 8 bytes …`, and their race checks, and the Stage suite's `sources`
   (`bf16_2048.cu`, `f16_padded.cu`,
-  merged reads); the tolk bench's `contract/qk-f32-2048` and
+  merged reads); `Tolk.Coalesce › memory_coalescing › loads at indices ordered
+  after a store merge as at their values, at` (every row); the tolk bench's
+  `contract/qk-f32-2048` and
   `stream/q8_0-64` rows and rune's
   `Cuda/matmul-float32-transposed-16384x440x1320`,
   `Cuda/matmul-float32-input-gradient-16384x1320x440` and

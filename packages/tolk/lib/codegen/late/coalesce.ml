@@ -211,16 +211,19 @@ let memory_coalescing sink (r : Renderer.t) =
                   | _ when is_literal idx -> (None, int_value idx)
                   | _ -> (Some idx, Bigint.zero)
                 in
-                (* An index ordered after effects, as a staged tile's read
-                   is after the next trip's copies, keeps its base ordered
-                   so: each element's index lifts its offset into the
-                   order ({!Shape.symbolic_simple}). *)
+                (* An index ordered after effects, as a staged tile's read is
+                   after the next trip's copies, keeps its base ordered so: each
+                   element's index lifts its offset into the order
+                   ({!Shape.symbolic_simple}). A constant's base is [0] ordered
+                   so. *)
                 let base, offset =
                   match (op idx, src idx) with
                   | Op.After, x :: deps -> (
                       match split x with
                       | Some b, o -> (Some (after b deps), o)
-                      | None, _ -> (Some idx, Bigint.zero))
+                      | None, o ->
+                          ( Some (after (const_like x (`Int Bigint.zero)) deps),
+                            o ))
                   | _ -> split idx
                 in
                 let depth =
