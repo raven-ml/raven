@@ -16,11 +16,13 @@
       is stored in its own format, as the unsigned integer of its width, and
       computed with as a {!Dtype.Float32}: a load converts it up, a store
       converts it down ({!f2f}). A cast to it rounds its source to it, once; a
-      source more precise than a {!Dtype.Float32} reaches one rounded to odd.
-      An operation on it computes in {!Dtype.Float32}, and its result is
-      rounded to the narrow float only where a store converts it down: a later
-      operation, or a cast of it to another type, reads the unrounded value. A
-      copy or a selection keeps the stored bits.
+      source more precise than a {!Dtype.Float32} reaches one rounded to odd. An
+      operation on it computes in {!Dtype.Float32}, and its result is rounded to
+      the narrow float only where a store converts it down: a later operation,
+      or a cast of it to another type, reads the unrounded value. A copy or a
+      selection keeps the stored bits. A bit reinterpretation of it as the
+      unsigned integer of its storage reads the stored bits, and one from that
+      integer writes them.
 
     The conversions are IEEE's: one rounding, to nearest with ties to even,
     gradual underflow, and infinities and NaNs kept where the format has them.
@@ -45,8 +47,9 @@ val f2f : ?sat:bool -> Ops.t -> Dtype.t -> Dtype.t -> Ops.t
       but a finite value of an 8-bit float, if [sat], is at most its greatest
       finite value.
 
-    A NaN stays a NaN, and a quiet one stays quiet; an [fnuz] format has one
-    NaN, and no negative zero. [sat] defaults to [true].
+    A NaN stays a NaN, and a quiet one stays quiet; an infinity, or a NaN,
+    narrows to the NaN of its sign where the format has two; an [fnuz] format
+    has one NaN, and no negative zero. [sat] defaults to [true].
 
     Raises [Invalid_argument] unless one of [fr] and [to_] is {!Dtype.Float32}
     and the other a narrower float. *)
@@ -100,7 +103,9 @@ val pm_dtype_decomps : (ctx, Ops.t) Ops.Pattern_matcher.t
 (** [pm_dtype_decomps] notes the narrow floats and 64-bit integers a kernel
     uses, and at the kernel's {!Op.Sink} rewrites it to emulate those that the
     target lacks, in the promotion order of their types ({!Dtype.compare}).
-    Unsigned 64-bit integers are emulated with signed ones.
+    Unsigned 64-bit integers are emulated with signed ones. The emulation
+    converts no float to an integer type that cannot hold it, which C leaves
+    undefined.
 
     Raises [Invalid_argument] if a 64-bit integer variable must be emulated, or
     if {!Setting.emulated_dtypes} names no data type. *)

@@ -1143,19 +1143,26 @@ let selects_every_code =
                 List.map code others;
               ])))
 
-(* A bit reinterpretation of a narrow float reads its storage, every code kept,
-   a signalling NaN's included. *)
+(* A bit reinterpretation of a narrow float reads its storage, and one from the
+   storage's integers writes them, every code kept, a signalling NaN's
+   included. *)
 let reinterprets =
-  cases "a bit reinterpretation reads a narrow float's storage" ~id:alias
-    narrows (fun dt ->
+  cases "a bit reinterpretation reads and writes a narrow float's storage"
+    ~id:alias narrows (fun dt ->
       let st = storage dt in
       let cs = List.sort_uniq compare (boundary_codes dt @ nan_codes dt) in
       let read =
         kernel [ dt ] st (List.length cs) (fun xs ->
             Ops.bitcast (List.hd xs) st)
       in
-      equal (list hex) cs
-        (List.map as_int (written ~on:on_narrows read [ List.map code cs ])))
+      equal ~msg:"read" (list hex) cs
+        (List.map as_int (written ~on:on_narrows read [ List.map code cs ]));
+      let write =
+        kernel [ st ] dt (List.length cs) (fun xs ->
+            Ops.bitcast (List.hd xs) dt)
+      in
+      equal ~msg:"written" (list hex) cs
+        (List.map as_int (written ~on:on_narrows write [ List.map code cs ])))
 
 let computed_then_reinterpreted =
   cases "a narrow float computed, then reinterpreted, is the code of the result"

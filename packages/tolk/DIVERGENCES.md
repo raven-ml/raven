@@ -938,12 +938,13 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
 - **tolk:** `Decomp_dtype.moved` and the store rule of
   `Decomp_dtype.pm_float_decomp` that stores it; `Cstyle.cuda_kernel`.
 - **Differs:** a store of a value that moves stored bits without arithmetic
-  (a load, a constant the float holds exactly, a selection between such
-  values, and stacks and lanes of them) stores those bits, as the storage's
-  unsigned integers, where tinygrad's widening and narrowing makes every NaN
-  its format's quiet one. Arithmetic still converts, and gives a NaN as the
-  NaN rule allows (D9). A move keeps a merged access's lanes together, so it
-  loads and stores vectors of the storage, which CUDA does not name as the
+  (a load, a constant the float holds exactly, a bit reinterpretation of an
+  integer, a selection between such values, and stacks and lanes of them)
+  stores those bits, as the storage's unsigned integers, where tinygrad's
+  widening and narrowing makes every NaN its format's quiet one. Arithmetic
+  still converts, and gives a NaN as the NaN rule allows (D9). A move keeps a
+  merged access's lanes together, so it loads and stores vectors of the
+  storage, which CUDA does not name as the
   renderer writes them (`unsigned_short4`, `unsigned_char4`): the CUDA
   renderer declares a vector of `unsigned char` or `unsigned short` as it
   declares one of `half`, but for 2 and 4 bytes, which it writes as one
@@ -960,9 +961,9 @@ Each part is one layer of the head's NaN rule: a float constant is its bits
 - **Pinned by:** the `Decomp_dtype` suite (`test/codegen/decomp/decomp_dtype`):
   `pm_dtype_decomps › narrow floats › an emulated copy keeps every code, a
   signalling NaN's included`, `› an emulated selection keeps every code, a
-  signalling NaN's included` and `› a bit reinterpretation reads a narrow
-  float's storage`, on every emulated float, and the goldens of the
-  `where`, `flip`, `gather` and `pad` kernels; the
+  signalling NaN's included` and `› a bit reinterpretation reads and writes a
+  narrow float's storage`, on every emulated float, and the goldens of the
+  `where`, `flip`, `gather`, `pad` and `bitcast_from_storage` kernels; the
   Codegen suite's `emulated floats' vectors on
   CUDA › a copy of every code, a thread's lanes moved together, keeps it`
   (`bfloat16` on sm_75, `fp8e4m3` on sm_80 and `fp8e4m3fnuz` on sm_89) and

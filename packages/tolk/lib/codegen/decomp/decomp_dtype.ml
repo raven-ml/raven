@@ -596,11 +596,11 @@ and f2f_store st idx value fr to_ =
                    f2f (bitcast (index value [ int i ]) tdt) to_ fr;
                  ]))
 
-(* The bits that [x], a value of the emulated float, moves from storage
-   without arithmetic: a load, a constant, a selection between such values,
-   and stacks and lanes of them. A move keeps every code, a signalling NaN's
-   included, where converting through the emulating float would quiet it
-  . *)
+(* The bits that [x], a value of the emulated float, moves from storage without
+   arithmetic: a load, a constant, a bit reinterpretation of an integer, a
+   selection between such values, and stacks and lanes of them. A move keeps
+   every code, a signalling NaN's included, where converting through the
+   emulating float would quiet it. *)
 and moved ((fr, _) as ctx) x =
   let all xs =
     List.fold_right
@@ -620,6 +620,9 @@ and moved ((fr, _) as ctx) x =
       | exception Invalid_argument _ -> None)
   | _ when not (Dtype.equal (dtype x) fr) -> None
   | Op.Load, [ idx ] -> Some (load (f2f_rewrite ctx idx) [])
+  | Op.Bitcast, [ y ] when not (Dtype.is_float (dtype y)) ->
+      let y = f2f_rewrite ctx y in
+      Some (if Dtype.equal (dtype y) tdt then y else bitcast y tdt)
   | Op.Where, [ c; a; b ] -> (
       match (moved ctx a, moved ctx b) with
       | Some a, Some b -> Some (where c a b)
@@ -742,17 +745,6 @@ and pm_float_decomp =
                        :: bits
                        :: List.tl (List.tl (src st))))
                  (moved ctx value));
-         rule_ctx
-           (Upat.op Op.Store ~name:"st"
-              ~src:
-                [ Upat.var "idx"; Upat.op Op.Bitcast ~dtype:floats ~name:"val" ])
-           (fun ((fr, _) as ctx) m ->
-             let idx = m "idx" and value = m "val" in
-             if emulated ctx value && storage ctx idx then
-               Some
-                 (replace (m "st")
-                    ~src:[ idx; bitcast (nth value 0) (f2f_dt fr) ])
-             else None);
          rule_ctx
            (Upat.op Op.Store ~name:"st"
               ~src:
