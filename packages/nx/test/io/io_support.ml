@@ -105,6 +105,10 @@ external resident : string -> string = "nx_io_test_resident"
 (* [page_size ()] is the size of [resident]'s pages: Linux only. *)
 external page_size : unit -> int = "nx_io_test_page_size"
 
+(* [storage path] is the bytes of storage the file [path] takes, or [-1] where
+   the system states none, as on Windows. *)
+external storage : string -> int = "nx_io_test_storage"
+
 (* The pages of the file [path] the system holds in memory, in order. *)
 let resident_pages path =
   let r = resident path in

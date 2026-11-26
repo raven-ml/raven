@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*/
 
 /* What nx.io's suites ask of the system that OCaml's Unix does not give:
-   dropping a file's cached pages, and which of them the system holds. */
+   dropping a file's cached pages, which of them the system holds, and the
+   storage a file takes. */
 
 #define _GNU_SOURCE
 
@@ -19,6 +20,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#elif !defined(_WIN32)
+#include <sys/stat.h>
 #endif
 
 /* [drop_pages path] writes the file at [path]'s dirty pages to storage and asks
@@ -85,5 +88,19 @@ value nx_io_test_page_size(value unit) {
   return Val_long(sysconf(_SC_PAGESIZE));
 #else
   caml_failwith("page size: Linux only");
+#endif
+}
+
+/* [storage path] is the bytes of storage the file at [path] takes, from its
+   blocks of 512 bytes, or -1 where the system states none (Windows) or the
+   file cannot be read. */
+value nx_io_test_storage(value v_path) {
+#if !defined(_WIN32)
+  struct stat st;
+  if (stat(String_val(v_path), &st) != 0) return Val_long(-1);
+  return Val_long((long)st.st_blocks * 512);
+#else
+  (void)v_path;
+  return Val_long(-1);
 #endif
 }
