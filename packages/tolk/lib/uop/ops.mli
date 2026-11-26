@@ -845,7 +845,10 @@ val broadcast : t -> int -> t
 
 val index : t -> t list -> t
 (** [index u idxs] is the {!Op.Index} of [u] by [idxs]; the [i]th source of a
-    stack if [u] is a stack and [idxs] the constant [i]. *)
+    stack if [u] is a stack of [n] sources and [idxs] the weak integer literal
+    [i], a negative [i] counting from the end ([-1] the last).
+
+    Raises [Invalid_argument] if [i] is outside [-n] to [n - 1]. *)
 
 val load : t -> t list -> t
 (** [load p rest] is the {!Op.Load} through [p]. *)
@@ -1003,8 +1006,9 @@ val bufferize : ?opts:bufferize_opts -> t -> t list -> t
 (** {1:placement Placement} *)
 
 val device : t -> device option
-(** [device u] is where [u] lives: its argument's device for storage and
-    copies, its sources' first otherwise. *)
+(** [device u] is where [u] lives: its argument's device for storage, copies and
+    placed stages, its first source's for an {!Op.After} and another stage, and
+    the first device of its sources otherwise. *)
 
 val on_disk : t -> bool
 (** [on_disk u] is [true] iff [u] lives on a disk device. *)
@@ -1045,8 +1049,14 @@ type movement =
     [Invalid_argument]. *)
 
 val addrspace : t -> Dtype.addr_space option
-(** [addrspace u] is the address space [u] lives in. A node of type [Void]
-    holds no memory and lives in [Alu]. *)
+(** [addrspace u] is the address space [u] lives in. A node of type [Void] holds
+    no memory and lives in [Alu]. Storage lives where its argument places it,
+    and binary data in [Global]. A constant, a variable, a range, a hardware
+    index and a load, which brings a value into registers, live in [Alu]. An
+    index, a cast, an {!Op.After}, a reduction and a movement live where their
+    first source does. A stack, a matrix product and an elementwise operation
+    live where those of their sources that live somewhere do, and nowhere
+    ([None]) if those differ. Any other node lives nowhere. *)
 
 val whole : t -> t
 (** [whole p] is the parameter of the storage the {!Op.Param} [p] views, its
@@ -1073,7 +1083,8 @@ val unique_num : unit -> int
 
 val take_unique : int -> unit
 (** [take_unique n] makes every number {!unique_num} returns afterwards greater
-    than [n], up to [max_int], past which no number is left.
+    than [n]. Once [max_int] is taken, a later number is unspecified: no number
+    is left.
 
     Raises [Invalid_argument] if [n] is [max_int]. *)
 

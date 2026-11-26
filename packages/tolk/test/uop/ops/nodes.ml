@@ -801,6 +801,24 @@ let construct =
           equal uops nodes (List.map node tags));
     ]
 
+let nth_group =
+  let s = Ops.sink [ var "a" 0 1; var "b" 0 1; var "c" 0 1 ] in
+  group "nth"
+    [
+      test "is the ith source, from 0" (fun () ->
+          equal uops (Ops.src s) (List.map (Ops.nth s) [ 0; 1; 2 ]));
+      cases "raises for a position with no source"
+        ~id:(fun (what, _, _) -> what)
+        [
+          ("-1", s, -1);
+          ("one past the last", s, 3);
+          ("max_int", s, max_int);
+          ("min_int", s, min_int);
+          ("0 of no source", Ops.sink [], 0);
+        ]
+        (fun (_, u, k) -> rejects (fun () -> Ops.nth u k));
+    ]
+
 let replacing =
   group "replace"
     [
@@ -2056,6 +2074,7 @@ let groups =
     pp_args;
     identity;
     construct;
+    nth_group;
     replacing;
     equality;
     ordering;

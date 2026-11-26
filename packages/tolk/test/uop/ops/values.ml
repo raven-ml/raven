@@ -1,4 +1,4 @@
-(* Values: bounds, arithmetic on constants and divisibility. *)
+(* Evaluating: bounds and arithmetic on constants. *)
 
 open Windtrap
 open Tolk
@@ -202,7 +202,9 @@ let gen_float_bounds =
    bounds are computed in doubles: a corner, its widening and their sum are each
    rounded by at most [2^-53] of a magnitude below [2 (|corner| + least
    normal)], so each errs by under [2^-50] of [|corner| + least normal], and a
-   further [2^-48] of it covers both. *)
+   further [2^-48] of it covers both. The slack exceeds Float64's [2^-52], so
+   Float64's tightness is checked only to a relative [2^-48]; the narrower
+   types' [2^-m] lie far above the slack. *)
 let stated_interval dt o (a0, a1) (b0, b1) =
   let e, m = Dtype.finfo dt in
   let tiny = Float.ldexp 1. (2 - (1 lsl (e - 1))) in
@@ -1275,37 +1277,6 @@ let shifts =
               alu Weak_int Shl [ i 1; i (n + 1) ]));
     ]
 
-(* Divisibility *)
-
-let divisibility =
-  let x = weak_var "x" 10 20 in
-  group "divisibility"
-    [
-      test "const_factor is a known divisor" (fun () ->
-          equal z (Bigint.of_int 42) (Ops.const_factor (Ops.int 42));
-          equal z (Bigint.of_int 6) (Ops.const_factor Ops.O.(int 30 + int 12));
-          equal z (Bigint.of_int 5) (Ops.const_factor Ops.O.(int 5 * int 7));
-          equal z (Bigint.of_int 3) (Ops.const_factor Ops.O.(x * int 3));
-          equal z Bigint.one (Ops.const_factor Ops.O.(x // int 4));
-          let g = Ops.special (Int 8) "gidx0" in
-          equal z Bigint.one (Ops.const_factor g);
-          equal z (Bigint.of_int 3) (Ops.const_factor Ops.O.(g * int 3));
-          equal z (Bigint.of_int 3)
-            (Ops.const_factor Ops.O.((g * int 3) + int 6));
-          equal z Bigint.one (Ops.const_factor Ops.O.((g * int 3) + int 1)));
-      test "const_factor of storage without a multiple is 1" (fun () ->
-          equal z Bigint.one
-            (Ops.const_factor (Shape.param ~shape:(ints [ 4 ]) 0 Int32)));
-      test "pop_const splits off a constant operand" (fun () ->
-          let e = Ops.O.(x + int 3) in
-          equal (pair uop const) (x, i 3) (Ops.pop_const e);
-          equal (pair uop const)
-            (x, i 3)
-            (Ops.pop_const ~op:Op.Mul Ops.O.(x * int 3));
-          equal (pair uop const) (e, i 1) (Ops.pop_const ~op:Op.Mul e);
-          equal (pair uop const) (x, i 0) (Ops.pop_const x));
-    ]
-
 let groups =
   [
     bounds_group;
@@ -1317,5 +1288,4 @@ let groups =
     numbers;
     exact_powers;
     shifts;
-    divisibility;
   ]

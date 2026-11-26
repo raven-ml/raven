@@ -85,8 +85,8 @@ a source (`uop/upat.py` `_get_clause`).
   the checks of `ParamArg.buffer` in `uop/spec.py` `spec_tensor` and
   `spec_kernel_graph` hold by construction.
 - **Reason:** (c).
-- **Pinned by:** for `Ops`: `Tolk.Ops › storage › new_buffer takes the
-  next slot without one` and `Tolk.Ops › pp_arg › writes each argument as
+- **Pinned by:** for `Ops`: `Tolk.Ops › new_buffer › without a slot, is
+  in a slot of its own` and `Tolk.Ops › pp_arg › writes each argument as
   reprs.golden states › reprs.golden`; for the engine, the Engine suite
   (`test/engine/tolk_engine`): `refusals › link
   refuses a device the map does not hold` and `refusals › run refuses a
@@ -160,9 +160,9 @@ a source (`uop/upat.py` `_get_clause`).
 - **Pinned by:** for `Codegen`: `Tolk.Codegen › beam search › a kernel that
   asks for a beam of width w is optimised by beam w` and `› raises
   Invalid_argument when a kernel asks for a beam and none is given`; for
-  `Ops`: `Tolk.Ops › resolve › simplify leaves a constant, and a sink of
-  constants and stacks of constants, alone`, and the `Tolk.Ops › resolve`
-  tests that simplify with `Symbolic`'s rules; `Tolk.Ops › pp › writes each
+  `Ops`: `Tolk.Shape › resolve › simplify leaves a constant, and a sink of
+  constants and stacks of constants, as they are`, and the `Tolk.Shape ›
+  resolve` tests that simplify with `Symbolic`'s rules; `Tolk.Ops › pp › writes each
   node as pretty.golden states › pretty.golden`; `Tolk.Ops › elementwise
   patterns › the pattern operators are the named pattern operations`; for `Renderer`: `Tolk.Renderer ›
   Compiler › compile raises what the toolchain rejects`, its
@@ -300,9 +300,10 @@ a source (`uop/upat.py` `_get_clause`).
 - **Reason:** (c).
 - **Pinned by:** for targets, `Tolk.Device › renderer takes a device's
   name as it is` and `Tolk.Device › renderer › picks a device's renderer as
-  tinygrad does`; for the disk, `Tolk.Ops › several devices › on_disk holds
-  for a disk device`, `Tolk.Ops › several devices › copy_to_device rejects
-  a disk and a weak type` and `Tolk.Ops › storage › clone rejects a disk`.
+  tinygrad does`; for the disk, `Tolk.Ops › on_disk › is true of a node on a
+  disk device`, `Tolk.Ops › copy_to_device › raises for a disk or a weak
+  type` and `Tolk.Shape › storage › clone raises for a disk, named in any
+  case`.
 
 ## D7. Withdrawn
 
@@ -8317,9 +8318,10 @@ reason and its pins.
 - **Reason:** (e). Storage made later without a slot could draw the given number
   and, at the same size and type, be the same node: two storages as one, so a
   write to one reaches the other.
-- **Pinned by:** `Tolk.Ops › storage › a buffer given a slot is no buffer made
-  without one`, `› an alloc given a slot is no alloc made without one` and `› a
-  placeholder given a slot is no placeholder made without one`.
+- **Pinned by:** `Tolk.Ops › new_buffer › given a slot, is no buffer made
+  without one`, `Tolk.Shape › storage › an alloc given a slot is no alloc made
+  without one` and `› a placeholder given a slot is no placeholder made without
+  one`.
 
 ## D419. Metal hides a bfloat16 product's operands from its compiler
 
