@@ -8,7 +8,8 @@
    may end the process and the copy may raise Sys_error naming the file, so it
    places the value, raises that or ends the child by a signal, and nothing
    else. A child copies, since a host read of such a page may end the process.
-   It skips without such a GPU. *)
+   It skips without such a GPU, and on Windows, which refuses to truncate a
+   mapped file. *)
 
 open Windtrap
 
@@ -37,6 +38,7 @@ let truncated_child path =
       | exception e -> print_string (Printexc.to_string e))
 
 let test_truncated () =
+  if Sys.win32 then skip ~reason:"Windows refuses to truncate a mapped file" ();
   let path = Filename.temp_file "nx_io_gpu" ".npy" in
   Fun.protect ~finally:(fun () -> Sys.remove path) @@ fun () ->
   let ic = Unix.open_process_args_in exe [| exe; "truncated"; path |] in
