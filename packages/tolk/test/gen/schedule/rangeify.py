@@ -5,11 +5,9 @@ receives when the tensors of a `Tensor` program are scheduled on the CPU, and
 `<program>_kernels.golden` the kernel graph it returns. A program that
 schedules several graphs, such as a function compiled on its own, records the later ones as `<program>_<n>.golden` and
 `<program>_<n>_kernels.golden`.
-
-`kernel_counts.golden` is the number of kernels of each recorded graph.
 """
 
-from golden import attempt, forked, graph, table
+from golden import attempt, forked, graph
 from tinygrad import Tensor, Variable, dtypes, function
 from tinygrad.helpers import DEV, MAX_KERNEL_BUFFERS, SPLIT_REDUCEOP
 from tinygrad.dtype import Invalid
@@ -471,9 +469,5 @@ def declare(name, program):
     return [(name if n == 0 else f"{name}_{n}", c) for n, c in enumerate(counts)]
 
 
-COUNTS = [row for name, program in PROGRAMS.items() for row in attempt(name, lambda: declare(name, program), [])]
-
-
-@table
-def kernel_counts():
-    return ["program", "kernels"], COUNTS
+for name, program in PROGRAMS.items():
+    attempt(name, lambda: declare(name, program), [])

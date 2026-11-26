@@ -3496,7 +3496,6 @@ schedule/rangeify/inline_function.golden
 schedule/rangeify/inline_function_kernels.golden
 schedule/rangeify/invalids_read.golden
 schedule/rangeify/invalids_read_kernels.golden
-schedule/rangeify/kernel_counts.golden
 schedule/rangeify/layernorm.golden
 schedule/rangeify/layernorm_kernels.golden
 schedule/rangeify/long_cumsum.golden
