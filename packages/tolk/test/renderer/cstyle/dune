@@ -9,6 +9,7 @@
   tolk
   tolk_test
   tolk_run
+  tolk_gpus
   tolk.engine
   rig
   rig.elf
@@ -18,19 +19,43 @@
   (glob_files *.golden)
   (glob_files *.tolk))
  (action
-  (setenv
-   COMGR_PATH
-   ./comgr_stand_in
-   (progn
-    (run %{test} --exclude-tag expand-ssa)
-    (setenv
-     EXPAND_SSA
-     1
-     (run %{test} --tag expand-ssa))))))
+  (progn
+   (setenv
+    COMGR_PATH
+    ./comgr_stand_in
+    (progn
+     (run %{test} --exclude-tag expand-ssa --exclude-tag comgr)
+     (setenv
+      EXPAND_SSA
+      1
+      (run %{test} --tag expand-ssa))))
+   (run %{test} --tag comgr))))
 
 ; No machine here has comgr: COMGR_PATH names a file that stands in for it,
 ; which HIP's compiler finds to name its table. A compile with it fails, and
-; its tests skip.
+; its tests skip. The tests tagged comgr run kernels on an AMD GPU, and run
+; in a process of their own, with the comgr the machine has.
+
+; The tests on Metal run again under Metal's API validation, which aborts a
+; launch whose bound arguments break the rules of the function it calls.
+; GitHub's macOS machines have a device without residency sets, and there
+; the validation layer aborts in the call that opens it.
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (enabled_if
+  (and
+   (= %{system} macosx)
+   (<> %{env:GITHUB_ACTIONS=false} true)))
+ (deps
+  (glob_files *.golden)
+  (glob_files *.tolk))
+ (action
+  (setenv
+   MTL_DEBUG_LAYER
+   1
+   (run %{exe:test_cstyle.exe} -f "metal › on Metal"))))
 
 (rule
  (target comgr_stand_in)

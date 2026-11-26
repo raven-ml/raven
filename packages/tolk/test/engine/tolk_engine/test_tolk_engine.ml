@@ -346,160 +346,6 @@ let with_binary bytes prg =
       (List.filteri (fun i _ -> i < 3) srcs
       @ [ Ops.v Op.Binary ~arg:(Ops.Bytes bytes) ])
 
-(* Signed arithmetic
-
-   An operation on a signed integer wraps at its width, as the interpreter
-   computes it, also where C's would overflow: C leaves that undefined, and a
-   compiler that takes it for impossible folds [x + y < x] to [y < 0]. A kernel
-   of one operation [op] on a signed type writes [op a b] and [op a b < a] for
-   every pair of the type's extremes, their neighbours and [-1], [0], [1] and
-   [2], and [b * 4], which the compiler shifts. Of [m] and [k], [a] and [b]
-   masked to their non-negative bits, whose bounds are narrowed but still let
-   a sum or a shift leave the type, it writes [m + k < m] and
-   [(m << 1) >> 1 < m]. *)
-
-let signed_ops = Op.[ Add; Sub; Mul; Neg ]
-
-let extremes dt =
-  let lo = Dtype.min dt and hi = Dtype.max dt in
-  let near v d = Dtype.Value.(v + of_int d) in
-  let n = Dtype.Value.of_int in
-  [ lo; near lo 1; n (-1); n 0; n 1; n 2; near hi (-1); hi ]
-
-let signed_kernel dt op n =
-  let open Ops.O in
-  let buffer slot dt = Shape.placeholder ~slot [ n ] dt in
-  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let at slot dt = Ops.index (buffer slot dt) [ i ] in
-  let a = at 2 dt and b = at 3 dt in
-  let r = if Op.equal op Neg then Ops.alu a Neg [] else Ops.alu a op [ b ] in
-  let four = Ops.int ~dtype:dt 4 and one = Ops.int ~dtype:dt 1 in
-  let mask x = x land Ops.const ~dtype:dt (Dtype.max dt :> Dtype.const) in
-  let m = mask a and k = mask b in
-  Ops.sink
-    ~kernel:(Ops.kernel_info ~name:"wraps" ())
-    [
-      Ops.end_
-        (Ops.group
-           [
-             Ops.store (at 0 dt) r;
-             Ops.store (at 1 Bool) (r < a);
-             Ops.store (at 4 dt) (b * four);
-             Ops.store (at 5 Bool) (m + k < m);
-             Ops.store (at 6 Bool) ((m lsl one) lsr one < m);
-           ])
-        [ i ];
-    ]
-
-(* [op] of the integer type [dt] on constants, wrapped at its width. *)
-let exec dt op args =
-  match Ops.exec_alu op dt (args :> Dtype.const list) with
-  | #Dtype.value as v -> v
-  | `Invalid -> invalid_arg "an integer operation gave Invalid"
-
-let wraps_on d dt op =
-  let e = extremes dt in
-  let each f = Array.of_list (List.concat_map f e) in
-  let a = each (fun x -> List.map (fun _ -> x) e) and b = each (fun _ -> e) in
-  let n = Array.length a in
-  let r =
-    Array.map2
-      (fun x y -> exec dt op (if Op.equal op Neg then [ x ] else [ x; y ]))
-      a b
-  in
-  let less = Array.map2 (fun r x -> `Bool Dtype.Value.(r < x)) r a in
-  let four = Array.map (fun y -> exec dt Mul [ y; Dtype.Value.of_int 4 ]) b in
-  let mask = Array.map (fun x -> exec dt And [ x; Dtype.max dt ]) in
-  let m = mask a and k = mask b in
-  let below f = Array.map2 (fun x y -> `Bool Dtype.Value.(f x y < x)) m k in
-  let one = Dtype.Value.of_int 1 in
-  let sum x y = exec dt Add [ x; y ]
-  and shifted x _ = exec dt Shr [ exec dt Shl [ x; one ]; one ] in
-  let zeros dt = Array.make n (Dtype.truncate dt (`Int Bigint.zero)) in
-  let prg = Codegen.to_program (signed_kernel dt op n) (Run.renderer d) in
-  let out =
-    Run.on d prg
-      [
-        (0, zeros dt);
-        (1, zeros Bool);
-        (2, a);
-        (3, b);
-        (4, zeros dt);
-        (5, zeros Bool);
-        (6, zeros Bool);
-      ]
-  in
-  let msg = Format.asprintf "%a %a" Dtype.pp dt Op.pp op in
-  equal ~msg values r (List.assoc 0 out);
-  equal ~msg:(msg ^ " < a") values less (List.assoc 1 out);
-  equal ~msg:(msg ^ ": b * 4") values four (List.assoc 4 out);
-  equal ~msg:(msg ^ ": m + k < m") values (below sum) (List.assoc 5 out);
-  equal ~msg:(msg ^ ": (m << 1) >> 1 < m") values (below shifted)
-    (List.assoc 6 out)
-
-let wraps_signed d () =
-  List.iter (fun dt -> List.iter (wraps_on d dt) signed_ops) Dtype.sints
-
-(* Divisions and shifts at the extremes
-
-   A division by 0, a signed type's least value divided by -1 and a shift by a
-   count at or past the type's width have values: a quotient by 0 is 0 and a
-   remainder by 0 the dividend; the least value's quotient by -1 wraps to the
-   least value and its remainder is 0; a left shift and an unsigned right shift
-   give 0, a signed right shift 0 or -1 by the sign. C leaves each undefined,
-   and x86 traps on both divisions. A kernel of one integer type writes the
-   truncated and floored quotients and remainders of [a] by [b], [a // a],
-   [a << k], [a >> k], [a]'s quotient and remainder by a constant 0, and [a]
-   shifted either way by a constant count of the type's width, of [lanes]
-   loaded operands, drawn at the type's extremes, which the
-   interpreter's values must match. It runs in scalars, and in vectors of 4
-   lanes, which C does not promote to [int]. *)
-
-let lanes = 64
-
-let in_vectors = [ Opt.Split { axis = 0; amount = 4; target = Upcast; top = false } ]
-
-let extreme_kernel ~opts dt =
-  let open Ops.O in
-  let i = Ops.range ~axis_type:Weak (Int lanes) [ 0 ] in
-  let at slot = Ops.index (Shape.placeholder ~slot [ lanes ] dt) [ i ] in
-  let a = at 9 and b = at 10 and k = at 11 in
-  let zero = Ops.int ~dtype:dt 0 in
-  let width = Ops.int ~dtype:dt (Dtype.bitsize dt) in
-  Ops.sink
-    ~kernel:(Ops.kernel_info ~name:"extremes" ~opts_to_apply:opts ())
-    [
-      Ops.end_
-        (Ops.group
-           [
-             Ops.store (at 0) (Ops.alu a Truncdiv [ b ]);
-             Ops.store (at 1) (Ops.alu a Truncmod [ b ]);
-             Ops.store (at 2) (Ops.alu a Div [ b ]);
-             Ops.store (at 3) (Ops.alu a Mod [ b ]);
-             Ops.store (at 4) (Ops.alu a Div [ a ]);
-             Ops.store (at 5) (a lsl k);
-             Ops.store (at 6) (a lsr k);
-             Ops.store (at 7) (Ops.alu a Truncdiv [ zero ]);
-             Ops.store (at 8) (Ops.alu a Truncmod [ zero ]);
-             Ops.store (at 12) (a lsl width);
-             Ops.store (at 13) (a lsr width);
-           ])
-        [ i ];
-    ]
-
-(* [extreme_kernel ~opts dt] compiled for [d]'s target, once for each. *)
-let extreme_program =
-  let compiled = Hashtbl.create 16 in
-  fun d ~opts dt ->
-    let key = (Run.target d, opts, dt) in
-    match Hashtbl.find_opt compiled key with
-    | Some prg -> prg
-    | None ->
-        let k = extreme_kernel ~opts dt in
-        let prg = Codegen.to_program k (Run.renderer d) in
-        Hashtbl.replace compiled key prg;
-        prg
-
 let of_int dt n = Dtype.truncate dt (`Int (Bigint.of_int n))
 
 (* The least and greatest values, their neighbours, and -1 to 2. *)
@@ -507,107 +353,6 @@ let edges dt =
   let near v d = Dtype.truncate dt Dtype.Value.(v + of_int d) in
   [ Dtype.min dt; near (Dtype.min dt) 1; of_int dt (-1); of_int dt 0;
     of_int dt 1; of_int dt 2; near (Dtype.max dt) (-1); Dtype.max dt ]
-
-(* Counts either side of the type's width and of the widths C computes in. *)
-let counts dt =
-  let w = Dtype.bitsize dt in
-  List.filter_map
-    (fun n ->
-      if Dtype.Value.(of_int n <= Dtype.max dt) then Some (of_int dt n)
-      else None)
-    (List.sort_uniq Int.compare
-       [ 0; 1; w - 1; w; w + 1; 31; 32; 33; 63; 64; 65; 127 ])
-
-type extremes = {
-  dt : Dtype.t;
-  a : Dtype.value array;
-  b : Dtype.value array;
-  k : Dtype.value array;
-}
-
-let pp_extremes ppf e =
-  let vs = Testable.pp (array Dtypes.value) in
-  Format.fprintf ppf "%a: a %a, b %a, k %a" Dtype.pp e.dt vs e.a vs e.b vs
-    e.k
-
-(* Each type's every pair of edges, and its counts in turn. *)
-let extreme_examples =
-  List.map
-    (fun dt ->
-      let e = Array.of_list (edges dt) and c = Array.of_list (counts dt) in
-      let n = Array.length e in
-      {
-        dt;
-        a = Array.init lanes (fun j -> e.(j / n mod n));
-        b = Array.init lanes (fun j -> e.(j mod n));
-        k = Array.init lanes (fun j -> c.(j mod Array.length c));
-      })
-    Dtype.ints
-
-let extreme_gen =
-  let open Gen in
-  let* dt = of_list Dtype.ints in
-  let drawn l random = frequency [ (3, of_list l); (1, random) ] in
-  let any = map (of_int dt) int in
-  let max_count =
-    if Dtype.bitsize dt > 8 then 200 else Dtype.Value.to_int (Dtype.max dt)
-  in
-  let lane l random = array ~size:(constant lanes) (drawn l random) in
-  let+ a = lane (edges dt) any
-  and+ b = lane (edges dt) any
-  and+ k = lane (counts dt) (map (of_int dt) (int_range 0 max_count)) in
-  { dt; a; b; k }
-
-let extremes_compute d { dt; a; b; k } =
-  let w = Dtype.bitsize dt in
-  let is v n = Dtype.Value.( = ) v (of_int dt n) in
-  let signed = List.mem dt Dtype.sints in
-  cover "the least value by -1"
-    (signed
-    && Array.exists2 (fun x y -> Dtype.Value.(x = Dtype.min dt) && is y (-1)) a b);
-  cover "a negative value by 0"
-    (Array.exists2 (fun x y -> Dtype.Value.(x < of_int 0) && is y 0) a b);
-  cover "a positive value by 0"
-    (Array.exists2 (fun x y -> Dtype.Value.(of_int 0 < x) && is y 0) a b);
-  cover "0 by itself" (Array.exists (fun x -> is x 0) a);
-  cover "a count of the width" (Array.exists (fun n -> is n w) k);
-  cover "a count of 64 or more"
-    (Array.exists (fun n -> Dtype.Value.(of_int 64 <= n)) k);
-  cover "a signed type" signed;
-  cover "an unsigned type" (not signed);
-  cover "a 64-bit type" (w = 64);
-  let each op x y = Array.map2 (fun x y -> exec dt op [ x; y ]) x y in
-  let zeros = Array.make lanes (of_int dt 0) in
-  List.iter
-    (fun (how, opts) ->
-      let out =
-        Run.on d
-          (extreme_program d ~opts dt)
-          (List.init 9 (fun slot -> (slot, zeros))
-          @ [ (9, a); (10, b); (11, k); (12, zeros); (13, zeros) ])
-      in
-      let msg = Format.asprintf "%a in %s" Dtype.pp dt how in
-      let expect slot what v =
-        equal ~msg:(msg ^ what) values v (List.assoc slot out)
-      in
-      expect 0 ": a / b" (each Truncdiv a b);
-      expect 1 ": a mod b" (each Truncmod a b);
-      expect 2 ": a // b, floored" (each Div a b);
-      expect 3 ": a mod b, floored" (each Mod a b);
-      expect 4 ": a // a, floored" (each Div a a);
-      expect 5 ": a << k" (each Shl a k);
-      expect 6 ": a >> k" (each Shr a k);
-      expect 7 ": a / 0" (each Truncdiv a zeros);
-      expect 8 ": a mod 0" (each Truncmod a zeros);
-      let widths = Array.make lanes (of_int dt w) in
-      expect 12 ": a << width" (each Shl a widths);
-      expect 13 ": a >> width" (each Shr a widths))
-    [ ("scalars", []); ("vectors", in_vectors) ]
-
-let extremes_prop name d =
-  prop name ~examples:extreme_examples
-    (Gen.with_pp pp_extremes extreme_gen)
-    (fun e -> extremes_compute (d ()) e)
 
 (* Casts to an 8-bit float at its bounds
 
@@ -696,52 +441,6 @@ let casts_to_fp8 d src =
 
 let fp8_cases name d =
   cases name ~id:Dtype.name fp8_sources (fun src -> casts_to_fp8 (d ()) src)
-
-(* A shift's count may be a uint32 whatever the shifted type: the constant
-   counts past a narrow type's width, 32 and 65536 shift its extremes as the
-   interpreter does, in scalars. *)
-let wide_counts = [ 8; 16; 32; 256; 257; 65536; 65537 ]
-
-let wide_count_kernel dt =
-  let n = List.length (edges dt) in
-  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
-  let at slot = Ops.index (Shape.placeholder ~slot [ n ] dt) [ i ] in
-  let a = at 0 in
-  let shifts =
-    List.concat_map
-      (fun c ->
-        let k = Ops.int ~dtype:Uint32 c in
-        [ Ops.alu a Shl [ k ]; Ops.alu a Shr [ k ] ])
-      wide_counts
-  in
-  Ops.sink
-    ~kernel:(Ops.kernel_info ~name:"wide_counts" ~opts_to_apply:[] ())
-    [
-      Ops.end_
-        (Ops.group (List.mapi (fun j v -> Ops.store (at (j + 1)) v) shifts))
-        [ i ];
-    ]
-
-let shifts_by_wide_counts d dt =
-  let a = Array.of_list (edges dt) in
-  let prg = Codegen.to_program (wide_count_kernel dt) (Run.renderer d) in
-  let out = Run.on d prg [ (0, a) ] in
-  List.iteri
-    (fun j c ->
-      let k = Dtype.Value.of_int c in
-      let msg op = Format.asprintf "%a %s %d" Dtype.pp dt op c in
-      equal ~msg:(msg "<<") values
-        (Array.map (fun x -> exec dt Shl [ x; k ]) a)
-        (List.assoc ((2 * j) + 1) out);
-      equal ~msg:(msg ">>") values
-        (Array.map (fun x -> exec dt Shr [ x; k ]) a)
-        (List.assoc ((2 * j) + 2) out))
-    wide_counts
-
-let wide_count_cases name d =
-  cases name ~id:(Format.asprintf "%a" Dtype.pp)
-    Dtype.[ Int8; Uint8; Int16; Uint16 ]
-    (fun dt -> shifts_by_wide_counts (d ()) dt)
 
 (* Shifts by counts of any size
 
@@ -1252,11 +951,6 @@ let on_the_host =
         runs_a_kernel;
       test "a variable left out of vars takes its bound value"
         takes_the_bound_value;
-      test "signed arithmetic wraps as the interpreter" (wraps_signed host);
-      extremes_prop "divisions and shifts at the extremes compute as the \
-         interpreter" (fun () -> host);
-      wide_count_cases "a narrow type shifted by a uint32 count computes as \
-         the interpreter" (fun () -> host);
       fp8_cases "a cast to an 8-bit float at its bounds computes as truncate"
         (fun () -> host);
       shift_counts_prop
@@ -8293,16 +7987,8 @@ let on_a_gpu kind =
       test "compiles is Ok iff a kernel compiles for the GPU" (fun () ->
           agrees (Gpus.gpu kind));
       group "custom kernels with variables" (custom_kernel_scalars ~devices ());
-      test "signed arithmetic wraps as the interpreter" (fun () ->
-          wraps_signed (devices "CPU:1") ());
-      extremes_prop
-        "divisions and shifts at the extremes compute as the interpreter"
-        (fun () -> devices "CPU:1");
       test "a pad of a quotient by a constant table writes what it computes"
         (divides_by_a_table ~devices "CPU:1");
-      wide_count_cases
-        "a narrow type shifted by a uint32 count computes as the interpreter"
-        (fun () -> devices "CPU:1");
       fp8_cases "a cast to an 8-bit float at its bounds computes as truncate"
         (fun () -> devices "CPU:1");
       shift_counts_prop

@@ -7499,9 +7499,11 @@ C's undefined behaviour.
   up to 14% more words (`embedding/render`), for the casts.
 - **Reason:** (e): at the pinned commit, a CUDA kernel computes
   `x + y < x` of int32 as `y < 0`, true where `x + y` wraps below `x`.
-- **Pinned by:** the Tolk_engine suite's `signed arithmetic wraps as the
-  interpreter`, on the host (`kernels on the host`) and on each GPU
-  (`GPUs ›`, run on fudge's CUDA and NV); rune's `jit › integer arithmetic
+- **Pinned by:** the Cstyle suite's `a signed integer's sum, difference,
+  product, negation and left shift wrap at its width, as Ops.exec_alu
+  computes them`, on the host (`clang › on the host`) and on each GPU
+  (`metal › on Metal`, `cuda › on CUDA` and `› on NV`, `hip › on AMD`, run
+  on fudge's CUDA and NV); rune's `jit › integer arithmetic
   at its type's edges gives eager's values`, shifts included, and its GPU
   suite's `integers ›` the same law.
 
@@ -7565,11 +7567,12 @@ C's undefined behaviour.
   shifted left by a weak count of 256 is itself, where it is 0, and on a
   target emulating 64-bit integers a shift by a count of 2^32 is by 0,
   where it is past the width.
-- **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
-  extremes compute as the interpreter`, on the host (`kernels on the
-  host`) and on each GPU (`GPUs ›`, run on fudge's CUDA and NV), against
-  `Ops.exec_alu`; `a narrow type shifted by a uint32 count computes as the
-  interpreter`; `a shift by a literal or weak count of any size computes
+- **Pinned by:** the Cstyle suite's `a division by 0, the least value's by
+  -1 and a shift past the width are what Ops.exec_alu computes`, on the
+  host (`clang › on the host`) and on each GPU (`metal › on Metal`, `cuda
+  › on CUDA` and `› on NV`, `hip › on AMD`, run on fudge's CUDA and NV),
+  and `an 8- or 16-bit integer shifted by a uint32 count is what
+  Ops.exec_alu computes`, beside them; the Tolk_engine suite's `a shift by a literal or weak count of any size computes
   the shift`, compiled and through the interpreter, on the host and each
   GPU; `an emulated 64-bit shift reads the whole of its count`, compiled
   with 64-bit integers emulated, by counts of the operand's type, of
@@ -7618,10 +7621,11 @@ C's undefined behaviour.
 - **Reason:** (e): at the pinned commit, the host's kernel of an integer
   division by a loaded 0 dies with SIGFPE, and CUDA's uint8 quotient of 0
   by 0 is 255, where tinygrad's interpreter gives 0.
-- **Pinned by:** the Tolk_engine suite's `divisions and shifts at the
-  extremes compute as the interpreter`, on the host (`kernels on the host`)
-  and on each GPU (`GPUs ›`, run on fudge's CUDA and NV), with 0 among the
-  divisors, `a // a` and a constant 0, against `Ops.exec_alu`; the Symbolic
+- **Pinned by:** the Cstyle suite's `a division by 0, the least value's by
+  -1 and a shift past the width are what Ops.exec_alu computes`, on the
+  host (`clang › on the host`) and on each GPU (`metal › on Metal`, `cuda
+  › on CUDA` and `› on NV`, `hip › on AMD`, run on fudge's CUDA and NV),
+  with 0 among the divisors, `a // a` and a constant 0, against `Ops.exec_alu`; the Symbolic
   suite's `identities › x // x is 1 where x's bounds hold no 0` and `› a
   committed x // x stays where x's bounds hold 0`; the
   Decomp_dtype suite's `pm_dtype_decomps › 64-bit integers › an emulated
