@@ -1731,12 +1731,7 @@ let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
         let bound =
           (lse_rounds n *. u) +. ((u +. narrow) *. Float.abs want) +. slack
         in
-        (* windtrap orders NaN below every float: a NaN [y] is an infinite
-           error, so that no bound passes it. *)
-        let err =
-          if Float.is_nan y then Float.infinity else Float.abs (y -. want)
-        in
-        at_most ~msg float_exact ~than:bound err)
+        at_most ~msg float_exact ~than:bound (Nx_array_support.gap y want))
     rows
 
 (* Arg, Logsumexp and Moments scans *)
