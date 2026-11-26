@@ -7,7 +7,11 @@
    into a run of rows of a value computed from buffers of its own: an
    elementwise value, a sum along a last axis, or a product of a matrix and a
    vector. Its schedule runs once as made and once with each launch run as its
-   members, one call each; both write the same bits. *)
+   members, one call each; both write the same bits.
+
+   Calls holds the laws of the states a loop's call reads each trip, of the
+   views of storage a call compiled on its own reads and writes, and of
+   stores through bytes viewed as another type. *)
 
 open Windtrap
 open Tolk
@@ -1305,7 +1309,7 @@ let limits =
 (* The launches on each GPU present: a GPU's tests skip without one. *)
 let on_a_gpu kind =
   group kind
-    [
+    ([
       test
         "sixteen products of one kernel run as one launch, writing what they \
          write apart"
@@ -1335,13 +1339,14 @@ let on_a_gpu kind =
         "the stores of one state write each piece's values" gen_many
         (writes_pieces kind);
     ]
+    @ Calls.on_a_gpu kind)
 
 let () =
   exit
   @@ run "Tolk.Launch"
        [
          group "create_schedule › states"
-           [
+           ([
              test
                "a store reads what its write's other store writes as it was, \
                 in either listing"
@@ -1408,7 +1413,8 @@ let () =
                "a loop reading an older run of its storage reads a copy of the \
                 run"
                loop_reads_older_run;
-           ];
+           ]
+           @ Calls.states);
          group "create_schedule › an After's stores"
            [
              test
@@ -1450,6 +1456,9 @@ let () =
                 raise, in any listing"
                two_whole;
            ];
+         group "create_linear_with_vars › calls of views" Calls.views;
+         group "create_linear_with_vars › stores through bytes"
+           Calls.byte_stores;
          group "create_linear_with_vars › launches"
            [
              (* Over 1 s: a case compiles its program twice, its members apart

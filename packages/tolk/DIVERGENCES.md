@@ -1601,26 +1601,26 @@ renderer.
 - **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
   `get_kernel_graph › loops of calls › a loop of a precompiled call is no
   kernel`, `› a loop of a call ends over the loop's range` and `› a loop's
-  call reads views that move with its range`; the
-  `Schedule` suite (`test/schedule/schedule`): `create_schedule › an end of
-  a call over a loop schedules the call in its loop`, `› a loop runs after
-  the call that writes what it reads`, `› a loop runs before the call that
-  overwrites what it reads`, and `create_linear_with_vars › loops of calls ›
-  a loop of a precompiled call is a loop of its body's calls`, `› a loop
-  inside a loop's body keeps its own end`, `› a loop outside a kernel that
-  runs anything but one call is refused` and `› a loop
-  of a call over a range of another axis type than Loop is refused`, each row
-  at the top level and in a precompiled and an inlined body; the `Tolk_engine`
-  suite (`test/engine/tolk_engine`): `link and run › a scan runs its body once
-  per trip, carrying in place` and `› a scan's merged calls carry in place as
-  its calls apart do` (D404), on the host and each GPU present; `calls of
-  views › nested loops of a call run the outer range slowest`, `› a loop reads
-  each run as its trip starts`, `› a loop in a body reads its parameters as
-  each trip starts` and `› an After state's fixed run under a back edge`, with
-  the loop's call inlined, the nested loops and the loop in a body also against
-  `Tensors`. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops of
-  calls › accepts an end of a call over loop ranges`, `› accepts a view that
-  moves with loop ranges, and its offset`, `› accepts a loop range`, `›
+  call reads views that move with its range`; the `Schedule` suite
+  (`test/schedule/schedule`): `create_schedule › an end of a call over a loop
+  schedules the call in its loop`, `› a loop runs after the call that writes
+  what it reads`, `› a loop runs before the call that overwrites what it
+  reads`, and `create_linear_with_vars › loops of calls › a loop of a
+  precompiled call is a loop of its body's calls`, `› a loop inside a loop's
+  body keeps its own end`, `› a loop outside a kernel that runs anything but
+  one call is refused` and `› a loop of a call over a range of another axis
+  type than Loop is refused`, each row at the top level and in a precompiled
+  and an inlined body; the `Tolk_engine` suite (`test/engine/tolk_engine`):
+  `link and run › a scan runs its body once per trip, carrying in place` and
+  `› a scan's merged calls carry in place as its calls apart do` (D404), on
+  the host and each GPU present; the `Tolk.Launch` suite's `create_schedule ›
+  states › nested loops of a call run the outer range slowest`, `› a loop
+  reads each run as its trip starts`, `› a loop in a body reads its parameters
+  as each trip starts` and `› an After state's fixed run under a back edge`,
+  with the loop's call inlined, the nested loops and the loop in a body also
+  against `Tensors`. The `Spec` suite (`test/uop/spec`): `kernel_graph › loops
+  of calls › accepts an end of a call over loop ranges`, `› accepts a view
+  that moves with loop ranges, and its offset`, `› accepts a loop range`, `›
   refuses a loop of a call over a range of any other kind` and `› refuses a
   weak sum of a weak integer variable`; `verdicts.tolk`'s D60 rows.
 
@@ -7624,19 +7624,19 @@ C's undefined behaviour.
 - **Reason:** (e): at the pinned commit, the host's kernel of an integer
   division by a loaded 0 dies with SIGFPE, and CUDA's uint8 quotient of 0
   by 0 is 255, where tinygrad's interpreter gives 0.
-- **Pinned by:** the Cstyle suite's `a division by 0, the least value's by
-  -1 and a shift past the width are what Ops.exec_alu computes`, on the
-  host (`clang › on the host`) and on each GPU (`metal › on Metal`, `cuda
-  › on CUDA` and `› on NV`, `hip › on AMD`, run on fudge's CUDA and NV),
-  with 0 among the divisors, `a // a` and a constant 0, against `Ops.exec_alu`; the Symbolic
-  suite's `identities › x // x is 1 where x's bounds hold no 0` and `› a
-  committed x // x stays where x's bounds hold 0`; the
-  Decomp_dtype suite's `pm_dtype_decomps › 64-bit integers › an emulated
-  quotient by 0 is 0` and its neighbours; rune's `jit › integer arithmetic at its type's
-  edges gives eager's values`, its GPU suite's `integers ›` the same law,
-  and `Lower_arith › divisions by constants give eager's bits`; the
-  Ops suite's `vmin and vmax › of a gated load of a constant table take in
-  its alternative`; the Tolk_engine suite's `a pad of integer divisions writes
+- **Pinned by:** the Cstyle suite's `a division by 0, the least value's by -1
+  and a shift past the width are what Ops.exec_alu computes`, on the host
+  (`clang › on the host`) and on each GPU (`metal › on Metal`, `cuda › on
+  CUDA` and `› on NV`, `hip › on AMD`, run on fudge's CUDA and NV), with 0
+  among the divisors, `a // a` and a constant 0, against `Ops.exec_alu`; the
+  Symbolic suite's `identities › x // x is 1 where x's bounds hold no 0` and
+  `› a committed x // x stays where x's bounds hold 0`; the Decomp_dtype
+  suite's `pm_dtype_decomps › 64-bit integers › an emulated quotient by 0 is
+  0` and its neighbours; rune's `jit › integer arithmetic at its type's edges
+  gives eager's values`, its GPU suite's `integers ›` the same law, and
+  `Lower_arith › divisions by constants give eager's bits`; the Ops suite's
+  `vmin and vmax › of a gated load of a constant table take in its
+  alternative`; the Tolk_engine suite's `a pad of integer divisions writes
   what its tensors compute`, `a pad of a quotient by a constant table writes
   what it computes` on the host and on each GPU, and the Codegen suite's
   `padto_idiv_upcast`.
@@ -7813,14 +7813,14 @@ into D342, which holds its rule, its reason and its pins.
   16 bytes; its kernels write new storage, a state of it or such a run,
   so no raven library makes a refused call.
 - **Pinned by:** the Prepare suite's `prepare_rangeify › calls compiled on
-  their own`; the Tolk_engine suite's `calls of views` (by a kernel and a
-  precompiled call; `› a call writes through a run of storage wherever it
-  starts`); the Schedule suite's `create_linear_with_vars › calls of views`
-  (the refusals, of a loop's column and of rows off 16 bytes among them,
-  with the specification checks on); the Spec suite's `tensor › accepts a call
-  whatever its arguments' starts` and `verdicts.tolk`'s shrink rows, a
-  shrink of storage in the kernel graph; the Rangeify suite's `custom_kernel_of_views`
-  recordings.
+  their own`; the Launch suite's `create_linear_with_vars › calls of views`
+  (by a kernel and a precompiled call; `› a call writes through a run of
+  storage wherever it starts`); the Schedule suite's `create_linear_with_vars
+  › calls of views` (the refusals, of a loop's column and of rows off 16 bytes
+  among them, with the specification checks on); the Spec suite's `tensor ›
+  accepts a call whatever its arguments' starts` and `verdicts.tolk`'s shrink
+  rows, a shrink of storage in the kernel graph; the Rangeify suite's
+  `custom_kernel_of_views` recordings.
 
 ## D356. A run's binding of a name holds over the value a call binds it to
 
@@ -8454,22 +8454,22 @@ reason and its pins.
   2 where the trips compute `6,7,8,9`. A stage made before the loop holds no
   trip's writes. rune and jera emit no read of this shape: their suites'
   schedules are the same with and without the rule.
-- **Pinned by:** the `Tolk_engine` suite's `calls of views › a call's fixed read
-  sees what its loop wrote`, `› a loop's fixed read off its parameter's start is
-  read each trip`, `› a back edge's fixed read sees what its loop wrote`,
-  `› a loop reads a flip of its written storage each trip`, `› a loop reads
-  earlier states as they were`, `› a call reads storage it writes off its
-  parameter's start, no after listing the storage`, `› a loop reads each run
-  as its trip starts`, `› a loop's fixed read of an After state it writes is
-  read each trip`, `› an After state's fixed run off its parameter's start`,
-  `› an After state's fixed run under a back edge`, `› a fixed run of the
-  state two stores deep`, `› a loop reads each run of an After state as its
-  trip starts`, `› an After state's fixed runs at other offsets`, `› two fixed
-  runs of an After state`, `› an After state's fixed run through a join`, `› a
-  loop named by an older state, a run of the later`, `› a bitcast run of an
-  After state read each trip`, `› older and sibling states' runs stay as they
-  were`, `› two loops in sequence read their runs`, `› a loop's older run of
-  storage leaves the state before it`.
+- **Pinned by:** the `Tolk.Launch` suite's `create_schedule › states › a
+  call's fixed read sees what its loop wrote`, `› a loop's fixed read off its
+  parameter's start is read each trip`, `› a back edge's fixed read sees what
+  its loop wrote`, `› a loop reads a flip of its written storage each trip`,
+  `› a loop reads earlier states as they were`, `› a call reads storage it
+  writes off its parameter's start, no after listing the storage`, `› a loop
+  reads each run as its trip starts`, `› a loop's fixed read of an After state
+  it writes is read each trip`, `› an After state's fixed run off its
+  parameter's start`, `› an After state's fixed run under a back edge`, `› a
+  fixed run of the state two stores deep`, `› a loop reads each run of an
+  After state as its trip starts`, `› an After state's fixed runs at other
+  offsets`, `› two fixed runs of an After state`, `› an After state's fixed
+  run through a join`, `› a loop named by an older state, a run of the later`,
+  `› a bitcast run of an After state read each trip`, `› older and sibling
+  states' runs stay as they were`, `› two loops in sequence read their runs`,
+  `› a loop's older run of storage leaves the state before it`.
 
 ## D429. Withdrawn
 
@@ -8585,17 +8585,18 @@ a view names its storage again (D426).
   `expand_bitcast` has made the target a value: at the pin, `x.bitcast(
   dtypes.uint8)[4:16].bitcast(dtypes.float32).assign(v)` raises it on a
   realized buffer and on a state. No raven consumer emits such a store.
-- **Pinned by:** `Tolk_engine › a store through whole elements of bytes viewed
-  as another type writes the value's bits into them` and `› a store through a
-  run of bytes that cuts elements writes the value's bytes into it, the others
-  kept`, against `Tensors`, on the host and in each GPU group;
-  `Tolk_engine › a store through a bitcast of a view that is no run writes
-  the value's bits through the view`; `Tolk.Schedule ›
-  create_linear_with_vars › stores through bytes › a store through bytes
-  that are no run, or that may cut elements where a bound variable places an
-  end, is refused`; `Tolk.Launch_law › create_linear_with_vars › launches › on the
-  host, a schedule's launches write what its graph states` and the same on
-  each GPU, whose programs store through bytes of states.
+- **Pinned by:** `Tolk.Launch › create_linear_with_vars › stores through bytes
+  › a store through whole elements of bytes viewed as another type writes the
+  value's bits into them` and `› a store through a run of bytes that cuts
+  elements writes the value's bytes into it, the others kept`, against
+  `Tensors`, on the host and in each of its GPU groups (`GPUs ›`); `› a store
+  through a bitcast of a view that is no run writes the value's bits through
+  the view`; `Tolk.Schedule › create_linear_with_vars › stores through bytes ›
+  a store through bytes that are no run, or that may cut elements where a
+  bound variable places an end, is refused`; `Tolk.Launch_law ›
+  create_linear_with_vars › launches › on the host, a schedule's launches
+  write what its graph states` and the same on each GPU, whose programs store
+  through bytes of states.
 
 ## D460. A compiled schedule is kept on disk whole
 
@@ -8655,15 +8656,14 @@ a view names its storage again (D426).
   same node `v` as its argument lost the store: the store's target was the
   stage that holds the read, and `b` kept its old elements, a silent wrong
   value. The call still reads `v` as it was, through the stage.
-- **Pinned by:** `Tolk_engine › calls of views › a store through a run a call
-  reads lands`, `› a store through a reshape of a run a call reads lands`, `› a
-  loop reading a run of the state under a store through it keeps the store`;
-  `Tolk.Graph › of_string › a graph of any argument reads back as itself`;
-  `Tolk.Ops › key › tells apart arguments a repr prints alike`;
-  `Tolk.Indexing › run_rangeify ›
-  rangeifies each recorded graph as its golden states ›
-  custom_kernel_rangeified.golden`, whose `.tolk` writes
-  the stage `argument=True`.
+- **Pinned by:** `Tolk.Launch › create_schedule › states › a store through a
+  run a call reads lands`, `› a store through a reshape of a run a call reads
+  lands`, `› a loop reading a run of the state under a store through it keeps
+  the store`; `Tolk.Graph › of_string › a graph of any argument reads back as
+  itself`; `Tolk.Ops › key › tells apart arguments a repr prints alike`;
+  `Tolk.Indexing › run_rangeify › rangeifies each recorded graph as its golden
+  states › custom_kernel_rangeified.golden`, whose `.tolk` writes the stage
+  `argument=True`.
 
 ## D434. A scalar value has no axis of its consumers, and stores join over what they write
 
@@ -8683,9 +8683,9 @@ a view names its storage again (D426).
   buffer reached the renderer as an index of the constant, `(1092616192)[i]`,
   a Clang error on a valid graph. Keeping the value unstaged then joined its
   stores across the two sizes, one store writing a fraction of its storage.
-- **Pinned by:** `Tolk_engine › calls of views › one constant stored at two
-  states through bitcasts`, `› one value stored whole into storages of other
-  sizes`.
+- **Pinned by:** `Tolk.Launch › create_schedule › states › one constant stored
+  at two states through bitcasts`, `› one value stored whole into storages of
+  other sizes`.
 
 ## D435. Withdrawn
 
@@ -8715,12 +8715,12 @@ one reads what the other left, and then they form a chain (D474).
   the refusal of a loop's fixed read of the state. Every read then is a read of
   a state of the storage: the runs read each trip, and the older states read
   as they were, need no case of their own.
-- **Pinned by:** `Tolk_engine › calls of views › a loop over a bitcast state
-  writes an older name of its storage`, `› a call reads states of a bitcast and
-  of its storage`, `› a later state over a bitcast is read each trip`, `› a loop
-  reads a run of a state of a bitcast each trip`, `› one constant stored at two
-  states through bitcasts`, `› a store through a run of a bitcast of a
-  state`, `› a weak value through a run of a bitcast`.
+- **Pinned by:** `Tolk.Launch › create_schedule › states › a loop over a
+  bitcast state writes an older name of its storage`, `› a call reads states
+  of a bitcast and of its storage`, `› a later state over a bitcast is read
+  each trip`, `› a loop reads a run of a state of a bitcast each trip`, `› one
+  constant stored at two states through bitcasts`, `› a store through a run of
+  a bitcast of a state`, `› a weak value through a run of a bitcast`.
 
 ## D437. A loop's read of a value of its state moves into the call's body
 
@@ -8742,18 +8742,19 @@ one reads what the other left, and then they form a chain (D474).
   refused.
 - **Reason:** (e): `Ops.after` gives these programs a meaning and they raised
   "reads storage the call writes".
-- **Pinned by:** `Tolk_engine › calls of views › a loop's value of a state it
-  writes is computed each trip`, `› a loop reads a value of several states each
-  trip`, `› a loop's value read twice in the body, or sharing a leaf`, `› a loop's
-  value through a bound variable`, `› a state over a view that is no run is read
-  each trip`, `› a kernel body takes a value computed each trip`, `› a back edge's
-  value is computed each trip`, `› a contiguous value of a written read is read
-  each trip`, `› a loop reading a state older than its listing reads it as it
-  was`, `› a loop reads a join of its own states each trip`, `› a loop in a
-  body reads its parameter's run each trip`, `› a loop in a body reads its
-  parameters as each trip starts`; the Schedule suite's
-  `create_linear_with_vars › calls of views › a value moving with a loop in a
-  call is refused` and `› a stored value moving with a loop is refused`.
+- **Pinned by:** `Tolk.Launch › create_schedule › states › a loop's value of a
+  state it writes is computed each trip`, `› a loop reads a value of several
+  states each trip`, `› a loop's value read twice in the body, or sharing a
+  leaf`, `› a loop's value through a bound variable`, `› a state over a view
+  that is no run is read each trip`, `› a kernel body takes a value computed
+  each trip`, `› a back edge's value is computed each trip`, `› a contiguous
+  value of a written read is read each trip`, `› a loop reading a state older
+  than its listing reads it as it was`, `› a loop reads a join of its own
+  states each trip`, `› a loop in a body reads its parameter's run each trip`,
+  `› a loop in a body reads its parameters as each trip starts`; the Schedule
+  suite's `create_linear_with_vars › calls of views › a value moving with a
+  loop in a call is refused` and `› a stored value moving with a loop is
+  refused`.
 
 ## D466. A long host kernel is written as several functions
 
@@ -9129,21 +9130,21 @@ D466.
   order of the sink's two items, and `after x1 [store (x 2..4) …]` and
   `after x [store y v]`, which `Ops.after` gives a meaning, raised internal
   errors.
-- **Pinned by:** the `Tolk.Schedule` suite: `create_linear_with_vars › the order
-  of a sink's items changes no result` and `› a schedule writes what its tensors
-  compute`; `create_linear_with_vars › two writes over one state › an effect
-  listed after another lands after it, whichever the sink reaches first`;
-  `create_linear_with_vars › joins › a store naming an older state, listed over
-  a later one, writes the later state`, `› a store through a run of a join
-  stores into the state it holds`, `› an after listing only a store into other
-  storage is that state` and `› stores into one other storage land as listed`;
-  the `Tolk_engine` suite's `calls of views › a call given an older state to
-  write and a later to read reads it before the call`, `› a kernel listed over
-  two storages names the later state in either listing` and `› runs of one other
-  storage land as listed in an after`; `Tolk.Launch › create_schedule › an
-  After's stores › a store listed twice lands at its first place`; the
-  `Tolk.Prepare` suite's recorded `*_prepared` graphs that `sequence` changes,
-  whose `.tolk` files name this entry.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_linear_with_vars › the
+  order of a sink's items changes no result` and `› a schedule writes what its
+  tensors compute`; `create_linear_with_vars › two writes over one state › an
+  effect listed after another lands after it, whichever the sink reaches
+  first`; `create_linear_with_vars › joins › a store naming an older state,
+  listed over a later one, writes the later state`, `› a store through a run
+  of a join stores into the state it holds`, `› an after listing only a store
+  into other storage is that state` and `› stores into one other storage land
+  as listed`; the `Tolk.Launch` suite's `create_schedule › states › a call
+  given an older state to write and a later to read reads it before the call`,
+  `› a kernel listed over two storages names the later state in either
+  listing` and `› runs of one other storage land as listed in an after`;
+  `Tolk.Launch › create_schedule › an After's stores › a store listed twice
+  lands at its first place`; the `Tolk.Prepare` suite's recorded `*_prepared`
+  graphs that `sequence` changes, whose `.tolk` files name this entry.
 
 ## D474. Two writes over one state are refused unless one runs after the other
 
@@ -9183,9 +9184,9 @@ D466.
   which covers refused and computed programs; the program
   `write_over_written`, tinygrad's test, whose linear and values tolk
   computes; `Tolk.Launch › create_schedule › an After's stores › an After of
-  a state and one of a view of it raise, in either listing`; the `Tolk_engine`
-  suite's `calls of views › a whole state
-  holds the sibling store its own store reads`, and the refusals beside it
+  a state and one of a view of it raise, in either listing`; the `Tolk.Launch`
+  suite's `create_schedule › states › a whole state holds the sibling store
+  its own store reads`, and the refusals beside it
   in the `Tolk.Schedule` suite's `create_linear_with_vars › two writes over
   one state`: `› a read of a whole state beside a sibling After is refused`,
   `› a value reading a join of sibling writes is refused`, `› a loop reading
@@ -9210,10 +9211,10 @@ D466.
 - **Reason:** (e), as D473: `Ops.after` gives the program a meaning, and
   tinygrad refuses it. No raven consumer emits it.
 - **Pinned by:** the `Tolk.Schedule` suite's `create_linear_with_vars › values
-  ordered after effects › a constant ordered after a store is the constant, and
-  the store runs`; the `Tolk_engine` suite's `calls of views › a value ordered
-  after effects is the value` and `› a state over a view a loop moves, ordered
-  after effects, is read each trip`.
+  ordered after effects › a constant ordered after a store is the constant,
+  and the store runs`; the `Tolk.Launch` suite's `create_schedule › states › a
+  value ordered after effects is the value` and `› a state over a view a loop
+  moves, ordered after effects, is read each trip`.
 
 ## D476. A buffer only one loop's calls take lives within a trip
 
@@ -10476,19 +10477,19 @@ D466.
   rune encodes its 8-bit floats itself and hands tolk none.
 - **Pinned by:** the Dtype suite's `Casts › truncate › past an 8-bit float's
   greatest value is Fp8e5m2's infinity from 61440 and Fp8e4m3's greatest
-  value, an infinity included` and `› rounds an 8-bit float's greatest
-  value, the tie past it and an infinity`; the Decomp_dtype suite's `f2f ›
-  a float with infinities is an infinity from its greatest value plus half an
-  ulp`, `› with saturation, a float without infinities overflows to its
-  greatest value, and an infinity is that value in e4m3 and the NaN in
-  fnuz`, `› narrowing a NaN to e4m3 gives the NaN of its sign, and an
-  infinity the greatest value of its sign` and `pm_dtype_decomps › narrow
-  floats › an infinity and an overflow are e5m2's infinity and e4m3's
-  greatest value; an fnuz format saturates an overflow and makes an infinity
-  its NaN`; the Codegen suite's `casts to an 8-bit float › on the host ›
-  give the value Dtype.truncate gives, at the formats' bounds`, emulated,
-  and `› on each GPU ›` the same, native on fudge's CUDA and NV, from float32, float64, float16 and
-  int32, with e5m2 infinity constants; the Cstyle suite's `cuda_*fp8e5m2`,
+  value, an infinity included` and `› rounds an 8-bit float's greatest value,
+  the tie past it and an infinity`; the Decomp_dtype suite's `f2f › a float
+  with infinities is an infinity from its greatest value plus half an ulp`, `›
+  with saturation, a float without infinities overflows to its greatest value,
+  and an infinity is that value in e4m3 and the NaN in fnuz`, `› narrowing a
+  NaN to e4m3 gives the NaN of its sign, and an infinity the greatest value of
+  its sign` and `pm_dtype_decomps › narrow floats › an infinity and an
+  overflow are e5m2's infinity and e4m3's greatest value; an fnuz format
+  saturates an overflow and makes an infinity its NaN`; the Codegen suite's
+  `casts to an 8-bit float › on the host › give the value Dtype.truncate
+  gives, at the formats' bounds`, emulated, and `› on each GPU ›` the same,
+  native on fudge's CUDA and NV, from float32, float64, float16 and int32,
+  with e5m2 infinity constants; the Cstyle suite's `cuda_*fp8e5m2`,
   `cuda_constants` and OCP `hip_*` goldens' `.tolk` files.
 
 ## D509. An integer past the greatest double converts to an infinity

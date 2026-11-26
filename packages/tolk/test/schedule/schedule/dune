@@ -15,7 +15,7 @@
 
 (test
  (name test_launch)
- (modules test_launch)
+ (modules test_launch calls)
  (package tolk)
  (libraries
   windtrap
@@ -25,6 +25,29 @@
   tolk_run
   tolk_gpus
   rig))
+
+; The laws of Calls on Metal run again under Metal's API validation, which
+; aborts a launch whose bound arguments break the rules of the function it
+; calls. GitHub's macOS machines have a device without residency sets, and
+; there the validation layer aborts in the call that opens it.
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (enabled_if
+  (and
+   (= %{system} macosx)
+   (<> %{env:GITHUB_ACTIONS=false} true)))
+ (action
+  (setenv
+   MTL_DEBUG_LAYER
+   1
+   (run
+    %{exe:test_launch.exe}
+    -f
+    "GPUs › Metal › a loop reads each run"
+    -f
+    "GPUs › Metal › a store through"))))
 
 ; A launch's members write what its graph states, in any order of them, on
 ; the host and on each GPU present.
