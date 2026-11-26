@@ -6,8 +6,7 @@
 (** Arbitrary-precision integers.
 
     Integers are exact: no operation wraps or rounds unless it says so. An
-    integer that fits an [int] is held as one, so arithmetic on such integers
-    allocates nothing while its result fits an [int] too.
+    integer that fits an [int] is held as one.
 
     Each integer has one representation: polymorphic equality and [Hashtbl.hash]
     apply to integers, and an integer that fits an [int] hashes as that [int].
@@ -116,7 +115,10 @@ val min : t -> t -> t
 val max : t -> t -> t
 (** [max n0 n1] is the greatest of [n0] and [n1]. *)
 
-(** {1:arith Arithmetic} *)
+(** {1:arith Arithmetic}
+
+    The values of this section allocate nothing while their arguments and result
+    fit an [int]. *)
 
 val neg : t -> t
 (** [neg n] is [-n]. *)

@@ -246,8 +246,11 @@ let div a b =
   if divides_small a b then of_small (to_small a / to_small b)
   else fst (div_rem a b)
 
+(* Stdlib's [mod] states [abs(x mod y) <= abs(y) - 1], so [min_int mod -1] is 0:
+   only the quotient overflows. *)
 let rem a b =
-  if divides_small a b then of_small (to_small a mod to_small b)
+  if is_small a && is_small b && to_small b <> 0 then
+    of_small (to_small a mod to_small b)
   else snd (div_rem a b)
 
 let fdiv a b =
@@ -260,8 +263,13 @@ let fdiv a b =
     if sign r <> 0 && sign r <> sign b then pred q else q
 
 let cdiv a b =
-  let q, r = div_rem a b in
-  if sign r <> 0 && sign r = sign b then succ q else q
+  if divides_small a b then
+    let x = to_small a and y = to_small b in
+    let r = x mod y in
+    of_small (if r <> 0 && r lxor y >= 0 then (x / y) + 1 else x / y)
+  else
+    let q, r = div_rem a b in
+    if sign r <> 0 && sign r = sign b then succ q else q
 
 let divisible a b = if sign b = 0 then sign a = 0 else sign (rem a b) = 0
 
@@ -278,15 +286,17 @@ let rec gcd a b =
   else if sign b = 0 then abs a
   else gcd b (rem a b)
 
+(* [acc * b^e], by squaring. At top level: bytecode allocates a closure for a
+   local recursive function. *)
+let rec pow_by_squaring acc b e =
+  if e = 0 then acc
+  else
+    let acc = if e land 1 = 1 then mul acc b else acc in
+    pow_by_squaring acc (if e > 1 then mul b b else b) (e lsr 1)
+
 let pow b e =
   if e < 0 then invalid_arg "Bigint.pow: negative exponent";
-  let rec go acc b e =
-    if e = 0 then acc
-    else
-      let acc = if e land 1 = 1 then mul acc b else acc in
-      go acc (if e > 1 then mul b b else b) (e lsr 1)
-  in
-  go one b e
+  pow_by_squaring one b e
 
 (* Bits *)
 

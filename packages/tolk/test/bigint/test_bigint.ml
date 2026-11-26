@@ -341,6 +341,56 @@ let errors =
       equal int max_int (B.trailing_zeros B.zero);
       equal int 0 (B.numbits B.zero))
 
+(* Allocation *)
+
+(* The minor words [f ()] allocates, less those of measuring a call: in
+   bytecode, reading the counter allocates the float it returns. *)
+let[@inline never] [@local never] words f =
+  let before = Gc.minor_words () in
+  let r = f () in
+  let after = Gc.minor_words () in
+  ignore (Sys.opaque_identity r);
+  after -. before
+
+let allocated f = Float.to_int (words f -. words (fun () -> ()))
+let small = Gen.frequency [ (1, edges); (2, Gen.int); (2, narrow) ]
+
+let arithmetic_allocates_nothing =
+  prop "arithmetic allocates nothing while its arguments and result fit an int"
+    ~examples:[ (min_int, -1); (min_int, 1); (max_int, -1); (7, -2); (-7, 2) ]
+    (Gen.with_pp
+       (fun ppf (x, y) -> Format.fprintf ppf "(%d, %d)" x y)
+       (Gen.pair small small))
+    (fun (x, y) ->
+      let a = B.of_int x and b = B.of_int y in
+      let fits name f =
+        match f () with
+        | exception Division_by_zero -> ()
+        | r -> if B.fits_int r then equal ~msg:name int 0 (allocated f)
+      in
+      fits "neg" (fun () -> B.neg a);
+      fits "abs" (fun () -> B.abs a);
+      fits "succ" (fun () -> B.succ a);
+      fits "pred" (fun () -> B.pred a);
+      fits "add" (fun () -> B.add a b);
+      fits "sub" (fun () -> B.sub a b);
+      fits "mul" (fun () -> B.mul a b);
+      fits "div" (fun () -> B.div a b);
+      fits "rem" (fun () -> B.rem a b);
+      fits "fdiv" (fun () -> B.fdiv a b);
+      fits "cdiv" (fun () -> B.cdiv a b);
+      fits "divisible" (fun () -> if B.divisible a b then B.one else B.zero);
+      fits "gcd" (fun () -> B.gcd a b);
+      fits "pow" (fun () -> B.pow a (y land 7)))
+
 let () =
   exit
-    (run "Tolk.Bigint" [ int_reference; laws; conversions; boundaries; errors ])
+    (run "Tolk.Bigint"
+       [
+         int_reference;
+         laws;
+         conversions;
+         boundaries;
+         errors;
+         arithmetic_allocates_nothing;
+       ])
