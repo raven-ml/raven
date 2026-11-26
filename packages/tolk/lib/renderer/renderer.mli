@@ -34,8 +34,11 @@ val with_storage : Ops.t -> Dtype.t -> Ops.t
 (** [with_storage u dt] is the access [u] restated at [dt] on the storage it
     reaches through first sources: the {!Op.Param}, {!Op.Buffer} or {!Op.Alloc}
     found from [u] by following first sources gets element type [dt], and the
-    nodes on the way are rebuilt on it. An access takes its data type from its
-    storage, so accessing memory at another type retypes the storage.
+    nodes on the way are rebuilt on it, keeping their other sources, such as an
+    index's gate. Those that take their data type from their first source, as
+    {!Op.Index}, {!Op.Load} and {!Op.After} do, take [dt]; a conversion keeps
+    its own. An access takes its data type from its storage, so accessing memory
+    at another type retypes the storage.
 
     Raises [Invalid_argument] if the first sources end before reaching a
     storage. *)
@@ -52,16 +55,18 @@ module Estimates : sig
 
   val add : t -> t -> t
   (** [add e0 e1] is the estimate of both [e0]'s and [e1]'s work: each count is
-      the sum of theirs, exactly: an [Int] where it fits one, else a constant
-      node. *)
+      the sum of theirs, exactly. The sum of two [Int]s is an [Int] where it
+      fits one, else a node of constants; a sum with a node is a node. *)
 
   val simplify : t -> t
   (** [simplify e] is [e] with each count simplified ({!Shape.ssimplify}). *)
 
   val of_uops : ?ignore_indexing:bool -> Ops.t list -> t
   (** [of_uops ~ignore_indexing uops] estimates the linearized kernel [uops]:
-      - [ops] counts arithmetic and logic operations, a multiply-add as two, and
-        a tensor core product as [2 N M K] shared among the threads of its warp;
+      - [ops] counts arithmetic and logic operations, an operation on a vector
+        once per lane, a multiply-add as two, and a tensor core product as
+        [2 N M K / threads], rounded down, the share of each thread of its warp
+        (the cores of {!Tc} divide it exactly);
       - [lds] counts the bytes of each load and store, except those of
         registers;
       - [mem] counts, for each parameter, the bytes loaded from it and the bytes
@@ -70,18 +75,17 @@ module Estimates : sig
 
       Each operation counts once per iteration of the ranges and hardware
       indices around it. A range with no trip count, a loop, counts as one
-      iteration, a trip count that depends on a hardware index is taken at
-      index [0], and one that depends on another range, as a triangular loop's
-      does, or on a value loaded from memory, at its greatest value: a count
-      reads no value but the run's variables. [ops] and each parameter's part
-      of [mem] are simplified; [lds] is not. With [ignore_indexing] (default
-      [false]), the operations that compute the indices of {!Op.Index} and
-      {!Op.Shrink} nodes, up to the {!Op.End} or {!Op.Backedge} of any loop
-      they read, are not counted.
+      iteration, a trip count that depends on a hardware index is taken at index
+      [0], and one that depends on another range, as a triangular loop's does,
+      or on a value loaded from memory, at its greatest value: a count reads no
+      value but the run's variables. [ops] and each parameter's part of [mem]
+      are simplified. With [ignore_indexing] (default [false]), the operations
+      that compute the indices of {!Op.Index} and {!Op.Shrink} nodes, up to the
+      {!Op.End} or {!Op.Backedge} of any loop they read, are not counted.
 
-      The counts are exact: an integer count that does not fit an [int], as of
-      a loop bounded by a value loaded from memory, is a node of constants,
-      which [ops] and [mem] simplify to one.
+      The counts are exact: an integer count that does not fit an [int], as of a
+      loop bounded by a value loaded from memory, is a node of constants, which
+      [ops] and [mem] simplify to one.
 
       Raises [Invalid_argument] if an {!Op.End} or {!Op.Backedge} closes no
       {!Op.Range}, or if an {!Op.Wmma} node has no tensor core argument. *)
@@ -121,10 +125,11 @@ module Compiler : sig
     ?disassemble:(string -> unit) ->
     (string list -> string list) ->
     t
-  (** [batch ~cachekey ~disassemble compile] is {!v}'s compiler, whose
-      [compile] is given several sources at once and returns their binaries in
-      their order. Each binary is the one [compile] makes of its source given
-      alone. *)
+  (** [batch ~cachekey ~disassemble compile] is {!v}'s compiler, whose [compile]
+      is given several sources at once and returns their binaries in their
+      order. Each binary is the one [compile] makes of its source given alone.
+      {!compile}, {!compile_cached} and {!compile_all} raise [Invalid_argument]
+      where [compile] returns other than one binary per source. *)
 
   val cachekey : t -> string option
   (** [cachekey c] is the name of [c]'s toolchain and options, if [c] has one:
@@ -406,19 +411,18 @@ val v :
     - [supports_float4], [has_local] and [has_shared] are [true], [registers]
       gives [None], [thread_registers] is [None], [half8], [byte_words] and
       [full_rate_subnormals] are [false] and [vector_lanes] is [1];
-    - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, the greatest
-      size a 32-bit signed index holds, and [global_prod_max] is [None];
-    - [local_threads_max] is [1024], a CUDA block's, and [simd_threads]
-      [32], a CUDA warp's;
+    - [global_max] and [local_max] are [0x8FFFFFFF] on each axis, and
+      [global_prod_max] is [None];
+    - [local_threads_max] is [1024], a CUDA block's, and [simd_threads] [32], a
+      CUDA warp's;
     - [shared_max] is [32768], and [async_copy] is [false];
     - [tensor_cores] and [code_for_op] are empty, and so are the rules of
       [extra_matcher];
-    - [per_byte_first] is [64], [sm_89]'s crossover, [core_threads] is
-      [16384], [stream_threads] [32768] and [local_workgroups] [256],
-      [sm_89]'s, which every target takes until its own are measured;
+    - [per_byte_first] is [64], [sm_89]'s crossover, [core_threads] is [16384],
+      [stream_threads] [32768] and [local_workgroups] [256], [sm_89]'s, which
+      every target takes until its own are measured;
     - [units], [in_flight] and [l2] are [0];
-    - [launch_members] is [max_int]; CUDA's and Metal's renderers bound
-      it;
+    - [launch_members] is [max_int]; CUDA's and Metal's renderers bound it;
     - [launch_args] is [max_int];
     - [launch_locals] is [true];
     - [packed_args] is [false];
