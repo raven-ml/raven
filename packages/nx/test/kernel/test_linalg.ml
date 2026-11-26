@@ -124,31 +124,6 @@ let matrix v ~rows ~cols m = Array.sub v (m * rows * cols) (rows * cols)
    declines only a dtype it states it declines ({!Linalg_cases.run}). *)
 let check_alone (b : Support.backend) r ~dt ?(result = dt) ~rows ~cols ~spoil
     ops =
-  let t0 = Float.of_int (Rig.Profile.now ()) *. 1e-9 in
-  Fun.protect ~finally:(fun () ->
-      let t = (Float.of_int (Rig.Profile.now ()) *. 1e-9) -. t0 in
-      let oc =
-        open_out_gen
-          [ Open_append; Open_creat ]
-          0o644
-          "/home/tm961/wt/tmp/tests-campaign/nx/kernel-b/scratch/test_linalg/t.txt"
-      in
-      let name =
-        match r with
-        | Cholesky _ -> "chol"
-        | Lu -> "lu"
-        | Qr _ -> "qr"
-        | Eigh v -> if v then "eighv" else "eigh"
-        | Svd None -> "svd"
-        | Svd _ -> "svdv"
-        | Eig v -> if v then "eigv" else "eig"
-        | Solve _ -> "solve"
-      in
-      Printf.fprintf oc "%.4f %s %s n%d\n" t name
-        (match dt with D.Any d -> D.name d)
-        rows;
-      close_out oc)
-  @@ fun () ->
   let n = Array.length ops in
   let vs = Array.map values ops in
   let three k =
