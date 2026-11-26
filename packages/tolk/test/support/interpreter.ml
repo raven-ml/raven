@@ -23,9 +23,10 @@ let held ~check dt (v : Dtype.value) : Dtype.const =
   match v with
   | `Float x when Float.is_nan x && Dtype.is_float dt ->
       (Dtype.truncate dt v :> Dtype.const)
-  (* a NaN or an infinity has no exact integer: an integer type takes the value
-     a constant of it does ({!Dtype.const}) *)
+  (* A NaN or an infinity has no integer: [check] sees it, and an integer type
+     takes the value a constant of it does ({!Dtype.const}). *)
   | `Float x when (not (Float.is_finite x)) && committed_int dt ->
+      check dt v;
       Dtype.const dt v
   (* An integer type wraps: [check] sees the exact integer, which one conversion
      gives for both. *)
@@ -570,6 +571,9 @@ let overflows ?(vars = []) ?(params = []) ?(buffers = []) u =
     | `Int z when Dtype.is_int dt && dt <> Dtype.Weak_int ->
         let lo, hi = Dtypes.int_bounds dt in
         if Bigint.lt z lo || Bigint.gt z hi then raise Overflow
+    (* a NaN or an infinity has no value at an integer type *)
+    | `Float x when committed_int dt && not (Float.is_finite x) ->
+        raise Overflow
     | _ -> ()
   in
   match fold ~check ~vars ~params ~buffers u with

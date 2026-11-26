@@ -86,7 +86,10 @@ val overflows :
 (** [overflows ~vars ~params ~buffers u] is [true] iff an arithmetic operation,
     a cast, a step of a reduction or the commitment of a weak integer operand in
     [u], its leaves, parameters and storage bound as {!eval} binds them, gives a
-    committed integer type a value outside that type, which {!eval} then wraps.
+    committed integer type a value outside that type, which {!eval} then wraps,
+    or casts a NaN or an infinity to such a type, which has no value there, as
+    for a float past the type: "If the value of the integral part cannot be
+    represented by the integer type, the behavior is undefined" (C11 6.3.1.4p1).
     Where it is [false], {!eval} computes what exact integer arithmetic does.
 
     Raises [Invalid_argument] as {!eval} does. *)

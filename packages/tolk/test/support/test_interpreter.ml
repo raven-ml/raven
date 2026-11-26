@@ -151,7 +151,7 @@ let overflows_of from to_ (v : Dtype.value) =
   && Dtype.is_int to_
   &&
   match v with
-  | `Float x when not (Float.is_finite x) -> false
+  | `Float x when not (Float.is_finite x) -> true
   | v ->
       let lo, hi = int_bounds to_ and z = Dtype.Value.to_z v in
       Bigint.lt z lo || Bigint.gt z hi
@@ -236,6 +236,18 @@ let casts =
                     stored_dtypes)
             stored_dtypes;
           cover "a cast past its integer type" !past);
+      test "a cast of a NaN or an infinity to an integer type overflows"
+        (fun () ->
+          let unrepresentable =
+            [ `Float nan; `Float infinity; `Float neg_infinity ]
+          in
+          let overflowing v =
+            Interpreter.overflows
+              ~params:[ (0, v) ]
+              (Ops.cast (x Dtype.Float32) Dtype.Int8)
+          in
+          equal (list value) unrepresentable
+            (List.filter overflowing unrepresentable));
       test "a cast of a float past its integer type overflows" (fun () ->
           let at v =
             Interpreter.overflows
