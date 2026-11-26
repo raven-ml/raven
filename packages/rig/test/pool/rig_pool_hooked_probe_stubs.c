@@ -165,8 +165,8 @@ typedef enum {
 } phase;
 
 static _Atomic int current = none;
-static _Atomic int published; /* narrow_sleep's job was published */
-static _Atomic int slept;     /* bit w: worker w parked after it */
+static _Atomic int returned; /* narrow_sleep's job returned */
+static _Atomic int slept;    /* bit w: worker w parked after it */
 static _Atomic int target; /* the worker a scenario holds */
 static _Atomic int go;      /* the caller's hooks act only once set */
 static _Atomic int entered; /* the target entered a job it must not */
@@ -271,10 +271,8 @@ static void hook(rig_pool_point at) {
     if (at == RIG_POOL_AT_PARKING && mine && once(w_bit)) sig(w_bit);
     break;
   case narrow_sleep:
-    if (at == RIG_POOL_AT_PUBLISHED && caller)
-      atomic_store(&published, 1);
-    else if (at == RIG_POOL_AT_PARKING && (id == 1 || id == 2) &&
-             atomic_load(&published))
+    if (at == RIG_POOL_AT_PARKING && (id == 1 || id == 2) &&
+        atomic_load(&returned))
       atomic_fetch_or(&slept, 1 << id);
     break;
   case narrow_wake:
@@ -437,29 +435,38 @@ static void await_park(event e) {
   await(e);
 }
 
-/* Runs a job on every core, then waits until workers 1 and 2 sleep on its
-   generation, with no wakeup pending. A parked bit alone does not say so: a
-   worker the job signalled keeps its bit until it runs. Each worker parks
-   after the job's publication, and from then on the generation stays: a
-   worker whose bit is set while this thread holds the parking mutex waits,
-   and only for a later job. It begins the scenario. Past the deadline,
-   records [asleep] as [await] does. */
+/* Runs jobs on every core until workers 1 and 2 sleep, each in a wait it
+   began after a job returned, with no wakeup pending. A parked bit alone
+   does not say so: a worker the job signalled keeps its bit until it runs.
+   Nor does a wait begun after the job's publication: the job signals its
+   parked workers outside the parking mutex (wake_parked), so a worker that
+   was parking as the job read its bit can run the job and park again before
+   the signal goes out, which then wakes that later wait. Every signal of a
+   job is sent before it returns, so a wait begun after the return holds
+   none, and no job runs after it: such a worker whose bit is set while this
+   thread holds the parking mutex waits, and only for a later job. A worker
+   found asleep in a wait begun before the return may hold a signal: another
+   job wakes it, and it parks after that job. It begins the scenario. Past
+   the deadline, records [asleep] as [await] does. */
 static void await_asleep(void) {
   int both = 1 << 1 | 1 << 2;
-  uint64_t bits = (uint64_t)both;
   begin(narrow_sleep);
-  atomic_store(&published, 0);
-  atomic_store(&slept, 0);
-  atomic_store(&go, 1);
-  kick();
   for (;;) {
-    if (atomic_load(&slept) == both && (rig_pool_parked() & bits) == bits)
-      return;
-    if (past()) {
-      gave_up(asleep);
-      return;
+    atomic_store(&returned, 0);
+    atomic_store(&slept, 0);
+    kick();
+    atomic_store(&returned, 1);
+    for (;;) {
+      int after = atomic_load(&slept);
+      int parked = (int)(rig_pool_parked() & (uint64_t)both);
+      if (after == both && parked == both) return;
+      if (past()) {
+        gave_up(asleep);
+        return;
+      }
+      if (parked & ~after) break;
+      sched_yield();
     }
-    sched_yield();
   }
 }
 
