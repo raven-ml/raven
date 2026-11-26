@@ -3,20 +3,27 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* rig.mli's Submitting and [submit]. Polled devices run their queue only when
+   the test runs it or a wait sleeps, so a submit there hands its work over and
+   returns; a software device runs it before [submit] returns. *)
+
 open Windtrap
 module B = Rig.Buffer
 module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
+let strf = Printf.sprintf
 let memory name = Result.get_ok (Rig.software name)
 
 (* [b] borrowed on [d], as a submit on [d] takes it. *)
 let on d b = require_some (B.borrow d b)
+
 (* A submission of no part, or of one fill that does nothing and uses a slot per
    element of [uses] ({!Support.touching}). *)
 let empty ?(uses = [||]) d =
-  if uses = [||] then Sub.make d [||] else Sub.make d [| Support.touching uses |]
+  if uses = [||] then Sub.make d [||]
+  else Sub.make d [| Support.touching uses |]
 
 let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
   Rig.submit ?waits s ~buffers ~args
@@ -31,1004 +38,59 @@ let touch ?waits uses d buffers =
 let page_bytes = B.paged_from
 
 (* A part that adds 1 to the 64-bit word in a submit's slot 0. *)
-let bump =
-  Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Support.bump ~params:8
+let bump = Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Support.bump ~params:8
 
-let idle =
-  (Sub.fill Support.noop ~params:0)
-
+(* A part that holds one unit of a Polled queue. *)
+let idle = Sub.fill Support.noop ~params:0
 let word b = Support.load (Support.Reader.host b)
+let lost = function Rig.Lost _ -> true | _ -> false
+let lost_on d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
+let count call p = List.length (List.filter (( = ) call) (P.log p))
+let names = Atomic.make 0
+let fresh what = strf "submit:%s-%d" what (Atomic.fetch_and_add names 1)
 
-(* The handle of [b]'s memory: the address of a Polled region. *)
-let handle b = Nativeint.to_int (B.handle b)
+let functions d =
+  require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
 
-(* The driver's copy facts describe the original allocation through views and
-   borrows. Polled exposes the payload that actually reached its queue. *)
-let copy_origins =
-  [
-    ("device", `Own B.Device, true);
-    ("device returned", `Returned, true);
-    ("mapped", `Own B.Mapped, false);
-    ("pinned", `Own B.Pinned, false);
-    ("host", `Host, false);
-    ("peer device", `Peer B.Device, false);
-    ("peer mapped", `Peer B.Mapped, false);
-    ("peer pinned", `Peer B.Pinned, false);
-  ]
+let fn image f = require_some (Rig.Image.resolve image f)
 
-let copy_serial = Atomic.make 0
+let launch ?(params = 0) ?(refs = [||]) image kernel =
+  Sub.launch ~refs (fn image kernel) ~params
 
-let test_copy_memory (length, src_first, dst_first) =
-  let serial = Atomic.fetch_and_add copy_serial 1 in
-  let name = Printf.sprintf "submit:copy-memory-%d" serial in
-  let d, p = P.open_ ~host_visible:false name in
-  let peer, _ = P.open_ ~host_visible:false (name ^ "-peer") in
-  let bytes = length + max src_first dst_first in
-  let endpoint first (label, origin, device_memory) =
-    let root =
-      match origin with
-      | `Own memory -> B.create ~memory d bytes
-      | `Returned -> on d (on peer (B.create d bytes))
-      | `Peer memory -> B.create ~memory peer bytes
-      | `Host -> B.create Rig.host (if bytes = 0 then 0 else max page_bytes bytes)
-    in
-    let buffer = on d (B.view (on d root) ~first ~length) in
-    (label, buffer, device_memory && bytes <> 0)
-  in
-  let sources = List.map (endpoint src_first) copy_origins in
-  let destinations = List.map (endpoint dst_first) copy_origins in
-  let rows =
-    List.concat_map
-      (fun (src_name, src, src_device) ->
-        List.map
-          (fun (dst_name, dst, dst_device) ->
-            ( src_name ^ " to " ^ dst_name,
-              (Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))),
-              src_device && dst_device ))
-          destinations)
-      sources
-  in
-  let parts = Array.of_list (List.map (fun (_, part, _) -> part) rows) in
-  Rig.Point.wait (submit (Sub.make d parts));
-  equal (list (pair string bool))
-    (List.map (fun (label, _, expected) -> (label, expected)) rows)
-    (List.map2
-       (fun (label, _, _) actual -> (label, actual))
-       rows
-       (List.map (fun (c : P.copy) -> c.device_memory) (P.copies p)));
-  Rig.close d;
-  Rig.close peer
+(* The values of a launch of one group of one thread. *)
+let single ?(params = Bytes.empty) () =
+  { Sub.groups = (1, 1, 1); threads = (1, 1, 1); shared = 0; params }
 
-let copy_memory_law (length, src_first, dst_first) =
-  cover "empty view of an allocation"
-    (length = 0 && max src_first dst_first > 0);
-  cover "one byte" (length = 1);
-  cover "different offsets" (src_first <> dst_first);
-  test_copy_memory (length, src_first, dst_first)
+(* The bytes of the 64-bit words [vs], little-endian. *)
+let words vs =
+  let b = Bytes.create (8 * List.length vs) in
+  List.iteri (fun i v -> Bytes.set_int64_le b (8 * i) (Int64.of_int v)) vs;
+  b
 
-(* Buffer.copy and a submission's copies carry the facts when a device of
-   another machine receives local host addresses directly, interleaved with its
-   own memory, through a buffer or a slot. Two local ends are refused, and so
-   is local memory in a slot a ref names. *)
-let test_copy_memory_sequence () =
-  let machine = Support.machine "submit:copy-memory-machine" in
-  let p = P.make ~host_visible:false () in
-  let d =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_ ~machine
-         (P.opener "copy-memory" p))
-  in
-  let a = B.create d 8 and b = B.create d 8 in
-  let mapped = B.create ~memory:B.Mapped d 8 in
-  let pinned = B.create ~memory:B.Pinned d 8 in
-  let host = B.create Rig.host 8 in
-  List.iter
-    (fun (src, dst) -> B.copy ~src ~dst)
-    [ (a, b); (host, a); (a, b); (b, host); (mapped, a); (a, b); (a, pinned) ];
-  let copy src dst buffers =
-    Rig.Point.wait (submit (Sub.make d [| Sub.copy ~src ~dst |]) ~buffers)
-  in
-  copy (Slot 0) (Buffer a) [| host |];
-  copy (Buffer a) (Slot 0) [| host |];
-  copy (Buffer host) (Slot 0) [| b |];
-  equal (list bool)
-    [ true; false; true; false; false; true; false; false; false; false ]
-    (List.map (fun (c : P.copy) -> c.device_memory) (P.copies p));
-  equal (list string)
-    [
-      "none"; "src"; "none"; "dst"; "none"; "none"; "none"; "src"; "dst"; "src";
-    ]
-    (List.map
-       (function `None -> "none" | `Src -> "src" | `Dst -> "dst")
-       (List.map (fun (c : P.copy) -> c.local) (P.copies p)));
-  let other = B.create Rig.host 8 in
-  raises_match ~msg:"two local buffers" Exn.invalid_arg (fun () ->
-      Sub.make d Sub.[| copy ~src:(Buffer host) ~dst:(Buffer other) |]);
-  raises_match ~msg:"a local buffer and a local slot" Exn.invalid_arg (fun () ->
-      copy (Buffer host) (Slot 0) [| other |]);
-  let fill = Sub.make d [| Support.touching [| Sub.read |] |] in
-  raises_match ~msg:"a ref's local buffer" Exn.invalid_arg (fun () ->
-      submit fill ~buffers:[| host |] ~args:one);
-  Rig.close d
-
-(* Copy ends *)
-
-(* A copy from a view of [src_len] bytes at [src_first] of one allocation into
-   a view of [dst_len] bytes at [dst_first] of the same allocation, if
-   [shared], or of another; each end a submit's slot, if [src_slot] or
-   [dst_slot], or a buffer the submission names. *)
-type ends = {
-  shared : bool;
-  src_first : int;
-  dst_first : int;
-  src_len : int;
-  dst_len : int;
-  src_slot : bool;
-  dst_slot : bool;
-}
-
-let ends_alloc = 40
-
-let pp_ends ppf c =
-  let side slot = if slot then "slot" else "buffer" in
-  Format.fprintf ppf "%s %d+%d -> %s %s%d+%d" (side c.src_slot) c.src_first
-    c.src_len (side c.dst_slot)
-    (if c.shared then "same " else "")
-    c.dst_first c.dst_len
-
-let gen_ends =
-  let open Gen in
-  let+ shared = bool
-  and+ src_first = int_range 0 24
-  and+ dst_first = int_range 0 24
-  and+ len = int_range 0 16
-  and+ other =
-    frequency [ (4, constant None); (1, map Option.some (int_range 0 16)) ]
-  and+ src_slot = bool
-  and+ dst_slot = bool in
-  let dst_len = Option.value other ~default:len in
-  { shared; src_first; dst_first; src_len = len; dst_len; src_slot; dst_slot }
-
-let ends_overlap c =
-  c.shared && c.src_len > 0 && c.dst_len > 0
-  && c.src_first < c.dst_first + c.dst_len
-  && c.dst_first < c.src_first + c.src_len
-
-let contents b =
-  let s = Bytes.create (B.length b) in
-  B.blit_to_bytes b 0 s 0 (B.length b);
+let host_bytes b n =
+  let s = Bytes.create n in
+  B.blit_to_bytes b 0 s 0 n;
   Bytes.to_string s
 
-(* A copy whose ends are slots or buffers, in each of the four mixes, copies
-   the bytes as a host copy does. Buffers of two lengths or that share a byte
-   are refused, by make where both ends are buffers and by the submit
-   otherwise, which then takes no value. Copies between two slots run through
-   one submission, each case with its own buffers. *)
-let ends_law cases =
-  let d = memory (Printf.sprintf "submit:ends-%d" (Random.bits ())) in
-  let slots = Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |] in
-  cover "several submits of one submission"
-    (List.length (List.filter (fun c -> c.src_slot && c.dst_slot) cases) > 1);
-  List.iteri
-    (fun i c ->
-      cover "slot to slot" (c.src_slot && c.dst_slot);
-      cover "slot to buffer" (c.src_slot && not c.dst_slot);
-      cover "buffer to slot" ((not c.src_slot) && c.dst_slot);
-      cover "buffer to buffer" (not (c.src_slot || c.dst_slot));
-      cover "buffers of two lengths" (c.src_len <> c.dst_len);
-      cover "overlapping views of one allocation" (ends_overlap c);
-      cover "disjoint views of one allocation"
-        (c.shared && c.src_len = c.dst_len && c.src_len > 0
-       && not (ends_overlap c));
-      let pattern k =
-        String.init ends_alloc (fun j -> Char.chr (((k * 61) + j) land 255))
-      in
-      let a = B.create d ends_alloc and b = B.create d ends_alloc in
-      B.blit_from_string (pattern (2 * i)) 0 a 0 ends_alloc;
-      B.blit_from_string (pattern ((2 * i) + 1)) 0 b 0 ends_alloc;
-      let src = B.view a ~first:c.src_first ~length:c.src_len in
-      let dst =
-        B.view (if c.shared then a else b) ~first:c.dst_first ~length:c.dst_len
-      in
-      let refused = c.src_len <> c.dst_len || ends_overlap c in
-      let buffers =
-        Array.of_list
-          ((if c.src_slot then [ src ] else [])
-          @ if c.dst_slot then [ dst ] else [])
-      in
-      let side slot k b = if slot then Sub.Slot k else Sub.Buffer b in
-      let make () =
-        if c.src_slot && c.dst_slot then slots
-        else
-          let dst_side = side c.dst_slot (Bool.to_int c.src_slot) dst in
-          Sub.make d [| Sub.copy ~src:(side c.src_slot 0 src) ~dst:dst_side |]
-      in
-      let before = Rig.submitted d in
-      if refused && not (c.src_slot || c.dst_slot) then
-        raises_match ~msg:"make" Exn.invalid_arg (fun () -> make ())
-      else if refused then begin
-        let s = make () in
-        raises_match ~msg:"the submit" Exn.invalid_arg (fun () ->
-            submit s ~buffers);
-        equal ~msg:"a refused submit's value" int before (Rig.submitted d)
-      end
-      else begin
-        let into = if c.shared then 2 * i else (2 * i) + 1 in
-        let expected = Bytes.of_string (pattern into) in
-        Bytes.blit_string (pattern (2 * i)) c.src_first expected c.dst_first
-          c.src_len;
-        let s = make () in
-        Rig.Point.wait (submit s ~buffers);
-        if not c.shared then
-          equal ~msg:"the source's allocation" string (pattern (2 * i))
-            (contents a);
-        equal ~msg:"the destination's allocation" string
-          (Bytes.to_string expected)
-          (contents (if c.shared then a else b))
-      end)
-    cases
+let pp_launch ppf (l : P.launch) =
+  let x, y, z = l.groups and tx, ty, tz = l.threads in
+  Format.fprintf ppf "groups %dx%dx%d threads %dx%dx%d shared %d params %S" x y
+    z tx ty tz l.shared l.params
 
-let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
+let launch_t = Testable.make ~pp:pp_launch ~equal:( = )
+let params_of launches = List.map (fun (l : P.launch) -> l.params) launches
 
-let test_values () =
-  let d = memory "submit:values" in
-  let base = Rig.submitted d in
-  let s = empty d in
-  let values = List.init 5 (fun _ -> Rig.Point.value (submit s)) in
-  equal (list int) (List.init 5 (fun i -> base + i + 1)) values;
-  equal int (base + 5) (Rig.submitted d);
-  equal int (base + 5) (Rig.signaled d);
-  equal (option device) (Some d) (Rig.Point.device (submit s))
+(* The 64-bit word each launch read first in its parameters. *)
+let first_words launches =
+  List.map
+    (fun p -> Int64.to_int (String.get_int64_le p 0))
+    (params_of launches)
 
-let test_fill () =
-  let d = memory "submit:fill" in
-  let arg = B.create Rig.host 8 in
-  Support.store (Support.Reader.host arg) 0;
-  let s = Sub.make d [| bump; bump |] in
-  let buffers = [| on d arg |] and args = Support.zeros 2 in
-  ignore (submit ~buffers ~args s);
-  ignore (submit ~buffers ~args s);
-  equal int 4 (word arg)
+(* Waits *)
 
-(* Polled runs nothing until a wait reaches its sleep. *)
-let test_polled () =
-  let d, p = P.open_ "submit:polled" in
-  let base = Rig.submitted d in
-  let s = empty d in
-  let a = submit s in
-  let b = submit s in
-  equal int 2 (P.queued p);
-  equal int base (Rig.signaled d);
-  Rig.Point.wait b;
-  equal int 0 (P.queued p);
-  equal bool true (Rig.Point.value a < Rig.Point.value b)
-
-(* Work that runs long is waited for where the driver states no hang bound. *)
-let test_still () =
-  let d, p = P.open_ "submit:still" in
-  let pt = submit (empty d) in
-  P.stall p 3;
-  Rig.Point.wait pt;
-  equal (option string) None (Rig.lost d);
-  equal int 4 (P.sleeps p)
-
-(* Hang bounds *)
-
-let hang_ms = 100
-let lost = function Rig.Lost _ -> true | _ -> false
-
-(* Work whose word stands still past the bound loses the device, not before the
-   bound, and the driver's stop, which its close runs, is given the reason. *)
-let test_hang () =
-  let d, p = P.open_ ~hang_ms "submit:hang" in
-  let pt = submit (empty d) in
-  P.stall p max_int;
-  let t0 = Rig.Profile.now () in
-  raises_match lost (fun () -> Rig.Point.wait pt);
-  let waited = (Rig.Profile.now () - t0) / 1_000_000 in
-  let why = Printf.sprintf "no progress for %d ms" hang_ms in
-  equal (option string) ~msg:"the loss" (Some why) (Rig.lost d);
-  Rig.close d;
-  equal (option string) ~msg:"the stop's fault" (Some why) (P.stop_fault p);
-  at_least ~msg:"the wait, in ms" int ~than:hang_ms waited
-
-(* Only a wait checks the bound: work stalled three bounds with nothing waiting
-   loses nothing, and the clock starts at the wait that finds it. *)
-let test_hang_unwatched () =
-  let d, p = P.open_ ~hang_ms "submit:hang-unwatched" in
-  let pt = submit (empty d) in
-  P.stall p max_int;
-  Thread.delay (3. *. Float.of_int hang_ms /. 1000.);
-  equal (option string) ~msg:"unwatched" None (Rig.lost d);
-  let t0 = Rig.Profile.now () in
-  raises_match lost (fun () -> Rig.Point.wait pt);
-  let waited = (Rig.Profile.now () - t0) / 1_000_000 in
-  at_least ~msg:"the wait, in ms" int ~than:hang_ms waited
-
-(* A word that moves within the bound loses nothing, however long the work runs
-   in all. Each of the wait's sleeps, which the stall makes last up to the
-   bound, moves the word to the next of five values, so each look finds a
-   later value whatever the scheduler does, and the wait lasts over three
-   bounds. *)
-let test_hang_moving () =
-  let d, p = P.open_ ~hang_ms "submit:hang-moving" in
-  let s = empty d in
-  let points = List.init 5 (fun _ -> submit s) in
-  P.stall p max_int;
-  let rec move = function
-    | [] -> ()
-    | pt :: rest ->
-        P.before p "sleep" (fun () ->
-            P.set_word p (Rig.Point.value pt);
-            move rest)
-  in
-  move points;
-  let t0 = Rig.Profile.now () in
-  Rig.Point.wait (List.nth points 4);
-  let waited = (Rig.Profile.now () - t0) / 1_000_000 in
-  equal (option string) None (Rig.lost d);
-  at_least ~msg:"the wait, in ms" int ~than:(3 * hang_ms) waited
-
-(* A device idle for longer than its bound loses nothing by it: the clock counts
-   only while a committed value stays above the word. *)
-let test_hang_idle () =
-  let d, _ = P.open_ ~hang_ms "submit:hang-idle" in
-  let s = empty d in
-  Rig.Point.wait (submit s);
-  Thread.delay (3. *. Float.of_int hang_ms /. 1000.);
-  Rig.Point.wait (submit s);
-  equal (option string) None (Rig.lost d)
-
-(* A device whose queue waits on a value of a device lost to its bound is lost
-   with it. *)
-let test_hang_spread () =
-  let producer, pp = P.open_ ~hang_ms "submit:hang-producer" in
-  let consumer, _ = P.open_ ~waits_on:[ `Host ] "submit:hang-consumer" in
-  let a = submit (empty producer) in
-  ignore (submit (empty consumer) ~waits:[| a |]);
-  P.stall pp max_int;
-  raises_match lost (fun () -> Rig.Point.wait a);
-  equal (option string) (Some "submit:hang-producer lost") (Rig.lost consumer)
-
-(* A device whose queue waits for another device's work loses nothing to its
-   bound while that work runs, however long: its clock starts once the work is
-   reached. The producer's work runs only when a sleep runs its queue, and the
-   consumer's first two sleeps run nothing: the consumer waits two still
-   intervals, past its bound, on a value its producer has not reached. *)
-let test_hang_in_queue () =
-  let producer, _ = P.open_ "submit:in-queue-producer" in
-  let consumer, pc =
-    P.open_ ~hang_ms ~waits_on:[ `Host ] "submit:in-queue-consumer"
-  in
-  let a = submit (empty producer) in
-  let b = submit (empty consumer) ~waits:[| a |] in
-  P.stall pc 2;
-  let t0 = Rig.Profile.now () in
-  Rig.Point.wait b;
-  let waited = (Rig.Profile.now () - t0) / 1_000_000 in
-  equal (option string) None (Rig.lost consumer);
-  at_least ~msg:"the wait, in ms" int ~than:hang_ms waited
-
-(* A word that moved while a wait was held between its read and the hang check
-   loses nothing: the check judges the word as it stands at the check. The wait
-   is held at its producer's gate, since a wait whose word stood still for a
-   still interval looks at the producers its queue waits on before it sleeps.
-   The clock started at the wait's previous sleep, more than the bound before
-   the check. *)
-let test_hang_held_read () =
-  let producer, pp = P.open_ "submit:held-read-producer" in
-  let d, p =
-    P.open_ ~hang_ms ~completion:`Store ~waits_on:[ `Host ] "submit:held-read"
-  in
-  let a = submit (empty producer) in
-  let first = submit (empty d) ~waits:[| a |] in
-  let b = submit (empty d) in
-  Rig.Point.wait a;
-  P.stall pp max_int;
-  P.gate p;
-  P.stall p 1;
-  let waiting =
-    Domain.spawn (fun () ->
-        match Rig.Point.wait b with
-        | () -> None
-        | exception Rig.Lost (_, why) -> Some why)
-  in
-  Support.await "the clock's first sleep" (fun () -> P.sleepers p = 1);
-  P.gate pp;
-  P.open_gate p;
-  Support.await "the wait held after its read" (fun () -> P.sleepers pp = 1);
-  P.set_word p (Rig.Point.value first);
-  Thread.delay (2. *. Float.of_int hang_ms /. 1000.);
-  P.open_gate pp;
-  equal (option string) ~msg:"the wait's loss" None (Domain.join waiting);
-  equal (option string) ~msg:"the loss" None (Rig.lost d)
-
-(* Bounded waits *)
-
-let names = Atomic.make 0
-
-let fresh what =
-  Printf.sprintf "submit:%s-%d" what (Atomic.fetch_and_add names 1)
-
-let still_ns = 200_000_000
-
-(* What a bounded wait may take past its time on a loaded machine: one still
-   interval. *)
-let tolerance_ns = still_ns
-
-let lost_on d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
-
-(* A bounded wait on work that runs long answers [false] no sooner than [ns],
-   and within the tolerance after it. The work runs on: once the stall ends a
-   wait reaches it, and nothing was lost. *)
-let wait_for_late ns =
-  cover "under a millisecond" (ns < 1_000_000);
-  cover "a millisecond or more" (ns >= 1_000_000);
-  let d, p = P.open_ (fresh "wait-for-late") in
-  let pt = submit (empty d) in
-  P.stall p max_int;
-  let t0 = Rig.Profile.now () in
-  let answer = Rig.Point.wait_for ~ns pt in
-  let waited = Rig.Profile.now () - t0 in
-  equal ~msg:"the answer" bool false answer;
-  at_least ~msg:"the wait, in ns" int ~than:ns waited;
-  less ~msg:"the wait past ns, in ns" int ~than:tolerance_ns (waited - ns);
-  P.stall p 0;
-  equal ~msg:"once the stall ends" bool true
-    (Rig.Point.wait_for ~ns:1_000_000_000 pt);
-  equal (option string) ~msg:"the loss" None (Rig.lost d);
-  Rig.close d
-
-let late_ns =
-  Gen.one_of [ Gen.int_range 1 999_999; Gen.int_range 1_000_000 50_000_000 ]
-
-(* An [ns] past the clock's range waits as [wait] does: over two stalled
-   sleeps of a still interval each, and no sooner. *)
-let test_wait_for_unbounded ns =
-  let d, p = P.open_ (fresh "wait-for-unbounded") in
-  let pt = submit (empty d) in
-  P.stall p 2;
-  let t0 = Rig.Profile.now () in
-  let answer = Rig.Point.wait_for ~ns pt in
-  let waited = Rig.Profile.now () - t0 in
-  equal ~msg:"the answer" bool true answer;
-  at_least ~msg:"the wait, in ns" int ~than:(2 * still_ns) waited;
-  equal ~msg:"sleeps" int 3 (P.sleeps p);
-  Rig.close d
-
-(* A bounded wait raises [Lost] where [wait] does, whatever [ns]: for a point
-   its lost device never reached, and not for one reached before the loss. *)
-let test_wait_for_lost ns =
-  let d, _ = P.open_ (fresh "wait-for-lost") in
-  let a = submit (empty d) in
-  Rig.Point.wait a;
-  let b = submit (empty d) in
-  Rig.lose d "given up";
-  raises_match ~msg:"wait, on the dropped point" (lost_on d) (fun () ->
-      Rig.Point.wait b);
-  raises_match ~msg:"wait_for, on the dropped point" (lost_on d) (fun () ->
-      Rig.Point.wait_for ~ns b);
-  Rig.Point.wait a;
-  equal ~msg:"wait_for, on the point reached before the loss" bool true
-    (Rig.Point.wait_for ~ns a);
-  Rig.close d
-
-(* A loss during a bounded wait raises it, as during [wait]. *)
-let test_wait_for_lost_during () =
-  let d, p = P.open_ "submit:wait-for-lost-during" in
-  let pt = submit (empty d) in
-  P.fault p "the engine hung";
-  raises_match (lost_on d) (fun () ->
-      Rig.Point.wait_for ~ns:1_000_000_000 pt);
-  equal (option string) ~msg:"the loss" (Some "the engine hung") (Rig.lost d);
-  Rig.close d
-
-(* Inside a lock a bounded wait raises [Invalid_argument] as it starts,
-   whatever [ns], and the point waits as before once outside. *)
-let test_wait_for_in_lock ns =
-  let d, _ = P.open_ (fresh "wait-for-in-lock") in
-  let pt = submit (empty d) in
-  raises_match Exn.invalid_arg (fun () ->
-      Support.inside_lock (fun () -> Rig.Point.wait_for ~ns pt));
-  Rig.Point.wait pt;
-  Rig.close d
-
-(* With no time a bounded wait answers as [reached]: from twin devices in one
-   state, the two answer alike and leave the same committed work. *)
-type state = Reached | Committed | Uncommitted | Lost_before
-
-let pp_state ppf s =
-  Format.pp_print_string ppf
-    (match s with
-    | Reached -> "reached"
-    | Committed -> "committed"
-    | Uncommitted -> "uncommitted"
-    | Lost_before -> "lost")
-
-(* A device in [state], whose one point is its first submit's: its driver
-   commits each value as it takes it, but for [Uncommitted], and runs only
-   what a sleep or the test runs. *)
-let in_state state =
-  let lag = match state with Uncommitted -> 2 | _ -> 1 in
-  let d, p = P.open_ ~lag (fresh "no-time") in
-  let pt = submit (empty d) in
-  (match state with
-  | Reached -> ignore (P.run p)
-  | Committed | Uncommitted -> ()
-  | Lost_before -> Rig.lose d "given up");
-  (d, p, pt)
-
-let answered f pt =
-  match f pt with r -> Ok r | exception Rig.Lost (_, why) -> Error why
-
-let no_time (state, ns) =
-  cover "reached" (state = Reached);
-  cover "committed" (state = Committed);
-  cover "uncommitted" (state = Uncommitted);
-  cover "lost" (state = Lost_before);
-  let d, p, pt = in_state state in
-  let twin, twin_p, twin_pt = in_state state in
-  let got = answered (Rig.Point.wait_for ~ns) pt in
-  let want = answered Rig.Point.reached twin_pt in
-  equal (result bool string) want got;
-  equal ~msg:"the work that runs after" int (P.run twin_p) (P.run p);
-  Rig.close d;
-  Rig.close twin
-
-let no_time_gen =
-  Gen.pair
-    (Gen.of_list ~pp:pp_state [ Reached; Committed; Uncommitted; Lost_before ])
-    (Gen.one_of
-       [
-         Gen.constant 0; Gen.int_range (-1_000_000) (-1); Gen.constant min_int;
-       ])
-
-(* [Point.submitted d] is the point of [d]'s last submitted value, and a wait
-   on it leaves every earlier point reached. With nothing submitted it is
-   reached at once, of no device. *)
-let submitted_point n =
-  cover "nothing submitted" (n = 0);
-  let d, _ = P.open_ (fresh "submitted") in
-  let points = List.init n (fun _ -> submit (empty d)) in
-  let s = Rig.Point.submitted d in
-  if n = 0 then begin
-    equal ~msg:"its device" (option device) None (Rig.Point.device s);
-    equal ~msg:"reached" bool true (Rig.Point.reached s)
-  end
-  else begin
-    equal ~msg:"its device" (option device) (Some d) (Rig.Point.device s);
-    equal ~msg:"its value" int (Rig.submitted d) (Rig.Point.value s)
-  end;
-  Rig.Point.wait s;
-  List.iteri
-    (fun i pt ->
-      equal ~msg:(Printf.sprintf "point %d" i) bool true (Rig.Point.reached pt))
-    points;
-  Rig.close d
-
-(* The host's work is done when its submit returns, so its submitted point
-   is reached at once, before and after a submit. *)
-let test_submitted_host () =
-  let before = Rig.Point.submitted Rig.host in
-  equal ~msg:"before a submit" bool true (Rig.Point.reached before);
-  Rig.Point.wait before;
-  ignore (submit (Sub.make Rig.host [||]));
-  let after = Rig.Point.submitted Rig.host in
-  equal ~msg:"its value" int (Rig.submitted Rig.host) (Rig.Point.value after);
-  equal ~msg:"after a submit" bool true (Rig.Point.reached after);
-  equal ~msg:"wait_for" bool true (Rig.Point.wait_for ~ns:1 after)
-
-(* Looks at producers *)
-
-(* A producer whose driver recorded a fault, a consumer whose queue waits on
-   it, and the consumer's point. The consumer's sleeps stall, so they never
-   run the producer's work: only a look at the producer surfaces the fault. *)
-let faulted_pair ?(completion = `Store) what =
-  let pd, pp = P.open_ (fresh (what ^ "-producer")) in
-  let c, pc =
-    P.open_ ~completion ~waits_on:[ `Host ] (fresh (what ^ "-consumer"))
-  in
-  let a = submit (empty pd) in
-  let b = submit (empty c) ~waits:[| a |] in
-  P.fault pp "the engine hung";
-  P.stall pc max_int;
-  (pd, c, b)
-
-(* The most a fault takes to surface through looks: the consumer's clock
-   passes a still interval, its first look reads the producer, whose own clock
-   then passes one, and one more round; and the tolerance. *)
-let look_within_ns = (3 * still_ns) + tolerance_ns
-
-(* A loop of short bounded waits on the consumer surfaces the producer's
-   fault: the consumer's clock outlives each wait, so its waits look. *)
-let short_waits ns =
-  let pd, c, b = faulted_pair "short-waits" in
-  let t0 = Rig.Profile.now () in
-  let rec loop () =
-    if Rig.Profile.now () - t0 > look_within_ns then "no loss in time"
-    else
-      match Rig.Point.wait_for ~ns b with
-      | true -> "reached"
-      | false -> loop ()
-      | exception Rig.Lost (l, why) when Rig.equal l c -> why
-  in
-  equal string (Rig.name pd ^ " lost") (loop ());
-  Rig.close c;
-  Rig.close pd
-
-(* A consumer whose word the host writes looks as one whose queue writes
-   it. *)
-let test_look_host () =
-  let pd, c, b = faulted_pair ~completion:`Host "look-host" in
-  let got =
-    match Rig.Point.wait_for ~ns:1_000_000_000 b with
-    | true -> "reached"
-    | false -> "no loss in time"
-    | exception Rig.Lost (l, why) when Rig.equal l c -> why
-  in
-  equal string (Rig.name pd ^ " lost") got;
-  Rig.close c;
-  Rig.close pd
-
-(* A producer lost while a consumer's wait sleeps, its clock past the still
-   interval, reaches the consumer once that sleep returns. The producer's
-   sleeps stall too, so a look runs none of its work. *)
-let test_lost_producer () =
-  let pd, pp = P.open_ (fresh "lost-producer") in
-  let c, pc = P.open_ ~waits_on:[ `Host ] (fresh "lost-producer-consumer") in
-  let a = submit (empty pd) in
-  let b = submit (empty c) ~waits:[| a |] in
-  P.stall pp max_int;
-  P.stall pc max_int;
-  let waiter =
-    Domain.spawn (fun () ->
-        match Rig.Point.wait b with
-        | () -> None
-        | exception Rig.Lost (l, why) when Rig.equal l c ->
-            Some (why, Rig.Profile.now ()))
-  in
-  Support.await "the consumer's second sleep" (fun () -> P.sleeps pc >= 2);
-  let lost_at = Rig.Profile.now () in
-  Rig.lose pd "given up";
-  match Domain.join waiter with
-  | None -> fail "the consumer's wait returned"
-  | Some (why, raised_at) ->
-      equal string ~msg:"the reason" (Rig.name pd ^ " lost") why;
-      less ~msg:"from the loss to the raise, in ns" int
-        ~than:(still_ns + tolerance_ns) (raised_at - lost_at);
-      Rig.close c;
-      Rig.close pd
-
-(* A short wait leaves the bound's clock alone: a later wait, past twice the
-   bound, on a queue that waited on its producer all along loses nothing. *)
-let test_short_wait_bound () =
-  let pd, pp = P.open_ (fresh "short-bound-producer") in
-  let c, _ =
-    P.open_ ~hang_ms ~completion:`Store ~waits_on:[ `Host ]
-      (fresh "short-bound-consumer")
-  in
-  let a = submit (empty pd) in
-  let b = submit (empty c) ~waits:[| a |] in
-  P.stall pp max_int;
-  equal ~msg:"the short wait" bool false (Rig.Point.wait_for ~ns:10_000_000 b);
-  Thread.delay (2. *. Float.of_int hang_ms /. 1000.);
-  P.stall pp 0;
-  Rig.Point.wait b;
-  equal (option string) ~msg:"the loss" None (Rig.lost c);
-  Rig.close c;
-  Rig.close pd
-
-(* Two waiters on one stalled device: each raises the bound's loss no sooner
-   than the bound after the stall began. *)
-let test_hang_two_waiters () =
-  let d, p = P.open_ ~hang_ms (fresh "hang-two-waiters") in
-  let pt = submit (empty d) in
-  P.stall p max_int;
-  let t0 = Rig.Profile.now () in
-  let wait () =
-    match Rig.Point.wait pt with
-    | () -> Error "returned"
-    | exception Rig.Lost (_, why) -> Ok (why, Rig.Profile.now ())
-  in
-  let other = Domain.spawn wait in
-  let mine = wait () in
-  let theirs = Domain.join other in
-  let why = Printf.sprintf "no progress for %d ms" hang_ms in
-  List.iter
-    (fun (who, r) ->
-      match r with
-      | Error e -> failf "%s: the wait %s" who e
-      | Ok (w, raised_at) ->
-          equal string ~msg:(who ^ ": the reason") why w;
-          at_least ~msg:(who ^ ": the wait, in ms") int ~than:hang_ms
-            ((raised_at - t0) / 1_000_000))
-    [ ("this domain", mine); ("the other", theirs) ];
-  Rig.close d
-
-let test_refusals () =
-  let d = memory "submit:refusals" in
-  raises_match Exn.invalid_arg (fun () ->
-      submit ~args:one (empty ~uses:[| Sub.read |] d))
-
-(* Each misuse [Submission.make] and [submit] state raises
-   [Invalid_argument]. *)
-let test_make_refusals () =
-  let d, _ = P.open_ ~host_visible:false "submit:make-refusals" in
-  let arg = B.create Rig.host 8 in
-  let unseen = B.create d 8 and other = B.create d 16 in
-  let dead = B.create d 8 in
-  ignore (require_some (Support.donated dead));
-  let copy src dst =
-    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
-  in
-  let make d parts = ignore (Sub.make d parts) in
-  let s = Sub.make d [| Support.touching [| Sub.read; Sub.write |] |] in
-  let touch buffers = ignore (submit s ~buffers ~args:one) in
-  let slot_copy = Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |] in
-  let into_unseen =
-    Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Buffer unseen) |]
-  in
-  let elsewhere = B.create (fst (P.open_ "submit:elsewhere")) 8 in
-  List.iter
-    (fun (msg, f) -> raises_match ~msg Exn.invalid_arg f)
-    [
-      ("on an io device", fun () -> make (Rig_support.io "submit:io") [||]);
-      ( "a copy of buffers of two sizes",
-        fun () -> make d [| copy unseen other |] );
-      ( "a copy of another device's memory",
-        fun () -> make d [| copy arg (B.create Rig.host 8) |] );
-      ("a part's dead buffer", fun () -> make d [| copy dead unseen |]);
-      ( "a copy of a slot into itself",
-        fun () -> make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 0) |] );
-      ( "a copy's negative slot",
-        fun () -> make d Sub.[| copy ~src:(Slot (-1)) ~dst:(Buffer unseen) |] );
-      ( "a slot no ref or copy names",
-        fun () -> make d Sub.[| copy ~src:(Slot 1) ~dst:(Buffer unseen) |] );
-      ( "a slot a copy and an unordered ref name",
-        fun () ->
-          make d
-            Sub.
-              [|
-                copy ~src:(Slot 0) ~dst:(Buffer unseen);
-                Support.touching [| unordered |];
-              |] );
-      ( "a submit's copy of buffers of two sizes",
-        fun () -> ignore (submit slot_copy ~buffers:[| unseen; other |]) );
-      ( "a submit's copy into a buffer of another size",
-        fun () -> ignore (submit into_unseen ~buffers:[| other |]) );
-      ( "a submit's copy of the host's memory",
-        fun () -> ignore (submit slot_copy ~buffers:[| arg; unseen |]) );
-      ( "a submit's copy of a dead buffer",
-        fun () -> ignore (submit slot_copy ~buffers:[| dead; unseen |]) );
-      ( "a submit's read of the host's memory",
-        fun () -> touch [| arg; unseen |] );
-      ( "a submit's write of another device's memory",
-        fun () -> touch [| unseen; elsewhere |] );
-      ( "a submit of more buffers than made",
-        fun () -> touch [| unseen; unseen; unseen |] );
-      ("a submit of fewer buffers than made", fun () -> touch [| unseen |]);
-      ("a submit's dead buffer", fun () -> touch [| dead; unseen |]);
-    ]
-
-(* A copy's buffers share no byte, so a driver copies between disjoint
-   ranges: a copy between halves of one buffer is made, and one between
-   views that share bytes is refused. *)
-let test_overlapping_copy () =
-  let d = memory "submit:overlapping-copy" in
-  let b = B.create d 16 in
-  let copy src dst =
-    let view first = B.view b ~first ~length:8 in
-    Sub.(copy ~src:(Buffer (view src)) ~dst:(Buffer (view dst)))
-  in
-  ignore (Sub.make d [| copy 0 8 |]);
-  List.iter
-    (fun (msg, src, dst) ->
-      raises_match ~msg (Exn.invalid_arg ~sub:"overlap") (fun () ->
-          Sub.make d [| copy src dst |]))
-    [ ("into itself", 0, 0); ("forwards", 0, 4); ("backwards", 4, 0) ]
-
-(* A submit that raises keeps nothing: the next submit of the submission waits
-   for none of its points. *)
-let test_cleared_on_raise () =
-  let d = memory "submit:cleared" in
-  let base = Rig.submitted d in
-  let producer, pp = P.open_ "submit:cleared-producer" in
-  let point = submit (empty producer) in
-  P.fail pp;
-  (try ignore (submit (empty producer)) with Rig.Lost _ -> ());
-  let s = empty ~uses:[| Sub.read |] d and b = on d (B.create Rig.host 8) in
-  raises_match
-    (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> submit s ~buffers:[| b |] ~args:one ~waits:[| point |]);
-  equal int (base + 1)
-    (Rig.Point.value (submit s ~buffers:[| b |] ~args:one))
-
-(* A submit's buffer whose memory was taken through another buffer refuses the
-   submit. *)
-let test_dead_slot () =
-  let d = memory "submit:dead-slot" in
-  let base = Rig.submitted d in
-  let b = B.create Rig.host 8 in
-  let s = empty ~uses:[| Sub.read |] d and borrowed = on d b in
-  ignore (require_some (Support.donated b));
-  raises_match Exn.invalid_arg (fun () ->
-      submit s ~buffers:[| borrowed |] ~args:one);
-  equal int base (Rig.submitted d)
-
-(* A submission keeps the buffers it was made with, whatever the caller's
-   parts array holds later: a take of a part's buffer is refused, and one of
-   the buffer the array names since succeeds. *)
-let test_parts_changed () =
-  let d = memory "submit:parts-changed" in
-  let a = B.create d 8 and b = B.create d 8 and dst = B.create d 8 in
-  let copy src =
-    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
-  in
-  let parts = [| copy a |] in
-  let s = Sub.make d parts in
-  parts.(0) <- copy b;
-  let takes x = Option.is_some (Support.donated x) in
-  equal ~msg:"the part's buffer, the array's" (pair bool bool) (false, true)
-    (takes a, takes b);
-  Rig.Point.wait (submit s)
-
-(* A submission keeps its parts' buffers after the caller's array changes. *)
-let test_parts_kept () =
-  let d = memory "submit:parts-kept" in
-  let collected = ref false in
-  let fresh () =
-    let a = B.create d 8 in
-    Support.store (Support.Reader.host a) 41;
-    Gc.finalise_last (fun () -> collected := true) a;
-    a
-  in
-  let b = B.create d 8 and dst = B.create d 8 in
-  Support.store (Support.Reader.host b) 42;
-  let copy src =
-    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
-  in
-  let parts = [| copy (fresh ()) |] in
-  let s = Sub.make d parts in
-  parts.(0) <- copy b;
-  Gc.full_major ();
-  equal ~msg:"the part's buffer collected" bool false !collected;
-  ignore (submit s);
-  equal ~msg:"the original part's bytes" int 41 (word dst);
-  equal ~msg:"the array's new buffer" int 42 (word b);
-  ignore (Sys.opaque_identity s)
-
-(* A submit whose hand-over fails has assigned its value: the stamps of the
-   memory it writes name it, so a read of that memory raises the loss, and
-   one of memory it only read does not. *)
-let test_failed_names () =
-  let d, p = P.open_ "submit:failed-names" in
-  let w = B.create Rig.host page_bytes and r = B.create Rig.host page_bytes in
-  let s = empty ~uses:[| Sub.read; Sub.write |] d in
-  let opened = Rig.submitted d in
-  P.fail p;
-  let lost = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false in
-  raises_match ~msg:"the submit" lost (fun () ->
-      submit ~args:one s ~buffers:[| on d r; on d w |]);
-  equal int ~msg:"its value" (opened + 1) (Rig.submitted d);
-  raises_match ~msg:"a read of its write" lost (fun () -> B.wait w Rig.Read);
-  B.wait r Rig.Read;
-  raises_match ~msg:"a write of its read" lost (fun () ->
-      B.wait r Rig.Read_write)
-
-(* A read of memory another device wrote waits for that write: on the host,
-   since a software device waits on no other device in its queue. *)
-let test_read_waits () =
-  let producer, pp = P.open_ "submit:producer" in
-  let consumer = memory "submit:consumer" in
-  let b = B.create producer page_bytes in
-  ignore (touch [| Sub.write |] producer [| b |]);
-  equal int 1 (P.queued pp);
-  ignore (touch [| Sub.read |] consumer [| on consumer b |]);
-  equal int 0 (P.queued pp)
-
-(* An [Unordered] buffer orders nothing: a submit that uses memory another
-   device's queued work writes waits for none of it, that device's later write
-   does not wait for the use, and neither does a wait of the host. *)
-let test_unordered () =
-  let a, pa = P.open_ "submit:unordered-writer" in
-  let b, pb = P.open_ "submit:unordered-user" in
-  let x = B.create a page_bytes in
-  let write () =
-    ignore (touch [| Sub.write |] a [| x |])
-  in
-  write ();
-  ignore (touch [| Sub.unordered |] b [| on b x |]);
-  equal ~msg:"the writer's work, after the use" int 1 (P.queued pa);
-  write ();
-  equal ~msg:"the use, after the next write" int 1 (P.queued pb);
-  B.wait x Rig.Read_write;
-  equal ~msg:"the use, after the host's wait" int 1 (P.queued pb);
-  ignore (P.run pb)
-
-(* An [Unordered] buffer stays reachable until the work is done: memory of one
-   device that only such a submit on another named returns once that device ran
-   the work, not before. *)
-let test_unordered_keeps () =
-  let a, pa = P.open_ "submit:unordered-keeps-owner" in
-  let b, pb = P.open_ "submit:unordered-keeps-user" in
-  (fun () ->
-    let x = B.create a page_bytes in
-    ignore (touch [| Sub.unordered |] b [| on b x |]))
-    ();
-  let drain () =
-    Gc.full_major ();
-    Gc.full_major ();
-    ignore (B.create a 0);
-    Rig.free_cache a
-  in
-  let frees () = List.length (List.filter (( = ) "free") (P.log pa)) in
-  drain ();
-  equal ~msg:"while the work is queued" int 0 (frees ());
-  ignore (P.run pb);
-  drain ();
-  equal ~msg:"once it ran" int 1 (frees ())
-
-(* The old buffer's queued write must not touch a later buffer, even when either
-   lifetime uses Unordered access. *)
-let[@inline never] dropped_bump d use =
-  let b = B.create d page_bytes in
-  Support.store (Support.Reader.host b) 0;
-  let bump = Sub.fill ~refs:[| use 0 ~at:0 |] Support.bump ~params:8 in
-  submit (Sub.make d [| bump |]) ~buffers:[| b |] ~args:one
-
-let test_cached_unordered_host () =
-  let d, p = P.open_ "submit:cached-unordered-host" in
-  let old = dropped_bump d Sub.unordered in
-  Gc.full_major ();
-  Gc.full_major ();
-  equal ~msg:"the earlier work is pending" int 1 (P.queued p);
-  let b = B.create d page_bytes in
-  B.wait b Rig.Read_write;
-  Support.store (Support.Reader.host b) 41;
-  Rig.Point.wait old;
-  equal ~msg:"the new buffer after the old work finishes" int 41 (word b)
-
-let test_cached_unordered_foreign (name, access) =
-  let a, pa = P.open_ ("submit:cached-unordered-owner:" ^ name) in
-  let d, _ = P.open_ ("submit:cached-unordered-user:" ^ name) in
-  let old = dropped_bump a access in
-  Gc.full_major ();
-  Gc.full_major ();
-  equal ~msg:"the earlier work is pending" int 1 (P.queued pa);
-  let b = B.create a page_bytes in
-  let poke =
-    Sub.fill ~refs:[| Sub.unordered 0 ~at:0 |] Support.poke ~params:16
-  in
-  let s = Sub.make d [| poke |] in
-  let params = Bytes.make 16 '\000' in
-  Bytes.set_int64_le params 8 41L;
-  let args = [| { Support.zero with params } |] in
-  Rig.Point.wait (submit ~buffers:[| on d b |] ~args s);
-  Rig.Point.wait old;
-  equal ~msg:"the new buffer after the old work finishes" int 41 (word b)
-
-(* A part's buffers are ordered as a submit's are: a copy waits for another
-   device's write of its source and for another device's read of its
-   destination. *)
-let test_part_points () =
-  let d, _ = P.open_ "submit:parts" in
-  let e, pe = P.open_ "submit:parts-other" in
-  let src = B.create d 64 and dst = B.create d 64 in
-  let copy =
-    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
-  in
-  let s = Sub.make d [| copy |] in
-  ignore (touch [| Sub.write |] e [| on e src |]);
-  ignore (submit s);
-  equal ~msg:"after a write of the source" int 0 (P.queued pe);
-  ignore (touch [| Sub.read |] e [| on e dst |]);
-  ignore (submit s);
-  equal ~msg:"after a read of the destination" int 0 (P.queued pe)
-
-(* A submit's buffers stay reachable until their stamps are raised: a buffer
-   only the submit's array reaches, while the submit waits on the host for
-   another device, is not collected, and a buffer made meanwhile by another
-   domain, after a full collection and a drain, gets other memory. *)
+(* A buffer only the submit's array reaches, while the submit waits on the host
+   for another device, is not collected: a buffer another domain makes
+   meanwhile, after a full collection and a drain, gets other memory. *)
 let test_run_keeps () =
   let producer, pp = P.open_ "submit:keeps-producer" in
   let d, _ = P.open_ "submit:keeps" in
@@ -1053,7 +115,8 @@ let test_run_keeps () =
       ~waits:[| a |]
   in
   let b = Domain.join other in
-  equal ~msg:"another domain's buffer" bool false (Support.Reader.host b = !at);
+  not_equal ~msg:"another domain's buffer's address" int !at
+    (Support.Reader.host b);
   Rig.Point.wait point
 
 (* A Polled device that waits on the words of producers of [completion] waits
@@ -1108,6 +171,28 @@ let test_unmapped_wait () =
 let test_in_queue () = in_queue ~completion:`Host
 let test_in_queue_store () = in_queue ~completion:`Store
 
+(* Room *)
+
+(* Submissions of one [idle] part and of none, each with its values, and the
+   value a submit of one takes. *)
+let one_part d = (Sub.make d [| idle |], Support.zeros 1)
+let no_part d = (empty d, [||])
+let value (s, args) = Rig.Point.value (submit s ~args)
+
+(* A thread of the test's domain running [f], whose outcome [join] gives. *)
+let spawn f =
+  let r = ref (Error Exit) in
+  let t = Thread.create (fun () -> r := try Ok (f ()) with e -> Error e) () in
+  fun () ->
+    Thread.join t;
+    !r
+
+let pp_outcome ppf = function
+  | Ok v -> Format.fprintf ppf "Ok %d" v
+  | Error e -> Format.fprintf ppf "Error %s" (Printexc.to_string e)
+
+let outcome = Testable.make ~pp:pp_outcome ~equal:( = )
+
 (* Room alone bounds a submission: one the device's queues hold runs, and one
    they never hold raises. *)
 let test_never_fits () =
@@ -1129,9 +214,559 @@ let test_room () =
   equal int 1 (P.queued p);
   equal int (base + 1) (Rig.signaled d)
 
-(* Growth *)
+(* A submit that waits for room waits with the turn released: a submission with
+   no parts, which fits, is handed over meanwhile. *)
+let test_later_releases () =
+  let d, p = P.open_ ~capacity:1 "submit:later" in
+  let base = Rig.submitted d in
+  equal int (base + 1) (value (one_part d));
+  P.gate p;
+  let waiting = spawn (fun () -> value (one_part d)) in
+  Support.await "a sleep at the gate" (fun () -> P.sleepers p = 1);
+  equal int (base + 2) (value (no_part d));
+  P.open_gate p;
+  equal outcome (Ok (base + 3)) (waiting ())
 
-let count call p = List.length (List.filter (( = ) call) (P.log p))
+(* A fault found while a submit waits for room loses the device, and the submit
+   commits nothing. *)
+let test_fault_waiting () =
+  let d, p = P.open_ ~capacity:1 "submit:fault-room" in
+  let base = Rig.submitted d in
+  equal int (base + 1) (value (one_part d));
+  P.gate p;
+  let waiting = spawn (fun () -> value (one_part d)) in
+  Support.await "a sleep at the gate" (fun () -> P.sleepers p = 1);
+  P.fault p "the engine hung";
+  P.open_gate p;
+  let why =
+    match waiting () with
+    | Error (Rig.Lost (d', why)) when Rig.equal d d' -> why
+    | Error e -> failf "the waiting submit raised %s" (Printexc.to_string e)
+    | Ok v -> failf "the waiting submit returned %d" v
+  in
+  equal ~msg:"the waiting submit's loss" string "the engine hung" why;
+  equal ~msg:"values assigned" int (base + 1) (Rig.submitted d)
+
+(* Polled refuses a launch of [main] with no group as work it cannot run:
+   [submit] raises and assigns no value, and the next submit takes the next
+   value. *)
+let test_never () =
+  let d, _ = P.open_ "submit:never" in
+  let base = Rig.submitted d in
+  let never = Sub.make d [| launch (functions d) "main" |] in
+  raises_match Exn.invalid_arg (fun () -> submit never ~args:one);
+  equal int base (Rig.submitted d);
+  equal int (base + 1) (value (one_part d))
+
+(* Submit *)
+
+let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
+
+let test_values () =
+  let d = memory "submit:values" in
+  let base = Rig.submitted d in
+  let s = empty d in
+  let values = List.init 5 (fun _ -> Rig.Point.value (submit s)) in
+  equal (list int) (List.init 5 (fun i -> base + i + 1)) values;
+  equal int (base + 5) (Rig.submitted d);
+  equal int (base + 5) (Rig.signaled d);
+  equal (option device) (Some d) (Rig.Point.device (submit s))
+
+let test_fill () =
+  let d = memory "submit:fill" in
+  let arg = B.create Rig.host 8 in
+  Support.store (Support.Reader.host arg) 0;
+  let s = Sub.make d [| bump; bump |] in
+  let buffers = [| on d arg |] and args = Support.zeros 2 in
+  ignore (submit ~buffers ~args s);
+  ignore (submit ~buffers ~args s);
+  equal int 4 (word arg)
+
+(* A submit that raises keeps nothing: the next submit of the submission waits
+   for none of its points. *)
+let test_cleared_on_raise () =
+  let d = memory "submit:cleared" in
+  let base = Rig.submitted d in
+  let producer, pp = P.open_ "submit:cleared-producer" in
+  let point = submit (empty producer) in
+  P.fail pp;
+  (try ignore (submit (empty producer)) with Rig.Lost _ -> ());
+  let s = empty ~uses:[| Sub.read |] d and b = on d (B.create Rig.host 8) in
+  raises_match
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> submit s ~buffers:[| b |] ~args:one ~waits:[| point |]);
+  equal int (base + 1) (Rig.Point.value (submit s ~buffers:[| b |] ~args:one))
+
+(* The device and image that each domain test's submission launches [fill] on,
+   made once for every case. *)
+let pool_device =
+  lazy
+    (let d, _ = P.open_ (fresh "pool") in
+     (d, functions d))
+
+let filling_on (d, image) =
+  Sub.make d [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
+
+(* The values of [fill] that store [v]. *)
+let fill_values v = single ~params:(words [ 0; v ]) ()
+
+(* Submits [s], a submission of [filling_on], with [args], and reads back the
+   word its launch wrote. *)
+let fill_with s args =
+  let d, _ = Lazy.force pool_device in
+  let out = B.create d 8 in
+  Rig.Point.wait (submit ~buffers:[| out |] ~args s);
+  Int64.to_int (String.get_int64_le (host_bytes out 8) 0)
+
+(* Two domains submit one submission, each with values of its own, and each
+   reads back its own parameter. *)
+let sub_t = abstract "s"
+
+let own_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes sub_t)
+      Fun.id
+      (fun () -> filling_on (Lazy.force pool_device));
+    command "submit"
+      (sub_t ^-> Gen.int_range 1 1000 @-> returns int)
+      (fun () v -> v)
+      (fun s v -> fill_with s [| fill_values v |]);
+  ]
+
+(* Two domains share one array of values, whose element a store replaces,
+   and submit one submission with it. A submit reads the element once and
+   checks what it read, so each reads back the parameter of the last store
+   before it in some order of the calls, and raises where that store put
+   values the launch refuses: more bytes than its 16. *)
+(* The model: the parameter of the last store, [None] where it put values
+   the launch refuses. *)
+type passed = { mutable stored : int option }
+type passing = { sub : Sub.t; args : Sub.args array }
+
+let passing_t =
+  abstract
+    ~pp:(fun ppf m ->
+      match m.stored with
+      | Some v -> Format.fprintf ppf "stored %d" v
+      | None -> Format.pp_print_string ppf "refused")
+    "p"
+
+let too_long = single ~params:(Bytes.make 24 '\000') ()
+
+let passing_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes passing_t)
+      (fun () -> { stored = Some 0 })
+      (fun () ->
+        let sub = filling_on (Lazy.force pool_device) in
+        { sub; args = [| fill_values 0 |] });
+    command "store"
+      (passing_t ^-> Gen.int_range 1 1000 @-> returns unit)
+      (fun m v -> m.stored <- Some v)
+      (fun t v -> t.args.(0) <- fill_values v);
+    command "spoil"
+      (passing_t ^-> returns unit)
+      (fun m -> m.stored <- None)
+      (fun t -> t.args.(0) <- too_long);
+    command "submit"
+      (passing_t ^-> judges int)
+      (fun m -> function
+        | Ok got ->
+            equal (option int) ~msg:"the last stored parameter" m.stored
+              (Some got)
+        | Error (Invalid_argument _) when m.stored = None -> ()
+        | Error e -> raise e)
+      (fun t -> fill_with t.sub t.args);
+  ]
+
+(* A submission of [n] launches of [fill] on the domain tests' device. *)
+let fills_on n =
+  let d, image = Lazy.force pool_device in
+  let fill = launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] in
+  Sub.make d (Array.make n fill)
+
+(* Submits [s], [n] launches of [fills_on], launch [i] storing [v + i] at word
+   [i], and reads the words back. *)
+let fills_with s n v =
+  let d, _ = Lazy.force pool_device in
+  let out = B.create d (8 * n) in
+  let args =
+    Array.init n (fun i -> single ~params:(words [ 8 * i; v + i ]) ())
+  in
+  Rig.Point.wait (submit ~buffers:[| out |] ~args s);
+  let b = host_bytes out (8 * n) in
+  List.init n (fun i -> Int64.to_int (String.get_int64_le b (8 * i)))
+
+(* "each block 32 bytes and twice its parameters rounded up to a multiple of
+   16": the bytes of the blocks of [n] launches of [fill], which takes 16. *)
+let fill_blocks n = n * (32 + (2 * 16))
+
+(* A free_cache of the host frees the state rig keeps for later submits, and a
+   submit after it runs. *)
+let test_state_freed () =
+  let n = 256 in
+  let s = fills_on n in
+  let from v = List.init n (( + ) v) in
+  equal (list int) ~msg:"a submit before" (from 1) (fills_with s n 1);
+  at_least int ~msg:"the state kept after it" ~than:(fill_blocks n)
+    (Rig.submit_state ());
+  Rig.free_cache Rig.host;
+  equal int ~msg:"the state kept after free_cache" 0 (Rig.submit_state ());
+  equal (list int) ~msg:"a submit after it" (from 7) (fills_with s n 7)
+
+(* "as many sets as submits ... were ever under way at once, each as large as
+   the largest submission it served": submits one at a time keep one set. Once
+   it served the large submission, the small one's submit takes it and adds
+   nothing; a set per submission would add the small one's. *)
+let test_state_sets () =
+  Rig.free_cache Rig.host;
+  let small = fills_on 1 and large = fills_on 64 in
+  ignore (fills_with small 1 1);
+  let small_alone = Rig.submit_state () in
+  Rig.free_cache Rig.host;
+  ignore (fills_with large 64 1);
+  let large_alone = Rig.submit_state () in
+  ignore (fills_with small 1 1);
+  equal ~msg:"the large one, then the small one" int large_alone
+    (Rig.submit_state ());
+  at_least ~msg:"the large one alone" int ~than:(fill_blocks 64) large_alone;
+  less ~msg:"the small one alone" int ~than:large_alone small_alone;
+  Rig.free_cache Rig.host
+
+(* A free_cache of the host while a submit of another domain waits in its
+   device's room, its values copied into its state, leaves that state: the
+   driver reads the values the submit was given. *)
+let test_state_held () =
+  let d, p = P.open_ ~may_block:true (fresh "state-held") in
+  let s = Sub.make d [| launch (functions d) "main" ~params:64 |] in
+  let params = words (List.init 8 (( + ) 100)) in
+  ignore (P.launches p);
+  P.gate_room p;
+  let held = Domain.spawn (fun () -> submit ~args:[| single ~params () |] s) in
+  Rig_support.await "a submit in its room" (fun () -> P.in_room p = 1);
+  Rig.free_cache Rig.host;
+  P.open_room p;
+  Rig.Point.wait (Domain.join held);
+  let given =
+    {
+      P.groups = (1, 1, 1);
+      threads = (1, 1, 1);
+      shared = 0;
+      params = Bytes.to_string params;
+    }
+  in
+  equal (list launch_t) ~msg:"the launch its driver read" [ given ]
+    (P.launches p)
+
+(* Two domains submit submissions of 1 to 64 launches while either frees the
+   host's cache, which may take a set of state as a submit would: each submit
+   reads back its own values. *)
+let fills_t = abstract ~pp:Format.pp_print_int "s"
+
+let freeing_commands =
+  [
+    command "make"
+      (Gen.int_range 1 64 @-> makes fills_t)
+      Fun.id
+      (fun n -> (fills_on n, n));
+    command "submit"
+      (fills_t ^-> Gen.int_range 1 1000 @-> returns (list int))
+      (fun n v -> List.init n (( + ) v))
+      (fun (s, n) v -> fills_with s n v);
+    command "free_cache"
+      (Gen.unit @-> returns unit)
+      Fun.id
+      (fun () -> Rig.free_cache Rig.host);
+  ]
+
+(* Two domains submitting one submission: the submits take turns, each takes the
+   device's next value, and every fill runs. A program counts values from
+   [base], its device's value when it began. *)
+type shared = {
+  dev : Rig.t;
+  base : int;
+  arg : B.t;
+  buffers : B.t array;
+  sub : Sub.t;
+}
+
+type shared_model = { mutable values : int }
+
+(* Devices go back to a pool when their program ends. *)
+let shared_pool = Mutex.create ()
+let shared_free = ref []
+let shared_opened = Atomic.make 0
+
+let make_shared () =
+  let d =
+    match
+      Mutex.protect shared_pool (fun () ->
+          match !shared_free with
+          | d :: rest ->
+              shared_free := rest;
+              Some d
+          | [] -> None)
+    with
+    | Some d -> d
+    | None ->
+        memory
+          (Printf.sprintf "submit:shared-%d"
+             (Atomic.fetch_and_add shared_opened 1))
+  in
+  let arg = B.create Rig.host 8 in
+  Support.store (Support.Reader.host arg) 0;
+  {
+    dev = d;
+    base = Rig.submitted d;
+    arg;
+    buffers = [| on d arg |];
+    sub = Sub.make d [| bump; bump |];
+  }
+
+(* Every submit ran both its fills. *)
+let release_shared t =
+  equal ~msg:"fills" int (2 * (Rig.submitted t.dev - t.base)) (word t.arg);
+  Mutex.protect shared_pool (fun () -> shared_free := t.dev :: !shared_free)
+
+let shared =
+  abstract
+    ~pp:(fun ppf r -> Format.fprintf ppf "values %d" r.values)
+    ~release:release_shared "s"
+
+let judge_submit r = function
+  | Ok v ->
+      equal ~msg:"value" int (r.values + 1) v;
+      r.values <- v
+  | Error e -> raise e
+
+let shared_commands =
+  [
+    command "make"
+      (Gen.unit @-> makes shared)
+      (fun () -> { values = 0 })
+      make_shared;
+    command "submit"
+      (shared ^-> judges int)
+      judge_submit
+      (fun t ->
+        let args = Support.zeros 2 in
+        Rig.Point.value (submit ~args ~buffers:t.buffers t.sub) - t.base);
+  ]
+
+(* Two domains copying on one device at once, each between buffers of its own:
+   through one submission whose copy's ends are its two slots, and through
+   Buffer.copy, which shares what it prepares for the device between domains.
+   Each copy's destination ends with its source's word. The host addresses no
+   memory of the device, so its copy engine runs each copy between two of its
+   buffers. *)
+let slot_copier =
+  let copier =
+    lazy
+      (let d, _ = P.open_ ~host_visible:false "submit:slot-copier" in
+       (d, Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
+  in
+  (* Two domains may make the first call at once, and a lazy value forced from
+     two domains at once raises [CamlinternalLazy.Undefined]. *)
+  let lock = Mutex.create () in
+  fun () -> Mutex.protect lock (fun () -> Lazy.force copier)
+
+(* A buffer of [d] holding [v], and one to copy it into. *)
+let copy_ends d v =
+  let src = B.create d 8 and dst = B.create d 8 in
+  let h = B.create Rig.host 8 in
+  Support.store (Support.Reader.host h) v;
+  B.copy ~src:h ~dst:src;
+  (src, dst)
+
+(* The word of [b], a buffer of a device. *)
+let device_word b =
+  let h = B.create Rig.host 8 in
+  B.copy ~src:b ~dst:h;
+  word h
+
+let copy_commands =
+  [
+    command "submit"
+      (Gen.int @-> returns int)
+      Fun.id
+      (fun v ->
+        let d, s = slot_copier () in
+        let src, dst = copy_ends d v in
+        Rig.Point.wait (Rig.submit s ~buffers:[| src; dst |] ~args:[||]);
+        device_word dst);
+    command "Buffer.copy"
+      (Gen.int @-> returns int)
+      Fun.id
+      (fun v ->
+        let d, _ = slot_copier () in
+        let src, dst = copy_ends d v in
+        B.copy ~src ~dst;
+        device_word dst);
+  ]
+
+(* While a submit of a submission waits on the host for a producer, a submit of
+   the same submission on another domain, with its own values, completes. *)
+let test_run_beside_wait () =
+  let producer, pp = P.open_ "submit:beside-producer" in
+  let d, p = P.open_ "submit:beside" in
+  let base = Rig.submitted d in
+  let s = Sub.make d [| launch (functions d) "main" ~params:8 |] in
+  let point = submit (empty producer) in
+  let values v = [| single ~params:(words [ v ]) () |] in
+  let first = values 41 and second = values 42 in
+  P.gate pp;
+  let waiting =
+    Domain.spawn (fun () -> submit s ~args:first ~waits:[| point |])
+  in
+  let finished = ref None in
+  Fun.protect
+    ~finally:(fun () ->
+      P.open_gate pp;
+      finished := Some (Domain.join waiting))
+    (fun () ->
+      Support.await "a sleep at the gate" (fun () -> P.sleepers pp = 1);
+      equal ~msg:"the submit beside the wait" int (base + 1)
+        (Rig.Point.value (submit s ~args:second)));
+  let finished = Option.get !finished in
+  equal ~msg:"the waiting submit" int (base + 2) (Rig.Point.value finished);
+  Rig.Point.wait finished;
+  equal ~msg:"each launch reads its submit's parameter" (list int) [ 42; 41 ]
+    (first_words (P.launches p))
+
+(* A submit made inside another's wait of the same submission, as a signal
+   handler runs, completes with its own values: each launch reads its submit's
+   parameter. *)
+let test_run_reentrant () =
+  let producer, pp = P.open_ "submit:reentrant-producer" in
+  let d, p = P.open_ "submit:reentrant" in
+  let base = Rig.submitted d in
+  let s = Sub.make d [| launch (functions d) "main" ~params:8 |] in
+  let point = submit (empty producer) in
+  let values v = [| single ~params:(words [ v ]) () |] in
+  let outer_args = values 41 and inner_args = values 42 in
+  let inner = ref None in
+  let handle _ = inner := Some (Rig.Point.value (submit s ~args:inner_args)) in
+  P.interrupt pp;
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  let outer =
+    Fun.protect
+      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+      (fun () -> submit s ~args:outer_args ~waits:[| point |])
+  in
+  equal ~msg:"the submit inside the wait" (option int) (Some (base + 1)) !inner;
+  equal ~msg:"the waiting submit" int (base + 2) (Rig.Point.value outer);
+  Rig.Point.wait outer;
+  equal ~msg:"each launch reads its submit's parameter" (list int) [ 42; 41 ]
+    (first_words (P.launches p))
+
+(* Values rewritten from a signal handler while a submit of them waits for a
+   producer: the submit completes, and its launch reads each byte as the values
+   held it before or after. *)
+let test_rewritten_values () =
+  let producer, pp = P.open_ "submit:rewritten-producer" in
+  let d, p = P.open_ "submit:rewritten" in
+  let s = Sub.make d [| launch (functions d) "main" ~params:8 |] in
+  let params = Bytes.make 8 'a' in
+  let args = [| single ~params () |] in
+  let point = submit (empty producer) in
+  let rewrites = ref 0 in
+  let handle _ =
+    Bytes.fill params 0 8 'b';
+    incr rewrites
+  in
+  ignore (P.launches p);
+  P.interrupt pp;
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
+  let v =
+    Fun.protect
+      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+      (fun () -> submit ~waits:[| point |] ~args s)
+  in
+  equal ~msg:"the handler's runs" int 1 !rewrites;
+  Rig.Point.wait v;
+  let neither l = String.exists (fun c -> c <> 'a' && c <> 'b') l in
+  equal ~msg:"launches reading a byte neither before nor after" (list string) []
+    (List.filter neither (params_of (P.launches p)))
+
+(* A linked program's run [n] uses copy [n mod 2]: it writes run [n]'s arguments
+   into the copy's values, which run [n - 2] passed, and submits the copy's
+   prepared submission. Its fill stores [n] where the arguments say, into run
+   [n]'s output. The host goes on to the next run without waiting for the
+   output. *)
+type replay = {
+  d : Rig.t;
+  p : P.t;
+  subs : Sub.t array; (* Each copy's submission. *)
+  values : Sub.args array array; (* Each copy's values. *)
+  outs : (int, B.t) Hashtbl.t;
+  points : (int, int) Hashtbl.t;
+  mutable runs : int;
+}
+
+let poke = Sub.fill ~refs:[| Sub.write 0 ~at:0 |] Support.poke ~params:16
+let replays = Atomic.make 0
+
+let open_replay () =
+  let name =
+    Printf.sprintf "submit:replay-%d" (Atomic.fetch_and_add replays 1)
+  in
+  let d, p = P.open_ name in
+  let values _ = [| { Support.zero with params = Bytes.make 16 '\000' } |] in
+  {
+    d;
+    p;
+    subs = Array.init 2 (fun _ -> Sub.make d [| poke |]);
+    values = Array.init 2 values;
+    outs = Hashtbl.create 8;
+    points = Hashtbl.create 8;
+    runs = 0;
+  }
+
+let run_replay t =
+  let n = t.runs in
+  let k = n mod 2 in
+  cover "a copy reused before its last run ran"
+    (n >= 2 && Rig.signaled t.d < Hashtbl.find t.points (n - 2));
+  let out = B.create t.d 8 in
+  B.wait out Rig.Read_write;
+  Support.store (Support.Reader.host out) (-1);
+  let args = t.values.(k) in
+  Bytes.set_int64_le args.(0).params 0 0L;
+  Bytes.set_int64_le args.(0).params 8 (Int64.of_int n);
+  let v = Rig.Point.value (Rig.submit t.subs.(k) ~buffers:[| out |] ~args) in
+  Hashtbl.replace t.outs n out;
+  Hashtbl.replace t.points n v;
+  t.runs <- n + 1
+
+let output t n =
+  let out = Hashtbl.find t.outs n in
+  B.wait out Rig.Read;
+  Support.load (Support.Reader.host out)
+
+(* A program's device closes when it ends, so no later collection walks it. *)
+let replay = abstract ~release:(fun t -> Rig.close t.d) "r"
+let run_index = among int replay (fun runs -> List.init !runs Fun.id)
+let run_command = command "run" (replay ^-> returns unit) incr run_replay
+
+(* Runs are drawn twice as often as the rest, so the host runs ahead. *)
+let replay_commands =
+  [
+    command "open" (Gen.unit @-> makes replay) (fun () -> ref 0) open_replay;
+    run_command;
+    run_command;
+    command "device runs"
+      (replay ^-> returns unit)
+      (fun _ -> ())
+      (fun t -> ignore (P.run t.p));
+    command "output"
+      (replay ^-> run_index ^-> returns int)
+      (fun _ n -> n)
+      output;
+  ]
+
+(* Growth *)
 
 (* A device whose queue holds 4 parts and grows. *)
 let growing name = P.open_ ~capacity:4 ~grows:max_int name
@@ -1207,9 +842,9 @@ let test_grow_past_memory () =
   equal ~msg:"times asked after" int (asked + 1) (count "grow" p);
   equal ~msg:"the parts that ran" int 5 (word arg)
 
-(* A growth short of memory for one submission fails no other: while domain
-   A's growth past the memory runs, domain B's smaller growth is made at its
-   first ask and B's submission runs; A raises Out_of_memory. *)
+(* A growth short of memory for one submission fails no other: while domain A's
+   growth past the memory runs, domain B's smaller growth is made at its first
+   ask and B's submission runs; A raises Out_of_memory. *)
 let test_grow_short_other () =
   let d, p = P.open_ ~capacity:4 ~grows:8 "submit:grow-short-other" in
   let base = Rig.submitted d in
@@ -1234,8 +869,8 @@ let test_grow_short_other () =
   equal ~msg:"the parts that ran" int 5 (word arg)
 
 (* While a growth runs, holding no turn, a submission of another domain that
-   needs a growth too takes the device's next value; the first submission
-   takes the one after, and every part runs once. *)
+   needs a growth too takes the device's next value; the first submission takes
+   the one after, and every part runs once. *)
 let test_grow_interleaved () =
   let d, p = growing "submit:grow-interleaved" in
   let base = Rig.submitted d in
@@ -1397,789 +1032,68 @@ let test_retire_lost () =
   Rig.free_cache d;
   equal ~msg:"retires" int 0 (count "retire" p)
 
-(* Submits of one submission *)
+(* A child process limits its address space to [room] bytes above what it maps,
+   and submits a submission whose blocks span more than 256 MiB: the submit
+   raises Out_of_memory. With the limit lifted, a submit of another submission
+   runs. On Linux only: the limit bounds no allocation elsewhere. *)
+let room = 64 lsl 20
+let spanning = 1 lsl 16
 
-(* While a submit of a submission waits on the host for a producer, a submit of
-   the same submission on another domain, with its own values, completes. *)
-let test_run_beside_wait () =
-  let producer, pp = P.open_ "submit:beside-producer" in
-  let d, p = P.open_ "submit:beside" in
-  let base = Rig.submitted d in
-  let image =
-    require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
+let exe =
+  let e = Sys.executable_name in
+  if Filename.is_relative e then Filename.concat (Sys.getcwd ()) e else e
+
+(* The bytes the process maps: the [VmSize] of its status. *)
+let mapped () =
+  let field l = Scanf.sscanf_opt l "VmSize: %d kB" (fun k -> k * 1024) in
+  let lines =
+    In_channel.with_open_text "/proc/self/status" In_channel.input_lines
   in
-  let part =
-    Sub.launch (require_some (Rig.Image.resolve image "main")) ~params:8
+  match List.find_map field lines with
+  | Some n -> n
+  | None -> failwith "no VmSize in /proc/self/status"
+
+let limit n =
+  match Rig_support.set_address_space n with
+  | 0 -> ()
+  | e -> failwith (strf "setrlimit: errno %d" e)
+
+let grow_child () =
+  let d, _ = P.open_ "submit:grow-child" in
+  let image = functions d in
+  let wide = launch image "main" ~params:4096 in
+  let big = Sub.make d (Array.make spanning wide) in
+  let big_args = Array.make spanning (single ()) in
+  let small =
+    Sub.make d
+      [| launch image "fill" ~params:16 ~refs:[| Sub.write 0 ~at:0 |] |]
   in
-  let s = Sub.make d [| part |] and point = submit (empty producer) in
-  let values value =
-    let params = Bytes.create 8 in
-    Bytes.set_int64_le params 0 (Int64.of_int value);
-    [| { Sub.groups = (1, 1, 1); threads = (1, 1, 1); shared = 0; params } |]
+  limit (mapped () + room);
+  let refused =
+    match submit big ~args:big_args with
+    | _ -> "submitted"
+    | exception Stdlib.Out_of_memory -> "Out_of_memory"
   in
-  let first = values 41 and second = values 42 in
-  P.gate pp;
-  let waiting =
-    Domain.spawn (fun () -> submit s ~args:first ~waits:[| point |])
-  in
-  let finished = ref None in
-  Fun.protect
-    ~finally:(fun () ->
-      P.open_gate pp;
-      finished := Some (Domain.join waiting))
-    (fun () ->
-      Support.await "a sleep at the gate" (fun () -> P.sleepers pp = 1);
-      equal ~msg:"the submit beside the wait" int (base + 1)
-        (Rig.Point.value (submit s ~args:second)));
-  let finished = Option.get !finished in
-  equal ~msg:"the waiting submit" int (base + 2) (Rig.Point.value finished);
-  Rig.Point.wait finished;
-  equal ~msg:"each launch reads its submit's parameter" (list int) [ 42; 41 ]
-    (List.map
-       (fun (launch : P.launch) ->
-         Int64.to_int (String.get_int64_le launch.params 0))
-       (P.launches p))
+  limit max_int;
+  let out = B.create d 8 in
+  Rig.Point.wait (submit ~buffers:[| out |] ~args:[| fill_values 41 |] small);
+  Printf.printf "%s\n%Ld\n" refused (String.get_int64_le (host_bytes out 8) 0)
 
-(* A submit made inside another's wait of the same submission, as a signal
-   handler runs, completes with its own values: each launch reads its
-   submit's parameter. *)
-let test_run_reentrant () =
-  let producer, pp = P.open_ "submit:reentrant-producer" in
-  let d, p = P.open_ "submit:reentrant" in
-  let base = Rig.submitted d in
-  let image =
-    require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
-  in
-  let part =
-    Sub.launch (require_some (Rig.Image.resolve image "main")) ~params:8
-  in
-  let s = Sub.make d [| part |] and point = submit (empty producer) in
-  let values value =
-    let params = Bytes.create 8 in
-    Bytes.set_int64_le params 0 (Int64.of_int value);
-    [| { Sub.groups = (1, 1, 1); threads = (1, 1, 1); shared = 0; params } |]
-  in
-  let outer_args = values 41 and inner_args = values 42 in
-  let inner = ref None in
-  let handle _ =
-    inner := Some (Rig.Point.value (submit s ~args:inner_args))
-  in
-  P.interrupt pp;
-  let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
-  let outer =
-    Fun.protect
-      ~finally:(fun () -> Sys.set_signal Sys.sigint before)
-      (fun () -> submit s ~args:outer_args ~waits:[| point |])
-  in
-  equal ~msg:"the submit inside the wait" (option int) (Some (base + 1)) !inner;
-  equal ~msg:"the waiting submit" int (base + 2) (Rig.Point.value outer);
-  Rig.Point.wait outer;
-  equal ~msg:"each launch reads its submit's parameter" (list int) [ 42; 41 ]
-    (List.map
-       (fun (launch : P.launch) ->
-         Int64.to_int (String.get_int64_le launch.params 0))
-       (P.launches p))
+let test_grow_refused () =
+  if not (Sys.file_exists "/proc/self/status") then
+    skip ~reason:"the limit bounds no allocation off Linux" ();
+  let ic = Unix.open_process_args_in exe [| exe; "grow" |] in
+  let out = In_channel.input_all ic in
+  (match Unix.close_process_in ic with
+  | WEXITED 0 -> ()
+  | _ -> failf "the child failed: %s" out);
+  equal (list string) [ "Out_of_memory"; "41" ]
+    (String.split_on_char '\n' (String.trim out))
 
-(* A submit claims its buffers while it runs: a take of each inside its wait
-   is refused, and one after it succeeds. *)
-let test_claims () =
-  let producer, pp = P.open_ "submit:claims-producer" in
-  let d, _ = P.open_ "submit:claims" in
-  let buffers = Array.init 5 (fun _ -> B.create d 64) in
-  let s = empty ~uses:(Array.make 5 Sub.read) d in
-  let point = submit (empty producer) in
-  let takes () =
-    Array.to_list
-      (Array.map
-         (fun b -> Option.is_some (B.take ~why:"taken" [ b ]))
-         buffers)
-  in
-  let during = ref None in
-  P.interrupt pp;
-  let before =
-    Sys.signal Sys.sigint
-      (Sys.Signal_handle (fun _ -> during := Some (takes ())))
-  in
-  Fun.protect
-    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
-    (fun () -> ignore (submit s ~buffers ~args:one ~waits:[| point |]));
-  equal ~msg:"inside the submit's wait"
-    (option (list bool))
-    (Some (List.init 5 (fun _ -> false)))
-    !during;
-  equal ~msg:"after the submit" (list bool)
-    (List.init 5 (fun _ -> true))
-    (takes ())
+(* Cost *)
 
-(* A copy on a device that runs no copies is refused where the caller can act:
-   when the submission is made. *)
-let test_copy_refused () =
-  let d, _ = P.open_ ~copies:false "submit:no-copies" in
-  let src = B.create d 8 and dst = B.create d 8 in
-  let copy =
-    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
-  in
-  raises_match Exn.invalid_arg (fun () -> Sub.make d [| copy |])
-
-(* A part no queue of its device runs is refused when the submission is made:
-   the host runs no words, and Polled with no copy queue no copy. *)
-let test_runs () =
-  raises_match ~msg:"words where no queue takes them" Exn.invalid_arg
-    (fun () -> Sub.make Rig.host [| Sub.words (B.create Rig.host 8) |]);
-  let e, _ = P.open_ ~copies:false "submit:runs-fills" in
-  let src = B.create e 8 and dst = B.create e 8 in
-  raises_match ~msg:"a copy where no queue copies" Exn.invalid_arg (fun () ->
-      Sub.make e [| Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) |]);
-  let image = Result.get_ok (Rig.Image.load e "code:64") in
-  let main = require_some (Rig.Image.resolve image "main") in
-  ignore (Sub.make e [| Sub.launch main ~params:0 |])
-
-(* Words, whose effect rig cannot see, follow every earlier part; a later part
-   follows them by running on their queue or by sharing memory with them.
-   Polled's COMPUTE:0 (queue 0) runs launches, fills and words, COPY:0 (queue
-   1) is its copy engine:
-   - 0, a copy a -> b: on the copy engine;
-   - 1, words reading ws: on COMPUTE:0, the queue of launches, after 0, though
-     they share no memory;
-   - 2, a fill: on COMPUTE:0, after the words by that queue's order;
-   - 3, a copy c -> e: on the copy engine, concurrent with the words;
-   - 4, a copy e -> ws: it follows 3 by e, and the words by ws, so it runs on
-     3's queue after the words. *)
-let test_words_order () =
-  let d, p = P.open_ "submit:words-order" in
-  let ws = B.create Rig.host page_bytes in
-  let a = B.create d 8 and b = B.create d 8 in
-  let c = B.create d page_bytes and e = B.create d page_bytes in
-  let copy src dst = Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst)) in
-  let parts =
-    [|
-      copy a b;
-      Sub.words ws;
-      Sub.fill Support.noop ~params:0;
-      copy c e;
-      copy e (on d ws);
-    |]
-  in
-  Rig.Point.wait (submit (Sub.make d parts) ~args:one);
-  equal
-    (list (pair int (list int)))
-    [ (1, []); (0, [ 0 ]); (0, []); (1, []); (1, [ 1 ]) ]
-    (P.layout p)
-
-(* Words whose buffer holds a part of a word are refused by length, when the
-   part is made. *)
-let test_part_word () =
-  List.iter
-    (fun n ->
-      raises_match
-        ~msg:(Printf.sprintf "%d bytes" n)
-        (Exn.invalid_arg ~sub:(Printf.sprintf "of %d bytes" n))
-        (fun () -> Sub.words (B.create Rig.host n)))
-    [ 1; 6; 7 ]
-
-(* Fills of 4,096 bytes of parameters: as many as a submit's blocks hold, each
-   a block of 32 bytes and twice its parameters against 2^32 - 1, are made, and
-   one more is refused. *)
-let test_blocks_bound () =
-  let d, _ = P.open_ "submit:blocks-bound" in
-  let params = 4096 in
-  let most = ((1 lsl 32) - 1) / (32 + (2 * params)) in
-  let fills n = Array.make n (Sub.fill Support.noop ~params) in
-  ignore (Sub.make d (fills most));
-  raises_match (Exn.invalid_arg ~sub:"take more than 2^32 - 1 bytes")
-    (fun () -> Sub.make d (fills (most + 1)))
-
-(* [make]'s stack does not grow with its parts: 2^20 fills make within a stack
-   of 2^16 words, whatever the parts' count. *)
-let test_parts_stack () =
-  let d, _ = P.open_ "submit:parts-stack" in
-  let parts = Array.make (1 lsl 20) (Sub.fill Support.noop ~params:0) in
-  let gc = Gc.get () in
-  Gc.set { gc with stack_limit = 1 lsl 16 };
-  let s =
-    Fun.protect ~finally:(fun () -> Gc.set gc) (fun () -> Sub.make d parts)
-  in
-  ignore (Sys.opaque_identity s)
-
-(* Order *)
-
-(* A case of the order law: parts on a Polled device, copies whose ends are
-   views of three allocations or slots, fills and launches whose refs name
-   slots, words, and fixed memory. The allocations are two of the device's,
-   which the host addresses only with [host_visible], and one of the host's,
-   borrowed. A slot's refs are all of its kind, and a copy names only slots of
-   ordered refs. A launch may also hold an entry ref. Each words part reads a
-   host buffer of its own. *)
-type view = { alloc : int; first : int; length : int }
-type use = Read | Write | Unordered
-type side = View of view | Slot of int
-
-type order_part =
-  | Copy of side * side
-  | Fill of int list
-  | Launch of int list * bool  (** Its slots, and whether an entry ref. *)
-  | Words
-
-type order_case = {
-  host_visible : bool;
-  kinds : use array;  (** Each slot's refs' kind. *)
-  parts : order_part list;
-  fixed : (view * Rig.access) list;
-}
-
-let pp_view ppf v = Format.fprintf ppf "%d[%d+%d]" v.alloc v.first v.length
-
-let pp_order_case ppf c =
-  let kind = function Read -> "r" | Write -> "w" | Unordered -> "u" in
-  let side ppf = function
-    | View v -> pp_view ppf v
-    | Slot k -> Format.fprintf ppf "slot %d" k
-  in
-  let slots ppf ks =
-    Format.pp_print_string ppf
-      (String.concat ";"
-         (List.map (fun k -> string_of_int k ^ kind c.kinds.(k)) ks))
-  in
-  let part ppf = function
-    | Copy (s, d) -> Format.fprintf ppf "copy %a->%a" side s side d
-    | Words -> Format.fprintf ppf "words"
-    | Fill ks -> Format.fprintf ppf "fill [%a]" slots ks
-    | Launch (ks, entry) ->
-        Format.fprintf ppf "launch [%a]%s" slots ks
-          (if entry then " entry" else "")
-  in
-  Format.fprintf ppf "%sparts [%a]; fixed [%a]"
-    (if c.host_visible then "" else "unaddressed; ")
-    (Format.pp_print_list ~pp_sep:Format.pp_print_space part)
-    c.parts
-    (Format.pp_print_list ~pp_sep:Format.pp_print_space (fun ppf (v, a) ->
-         Format.fprintf ppf "%a%s" pp_view v (if a = Rig.Read then "r" else "w")))
-    c.fixed
-
-(* Whether two views share a byte. *)
-let share_byte v v' =
-  v.alloc = v'.alloc && v.length > 0 && v'.length > 0
-  && v.first < v'.first + v'.length
-  && v'.first < v.first + v.length
-
-(* Whether two views share memory, as rig orders it: a word, the [Rig.word]
-   bytes at a multiple of it from the allocation's first byte. *)
-let overlap v v' =
-  let lo v = v.first / Rig.word * Rig.word
-  and hi v = (v.first + v.length + Rig.word - 1) / Rig.word * Rig.word in
-  v.alloc = v'.alloc && v.length > 0 && v'.length > 0
-  && lo v < hi v'
-  && lo v' < hi v
-
-let nallocs = 3
-let alloc_bytes = 64
-
-let gen_order_case =
-  let open Gen in
-  (* Views start and end on 2-byte steps, so that views often share or abut
-     their bounds, or share a word and no byte; empty views overlap
-     nothing. *)
-  let step = 2 in
-  let view length =
-    let+ alloc = int_range 0 (nallocs - 1)
-    and+ first =
-      map (( * ) step) (int_range 0 ((alloc_bytes - length) / step))
-    in
-    { alloc; first; length }
-  in
-  let length = map (( * ) step) (int_range 0 (alloc_bytes / step)) in
-  (* Fills of unordered slots and read-only fixed memory leave copies free of
-     them, so that a copy on the copy engine can follow one on a fill's queue. *)
-  let* kinds =
-    array ~size:(constant 3)
-      (frequency
-         [ (1, constant Read); (1, constant Write); (3, constant Unordered) ])
-  in
-  (* A slot of ordered refs for a copy's end, or none: slots run 8 bytes, so a
-     copy with a slot end copies 8. *)
-  let ordered = List.filter (fun k -> kinds.(k) <> Unordered) [ 0; 1; 2 ] in
-  let slot_end =
-    if ordered = [] then constant None
-    else
-      frequency
-        [
-          (3, constant None);
-          (1, map Option.some (of_list ~pp:Format.pp_print_int ordered));
-        ]
-  in
-  let slots =
-    map (List.sort_uniq Int.compare) (list ~size:(int_range 0 2) (int_range 0 2))
-  in
-  let part =
-    one_of
-      [
-        (* A copy's buffers share no byte and its slots differ
-           (Submission.copy): a [dst] view that would share bytes with [src]
-           moves to the next allocation, and a [dst] slot equal to [src]'s is
-           a view. *)
-        (let* src_slot, dst_slot = pair slot_end slot_end in
-         let* length =
-           if src_slot = None && dst_slot = None then length else constant 8
-         in
-         let+ src = view length and+ dst = view length in
-         match (src_slot, dst_slot) with
-         | Some k, Some k' when k <> k' -> Copy (Slot k, Slot k')
-         | Some k, _ -> Copy (Slot k, View dst)
-         | None, Some k -> Copy (View src, Slot k)
-         | None, None ->
-             let dst =
-               if share_byte src dst then
-                 { dst with alloc = (dst.alloc + 1) mod nallocs }
-               else dst
-             in
-             Copy (View src, View dst));
-        map (fun ks -> Fill ks) slots;
-        (let+ ks = slots and+ entry = bool in
-         Launch (ks, entry));
-        constant Words;
-      ]
-  in
-  let fixed =
-    let* length = length in
-    let+ v = view length
-    and+ a = frequency [ (3, constant Rig.Read); (1, constant Rig.Read_write) ] in
-    (v, a)
-  in
-  let+ host_visible = bool
-  and+ parts = list ~size:(int_range 1 40) part
-  and+ fixed =
-    list
-      ~size:(frequency [ (1, constant 0); (2, constant 1); (1, constant 3) ])
-      fixed
-  in
-  { host_visible; kinds; parts; fixed }
-
-(* The case's slots, renumbered from 0 in their order of use, so that every
-   slot is a ref's or a copy's. *)
-let slot_order c =
-  let add acc k = if List.mem k acc then acc else acc @ [ k ] in
-  let side acc = function Slot k -> add acc k | View _ -> acc in
-  List.fold_left
-    (fun acc -> function
-      | Fill slots | Launch (slots, _) -> List.fold_left add acc slots
-      | Copy (src, dst) -> side (side acc src) dst
-      | Words -> acc)
-    [] c.parts
-
-(* What a part uses, as Submission.make states it: [`View] a buffer it names,
-   [`Words] the host buffer a words part reads, which no other part names, and
-   [`Slot] a submit's buffer, which may be any, with whether it writes. *)
-let uses c p =
-  let fixed = List.map (fun (v, a) -> (`View v, a = Rig.Read_write)) c.fixed in
-  let side w = function View v -> (`View v, w) | Slot _ -> (`Slot, w) in
-  match p with
-  | Copy (src, dst) -> side false src :: side true dst :: fixed
-  | Words -> (`Words, false) :: fixed
-  | Fill slots | Launch (slots, _) ->
-      List.filter_map
-        (fun k ->
-          match c.kinds.(k) with
-          | Unordered -> None
-          | Read -> Some (`Slot, false)
-          | Write -> Some (`Slot, true))
-        slots
-      @ fixed
-
-let conflict c p p' =
-  List.exists
-    (fun (u, w) ->
-      List.exists
-        (fun (u', w') ->
-          (w || w')
-          &&
-          match (u, u') with
-          | `View v, `View v' -> overlap v v'
-          | (`View _ | `Words), (`View _ | `Words) -> false
-          | `Slot, _ | _, `Slot -> true)
-        (uses c p'))
-    (uses c p)
-
-(* The layout the order law states: a fill or a launch on queue 0, the first
-   that runs it; words on queue 0, the first that runs launches and words; a
-   copy on the queue of the last earlier part it follows, else on the copy
-   engine, queue 1; and per other queue, the last earlier part it follows. A
-   part follows the earlier parts that may share memory with it, and words
-   every earlier part. *)
-let expected_layout c =
-  let parts = Array.of_list c.parts in
-  let queues = Array.make (Array.length parts) 0 in
-  Array.mapi
-    (fun j p ->
-      let follows i = p = Words || conflict c parts.(i) p in
-      let earlier = List.init j Fun.id in
-      let q =
-        match p with
-        | Fill _ | Launch _ | Words -> 0
-        | Copy _ -> (
-            match List.filter follows (List.rev earlier) with
-            | i :: _ -> queues.(i)
-            | [] -> 1)
-      in
-      queues.(j) <- q;
-      let after =
-        List.filter_map
-          (fun q' ->
-            if q' = q then None
-            else
-              List.fold_left
-                (fun last i -> if queues.(i) = q' && follows i then Some i else last)
-                None earlier)
-          [ 0; 1 ]
-      in
-      (q, List.sort Int.compare after))
-    parts
-  |> Array.to_list
-
-let order_law c =
-  let d, p =
-    P.open_ ~host_visible:c.host_visible
-      (Printf.sprintf "submit:order-%d" (Random.bits ()))
-  in
-  let host =
-    B.view (on d (B.create Rig.host page_bytes)) ~first:0 ~length:alloc_bytes
-  in
-  let allocs = [| B.create d alloc_bytes; B.create d alloc_bytes; host |] in
-  let buffer v = B.view allocs.(v.alloc) ~first:v.first ~length:v.length in
-  let slots = slot_order c in
-  let index k =
-    let rec go i = function
-      | [] -> assert false
-      | k' :: rest -> if k = k' then i else go (i + 1) rest
-    in
-    go 0 slots
-  in
-  let ref_of i k =
-    let slot = index k and at = 8 * i in
-    match c.kinds.(k) with
-    | Read -> Sub.read slot ~at
-    | Write -> Sub.write slot ~at
-    | Unordered -> Sub.unordered slot ~at
-  in
-  let side = function
-    | View v -> Sub.Buffer (buffer v)
-    | Slot k -> Sub.Slot (index k)
-  in
-  let image =
-    require_ok ~pp:Format.pp_print_string (Rig.Image.load d "functions")
-  in
-  let main = require_some (Rig.Image.resolve image "main") in
-  let part = function
-    | Copy (src, dst) -> Sub.copy ~src:(side src) ~dst:(side dst)
-    | Fill ks ->
-        Sub.fill
-          ~refs:(Array.of_list (List.mapi ref_of ks))
-          Support.noop
-          ~params:(8 * List.length ks)
-    | Launch (ks, entry) ->
-        let n = List.length ks in
-        let entries = if entry then [ Sub.entry main ~at:(8 * n) ] else [] in
-        Sub.launch
-          ~refs:(Array.of_list (List.mapi ref_of ks @ entries))
-          main
-          ~params:(8 * (n + List.length entries))
-    | Words -> Sub.words (B.create Rig.host 8)
-  in
-  let fixed = List.map (fun (v, a) -> (buffer v, a)) c.fixed in
-  let s = Sub.make ~fixed d (Array.of_list (List.map part c.parts)) in
-  let buffers = Array.of_list (List.map (fun _ -> B.create d 8) slots) in
-  (* Each launch runs one group of one thread, which Polled's [main] spends
-     doing nothing, and a fill reads no value. *)
-  let one_thread =
-    { Support.zero with groups = (1, 1, 1); threads = (1, 1, 1) }
-  in
-  let args =
-    List.filter_map
-      (function
-        | Launch _ -> Some one_thread
-        | Fill _ -> Some Support.zero
-        | Copy _ | Words -> None)
-      c.parts
-  in
-  Rig.Point.wait (submit s ~buffers ~args:(Array.of_list args));
-  let expected = expected_layout c in
-  let copy_after_fill =
-    List.exists
-      (fun (q, after) -> q = 1 && after <> [])
-      expected
-  in
-  cover "a copy on the copy engine after a fill" copy_after_fill;
-  cover "a copy on a fill's queue"
-    (List.exists2
-       (fun p (q, _) ->
-         match p with Copy _ -> q = 0 | Fill _ | Launch _ | Words -> false)
-       c.parts expected);
-  let parts = Array.of_list c.parts in
-  cover "words after a part of another queue"
-    (List.exists2
-       (fun p (_, after) -> p = Words && after <> [])
-       c.parts expected);
-  cover "a copy concurrent with earlier words"
-    (List.exists
-       (fun (j, (q, after)) ->
-         q = 1
-         && List.exists
-              (fun i -> parts.(i) = Words && not (List.mem i after))
-              (List.init j Fun.id))
-       (List.mapi (fun j x -> (j, x)) expected));
-  cover "an unordered slot"
-    (List.exists
-       (function
-         | Fill ks | Launch (ks, _) ->
-             List.exists (fun k -> c.kinds.(k) = Unordered) ks
-         | Copy _ | Words -> false)
-       c.parts);
-  cover "a copy with a slot end"
-    (List.exists
-       (function
-         | Copy (Slot _, _) | Copy (_, Slot _) -> true
-         | Copy _ | Fill _ | Launch _ | Words -> false)
-       c.parts);
-  cover "a launch with an entry ref"
-    (List.exists
-       (function
-         | Launch (_, entry) -> entry | Copy _ | Fill _ | Words -> false)
-       c.parts);
-  let views =
-    let side = function View v -> [ v ] | Slot _ -> [] in
-    List.concat_map
-      (function
-        | Copy (s, d) -> side s @ side d | Fill _ | Launch _ | Words -> [])
-      c.parts
-    @ List.map fst c.fixed
-  in
-  cover "two views that share some bytes and differ"
-    (List.exists
-       (fun v -> List.exists (fun v' -> v <> v' && share_byte v v') views)
-       views);
-  cover "two views that share a word and no byte"
-    (List.exists
-       (fun v ->
-         List.exists (fun v' -> overlap v v' && not (share_byte v v')) views)
-       views);
-  (* Unaddressed, each of the device's allocations is a space of its own, cut
-     at the bounds of the views of it rounded out to words: [m] ranges between
-     them. *)
-  let ranges a =
-    let w = Rig.word in
-    let bounds =
-      List.concat_map
-        (fun v ->
-          if v.alloc = a && v.length > 0 then
-            [ v.first / w * w; (v.first + v.length + w - 1) / w * w ]
-          else [])
-        views
-    in
-    List.length (List.sort_uniq Int.compare bounds) - 1
-  in
-  let spaces = if c.host_visible then [] else [ ranges 0; ranges 1 ] in
-  let pow2 m = m > 0 && m land (m - 1) = 0 in
-  cover "a space of one range" (List.mem 1 spaces);
-  cover "a space of a power of 2 ranges, past 1"
-    (List.exists (fun m -> m > 1 && pow2 m) spaces);
-  cover "a space of one past a power of 2 ranges, past 2"
-    (List.exists (fun m -> m > 2 && pow2 (m - 1)) spaces);
-  equal
-    (list (pair int (list int)))
-    ~msg:"each part's queue and after" expected (P.layout p);
-  ignore (Sys.opaque_identity allocs)
-
-(* A copy on the copy engine after a fill, which drawn cases give in about one
-   in 40: a fill of no slot, then a copy that shares no memory with it, so on
-   the copy engine, then a copy after both, which writes the fixed memory the
-   fill reads. *)
-let order_examples =
-  let v alloc : view = { alloc; first = 0; length = 8 } in
-  [
-    ({
-      host_visible = true;
-      kinds = [| Unordered; Unordered; Unordered |];
-      parts =
-        [ Fill []; Copy (View (v 0), View (v 1)); Copy (View (v 1), View (v 2)) ];
-      fixed = [ (v 2, Rig.Read) ];
-    }
-      : order_case);
-  ]
-
-(* A value's work starts once the previous value's completed, on every queue: a
-   copy on COPY:0, then a fill on COMPUTE:0 that reads what the copy wrote with
-   unordered slots, sees the copy, and the other way round. Only the device's
-   order orders them. *)
-let test_device_order () =
-  let d, p = P.open_ "submit:device-order" in
-  (* Host buffers of [Rig.Buffer.paged_from] bytes start on a page, so the
-     device borrows them. *)
-  let n = B.paged_from in
-  let filled c =
-    let b = B.create Rig.host n in
-    B.write b Bigarray.char (fun a -> Bigarray.Array1.fill a c);
-    b
-  in
-  let a = filled 'a' and b = B.create d n in
-  let c = filled '-' and out = filled '-' and z = filled 'z' in
-  let bytes x = B.read x Bigarray.char (fun a -> String.init n (Bigarray.Array1.get a)) in
-  let fill dst src =
-    let part =
-      Sub.fill
-        ~refs:[| Sub.unordered 0 ~at:0; Sub.unordered 1 ~at:8 |]
-        Support.carry ~params:24
-    in
-    let s = Sub.make d [| part |] in
-    let params = Bytes.make 24 '\000' in
-    Bytes.set_int64_le params 16 (Int64.of_int n);
-    let args = [| { Support.zero with params } |] in
-    ignore (submit ~args ~buffers:[| on d dst; on d src |] s)
-  in
-  let copy src dst =
-    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
-  in
-  let run parts = ignore (submit (Sub.make d parts)) in
-  let a' = require_some (B.borrow d a) and c' = require_some (B.borrow d c) in
-  run [| copy a' b |];
-  fill out b;
-  ignore (P.run p);
-  equal ~msg:"a fill after a copy" string (String.make n 'a') (bytes out);
-  fill b z;
-  run [| copy b c' |];
-  ignore (P.run p);
-  equal ~msg:"a copy after a fill" string (String.make n 'z') (bytes c)
-
-(* Lifetime against the driver's frees *)
-
-(* Each submission copies between two fresh buffers that only it holds, and each
-   submit writes a fresh slot buffer the caller drops at once. Polled logs every
-   free with its word: no free may name a part's memory while its submission is
-   reachable, nor memory a submit used before the device's word reached that
-   submit's value. *)
-type watched = {
-  addresses : int list;
-  since : int;  (** Frees logged before the memory was made. *)
-  mutable dropped : int option;  (** Frees logged before it was dropped. *)
-  mutable last : int;  (** The last value that used it. *)
-}
-
-type device = {
-  d : Rig.t;
-  p : P.t;
-  base : int;  (** The value its word held when it opened. *)
-  mutable watched : watched list;
-  mutable last_point : Rig.Point.t option;
-}
-
-type submission = {
-  dev : device;
-  mutable sub : Sub.t option;  (* [None] once dropped. *)
-  parts : watched;
-}
-
-type device_model = { mutable value : int }
-type submission_model = { model : device_model; mutable live : bool }
-
-let devices = Atomic.make 0
-
-let open_device () =
-  let n = Atomic.fetch_and_add devices 1 in
-  let d, p = P.open_ (Printf.sprintf "submit:lifetime-%d" n) in
-  { d; p; base = Rig.submitted d; watched = []; last_point = None }
-
-let frees t = List.length (P.frees t.p)
-
-let watch t ?dropped ~last addresses =
-  let w = { addresses; since = frees t; dropped; last } in
-  t.watched <- w :: t.watched;
-  w
-
-let check_frees _ t =
-  cover "memory a submission named is freed"
-    (List.exists
-       (fun (at, _) -> List.exists (fun w -> List.mem at w.addresses) t.watched)
-       (P.frees t.p));
-  List.iteri
-    (fun i (at, word) ->
-      List.iter
-        (fun w ->
-          if i >= w.since && List.mem at w.addresses then
-            match w.dropped with
-            | Some j when j <= i ->
-                at_least
-                  ~msg:(Printf.sprintf "the word when %#x was freed" at)
-                  int ~than:w.last word
-            | _ -> failf "%#x was freed while a submission held it" at)
-        t.watched)
-    (P.frees t.p)
-
-let make t =
-  let src = B.create t.d 256 and dst = B.create t.d 256 in
-  let parts = watch t ~last:0 [ handle src; handle dst ] in
-  let copy =
-    Sub.(copy ~src:(Buffer src) ~dst:(Buffer dst))
-  in
-  let s = Sub.make t.d [| copy; Support.touching [| Sub.write |] |] in
-  { dev = t; sub = Some s; parts }
-
-let submit_sub sub =
-  let t = sub.dev in
-  let s = Option.get sub.sub in
-  let out = B.create t.d 256 in
-  let at = handle out in
-  let pt = Rig.submit s ~buffers:[| out |] ~args:one in
-  t.last_point <- Some pt;
-  let v = Rig.Point.value pt in
-  sub.parts.last <- v;
-  ignore (watch t ~dropped:(frees t) ~last:v [ at ]);
-  v - t.base
-
-let drop sub =
-  sub.sub <- None;
-  sub.parts.dropped <- Some (frees sub.dev);
-  Gc.full_major ()
-
-let drain t =
-  Gc.full_major ();
-  ignore (B.create t.d 64);
-  Rig.free_cache t.d
-
-let device = abstract ~invariant:check_frees "d"
-let submission = abstract "s"
-let nothing _ = ()
-
-let lifetime =
-  [
-    command "open"
-      (Gen.unit @-> makes device)
-      (fun () -> { value = 0 })
-      open_device;
-    command "make"
-      (device ^-> makes submission)
-      (fun model -> { model; live = true })
-      make;
-    command "submit"
-      ~pre:(fun r -> r.live)
-      (submission ^-> returns int)
-      (fun r ->
-        r.model.value <- r.model.value + 1;
-        r.model.value)
-      submit_sub;
-    command "drop"
-      ~pre:(fun r -> r.live)
-      (submission ^-> returns unit)
-      (fun r -> r.live <- false)
-      drop;
-    command "drain" (device ^-> returns unit) nothing drain;
-    command "device runs"
-      (device ^-> returns unit)
-      nothing
-      (fun t -> ignore (P.run t.p));
-    command "wait"
-      (device ^-> returns unit)
-      nothing
-      (fun t -> Option.iter Rig.Point.wait t.last_point);
-  ]
-
+(* A submit that waits for nothing allocates nothing, over a slot, values, a
+   copy's slots and a copy from a buffer. *)
 let test_allocation () =
   let d = memory "submit:words" in
   let bytes_of_submits s buffers args =
@@ -2213,300 +1127,103 @@ let test_allocation () =
         [||] );
     ]
 
-(* Two domains submitting one submission: the submits take turns, each takes the
-   device's next value, and every fill runs. A program counts values from
-   [base], its device's value when it began. *)
-type shared = {
-  dev : Rig.t;
-  base : int;
-  arg : B.t;
-  buffers : B.t array;
-  sub : Sub.t;
-}
-
-type shared_model = { mutable values : int }
-
-(* Devices go back to a pool when their program ends. *)
-let shared_pool = Mutex.create ()
-let shared_free = ref []
-let shared_opened = Atomic.make 0
-
-let make_shared () =
-  let d =
-    match
-      Mutex.protect shared_pool (fun () ->
-          match !shared_free with
-          | d :: rest ->
-              shared_free := rest;
-              Some d
-          | [] -> None)
-    with
-    | Some d -> d
-    | None ->
-        memory
-          (Printf.sprintf "submit:shared-%d"
-             (Atomic.fetch_and_add shared_opened 1))
+(* A launch's submit allocates nothing, nor does one after its values were
+   rewritten in place. *)
+let test_launch_allocation () =
+  let d, _ = P.open_ "submit:launch-words" in
+  let image = functions d in
+  let refs =
+    Array.init 8 (fun k ->
+        if k < 4 then Sub.read k ~at:(8 * k) else Sub.write k ~at:(8 * k))
   in
-  let arg = B.create Rig.host 8 in
-  Support.store (Support.Reader.host arg) 0;
-  {
-    dev = d;
-    base = Rig.submitted d;
-    arg;
-    buffers = [| on d arg |];
-    sub = Sub.make d [| bump; bump |];
-  }
-
-(* Every submit ran both its fills. *)
-let release_shared t =
-  equal ~msg:"fills" int (2 * (Rig.submitted t.dev - t.base)) (word t.arg);
-  Mutex.protect shared_pool (fun () -> shared_free := t.dev :: !shared_free)
-
-let shared =
-  abstract
-    ~pp:(fun ppf r -> Format.fprintf ppf "values %d" r.values)
-    ~release:release_shared "s"
-
-let judge_submit r = function
-  | Ok v ->
-      equal ~msg:"value" int (r.values + 1) v;
-      r.values <- v
-  | Error e -> raise e
-
-let shared_commands =
-  [
-    command "make"
-      (Gen.unit @-> makes shared)
-      (fun () -> { values = 0 })
-      make_shared;
-    command "submit"
-      (shared ^-> judges int)
-      judge_submit
-      (fun t ->
-        let args = Support.zeros 2 in
-        Rig.Point.value (submit ~args ~buffers:t.buffers t.sub) - t.base);
-  ]
-
-(* Two domains copying on one device at once, each between buffers of its
-   own: through one submission whose copy's ends are its two slots, and
-   through Buffer.copy, which shares what it prepares for the device between
-   domains.
-   Each copy's destination ends with its source's word. The host addresses no
-   memory of the device, so its copy engine runs each copy between two of its
-   buffers. *)
-let slot_copier =
-  let copier =
-    lazy
-      (let d, _ = P.open_ ~host_visible:false "submit:slot-copier" in
-       (d, Sub.make d Sub.[| copy ~src:(Slot 0) ~dst:(Slot 1) |]))
+  let s = Sub.make d [| launch image "main" ~params:72 ~refs |] in
+  let buffers = Array.init 8 (fun _ -> B.create d 8) in
+  let params = Bytes.make 72 '\000' in
+  let args = [| single ~params () |] in
+  let first = submit ~buffers ~args s in
+  let n = 100 in
+  let allocates msg f =
+    equal int ~msg 0
+      (Rig_support.allocated_bytes (fun () ->
+           for i = 1 to n do
+             f i
+           done))
   in
-  (* Two domains may make the first call at once, and a lazy value forced
-     from two domains at once raises [CamlinternalLazy.Undefined]. *)
-  let lock = Mutex.create () in
-  fun () -> Mutex.protect lock (fun () -> Lazy.force copier)
-
-(* A buffer of [d] holding [v], and one to copy it into. *)
-let copy_ends d v =
-  let src = B.create d 8 and dst = B.create d 8 in
-  let h = B.create Rig.host 8 in
-  Support.store (Support.Reader.host h) v;
-  B.copy ~src:h ~dst:src;
-  (src, dst)
-
-(* The word of [b], a buffer of a device. *)
-let device_word b =
-  let h = B.create Rig.host 8 in
-  B.copy ~src:b ~dst:h;
-  word h
-
-let copy_commands =
-  [
-    command "submit"
-      (Gen.int @-> returns int)
-      Fun.id
-      (fun v ->
-        let d, s = slot_copier () in
-        let src, dst = copy_ends d v in
-        Rig.Point.wait (Rig.submit s ~buffers:[| src; dst |] ~args:[||]);
-        device_word dst);
-    command "Buffer.copy"
-      (Gen.int @-> returns int)
-      Fun.id
-      (fun v ->
-        let d, _ = slot_copier () in
-        let src, dst = copy_ends d v in
-        B.copy ~src ~dst;
-        device_word dst);
-  ]
+  allocates "a submit of a launch" (fun _ ->
+      ignore (Sys.opaque_identity (Rig.submit s ~buffers ~args)));
+  allocates "a rewrite of its values in place and a submit" (fun i ->
+      Bytes.set_int64_le params 64 (Int64.of_int i);
+      ignore (Sys.opaque_identity (Rig.submit s ~buffers ~args)));
+  let last = submit ~buffers ~args s in
+  Rig.Point.wait first;
+  Rig.Point.wait last
 
 let tests =
   [
-    group "copy ends"
+    group "waits"
       [
-        prop ~count:200
-          "a copy between slots and buffers copies as the host does, and \
-           refuses buffers of two lengths or that share a byte"
-          (Gen.list ~size:(Gen.int_range 1 4) (Gen.with_pp pp_ends gen_ends))
-          ends_law;
-      ];
-    group "copy memory"
-      [
-        test "empty allocations name no device memory" (fun () ->
-            test_copy_memory (0, 0, 0));
-        prop ~count:300 ~examples:order_examples
-          "a part follows the earlier parts that may share memory with it, \
-           on its queue or by its after"
-          (Gen.with_pp pp_order_case gen_order_case)
-          order_law;
-        prop "views and borrows preserve copy allocation facts"
-          ~examples:[ (0, 1, 2); (1, 0, 0); (17, 3, 7) ]
-          (Gen.triple (Gen.int_range 0 64) (Gen.int_range 0 7)
-             (Gen.int_range 0 7))
-          copy_memory_law;
-        test "copies carry both facts across memory kinds"
-          test_copy_memory_sequence;
-      ];
-    group "values"
-      [
-        test "values follow one another from 1" test_values;
-        test "a submission's fills run with its value" test_fill;
-        stateful ~domains:2 "two domains submit one submission at once"
-          shared_commands;
-        stateful ~domains:2
-          "two domains copy at once through one submission, each between \
-           buffers of its own"
-          copy_commands;
-        test "a device's work completes once a wait reaches it" test_polled;
-        test "a word still for three intervals loses nothing" test_still;
-      ];
-    group "hangs"
-      [
-        test "work still past the hang bound loses the device" test_hang;
-        test "a word moving within the bound loses nothing" test_hang_moving;
-        test "an idle device loses nothing to the bound" test_hang_idle;
-        test "work nothing waits for loses nothing to the bound"
-          test_hang_unwatched;
-        test "a queue waiting on a hung device is lost with it" test_hang_spread;
-        test "a queue waiting on longer work elsewhere loses nothing"
-          test_hang_in_queue;
-        test "a word that moved while a wait was held loses nothing"
-          test_hang_held_read;
-        test "a short wait leaves the bound's clock alone"
-          test_short_wait_bound;
-        test "the bound comes no sooner with two waiters" test_hang_two_waiters;
-      ];
-    group "looks"
-      [
-        cases ~id:string_of_int
-          "a loop of short waits surfaces a producer's recorded fault"
-          [ 1; 50_000_000 ]
-          short_waits;
-        test "a wait on a host-written word surfaces a producer's fault"
-          test_look_host;
-        test "a lost producer reaches a consumer's wait at once"
-          test_lost_producer;
-      ];
-    group "bounded waits"
-      [
-        prop ~count:20 ~examples:[ 1; 999_999; 1_000_000; 50_000_000 ]
-          "false comes no sooner than ns, within a still interval after, and \
-           the work runs on"
-          late_ns wait_for_late;
-        cases ~id:string_of_int "an ns past the clock's range waits as wait"
-          [ max_int; max_int - 1; max_int / 2 ]
-          test_wait_for_unbounded;
-        cases ~id:string_of_int "a bounded wait raises Lost where wait does"
-          [ min_int; 0; 1; 1_000_000; max_int ]
-          test_wait_for_lost;
-        test "a loss during a bounded wait raises it" test_wait_for_lost_during;
-        cases ~id:string_of_int
-          "a bounded wait inside a lock is refused, whatever ns"
-          [ min_int; 0; 1; max_int ]
-          test_wait_for_in_lock;
-        prop ~count:60
-          ~examples:
-            [
-              (Reached, 0);
-              (Committed, 0);
-              (Uncommitted, min_int);
-              (Lost_before, -1);
-            ]
-          "with no time a bounded wait answers as reached" no_time_gen no_time;
-      ];
-    group "submitted points"
-      [
-        prop ~count:20 ~examples:[ 0; 1 ]
-          "a wait on the submitted point reaches every earlier point"
-          (Gen.int_range 0 8) submitted_point;
-        test "the host's submitted point is reached at once"
-          test_submitted_host;
-      ];
-    group "submits of one submission"
-      [
-        test "a submit beside another's wait completes with its own values"
-          test_run_beside_wait;
-        test "a submit inside another's wait completes with its own values"
-          test_run_reentrant;
-      ];
-    group "refusals"
-      [
-        test "a submission refuses what it cannot run" test_refusals;
-        test "a submission refuses each misuse its interface states"
-          test_make_refusals;
-        test "a submission refuses a copy whose buffers overlap"
-          test_overlapping_copy;
-        test "a submit that raises keeps nothing" test_cleared_on_raise;
-        test "a submit's buffer that died refuses the submit" test_dead_slot;
-        test "a submit claims its buffers while it runs" test_claims;
-        test "a submission holds its parts' buffers after their array changed"
-          test_parts_changed;
-        test "a submission keeps its parts' buffers after their array changed"
-          test_parts_kept;
-        test "a copy on a device that runs no copies is refused"
-          test_copy_refused;
-        test "a part of a kind its queue does not run is refused at make"
-          test_runs;
-        test "words follow every earlier part, and later parts of their queue"
-          test_words_order;
-        test "words of a length no multiple of 4 are refused"
-          test_part_word;
-        test "launches and fills past what a submit holds are refused at make"
-          test_blocks_bound;
-      ];
-    group "order"
-      [
-        test "a value's work follows the previous value's, on every queue"
-          test_device_order;
-        test "a read waits for another device's write" test_read_waits;
-        test "a submit its driver fails to take names its memory"
-          test_failed_names;
-        test "an Unordered buffer orders no work" test_unordered;
-        test "an Unordered buffer stays reachable until its work is done"
-          test_unordered_keeps;
-        test "cached Unordered work cannot change a new buffer's host write"
-          test_cached_unordered_host;
-        cases "cached work cannot change a new buffer's Unordered write" ~id:fst
-          [
-            ("after ordered work", Sub.write);
-            ("after Unordered work", Sub.unordered);
-          ]
-          test_cached_unordered_foreign;
-        test "a submit's buffers stay reachable until its stamps are raised"
-          test_run_keeps;
-        test "a part's buffers wait as a submit's do" test_part_points;
         test "a queue that waits on host words waits in the queue" test_in_queue;
+        test "a queue that waits on stores waits on the producer's word"
+          test_in_queue_store;
         test "a producer whose word the device cannot map is waited on the host"
           test_unmapped_wait;
         test "a room check is given the waits its submit is given"
           test_room_waits;
-        test "a queue that waits on stores waits on the producer's word"
-          test_in_queue_store;
+        test "a submit keeps its buffers while it waits on the host"
+          test_run_keeps;
+      ];
+    group "room"
+      [
+        test "a full queue's submit waits for room" test_room;
+        test "a submit waiting for room lets a submission that fits through"
+          test_later_releases;
+        test "a fault while a submit waits for room commits nothing"
+          test_fault_waiting;
         test "a submission runs if its queues hold it, and raises if never"
           test_never_fits;
-        test "a full queue's submit waits for room" test_room;
       ];
-    group "growth"
+    group "submit"
       [
+        test "each submit's value is one more than the last" test_values;
+        test "each submit runs every fill of its submission" test_fill;
+        stateful ~domains:2
+          "two domains' submits of one submission each read their own values"
+          own_commands;
+        stateful ~domains:2
+          "submits of one submission from two domains take the device's next \
+           values"
+          shared_commands;
+        stateful ~steps:0 ~domains:2
+          "two domains copy at once through one submission, each between \
+           buffers of its own"
+          copy_commands;
+        test "a submit beside another's wait completes with its own values"
+          test_run_beside_wait;
+        test "a submit inside another's wait completes with its own values"
+          test_run_reentrant;
+        stateful ~domains:2
+          "a submit reads the element a store left in its values, or refuses it"
+          passing_commands;
+        test "values rewritten during their submit give it some bytes of each"
+          test_rewritten_values;
+        stateful ~steps:12
+          "values rewritten for a later submit change nothing of earlier work \
+           still queued"
+          replay_commands;
+        test "a free_cache of the host frees the state kept for submits"
+          test_state_freed;
+        test
+          "submits one at a time keep one set of state, as large as the \
+           largest submission"
+          test_state_sets;
+        test
+          "a free_cache of the host while a submit is in its room leaves its \
+           values"
+          test_state_held;
+        stateful ~count:30 ~domains:2
+          "submits on two domains read their own values while the host's cache \
+           is freed"
+          freeing_commands;
         cases "a submission runs once its queue grew to hold it"
           ~id:(Printf.sprintf "%d parts on a queue of 4 that grows")
           [ 1; 4; 5; 9; 300 ] test_grows;
@@ -2514,38 +1231,44 @@ let tests =
           test_grow_no_memory;
         test "a growth short at first is made after a round of reclamation"
           test_grow_reclaims;
-        test "a growth past the memory leaves no want behind"
+        test
+          "after a growth raises Out_of_memory, a smaller one is made at its \
+           first ask"
           test_grow_past_memory;
         test "a submission of another domain runs while a growth runs"
           test_grow_interleaved;
         test "a growth short for one submission fails no other"
           test_grow_short_other;
         test "a growth that faults loses the device" test_grow_fault;
+        test "a submit that does not wait allocates nothing" test_allocation;
+        test "a launch's submit and a rewrite of its values allocate nothing"
+          test_launch_allocation;
+        test "a submit its driver cannot run assigns no value" test_never;
+        test "a submit that raises keeps nothing" test_cleared_on_raise;
+        test "a submit whose blocks the host has no memory for raises"
+          test_grow_refused;
+      ];
+    group "free_cache"
+      [
         test "free_cache gives back what the queue grew into" test_grow_trimmed;
         test "a free_cache while a submit grows the queue leaves its growth"
           test_grow_untrimmed;
-        test "a retire that faults at free_cache loses the device"
-          test_retire_fault;
-        test "a retire's other exception loses the device and passes out"
-          test_retire_raises;
-        test "a lost device's free_cache calls no retire" test_retire_lost;
         prop
+          ~examples:[ (false, 1, 0, true) ]
           "free_cache shrinks the record of queue waits to the live ones, \
            which a loss still spreads along"
           record_cases record_trimmed;
         test "a free_cache while a submit grows leaves the record of waits"
           test_record_untrimmed;
-      ];
-    group "lifetime"
-      [
-        stateful "memory a submission names returns after its last submit"
-          lifetime;
-      ];
-    group "cost"
-      [
-        test "a submit that does not wait allocates nothing" test_allocation;
-        test "make takes no stack per part" test_parts_stack;
+        test "a retire that faults at free_cache loses the device"
+          test_retire_fault;
+        test "a retire's other exception loses the device and passes out"
+          test_retire_raises;
+        test "a lost device's free_cache calls no retire" test_retire_lost;
       ];
   ]
 
-let () = exit (run "rig.submit" tests)
+let () =
+  match Sys.argv with
+  | [| _; "grow" |] -> grow_child ()
+  | _ -> exit (run "rig.submit" tests)
