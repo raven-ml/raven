@@ -172,7 +172,7 @@ a source (`uop/upat.py` `_get_clause`).
   raises Invalid_argument for a kernel that asks for one when none is
   given`, and `Jit JITBEAM › JITBEAM unset › a kernel is searched with
   BEAM's width`, through `Realize.compile_linear`; for `Compiler_metal`:
-  `Tolk.Compiler_metal › MTLCompiler › compiles a kernel to a Metal
+  `Tolk.Compiler_metal › compiler › compiles a kernel to a Metal
   library`.
 
 ## D5. Compilation workers are domains
@@ -268,17 +268,19 @@ a source (`uop/upat.py` `_get_clause`).
   several domains at once make one program, compiled once`; `Tolk.Decomp_dtype,
   compiled in parallel › targets lowered on several domains at once get their
   own rules`; `Tolk.Compiler_metal › compiles in processes of their own` (every
-  test), `› a library that does not load` (every test), `› a library without
-  MTLCompiler's functions`, `› a library that makes no service`, `› a process
-  that cannot start`, `› a cache that cannot be written`, `› a cache whose
-  program cannot run` and `› cache › a compile the table holds starts no
-  worker`; `Tolk.Compiler_metal (fork) › a forked process` (every test);
-  `Tolk.Compiler_amd › compiles in processes of their own` (every test) and `› a
-  process that cannot start`; `Tolk.Compiler_cuda › compiles in processes of
-  their own` (every test), `› a library that does not load` (every test), and `›
-  a process that cannot start`; `Tolk.Compiler_amd › a library that does not
-  load` (every test); `Tolk.Compiler_cuda (fork) › a forked process` (every
-  test); `Tolk.Indexing › apply_movement_op › laws › one memo keeps the index
+  test), `› compiler › a library that does not load raises Compile_error
+  naming it`, `› a library without MTLCompiler's functions …`, `› a library
+  that makes no service …`, `› a process that cannot start raises Failure
+  naming the worker`, `› a cache that cannot be written`, `› a cache whose
+  program cannot run` and `› compiler › the table › a compile the table holds
+  starts no process`; `Tolk.Compiler_amd › compiles in processes of their own`
+  (every test), `› hip › a library that does not load raises Compile_error
+  naming the file` and `› a process that cannot start raises Failure naming
+  the worker`; `Tolk.Compiler_cuda › compiles in processes of their own`
+  (every test), `› nvrtc › a library that does not load raises Compile_error
+  naming the file`, `› a compile in turn is served by the idle worker, with
+  its answer` and `› a process that cannot start raises Failure naming the
+  worker`; `Tolk.Compiler_cuda (fork)` (every test); `Tolk.Indexing › apply_movement_op › laws › one memo keeps the index
   of each movement it holds`.
 
 ## D6. Devices are named, never parsed

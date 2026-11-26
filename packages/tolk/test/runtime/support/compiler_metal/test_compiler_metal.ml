@@ -50,7 +50,7 @@ let metal_version () =
   | 13 -> 300
   | _ -> 200
 
-(* Workers' files *)
+(* Workers *)
 
 (* [remove path] removes the file or the directory tree at [path], following no
    symbolic link. *)
@@ -61,32 +61,24 @@ let rec remove path =
       Unix.rmdir path
   | _ -> Unix.unlink path
 
-(* This process's temporary directory, where workers' temporary directories are
-   made: a directory of its own, removed when it exits. *)
+(* A directory of the run's own, made this process's temporary directory, where
+   a program the cache cannot hold is written: a test that looks there acquires
+   it before its first compile. *)
 let scratch =
-  let dir = Filename.temp_dir "tolk-test-metal" "" in
-  at_exit (fun () -> remove dir);
-  Filename.set_temp_dir_name dir;
-  dir
+  fixture ~teardown:remove (fun () ->
+      let dir = Filename.temp_dir "tolk-test-metal" "" in
+      Filename.set_temp_dir_name dir;
+      dir)
 
 let named_in dir ~prefix =
   if not (Sys.file_exists dir) then []
   else
     List.filter (String.starts_with ~prefix) (Array.to_list (Sys.readdir dir))
 
-(* The workers' temporary directories. *)
-let worker_dirs () = named_in scratch ~prefix:"tolk-metal-"
-
-(* Workers *)
-
 (* [with_signal s behavior f] is [f ()] run with [behavior] for [s]. *)
 let with_signal s behavior f =
   let previous = Sys.signal s behavior in
   Fun.protect ~finally:(fun () -> Sys.set_signal s previous) f
-
-(* [f ()] with SIGPIPE's default action, which ends the process: a process may
-   start with it ignored. *)
-let sigpipe_kills f = with_signal Sys.sigpipe Signal_default f
 
 (* The pids of this process's children, which pgrep lists, in order; the test
    skips where pgrep does not run. *)
@@ -111,7 +103,17 @@ let kill_children () =
       ignore (Unix.waitpid [] pid))
     (children ())
 
-(* The cache *)
+let digest lib = Digest.to_hex (Digest.string lib)
+let compile src = Compiler.compile (Compiler_metal.compiler ()) src
+
+(* A library that does not load: these tests run in a process of their own,
+   where MTLCOMPILER_PATH names a file that is no library, which the compiler
+   finds and each worker fails to load. Off macOS the worker loads none. *)
+
+let load_failure () = rejection (fun () -> compile (kernel "add"))
+let no_library = tag "no-library"
+
+(* The table *)
 
 let ccache_off f = Setting.context [ B (Setting.ccache, false) ] f
 
@@ -124,12 +126,15 @@ let named ~prefix table =
 let table () =
   Option.get (Compiler.cachekey (with_metal Compiler_metal.compiler))
 
-let cache =
-  group "cache"
+let table_tests =
+  group "the table"
     [
-      test "libraries are cached in the table compile_metal_direct and a digest"
-        (fun () -> named ~prefix:"compile_metal_direct_" (table ()));
-      test "the table names the file MTLCOMPILER_PATH names" (fun () ->
+      no_library
+      @@ test
+           "libraries are cached in the table compile_metal_direct and a digest"
+           (fun () -> named ~prefix:"compile_metal_direct_" (table ()));
+      no_library
+      @@ test "the table names the file MTLCOMPILER_PATH names" (fun () ->
           let default = table () in
           let file = Filename.concat (temp_dir ()) "MTLCompiler" in
           Out_channel.with_open_bin file (fun oc -> output_string oc "a");
@@ -138,76 +143,17 @@ let cache =
           not_equal string default named_file;
           Out_channel.with_open_bin file (fun oc -> output_string oc "changed");
           not_equal string ~msg:"once the file changed" named_file (table ()));
-      test "the table is named with ccache off" (fun () ->
+      no_library
+      @@ test "the table is named with ccache off" (fun () ->
           equal string (table ()) (ccache_off table));
-      test "a compile the table holds starts no worker" (fun () ->
+      test "a compile the table holds starts no process" (fun () ->
           let metal = with_metal Compiler_metal.compiler in
           let lib = Compiler.compile_cached metal (kernel "kept") in
           kill_children ();
           let again = Compiler.compile_cached metal (kernel "kept") in
           equal (list int) ~msg:"workers" [] (children ());
-          equal string
-            (Digest.to_hex (Digest.string lib))
-            (Digest.to_hex (Digest.string again)));
+          equal string (digest lib) (digest again));
     ]
-
-(* Without MTLCompiler on the machine *)
-
-let without_mtlcompiler =
-  group "without MTLCompiler on the machine"
-    [
-      test "making a compiler raises Failure naming MTLCompiler and \
-            MTLCOMPILER_PATH" (fun () ->
-          match Compiler_metal.compiler () with
-          | _ -> skip ~reason:"MTLCompiler is on the machine" ()
-          | exception Failure msg ->
-              in_order ~subs:[ "MTLCompiler"; "MTLCOMPILER_PATH" ] msg);
-    ]
-
-(* A library that does not load: these tests run in a process of their own,
-   where MTLCOMPILER_PATH names a file that is no library, which the compiler
-   finds and each worker fails to load. *)
-
-let load_failure () =
-  rejection (fun () ->
-      Compiler.compile (Compiler_metal.compiler ()) (kernel "add"))
-
-let not_a_library =
-  tag "no-library"
-  @@ group "a library that does not load"
-       [
-         test "making a compiler raises nothing" (fun () ->
-             ignore (Compiler_metal.compiler ()));
-         test "a compile raises Compile_error naming MTLCompiler and the file"
-           (fun () ->
-             let msg = require_some (load_failure ()) in
-             contains ~sub:"MTLCompiler" msg;
-             (* Elsewhere than on macOS, no file is loaded. *)
-             if Platform.system = "macosx" then
-               contains ~sub:"not_a_library" msg);
-         test "every compile raises the same Compile_error" (fun () ->
-             let first = load_failure () in
-             equal (option string) first (load_failure ());
-             is_some first);
-         test "compiles from several domains at once raise it" (fun () ->
-             let domains = List.init 4 (fun _ -> Domain.spawn load_failure) in
-             let msgs = List.map Domain.join domains in
-             is_some (List.hd msgs);
-             List.iter (equal (option string) (List.hd msgs)) msgs);
-         test "a compile in turn is served by an idle worker" (fun () ->
-             ignore (load_failure ());
-             let workers = children () in
-             not_equal (list int) [] workers;
-             ignore (load_failure ());
-             equal (list int) workers (children ()));
-         test
-           "a compile after its idle workers are killed raises the same error"
-           (fun () ->
-             let first = load_failure () in
-             kill_children ();
-             equal (list int) [] (children ());
-             equal (option string) first (sigpipe_kills load_failure));
-       ]
 
 (* A library that loads but is no MTLCompiler: these tests run in processes of
    their own, where MTLCOMPILER_PATH names a library of the suite's. One has
@@ -215,59 +161,30 @@ let not_a_library =
    if a compile reaches it. A worker answers each compile with why, and
    lives. *)
 
-let stand_in ~tag:t ~name ~why =
-  tag t
-  @@ group name
-       [
-         test
-           "a compile raises Compile_error saying why, from a worker that lives"
-           (fun () ->
-             if Platform.system <> "macosx" then
-               skip ~reason:"only macOS loads MTLCompiler" ();
-             let msg = require_some (load_failure ()) in
-             in_order ~subs:[ "MTLCompiler"; ".dylib"; why ] msg;
-             let workers = children () in
-             not_equal (list int) [] workers;
-             equal (option string) (Some msg) (load_failure ());
-             equal (list int) ~msg:"workers" workers (children ()));
-       ]
+(* [answers_why why] checks that a compile raises [Compile_error] saying [why]
+   from a worker that answers the next compile alike. *)
+let answers_why why =
+  if Platform.system <> "macosx" then
+    skip ~reason:"only macOS loads MTLCompiler" ();
+  let msg = require_some (load_failure ()) in
+  in_order ~subs:[ "MTLCompiler"; ".dylib"; why ] msg;
+  let workers = children () in
+  not_equal (list int) [] workers;
+  equal (option string) (Some msg) (load_failure ());
+  equal (list int) ~msg:"workers" workers (children ())
 
-let no_symbol =
-  stand_in ~tag:"no-symbol" ~name:"a library without MTLCompiler's functions"
-    ~why:"undefined symbol MTLCodeGenServiceCreate"
-
-let no_service =
-  stand_in ~tag:"no-service" ~name:"a library that makes no service"
-    ~why:"MTLCodeGenServiceCreate made no service"
-
-(* MTLCompiler *)
-
-let metal =
-  group "MTLCompiler"
+let compiler_tests =
+  group "compiler"
     [
       test "compiles a kernel to a Metal library" (fun () ->
-          is_metal_library
-            (with_metal (fun () ->
-                 Compiler.compile (Compiler_metal.compiler ()) (kernel "add"))));
+          is_metal_library (with_metal (fun () -> compile (kernel "add"))));
       test "a source that draws warnings compiles to a Metal library" (fun () ->
           let src =
             "#include <metal_stdlib>\n\
              kernel void warned(device int* data0) { int unused = 1; data0[0] \
              = 0; }"
           in
-          is_metal_library
-            (with_metal (fun () ->
-                 Compiler.compile (Compiler_metal.compiler ()) src)));
-      test "a rejected source raises Compile_error with the compiler's message"
-        (fun () ->
-          match
-            Compiler.compile
-              (Compiler_metal.compiler ())
-              "this is not valid metal"
-          with
-          | _ -> fail "the compiler accepted a source that is not Metal"
-          | exception Failure msg when absent msg -> skip ~reason:msg ()
-          | exception Compiler.Compile_error msg -> contains ~sub:"error" msg);
+          is_metal_library (with_metal (fun () -> compile src)));
       test "the language is the latest the running macOS compiles kernels of"
         (fun () ->
           let src =
@@ -275,9 +192,7 @@ let metal =
               "#if __METAL_VERSION__ != %d\n#error wrong version\n#endif\n%s"
               (metal_version ()) (kernel "versioned")
           in
-          is_metal_library
-            (with_metal (fun () ->
-                 Compiler.compile (Compiler_metal.compiler ()) src)));
+          is_metal_library (with_metal (fun () -> compile src)));
       test "a product and a sum compile under the no-contraction pragma"
         (fun () ->
           let src =
@@ -286,16 +201,60 @@ let metal =
              device float* b, const device float* c) { d[0] = a[0] * b[0] + \
              c[0]; }"
           in
-          is_metal_library
-            (with_metal (fun () ->
-                 Compiler.compile (Compiler_metal.compiler ()) src)));
+          is_metal_library (with_metal (fun () -> compile src)));
       test "fast math is off" (fun () ->
           let src =
             "#ifdef __FAST_MATH__\n#error fast math\n#endif\n" ^ kernel "exact"
           in
-          is_metal_library
-            (with_metal (fun () ->
-                 Compiler.compile (Compiler_metal.compiler ()) src)));
+          is_metal_library (with_metal (fun () -> compile src)));
+      table_tests;
+      test
+        "without MTLCompiler, making a compiler raises Failure naming \
+         MTLCOMPILER_PATH" (fun () ->
+          match Compiler_metal.compiler () with
+          | _ -> skip ~reason:"MTLCompiler is on the machine" ()
+          | exception Failure msg ->
+              in_order ~subs:[ "MTLCompiler"; "MTLCOMPILER_PATH" ] msg);
+      test "a rejected source raises Compile_error with the compiler's message"
+        (fun () ->
+          let src =
+            "kernel void f(device int* a) { a[0] = undeclared_name; }"
+          in
+          match with_metal (fun () -> compile src) with
+          | _ -> fail "the compiler accepted an undeclared name"
+          | exception Compiler.Compile_error msg ->
+              contains ~sub:"undeclared_name" msg);
+      no_library
+      @@ test "making a compiler starts no process" (fun () ->
+          kill_children ();
+          ignore (Compiler_metal.compiler ());
+          equal (list int) [] (children ()));
+      no_library
+      @@ test "a library that does not load raises Compile_error naming it"
+           (fun () ->
+             let msg = require_some (load_failure ()) in
+             contains ~sub:"MTLCompiler" msg;
+             (* Elsewhere than on macOS, no file is loaded. *)
+             if Platform.system = "macosx" then
+               contains ~sub:"not_a_library" msg);
+      tag "no-symbol"
+      @@ test
+           "a library without MTLCompiler's functions raises Compile_error \
+            saying so, from a worker that lives" (fun () ->
+             answers_why "undefined symbol MTLCodeGenServiceCreate");
+      tag "no-service"
+      @@ test
+           "a library that makes no service raises Compile_error saying so, \
+            from a worker that lives" (fun () ->
+             answers_why "MTLCodeGenServiceCreate made no service");
+      (* This test runs in a process of its own, where MTLCOMPILER_PATH names a
+         file, and forbids it to start any other for the rest of its life. *)
+      tag "no-spawn"
+      @@ test "a process that cannot start raises Failure naming the worker"
+           (fun () ->
+             Spawn.forbid ();
+             raises_match (Exn.failure ~sub:"metal worker") (fun () ->
+                 compile (kernel "add")));
       test "disassembly prints nothing" (fun () ->
           let metal = with_metal Compiler_metal.compiler in
           let lib = Compiler.compile metal (kernel "add") in
@@ -305,7 +264,7 @@ let metal =
           equal string "" (output ()));
     ]
 
-(* A compile in a process of its own *)
+(* Compiles in processes of their own *)
 
 (* Kernel [i], scaled by [c]: distinct kernels for distinct [i]. *)
 let scaled (i, c) =
@@ -314,9 +273,6 @@ let scaled (i, c) =
      kernel void scaled%d(device float* d, uint i [[thread_position_in_grid]]) \
      { d[i] = d[i] * %d.5f; }"
     i c
-
-let digest lib = Digest.to_hex (Digest.string lib)
-let compile src = Compiler.compile (Compiler_metal.compiler ()) src
 
 (* The digests of [srcs] compiled on [domains] domains at once, each taking
    every [domains]-th source, in [srcs]' order. *)
@@ -334,21 +290,25 @@ let at_once ~domains srcs =
   in
   List.concat_map Domain.join spawned |> List.sort compare |> List.map snd
 
-(* 1 to 16 distinct kernels and 1 to 8 domains, a third of the cases on one
+(* 1 to 8 distinct kernels and 1 to 8 domains, a third of the cases on one
    domain and a third on more than four. *)
 let concurrent_case =
   let open Gen in
-  let* n = int_range 1 16 in
+  let* n = int_range 1 8 in
   let* consts = list ~size:(constant n) (int_range 0 999) in
   let+ domains =
     frequency [ (1, constant 1); (1, int_range 2 4); (1, int_range 5 8) ]
   in
   (List.mapi (fun i c -> scaled (i, c)) consts, domains)
 
+(* The cases each cover needs, run whatever the seed. *)
+let on_one_domain = ([ scaled (0, 1); scaled (1, 2) ], 1)
+let on_eight_domains = (List.init 8 (fun i -> scaled (i, i)), 8)
+
 let process =
   group "compiles in processes of their own"
     [
-      prop ~count:30
+      prop ~count:30 ~examples:[ on_one_domain; on_eight_domains ]
         "kernels compiled on several domains at once are the bytes they are \
          compiled to in turn"
         concurrent_case (fun (srcs, domains) ->
@@ -360,18 +320,14 @@ let process =
               srcs
           in
           equal (list string) in_turn (at_once ~domains srcs));
-      test "a compile in turn is served by an idle worker" (fun () ->
-          ignore (with_metal (fun () -> compile (kernel "add")));
-          let workers = children () in
-          not_equal (list int) [] workers;
-          ignore (compile (kernel "add"));
-          equal (list int) workers (children ()));
-      test "a compile after its idle workers are killed returns its binary"
-        (fun () ->
-          let lib = digest (with_metal (fun () -> compile (kernel "add"))) in
-          kill_children ();
-          equal string lib
-            (digest (sigpipe_kills (fun () -> compile (kernel "add")))));
+      no_library
+      @@ test "a compile in turn is served by the idle worker, with its answer"
+           (fun () ->
+             let first = load_failure () in
+             let workers = children () in
+             not_equal (list int) [] workers;
+             equal (option string) first (load_failure ());
+             equal (list int) ~msg:"workers" workers (children ()));
       test "a worker started with SIGCHLD ignored returns its binary" (fun () ->
           let lib = digest (with_metal (fun () -> compile (kernel "add"))) in
           kill_children ();
@@ -379,28 +335,7 @@ let process =
             (digest
                (with_signal Sys.sigchld Signal_ignore (fun () ->
                     compile (kernel "add")))));
-      test "the temporary directories of workers that ended are removed"
-        (fun () ->
-          ignore (with_metal (fun () -> compile (kernel "add")));
-          kill_children ();
-          ignore (compile (kernel "add"));
-          equal int ~msg:"one worker's directory" 1
-            (List.length (worker_dirs ())));
     ]
-
-(* A process that cannot start: these tests run in a process of their own, where
-   MTLCOMPILER_PATH names a file, and forbid it to start any other for the rest
-   of its life. *)
-
-let no_spawn =
-  tag "no-spawn"
-  @@ group "a process that cannot start"
-       [
-         test "a compile raises Failure naming the worker" (fun () ->
-             Spawn.forbid ();
-             raises_match (Exn.failure ~sub:"metal worker") (fun () ->
-                 compile (kernel "add")));
-       ]
 
 (* A cache that cannot hold the program: these tests run in processes of their
    own. In one, XDG_CACHE_HOME names a file, under which no cache can be made;
@@ -420,8 +355,8 @@ let program_in dir =
 (* A program that leaves a file where it ran: what another user would plant at
    the program's name. *)
 let planted () =
-  let marker = Filename.concat scratch "planted-ran" in
-  let script = Filename.concat scratch "planted.sh" in
+  let marker = Filename.concat (scratch ()) "planted-ran" in
+  let script = Filename.concat (scratch ()) "planted.sh" in
   Out_channel.with_open_bin script (fun oc ->
       Printf.fprintf oc "#!/bin/sh\ntouch %s\n" (Filename.quote marker));
   Unix.chmod script 0o755;
@@ -441,33 +376,35 @@ let not_run ~dir plant =
   plant (program_in dir) script;
   kill_children ();
   equal string lib (digest (compile (kernel "add")));
-  equal bool ~msg:"the planted program ran" false (Sys.file_exists marker)
+  equal (list string) ~msg:"the planted program's marks" []
+    (List.filter Sys.file_exists [ marker ])
 
 let unwritable_cache =
   tag "unwritable-cache"
   @@ group "a cache that cannot be written"
        [
          test "a compile returns its binary" (fun () ->
+             ignore (scratch ());
              is_metal_library (with_metal (fun () -> compile (kernel "add"))));
          test
            "a link at the program's name in the temporary directory is not run"
-           (fun () -> not_run ~dir:scratch link_over);
+           (fun () -> not_run ~dir:(scratch ()) link_over);
        ]
 
 (* A cache whose program changed under a running process: these tests run in a
    process of their own, where XDG_CACHE_HOME names a directory of the
    sandbox. *)
 
-(* [f ()] with [change] run on the program's path each time its check is
-   about to open it. *)
+(* [f ()] with [change] run on the program's path each time its check is about
+   to open it. *)
 let while_checked change f =
   Compiler_metal.before_program_open := change;
   Fun.protect
     ~finally:(fun () -> Compiler_metal.before_program_open := ignore)
     f
 
-(* What another process writing the program does: a whole copy written
-   aside, then renamed to [program]. *)
+(* What another process writing the program does: a whole copy written aside,
+   then renamed to [program]. *)
 let rewrite_as_peer program =
   let copy = program ^ ".peer" in
   let bytes = In_channel.with_open_bin program In_channel.input_all in
@@ -488,12 +425,12 @@ let program_changed =
          test "a link swapped in while the program is checked is not run"
            (fun () ->
              (* The program and the script to link there, once planted. *)
-             let armed = ref None and swapped = ref false in
+             let armed = ref None and swapped = ref [] in
              let swap path =
                match !armed with
                | Some (program, script) when path = program ->
                    armed := None;
-                   swapped := true;
+                   swapped := path :: !swapped;
                    Sys.remove path;
                    Unix.symlink script path
                | _ -> ()
@@ -501,7 +438,7 @@ let program_changed =
              while_checked swap (fun () ->
                  not_run ~dir:Helpers.cache_dir (fun program script ->
                      armed := Some (program, script)));
-             equal bool ~msg:"the link was swapped in" true !swapped);
+             equal int ~msg:"links swapped in" 1 (List.length !swapped));
          test "a link at the program's name is not run" (fun () ->
              not_run ~dir:Helpers.cache_dir link_over);
          test "a program rewritten after it ran is not run" (fun () ->
@@ -573,14 +510,8 @@ let () =
   exit
     (run "Tolk.Compiler_metal"
        [
-         cache;
-         without_mtlcompiler;
-         not_a_library;
-         no_symbol;
-         no_service;
-         metal;
+         compiler_tests;
          process;
-         no_spawn;
          unwritable_cache;
          unrunnable_cache;
          program_changed;

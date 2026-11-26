@@ -65,28 +65,6 @@
      changed
      (run %{test} --tag program-changed))))))
 
-; A fork needs a process that never spawned a domain: the fork tests run in a
-; program of their own, with MTLCompiler and with a file that is no library.
-
-(test
- (name test_fork)
- (modules test_fork)
- (package tolk)
- (libraries windtrap tolk unix)
- (deps
-  (sandbox always)
-  not_a_library)
- (action
-  (setenv
-   CACHEDB
-   cache
-   (progn
-    (run %{test})
-    (setenv
-     MTLCOMPILER_PATH
-     ./not_a_library
-     (run %{test}))))))
-
 (rule
  (target not_a_library)
  (action
