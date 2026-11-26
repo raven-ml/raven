@@ -102,7 +102,9 @@ val writes :
 (** [writes ~vars ~params ~buffers u] is the set of writes of the stores
     ({!Tolk.Op.Store}) under [u], each [(slot, i, v)]: element [i] of the
     storage of slot [slot] takes the value [v]. The list is sorted by slot, then
-    index, then value ({!Dtype.Value.compare}), and holds each write once.
+    index, then value ({!Dtype.Value.compare}), [-0.] before [0.], and holds
+    each write once. [-0.] and [0.] are different writes; every NaN is one
+    value, since the bits of a NaN an operation computes depend on the host.
 
     A store [Store (Index (storage, index), value)], or
     [Store (Index (storage, index), value, gate)], writes once for each binding

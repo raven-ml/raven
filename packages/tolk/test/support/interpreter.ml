@@ -578,10 +578,18 @@ let overflows ?(vars = []) ?(params = []) ?(buffers = []) u =
 
 (* Kernels *)
 
+(* [-0.] and [0.] are different writes: the element takes one or the other.
+   Every NaN is one value, since the bits of a computed NaN depend on the
+   host. *)
+let compare_value v0 v1 =
+  match (Dtype.Value.compare v0 v1, v0, v1) with
+  | 0, `Float x, `Float y when x = 0. ->
+      Bool.compare (Float.sign_bit y) (Float.sign_bit x)
+  | c, _, _ -> c
+
 let compare_write (s0, i0, v0) (s1, i1, v1) =
   match Int.compare s0 s1 with
-  | 0 -> (
-      match Int.compare i0 i1 with 0 -> Dtype.Value.compare v0 v1 | c -> c)
+  | 0 -> ( match Int.compare i0 i1 with 0 -> compare_value v0 v1 | c -> c)
   | c -> c
 
 let writes ?(vars = []) ?(params = []) ?(buffers = []) u =

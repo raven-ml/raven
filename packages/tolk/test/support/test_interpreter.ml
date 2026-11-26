@@ -492,6 +492,34 @@ let kernels =
                (Ops.end_
                   (store (Ops.int 3) (Ops.int ~dtype:Dtype.Int32 7))
                   [ l ])));
+      test "-0. and 0. at one element are two writes" (fun () ->
+          let out = Shape.param ~shape:[ Int 1 ] 0 Dtype.Float32 in
+          let zero =
+            Ops.where
+              Ops.O.(s < int 1)
+              (Ops.float ~dtype:Dtype.Float32 0.)
+              (Ops.float ~dtype:Dtype.Float32 (-0.))
+          in
+          let u =
+            Ops.end_ (Ops.store (Ops.index out [ Ops.int 0 ]) zero) [ s ]
+          in
+          equal (list write)
+            [ (0, 0, `Float (-0.)); (0, 0, `Float 0.) ]
+            (writes u));
+      (* the NaN of each payload is moved from its bits, the same on every
+         host *)
+      test "NaNs of two payloads at one element are one write" (fun () ->
+          let out = Shape.param ~shape:[ Int 1 ] 0 Dtype.Float32 in
+          let nan bits =
+            Ops.bitcast (Ops.const ~dtype:Dtype.Uint32 (int bits)) Dtype.Float32
+          in
+          let either =
+            Ops.where Ops.O.(s < int 1) (nan 0x7fc00001) (nan 0x7fc00002)
+          in
+          let u =
+            Ops.end_ (Ops.store (Ops.index out [ Ops.int 0 ]) either) [ s ]
+          in
+          equal (list write) [ (0, 0, `Float Float.nan) ] (writes u));
       test "a store's value may read storage and reduce" (fun () ->
           let table = Shape.param ~shape:[ Int 4 ] 1 Dtype.Int32 in
           let total = Ops.reduce (Ops.index table [ s ]) Add [ s ] in
