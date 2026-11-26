@@ -1127,7 +1127,7 @@ let law_attention_keys c =
         let one = e l and cut = (3. *. Float.max part (e l)) +. e4 l +. rest in
         at_most ~msg:"lse" float_exact
           ~than:((3. *. eta) +. one +. cut)
-          (Float.abs (l -. l'));
+          (Nx_support.gap l' l);
         let w eta eps = (2. *. eta) +. eps +. rest_w in
         let tol =
           (w eta one +. gamma (tk + 1) +. w (2. *. eta) cut
@@ -1138,7 +1138,7 @@ let law_attention_keys c =
           let x = o.((i * dv) + d) and x' = o'.((i * dv) + d) in
           (* Each rounds once into [dt]: [u |o|]. *)
           let tol = tol +. (u *. (Float.abs x +. Float.abs x')) in
-          at_most ~msg:"o" float_exact ~than:tol (Float.abs (x -. x'))
+          at_most ~msg:"o" float_exact ~than:tol (Nx_support.gap x' x)
         done
       end)
     lse
