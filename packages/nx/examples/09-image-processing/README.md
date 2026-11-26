@@ -56,9 +56,9 @@ A 3x3 kernel with weights summing to 1, giving more weight to the center:
 
 ```ocaml
 let blur_kernel = Nx.create Nx.float32 [| 3; 3 |]
-  [| 1./16.; 2./16.; 1./16.;
-     2./16.; 4./16.; 2./16.;
-     1./16.; 2./16.; 1./16. |]
+  [| 1. /. 16.; 2. /. 16.; 1. /. 16.;
+     2. /. 16.; 4. /. 16.; 2. /. 16.;
+     1. /. 16.; 2. /. 16.; 1. /. 16. |]
 ```
 
 ### Sobel edge detection
