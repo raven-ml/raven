@@ -1060,10 +1060,14 @@ let complex_kinds =
     "atanh";
   ]
 
-(* |z' - z| / |z| of the moduli alone, in units of [u]. *)
-let modulus_error u (re, im) (((zr, _), (zi, _)) : (float * float) * (float * float)) =
-  let m = Float.hypot zr zi in
-  Float.abs (Float.hypot re im -. m) /. m /. u
+(* |z' - z| / |z| of the moduli alone, in units of [u], infinite where a part of
+   [z'] is NaN, as [normwise] reads it, so that no bound passes it. *)
+let modulus_error u (re, im)
+    (((zr, _), (zi, _)) : (float * float) * (float * float)) =
+  if Float.is_nan re || Float.is_nan im then Float.infinity
+  else
+    let m = Float.hypot zr zi in
+    Float.abs (Float.hypot re im -. m) /. m /. u
 
 (* C99 Annex G's special values, G.6.1 to G.6.4, at c128 and c64. Where it
    leaves a sign unspecified, the value is nx_kinds.h's choice. A NaN part is
@@ -1438,7 +1442,7 @@ let test_complex_log_circle =
       let check u call z want =
         let re, _ = call "log" [ z ] in
         at_most float_exact ~than:4.
-          (Float.abs (re -. want) /. Float.abs want /. u)
+          (normwise u (re, 0.) ((want, 0.), (0., 0.)))
           ~msg:(strf "log %h %h: %h" (fst z) (snd z) re)
       in
       check 0x1p-53 c128_call (-0.46684475937821884, -0.8843392848002926)
