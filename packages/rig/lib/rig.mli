@@ -2883,9 +2883,9 @@ module Timer : sig
     Point.t
   (** [submit t i ~waits s ~buffers ~args] is {!submit}[ ~waits s ~buffers
       ~args] with its work timed as step [i] of [t], replacing the work [i]
-      had, whether or not a profile is being taken. A profile taken at the
-      submit records the work with the same times. A submission with no
-      parts times nothing. *)
+      had, whether or not a profile is being taken. Where a profile taken
+      at the submit records the work ({!Profile.Work}), it records the same
+      times. A submission with no parts times nothing. *)
 
   val read : t -> int array
   (** [read t] waits for each step's work and is, for each step, the time

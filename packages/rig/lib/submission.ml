@@ -1558,10 +1558,12 @@ let counters s prof v work =
    reached, from the time pair its driver wrote. A driver that left the pair
    0, or no pair, timed nothing: no work, and the copies run from [t.asked] to
    when the host saw [p] reached, now if the device ran the work in its
-   submit, and otherwise at the read. A settle that failed or found the device
+   submit, and otherwise at the read. A device of another machine records no
+   work, so its times count as none. A settle that failed or found the device
    lost records nothing and raises [Lost]. *)
 let record s (lane, name) { ps; moves; asked } p x =
   let device = s.dev in
+  let here = Dev.same_machine device Dev.host in
   let seen = if Dev.is_done p then Profile.now () else -1 in
   let read prof =
     let copies start stop =
@@ -1571,7 +1573,8 @@ let record s (lane, name) { ps; moves; asked } p x =
             (Copy { src; dst; bytes; point = Some p; start; stop }))
         moves
     in
-    match read_timed x with
+    let times = read_timed x in
+    match if here then times else (0, 0) with
     | 0, 0 ->
         copies asked (if seen >= 0 then seen else Profile.now ());
         if x.measured then counters s prof x.value None

@@ -365,7 +365,8 @@ let test_unrecorded (_, make) =
   let (), events = Prof.take run in
   equal (list string) [] (work_names d events)
 
-(* The device's Polled driver times its work, on this host's clock. *)
+(* The device's Polled driver times its work, on this host's clock. Its copy
+   part is still recorded, as every submission's is (rig.mli, Copy). *)
 let test_far () =
   let machine = Support.machine "profile:none-far" in
   let d =
@@ -374,8 +375,19 @@ let test_far () =
   in
   let src = B.create d 8 and dst = B.create d 8 in
   let copy = Sub.make d [| Sub.copy ~src:(Buffer src) ~dst:(Buffer dst) |] in
-  let (), events = Prof.take (fun () -> Rig.Point.wait (submit copy)) in
-  equal (list string) [] (work_names d events)
+  let p, events =
+    Prof.take (fun () ->
+        let p = submit copy in
+        Rig.Point.wait p;
+        p)
+  in
+  equal (list string) [] (work_names d events);
+  equal ~msg:"its copy"
+    (list (triple string string int))
+    [ (Rig.name d, Rig.name d, 8) ]
+    (copies events);
+  equal ~msg:"its copy's point" (list (option point)) [ Some p ]
+    (copy_points events)
 
 let test_software_work () =
   let d = software "profile:software" in
@@ -1204,11 +1216,7 @@ let tests =
           test_empty_queue_name;
         cases ~id:fst "no Work is recorded of a submission" unrecorded
           test_unrecorded;
-        xfail
-          ~reason:
-            "rig records a Work of another machine's device whose driver times \
-             its work (rig.mli: it records none)"
-        @@ test "no Work is recorded of a device of another machine" test_far;
+        test "no Work is recorded of a device of another machine" test_far;
         test "a software device times its work" test_software_work;
       ];
     group "Span"
