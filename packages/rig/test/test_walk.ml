@@ -8,8 +8,8 @@
    each; an operation that gives rig a function runs once more with that
    function raising. After each failure the outcome is the one rig.mli states,
    the driver holds no region of the operation's, a lost device was stopped
-   once, the C heap, the descriptors and the signals the thread blocks are
-   back where they were, and the operation runs again. *)
+   once, the C heap, the descriptors and the signals the thread blocks are back
+   where they were, and the operation runs again. *)
 
 open Windtrap
 module B = Rig.Buffer
@@ -38,12 +38,6 @@ let grew what deltas =
 
 (* Failures *)
 
-let pp_failure ppf = function
-  | Fault n -> Format.fprintf ppf "a fault at call %d" n
-  | Refuse n -> Format.fprintf ppf "a refusal at call %d" n
-  | Exhaust n -> Format.fprintf ppf "refusals from call %d" n
-  | Raise -> Format.fprintf ppf "a raising function"
-
 let inject p = function
   | Fault n -> P.fail_at p n (`Fault why)
   | Refuse n -> P.fail_at p n (`Refuse 1)
@@ -63,8 +57,6 @@ let outcome d f =
   | exception Rig.Lost (d', w) when Rig.equal d d' -> "lost: " ^ w
   | exception Rig.Out_of_memory (d', _) when Rig.equal d d' -> "out of memory"
   | exception Exit -> "raised Exit"
-
-(* Operations *)
 
 (* Walking *)
 
@@ -188,20 +180,14 @@ let open_attempt failure =
   let heap', fds', signals' = census () in
   equal ~msg:("descriptors" ^ at) (option int) fds fds';
   equal ~msg:("signals blocked" ^ at) (list int) signals signals';
-  ignore
-    (require_ok
-       (Rig.open_
-          (P.opener name (P.make ()))));
+  ignore (require_ok (Rig.open_ (P.opener name (P.make ()))));
   match (heap, heap') with Some h, Some h' -> h' - h | _ -> 0
 
 (* A fact refuses nothing: the walk faults them, and raises in the opener. *)
 let test_open () =
   ignore (open_attempt (Fault 1));
   let p = P.make () in
-  ignore
-    (require_ok
-       (Rig.open_
-          (P.opener (fresh "open") p)));
+  ignore (require_ok (Rig.open_ (P.opener (fresh "open") p)));
   let k = P.steps p in
   greater ~msg:"facts" int ~than:0 k;
   List.iter
@@ -221,13 +207,9 @@ let memory_attempt n =
   let d = Result.get_ok (Rig.software name) in
   let counter = B.create d 8 in
   S.store (S.Reader.host counter) 0;
-  let fill =
-    Sub.fill ~refs:[| Sub.write 0 ~at:0 |] S.countdown ~params:8
-  in
+  let fill = Sub.fill ~refs:[| Sub.write 0 ~at:0 |] S.countdown ~params:8 in
   let part = fill in
-  let s =
-    ref (Some (Sub.make d (Array.make fills part)))
-  in
+  let s = ref (Some (Sub.make d (Array.make fills part))) in
   let args = S.zeros fills and buffers = [| counter |] in
   Rig.Point.wait (once ~buffers ~args (Option.get !s));
   let heap, fds, signals = census () in
@@ -277,34 +259,37 @@ let test_memory_refused () =
 let exhausted op =
   let op = { op with opener = P.open_ ~host_visible:false } in
   test
-    (op.name ^ ", every mapping refused")
+    (Printf.sprintf
+       "a failing call of %s, every mapping refused, ends as rig.mli states"
+       op.name)
     (walk ~kinds:[ (fun n -> Exhaust n) ] op)
 
+let failing ?kinds op =
+  test
+    (Printf.sprintf "a failing call of %s ends as rig.mli states" op.name)
+    (walk ?kinds op)
+
 let () =
+  let boxes, through = queued in
   exit
   @@ run "rig.walk"
        [
-         group "every failing call ends as rig.mli states"
-           (let boxes, through = queued in
-            List.map
-              (fun op -> test op.name (walk op))
-              (ops @ [ boxes; wait_for ])
-            @ List.map
-                (fun op ->
-                  test op.name
-                    (walk ~kinds:[ (fun n -> Fault n); (fun n -> Refuse n) ] op))
-                (staged @ through)
-            @ List.map exhausted (staged @ through));
-         group "opening"
+         group "open_"
            [
              test "every failing fact or opener leaves the name to open"
                test_open;
            ];
-         group "software devices"
+         group "software"
            [
              test "every failing fill loses the device, which opens again"
                test_memory_fill;
              test "an allocation the host refuses raises Out_of_memory"
                test_memory_refused;
            ];
+         group "errors and failure"
+           (List.map failing (ops @ [ boxes; wait_for ])
+           @ List.map
+               (failing ~kinds:[ (fun n -> Fault n); (fun n -> Refuse n) ])
+               (staged @ through)
+           @ List.map exhausted (staged @ through));
        ]

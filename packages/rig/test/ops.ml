@@ -39,8 +39,8 @@ let fresh =
 let page = B.paged_from
 let staged_bytes = 1 lsl 12
 
-(* The byte loops apply no closure, which bytecode's walks would pay for
-   at each byte of a check. *)
+(* The byte loops apply no closure, which bytecode's walks would pay for at each
+   byte of a check. *)
 let pattern n =
   let s = Bytes.create n in
   for i = 0 to n - 1 do
@@ -71,11 +71,26 @@ let filled n =
 let op ?(opener = fun name -> P.open_ name) ?(raises = false) name prepare =
   { name; opener; prepare; raises }
 
-(* A refusal may reach a call that answers [None] or [Error]. *)
-let refusing = function Some (Refuse _ | Exhaust _) -> true | _ -> false
+let pp_failure ppf = function
+  | Fault n -> Format.fprintf ppf "a fault at call %d" n
+  | Refuse n -> Format.fprintf ppf "a refusal at call %d" n
+  | Exhaust n -> Format.fprintf ppf "refusals from call %d" n
+  | Raise -> Format.fprintf ppf "a raising function"
 
-(* Pinned memory is a device's whose memory the host does not address: one
-   whose memory the host addresses has none. *)
+let pp_met ppf = function
+  | None -> Format.pp_print_string ppf "no failure"
+  | Some f -> pp_failure ppf f
+
+(* A refusal may reach a call that answers [None] or [Error]: a call refused
+   checks that the walk injected one. *)
+let refused what failure =
+  let refusing = function Some (Refuse _ | Exhaust _) -> true | _ -> false in
+  satisfies ~msg:(what ^ " refused") ~claim:"a refusal the walk injected"
+    (Testable.make ~pp:pp_met ~equal:( = ))
+    refusing failure
+
+(* Pinned memory is a device's whose memory the host does not address: one whose
+   memory the host addresses has none. *)
 let create memory =
   let opener =
     match memory with
@@ -95,11 +110,11 @@ let borrow_of ?opener name make =
       fun failure ->
         match B.borrow d b with
         | Some b' -> equal int (B.length b) (B.length b')
-        | None -> equal ~msg:"borrow refused" bool true (refusing failure))
+        | None -> refused "a borrow" failure)
 
 (* The device whose memory [borrow peer] borrows, one for every walk of a
-   process while it is not lost, opened with the first device that borrows
-   from it: a forked child opens its own. *)
+   process while it is not lost, opened with the first device that borrows from
+   it: a forked child opens its own. *)
 let peers = ref None
 
 let peer () =
@@ -120,13 +135,10 @@ let borrow_peer =
   in
   borrow_of ~opener "borrow peer" (fun () -> B.create (peer ()) 64)
 
-let bump =
-  Sub.fill ~refs:[| Sub.write 0 ~at:0 |] S.bump ~params:8
-
+let bump = Sub.fill ~refs:[| Sub.write 0 ~at:0 |] S.bump ~params:8
 let once ?(buffers = [||]) ?(args = [||]) s = Rig.submit s ~buffers ~args
 
-(* The values of [bump]: none, as its entry ref writes the counter's
-   address. *)
+(* The values of [bump]: none, as its entry ref writes the counter's address. *)
 let bumps = S.zeros 1
 
 let submit =
@@ -137,6 +149,9 @@ let submit =
       fun _ ->
         Rig.Point.wait (once ~buffers ~args:bumps s);
         equal string "\001\000\000\000\000\000\000\000" (bytes arg))
+
+let waited_for ~ns pt =
+  if Rig.Point.wait_for ~ns pt then "reached" else "not reached"
 
 (* A bound on the second wait of [wait_for], far past the time its work
    takes. *)
@@ -152,12 +167,12 @@ let open_stallable name =
 
 let driver_of d = snd (List.find (fun (d', _) -> Rig.equal d d') !stallable)
 
-(* A submit waited for twice with a bound in time: for 1 ns, over work that
-   its driver's next sleep does not run, as work that runs long, then for
-   [long_ns], whose sleep runs it. The 1 ns wait answers [false] whether or
-   not it sleeps: a wait whose clock read no time passed sleeps once, for
-   1 ms, and the stalled sleep leaves the work unrun. A stalled sleep counts
-   as no fallible call, so the op makes as many as a failure walk counted. *)
+(* A submit waited for twice with a bound in time: for 1 ns, over work that its
+   driver's next sleep does not run, as work that runs long, then for [long_ns],
+   whose sleep runs it. The 1 ns wait answers [false] whether or not it sleeps:
+   a wait whose clock read no time passed sleeps once, for 1 ms, and the stalled
+   sleep leaves the work unrun. A stalled sleep counts as no fallible call, so
+   the op makes as many as a failure walk counted. *)
 let wait_for =
   op "wait for" ~opener:open_stallable (fun d ->
       let arg = B.create d 8 in
@@ -167,11 +182,10 @@ let wait_for =
       fun _ ->
         let v = once ~buffers ~args:bumps s in
         P.stall p 1;
-        let ended = Rig.Point.wait_for ~ns:1 v in
+        let ended = waited_for ~ns:1 v in
         P.stall p 0;
-        equal ~msg:"a wait of 1 ns" bool false ended;
-        equal ~msg:"a wait of 10 s" bool true
-          (Rig.Point.wait_for ~ns:long_ns v);
+        equal ~msg:"a wait of 1 ns" string "not reached" ended;
+        equal ~msg:"a wait of 10 s" string "reached" (waited_for ~ns:long_ns v);
         equal string "\001\000\000\000\000\000\000\000" (bytes arg))
 
 (* A device whose memory the host does not address, which copied through the
@@ -219,8 +233,8 @@ let fill =
         B.copy ~src:on_d ~dst:back;
         equal string (String.make staged_bytes 'f') (bytes back))
 
-(* A queued copy between the host and [d], waited for: as [copy], returning
-   once queued. *)
+(* A queued copy between the host and [d], waited for: as [copy], returning once
+   queued. *)
 let submit_copy direction =
   let name =
     match direction with
@@ -253,8 +267,8 @@ let submit_fill =
         B.copy ~src:on_d ~dst:back;
         equal string (String.make staged_bytes 'g') (bytes back))
 
-(* A queued copy of two boxes between buffers of [d], whose memory the host
-   does not address: one submission of a part per box on [d]'s copy engine. *)
+(* A queued copy of two boxes between buffers of [d], whose memory the host does
+   not address: one submission of a part per box on [d]'s copy engine. *)
 let submit_boxes =
   op "submit copy of boxes" ~opener:(P.open_ ~host_visible:false) (fun d ->
       let src = B.create d page and dst = B.create d page in
@@ -278,8 +292,8 @@ let submit_boxes =
         equal string (pattern page) (bytes back))
 
 (* A load, then a wait for work after it: the load queues its code's copy and
-   returns, and the code's memory and the copy's staging go back once that
-   work is done. *)
+   returns, and the code's memory and the copy's staging go back once that work
+   is done. *)
 let load =
   op "load" (fun d failure ->
       (match Rig.Image.load d "code:64" with
@@ -287,7 +301,7 @@ let load =
           match Rig.Image.resolve p "main" with
           | Some _ -> ()
           | None -> fail "main is absent")
-      | Error _ -> equal ~msg:"load refused" bool true (refusing failure));
+      | Error _ -> refused "a load" failure);
       Rig.Point.wait (once (Sub.make d [||])))
 
 let wait_transport =
@@ -295,8 +309,8 @@ let wait_transport =
       let s = Sub.make d [||] in
       fun _ -> Rig.Point.wait (once s))
 
-(* Submits on [d] once a submission that keeps a value, leaving the
-   submission unreachable. *)
+(* Submits on [d] once a submission that keeps a value, leaving the submission
+   unreachable. *)
 let[@inline never] submit_kept d =
   Rig.Point.wait (once (Sub.make ~keep:(ref ()) d [||]))
 
@@ -317,10 +331,9 @@ let profile =
           (Rig.Profile.take (fun () ->
                Rig.Point.wait (once ~buffers ~args:bumps s))))
 
-(* A submission with a part timed outside a profile: its hand-over takes a
-   time pair that the timer alone holds, and the timer's read settles it once
-   the value is reached, or the timer gives it back where the submit
-   raised. *)
+(* A submission with a part timed outside a profile: its hand-over takes a time
+   pair that the timer alone holds, and the timer's read settles it once the
+   value is reached, or the timer gives it back where the submit raised. *)
 let time =
   op "time" (fun d ->
       let arg = B.create d 8 in
@@ -342,7 +355,7 @@ let dma =
         match B.dma b ~fn:"0000:41:00.0" with
         | Ok (Rig_edge.Bus [ (_, n) ]) -> equal ~msg:"its bytes" int page n
         | Ok _ -> fail "Polled describes a region as one run"
-        | Error _ -> equal ~msg:"dma refused" bool true (refusing failure))
+        | Error _ -> refused "a dma" failure)
 
 let ops =
   [
@@ -360,13 +373,14 @@ let ops =
     dma;
   ]
 
-(* A copy through the staging memory needs [d] to map it, and so does a
-   fill's read back. *)
+(* A copy through the staging memory needs [d] to map it, and so does a fill's
+   read back. *)
 let staged = [ copy `Into; copy `Out_of; fill ]
 
-(* The queued copies and fill, each waited for: the copy of boxes on a
-   device's copy engine, and the others through staging memory. *)
-let queued = (submit_boxes, [ submit_copy `Into; submit_copy `Out_of; submit_fill ])
+(* The queued copies and fill, each waited for: the copy of boxes on a device's
+   copy engine, and the others through staging memory. *)
+let queued =
+  (submit_boxes, [ submit_copy `Into; submit_copy `Out_of; submit_fill ])
 
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 
@@ -378,11 +392,11 @@ let peer_devices () =
 
 (* Collects what the caller dropped, then returns memory in the order it comes
    back: the frees of the host's, the peer's and [d]'s caches drain each first,
-   which moves [d]'s mappings of their memory into [d]'s cache, which [d]'s
-   free returns; the memory they mapped is then unreachable, and the same
-   frees again take it back. *)
+   which moves [d]'s mappings of their memory into [d]'s cache, which [d]'s free
+   returns; the memory they mapped is then unreachable, and the same frees again
+   take it back. *)
 let settle d =
-  let devices = Rig.host :: peer_devices () @ [ d ] in
+  let devices = (Rig.host :: peer_devices ()) @ [ d ] in
   collect ();
   List.iter Rig.free_cache devices;
   collect ();

@@ -3,28 +3,31 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Operations on a Polled device, which the failure walks ([test_walk]) and
-    the interrupt walks ([test_interrupt]) run. *)
+(** Operations on a Polled device, which the failure walks ([test_walk]) and the
+    interrupt walks ([test_interrupt]) run. *)
 
 val why : string
 (** [why] is the reason of the faults the walks inject. *)
 
-(** How a walk fails an operation: from its [n]-th fallible call on, every
-    call faults; its [n]-th call refuses; from its [n]-th call on, every call
+(** How a walk fails an operation: from its [n]-th fallible call on, every call
+    faults; its [n]-th call refuses; from its [n]-th call on, every call
     refuses, as a device out of memory does; or a function it gave rig raises
     [Exit]. *)
 type failure = Fault of int | Refuse of int | Exhaust of int | Raise
 
-(** An operation on a device: [prepare d] makes what it needs, and is the
-    operation, told the failure it meets. It checks the values it gets, and
-    raises on one rig.mli does not allow. [raises] says whether it gives rig
-    a function, which raises under [Raise]. *)
+val pp_failure : Format.formatter -> failure -> unit
+(** [pp_failure] formats a failure, as ["a fault at call 3"]. *)
+
 type op = {
   name : string;
   opener : string -> Rig.t * Rig_support.Polled.t;
   prepare : Rig.t -> failure option -> unit;
   raises : bool;
 }
+(** An operation on a device: [prepare d] makes what it needs, and is the
+    operation, told the failure it meets. It checks the values it gets, and
+    raises on one rig.mli does not allow. [raises] says whether it gives rig a
+    function, which raises under [Raise]. *)
 
 val op :
   ?opener:(string -> Rig.t * Rig_support.Polled.t) ->
@@ -43,12 +46,11 @@ val page : int
 
 val staged_bytes : int
 (** [staged_bytes] is the size of the buffers that the copies and the fill
-    through staging memory move, 4 KiB: each moves them through one piece of
-    a half, as a larger copy up to a half does. *)
+    through staging memory move, 4 KiB: each moves them through one piece of a
+    half, as a larger copy up to a half does. *)
 
 val filled : int -> Rig.Buffer.t
-(** [filled n] is a host buffer of [n] bytes whose byte [i] is
-    [i land 0xff]. *)
+(** [filled n] is a host buffer of [n] bytes whose byte [i] is [i land 0xff]. *)
 
 val collect : unit -> unit
 (** [collect ()] runs two full collections, so chains of finalisers run. *)
@@ -58,8 +60,8 @@ val once :
   ?args:Rig.Submission.args array ->
   Rig.Submission.t ->
   Rig.Point.t
-(** [once ~buffers ~args s] submits [s]. [buffers] and [args] default to
-    [[||]]. *)
+(** [once ~buffers ~args s] submits [s]. [buffers] and [args] default to [[||]].
+*)
 
 val ops : op list
 (** [ops] are the operations on a device that walks fail. *)
@@ -68,13 +70,13 @@ val staged : op list
 (** [staged] are the copies through staging memory. *)
 
 val queued : op * op list
-(** [queued] are the queued copies and fill, each waited for: a copy of boxes
-    on a device's copy engine, and those through staging memory. *)
+(** [queued] are the queued copies and fill, each waited for: a copy of boxes on
+    a device's copy engine, and those through staging memory. *)
 
 val wait_for : op
-(** [wait_for] submits work and waits for it with {!Rig.Point.wait_for}: for
-    1 ns, over work its driver's next sleep does not run, which ends before
-    the work runs, then long enough for it. *)
+(** [wait_for] submits work and waits for it with {!Rig.Point.wait_for}: for 1
+    ns, over work its driver's next sleep does not run, which ends before the
+    work runs, then long enough for it. *)
 
 val count : string -> Rig_support.Polled.t -> int
 (** [count call p] is the number of [p]'s logged calls named [call]. *)
@@ -84,10 +86,10 @@ val peer : unit -> Rig.t
     this process opens at its first call, and again after a loss. *)
 
 val peer_devices : unit -> Rig.t list
-(** [peer_devices ()] is the device whose memory the borrow operations
-    borrow, if this process opened it. *)
+(** [peer_devices ()] is the device whose memory the borrow operations borrow,
+    if this process opened it. *)
 
 val settle : Rig.t -> unit
-(** [settle d] collects what the caller dropped and returns memory in the
-    order it comes back: drains of the host, the peer and [d], their caches
-    freed, a collection, and a drain of the host again. *)
+(** [settle d] collects what the caller dropped and returns memory in the order
+    it comes back: drains of the host, the peer and [d], their caches freed, a
+    collection, and a drain of the host again. *)
