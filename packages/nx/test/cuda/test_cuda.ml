@@ -751,15 +751,6 @@ let cpu_product (type v s) (acc : (v, s) D.t) ~batch ~m ~n a b : v array =
 
 let cpu_sums = cpu_product D.Float64
 
-(* An error that a NaN or an infinity never hides: 0 where both are NaN or the
-   same infinity, infinite where exactly one is NaN or an infinity differs, else
-   the distance. *)
-let gap got want =
-  match (Float.is_nan got, Float.is_nan want) with
-  | true, true -> 0.
-  | true, false | false, true -> Float.infinity
-  | false, false -> if got = want then 0. else Float.abs (got -. want)
-
 (* The sums of [c]'s products and of their magnitudes for its reference, where
    its operands are floats narrower than float64: nx.cpu's float64 contraction
    reads each element exactly and its products are exact, so the reference skips
@@ -1494,7 +1485,7 @@ let complex_bound (_, (m, n, k)) =
   let worst = ref 0. in
   Array.iteri
     (fun o (z : Complex.t) ->
-      let err = Float.hypot (gap z.re r.(o).re) (gap z.im r.(o).im) in
+      let err = Nx_array_support.complex_gap z r.(o) in
       if err > 0. then worst := Float.max !worst (err /. allow o))
     y;
   at_most ~msg:"the largest error over its bound" float_exact ~than:1. !worst
@@ -1730,7 +1721,7 @@ let worst_ratio ~m ~n ~k ~d ?init av bv ys =
     (fun o s ->
       let c = match init with Some v -> v.(o) | None -> 0. in
       let mag = mags.(o) *. (1. +. g64) and r = s +. c in
-      let err = gap (f32 ys o) r in
+      let err = Nx_array_support.gap (f32 ys o) r in
       let allow =
         (match init with Some _ -> u *. Float.abs r | None -> 0.)
         +. ((1. +. u) *. gamma d u *. mag)

@@ -236,11 +236,7 @@ let law_scan (rows, r, _, seed) =
       end;
       sum := !sum +. x;
       mag := !mag +. Float.abs x;
-      (* A NaN for finite terms is an infinite error, never a pass. *)
-      let err =
-        if Float.is_nan got.(i) then Float.infinity
-        else Float.abs (got.(i) -. !sum)
-      in
+      let err = Nx_array_support.gap got.(i) !sum in
       let bound = (gamma (n - 1) u +. gamma n w) *. !mag in
       if err > 0. then worst := Float.max !worst (err /. bound))
     xs;
