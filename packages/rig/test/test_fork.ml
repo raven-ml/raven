@@ -3,8 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A forked child of a process that opened devices. Its own suite: a process
-   that ran a domain cannot fork. *)
+(* A forked child of a process that opened devices. *)
 
 open Windtrap
 module B = Rig.Buffer
@@ -16,7 +15,9 @@ let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
   Rig.submit ?waits s ~buffers ~args
 
 let empty d = Sub.make d [||]
-let raises_lost f = match f () with _ -> false | exception Rig.Lost _ -> true
+
+let raised f =
+  match f () with _ -> "returned" | exception Rig.Lost _ -> "Lost"
 
 let status = function
   | Unix.WEXITED n -> Printf.sprintf "exited %d" n
@@ -53,10 +54,13 @@ let in_child child =
 
 (* The child sees the device lost, calls no driver function and reads no word:
    memory dropped in it stays, even once the word reads every submitted value,
-   which would free it in a process that read it. *)
+   which would free it in a process that read it. A device lost before the fork
+   keeps its reason. *)
 let test_child () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let d, p = P.open_ "fork:child" in
+  let given_up, _ = P.open_ "fork:given-up" in
+  Rig.lose given_up "given up";
   let b = ref (Some (B.create d 64)) in
   let pt = submit (empty d) in
   let v = Rig.Point.value pt in
@@ -64,8 +68,8 @@ let test_child () =
   let lines, ended =
     in_child (fun () ->
         let lost = Rig.lost d in
-        let submit = raises_lost (fun () -> submit (empty d)) in
-        let wait = raises_lost (fun () -> Rig.Point.wait pt) in
+        let submit = raised (fun () -> submit (empty d)) in
+        let wait = raised (fun () -> Rig.Point.wait pt) in
         b := None;
         Gc.full_major ();
         ignore (B.create Rig.host 8);
@@ -74,20 +78,22 @@ let test_child () =
         ignore (B.create Rig.host 8);
         [
           Option.value ~default:"not lost" lost;
-          Printf.sprintf "submit raises Lost: %b" submit;
-          Printf.sprintf "wait raises Lost: %b" wait;
+          "a submit: " ^ submit;
+          "a wait: " ^ wait;
           Printf.sprintf "driver calls since the fork: %s"
             (String.concat " "
                (List.filteri (fun i _ -> i >= List.length calls) (P.log p)));
+          Option.value ~default:"not lost" (Rig.lost given_up);
         ])
   in
   equal string "exited 0" (status ended);
   equal (list string)
     [
       "forked";
-      "submit raises Lost: true";
-      "wait raises Lost: true";
+      "a submit: Lost";
+      "a wait: Lost";
       "driver calls since the fork: ";
+      "given up";
     ]
     lines;
   equal (option string) None (Rig.lost d);
@@ -136,7 +142,7 @@ let store io n = B.of_io io (module Store) (Store.make n) ~access:Read_write n
    rig leaves the device usable in the child, where a driver's device is
    lost. *)
 let test_io_child () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let io = open_io "fork:io" in
   let d, _ = P.open_ "fork:beside-io" in
   let lines, ended =
@@ -153,7 +159,7 @@ let test_io_child () =
 (* A forked child frees the io memory it drops, as its parent does: a child that
    makes and drops io buffers in a loop holds a bounded number of them. *)
 let test_io_loop () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let io = open_io "fork:io-loop" in
   let lines, ended =
     in_child (fun () ->
@@ -171,7 +177,7 @@ let test_io_loop () =
 (* A parent's device works on the parent's copy of io memory: the child frees
    its own copy once dropped, whatever work the device still has on it. *)
 let test_io_used () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let io = open_io "fork:io-used" in
   let d, p = P.open_ "fork:io-user" in
   let m = ref (Some (store io page_bytes)) in
@@ -196,7 +202,7 @@ let test_io_used () =
    that memory: a child that drops the buffer gives the memory back at the
    device's free_cache, as its parent would. *)
 let test_io_closed () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let io = open_io "fork:io-closed" in
   let m = ref (Some (store io 8)) in
   Rig.close io;
@@ -218,7 +224,7 @@ let test_io_closed () =
    or a fail, and frees none of its memory, since the stop is the parent's,
    which the closing thread runs once the call returns. *)
 let test_io_owed () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let module Store = Make () in
   let io = open_io "fork:io-owed" in
   let buffer n =
@@ -246,26 +252,49 @@ let test_io_owed () =
   Thread.join closer;
   equal string "exited 0" (status ended);
   equal (list string) [ "freed: 0" ] lines;
-  equal ~msg:"the parent's close" (option string) (Some "closed")
-    (Rig.lost io);
+  equal ~msg:"the parent's close" (option string) (Some "closed") (Rig.lost io);
   ignore (Sys.opaque_identity !other)
 
-(* A device that takes the slot a closed io device left is a driver's device:
-   a forked child sees it lost. A software device's last value, which the io
-   device's slot keeps and the Polled device starts from, shows that the slot
-   passed from one to the next. *)
+(* A Polled device whose values start past [2^40], which no other slot of the
+   process reaches. *)
+let marked = 1 lsl 40
+
+(* Opens devices with [open_] until one takes the slot whose last value is [v],
+   no other slot's near it, and closes the others: a device that opens takes a
+   free slot, which rig.mli does not name, and its values go on past every value
+   the slot's earlier devices were given. *)
+let on_slot v open_ =
+  let rec go others =
+    let d = open_ () in
+    if Rig.submitted d >= v then begin
+      List.iter Rig.close others;
+      d
+    end
+    else go (d :: others)
+  in
+  go []
+
+let slot_opens = Atomic.make 0
+
+let numbered what =
+  Printf.sprintf "fork:%s-%d" what (Atomic.fetch_and_add slot_opens 1)
+
+(* A device that takes the slot a closed io device left is a driver's device: a
+   forked child sees it lost. The io device and the Polled device are those that
+   took the slot of a device whose last value is past [marked]. *)
 let test_slot_of_io () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
-  let m = Result.get_ok (Rig.software "fork:before-io") in
-  let p = submit (empty m) in
-  Rig.Point.wait p;
+  Support.needs_fork ();
+  let m =
+    require_ok ~pp:Format.pp_print_string
+      (Rig.open_ (P.opener ~start:marked "fork:before-io" (P.make ())))
+  in
+  let v = Rig.Point.value (submit (empty m)) in
   Rig.close m;
   Rig.free_cache m;
-  let io = open_io "fork:io-slot" in
+  let io = on_slot v (fun () -> open_io (numbered "io-slot")) in
   Rig.close io;
   Rig.free_cache io;
-  let d, _ = P.open_ "fork:after-io" in
-  equal ~msg:"the slot passed on" int (Rig.Point.value p) (Rig.submitted d);
+  let d = on_slot v (fun () -> fst (P.open_ (numbered "after-io"))) in
   let lines, ended =
     in_child (fun () -> [ Option.value ~default:"not lost" (Rig.lost d) ])
   in
@@ -279,7 +308,7 @@ let[@inline never] dropped d n = Support.at (B.create d n)
 (* A device a child opens is its own: memory it drops returns to its cache as in
    any process, while the devices it inherited stay lost. *)
 let test_own_device () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let inherited, _ = P.open_ "fork:inherited" in
   let lines, ended =
     in_child (fun () ->
@@ -300,12 +329,7 @@ let test_own_device () =
 (* A part that holds one unit of a Polled queue. *)
 let one_part d =
   let fill = Support.noop in
-  let s =
-    Sub.make d
-      [|
-        Sub.fill fill ~params:0;
-      |]
-  in
+  let s = Sub.make d [| Sub.fill fill ~params:0 |] in
   s
 
 let submit_part s = Rig.submit s ~buffers:[||] ~args:(Support.zeros 1)
@@ -316,7 +340,7 @@ let submit_part s = Rig.submit s ~buffers:[||] ~args:(Support.zeros 1)
    lost at once. A child that waits for what the thread holds hangs, and the
    test times out. *)
 let test_locks () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let io = open_io "fork:io-locked" in
   let d, p = P.open_ ~capacity:1 ~may_block:true "fork:blocked" in
   let s = one_part d in
@@ -337,22 +361,21 @@ let test_locks () =
           Printf.sprintf "bytes made: %d" made;
           Printf.sprintf "submitted: %d" v;
           Option.value ~default:"not lost" (Rig.lost d);
-          Printf.sprintf "submit raises Lost: %b"
-            (raises_lost (fun () -> submit_part s));
+          "a submit: " ^ raised (fun () -> submit_part s);
         ])
   in
   ignore (P.run p);
   Thread.join holder;
   equal string "exited 0" (status ended);
   equal (list string)
-    [ "bytes made: 8"; "submitted: 1"; "forked"; "submit raises Lost: true" ]
+    [ "bytes made: 8"; "submitted: 1"; "forked"; "a submit: Lost" ]
     lines
 
 (* In a forked child, a buffer over an inherited device's memory raises the
    device's loss, read by the host directly or through a borrow on the host: the
    child may not map that memory, as it maps no Metal buffer on macOS. *)
 let test_child_memory () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let d, _ = P.open_ ~copies:false "fork:memory" in
   let m = B.create d 64 in
   let h = require_some (B.borrow Rig.host m) in
@@ -379,11 +402,10 @@ let test_child_memory () =
 
 (* A child of a process whose thread holds a half of the host's staging memory
    at the fork, and whose queued copies no device ran, copies through staging
-   memory of its own: the held half stays held, and a half whose work names a
-   parent's device is replaced. Host memory a parent's device wrote through a
-   borrow, with the copy still queued, is lost in the child. *)
+   memory of its own. Host memory a parent's device wrote through a borrow, with
+   the copy still queued, is lost in the child. *)
 let test_staging () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   Rig.free_cache Rig.host;
   let d, p = P.open_ ~host_visible:false "fork:staging" in
   let src = B.create d 64 in
@@ -460,10 +482,10 @@ let collected_in_child ?on d p runs h =
   Gc.full_major ();
   equal ~msg:"in the parent" int 1 (Atomic.get runs)
 
-(* A submission made and submitted before a fork keeps its value in the child
-   no longer, though its work is not done. *)
+(* A submission made and submitted before a fork keeps its value in the child no
+   longer, though its work is not done. *)
 let test_keep () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let runs = Atomic.make 0 in
   let d, p = P.open_ "fork:keep" in
   let h = ref (Some (Sub.make ~keep:(counted runs) d [||])) in
@@ -473,7 +495,7 @@ let test_keep () =
 (* The child makes no call on an orphaned device, so a call on any device lets
    go of the value a submission on it keeps, here one on the host. *)
 let test_keep_any_call () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let runs = Atomic.make 0 in
   let d, p = P.open_ "fork:keep-any-call" in
   let h = ref (Some (Sub.make ~keep:(counted runs) d [||])) in
@@ -489,7 +511,7 @@ let[@inline never] kept_and_drained d runs =
   drain d
 
 let test_keep_drained () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let runs = Atomic.make 0 in
   let d, p = P.open_ "fork:keep-drained" in
   kept_and_drained d runs;
@@ -498,10 +520,10 @@ let test_keep_drained () =
 
 (* A child gives back nothing of a word its parent's devices hold: neither a
    consumer's mapping of a producer's word of its own nor the word, of a
-   producer whose slot was freed before the fork. The parent gives the word
-   back once, after its consumer closed. *)
+   producer whose slot was freed before the fork. The parent gives the word back
+   once, after its consumer closed. *)
 let test_word_maps () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Support.needs_fork ();
   let consumer, c = P.open_ ~waits_on:[ `Host ] "fork:word-consumer" in
   let d, p = P.open_ ~transport:true "fork:word-producer" in
   let q = submit (empty d) in
@@ -537,11 +559,10 @@ let test_word_maps () =
   equal ~msg:"Polled's violations" (list string) [] (P.violations ())
 
 (* A child forked inside the function of a write of Mapped memory makes no
-   driver call on the device, which is the parent's, and ends the write with
-   its counts at 0, so it closes a device of its own. The parent's write
-   flushes once. *)
+   driver call on the device, which is the parent's, and ends the write with its
+   counts at 0, so it closes a device of its own. The parent's write flushes
+   once. *)
 let test_mapped_write () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
   Support.needs_fork ();
   let d, p = P.open_ ~host_visible:false "fork:mapped-write" in
   let m = B.create ~memory:Mapped d 64 in
@@ -563,7 +584,7 @@ let test_mapped_write () =
           Printf.sprintf "driver calls since the fork: %s"
             (String.concat " " since);
           Printf.sprintf "counted calls: %d" counted;
-          Printf.sprintf "its own device closed: %b" (Rig.lost own <> None);
+          "its own device: " ^ Option.value ~default:"not lost" (Rig.lost own);
         ])
   in
   equal string "exited 0" (status ended);
@@ -571,17 +592,16 @@ let test_mapped_write () =
     [
       "driver calls since the fork: ";
       "counted calls: 0";
-      "its own device closed: true";
+      "its own device: closed";
     ]
     lines;
   equal ~msg:"the parent's flushes" (list string) [ "flush" ]
     (List.filter (String.equal "flush") (P.log p))
 
-(* A child forked inside the function of a write of Mapped memory is inside
-   no call of rig's, its fork having forgotten the parent's: a close there,
-   before the function returns, ends a device of its own. *)
+(* A child forked inside the function of a write of Mapped memory is inside no
+   call of rig's, its fork having forgotten the parent's: a close there, before
+   the function returns, ends a device of its own. *)
 let test_close_in_write () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
   Support.needs_fork ();
   let d, _ = P.open_ ~host_visible:false "fork:close-in-write" in
   let m = B.create ~memory:Mapped d 64 in
@@ -604,10 +624,9 @@ let test_close_in_write () =
   equal ~msg:"its own device's close" (list string) [ "closed" ] lines
 
 (* A child forked by a callback inside a driver's counted call, here an
-   allocation's, ends that call with its counts at 0, so it closes a device
-   of its own. *)
+   allocation's, ends that call with its counts at 0, so it closes a device of
+   its own. *)
 let test_counted_call () =
-  if Sys.win32 then skip ~reason:"Windows has no fork" ();
   Support.needs_fork ();
   let d, p = P.open_ ~host_visible:false "fork:counted-call" in
   let pipe = Unix.pipe () in
@@ -627,19 +646,17 @@ let test_counted_call () =
         Rig.close own;
         [
           Printf.sprintf "counted calls: %d" counted;
-          Printf.sprintf "its own device closed: %b" (Rig.lost own <> None);
+          "its own device: " ^ Option.value ~default:"not lost" (Rig.lost own);
         ])
   in
   equal string "exited 0" (status ended);
-  equal (list string)
-    [ "counted calls: 0"; "its own device closed: true" ]
-    lines;
+  equal (list string) [ "counted calls: 0"; "its own device: closed" ] lines;
   equal ~msg:"the parent's allocation" string "made" made;
   equal ~msg:"the parent's counted calls" int 0 (Support.counted ())
 
 let tests =
   [
-    group "fork"
+    group "forks"
       [
         test "a forked child's devices are lost for good" test_child;
         test "a forked child's io devices stay usable" test_io_child;
