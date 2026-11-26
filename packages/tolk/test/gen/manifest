@@ -4564,7 +4564,6 @@ uop/uop_weak/lower_a_gated_long_index_into_a_huge_buffer_keeps_int64.golden
 uop/uop_weak/lower_a_gated_long_index_into_a_small_buffer_to_int32.golden
 uop/uop_weak/lower_a_gated_long_index_into_the_largest_int32_buffer_to_int32.golden
 uop/uop_weak/lower_a_gated_shrink_to_the_width_its_bounds_need.golden
-uop/uop_weak/lower_a_register_buffer_size.golden
 uop/uop_weak/lower_a_special.golden
 uop/uop_weak/lower_a_stack.golden
 uop/uop_weak/lower_a_unary_float.golden
@@ -4579,6 +4578,7 @@ uop/uop_weak/lower_an_int_beyond_int32_to_int64.golden
 uop/uop_weak/lower_an_int_beyond_int64_to_uint64.golden
 uop/uop_weak/lower_an_int_to_int32.golden
 uop/uop_weak/lower_around_a_weak_node_it_does_not_lower.golden
+uop/uop_weak/lower_keeps_a_register_buffer_size_bare.golden
 uop/uop_weak/lower_keeps_weak_storage_outside_registers_of_scalars.golden
 uop/uop_weak/lower_range_arithmetic.golden
 uop/uop_weak/lower_stacked_weak_casts_as_two_conversions.golden

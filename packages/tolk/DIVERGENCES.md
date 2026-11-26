@@ -1340,8 +1340,7 @@ encodes no queue (D146).
   past 2^24 rounds and updates land in the wrong run.
 - **Pinned by:** the Uop_weak suite (`test/uop/uop_weak`): `pm_commit_weak ›
   a 64-bit unsigned cast of a weak expression keeps its value past a float's
-  precision` and `laws › pm_commit_weak computes an integer cast in
-  integers`. On rune: missing (no test scatters past 2^24 positions).
+  precision` and `pm_commit_weak › computes an integer cast in integers`. On rune: missing (no test scatters past 2^24 positions).
 
 ## D45. Withdrawn
 

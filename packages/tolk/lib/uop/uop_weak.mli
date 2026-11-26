@@ -35,7 +35,14 @@
     which keeps its bits and its value; a comparison, a maximum, a division, a
     remainder or a right shift at the 64-bit type that holds every operand's
     bounds, or at {!Dtype.Int64} where none does, its operands past it wrapping.
-*)
+
+    Each pass keeps the value of each integer node it rewrites, computed in
+    machine integers: a weak operand committed at a peer wraps at the peer's
+    type, as compiled code commits it, and a width a pass gives holds the node's
+    bounds, but for a weak integer whose bounds no 64-bit integer holds, which
+    wraps at {!Dtype.Int64}, and for a node that reads its operands' signedness
+    where no 64-bit integer holds them all. A shift's count is apart: it
+    saturates at the shift's width, which keeps the shift's value. *)
 
 val commit_weak_consts : Ops.t -> Dtype.t option -> Ops.t
 (** [commit_weak_consts u dt] is [u] with each of its sources that is a weak
@@ -52,25 +59,29 @@ val pm_commit_weak : (unit, Ops.t) Ops.Pattern_matcher.t
       ({!Dtype.val-const}), when the node's type does not depend on it: the
       other sources already derive a committed type for the node. A shift's
       count is a number of bits, so it never wraps at [dt]: a count of
-      {!Dtype.bitsize}[ dt] or more shifts every bit out, so a weak count saturates
-      at that width. An expression whose bounds [dt] does not hold saturates at
-      its own committed type ({!Ops.commit_dtype}) and then converts to [dt]. An
-      expression whose bounds no 64-bit integer holds ({!Ops.fits_no_int}) is
-      the width if its bounds are all past the width, and otherwise raises
+      {!Dtype.bitsize}[ dt] or more shifts every bit out, so a weak count
+      saturates at that width. A count expression whose bounds [dt] does not
+      hold saturates at the width, computed at its own committed type
+      ({!Ops.commit_dtype}), then converts to [dt]. A count expression whose
+      bounds no 64-bit integer holds ({!Ops.fits_no_int}) is the width if its
+      bounds are all at or past the width, and otherwise raises
       [Invalid_argument] when the rule runs: wrapped, it would shift by the
-      wrong number. An
-      integer power's exponent is a number too: it stays weak, its value whole;
+      wrong number. An integer power's exponent is a number too: it stays weak,
+      its value whole;
     - a {!Op.Store} of a weak value converts it to the destination's type;
-    - a cast to a committed type [dt] over a weak arithmetic node [u] of [dt]'s
-      kind commits [u]'s weak sources at the least upper type of [dt], [u]'s
-      committed type and each weak source's committed type, a shift's count and
-      an integer power's exponent apart, and casts the result to [dt]. Where
-      that type is a float, as it is for a 64-bit unsigned [dt] over a signed
-      width, they commit at 64 bits as an integer node does (see above): an
-      integer cast computes in integers.
+    - a cast to a committed type [dt] over a weak arithmetic node or stack [u]
+      of [dt]'s kind commits [u]'s weak sources at the least upper type of [dt],
+      [u]'s committed type and each weak source's committed type, a shift's
+      count and an integer power's exponent apart, and casts the result to [dt].
+      Where that type is a float, as it is for a 64-bit unsigned [dt] over a
+      signed width, they commit at 64 bits as an integer node does (see above):
+      an integer cast computes in integers.
 
     It runs with every rewrite that can build a weak constant, and must reach
-    its fixed point before {!pm_lower_weak} gives defaults. *)
+    its fixed point before {!pm_lower_weak} gives defaults.
+
+    Raises [Invalid_argument] on a weak integer constant under a committed cast
+    that no 64-bit integer holds. *)
 
 val pm_lower_weak : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_lower_weak] gives every weak node that nothing committed its default
@@ -90,16 +101,28 @@ val pm_lower_weak : (unit, Ops.t) Ops.Pattern_matcher.t
       its own type, which its consumers absorb in turn;
     - two stacked weak casts over a committed value are two conversions, each at
       the default of its kind;
-    - a weak integer scalar parameter or buffer is stored at its default, cast
-      back to {!Dtype.Weak_int};
+    - a weak integer parameter passed by value ({!Dtype.Alu}), a variable's
+      included, is passed at its default, cast back to {!Dtype.Weak_int}; a
+      parameter in memory keeps its type;
     - an {!Op.Index} or {!Op.Shrink} whose index is an {!Dtype.Int64} guarded by
       a condition, and {!Ops.invalid} elsewhere, indexes through an
       {!Dtype.Int32} when the storage's greatest index fits one: the values
-      outside the guard are discarded. *)
+      outside the guard are discarded.
+
+    A define's size ({!Op.Set.defines}) stays a bare weak literal.
+
+    Raises [Invalid_argument] on a weak integer constant that no 64-bit integer
+    holds. *)
 
 val pm_cast_const : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_cast_const] states the width of every constant still weak, at each
     consumer: a broadcastable consumer that derives a committed type from its
     sources converts its weak constants to their least upper type, and every
     remaining bare constant becomes a cast of the literal to its committed type
-    ({!Ops.cconst}), booleans included. {!Ops.invalid} stays bare. *)
+    ({!Ops.cconst}), booleans included. {!Ops.invalid} stays bare.
+
+    It runs after {!pm_lower_weak}: where a weak expression remains, a constant
+    it commits becomes that expression's committed peer, which then wraps it.
+
+    Raises [Invalid_argument] on a weak integer constant with no committed peer
+    that no 64-bit integer holds. *)

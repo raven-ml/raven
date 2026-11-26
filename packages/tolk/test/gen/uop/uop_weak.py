@@ -265,7 +265,7 @@ def lower_a_gated_shrink_to_the_width_its_bounds_need():
 
 
 @graph
-def lower_a_register_buffer_size():
+def lower_keeps_a_register_buffer_size_bare():
     return rewritten(UOp.placeholder((4,), dtypes.float, 0, addrspace=AddrSpace.REG).sink(), pm_lower_weak)
 
 
