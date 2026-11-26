@@ -53,4 +53,5 @@ val nvrtc : ?ptx:bool -> ?cache_key:string -> string -> Renderer.Compiler.t
     answering, which fails that compile only; it raises [Failure] if a process
     cannot be started.
     {!Renderer.Compiler.disassemble} prints the GPU's instructions, which the
-    CUDA toolkit's [ptxas] and [nvdisasm] find, or else why they could not. *)
+    CUDA toolkit's [ptxas] and [nvdisasm] find, or else why they could not, and
+    leaves no file behind. *)

@@ -35,29 +35,35 @@ let request src ~ptx options =
   in
   String.concat "" (List.map (fun f -> f ^ "\000") fields) ^ src
 
+(* The binary goes to a file of its own in the temporary directory, removed once
+   [ptxas] and [nvdisasm] have read it. *)
 let cuda_disassemble ~ptx arch lib =
-  try
-    let fn =
-      Filename.concat
-        (Filename.get_temp_dir_name ())
-        ("tinycuda_" ^ Digest.to_hex (Digest.string lib))
-    in
-    let rec rstrip_nul s =
-      if String.ends_with ~suffix:"\000" s then
-        rstrip_nul (String.sub s 0 (String.length s - 1))
-      else s
-    in
-    Out_channel.with_open_bin fn (fun oc ->
-        output_string oc (if ptx then rstrip_nul lib else lib));
-    if ptx then
-      ignore
-        (Helpers.system (Printf.sprintf "ptxas -arch=%s -o %s %s" arch fn fn));
-    print_endline (Helpers.system ("nvdisasm " ^ fn))
-  with Failure e | Sys_error e ->
+  let failed e =
     print_endline
       ("Failed to generate SASS " ^ e
      ^ " Make sure your PATH contains ptxas/nvdisasm binary of compatible \
         version.")
+  in
+  let rec rstrip_nul s =
+    if String.ends_with ~suffix:"\000" s then
+      rstrip_nul (String.sub s 0 (String.length s - 1))
+    else s
+  in
+  match Filename.temp_file "tinycuda_" "" with
+  | exception Sys_error e -> failed e
+  | fn -> (
+      Fun.protect ~finally:(fun () ->
+          try Sys.remove fn with Sys_error _ -> ())
+      @@ fun () ->
+      try
+        Out_channel.with_open_bin fn (fun oc ->
+            output_string oc (if ptx then rstrip_nul lib else lib));
+        if ptx then
+          ignore
+            (Helpers.system
+               (Printf.sprintf "ptxas -arch=%s -o %s %s" arch fn fn));
+        print_endline (Helpers.system ("nvdisasm " ^ fn))
+      with Failure e | Sys_error e -> failed e)
 
 (* NVRTC *)
 

@@ -190,6 +190,13 @@ let disassembly =
           let text = output () in
           contains ~sub:"nvdisasm " text;
           not_contains ~sub:"ptxas -arch" text);
+      test "leaves no file in the temporary directory" (fun () ->
+          let dir = Filename.get_temp_dir_name () in
+          let files () = List.sort compare (Array.to_list (Sys.readdir dir)) in
+          let before = files () in
+          Compiler.disassemble (nvrtc "sm_89") "not ptx";
+          Compiler.disassemble (nvrtc ~ptx:false "sm_89") "not a cubin";
+          equal (list string) before (files ()));
     ]
 
 (* NVRTC *)
