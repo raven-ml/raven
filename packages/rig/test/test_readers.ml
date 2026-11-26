@@ -10,30 +10,42 @@ open Windtrap
 module B = Rig.Buffer
 module R = Rig_support.Reader
 
+(* Whether two buffers or ranges share memory. *)
+let sharing =
+  Testable.make
+    ~pp:(fun ppf o ->
+      Format.pp_print_string ppf (if o then "share" else "apart"))
+    ~equal:Bool.equal
+
 let test_live () =
   let b = B.create Rig.host 40 in
-  not_equal int 0 (R.host b);
-  equal int 40 (R.bytes b);
-  equal (option string) None (R.why b)
+  not_equal ~msg:"its address" int 0 (R.host b);
+  equal ~msg:"its bytes" int 40 (R.bytes b);
+  equal ~msg:"its reason" (option string) None (R.why b)
 
 let test_view () =
   let b = B.create Rig.host 64 in
   let v = B.view b ~first:8 ~length:6 in
-  equal int (R.host b + 8) (R.host v);
-  equal int 6 (R.bytes v)
+  equal ~msg:"its address" int (R.host b + 8) (R.host v);
+  equal ~msg:"its bytes" int 6 (R.bytes v)
 
 let test_dead () =
   let b = B.create Rig.host 8 in
   ignore (require_some (Rig_support.donated b));
   equal (option string) (Some "donated") (R.why b)
 
-(* A claim from C resolves and claims, and its release ends it. *)
+(* A take of the memory is refused while the claim holds, and made once it is
+   released. *)
 let test_claim () =
   let b = B.create Rig.host 8 in
   let answer = Testable.make ~pp:R.pp_answer ~equal:( = ) in
-  equal ~msg:"claimed" answer R.Claimed (R.claim b Rig.Read);
+  equal ~msg:"the claim" answer R.Claimed (R.claim b Rig.Read);
+  ignore (B.take ~why:"taken" [ b ]);
+  equal ~msg:"after a take while claimed" (option string) None (B.dead b);
   R.release b;
-  is_some ~msg:"released" (B.take ~why:"taken" [ b ])
+  ignore (B.take ~why:"taken" [ b ]);
+  equal ~msg:"after a take once released" (option string) (Some "taken")
+    (B.dead b)
 
 (* Spans *)
 
@@ -107,6 +119,10 @@ let views =
     (list ~size:(int_range 2 6)
        (triple (int_range 0 7) (int_range 0 32) (int_range 0 32)))
 
+(* Views of two buffers over one word: the host memory and its borrow, and the
+   two bigarrays, the second 8 bytes into the first. *)
+let spans_examples = [ [ (0, 0, 8); (4, 0, 8) ]; [ (2, 8, 8); (3, 0, 8) ] ]
+
 (* Whether two spans' ranges, rounded out to whole words of their space,
    meet. *)
 let shares (s, f, n) (s', f', n') =
@@ -115,7 +131,8 @@ let shares (s, f, n) (s', f', n') =
   n > 0 && n' > 0 && s = s' && lo f < hi f' n' && lo f' < hi f n
 
 (* Two buffers share memory iff their spans are in one space and their ranges
-   meet there once rounded out to words, as Buffer.overlaps says. *)
+   meet there once rounded out to words, as Buffer.overlaps says: the pairs of
+   drawn views, by their places in the list, that share. *)
 let law_spans vs =
   let w = world () in
   let bs =
@@ -130,34 +147,65 @@ let law_spans vs =
     let s, f = R.span b in
     (s, f, B.length b)
   in
+  let pairs = ref [] in
   List.iteri
     (fun k (i, b) ->
       List.iteri
         (fun j (i', b') ->
-          if j > k then begin
-            let o = B.overlaps b b' in
-            cover "views that share a word" o;
-            cover "views of two buffers over one word" (o && i <> i');
-            equal ~msg:"overlaps" bool o (shares (place b) (place b'))
-          end)
+          if j > k then pairs := ((k, j), (i, b), (i', b')) :: !pairs)
         bs)
-    bs
+    bs;
+  let pairs = List.rev !pairs in
+  let overlapping =
+    List.filter (fun (_, (_, b), (_, b')) -> B.overlaps b b') pairs
+  in
+  cover "views that share a word" (overlapping <> []);
+  cover "views of two buffers over one word"
+    (List.exists (fun (_, (i, _), (i', _)) -> i <> i') overlapping);
+  let sharing_pairs f =
+    List.filter_map
+      (fun (kj, (_, b), (_, b')) -> if f b b' then Some kj else None)
+      pairs
+  in
+  equal ~msg:"the pairs that share memory"
+    (list (pair int int))
+    (sharing_pairs (fun b b' -> shares (place b) (place b')))
+    (sharing_pairs B.overlaps)
+
+(* Ranges at a buffer's bounds lie within it: an empty range at its end overlaps
+   nothing, its last byte overlaps itself, and two halves of it share no byte. A
+   range past the bounds aborts the process, which no test in the process can
+   observe. *)
+let bounds =
+  [
+    ("an empty range at the end", (64, 0, 0, 64), false);
+    ("the last byte", (63, 1, 63, 1), true);
+    ("two halves", (0, 32, 32, 32), false);
+    ("the whole buffer", (0, 64, 0, 64), true);
+  ]
+
+let test_overlap_bound (_, (af, an, bf, bn), expected) =
+  let a = B.create Rig.host 64 in
+  equal sharing expected (R.overlap a af an a bf bn)
 
 let tests =
   [
-    group "readers"
+    group "low level"
       [
         test "a live buffer reads as its address and length" test_live;
         test "a view reads as its own first byte and elements" test_view;
         test "a dead buffer reads as its reason" test_dead;
         test "a claim from C claims and its release ends it" test_claim;
-      ];
-    group "spans"
-      [
         test "host memory lies at host addresses" test_span_host;
         test "other memory lies in a space of its own, at offsets"
           test_span_device;
-        prop "spans share a word as Buffer.overlaps says" views law_spans;
+        prop ~examples:spans_examples
+          "spans share a word as Buffer.overlaps says" views law_spans;
+        cases
+          ~id:(fun (what, _, _) -> what)
+          "rig_buffers_overlap of ranges at a buffer's bounds is whether they \
+           share a byte"
+          bounds test_overlap_bound;
       ];
   ]
 
