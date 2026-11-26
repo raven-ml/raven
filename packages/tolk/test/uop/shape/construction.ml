@@ -269,8 +269,10 @@ let movement =
           equal (list value)
             [ `Int (Bigint.of_int (1 lsl 31)) ]
             (window u (1 lsl 30) 1));
-      test "rop rejects a repeated axis" (fun () ->
-          rejects (fun () -> Shape.rop p Op.Add [ 1; 1 ]));
+      test "rop raises for an axis given twice" (fun () ->
+          rejects (fun () -> Shape.rop p Op.Add [ 1; 1 ]);
+          let q = param [ 2; 1; 4 ] 0 Float32 in
+          rejects (fun () -> Shape.rop q Op.Add [ 1; 1 ]));
       test "permute rejects an order that is not a permutation" (fun () ->
           rejects (fun () -> Shape.permute p [ 0; 0; 1 ]);
           rejects (fun () -> Shape.permute p [ 0; 1 ]);

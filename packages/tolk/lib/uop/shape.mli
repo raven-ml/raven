@@ -214,7 +214,9 @@ val stack : ?axis:int -> Ops.t list -> Ops.t
 val rop : Ops.t -> Op.t -> int list -> Ops.t
 (** [rop u op axes] reduces the axes [axes] of [u] with [op]: axes of size [1]
     are reshaped away, and the others are permuted to the front and reduced by
-    one {!Op.Reduce}. *)
+    one {!Op.Reduce}.
+
+    Raises [Invalid_argument] if an axis is given twice. *)
 
 val valid : Ops.t -> Ops.t -> Ops.t
 (** [valid u cond] is [u] where [cond] holds and [`Invalid] elsewhere. *)

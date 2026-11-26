@@ -845,6 +845,8 @@ let vconst_like u c = broadcast (const ~dtype:(dtype u) c) (max_numel u)
 
 let rop u op axes =
   let axes = List.sort Int.compare axes in
+  if List.length (List.sort_uniq Int.compare axes) <> List.length axes then
+    invalid_arg "rop reduces each axis once";
   let s = shape u in
   let reduce_axes =
     List.filter (fun a -> Sint.resolve Sint.(List.nth s a <> Int 1)) axes
