@@ -112,8 +112,8 @@ let test_other_performance_cores () =
     skip ~reason:"the host reports its performance cores" ();
   if Sys.file_exists "/sys/devices/system/cpu/cpu0/cpu_capacity" then
     skip ~reason:"the host reports its CPUs' capacities" ();
-  if Sys.file_exists "/sys/devices/system/cpu/cpu0/acpi_cppc/highest_perf"
-  then skip ~reason:"the host rates its CPUs' highest performance" ();
+  if Sys.file_exists "/sys/devices/system/cpu/cpu0/acpi_cppc/highest_perf" then
+    skip ~reason:"the host rates its CPUs' highest performance" ();
   equal int cores (P.performance_cores ())
 
 (* A process of this executable pins itself to one CPU, reads the cores, then
@@ -134,6 +134,59 @@ let test_affinity () =
   equal
     ~msg:"cores at the first call, on one CPU, and after the affinity returned"
     (option string) (Some "1 1") line
+
+(* Whether the host is Linux, as its kernel names itself. *)
+let linux () =
+  Sys.os_type = "Unix"
+  &&
+  match
+    In_channel.with_open_text "/proc/sys/kernel/ostype" In_channel.input_all
+  with
+  | ostype -> String.trim ostype = "Linux"
+  | exception Sys_error _ -> false
+
+(* The CPUs of this process's affinity, from Linux's /proc/self/status, the list
+   its "Cpus_allowed_list:" line holds, such as "0-5,8". *)
+let affinity () =
+  if not (linux ()) then skip ~reason:"the host is not Linux" ();
+  let path = "/proc/self/status" in
+  let prefix = "Cpus_allowed_list:" in
+  let line =
+    match
+      In_channel.with_open_text path In_channel.input_lines
+      |> List.find_opt (String.starts_with ~prefix)
+    with
+    | Some line -> line
+    | None -> failf "%s has no %s line" path prefix
+  in
+  let list =
+    String.trim
+      (String.sub line (String.length prefix)
+         (String.length line - String.length prefix))
+  in
+  String.split_on_char ',' list
+  |> List.concat_map (fun range ->
+      match String.split_on_char '-' range with
+      | [ a ] -> [ int_of_string a ]
+      | [ a; b ] ->
+          let a = int_of_string a in
+          List.init (int_of_string b - a + 1) (fun i -> a + i)
+      | _ -> failf "an affinity range %S" range)
+
+let test_linux_cores () =
+  let cpus = affinity () in
+  let q = P.cgroup_cpus "" in
+  let a = List.length cpus in
+  equal ~msg:"min (a, ceil q), a without a quota" int
+    (if q < 0 then a else min a q)
+    cores
+
+let test_linux_performance_cores () =
+  let cpus = Array.of_list (affinity ()) in
+  let fast = P.performance_cpus "" cpus in
+  equal ~msg:"the rated performance cores, at most the cores" int
+    (if fast < 0 then cores else min cores fast)
+    (P.performance_cores ())
 
 let test_windows_cores () =
   let active = P.active_processors () in
@@ -333,17 +386,16 @@ let path_trees =
         mounts = [ mount ~root point ];
         limits =
           [
-            ( String.sub dir 1 (String.length dir - 1) ^ "/cpu.max",
-              quota 150000 );
+            (String.sub dir 1 (String.length dir - 1) ^ "/cpu.max", quota 150000);
           ];
         cpus = 2;
       })
     paths
 
 (* [with_files files f] is [f dir], with each (path, contents) of [files]
-   written under [dir], a directory of the test's own, which the runner
-   removes as the test ends: the native and bytecode suites may run at once,
-   and windtrap's workers do. *)
+   written under [dir], a directory of the test's own, which the runner removes
+   as the test ends: the native and bytecode suites may run at once, and
+   windtrap's workers do. *)
 let with_files files f =
   let dir = temp_dir ~prefix:"cgroup" () in
   let rec make path =
@@ -370,9 +422,9 @@ let test_cgroup tree =
   equal ~msg:"ceil q, or -1 without a quota" int tree.cpus
     (with_files files P.cgroup_cpus)
 
-(* The CPUs [cpus] of a tree whose CPU i has capacity [capacities.(i)] and
-   ACPI CPPC highest performance [perfs.(i)], none where it is negative, and
-   the other files [others]. [fast] is what rig_pool_performance_cpus counts. *)
+(* The CPUs [cpus] of a tree whose CPU i has capacity [capacities.(i)] and ACPI
+   CPPC highest performance [perfs.(i)], none where it is negative, and the
+   other files [others]. [fast] is what rig_pool_performance_cpus counts. *)
 type cpu_tree = {
   name : string;
   capacities : int array;
@@ -407,14 +459,14 @@ let cpu_trees =
     }
   in
   (* An Intel Core Ultra 5 235 under Linux 6.12: no CPU has a capacity, CPPC
-     rates performance cores 0-5 at 80 and efficiency cores 6-13 at 62, and
-     the kernel lists the two kinds as the CPUs of the cpu_core and cpu_atom
-     PMUs. The efficiency cores run compute at 0.9 of the performance cores'
-     speed. *)
+     rates performance cores 0-5 at 80 and efficiency cores 6-13 at 62, and the
+     kernel lists the two kinds as the CPUs of the cpu_core and cpu_atom PMUs.
+     The efficiency cores run compute at 0.9 of the performance cores' speed. *)
   let hybrid name cpus fast =
     {
-      (rated name (Array.init 14 (fun cpu -> if cpu < 6 then 80 else 62)) cpus
-         fast)
+      (rated name
+         (Array.init 14 (fun cpu -> if cpu < 6 then 80 else 62))
+         cpus fast)
       with
       others =
         [
@@ -440,8 +492,7 @@ let cpu_trees =
       [| 6; 7; 8; 9; 10; 11; 12; 13 |]
       8;
     hybrid "an affinity across a hybrid CPU's kinds of core"
-      [| 4; 5; 6; 7; 8; 9 |]
-      6;
+      [| 4; 5; 6; 7; 8; 9 |] 6;
     {
       (hybrid "a hybrid CPU where one CPU has a capacity" (all 14) 14) with
       capacities = Array.init 14 (fun cpu -> if cpu = 0 then 1024 else -1);
@@ -458,8 +509,7 @@ let cpu_trees =
       perfs = Array.make 8 80;
     };
     {
-      (sized "CPPC rates where a CPU has no capacity" [| 1024; -1 |] (all 2) 1)
-      with
+      (sized "CPPC rates where a CPU has no capacity" [| 1024; -1 |] (all 2) 1) with
       perfs = [| 80; 40 |];
     };
   ]
@@ -479,44 +529,7 @@ let test_cpu_tree tree =
   equal ~msg:"the performance cores among the CPUs, or -1" int tree.fast
     (with_files files (fun root -> P.performance_cpus root tree.cpus))
 
-let cores_tests =
-  group "cores"
-    [
-      test "the cores and the performance cores are within their bounds"
-        test_core_bounds;
-      test
-        "on macOS the cores are the physical cores and the performance cores \
-         those of hw.perflevel0"
-        test_macos_cores;
-      test "where the host reports no performance cores, they are the cores"
-        test_other_performance_cores;
-      test "on Windows the cores are the active processors of every group"
-        test_windows_cores;
-      test
-        "on Linux the cores are bounded by the affinity at the first call, and \
-         a later change is not seen"
-        test_affinity;
-      cases
-        "Linux's cgroup bound is the least ceil (quota / period) up the \
-         process's cgroup v2, read from any tree"
-        ~id:(fun (t : tree) -> t.name)
-        trees test_cgroup;
-      cases "Linux's cgroup paths preserve their names"
-        ~id:(fun (t : tree) -> t.name)
-        path_trees
-        (fun tree ->
-          if Sys.win32 then
-            skip ~reason:"Windows cannot represent these Linux path names" ();
-          test_cgroup tree);
-      cases
-        "Linux's performance cores are the CPUs of capacity more than half the \
-         largest of theirs, or without capacities of CPPC highest performance \
-         more than half the largest of theirs, read from any tree"
-        ~id:(fun (t : cpu_tree) -> t.name)
-        cpu_trees test_cpu_tree;
-    ]
-
-(* Chunks *)
+(* Jobs *)
 
 let pp_int64 ppf x = Format.fprintf ppf "%LdL" x
 
@@ -534,8 +547,8 @@ let int64_extremes =
       max_int;
     ]
 
-(* A blocking job runs on as many threads as it asks, up to its chunks, so
-   its draws stay within a few times the cores: every one is made. *)
+(* A blocking job runs on as many threads as it asks, up to its chunks, so its
+   draws stay within a few times the cores: every one is made. *)
 let threads_gen kind =
   let most =
     match kind with
@@ -597,9 +610,6 @@ let job_examples =
 let kinds = [ P.Compute; P.Blocking ]
 let kind_name = function P.Compute -> "compute" | P.Blocking -> "blocking"
 
-(* [for_kinds f] is [f kind] for each kind, its name prefixed by the kind's. *)
-let for_kinds f = List.map (fun kind -> f kind (kind_name kind ^ ": ")) kinds
-
 let test_bounds kind ((threads, total, chunks) as job) =
   assume_recordable job;
   let c = chunk_count ~total ~chunks
@@ -635,8 +645,8 @@ let test_bounds kind ((threads, total, chunks) as job) =
 (* 16 chunks on two threads go one a call; 4096 start with a run of 256. *)
 let test_balance chunks =
   P.needs_two_cores ();
-  equal ~msg:"the other chunks ran while chunk 0's call lasted" bool true
-    (P.balance chunks)
+  satisfies ~claim:"the other chunks ran while chunk 0's call lasted" bool
+    Fun.id (P.balance chunks)
 
 let top = Int64.max_int
 
@@ -672,31 +682,7 @@ let test_wide_job kind (total, chunks, expected) =
     expected
     (cut (0L :: List.map snd expected) ran)
 
-let chunk_tests =
-  group "chunks"
-    (for_kinds (fun kind name ->
-         prop ~count:300 ~examples:job_examples
-           (name
-          ^ "a job calls ranges of whole chunks of the stated bounds that \
-             cover its units once, one range on one thread, and nothing for \
-             no unit")
-           (job_gen kind) (test_bounds kind))
-    @ for_kinds (fun kind name ->
-        cases
-          (name
-         ^ "a job whose total times its chunks passes 64 bits, or of more \
-            chunks than units, calls ranges of the stated chunks")
-          ~id:(fun (total, chunks, _) ->
-            strf "total %Ld, chunks %Ld" total chunks)
-          wide_jobs (test_wide_job kind))
-    @ [
-        cases
-          "a thread that finishes early runs the chunks a slower one would \
-           have, one at a time or in runs"
-          ~id:(strf "%d chunks") [ 16; 4096 ] test_balance;
-      ])
-
-(* Workers *)
+(* Bodies *)
 
 let test_workers kind ((threads, total, chunks) as job) =
   assume_recordable job;
@@ -730,22 +716,7 @@ let test_visibility kind =
   equal ~msg:"values bodies read stale" int 0 bodies;
   equal ~msg:"values the caller read stale" int 0 caller
 
-let worker_tests =
-  group "workers"
-    (for_kinds (fun kind name ->
-         prop ~examples:job_examples
-           (name
-          ^ "a call's worker is below the job's threads, the caller's 0, one \
-             per thread, and its calls never overlap")
-           (job_gen kind) (test_workers kind))
-    @ [
-        cases
-          "bodies see the caller's writes made before the job, and the caller \
-           the bodies' once it returns"
-          ~id:kind_name kinds test_visibility;
-      ])
-
-(* Scheduling *)
+(* Jobs beside each other *)
 
 let test_alone held ~threads =
   P.while_held ~kind:held (fun () ->
@@ -772,7 +743,7 @@ let test_blocking_alone () =
 let test_beside (held, kind) =
   P.needs_two_cores ();
   P.while_held ~kind:held (fun () ->
-      equal ~msg:"its two chunks ran at once" bool true
+      satisfies ~claim:"its two chunks ran at once" bool Fun.id
         (P.finishes "the job" (fun () -> P.meet kind)))
 
 let test_nested kinds =
@@ -808,19 +779,23 @@ let test_waits () =
       P.counted_calls () = 4);
   Domain.join waiting
 
-(* A job's chunks, each once. Jobs of up to 96 chunks reach runs of several
-   chunks on up to 6 threads. Half the draws take at most 7 threads and half at
-   least 31 chunks, whatever the cores, so that a call reaches runs of several
-   chunks on several threads about one time in eight on a machine of 255 cores
-   as on one of 4: a program holds each command with probability 3/4 and calls
-   it about 12 times, and 30 programs all miss with a probability below
-   10^-11. *)
+(* A job's chunks, each once, from either domain. Jobs of up to 96 chunks reach
+   runs of several chunks on several threads, which need c > 15 t: half the
+   draws take two or three threads, whatever the cores. A program reaches them
+   for each kind in about 0.70 of programs on 14 cores (600 programs) and 0.76
+   on 2 (300), so 20 programs all miss with a probability below 3 10^-10 at the
+   lower 95% bound, 0.666. Its time is the pool's: on 2 CPUs the two domains'
+   compute jobs wait for each other while their threads spin. *)
 let job_commands =
   let small_job =
     Gen.with_pp pp_job
       (Gen.triple
          (Gen.frequency
-            [ (1, Gen.int_range (-1) 7); (1, Gen.int_range (-1) (cores + 1)) ])
+            [
+              (2, Gen.int_range 2 3);
+              (1, Gen.int_range (-1) 7);
+              (1, Gen.int_range (-1) (cores + 1));
+            ])
          (Gen.int64_range (-1L) 2000L)
          (Gen.frequency
             [ (1, Gen.int64_range (-1L) 96L); (1, Gen.int64_range 31L 96L) ]))
@@ -843,17 +818,114 @@ let job_commands =
           cut (chunk_bounds ~total ~chunks) (chunks_ran ran)))
     kinds
 
-let scheduling_tests =
-  group "scheduling"
+let cores_tests =
+  group "cores"
     [
-      cases
-        "a job of one thread runs at once while another thread's job of its \
-         kind runs"
-        ~id:kind_name kinds test_one_thread_at_once;
+      test "the cores and the performance cores are within their bounds"
+        test_core_bounds;
       test
-        "a blocking job of more than one thread runs at once on the calling \
-         thread alone, in one call, while another thread's blocking job runs"
-        test_blocking_alone;
+        "on macOS the cores are the physical cores and the performance cores \
+         those of hw.perflevel0"
+        test_macos_cores;
+      test "where the host reports no performance cores, they are the cores"
+        test_other_performance_cores;
+      test "on Windows the cores are the active processors of every group"
+        test_windows_cores;
+      test
+        "on Linux the cores are bounded by the affinity at the first call, and \
+         a later change is not seen"
+        test_affinity;
+      test
+        "on Linux the cores are the least of the affinity's CPUs and the \
+         cgroup bound"
+        test_linux_cores;
+      test
+        "on Linux the performance cores are the affinity's rated more than \
+         half the largest of theirs, at most the cores"
+        test_linux_performance_cores;
+      cases
+        "Linux's cgroup bound is the least ceil (quota / period) up the \
+         process's cgroup v2, read from any tree"
+        ~id:(fun (t : tree) -> t.name)
+        trees test_cgroup;
+      cases "Linux's cgroup paths preserve their names"
+        ~id:(fun (t : tree) -> t.name)
+        path_trees
+        (fun tree ->
+          if Sys.win32 then
+            skip ~reason:"Windows cannot represent these Linux path names" ();
+          test_cgroup tree);
+      cases
+        "Linux's performance cores are the CPUs of capacity more than half the \
+         largest of theirs, or without capacities of CPPC highest performance \
+         more than half the largest of theirs, read from any tree"
+        ~id:(fun (t : cpu_tree) -> t.name)
+        cpu_trees test_cpu_tree;
+    ]
+
+let job_tests =
+  group "jobs"
+    (List.map
+       (fun kind ->
+         prop ~count:300 ~examples:job_examples
+           (strf
+              "a %s job calls ranges of whole chunks of the stated bounds that \
+               cover its units once, one range on one thread, and nothing for \
+               no unit"
+              (kind_name kind))
+           (job_gen kind) (test_bounds kind))
+       kinds
+    @ List.map
+        (fun kind ->
+          cases
+            (strf
+               "a %s job whose total times its chunks passes 64 bits, or of \
+                more chunks than units, calls ranges of the stated chunks"
+               (kind_name kind))
+            ~id:(fun (total, chunks, _) ->
+              strf "total %Ld, chunks %Ld" total chunks)
+            wide_jobs (test_wide_job kind))
+        kinds
+    @ [
+        cases
+          "a thread that finishes early runs the chunks a slower one would \
+           have, one at a time or in runs"
+          ~id:(strf "%d chunks") [ 16; 4096 ] test_balance;
+        cases
+          "a job of one thread runs at once while another thread's job of its \
+           kind runs"
+          ~id:kind_name kinds test_one_thread_at_once;
+        cases
+          "a job begun from a body of a job of more than one thread runs at \
+           once on the body's thread as worker 0, in one call"
+          ~id:(fun (o, i) -> strf "%s in %s" (kind_name i) (kind_name o))
+          (List.concat_map (fun o -> List.map (fun i -> (o, i)) kinds) kinds)
+          test_nested;
+        test
+          "a compute job of more than one thread waits for another thread's \
+           compute job to end, sampled for 50 ms"
+          test_waits;
+        cases
+          "bodies see the caller's writes made before the job, and the caller \
+           the bodies' once it returns"
+          ~id:kind_name kinds test_visibility;
+      ])
+
+let body_tests =
+  group "bodies"
+    (List.map
+       (fun kind ->
+         prop ~examples:job_examples
+           (strf
+              "in a %s job, a call's worker is below the job's threads, the \
+               caller's 0, one per thread, and its calls never overlap"
+              (kind_name kind))
+           (job_gen kind) (test_workers kind))
+       kinds)
+
+let blocking_tests =
+  group "blocking jobs"
+    [
       cases
         "a job of either kind runs on two threads while another thread's job \
          of the other kind runs"
@@ -861,17 +933,16 @@ let scheduling_tests =
           strf "%s beside %s" (kind_name kind) (kind_name held))
         [ (P.Compute, P.Blocking); (P.Blocking, P.Compute) ]
         test_beside;
-      cases
-        "a job begun from a body of a job of more than one thread runs at once \
-         on the body's thread as worker 0, in one call"
-        ~id:(fun (o, i) -> strf "%s in %s" (kind_name i) (kind_name o))
-        (List.concat_map (fun o -> List.map (fun i -> (o, i)) kinds) kinds)
-        test_nested;
       test
-        "a compute job of more than one thread waits for another thread's \
-         compute job to end, sampled for 50 ms"
-        test_waits;
-      stateful ~domains:2 ~count:30
+        "a blocking job of more than one thread runs at once on the calling \
+         thread alone, in one call, while another thread's blocking job runs"
+        test_blocking_alone;
+    ]
+
+let domain_tests =
+  group "domains"
+    [
+      stateful ~domains:2 ~steps:0 ~count:20
         "jobs of both kinds from two domains each call their chunks once"
         job_commands;
     ]
@@ -879,4 +950,4 @@ let scheduling_tests =
 let () =
   exit
     (run "rig_pool.h"
-       [ cores_tests; chunk_tests; worker_tests; scheduling_tests ])
+       [ cores_tests; job_tests; body_tests; blocking_tests; domain_tests ])
