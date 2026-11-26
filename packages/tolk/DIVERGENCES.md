@@ -3031,9 +3031,10 @@ encodes its barriers (D146).
   keeps what it compiles, as rune's jit did for `BEAM`, `JITBEAM` and
   `DEBUG`; `DEBUG` read by
   `compile_linear` would reach output and key every cache on verbosity.
-- **Pinned by:** `Tolk.Setting › constructors`, `› shaping` (every test,
-  among them `› holds the library's settings of output, and those alone` and `›
-  changes a library setting's entry when the setting changes`); `Tolk.Search ›
+- **Pinned by:** `Tolk.Setting › constructors`, `› shaping` (every test)
+  and `› tolk's settings › those that reach Output are the library's entries
+  of shaping` and `› those that reach Output change their entry of shaping as
+  they change`; `Tolk.Search ›
   actions › asks for the tensor cores' levels whatever TC_OPT` and `›
   beam_search keeps its choice › a search kept under one value is measured
   again under another, of › a setting its caller declares`; `Tolk.Codegen ›
