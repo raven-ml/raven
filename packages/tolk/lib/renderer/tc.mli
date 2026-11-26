@@ -115,13 +115,13 @@ val pp : Format.formatter -> t -> unit
 (** {1:products Products} *)
 
 val factor : t -> Ops.t -> Ops.t option
-(** [factor tc u] is what [tc] multiplies for a factor [u] of a product: [u]
-    at [tc]'s input type, or the narrow float that [u] widens to float32
-    where [tc] adds float32 products, since it multiplies two narrow floats
-    exactly, as float32 does. An integer widened to float32 that the input
-    type holds exactly, as a Q8_0 code in bfloat16, enters cast to that type:
-    the cast through the narrow float keeps every value. It is [None]
-    otherwise. *)
+(** [factor tc u] is what [tc] multiplies for a factor [u] of a product: [u] at
+    [tc]'s input type, or the narrow float that [u] widens to float32 where [tc]
+    adds float32 products, since it multiplies two narrow floats exactly, as
+    float32 does. Where [tc] adds float32 products of a narrow float, an integer
+    widened to float32 that the input type holds exactly, as a Q8_0 code in
+    bfloat16, enters cast to that type: the cast through the narrow float keeps
+    every value. It is [None] otherwise. *)
 
 val takes : t -> acc:Dtype.t -> Ops.t -> Ops.t -> bool
 (** [takes tc ~acc a b] is [true] iff [tc] computes a sum of the products of
@@ -157,16 +157,17 @@ type chain = {
 val chain : t -> t -> operand -> chain option
 (** [chain x y op] is how [x]'s accumulator is [y]'s operand [op] with every
     element in the lane that holds it, if it can be. [y]'s other operand must
-    read [K] permuted as [k_bits] says. The bits of [y]'s [K] that [k_bits]
-    does not name are element bits of [op] numbering accumulators of [x]; the
-    elements whose bits there read [e] come from accumulator [e]. A bit
-    keeps its own index where [op]'s elements leave it free. The elements
-    stay of [x]'s [dtype_out], and a program converts them to [y]'s
+    read [K] permuted as [k_bits] says. The bits of [y]'s [K] that [k_bits] does
+    not name are element bits of [op] numbering accumulators of [x]; the
+    elements whose bits there read [e] come from accumulator [e]. A bit keeps
+    its own index where [op]'s elements leave it free; each other bit, in the
+    order of [x]'s accumulator elements, takes the least index left free. The
+    elements stay of [x]'s [dtype_out], and a program converts them to [y]'s
     [dtype_in].
 
-    It is [None] if [x] and [y] differ in threads, their kept dimensions
-    differ in size, [x]'s other dimension is larger than [y]'s [K], or some
-    lane of [op] needs an element another lane of [x]'s accumulator holds. *)
+    It is [None] if [x] and [y] differ in threads, their kept dimensions differ
+    in size, [x]'s other dimension is larger than [y]'s [K], or some lane of
+    [op] needs an element another lane of [x]'s accumulator holds. *)
 
 val transpose : t -> t
 (** [transpose tc] is the core of [Dᵀ = Bᵀ Aᵀ + Cᵀ], which a program computes

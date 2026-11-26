@@ -169,9 +169,9 @@ let chain x y operand =
         true
     | _ -> dim c = kept && equal_bit c o
   in
-  (* An element bit stays an element bit: a kept bit itself, a moved bit a K
-     bit not yet taken, first those whose own index is free, then the rest in
-     order of index. *)
+  (* An element bit stays an element bit: a kept bit itself, a moved bit a K bit
+     not yet taken, first those whose own index is free, then the rest, in the
+     order of x's accumulator elements, each the least index left free. *)
   let free j = List.mem (K j) f.elements && not (Array.mem j ks) in
   let element c =
     if dim c = kept then List.mem c f.elements

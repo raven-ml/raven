@@ -6073,11 +6073,12 @@ union, as fast on CUDA, on the host and in compile time.
 - **Reason:** (b): rune's `Lower_attention`, the fused attention lowering,
   reads it to chain the scores' accumulator into the values' product, and
   takes a core that chains as `B` transposed.
-- **Pinned by:** `Tolk.Tc › chain › a core's accumulator as its own operand`,
-  per shipped core, and `› an accumulator chains iff some permutation of K
-  reads it in place, and the chain reads it so`, against every map of the
-  moved bits over every pair of each target's cores; `Tolk.Tc › transpose`,
-  over every shipped core and every pair of each target's cores.
+- **Pinned by:** `Tolk.Tc › chain › chains a core's accumulator into itself
+  as its fragments allow`, per shipped core, and `› chains iff some
+  permutation of K reads the accumulator in place, and the chain reads it so`,
+  against every map of the moved bits over every pair of shipped cores;
+  `Tolk.Tc › transpose`, over every shipped core and every pair of each
+  target's cores.
 
 ## D202. A join keeps its dependencies, and holds the state under it
 
