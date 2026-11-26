@@ -8481,36 +8481,47 @@ let grown =
 let law_grown_plans g =
   let c = List.nth long_cases g.gc in
   let buffer = Lazy.force long_buffer in
+  (* A plan's time grows with its launches: no length past [kept_elements], and
+     each length planned once. *)
+  let slices = 1 lsl g.gslices in
+  let longest = kept_elements (depends ~carried:c.carried c.p) / slices in
+  let plans = Hashtbl.create 8 in
   let plan terms =
-    S.parted ~seconds:1. (fun () ->
-        long_plan ~holds:g.gholds ~carried:c.carried buffer c.p c.r ~into:c.into
-          ~shape:(grown_shape g ~terms) ~step:g.gstep)
+    match Hashtbl.find_opt plans terms with
+    | Some r -> r
+    | None ->
+        let r =
+          S.parted ~seconds:1. (fun () ->
+              long_plan ~holds:g.gholds ~carried:c.carried buffer c.p c.r
+                ~into:c.into ~shape:(grown_shape g ~terms) ~step:g.gstep)
+        in
+        Hashtbl.add plans terms r;
+        r
   in
-  let planned terms = Result.is_ok (plan terms) in
   (* A Logsumexp or Moments slice takes one pass up to its block's terms and
      three past them: the block's terms, its network launches' NX_LOOP_SEGMENT
-     at 4096 terms a slice, and one more. *)
+     at 4096 terms a slice, or at the longest where shorter, and one more. *)
   let switch =
     let network (l : Plan.launch) =
       match l.kernel with
       | Loop_network_v4 | Loop_network_v1 | Loop_network_wide -> true
       | _ -> false
     in
-    match plan 4096 with
-    | Ok (Some p) -> (
-        match List.find_opt network (Array.to_list p.launches) with
-        | Some l ->
-            let b =
-              Int64.to_int
-                (Bytes.get_int64_le l.words (8 * Nx_metal.Kernels.loop_segment))
-            in
-            [ b; b + 1 ]
-        | None -> [])
-    | Ok None | Error _ -> []
+    let segment (l : Plan.launch) =
+      Int64.to_int
+        (Bytes.get_int64_le l.words (8 * Nx_metal.Kernels.loop_segment))
+    in
+    match c.r with
+    | Monoid _ | Arg _ -> []
+    | (Logsumexp | Moments) when longest < 1 -> []
+    | Logsumexp | Moments -> (
+        match plan (Int.min 4096 longest) with
+        | Ok (Some p) -> (
+            match List.find_opt network (Array.to_list p.launches) with
+            | Some l -> [ segment l; segment l + 1 ]
+            | None -> [])
+        | Ok None | Error _ -> [])
   in
-  (* A plan's time grows with its launches: no length past [kept_elements]. *)
-  let slices = 1 lsl g.gslices in
-  let longest = kept_elements (depends ~carried:c.carried c.p) / slices in
   let lengths =
     List.filter
       (fun t -> t >= 1 && t <= longest)
@@ -8518,7 +8529,7 @@ let law_grown_plans g =
   in
   List.iter
     (fun terms ->
-      if not (planned terms) then
+      if Result.is_error (plan terms) then
         failf "%a: declined at %d terms a slice" pp_grown g terms)
     lengths;
   cover "several parts at the longest"
@@ -8530,7 +8541,8 @@ let law_grown_plans g =
   cover "a Logsumexp or Moments"
     (match c.r with Logsumexp | Moments -> true | Monoid _ | Arg _ -> false);
   cover "a program past 64 nodes" (depends c.p > 64);
-  cover "a Logsumexp or Moments at its block's terms and one more" (switch <> []);
+  cover "a Logsumexp or Moments at its block's terms and one more"
+    (switch <> [] && List.for_all (fun t -> List.mem t lengths) switch);
   List.iter
     (fun rank -> cover (Printf.sprintf "%d axes" rank) (g.grank = rank))
     [ 8; 20; 32 ]
