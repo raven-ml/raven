@@ -30,17 +30,18 @@ val render : ?simplify:bool -> Ops.t -> string
       [(x*y+z)], [(x if c else y)], [truncdiv(x, y)] and [truncmod(x, y)];
     - a movement is its source followed by [.reshape], [.expand], [.pad],
       [.shrink] or [.permute] and its argument as a tuple: [(4,8)],
-      [((0, 2),(1, 3))], [(1, 0)];
-    - {!Op.Add}, {!Op.Sub}, {!Op.Mul}, {!Op.Div}, {!Op.Mod},
-      {!Op.Shl}, {!Op.Shr}, {!Op.And}, {!Op.Or}, {!Op.Xor}, {!Op.Cmplt},
-      {!Op.Cmpne} and {!Op.Cmpeq} are [+], [-], [*], [//], [%], [<<], [>>],
-      [&], [|], [^], [<], [!=] and [==] between their operands, in
-      parentheses. An operand loses its own parentheses where precedence makes
-      them redundant: from the tightest, [* // %], then [+ -], [<< >>], [&],
-      [^] and [|]. Operations of equal precedence associate to the left, so
-      [(a+b)+c] is [(a+b+c)] and [a-(b+c)] keeps its parentheses. A
-      comparison keeps its operands' parentheses, and its own within any
-      operation;
+      [((0, 2),(1, 3))], [(1, 0)]; each size is written as {!Shape.simplify}
+      leaves it, whatever [simplify];
+    - {!Op.Add}, {!Op.Sub}, {!Op.Mul}, {!Op.Div}, {!Op.Mod}, {!Op.Shl},
+      {!Op.Shr}, {!Op.And}, {!Op.Or}, {!Op.Xor}, {!Op.Cmplt}, {!Op.Cmpne} and
+      {!Op.Cmpeq} are [+], [-], [*], [//], [%], [<<], [>>], [&], [|], [^], [<],
+      [!=] and [==] between their operands, in parentheses. An operand written
+      with one of these operators, but a comparison, loses its own parentheses
+      where precedence makes them redundant: from the tightest, [* // %], then
+      [+ -], [<< >>], [&], [^] and [|]; any other operand keeps its text.
+      Operations of equal precedence associate to the left, so [(a+b)+c] is
+      [(a+b+c)] and [a-(b+c)] keeps its parentheses. A comparison keeps its
+      operands' parentheses, and its own within any operation;
     - an {!Op.Index} or an {!Op.Stage} is each source after the first between
       brackets, without their outer parentheses: [[i][j]];
     - a load through an index is the indexed storage followed by the index:
@@ -48,9 +49,11 @@ val render : ?simplify:bool -> Ops.t -> string
     - a stack is its sources between braces, separated by commas: [{a,b}];
     - any other node is written as {!Ops.pp} prints it.
 
-    Raises [Invalid_argument] if [simplify] and the symbolic rules are not
-    installed, as {!Shape.simplify}; so does writing a movement whose argument
-    sizes are nodes, or an integer that {!Bigint.to_string} refuses. *)
+    Raises what {!Shape.simplify} raises, on [u] if [simplify] and on a
+    movement's sizes always. Raises [Invalid_argument] on a movement one of
+    whose sizes is a float, an invalid value or an integer beyond [int]'s range,
+    on a permutation whose axis is a node that does not simplify to an integer,
+    and on an integer that {!Bigint.to_string} refuses. *)
 
 val srender : Ops.sint -> string
 (** [srender s] is an integer [s] in decimal, and a node [s] as {!render} writes

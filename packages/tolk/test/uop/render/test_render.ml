@@ -7,14 +7,30 @@ let var name lo hi =
   Ops.variable name (`Int (Bigint.of_int lo)) (`Int (Bigint.of_int hi))
 
 let a = var "a" 1 5
+let b = var "b" 0 9
 
-(* The cases of an input golden are its sink's sources, in order. *)
-let sources file = Ops.src (Golden.sink file)
-let case file cell = List.nth (sources file) (int_of_string (cell "src"))
+(* The cases of an input golden are its sink's sources, in order, read once. *)
+let cases_of file = lazy (Ops.src (Golden.sink file))
+let expressions = cases_of "expressions.golden"
+let symbolic = cases_of "symbolic.golden"
+let trees = cases_of "trees.golden"
+let case cases cell = List.nth (Lazy.force cases) (int_of_string (cell "src"))
+
+(* What [f ()] returns, or the exception it raises. *)
+let outcome f = match f () with s -> Ok s | exception e -> Error e
+
+let exn =
+  Testable.make
+    ~pp:(fun ppf e -> Format.pp_print_string ppf (Printexc.to_string e))
+    ~equal:( = )
+
+let written = result string exn
 
 (* Reading an expression back *)
 
 let variables = List.map (fun name -> (name, var name 0 9)) [ "a"; "b"; "c" ]
+let comparisons = Op.[ Cmplt; Cmpne; Cmpeq ]
+let is_comparison u = List.exists (Op.equal (Ops.op u)) comparisons
 
 (* Two-character symbols come first, so that [<] never reads the start of
    [<<]. *)
@@ -25,6 +41,7 @@ let symbols =
       ("<<", Shl);
       (">>", Shr);
       ("!=", Cmpne);
+      ("==", Cmpeq);
       ("*", Mul);
       ("%", Mod);
       ("+", Add);
@@ -39,7 +56,7 @@ let symbols =
 let levels =
   Op.
     [
-      [ Cmplt; Cmpne ];
+      comparisons;
       [ Or ];
       [ Xor ];
       [ And ];
@@ -48,11 +65,13 @@ let levels =
       [ Mul; Div; Mod ];
     ]
 
-(* [parse s] is the tree of binary operations over [variables] and integer
+(* [read s] is the tree of binary operations over [variables] and integer
    literals that [s] denotes, read with Python's precedence and associating to
-   the left. *)
-let parse s =
-  let pos = ref 0 in
+   the left, and the positions of the pairs of parentheses in [s] that [render]
+   keeps whatever precedence says: the whole text's, a comparison's and a
+   comparison's operands'. *)
+let read s =
+  let pos = ref 0 and kept = ref [ (0, String.length s - 1) ] in
   let at c = !pos < String.length s && s.[!pos] = c in
   let fail () = failwith (Printf.sprintf "cannot read %S at %d" s !pos) in
   let operator () =
@@ -75,19 +94,30 @@ let parse s =
   let rec level = function
     | [] -> primary ()
     | ops :: tighter ->
-        let rec continue left =
+        let operand () =
+          let start = !pos in
+          let e = level tighter in
+          (e, (start, !pos - 1))
+        in
+        let rec continue (left, span) =
           match operator () with
           | Some (sym, op) when List.exists (Op.equal op) ops ->
               pos := !pos + String.length sym;
-              continue (Ops.v op ~src:[ left; level tighter ])
+              let right, right_span = operand () in
+              if List.exists (Op.equal op) comparisons then
+                kept := span :: right_span :: !kept;
+              continue
+                (Ops.v op ~src:[ left; right ], (fst span, snd right_span))
           | _ -> left
         in
-        continue (level tighter)
+        continue (operand ())
   and primary () =
     if at '(' then (
+      let start = !pos in
       incr pos;
       let e = level levels in
       if not (at ')') then fail ();
+      if is_comparison e then kept := (start, !pos) :: !kept;
       incr pos;
       e)
     else
@@ -103,7 +133,54 @@ let parse s =
   in
   let e = level levels in
   if !pos <> String.length s then fail ();
-  e
+  (e, !kept)
+
+let parse s = fst (read s)
+
+(* The pairs of parentheses of [s], as the positions of each. *)
+let pairs s =
+  let opened = ref [] and found = ref [] in
+  String.iteri
+    (fun i c ->
+      match (c, !opened) with
+      | '(', _ -> opened := i :: !opened
+      | ')', j :: rest ->
+          found := (j, i) :: !found;
+          opened := rest
+      | _ -> ())
+    s;
+  !found
+
+let without s (i, j) =
+  String.sub s 0 i
+  ^ String.sub s (i + 1) (j - i - 1)
+  ^ String.sub s (j + 1) (String.length s - j - 1)
+
+let operations u =
+  List.filter (fun n -> Ops.src n <> []) (Ops.toposort ~calls:Enter u)
+
+(* Every pair of parentheses of [render]'s text that [read] does not find kept
+   is needed: without it the text reads as another tree, or not at all. *)
+let needs_its_parentheses u =
+  let s = Render.render ~simplify:false u in
+  let kept = snd (read s) in
+  let checked = List.filter (fun p -> not (List.mem p kept)) (pairs s) in
+  cover "a pair the law checks" (checked <> []);
+  cover "a pair precedence drops"
+    (List.length (pairs s) < List.length (operations u));
+  cover "a comparison under & ^ or |"
+    (List.exists
+       (fun n ->
+         List.exists (Op.equal (Ops.op n)) Op.[ And; Xor; Or ]
+         && List.exists is_comparison (Ops.src n))
+       (operations u));
+  List.iter
+    (fun p ->
+      let s' = without s p in
+      match parse s' with
+      | tree -> not_equal ~msg:s' uop u tree
+      | exception Failure _ -> ())
+    checked
 
 (* Trees of the binary operations *)
 
@@ -140,7 +217,7 @@ let rec integer depth =
         (3, shift operand);
       ]
 
-let comparison = binary Op.[ Cmplt; Cmpne ] (integer 2)
+let comparison = binary comparisons (integer 2)
 
 let rec boolean depth =
   if depth = 0 then comparison
@@ -152,164 +229,207 @@ let expression = Gen.with_pp Ops.pp (Gen.one_of [ integer 4; boolean 2 ])
 
 (* render *)
 
-let render =
-  group "render"
-    [
-      Golden.cases "expressions_rendered.golden" (fun cell ->
-          equal string (cell "render")
-            (Render.render ~simplify:false (case "expressions.golden" cell)));
-      Golden.text "unrendered_rendered.golden" (fun () ->
-          String.concat "\n"
-            (List.map
-               (Render.render ~simplify:false)
-               (sources "unrendered.golden")));
-      test "writes the operators of O as they read" (fun () ->
-          let b = var "b" 0 9 and c = var "c" 0 9 in
-          equal string "(a*b+c)"
-            (Render.render ~simplify:false Ops.O.((a * b) + c));
-          equal string "((a+b)*c)"
-            (Render.render ~simplify:false Ops.O.((a + b) * c)));
-      prop "an expression reads back as the tree it writes" expression
-        (Law.round_trip uop string (Render.render ~simplify:false) parse);
-    ]
+(* [render u] is [render ~simplify:false] of [Shape.simplify u], or raises as
+   simplifying [u] does. *)
+let simplifies_then_writes u =
+  equal written
+    (outcome (fun () -> Render.render ~simplify:false (Shape.simplify u)))
+    (outcome (fun () -> Render.render u))
 
-(* The [simplified] column follows the README's negative-shift row: where
-   tinygrad raises CPython's ValueError on a shift by a negative count, a
-   shift's bounds are its type's and folding it declines. A zero divisor still
-   raises. *)
+(* The negative-shift row of the README's exclusions: where tinygrad raises
+   CPython's ValueError on a shift by a negative count, tolk declines to fold
+   the shift, so the golden has no text to compare with, and the tree is held to
+   render's definition alone. *)
 let simplified_tree cell =
-  if cell "simplified" <> cell "tinygrad" then
-    equal string "raises ValueError" (cell "tinygrad");
-  let u = case "trees.golden" cell in
+  let u = case trees cell in
   match cell "simplified" with
+  | "raises ValueError" -> simplifies_then_writes u
   | "raises ZeroDivisionError" ->
       raises Division_by_zero (fun () -> Render.render u)
   | rendered -> equal string rendered (Render.render u)
 
-(* [(18<<18)*2 << (18<<18)*2] simplifies to [9437184 * 2^9437184], an integer
-   of 2840883 digits. *)
+(* [(18<<18)*2 << (18<<18)*2] simplifies to [9437184 * 2^9437184], an integer of
+   2840883 digits. *)
 let huge_shift =
   let x = Ops.O.(Ops.int 3 * Ops.int 6) in
   let y = Ops.shl x x in
   let z = Ops.add y y in
   Ops.shl z z
 
-let simplified =
-  group "render after simplifying"
+let movement op src = Ops.v op ~src
+
+let after_simplifying =
+  group "after simplifying"
     [
-      Golden.cases "expressions_rendered.golden" (fun cell ->
-          equal string (cell "simplified")
-            (Render.render (case "expressions.golden" cell)));
-      Golden.cases "symbolic_rendered.golden" (fun cell ->
-          let u = case "symbolic.golden" cell in
-          equal string (cell "render") (Render.render ~simplify:false u);
-          equal string (cell "simplified") (Render.render u));
-      Golden.cases "trees_rendered.golden" simplified_tree;
+      group "writes each expression as its golden states"
+        [
+          Golden.cases "expressions_rendered.golden" (fun cell ->
+              equal string (cell "simplified")
+                (Render.render (case expressions cell)));
+          Golden.cases "symbolic_rendered.golden" (fun cell ->
+              equal string (cell "simplified")
+                (Render.render (case symbolic cell)));
+          Golden.cases "trees_rendered.golden" simplified_tree;
+        ];
       (* The example's divisor is always 0, which simplifying refuses: a random
          tree has one in about 3% of cases, a rate 100 cases miss once in 20
          runs. *)
       prop "writes the simplified node, or raises as simplifying it does"
         ~examples:[ Ops.O.(a % Ops.int 0) ]
-        expression (fun u ->
-          let simplified =
-            match Render.render ~simplify:false (Shape.simplify u) with
-            | s -> Ok s
-            | exception e -> Error e
-          in
-          cover "renders" (Result.is_ok simplified);
-          cover "raises" (Result.is_error simplified);
-          match simplified with
-          | Ok s -> equal string s (Render.render u)
-          | Error e -> raises e (fun () -> Render.render u));
-      cases "an integer past 4300 digits is refused"
-        ~id:(Render.render ~simplify:false)
-        [ huge_shift ]
+        expression
         (fun u ->
-          raises_match
-            (Exn.invalid_arg ~sub:"4300 digits")
-            (fun () -> Render.render u));
+          let raised = Result.is_error (outcome (fun () -> Shape.simplify u)) in
+          cover "renders" (not raised);
+          cover "raises" raised;
+          simplifies_then_writes u);
+      test "raises Invalid_argument on an integer Bigint.to_string refuses"
+        (fun () ->
+          raises_match (Exn.invalid_arg ~sub:"4300 digits") (fun () ->
+              Render.render huge_shift));
+    ]
+
+let render =
+  group "render"
+    [
+      group "writes each expression as its golden states"
+        [
+          Golden.cases "expressions_rendered.golden" (fun cell ->
+              equal string (cell "render")
+                (Render.render ~simplify:false (case expressions cell)));
+          Golden.cases "symbolic_rendered.golden" (fun cell ->
+              equal string (cell "render")
+                (Render.render ~simplify:false (case symbolic cell)));
+        ];
+      group "writes any other node as Ops.pp prints it"
+        [
+          Golden.text "unrendered_rendered.golden" (fun () ->
+              String.concat "\n"
+                (List.map
+                   (Render.render ~simplify:false)
+                   (Ops.src (Golden.sink "unrendered.golden"))));
+        ];
+      prop
+        "writes a tree of the infix operations over variables and integers \
+         that reads back as that tree"
+        expression
+        (Law.round_trip uop string (Render.render ~simplify:false) parse);
+      prop
+        "writes a tree of the infix operations over variables and integers \
+         with no parentheses but those precedence needs, a comparison's, its \
+         operands' and the whole's"
+        expression needs_its_parentheses;
+      test "writes a movement's sizes simplified, whatever simplify" (fun () ->
+          equal string "a.reshape((b,))"
+            (Render.render ~simplify:false
+               (movement Op.Reshape [ a; Ops.O.(b + Ops.int 0) ])));
+      test
+        "raises what Shape.simplify raises on a movement's sizes, whatever \
+         simplify" (fun () ->
+          let size = Ops.O.(b % Ops.int 0) in
+          let raised =
+            require_error (outcome (fun () -> Shape.simplify size))
+          in
+          let u = movement Op.Reshape [ a; size ] in
+          raises raised (fun () -> Render.render ~simplify:false u));
+      test "raises Invalid_argument on a movement whose size is a float"
+        (fun () ->
+          let u = movement Op.Reshape [ a; Ops.float 1.5 ] in
+          raises_match (Exn.invalid_arg ~sub:"is not a size") (fun () ->
+              Render.render ~simplify:false u));
+      test "raises Invalid_argument on a permutation whose axis is a node"
+        (fun () ->
+          let u = movement Op.Permute [ a; b ] in
+          raises_match (Exn.invalid_arg ~sub:"symbolic axis") (fun () ->
+              Render.render ~simplify:false u));
+      after_simplifying;
     ]
 
 (* srender *)
 
-let ints =
-  Gen.frequency
-    [
-      (6, Gen.int_range (-1000) 1000);
-      (1, Gen.int);
-      ( 1,
-        Gen.of_list ~pp:Format.pp_print_int
-          [ min_int; min_int + 1; -1; 0; 1; max_int - 1; max_int ] );
-    ]
+let ints = Gen.frequency [ (6, Gen.int_range (-1000) 1000); (1, Gen.int) ]
 
 let srender =
   group "srender"
     [
-      prop "writes an integer in decimal" ints (fun n ->
-          equal string (Int.to_string n) (Render.srender (Int n)));
-      test "writes a node as render does" (fun () ->
-          equal string "a" (Render.srender (Sym a));
-          equal string "(a*12)"
-            (Render.srender Shape.Sint.(prod [ Sym a; Int 3; Int 4 ]));
-          equal string "(a*12)"
-            (Render.srender Shape.Sint.(prod [ Int 3; Int 4; Sym a ])));
+      prop "writes an integer in decimal"
+        ~examples:[ min_int; min_int + 1; -1; 0; 1; max_int - 1; max_int ]
+        ints
+        (fun n -> equal string (Int.to_string n) (Render.srender (Int n)));
+      prop "writes a node as render does" ~examples:[ a ] expression (fun u ->
+          equal written
+            (outcome (fun () -> Render.render u))
+            (outcome (fun () -> Render.srender (Sym u))));
     ]
 
 (* render_uir *)
 
-let uir ?(color = false) uops =
+let uir uops =
   Setting.context
-    [ B (Setting.no_color, not color) ]
+    [ B (Setting.no_color, true) ]
     (fun () -> Render.render_uir uops)
 
-(* tinygrad prints the text, ended. *)
-let printed ?color file =
-  uir ?color (Ops.toposort ~calls:Enter (Golden.sink file)) ^ "\n"
+let uir_colored uops =
+  Setting.context
+    [ B (Setting.no_color, false) ]
+    (fun () -> Render.render_uir uops)
 
-let wire_formats =
-  [
-    ("program_uir.golden", "program.golden", false);
-    ("program_uir_colored.golden", "program.golden", true);
-    ("args_uir.golden", "args.golden", false);
-    ("symbolic_vars_uir.golden", "symbolic_vars.golden", false);
-  ]
+(* A graph golden's sink and what it reaches, in order. *)
+let listing file = Ops.toposort ~calls:Enter (Golden.sink file)
 
-let f32 x = Ops.float ~dtype:Float32 x
+(* Lines separated by newlines, the last not ended: an empty text has none. *)
+let lines = function "" -> [] | s -> String.split_on_char '\n' s
 
-(* A node of a sum of [n] float32 constants, [n] at least 1. *)
-let sum n =
-  List.init (n - 1) (fun i -> f32 (float_of_int i))
-  |> List.fold_left Ops.add (f32 0.)
+(* A constant, or a stack of constants such as a variable's empty stack of
+   bounds, has no line. *)
+let has_line u =
+  match Ops.op u with
+  | Op.Const -> false
+  | Op.Stack -> not (List.for_all (fun s -> Ops.op s = Op.Const) (Ops.src u))
+  | _ -> true
 
-let one_line_per_node n =
-  let uops = Ops.toposort ~calls:Enter (sum n) in
-  let lines = String.split_on_char '\n' (uir uops) in
-  let nodes = List.filter (fun u -> Ops.op u <> Op.Const) uops in
-  equal int (max 1 (List.length nodes)) (List.length lines);
+let line_per_node u =
+  let uops = Ops.toposort ~calls:Enter u in
+  let nodes = List.filter has_line uops in
+  cover "a line" (nodes <> []);
+  cover "a constant" (List.exists (fun u -> Ops.op u = Op.Const) uops);
+  let written = lines (uir uops) in
+  equal int (List.length nodes) (List.length written);
   List.iteri
-    (fun i line ->
-      if nodes <> [] then
-        starts_with ~msg:line ~prefix:(Printf.sprintf "%%%d = " i) line)
-    lines
+    (fun i (u, line) ->
+      starts_with
+        ~prefix:
+          (Printf.sprintf "%%%d = %s" i
+             (String.lowercase_ascii (Op.name (Ops.op u))))
+        line)
+    (List.combine nodes written)
 
+(* tinygrad prints the text, ended. *)
 let render_uir =
   group "render_uir"
-    (List.map
-       (fun (golden, input, color) ->
-         Golden.text golden (fun () -> printed ~color input))
-       wire_formats
-    @ [
-        test "an empty list writes nothing" (fun () ->
-            equal string "" (uir []));
-        test "a constant is written in its user" (fun () ->
-            let x = Ops.add (Ops.float 1.5) (Ops.float (-0.)) in
-            equal string "%0 = add 1.5, -0.0" (uir (Ops.toposort ~calls:Enter x)));
-        test "an operation is written in its colour" (fun () ->
-            let x = Ops.add (Ops.float 1.) (Ops.float 2.) in
-            equal string "%0 = \027[38;2;255;255;192madd\027[0m 1.0, 2.0"
-              (uir ~color:true (Ops.toposort ~calls:Enter x)));
-        prop "writes a line per node that is no constant, numbered from 0"
-          (Gen.int_range 1 12) one_line_per_node;
-      ])
+    [
+      group "writes each graph as its golden states"
+        [
+          Golden.text "program_uir.golden" (fun () ->
+              uir (listing "program.golden") ^ "\n");
+          Golden.text "program_uir_colored.golden" (fun () ->
+              uir_colored (listing "program.golden") ^ "\n");
+          Golden.text "args_uir.golden" (fun () ->
+              uir (listing "args.golden") ^ "\n");
+          Golden.text "symbolic_vars_uir.golden" (fun () ->
+              uir (listing "symbolic_vars.golden") ^ "\n");
+        ];
+      test "writes nothing for no node" (fun () -> equal string "" (uir []));
+      test "writes a constant in its user" (fun () ->
+          let x = Ops.add (Ops.float 1.5) (Ops.float (-0.)) in
+          equal string "%0 = add 1.5, -0.0" (uir (Ops.toposort ~calls:Enter x)));
+      prop
+        "writes a line per node that is no constant nor stack of constants, \
+         numbered from 0"
+        ~examples:[ Ops.int 3 ]
+        expression line_per_node;
+      test
+        "raises Not_found on a source with a line that is not among the nodes"
+        (fun () -> raises Not_found (fun () -> uir [ Ops.add a (Ops.int 1) ]));
+    ]
 
-let () = exit (run "Tolk.Render" [ render; simplified; srender; render_uir ])
+let () = exit (run "Tolk.Render" [ render; srender; render_uir ])

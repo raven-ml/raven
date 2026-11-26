@@ -9,13 +9,12 @@ golden is what `render_uir` writes for the toposort of a graph golden's sink.
 """
 
 import ast
-import functools
 
 from golden import graph, table, text
 from tinygrad.dtype import AddrSpace, Invalid, dtypes
 from tinygrad.helpers import Context
 from tinygrad.uop import Ops
-from tinygrad.uop.ops import AxisType, KernelInfo, ParamArg, PatternMatcher, UOp
+from tinygrad.uop.ops import AxisType, KernelInfo, ParamArg, UOp
 from tinygrad.uop.render import render_uir
 import dataclasses
 
@@ -264,10 +263,9 @@ def symbolic_rendered(): return rendered(SYMBOLIC)
 
 
 # Simplifying trees of the binary operations, drawn as the suite's law draws
-# them. CPython raises ValueError on a shift by a negative count, where
-# tolk gives its bounds the type's and declines to fold it (the README's
-# negative-shift row): `simplified` is tinygrad with that rule applied, and
-# `tinygrad` is tinygrad as it is.
+# them: `simplified` is what `render` writes after simplifying, or what it
+# raises. CPython raises ValueError on a shift by a negative count, where tolk
+# declines to fold it (the README's negative-shift row).
 
 SYMBOLS = {ast.Add: Ops.ADD, ast.Sub: Ops.SUB, ast.Mult: Ops.MUL, ast.FloorDiv: Ops.DIV, ast.Mod: Ops.MOD,
            ast.LShift: Ops.SHL, ast.RShift: Ops.SHR, ast.BitAnd: Ops.AND, ast.BitOr: Ops.OR, ast.BitXor: Ops.XOR,
@@ -300,44 +298,13 @@ TREES = [
 ]
 
 
-def declining_negative_shifts():
-    """Apply the negative-shift row to tinygrad, in this process."""
-    min_max = UOp.__dict__["_min_max"].func
-    def bounded(self):
-        if self.op in (Ops.SHL, Ops.SHR) and not dtypes.is_float(self.dtype):
-            lo, hi = self.src[1]._min_max
-            if lo == hi and type(lo) is int and lo < 0: return self.dtype.min, self.dtype.max
-        return min_max(self)
-    prop = functools.cached_property(bounded)
-    prop.__set_name__(UOp, "_min_max")
-    UOp._min_max = prop
-    def rewrite(self, uop, ctx=None):
-        if len(pats := self.pdict.get(uop.op, [])):
-            if (ler := uop.__dict__.get("_src_ops")) is None: uop.__dict__["_src_ops"] = ler = {u.op for u in uop.src}
-            for _, match, early_reject in pats:
-                if not early_reject.issubset(ler): continue
-                try: ret = match(uop, ctx)
-                except ValueError as e:
-                    if str(e) != "negative shift count": raise
-                    continue
-                if ret is not None and ret is not uop: return ret
-        return None
-    PatternMatcher.rewrite = rewrite
-
-
 @graph
 def trees(): return UOp.sink(*[tree(t) for t in TREES])
 
 
 @table
 def trees_rendered():
-    # tinygrad as it is first: a raise caches nothing, and the rule's bounds
-    # would stay cached on the nodes
-    uops = [tree(t) for t in TREES]
-    rows = [[t, str(i), attempt(u.render)] for i, (t, u) in enumerate(zip(TREES, uops))]
-    declining_negative_shifts()
-    for row, u in zip(rows, uops): row.append(attempt(u.render))
-    return ["case", "src", "tinygrad", "simplified"], rows
+    return ["case", "src", "simplified"], [[t, str(i), attempt(tree(t).render)] for i, t in enumerate(TREES)]
 
 
 # Wire format
