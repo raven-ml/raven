@@ -116,7 +116,7 @@ type dd = { mutable hi : float; mutable lo : float }
 
 let dd () = { hi = 0.; lo = 0. }
 
-let add s x =
+let[@inline] add s x =
   let t = s.hi +. x in
   let e =
     if Float.abs s.hi >= Float.abs x then s.hi -. t +. x else x -. t +. s.hi
@@ -124,7 +124,7 @@ let add s x =
   s.hi <- t;
   s.lo <- s.lo +. e
 
-let add_prod s a b =
+let[@inline] add_prod s a b =
   let p = a *. b in
   add s p;
   s.lo <- s.lo +. Float.fma a b (-.p)
@@ -136,17 +136,36 @@ type sum = { re : dd; im : dd }
 
 let sum () = { re = dd (); im = dd () }
 
-let add_cprod ?(conj = false) s (x : Complex.t) (y : Complex.t) =
-  if x.im = 0. && y.im = 0. then add_prod s.re x.re y.re
+let[@inline] cprod s xr xi yr yi =
+  if xi = 0. && yi = 0. then add_prod s.re xr yr
   else begin
-    let yi = if conj then -.y.im else y.im in
-    add_prod s.re x.re y.re;
-    add_prod s.re (-.x.im) yi;
-    add_prod s.im x.re yi;
-    add_prod s.im x.im y.re
+    add_prod s.re xr yr;
+    add_prod s.re (-.xi) yi;
+    add_prod s.im xr yi;
+    add_prod s.im xi yr
   end
 
+let[@inline] add_cprod s (x : Complex.t) (y : Complex.t) =
+  cprod s x.re x.im y.re y.im
+
+let[@inline] add_cprod_conj s (x : Complex.t) (y : Complex.t) =
+  cprod s x.re x.im y.re (-.y.im)
+
+(* [s] minus [x y], [y] conjugated in [sub_cprod_conj]. *)
+let[@inline] sub_cprod s (x : Complex.t) (y : Complex.t) =
+  cprod s (-.x.re) (-.x.im) y.re y.im
+
+let[@inline] sub_cprod_conj s (x : Complex.t) (y : Complex.t) =
+  cprod s (-.x.re) (-.x.im) y.re (-.y.im)
+
 let total s = { Complex.re = s.re.hi +. s.re.lo; im = s.im.hi +. s.im.lo }
+
+(* {!total}'s modulus and its square, with no Complex.t made. *)
+let[@inline] total_norm s = Float.hypot (s.re.hi +. s.re.lo) (s.im.hi +. s.im.lo)
+
+let[@inline] total_norm2 s =
+  let re = s.re.hi +. s.re.lo and im = s.im.hi +. s.im.lo in
+  (re *. re) +. (im *. im)
 
 (* Draws *)
 
@@ -155,11 +174,11 @@ let at v ~rows ~cols b i j = v.((((b * rows) + i) * cols) + j)
 
 (* Defining relations *)
 
-(* The worst ratio, over the elements, of a residual to its bound, and where
-   it is. *)
+(* The worst ratio, over the elements, of a residual to its bound, and where it
+   is. *)
 type worst = { mutable ratio : float; mutable where : string }
 
-let worse w ~bound ~residual where =
+let[@inline] worse w ~bound ~residual where =
   let q =
     if Float.is_nan residual then infinity
     else if bound = 0. then if residual = 0. then 0. else infinity
@@ -216,14 +235,14 @@ let law_cholesky bounds (b : Support.backend) c =
               for p = 0 to j do
                 let lip = at l ~rows:n ~cols:n m i p
                 and ljp = at l ~rows:n ~cols:n m j p in
-                add_cprod ~conj:true s (Complex.neg lip) ljp;
+                sub_cprod_conj s lip ljp;
                 add_prod bound (Complex.norm lip) (Complex.norm ljp)
               done;
               let ljj = (at l ~rows:n ~cols:n m j j).re in
               let h = h *. (1. +. Float.ldexp ljj (-e)) in
               worse w
                 ~bound:((g *. bound.hi) +. h)
-                ~residual:(Complex.norm (total s))
+                ~residual:(total_norm s)
                 (fun () -> Printf.sprintf "matrix %d, element (%d, %d)" m i j)
             end
           done
@@ -287,12 +306,12 @@ let law_solve bounds (b : Support.backend) c =
             let lo, hi = if upper then (i, n - 1) else (0, i) in
             for p = lo to hi do
               let aip = op m i p and xpj = at x ~rows:n ~cols:r m p j in
-              add_cprod s (Complex.neg aip) xpj;
+              sub_cprod s aip xpj;
               add_prod bound (Complex.norm aip) (Complex.norm xpj)
             done;
             worse w
               ~bound:((g *. bound.hi) +. h)
-              ~residual:(Complex.norm (total s))
+              ~residual:(total_norm s)
               (fun () -> Printf.sprintf "matrix %d, element (%d, %d)" m i j)
           done
         done
@@ -349,7 +368,7 @@ let law_lu bounds (b : Support.backend) c =
             add s.im pa.im;
             for q = 0 to min (min i j) (k - 1) do
               let liq = l i q and uqj = at lu ~rows:m ~cols:n t q j in
-              add_cprod s (Complex.neg liq) uqj;
+              sub_cprod s liq uqj;
               add_prod bound (Complex.norm liq) (Complex.norm uqj)
             done;
             let p = min i j in
@@ -357,7 +376,7 @@ let law_lu bounds (b : Support.backend) c =
             let h = h *. (1. +. Float.ldexp upp (-d)) in
             worse w
               ~bound:((g *. bound.hi) +. h)
-              ~residual:(Complex.norm (total s))
+              ~residual:(total_norm s)
               (fun () -> Printf.sprintf "matrix %d, element (%d, %d)" t i j)
           done
         done
@@ -450,14 +469,15 @@ let wide_qr ~bound ~g ~count ~m ~n ~qc ~w a q r =
         add s.re aij.re;
         add s.im aij.im;
         for p = 0 to min j (qc - 1) do
-          add_cprod s
-            (Complex.neg (at q ~rows:m ~cols:qc t i p))
+          sub_cprod s
+            (at q ~rows:m ~cols:qc t i p)
             (at r ~rows:qc ~cols:n t p j)
         done;
-        res := !res +. Complex.norm2 (total s);
+        res := !res +. total_norm2 s;
         norm := !norm +. Complex.norm2 aij
       done;
-      worse w ~bound:(bound (sqrt !norm))
+      worse w
+        ~bound:(bound (sqrt !norm))
         ~residual:(sqrt !res)
         (fun () -> Printf.sprintf "matrix %d, column %d of a - q r" t j)
     done;
@@ -467,22 +487,20 @@ let wide_qr ~bound ~g ~count ~m ~n ~qc ~w a q r =
         let s = sum () in
         if i = j then add s.re (-1.);
         for p = 0 to m - 1 do
-          add_cprod ~conj:true s
+          add_cprod_conj s
             (at q ~rows:m ~cols:qc t p j)
             (at q ~rows:m ~cols:qc t p i)
         done;
-        worse w ~bound:g
-          ~residual:(Complex.norm (total s))
-          (fun () ->
+        worse w ~bound:g ~residual:(total_norm s) (fun () ->
             Printf.sprintf "matrix %d, element (%d, %d) of qᴴq - I" t i j)
       done
     done
   done
 
-(* a = q r with, per column, ‖a_j − q r_j‖ <= g ‖a_j‖ + √m h; each element
-   of qᴴq − I at most g, g = γ(k(2m + 10)) and h = ε(k(2m + 10)); r +0
-   below its diagonal and real on it, for the [count] matrices of [m] × [n]
-   of [a], q of [qc] columns. [a] and [r] are scaled by 2^e. *)
+(* a = q r with, per column, ‖a_j − q r_j‖ <= g ‖a_j‖ + √m h; each element of
+   qᴴq − I at most g, g = γ(k(2m + 10)) and h = ε(k(2m + 10)); r +0 below its
+   diagonal and real on it, for the [count] matrices of [m] × [n] of [a], q of
+   [qc] columns. [a] and [r] are scaled by 2^e. *)
 let check_qr ~underflow dt ~e ~count ~m ~n ~qc (a : Complex.t array)
     (q : Complex.t array) (r : Complex.t array) =
   let g = gamma dt (min m n * ((2 * m) + 10)) in
@@ -661,14 +679,14 @@ let check_eigh ~underflow dt ~e ~count ~n (a : Complex.t array)
         add s.im aij.im;
         if i = j then add o.re (-1.);
         for p = 0 to n - 1 do
-          add_cprod ~conj:true s vw.((i * n) + p) (at v ~rows:n ~cols:n t j p);
-          add_cprod ~conj:true o
+          add_cprod_conj s vw.((i * n) + p) (at v ~rows:n ~cols:n t j p);
+          add_cprod_conj o
             (at v ~rows:n ~cols:n t p i)
             (at v ~rows:n ~cols:n t p j)
         done;
         let twice = if i = j then 1. else 2. in
-        res := !res +. (twice *. Complex.norm2 (total s));
-        orth := !orth +. (twice *. Complex.norm2 (total o));
+        res := !res +. (twice *. total_norm2 s);
+        orth := !orth +. (twice *. total_norm2 o);
         norm := !norm +. (twice *. Complex.norm2 aij)
       done
     done;
@@ -701,24 +719,23 @@ let check_eigh_sampled ~underflow dt ~n ~k r (a : Complex.t array)
     add s.im a.((i * n) + j).im;
     if i = j then add o.re (-1.);
     for p = 0 to n - 1 do
-      add_cprod ~conj:true s
+      add_cprod_conj s
         (Complex.mul v.((i * n) + p) { Complex.re = -.w.(p).re; im = 0. })
         v.((j * n) + p);
-      add_cprod ~conj:true o v.((p * n) + i) v.((p * n) + j)
+      add_cprod_conj o v.((p * n) + i) v.((p * n) + j)
     done;
     worse worst
       ~bound:((g *. sqrt norm) +. h)
-      ~residual:(Complex.norm (total s))
+      ~residual:(total_norm s)
       (fun () -> Printf.sprintf "element (%d, %d) of a - v diag w vᴴ" i j);
-    worse worst ~bound:g
-      ~residual:(Complex.norm (total o))
-      (fun () -> Printf.sprintf "element (%d, %d) of vᴴv - I" i j)
+    worse worst ~bound:g ~residual:(total_norm o) (fun () ->
+        Printf.sprintf "element (%d, %d) of vᴴv - I" i j)
   done;
   check_worst worst
 
-(* eigh's results meet check_eigh's relations, and the values alone lie
-   within 2 (g ‖a‖_F + h) of the vectors' call's, each within g ‖a‖₂ + h
-   of the exact ones. *)
+(* eigh's results meet check_eigh's relations, and the values alone lie within 2
+   (g ‖a‖_F + h) of the vectors' call's, each within g ‖a‖₂ + h of the exact
+   ones. *)
 let law_eigh bounds (b : Support.backend) c =
   let x = laid_out c.how (eigh_operand c) in
   match (run b (Eigh true) [| x |], run b (Eigh false) [| x |]) with
@@ -1023,7 +1040,7 @@ let check_svd ~underflow dt ~e ~count ~m ~n ~uc ~vr (a : Complex.t array)
         for p = 0 to k - 1 do
           add_cprod r us.((i * k) + p) (at vh ~rows:vr ~cols:n t p j)
         done;
-        res := !res +. Complex.norm2 (total r);
+        res := !res +. total_norm2 r;
         norm := !norm +. Complex.norm2 aij
       done
     done;
@@ -1041,10 +1058,10 @@ let check_svd ~underflow dt ~e ~count ~m ~n ~uc ~vr (a : Complex.t array)
           let x = sum () in
           if i = j then add x.re (-1.);
           for p = 0 to len - 1 do
-            add_cprod ~conj:true x (el p j) (el p i)
+            add_cprod_conj x (el p j) (el p i)
           done;
           let twice = if i = j then 1. else 2. in
-          o := !o +. (twice *. Complex.norm2 (total x))
+          o := !o +. (twice *. total_norm2 x)
         done
       done;
       worse worst ~bound:g ~residual:(sqrt !o) (fun () ->
@@ -1296,11 +1313,10 @@ let check_svd_sampled ~underflow dt ~m ~n ~k r (a : Complex.t array)
     let o = sum () in
     if i = j then add o.re (-1.);
     for q = 0 to len - 1 do
-      add_cprod ~conj:true o (el q i) (el q j)
+      add_cprod_conj o (el q i) (el q j)
     done;
-    worse worst ~bound:g
-      ~residual:(Complex.norm (total o))
-      (fun () -> Printf.sprintf "element (%d, %d) of %s" i j msg)
+    worse worst ~bound:g ~residual:(total_norm o) (fun () ->
+        Printf.sprintf "element (%d, %d) of %s" i j msg)
   in
   for _ = 1 to k do
     let i = Random.State.int r m and j = Random.State.int r n in
@@ -1314,7 +1330,7 @@ let check_svd_sampled ~underflow dt ~m ~n ~k r (a : Complex.t array)
     done;
     worse worst
       ~bound:((g *. sqrt norm) +. h)
-      ~residual:(Complex.norm (total x))
+      ~residual:(total_norm x)
       (fun () -> Printf.sprintf "element (%d, %d) of a - u diag s vh" i j);
     gram ~msg:"uᴴu - I" m (fun q i -> u.((q * p) + i));
     gram ~msg:"vh vhᴴ - I" n (fun q i -> vh.((i * n) + q))
@@ -1638,8 +1654,8 @@ let check_eig ?(positive = false) ~underflow dt ~e ~count ~n
         for p = 0 to n - 1 do
           add_cprod s (at a ~rows:n ~cols:n t i p) (vij p)
         done;
-        add_cprod s (Complex.neg wj) x;
-        res := !res +. Complex.norm2 (total s)
+        sub_cprod s wj x;
+        res := !res +. total_norm2 s
       done;
       worse worst ~bound:g
         ~residual:(Float.abs (sqrt (len.hi +. len.lo) -. 1.))
@@ -1916,7 +1932,7 @@ let test_eig_balanced (b : Support.backend) () =
               for p = 0 to n - 1 do
                 add_cprod s a.((i * n) + p) v.((p * n) + j)
               done;
-              add_cprod s (Complex.neg w.(j)) v.((i * n) + j);
+              sub_cprod s w.(j) v.((i * n) + j);
               res := !res +. Complex.norm2 (ldexp (-d.(i)) (total s));
               len := !len +. Complex.norm2 (ldexp (-d.(i)) v.((i * n) + j))
             done;
@@ -2666,16 +2682,14 @@ let read ar =
   Array.map (fun (z : Complex.t) ->
       { Complex.re = ar.read z.re; im = ar.read z.im })
 
-(* c + a b: one fused multiply-add on reals, two a part on complex
-   numbers, the terms in nx_kernel.mli's order. *)
-let mac ar (c : Complex.t) (a : Complex.t) (b : Complex.t) =
-  if not ar.cx then { c with re = ar.fma a.re b.re c.re }
-  else
-    let re = ar.fma (-.a.im) b.im (ar.fma a.re b.re c.re) in
-    let im = ar.fma a.im b.re (ar.fma a.re b.im c.im) in
-    { Complex.re; im }
+(* c + a b by the fused multiply-add [f]: one on reals, two a part on complex
+   numbers ([cx]), the terms in nx_kernel.mli's order; its real part, then its
+   imaginary part, of the parts given. *)
+let[@inline] mac_re f ~cx cre are aim bre bim =
+  if cx then fused f (-.aim) bim (fused f are bre cre) else fused f are bre cre
 
-let nmac ar c (a : Complex.t) b = mac ar c (Complex.neg a) b
+let[@inline] mac_im f cim are aim bre bim =
+  fused f aim bre (fused f are bim cim)
 
 (* Each x / d: by d's real part where its imaginary part is 0, else Smith's
    quotient as nx_kinds.h's Fdiv computes it, each operation in the format: p
@@ -2752,7 +2766,7 @@ let lu_ref ~underflow ~m ~n x =
       let p = at i j in
       a.(p) <- l.re;
       if w = 2 then a.(p + 1) <- l.im;
-      (* nmac: c - l u, as mac's terms. *)
+      (* c - l u, as mac_re orders the terms. *)
       if w = 1 then
         for c = j + 1 to n - 1 do
           let p = at i c in
@@ -2771,34 +2785,56 @@ let lu_ref ~underflow ~m ~n x =
   (a, piv, perm)
 
 (* Cholesky's lower factor of the n x n [a], or None where a pivot is not
-   positive. *)
+   positive. The update, about n³ / 6 multiply-adds, runs on the parts by the
+   format's named fma ({!mac_re}). *)
 let cholesky_ref ~underflow dt ~n (a : Complex.t array) =
   let ar = arith ~underflow dt in
   let a = read ar a in
+  let re = Array.map (fun (z : Complex.t) -> z.re) a in
+  let im = Array.map (fun (z : Complex.t) -> z.im) a in
+  let f = ar.fused in
   let ok = ref true in
   for j = 0 to n - 1 do
-    let d = a.((j * n) + j).re in
+    let d = re.((j * n) + j) in
     if not (d > 0.) then ok := false;
     let s = ar.rnd (Float.sqrt d) in
-    let sd = { Complex.re = s; im = 0. } in
     let col =
-      divd ar (Array.init (n - j - 1) (fun t -> a.(((j + 1 + t) * n) + j))) sd
+      divd ar
+        (Array.init (n - j - 1) (fun t ->
+             let p = ((j + 1 + t) * n) + j in
+             { Complex.re = re.(p); im = im.(p) }))
+        { Complex.re = s; im = 0. }
     in
-    Array.iteri (fun t l -> a.(((j + 1 + t) * n) + j) <- l) col;
-    a.((j * n) + j) <- sd;
+    Array.iteri
+      (fun t (l : Complex.t) ->
+        let p = ((j + 1 + t) * n) + j in
+        re.(p) <- l.re;
+        im.(p) <- l.im)
+      col;
+    re.((j * n) + j) <- s;
+    im.((j * n) + j) <- 0.;
     for i = j + 1 to n - 1 do
+      let bre = re.((i * n) + j) and bim = im.((i * n) + j) in
       for c = j + 1 to i do
-        a.((i * n) + c) <-
-          nmac ar a.((i * n) + c) (Complex.conj a.((c * n) + j)) a.((i * n) + j)
+        (* c - conj(a_cj) a_ij: c + x a_ij, x = -conj(a_cj) = (-re, im). *)
+        let p = (i * n) + c and q = (c * n) + j in
+        let xre = -.re.(q) and xim = im.(q) in
+        let r = mac_re f ~cx:ar.cx re.(p) xre xim bre bim in
+        if ar.cx then im.(p) <- mac_im f im.(p) xre xim bre bim;
+        re.(p) <- r
       done
     done
   done;
   if not !ok then None
   else
-    Some (Array.mapi (fun k z -> if k mod n > k / n then Complex.zero else z) a)
+    Some
+      (Array.init (n * n) (fun k ->
+           if k mod n > k / n then Complex.zero
+           else { Complex.re = re.(k); im = im.(k) }))
 
-(* x with op(a) x = b, n x n [a] and n x r [b], substituting from the first
-   row of a lower op(a), from the last of an upper one. *)
+(* x with op(a) x = b, n x n [a] and n x r [b], substituting from the first row
+   of a lower op(a), from the last of an upper one, each row's sums on the parts
+   by the format's named fma ({!mac_re}). *)
 let solve_ref ~underflow dt ~n ~r ~upper ~adjoint ~unit (a : Complex.t array)
     (b : Complex.t array) =
   let ar = arith ~underflow dt in
@@ -2807,17 +2843,24 @@ let solve_ref ~underflow dt ~n ~r ~upper ~adjoint ~unit (a : Complex.t array)
     if adjoint then Complex.conj a.((q * n) + i) else a.((i * n) + q)
   in
   let x = read ar b in
+  let f = ar.fused in
   let zero = ref false in
   for t = 0 to n - 1 do
     let i = if upper then n - 1 - t else t in
     let row =
       Array.init r (fun j ->
-          let v = ref x.((i * r) + j) in
+          let v = x.((i * r) + j) in
+          let vre = ref v.re and vim = ref v.im in
           for u = 0 to t - 1 do
             let q = if upper then n - 1 - u else u in
-            v := nmac ar !v (op i q) x.((q * r) + j)
+            let o = op i q and y = x.((q * r) + j) in
+            (* v - o y: v + (-o) y. *)
+            let are = -.o.re and aim = -.o.im in
+            let re = mac_re f ~cx:ar.cx !vre are aim y.re y.im in
+            if ar.cx then vim := mac_im f !vim are aim y.re y.im;
+            vre := re
           done;
-          !v)
+          { Complex.re = !vre; im = !vim })
     in
     let row =
       if unit then row
