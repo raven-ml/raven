@@ -108,16 +108,15 @@ let unpack =
 let vector k n = Bigarray.Array1.create k Bigarray.c_layout n
 
 (* Two float32 elements mapped from a file at byte 1, so their data is not
-   aligned for them. *)
+   aligned for them. The file is the test's temporary file: Windows refuses to
+   delete a mapped file, and the runner leaves one it cannot delete. *)
 let misaligned () =
-  let path = Filename.temp_file "nx-test" ".bin" in
+  let path = temp_file ~suffix:".bin" () in
   Out_channel.with_open_bin path (fun oc ->
       output_string oc (String.make 9 'a'));
   let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
   Fun.protect
-    ~finally:(fun () ->
-      Unix.close fd;
-      Sys.remove path)
+    ~finally:(fun () -> Unix.close fd)
     (fun () ->
       Bigarray.array1_of_genarray
         (Unix.map_file fd ~pos:1L Bigarray.float32 Bigarray.c_layout false
