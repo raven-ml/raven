@@ -3,15 +3,41 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Devices: opening and closing, their properties, and machines (rig.mli,
+   "Devices"). A device's slot, and what it keeps once closed, are test_reuse's
+   and test_limit's. *)
+
 open Windtrap
+module B = Rig.Buffer
+module Sub = Rig.Submission
 module P = Rig_support.Polled
 module Support = Rig_support
 
 let submit ?(buffers = [||]) ?(args = [||]) ?waits s =
   Rig.submit ?waits s ~buffers ~args
 
+let empty d = Sub.make d [||]
 let device = Testable.make ~pp:Rig.pp ~equal:Rig.equal
-let memory name = Result.get_ok (Rig.software name)
+let opened r = require_ok ~pp:Format.pp_print_string r
+let software name = opened (Rig.software name)
+let io name = Support.io name
+let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
+let count call p = List.length (List.filter (( = ) call) (P.log p))
+
+(* The opener of a fresh Polled device named [name]. *)
+let polled name = P.opener name (P.make ())
+
+(* Opens [machine]'s host [name], a driver's device. *)
+let open_host machine name = Rig.open_host ~machine (polled name)
+
+(* A Polled device named [name] on the machine named [machine], whose host
+   {!Support.machine} opens. *)
+let remote ?bus ?granules ?alignment ?cache_bytes machine name =
+  let p = P.make ?bus ?granules ?alignment ?cache_bytes () in
+  opened (Rig.open_ ~machine:(Support.machine machine) (P.opener name p))
+
+(* [answers f rows] is [(what, f d)] for each device [(what, d)] of [rows]. *)
+let answers f rows = List.map (fun (what, d) -> (what, f d)) rows
 
 (* The operating system's name, as [uname -s] prints it. *)
 let os () =
@@ -20,178 +46,15 @@ let os () =
   ignore (Unix.close_process_in ic);
   name
 
-let test_same_name () =
-  let d = memory "open:same" in
-  equal device d (memory "open:same");
-  not_equal device d (memory "open:other")
-
-let test_other_driver () =
-  ignore (memory "open:taken");
-  raises_match Exn.invalid_arg (fun () -> P.open_ "open:taken")
-
-let test_facts () =
-  let d = memory "open:facts" in
-  let p, _ = P.open_ "open:facts-polled" in
-  equal string "open:facts" (Rig.name d);
-  equal bool true (Rig.computes d);
-  equal bool true (Rig.runs_on_host d);
-  equal bool false (Rig.runs_on_host p);
-  equal bool true (Rig.reaches d Rig.host);
-  equal bool true (Rig.reaches Rig.host d);
-  equal device Rig.host (Rig.host_of d);
-  is_some (Rig.capability p P.capability_key)
-
-let test_host () =
-  equal string "CPU" (Rig.name Rig.host);
-  mem string
-    (Rig.instruction_set Rig.host)
-    [
-      "arm64";
-      "x86_64";
-      "ppc64le";
-      "ppc64";
-      "s390x";
-      "riscv64";
-      "loongarch64";
-      "";
-    ];
-  equal bool true (Rig.computes Rig.host);
-  equal bool true (Rig.runs_on_host Rig.host);
-  equal bool true (Rig.reaches Rig.host Rig.host);
-  equal device Rig.host (Rig.host_of Rig.host);
-  (* macOS states the caches, and Linux in sysfs where the firmware describes
-     them: a cache's size file that holds a positive size. A sandbox may show
-     no sysfs, and other systems state none. *)
-  let sysfs = "/sys/devices/system/cpu/cpu0/cache" in
-  let sized i =
-    let file = Printf.sprintf "%s/index%d/size" sysfs i in
-    match In_channel.with_open_text file In_channel.input_all with
-    | s -> Scanf.sscanf_opt s "%d" Fun.id
-    | exception Sys_error _ -> None
-  in
-  let rec stated i =
-    Sys.file_exists (Printf.sprintf "%s/index%d" sysfs i)
-    && (Option.fold ~none:false ~some:(fun n -> n > 0) (sized i)
-       || stated (i + 1))
-  in
-  let states =
-    Sys.os_type = "Unix"
-    && match os () with "Darwin" -> true | "Linux" -> stated 0 | _ -> false
-  in
-  match Rig.cache_bytes Rig.host with
-  | Some n -> greater int ~msg:"the host's cache" ~than:0 n
-  | None -> if states then fail "the host states no cache"
-
-(* What a driver's device reaches follows its facts: the host reaches its memory
-   where the host addresses its regions, whatever its queues, and it reaches the
-   host's and its peers' where it maps them. *)
-let test_reach () =
-  let d, _ = P.open_ "open:reach" in
-  let e, _ = P.open_ "open:reach-peer" in
-  let f, _ = P.open_ ~peers:false "open:reach-alone" in
-  let h, _ = P.open_ ~host_visible:false "open:reach-hidden" in
-  let g, _ = P.open_ ~copies:false ~host_visible:false "open:reach-no-copy" in
-  let reach d = [ Rig.reaches d Rig.host; Rig.reaches Rig.host d ] in
-  equal string "polled" (Rig.arch d);
-  equal ~msg:"a copy queue, memory the host addresses" (list bool)
-    [ true; true ] (reach d);
-  equal ~msg:"a copy queue, memory the host does not address" (list bool)
-    [ true; false ] (reach h);
-  equal ~msg:"no copy queue, memory the host does not address" (list bool)
-    [ true; false ] (reach g);
-  equal (list bool) [ true; false ] [ Rig.reaches d e; Rig.reaches f d ]
-
-(* Where the host reaches a device's memory, every buffer of it has a host
-   address, of each memory it has and in each of Polled's modes, and on a
-   software device. It has no Pinned memory. *)
-let test_reach_addresses () =
-  let n = ref 0 in
-  let check ~msg d =
-    if Rig.reaches Rig.host d then begin
-      List.iter
-        (fun memory ->
-          let b = Rig.Buffer.create ~memory d 64 in
-          not_equal ~msg int 0 (Support.Reader.host b))
-        Rig.Buffer.[ Device; Mapped ];
-      raises_match ~msg Exn.invalid_arg (fun () ->
-          Rig.Buffer.create ~memory:Pinned d 64)
-    end
-  in
-  let bools = [ false; true ] in
-  List.iter
-    (fun copies ->
-      List.iter
-        (fun host_visible ->
-          List.iter
-            (fun transport ->
-              incr n;
-              let name = Printf.sprintf "open:reach-addresses-%d" !n in
-              let d, _ = P.open_ ~copies ~host_visible ~transport name in
-              let msg =
-                Printf.sprintf "copies %b, host_visible %b, transport %b" copies
-                  host_visible transport
-              in
-              check ~msg d;
-              Rig.close d)
-            bools)
-        bools)
-    bools;
-  check ~msg:"a software device" (memory "open:reach-addresses-memory")
-
-(* An io library whose memory is bytes that nothing reads, as host pages. *)
-module Store = struct
-  type region =
-    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
-  let free _ = ()
-  let read _ ~at:_ ~dst:_ ~len:_ = ()
-  let write _ ~at:_ ~src:_ ~len:_ = ()
-  let pages r = Some r
-  let prefetch _ ~at:_ ~len:_ = ()
-end
-
-(* Another io library, whose regions are no bigarrays. *)
-module Other = struct
-  type region = unit
-
-  let free () = ()
-  let read () ~at:_ ~dst:_ ~len:_ = ()
-  let write () ~at:_ ~src:_ ~len:_ = ()
-  let pages () = None
-  let prefetch () ~at:_ ~len:_ = ()
-end
-
-(* Polled whose queues are named ["Q0"], ["Q1"]. *)
-module Renamed = struct
-  include P
-
-  let facts d =
-    let f = P.facts d in
-    let name i (q : Rig_edge.queue) = { q with name = Printf.sprintf "Q%d" i } in
-    { f with queues = List.mapi name f.queues }
-end
-
-(* Polled whose queue named "COPY:0" runs no copy, and which has no copy
-   engine. *)
-module Copyless = struct
-  include P
-
-  let facts d =
-    let f = P.facts d in
-    let fills name = { Rig_edge.name; runs = [ Fill ] } in
-    let queues = [ fills "COMPUTE:0"; fills "COPY:0" ] in
-    { f with queues; copy_engine = None }
-end
-
-(* Polled with its first queue alone, which runs fills, copies and launches,
-   and is its copy engine. *)
-module One_queue = struct
-  include P
-
-  let facts d =
-    let f = P.facts d in
-    { f with queues = [ List.hd f.queues ]; copy_engine = Some 0 }
-end
+(* [refuses ~sub driver p name] opens [p] as [name] with [driver]: the open
+   raises [Invalid_argument] naming [sub], [p], handed to rig and held by no
+   device, is stopped once, and the name stays free. *)
+let refuses ?(driver = (module P : Rig_edge.Driver with type t = P.t)) ~sub p
+    name =
+  raises_match (Exn.invalid_arg ~sub) (fun () ->
+      Rig.open_ { name; driver; make = (fun ~word -> Ok (P.bind p ~word)) });
+  equal ~msg:"the handle's stops" int 1 (count "stop" p);
+  ignore (opened (Rig.open_ (polled name)))
 
 (* The driver [B] whose copy engine is [engine]. *)
 let engine (module B : Rig_edge.Driver with type t = P.t) engine =
@@ -202,113 +65,19 @@ let engine (module B : Rig_edge.Driver with type t = P.t) engine =
   end in
   (module D : Rig_edge.Driver with type t = P.t)
 
-(* Polled that states the host addresses its memory, which it does not. *)
-module Overstated = struct
+(* Polled whose queue named "COPY:0" runs fills alone. *)
+module Copyless = struct
   include P
 
-  let facts d = { (P.facts d) with host_addresses = true }
+  let facts d =
+    let f = P.facts d in
+    let fills name = { Rig_edge.name; runs = [ Fill ] } in
+    {
+      f with
+      queues = [ fills "COMPUTE:0"; fills "COPY:0" ];
+      copy_engine = None;
+    }
 end
-
-let open_as (module D : Rig_edge.Driver with type t = P.t) name p =
-  require_ok ~pp:Format.pp_print_string
-    (Rig.open_
-       { name; driver = (module D); make = (fun ~word -> Ok (P.bind p ~word)) })
-
-(* Bytes into memory of [d] the host does not address and back, which [d]'s
-   copy queue runs: the copies [p] ran and the bytes back. *)
-let round_trip d p =
-  let n = Rig.Buffer.paged_from in
-  let src = Rig.Buffer.create Rig.host n in
-  Rig.Buffer.write src Bigarray.char (fun a -> Bigarray.Array1.fill a 'q');
-  let dst = Rig.Buffer.create d n in
-  let back = Rig.Buffer.create Rig.host n in
-  Rig.Buffer.copy ~src ~dst;
-  Rig.Buffer.copy ~src:dst ~dst:back;
-  let got =
-    Rig.Buffer.read back Bigarray.char (fun a ->
-        String.init n (Bigarray.Array1.get a))
-  in
-  (P.submits p, got = String.make n 'q')
-
-(* rig's copies go to the copy engine the facts name, whatever the queues'
-   names and order: a queue named "COPY:0" may run none, and a device without
-   a copy engine takes no copy part. *)
-let test_copy_engine () =
-  let p = P.make ~host_visible:false () in
-  let d = open_as (module Renamed) "open:renamed" p in
-  equal ~msg:"renamed: copies run, bytes back" (pair int bool) (2, true)
-    (round_trip d p);
-  let p = P.make ~host_visible:false () in
-  let d = open_as (module One_queue) "open:one-queue" p in
-  equal ~msg:"one queue: copies run, bytes back" (pair int bool) (2, true)
-    (round_trip d p);
-  let p = P.make ~host_visible:false () in
-  let d = open_as (engine (module P) (Some 0)) "open:first-engine" p in
-  let (), events = Rig.Profile.take (fun () -> ignore (round_trip d p)) in
-  let lanes =
-    List.filter_map
-      (function
-        | Rig.Profile.Work s when Rig.equal s.device d -> Some s.lane
-        | _ -> None)
-      events
-  in
-  equal ~msg:"the first queue runs the copies" (list string)
-    [ "COMPUTE:0"; "COMPUTE:0" ] lanes;
-  let c = open_as (module Copyless) "open:copyless" (P.make ()) in
-  let src = Rig.Buffer.create c 8 and dst = Rig.Buffer.create c 8 in
-  raises_match (Exn.invalid_arg ~sub:"runs no copies") (fun () ->
-      Rig.Submission.(make c [| copy ~src:(Buffer src) ~dst:(Buffer dst) |]))
-
-(* A copy engine that names no queue, or a queue that runs no copy, refuses
-   the open, and the driver's device is stopped. *)
-let test_copy_engine_refused () =
-  let refuses name driver =
-    let p = P.make () in
-    raises_match ~msg:name (Exn.invalid_arg ~sub:"copy engine") (fun () ->
-        Rig.open_ { name; driver; make = (fun ~word -> Ok (P.bind p ~word)) });
-    equal ~msg:(name ^ ": stopped") bool true (List.mem "stop" (P.log p))
-  in
-  refuses "open:engine-past" (engine (module P) (Some 2));
-  refuses "open:engine-negative" (engine (module P) (Some (-1)));
-  refuses "open:engine-fills" (engine (module Copyless) (Some 1))
-
-(* A region without the host address the facts promise goes back to the driver
-   and faults the device, as one off its alignment does. *)
-let test_overstated () =
-  let p = P.make ~host_visible:false () in
-  let d = open_as (module Overstated) "open:overstated" p in
-  raises_match ~msg:"the allocation"
-    (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> Rig.Buffer.create d 64);
-  is_some ~msg:"the device lost" (Rig.lost d);
-  equal ~msg:"the region freed" (list string) [ "alloc"; "free" ]
-    (List.filter (fun c -> c = "alloc" || c = "free") (P.log p))
-
-(* A device's counters, each with at least one value, are listed iff its
-   driver gives [measures]: the support driver gives none. *)
-let test_counters_refused () =
-  List.iteri
-    (fun i (counters, sub) ->
-      let p = P.make ~counters () in
-      let name = Printf.sprintf "open:counters-%d" i in
-      raises_match ~msg:sub (Exn.invalid_arg ~sub) (fun () ->
-          Rig.open_ (P.opener name p)))
-    [
-      ([ ("A", 0) ], "has 0 values");
-      ([ ("A", -1) ], "has -1 values");
-      ([ ("A", 1) ], "gives no measures");
-    ]
-
-let test_hang_refused () =
-  List.iteri
-    (fun i n ->
-      let p = P.make ~hang_ms:n () in
-      let name = Printf.sprintf "open:hang-%d" i in
-      raises_match ~msg:(Printf.sprintf "hang_ms %d" n)
-        (Exn.invalid_arg ~sub:"hang bound") (fun () ->
-          Rig.open_ (P.opener name p));
-      equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
-    [ 0; -1; min_int ]
 
 (* Polled whose facts name no C state. *)
 module Edgeless = struct
@@ -320,10 +89,11 @@ end
 (* Zeroed bytes, whose first member is NULL as a C state's. *)
 let zeroed =
   lazy
-    (let b = Rig.Buffer.create Rig.host 64 in
-     Rig.Buffer.fill b '\000';
+    (let b = B.create Rig.host 64 in
+     B.fill b '\000';
      b)
 
+(* Polled whose facts name a C state whose driver is NULL. *)
 module Driverless = struct
   include P
 
@@ -332,446 +102,79 @@ module Driverless = struct
     { (P.facts d) with edge = Nativeint.of_int at }
 end
 
-(* An edge that names no C state, or a state whose first member is NULL,
-   refuses the open, the driver's device is stopped, and the name stays
-   free. *)
-let test_edge_refused () =
-  List.iter
-    (fun (name, driver) ->
-      let p = P.make () in
-      raises_match ~msg:name (Exn.invalid_arg ~sub:"rig_driver") (fun () ->
-          Rig.open_ { name; driver; make = (fun ~word -> Ok (P.bind p ~word)) });
-      equal ~msg:("stopped, " ^ name) bool true (List.mem "stop" (P.log p));
-      ignore (open_as (module P) name (P.make ())))
-    [
-      ("open:edgeless", (module Edgeless : Rig_edge.Driver with type t = P.t));
-      ("open:driverless", (module Driverless));
-    ]
+(* Polled that states the host addresses its memory, which it does not. *)
+module Overstated = struct
+  include P
 
-let open_store name = require_ok ~pp:Format.pp_print_string (Rig.open_io name)
+  let facts d = { (P.facts d) with host_addresses = true }
+end
 
-(* Opens [machine]'s host [name], a driver's device. *)
-let open_host machine name =
-  Rig.open_host ~machine
-    (P.opener name (P.make ()))
+(* [open_] *)
 
-(* Every non-empty buffer starts on its device's alignment, of each kind it
-   has and on either side of the sizes the host aligns further. A device whose
-   memory the host addresses has no Pinned memory. *)
-let test_alignment () =
-  let d = memory "open:alignment" in
-  let p, _ = P.open_ ~alignment:256 "open:alignment-polled" in
-  let hidden, _ =
-    P.open_ ~alignment:256 ~host_visible:false "open:alignment-hidden"
-  in
-  let io = open_store "open:alignment-io" in
-  equal ~msg:"the stated values" (list int) [ 16; 64; 256; 256; 1 ]
-    (List.map Rig.alignment [ Rig.host; d; p; hidden; io ]);
-  List.iter
-    (fun (d, memory, n) ->
-      let b = Rig.Buffer.create ~memory d n in
-      equal
-        ~msg:(Printf.sprintf "%s, %d bytes" (Rig.name d) n)
-        bool true
-        (Rig.Buffer.aligned b ~at:0 (Rig.alignment d)))
-    (List.concat_map
-       (fun (d, kinds) ->
-         List.concat_map
-           (fun memory ->
-             List.map
-               (fun n -> (d, memory, n))
-               [ 1; 15; 16; 17; 127; 128; 129; 4096; 65535; 1 lsl 18 ])
-           kinds)
-       Rig.Buffer.
-         [
-           (Rig.host, [ Device; Mapped ]);
-           (d, [ Device; Mapped ]);
-           (p, [ Device; Mapped ]);
-           (hidden, [ Device; Pinned; Mapped ]);
-         ])
+let test_same_name () =
+  let d = software "open:same" in
+  equal device d (software "open:same");
+  not_equal device d (software "open:other")
 
-(* A non-empty buffer's memory runs on to whole words, through bytes that
-   belong to no other memory: a write of every word that holds a byte of a
-   view, at the end or at an offset, or of a borrow changes no byte outside
-   those words, and a driver is asked for whole words. Sizes lie on either
-   side of the host's line and page placements. *)
-let test_tail () =
-  let d = memory "open:tail" in
-  let p, polled = P.open_ ~alignment:256 "open:tail-polled" in
-  let hidden, unseen =
-    P.open_ ~alignment:256 ~host_visible:false "open:tail-hidden"
-  in
-  let w = Rig.word in
-  let sizes = [ 1; 3; 15; 17; 63; 65; 127; 129; 255; 257; 65537; 262145 ] in
-  let pattern n seed =
-    String.init n (fun i -> Char.chr ((seed + i) land 255))
-  in
-  let made =
-    List.concat_map
-      (fun (d, kinds) ->
-        List.concat_map
-          (fun memory ->
-            List.map (fun n -> Rig.Buffer.create ~memory d n) sizes)
-          kinds)
-      Rig.Buffer.
-        [
-          (Rig.host, [ Device; Mapped ]);
-          (d, [ Device; Mapped ]);
-          (p, [ Device; Mapped ]);
-          (hidden, [ Pinned ]);
-        ]
-  in
-  (* The bytes of [b] whose words are written, as [(first, length, borrow)]:
-     its last byte, a view from an offset off a word to before its end, and
-     on the host, its first bytes through a borrow by [d] where [b] starts on
-     a page. *)
-  let ranges b =
-    let n = Rig.Buffer.length b in
-    let last = [ (n - 1, 1, false) ] in
-    let inner = if n < 7 then [] else [ (1, n - 6, false) ] in
-    let first =
-      if Rig.Buffer.device b == Rig.host && n >= Rig.Buffer.paged_from then
-        [ (0, 5, true) ]
-      else []
-    in
-    last @ inner @ first
-  in
-  List.iteri
-    (fun i b ->
-      let n = Rig.Buffer.length b in
-      Rig.Buffer.blit_from_string (pattern n i) 0 b 0 n)
-    made;
-  let marks = Rig.Buffer.of_string (String.make 8 '\xee') in
-  (* Writes every word that holds a byte of [v], through its host address. *)
-  let mark v =
-    let a = Support.Reader.host v and n = Rig.Buffer.length v in
-    let rec go at =
-      if at < (a + n + w - 1) / w * w then begin
-        Support.move ~dst:at ~src:(Support.Reader.host marks) w;
-        go (at + w)
-      end
-    in
-    go (a / w * w)
-  in
-  List.iter
-    (fun b ->
-      List.iter
-        (fun (first, length, borrow) ->
-          let v = Rig.Buffer.view b ~first ~length in
-          mark (if borrow then require_some (Rig.Buffer.borrow d v) else v))
-        (ranges b))
-    made;
-  List.iteri
-    (fun i b ->
-      let n = Rig.Buffer.length b in
-      let expected = Bytes.of_string (pattern n i) in
-      List.iter
-        (fun (first, length, _) ->
-          let lo = first / w * w and hi = (first + length + w - 1) / w * w in
-          Bytes.fill expected lo (Int.min hi n - lo) '\xee')
-        (ranges b);
-      let s = Bytes.create n in
-      Rig.Buffer.blit_to_bytes b 0 s 0 n;
-      equal
-        ~msg:(Printf.sprintf "%s, %d bytes" (Rig.name (Rig.Buffer.device b)) n)
-        string (Bytes.to_string expected) (Bytes.to_string s))
-    made;
-  List.iter
-    (fun (_, n, _) ->
-      equal ~msg:(Printf.sprintf "%d bytes asked" n) int 0 (n mod w))
-    (P.allocs polled @ P.allocs unseen);
-  Gc.full_major ()
+(* A Polled open of a name that another driver's device holds: a software
+   device's or an io device's. *)
+let other_driver =
+  cases ~id:fst "an open of a name another driver's device holds raises"
+    [ ("a software device's", `Software); ("an io device's", `Io) ]
+  @@ fun (what, held) ->
+  let name = "open:taken-" ^ what in
+  (match held with
+  | `Software -> ignore (software name)
+  | `Io -> ignore (io name));
+  raises_match Exn.invalid_arg (fun () -> Rig.open_ (polled name))
 
-(* An alignment that is not a power of two refuses the open, and the driver's
-   device is stopped. *)
-let test_alignment_refused () =
-  List.iter
-    (fun n ->
-      let p = P.make ~alignment:n () in
-      let name = Printf.sprintf "open:alignment-%d" n in
-      raises_match ~msg:(Printf.sprintf "alignment %d" n)
-        (Exn.invalid_arg ~sub:"power of two") (fun () ->
-          Rig.open_ (P.opener name p));
-      equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
-    [ 0; -16; 24; 48 ]
-
-(* A device states the last-level cache its driver states, a software device
-   the host's, and an io device none. *)
-let test_cache_bytes () =
-  let d = memory "open:cache-memory" in
-  let p, _ = P.open_ ~cache_bytes:(48 lsl 20) "open:cache-polled" in
-  let q, _ = P.open_ "open:cache-none" in
-  let io = open_store "open:cache-io" in
-  equal ~msg:"the stated values" (list (option int))
-    [ Rig.cache_bytes Rig.host; Some (48 lsl 20); None; None ]
-    (List.map Rig.cache_bytes [ d; p; q; io ])
-
-(* A cache of fewer than 1 byte refuses the open, and the driver's device is
-   stopped. *)
-let test_cache_refused () =
-  List.iteri
-    (fun i n ->
-      let p = P.make ~cache_bytes:n () in
-      let name = Printf.sprintf "open:cache-%d" i in
-      raises_match ~msg:(Printf.sprintf "cache_bytes %d" n)
-        (Exn.invalid_arg ~sub:"last-level cache") (fun () ->
-          Rig.open_ (P.opener name p));
-      equal ~msg:"stopped" bool true (List.mem "stop" (P.log p)))
-    [ 0; -1; min_int ]
-
-(* A region off the device's alignment goes back to the driver and faults the
-   device: Polled's start on a page, never on 2^60. *)
-let test_misaligned () =
-  let d, p = P.open_ ~alignment:(1 lsl 60) "open:misaligned" in
-  raises_match ~msg:"the allocation"
-    (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> Rig.Buffer.create d 64);
-  is_some ~msg:"the device lost" (Rig.lost d);
-  equal ~msg:"the region freed" (list string) [ "alloc"; "free" ]
-    (List.filter (fun c -> c = "alloc" || c = "free") (P.log p))
-
-let test_io () =
-  let io = open_store "open:io" in
-  equal string "" (Rig.arch io);
-  equal bool false (Rig.computes io);
-  equal int max_int (Rig.budget io);
-  is_none ~msg:"capacity" (Rig.capacity io);
-  equal (list bool) [ false; false ]
-    [ Rig.reaches io Rig.host; Rig.reaches Rig.host io ];
-  equal ~msg:"an empty buffer" int 0
-    (Rig.Buffer.length (Rig.Buffer.create io 0))
-
-(* An io open of a name answers the io device open under it, and a name a
-   driver's device holds refuses it, as a driver's open of an io device's name
-   is refused. *)
-let test_io_name () =
-  let io = open_store "open:io-name" in
-  equal ~msg:"the device open" bool true
-    (Rig.equal io (open_store "open:io-name"));
-  let _ = P.open_ "open:io-driver" in
-  raises_match ~msg:"a driver's name" Exn.invalid_arg (fun () ->
-      Rig.open_io "open:io-driver");
-  raises_match ~msg:"an io device's name" Exn.invalid_arg (fun () ->
-      Rig.open_
-        {
-          name = "open:io-name";
-          driver = (module P);
-          make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
-        })
-
-(* A region an io library gave is a buffer of its device, beside another
-   library's on the same device, and borrows on the host through its pages. *)
-let test_of_io () =
-  let io = open_store "open:of-io" in
-  let r = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 16 in
-  Bigarray.Array1.fill r 'p';
-  let b = Rig.Buffer.of_io io (module Store) r ~access:Read_write 16 in
-  let other = Rig.Buffer.of_io io (module Other) () ~access:Read_write 16 in
-  equal ~msg:"the devices" (pair bool bool) (true, true)
-    ( Rig.equal io (Rig.Buffer.device b),
-      Rig.equal io (Rig.Buffer.device other) );
-  is_none ~msg:"another library's borrow" (Rig.Buffer.borrow Rig.host other);
-  let h = require_some (Rig.Buffer.borrow Rig.host b) in
-  equal string (String.make 16 'p')
-    (Rig.Buffer.read h Bigarray.char (fun a ->
-         String.init 16 (Bigarray.Array1.get a)))
-
-(* A device of another machine is named after it, and its host is the device
-   opened as that machine's, which runs work and loads code. A device opened
-   beside any device of the machine is of that machine. *)
-let test_machine () =
-  let far = require_ok ~pp:Format.pp_print_string (open_host "far" "HOST") in
-  let beside machine name =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_ ~machine
-         (P.opener name (P.make ())))
-  in
-  let g = beside far "open:gpu" in
-  let g' = beside g "open:gpu-beside" in
-  equal string "open:gpu@far" (Rig.name g);
-  equal device far (Rig.host_of g);
-  equal ~msg:"beside a device" device far (Rig.host_of g');
-  equal ~msg:"beside this machine's host" device Rig.host
-    (Rig.host_of (beside Rig.host "open:here"));
-  equal device far (Rig.host_of far);
-  equal (list bool)
-    [ false; false; false; false ]
-    [
-      Rig.reaches g Rig.host;
-      Rig.reaches Rig.host g;
-      Rig.reaches far Rig.host;
-      Rig.reaches Rig.host far;
-    ];
-  equal ~msg:"computes" bool true (Rig.computes far);
-  ignore (submit (Rig.Submission.make far [||]))
-
-(* A machine has one host: [~host] names another machine's, and a second host of
-   a machine whose host is open under another name is refused. *)
-let test_one_host () =
-  let h = require_ok ~pp:Format.pp_print_string (open_host "one" "A") in
-  raises_match ~msg:"a second" Exn.invalid_arg (fun () -> open_host "one" "B");
-  equal ~msg:"the same name" device h
-    (require_ok ~pp:Format.pp_print_string (open_host "one" "A"))
-
-(* A machine has one host for its life: once it is closed or lost, [open_host]
-   of the machine answers [Error], under its name or another. *)
-let test_host_for_life () =
-  let closed =
-    require_ok ~pp:Format.pp_print_string (open_host "life-closed" "CPU")
-  in
-  Rig.close closed;
-  let lost = P.make () in
-  let host =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_host ~machine:"life-lost"
-         (P.opener "CPU" lost))
-  in
-  P.fault lost "unplugged";
-  (try ignore (Rig.Buffer.create host 8) with Rig.Lost _ -> ());
-  Rig.close host;
-  List.iter
-    (fun (machine, name) ->
-      is_error
-        ~pp:(fun ppf d -> Format.pp_print_string ppf (Rig.name d))
-        ~msg:(machine ^ " " ^ name)
-        (open_host machine name))
-    [
-      ("life-closed", "CPU");
-      ("life-closed", "OTHER");
-      ("life-lost", "CPU");
-      ("life-lost", "OTHER");
-    ]
-
-(* Closing another machine's host closes every device of its machine too. *)
-let test_close_machine () =
-  let far = require_ok ~pp:Format.pp_print_string (open_host "closing" "CPU") in
-  let g =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_ ~machine:far
-         {
-           name = "open:closing-gpu";
-           driver = (module P);
-           make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
-         })
-  in
-  Rig.close far;
-  equal
-    (list (option string))
-    [ Some "closed"; Some "closed" ]
-    [ Rig.lost g; Rig.lost far ]
-
-(* Once a machine's host is closed or lost, its devices open no more: the open
-   answers the host's loss. *)
-let test_open_on_ended_host () =
-  let gpu machine =
-    Rig.open_ ~machine
-      {
-        name = "open:ended-gpu";
-        driver = (module P);
-        make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
-      }
-  in
-  let closed =
-    require_ok ~pp:Format.pp_print_string (open_host "ended-closed" "CPU")
-  in
-  Rig.close closed;
-  let lost = P.make () in
-  let host =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_host ~machine:"ended-lost"
-         (P.opener "CPU" lost))
-  in
-  P.fault lost "unplugged";
-  (try ignore (Rig.Buffer.create host 8) with Rig.Lost _ -> ());
-  equal
-    (list (result device string))
-    [
-      Error "CPU@ended-closed lost: closed";
-      Error "CPU@ended-lost lost: unplugged";
-    ]
-    [ gpu closed; gpu host ]
-
-(* The loss of another machine's host loses none of its devices: they run work
-   as before. *)
-let test_host_loss_spares_devices () =
-  let lost = P.make () in
-  let far =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_host ~machine:"host-loss"
-         (P.opener "CPU" lost))
-  in
-  let g =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_ ~machine:far
-         {
-           name = "open:host-loss-gpu";
-           driver = (module P);
-           make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
-         })
-  in
-  P.fault lost "unplugged";
-  (try ignore (Rig.Buffer.create far 8) with Rig.Lost _ -> ());
-  equal (option string) ~msg:"the host" (Some "unplugged") (Rig.lost far);
-  equal (option string) ~msg:"its device" None (Rig.lost g);
-  Rig.Point.wait (submit (Rig.Submission.make g [||]));
-  equal (option string) ~msg:"after its work" None (Rig.lost g)
-
-(* Closing a lost host closes its machine's devices too. *)
-let test_close_lost_host () =
-  let lost = P.make () in
-  let far =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_host ~machine:"closing-lost"
-         (P.opener "CPU" lost))
-  in
-  let g =
-    require_ok ~pp:Format.pp_print_string
-      (Rig.open_ ~machine:far
-         {
-           name = "open:closing-lost-gpu";
-           driver = (module P);
-           make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
-         })
-  in
-  P.fault lost "unplugged";
-  (try ignore (Rig.Buffer.create far 8) with Rig.Lost _ -> ());
-  Rig.close far;
-  equal (option string) (Some "closed") (Rig.lost g)
-
-(* A fault while the device's facts are read is the open's error, and the
-   driver's handle is stopped: nothing it opened stays. *)
-let test_fault_at_open () =
-  let p = P.make () in
-  P.fault p "no device";
-  equal (result device string) (Error "open:faulted: no device")
-    (Rig.open_
-       (P.opener "open:faulted" p));
-  equal (list string) [ "stop" ] (P.log p)
-
-let test_point () =
-  let d = memory "open:point" in
-  let p = submit (Rig.Submission.make d [||]) in
-  equal string "open:point:1" (Format.asprintf "%a" Rig.Point.pp p)
-
-(* An opener's error is the open's, and leaves the name free. *)
 let test_failed_open () =
   let fails ~word:_ = Error "no hardware" in
   equal (result device string) (Error "no hardware")
     (Rig.open_ { name = "open:failed"; driver = (module P); make = fails });
-  let d, _ = P.open_ "open:failed" in
-  equal string "open:failed" (Rig.name d)
+  equal string "open:failed"
+    (Rig.name (opened (Rig.open_ (polled "open:failed"))))
 
-(* An exception the opener raises is raised again, the name left unopened. *)
-let test_opener_raises () =
-  raises Exit (fun () ->
-      Rig.open_
-        {
-          name = "open:raises";
-          driver = (module P);
-          make = (fun ~word:_ -> raise Exit);
-        });
-  let d, _ = P.open_ "open:raises" in
-  equal string "open:raises" (Rig.name d)
+(* Rig_edge.facts: a copy engine is a queue that runs copies. *)
+let copy_engine_refused =
+  cases ~id:fst "facts whose copy engine runs no copies raise"
+    [
+      ("past the queues", engine (module P) (Some 2));
+      ("negative", engine (module P) (Some (-1)));
+      ("a queue of fills", engine (module Copyless) (Some 1));
+    ]
+  @@ fun (what, driver) ->
+  refuses ~driver ~sub:"copy engine" (P.make ()) ("open:engine " ^ what)
+
+(* Rig_edge.facts: a hang bound is at least 1 ms. *)
+let hang_refused =
+  cases ~id:string_of_int "facts whose hang bound is below 1 ms raise"
+    [ 0; -1; min_int ]
+  @@ fun n ->
+  refuses ~sub:"hang bound" (P.make ~hang_ms:n ())
+    (Printf.sprintf "open:hang %d" n)
+
+(* Rig_edge.facts: each counter has a value, and counters come with the driver's
+   measures, which Polled has none of. *)
+let counters_refused =
+  cases ~id:snd "facts whose counters have no value or no measures raise"
+    [
+      ([ ("A", 0) ], "has 0 values");
+      ([ ("A", -1) ], "has -1 values");
+      ([ ("A", 1) ], "gives no measures");
+    ]
+  @@ fun (counters, sub) ->
+  refuses ~sub (P.make ~counters ()) ("open:counters " ^ sub)
+
+(* Rig_edge.facts: [edge] is a C state whose first member is its driver. *)
+let edge_refused =
+  cases ~id:fst "facts whose edge names no C state or driver raise"
+    [
+      ("no state", (module Edgeless : Rig_edge.Driver with type t = P.t));
+      ("no driver", (module Driverless));
+    ]
+  @@ fun (what, driver) ->
+  refuses ~driver ~sub:"rig_driver" (P.make ()) ("open:edge " ^ what)
 
 (* An exception raised at any allocation of an open, as [Out_of_memory] or a
    signal handler's is, leaves the name free, or open where the open published
@@ -791,108 +194,212 @@ let raising_at n armed =
   in
   { Gc.Memprof.null_tracker with alloc_minor = alloc; alloc_major = alloc }
 
-(* [raise_anywhere what handle bind stops opens] opens names with [opens name
-   make] over handles of [handle ()], whose stops [stops] counts. [make word]
-   hands the handle, bound with [bind] to the word of the driver's opener. *)
-let raise_anywhere what handle bind stops opens () =
+(* [opens_raising n open_] is [Some r] where [open_ ()] returned [r] under a
+   memory profile raising at its [n]th allocation, or [None] where the profile
+   raised. *)
+let opens_raising n open_ =
+  let armed = ref false in
+  let profile = Gc.Memprof.start ~sampling_rate:1. (raising_at n armed) in
+  let stop () =
+    armed := false;
+    Gc.Memprof.stop ();
+    Gc.Memprof.discard profile
+  in
+  Fun.protect ~finally:stop (fun () ->
+      armed := true;
+      match open_ () with
+      | r ->
+          armed := false;
+          Some r
+      | exception Injected -> None)
+
+let test_raise_anywhere () =
   let rec from n =
-    let name = Printf.sprintf "open:raise-%s-%d" what n in
-    let h = handle () and handed = ref false in
-    let make word =
-      let r = Ok (bind h ~word) in
+    let name = Printf.sprintf "open:raise-%d" n in
+    let p = P.make () and handed = ref false in
+    let make ~word =
+      let r = Ok (P.bind p ~word) in
       handed := true;
       r
     in
-    let armed = ref false in
-    let profile = Gc.Memprof.start ~sampling_rate:1. (raising_at n armed) in
-    let stop () =
-      armed := false;
-      Gc.Memprof.stop ();
-      Gc.Memprof.discard profile
-    in
-    let opened =
-      Fun.protect ~finally:stop (fun () ->
-          armed := true;
-          match opens name make with
-          | r ->
-              armed := false;
-              Some r
-          | exception Injected -> None)
-    in
     let msg = Printf.sprintf "raised at allocation %d" n in
-    match opened with
+    match
+      opens_raising n (fun () -> Rig.open_ { name; driver = (module P); make })
+    with
     | Some r ->
-        Rig.close (require_ok ~pp:Format.pp_print_string r);
+        Rig.close (opened r);
         greater ~msg:"allocations that raised" int ~than:1 n
     | None ->
-        (* An open that published its device left it open: the name answers
-           it without calling [make]. *)
+        (* An open that published its device left it open: the name answers it
+           without calling [make]. *)
         let calls = ref 0 in
+        let again ~word =
+          incr calls;
+          Ok (P.bind (P.make ()) ~word)
+        in
         let d =
-          require_ok ~pp:Format.pp_print_string
-            (opens name (fun _ ->
-                 incr calls;
-                 Ok (handle ())))
+          opened (Rig.open_ { name; driver = (module P); make = again })
         in
         equal ~msg (option string) None (Rig.lost d);
         let left_open = !calls = 0 in
-        if left_open then equal ~msg:("handed, " ^ msg) bool true !handed;
+        if left_open && not !handed then
+          failf "%s: the name is open, and make handed no handle" msg;
         let stopped = !handed && not left_open in
-        equal ~msg int (if stopped then 1 else 0) (stops h);
+        equal ~msg int (if stopped then 1 else 0) (count "stop" p);
         Rig.close d;
         from (n + 1)
   in
   from 1
 
-let test_driver_raise_anywhere =
-  raise_anywhere "driver"
-    (fun () -> P.make ())
-    (fun p ~word -> P.bind p ~word)
-    (fun p -> List.length (List.filter (( = ) "stop") (P.log p)))
-    (fun name make ->
-      Rig.open_ { name; driver = (module P); make = (fun ~word -> make word) })
-
-(* An io open has no handle: an exception at any of its allocations leaves the
-   name free, or open with the device the open published. *)
-let test_io_raise_anywhere () =
-  let rec from n =
-    let name = Printf.sprintf "open:raise-io-%d" n in
-    let armed = ref false in
-    let profile = Gc.Memprof.start ~sampling_rate:1. (raising_at n armed) in
-    let stop () =
-      armed := false;
-      Gc.Memprof.stop ();
-      Gc.Memprof.discard profile
-    in
-    let opened =
-      Fun.protect ~finally:stop (fun () ->
-          armed := true;
-          match Rig.open_io name with
-          | r ->
-              armed := false;
-              Some r
-          | exception Injected -> None)
-    in
-    match opened with
-    | Some r ->
-        Rig.close (require_ok ~pp:Format.pp_print_string r);
-        greater ~msg:"allocations that raised" int ~than:1 n
-    | None ->
-        let d = require_ok ~pp:Format.pp_print_string (Rig.open_io name) in
-        equal
-          ~msg:(Printf.sprintf "raised at allocation %d" n)
-          (option string) None (Rig.lost d);
-        Rig.close d;
-        from (n + 1)
+(* A lost device's name opens again only once its stop returned: before, the
+   open is [Error]. The stop runs in a close, held at Polled's gate. *)
+let test_reopen_early () =
+  let d, p = P.open_ "open:early" in
+  P.gate p;
+  P.fail p;
+  let loser =
+    Thread.create
+      (fun () ->
+        (try ignore (submit (empty d)) with Rig.Lost _ -> ());
+        Rig.close d)
+      ()
   in
-  from 1
+  Support.await "a stop at the gate" (fun () -> P.sleepers p = 1);
+  is_error ~pp:Rig.pp (Rig.open_ (polled "open:early"));
+  P.open_gate p;
+  Thread.join loser;
+  not_equal device d (fst (P.open_ "open:early"))
+
+let test_reopen () =
+  let d, p = P.open_ "open:reopen" in
+  let s = empty d in
+  P.fail p;
+  raises_match (lost d) (fun () -> submit s);
+  equal ~msg:"the calls before the open" (list string) [] (P.log p);
+  let d', _ = P.open_ "open:reopen" in
+  equal ~msg:"the calls after the open" (list string) [ "stop" ] (P.log p);
+  not_equal device d d';
+  equal (option string) None (Rig.lost d')
+
+(* [x1] and [x2], lost together, [x2] by spread, owe their stops; an open whose
+   stop raises raises it, and the next open of the name opens it anew, the stop
+   having returned. *)
+let test_reopen_owed () =
+  let x1, p1 = P.open_ "open:owed-1" in
+  let x2, p2 = P.open_ ~waits_on:[ `Host ] "open:owed-2" in
+  let raised = Atomic.make false in
+  let stop () =
+    if not (Atomic.exchange raised true) then failwith "the first stop"
+  in
+  P.before p1 "stop" stop;
+  P.before p2 "stop" stop;
+  let first = submit (empty x1) in
+  ignore (submit (empty x2) ~waits:[| first |]);
+  P.fail p1;
+  raises_match (lost x1) (fun () -> submit (empty x1));
+  equal ~msg:"the spread" (option string) (Some "open:owed-1 lost")
+    (Rig.lost x2);
+  equal ~msg:"stops before the opens" (pair int int) (0, 0)
+    (P.stops p1, P.stops p2);
+  let reopen name = opened (Rig.open_ (polled name)) in
+  raises_match
+    (function Failure _ -> true | _ -> false)
+    (fun () -> reopen "open:owed-1");
+  let y = reopen "open:owed-1" in
+  let y' = reopen "open:owed-2" in
+  equal ~msg:"stops" (pair int int) (1, 1) (P.stops p1, P.stops p2);
+  List.iter
+    (fun (x, y) -> not_equal device x y)
+    [ (x1, y); (x1, y'); (x2, y); (x2, y') ]
+
+(* Once a machine's host is closed or lost, the open answers the host's loss as
+   its [Lost] prints. *)
+let test_open_on_ended_host () =
+  let gpu machine = Rig.open_ ~machine (polled "open:ended-gpu") in
+  let closed = opened (open_host "ended-closed" "CPU") in
+  Rig.close closed;
+  let lost = P.make () in
+  let host =
+    opened (Rig.open_host ~machine:"ended-lost" (P.opener "CPU" lost))
+  in
+  P.fault lost "unplugged";
+  (try ignore (B.create host 8) with Rig.Lost _ -> ());
+  equal
+    (list (result device string))
+    [
+      Error "CPU@ended-closed lost: closed";
+      Error "CPU@ended-lost lost: unplugged";
+    ]
+    [ gpu closed; gpu host ]
+
+(* An open whose opener blocks holds back only opens of its own name, which
+   answer the device that opener makes. *)
+let test_blocked_opener () =
+  let lock = Mutex.create () and cond = Condition.create () in
+  let inside = ref false and go = ref false and calls = ref 0 in
+  let make ~word =
+    Mutex.protect lock (fun () ->
+        incr calls;
+        inside := true;
+        while not !go do
+          Condition.wait cond lock
+        done);
+    Ok (P.bind (P.make ()) ~word)
+  in
+  let opener : P.t Rig_edge.opener =
+    { name = "open:slow"; driver = (module P); make }
+  in
+  let first = ref None and second = ref None in
+  let slow =
+    Thread.create (fun () -> first := Some (opened (Rig.open_ opener))) ()
+  in
+  Support.await "a running opener" (fun () ->
+      Mutex.protect lock (fun () -> !inside));
+  let started = Atomic.make false in
+  let same =
+    Thread.create
+      (fun () ->
+        Atomic.set started true;
+        let another = { opener with make = (fun ~word -> make ~word) } in
+        second := Some (opened (Rig.open_ another)))
+      ()
+  in
+  Support.await "a concurrent open of the same name" (fun () ->
+      Atomic.get started);
+  equal string "open:fast" (Rig.name (fst (P.open_ "open:fast")));
+  Mutex.protect lock (fun () ->
+      go := true;
+      Condition.broadcast cond);
+  Thread.join slow;
+  Thread.join same;
+  let d = Option.get !first in
+  equal device d (Option.get !second);
+  equal ~msg:"the opener's calls" int 1 !calls;
+  Rig.close d;
+  let reopened = opened (Rig.open_ opener) in
+  not_equal device d reopened;
+  equal ~msg:"the opener's calls after a close" int 2 !calls;
+  Rig.close reopened
+
+(* The inner open raises, which ends the outer one, and the name then opens. *)
+let test_opener_opens_itself () =
+  let rec opener : P.t Rig_edge.opener =
+    { name = "open:itself"; driver = (module P); make }
+  and make ~word =
+    ignore (Rig.open_ opener);
+    Ok (P.bind (P.make ()) ~word)
+  in
+  raises_match ~msg:"the open" Exn.invalid_arg (fun () -> Rig.open_ opener);
+  let d, _ = P.open_ "open:itself" in
+  equal string "open:itself" (Rig.name d);
+  Rig.close d
 
 (* An open that waits for another open of its name returns to OCaml at least
    every 200 ms, where a pending signal's handler runs. The other opener parks
    outside OCaml until unparked, and a thread of no OCaml code raises SIGINT
-   once the open blocks in its condition wait, so only the waiting open can
-   take the signal before the other open ends. The handler raises Sys.Break on
-   the waiting thread alone. *)
+   once the open blocks in its condition wait, so only the waiting open can take
+   the signal before the other open ends. The handler raises Sys.Break on the
+   waiting thread alone. *)
 let test_break_waiting_open () =
   if not Support.sees_waits then
     skip ~reason:"the system shows no thread's blocking call" ();
@@ -908,7 +415,7 @@ let test_break_waiting_open () =
       ()
   in
   let calls = ref 0 in
-  let got, raised =
+  let got =
     Fun.protect ~finally:Support.unpark @@ fun () ->
     Support.await "the first opener" Support.parked;
     let waiting = Thread.id (Thread.self ()) and taken = ref "nowhere" in
@@ -931,57 +438,14 @@ let test_break_waiting_open () =
             | exception Sys.Break -> "Sys.Break"))
   in
   Thread.join opener;
-  equal ~msg:"the open waited" bool true raised;
-  equal ~msg:"the waiting open" string "Sys.Break" got;
+  equal ~msg:"the waiting open, and whether it waited" (pair string bool)
+    ("Sys.Break", true) got;
   equal ~msg:"its opener's calls" int 0 !calls;
-  is_ok ~msg:"the other open" (Option.get !first)
+  is_ok ~pp:Format.pp_print_string ~msg:"the other open" (Option.get !first)
 
-(* A close of a machine's host waits for the opens in flight on the machine.
-   A Ctrl-C during that wait ends the close and leaves the machine as it was:
-   its host is not lost, and its devices open. The opener parks outside OCaml
-   until the close has taken the signal. *)
-let test_break_waiting_close () =
-  if not Support.sees_waits then
-    skip ~reason:"the system shows no thread's blocking call" ();
-  let far =
-    require_ok ~pp:Format.pp_print_string (open_host "break-close" "CPU")
-  in
-  let gpu name make =
-    Rig.open_ ~machine:far { name; driver = (module P); make }
-  in
-  let make ~word =
-    Support.park ();
-    Ok (P.bind (P.make ()) ~word)
-  in
-  let first = ref None in
-  let opener =
-    Thread.create (fun () -> first := Some (gpu "open:break-close-1" make)) ()
-  in
-  let got, raised =
-    Fun.protect ~finally:Support.unpark @@ fun () ->
-    Support.await "the opener" Support.parked;
-    Sys.catch_break true;
-    Fun.protect
-      ~finally:(fun () -> Sys.catch_break false)
-      (fun () ->
-        Support.interrupt_in_wait (fun () ->
-            match Rig.close far with
-            | () -> "closed"
-            | exception Sys.Break -> "Sys.Break"))
-  in
-  Thread.join opener;
-  equal ~msg:"the close waited" bool true raised;
-  equal ~msg:"the close" string "Sys.Break" got;
-  equal ~msg:"the host" (option string) None (Rig.lost far);
-  is_ok ~msg:"the open in flight" (Option.get !first);
-  is_ok ~msg:"a later open"
-    (gpu "open:break-close-2" (fun ~word -> Ok (P.bind (P.make ()) ~word)));
-  Rig.close far
-
-(* An open of a name that another thread is opening waits for it holding no
-   lock: a signal handler that runs in the wait, where it returns to OCaml,
-   calls rig as any code does. The opener is parked outside OCaml, so the
-   waiting thread is the one that runs the handler. *)
+(* A signal handler that runs in the wait, where it returns to OCaml, calls rig
+   as any code does: the wait holds no lock. The opener is parked outside OCaml,
+   so the waiting thread is the one that runs the handler. *)
 let test_handled_in_open_wait () =
   if not Support.sees_waits then
     skip ~reason:"the system shows no thread's blocking call" ();
@@ -998,12 +462,12 @@ let test_handled_in_open_wait () =
       ()
   in
   let call = ref "no handler ran" in
-  let opened, raised =
+  let r, raised =
     Fun.protect ~finally:Support.unpark @@ fun () ->
     Support.await "the opener" Support.parked;
     let handle _ =
       (call :=
-         match Rig.Buffer.create Rig.host 8 with
+         match B.create Rig.host 8 with
          | _ -> "ran"
          | exception Invalid_argument why -> why);
       Support.unpark ()
@@ -1011,32 +475,290 @@ let test_handled_in_open_wait () =
     let before = Sys.signal Sys.sigint (Sys.Signal_handle handle) in
     Fun.protect
       ~finally:(fun () -> Sys.set_signal Sys.sigint before)
-      (fun () ->
-        Support.interrupt_in_wait (fun () ->
-            Rig.open_
-              {
-                name;
-                driver = (module P);
-                make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
-              }))
+      (fun () -> Support.interrupt_in_wait (fun () -> Rig.open_ (polled name)))
   in
   Thread.join opener;
-  equal ~msg:"the open waited" bool true raised;
-  equal ~msg:"the handler's call of rig" string "ran" !call;
-  let d = require_ok ~pp:Format.pp_print_string opened in
-  equal ~msg:"the device the opener made" bool true
-    (Rig.equal d (require_ok ~pp:Format.pp_print_string (Option.get !first)));
+  equal ~msg:"the handler's call of rig, and whether the open waited"
+    (pair string bool) ("ran", true) (!call, raised);
+  let d = opened r in
+  equal ~msg:"the device the opener made" device d (opened (Option.get !first));
   Rig.close d
 
+(* [unpark_on_signal f] is [f ()], run while a SIGINT, which
+   {!Support.interrupt_in_wait} raises once the calling thread blocks in a
+   condition wait, unparks the parked thread instead of raising, at the time
+   [unparked_at] records: the parked thread then goes on while the caller
+   waits. *)
+let unparked_at = ref 0.
+
+let unpark_on_signal f =
+  let unpark _ =
+    unparked_at := Unix.gettimeofday ();
+    Support.unpark ()
+  in
+  let before = Sys.signal Sys.sigint (Sys.Signal_handle unpark) in
+  Fun.protect
+    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
+    (fun () -> Support.interrupt_in_wait f)
+
+(* An opener that parks outside OCaml, then raises [Exit]. *)
+let parks_then_raises ~word:_ =
+  Support.park ();
+  raise Exit
+
+(* An open that an exception ends wakes the opens of its name waiting for it,
+   and the next one opens. The first opener raises only once the second open
+   waits. The time runs from the unpark: a wait runs no signal handler, so the
+   handler unparks when the open's wait returns to OCaml, and the open starts
+   its next wait right after. Unwoken, that wait returns 200 ms after its start,
+   rig's period; the end wakes it well within 150 ms. rig shows no count of the
+   waits its period ended, so the time is what tells a missed wake-up. *)
+let test_ended_wakes_waiter () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let name = "open:ended-wakes" in
+  let first = ref "" in
+  let opener =
+    Thread.create
+      (fun () ->
+        first :=
+          match
+            Rig.open_ { name; driver = (module P); make = parks_then_raises }
+          with
+          | _ -> "returned"
+          | exception Exit -> "raised Exit")
+      ()
+  in
+  Support.await "the first opener" Support.parked;
+  let second, waited = unpark_on_signal (fun () -> Rig.open_ (polled name)) in
+  let took = Unix.gettimeofday () -. !unparked_at in
+  Thread.join opener;
+  equal ~msg:"the first open, and whether the second waited" (pair string bool)
+    ("raised Exit", true) (!first, waited);
+  less ~msg:"seconds from the end to the second open's return" float_exact
+    ~than:0.15 took;
+  Rig.close (opened second)
+
+(* [open_io] *)
+
+let test_io_name () =
+  let d = io "open:io-name" in
+  equal device d (opened (Rig.open_io "open:io-name"))
+
+let test_io_driver_name () =
+  ignore (P.open_ "open:io-driver");
+  raises_match Exn.invalid_arg (fun () -> Rig.open_io "open:io-driver")
+
+(* The opener's [make] runs on the thread that opens the name. *)
+let test_io_inside_open () =
+  let name = "open:io-inside" in
+  let inner = ref (Ok ()) in
+  let make ~word =
+    (inner :=
+       match Rig.open_io name with
+       | _ -> Ok ()
+       | exception Invalid_argument why -> Error why);
+    Ok (P.bind (P.make ()) ~word)
+  in
+  ignore (opened (Rig.open_ { name; driver = (module P); make }));
+  satisfies ~claim:"Invalid_argument" (result unit string) Result.is_error
+    !inner
+
+(* rig.mli: "An io device runs no work and makes no memory". *)
+let test_io_no_memory () =
+  let d = io "open:io-memory" in
+  equal ~msg:"an empty buffer's length" int 0 (B.length (B.create d 0));
+  raises_match ~msg:"a buffer of 8 bytes" Exn.invalid_arg (fun () ->
+      B.create d 8)
+
+(* rig.mli, budget: "It starts at [max_int] for host and an io device";
+   capacity: [None] for an io device, "whose memory is the machine's". *)
+let test_io_budget () =
+  let d = io "open:io-budget" in
+  equal ~msg:"its budget" int max_int (Rig.budget d);
+  is_none ~msg:"its capacity" (Rig.capacity d)
+
+let test_io_raise_anywhere () =
+  let rec from n =
+    let name = Printf.sprintf "open:raise-io-%d" n in
+    match opens_raising n (fun () -> Rig.open_io name) with
+    | Some r ->
+        Rig.close (opened r);
+        greater ~msg:"allocations that raised" int ~than:1 n
+    | None ->
+        let d = opened (Rig.open_io name) in
+        equal
+          ~msg:(Printf.sprintf "raised at allocation %d" n)
+          (option string) None (Rig.lost d);
+        Rig.close d;
+        from (n + 1)
+  in
+  from 1
+
+(* [software] *)
+
+let test_software_driver_name () =
+  ignore (P.open_ "open:software-driver");
+  raises_match Exn.invalid_arg (fun () -> Rig.software "open:software-driver")
+
+(* [close] *)
+
+(* A close ends the device as a loss does, with the reason "closed": its stop
+   runs once, before close returns. *)
+let test_close () =
+  let d, p = P.open_ "open:close" in
+  let v = Rig.Point.value (submit (empty d)) in
+  Rig.close d;
+  equal ~msg:"the work ran" int v (Rig.signaled d);
+  equal (option string) (Some "closed") (Rig.lost d);
+  equal ~msg:"stops" int 1 (count "stop" p);
+  match submit (empty d) with
+  | _ -> failf "a closed device took a submit"
+  | exception (Rig.Lost (d', why) as e) ->
+      equal device d d';
+      equal string "closed" why;
+      equal string "open:close lost: closed" (Printexc.to_string e)
+
+(* The stop waits at the gate while the second close is sampled for 50 ms: it
+   waits in rig, where no driver seam sees it. *)
+let test_two_closes () =
+  let d, p = P.open_ "open:two-closes" in
+  P.gate p;
+  let returned = Atomic.make 0 in
+  let close () =
+    Rig.close d;
+    Atomic.incr returned;
+    count "stop" p
+  in
+  let first = Domain.spawn close in
+  Support.await "the stop at the gate" (fun () -> P.sleepers p = 1);
+  let second = Domain.spawn close in
+  Unix.sleepf 0.05;
+  equal ~msg:"closes returned, and stops at the gate, while the stop waits"
+    (pair int int) (0, 1)
+    (Atomic.get returned, P.sleepers p);
+  P.open_gate p;
+  equal ~msg:"the stops each close saw" (list int) [ 1; 1 ]
+    [ Domain.join first; Domain.join second ];
+  equal (option string) (Some "closed") (Rig.lost d)
+
+let test_close_fault () =
+  let d, p = P.open_ "open:close-fault" in
+  ignore (submit (empty d));
+  P.fault p "the engine hung";
+  Rig.close d;
+  equal (option string) (Some "the engine hung") (Rig.lost d);
+  equal ~msg:"stops" int 1 (count "stop" p)
+
+let test_close_host () =
+  raises_match Exn.invalid_arg (fun () -> Rig.close Rig.host);
+  equal ~msg:"the host's loss" (option string) None (Rig.lost Rig.host)
+
+(* An io device's work is the caller's. *)
+let test_close_io () =
+  let d = io "open:close-io" in
+  let b = Support.io_buffer d 8 in
+  Rig.close d;
+  equal (option string) (Some "closed") (Rig.lost d);
+  raises_match (lost d) (fun () -> B.copy ~src:b ~dst:(B.create Rig.host 8))
+
+let test_close_machine () =
+  let far = opened (open_host "closing" "CPU") in
+  let g = opened (Rig.open_ ~machine:far (polled "open:closing-gpu")) in
+  Rig.close far;
+  equal
+    (list (option string))
+    [ Some "closed"; Some "closed" ]
+    [ Rig.lost g; Rig.lost far ]
+
+let test_close_lost_host () =
+  let lost = P.make () in
+  let far =
+    opened (Rig.open_host ~machine:"closing-lost" (P.opener "CPU" lost))
+  in
+  let g = opened (Rig.open_ ~machine:far (polled "open:closing-lost-gpu")) in
+  P.fault lost "unplugged";
+  (try ignore (B.create far 8) with Rig.Lost _ -> ());
+  Rig.close far;
+  equal (option string) (Some "closed") (Rig.lost g)
+
+(* The opener parks outside OCaml until the close waits for it, then makes its
+   device, which the close then closes. *)
+let test_close_opening () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let far = opened (open_host "close-opening" "CPU") in
+  let make ~word =
+    Support.park ();
+    Ok (P.bind (P.make ()) ~word)
+  in
+  let first = ref (Error "not returned") in
+  let opener =
+    Thread.create
+      (fun () ->
+        first :=
+          Rig.open_ ~machine:far
+            { name = "open:close-opening"; driver = (module P); make })
+      ()
+  in
+  Support.await "the opener" Support.parked;
+  let (), waited = unpark_on_signal (fun () -> Rig.close far) in
+  Thread.join opener;
+  let g = opened !first in
+  equal ~msg:"the device that was opening, and whether the close waited"
+    (pair (option string) bool)
+    (Some "closed", true)
+    (Rig.lost g, waited);
+  is_error ~pp:Rig.pp ~msg:"a later open"
+    (Rig.open_ ~machine:far (polled "open:close-opening-later"))
+
+(* A close of a machine's host waits for the opens in flight on the machine. A
+   Ctrl-C during that wait ends the close and leaves the machine as it was: its
+   host is not lost, and its devices open. The opener parks outside OCaml until
+   the close has taken the signal. *)
+let test_break_waiting_close () =
+  if not Support.sees_waits then
+    skip ~reason:"the system shows no thread's blocking call" ();
+  let far = opened (open_host "break-close" "CPU") in
+  let gpu name make =
+    Rig.open_ ~machine:far { name; driver = (module P); make }
+  in
+  let make ~word =
+    Support.park ();
+    Ok (P.bind (P.make ()) ~word)
+  in
+  let first = ref None in
+  let opener =
+    Thread.create (fun () -> first := Some (gpu "open:break-close-1" make)) ()
+  in
+  let got =
+    Fun.protect ~finally:Support.unpark @@ fun () ->
+    Support.await "the opener" Support.parked;
+    Sys.catch_break true;
+    Fun.protect
+      ~finally:(fun () -> Sys.catch_break false)
+      (fun () ->
+        Support.interrupt_in_wait (fun () ->
+            match Rig.close far with
+            | () -> "closed"
+            | exception Sys.Break -> "Sys.Break"))
+  in
+  Thread.join opener;
+  equal ~msg:"the close, and whether it waited" (pair string bool)
+    ("Sys.Break", true) got;
+  equal ~msg:"the host" (option string) None (Rig.lost far);
+  is_ok ~pp:Format.pp_print_string ~msg:"the open in flight" (Option.get !first);
+  is_ok ~pp:Format.pp_print_string ~msg:"a later open"
+    (gpu "open:break-close-2" (fun ~word -> Ok (P.bind (P.make ()) ~word)));
+  Rig.close far
+
 (* Two closes of one host wait for an open on its machine. A Ctrl-C ends the
-   second close's wait, and the first close still holds the machine: an open
-   on it is an [Error] until the first close ends it. *)
+   second close's wait, and the first close still holds the machine: an open on
+   it is an [Error] until the first close ends it. *)
 let test_break_second_close () =
   if not Support.sees_waits then
     skip ~reason:"the system shows no thread's blocking call" ();
-  let far =
-    require_ok ~pp:Format.pp_print_string (open_host "second-close" "CPU")
-  in
+  let far = opened (open_host "second-close" "CPU") in
   let gpu name make =
     Rig.open_ ~machine:far { name; driver = (module P); make }
   in
@@ -1051,7 +773,7 @@ let test_break_second_close () =
       ()
   in
   let closed = Printf.sprintf "%s lost: closed" (Rig.name far) in
-  let first_close, (got, raised), during =
+  let first_close, got, during =
     Fun.protect ~finally:Support.unpark @@ fun () ->
     Support.await "the opener" Support.parked;
     let first_close = Thread.create (fun () -> Rig.close far) () in
@@ -1082,81 +804,18 @@ let test_break_second_close () =
   in
   Thread.join opener;
   Thread.join first_close;
-  equal ~msg:"the second close waited" bool true raised;
-  equal ~msg:"the second close" string "Sys.Break" got;
-  equal ~msg:"an open while the first close runs"
-    (result unit string) (Error closed) (Result.map ignore during);
+  equal ~msg:"the second close, and whether it waited" (pair string bool)
+    ("Sys.Break", true) got;
+  equal ~msg:"an open while the first close runs" (result unit string)
+    (Error closed) (Result.map ignore during);
   equal ~msg:"the host" (option string) (Some "closed") (Rig.lost far);
   ignore (Option.get !first_open)
 
-(* [unpark_on_signal f] is [f ()], run while a SIGINT, which
-   {!Support.interrupt_in_wait} raises once the calling thread blocks in a
-   condition wait, unparks the parked thread instead of raising, at the time
-   [unparked_at] records: the parked thread then goes on while the caller
-   waits. *)
-let unparked_at = ref 0.
-
-let unpark_on_signal f =
-  let unpark _ =
-    unparked_at := Unix.gettimeofday ();
-    Support.unpark ()
-  in
-  let before = Sys.signal Sys.sigint (Sys.Signal_handle unpark) in
-  Fun.protect
-    ~finally:(fun () -> Sys.set_signal Sys.sigint before)
-    (fun () -> Support.interrupt_in_wait f)
-
-(* An opener that parks outside OCaml, then raises [Exit]. *)
-let parks_then_raises ~word:_ =
-  Support.park ();
-  raise Exit
-
-(* An open that an exception ends wakes the opens of its name waiting for it,
-   and the next one opens. The first opener raises only once the second open
-   waits. The time runs from the unpark: a wait runs no signal handler, so
-   the handler unparks when the open's wait returns to OCaml, and the open
-   starts its next wait right after. Unwoken, that wait returns 200 ms after
-   its start; the end wakes it well within 150 ms. These guard the end of an
-   interrupted open by the next open. *)
-let test_ended_wakes_waiter () =
-  if not Support.sees_waits then
-    skip ~reason:"the system shows no thread's blocking call" ();
-  let name = "open:ended-wakes" in
-  let first = ref "" in
-  let opener =
-    Thread.create
-      (fun () ->
-        first :=
-          match
-            Rig.open_ { name; driver = (module P); make = parks_then_raises }
-          with
-          | _ -> "returned"
-          | exception Exit -> "raised Exit")
-      ()
-  in
-  Support.await "the first opener" Support.parked;
-  let second, waited =
-    unpark_on_signal (fun () ->
-        let make ~word = Ok (P.bind (P.make ()) ~word) in
-        Rig.open_ { name; driver = (module P); make })
-  in
-  let took = Unix.gettimeofday () -. !unparked_at in
-  Thread.join opener;
-  equal ~msg:"the second open waited" bool true waited;
-  equal ~msg:"the first open" string "raised Exit" !first;
-  less ~msg:"seconds from the end to the second open's return" float_exact
-    ~than:0.15 took;
-  Rig.close (require_ok ~pp:Format.pp_print_string second)
-
-(* A close of a machine's host waits for the opens in flight on the machine,
-   and ends one that an exception ended. The opener raises only once the
-   close waits. This guards the end of an interrupted open by a close. *)
+(* The opener raises only once the close waits. *)
 let test_close_ends_interrupted_open () =
   if not Support.sees_waits then
     skip ~reason:"the system shows no thread's blocking call" ();
-  let far =
-    require_ok ~pp:Format.pp_print_string (open_host "close-ended" "CPU")
-  in
+  let far = opened (open_host "close-ended" "CPU") in
   let first = ref "" in
   let opener =
     Thread.create
@@ -1177,16 +836,14 @@ let test_close_ends_interrupted_open () =
   Support.await "the opener" Support.parked;
   let (), waited = unpark_on_signal (fun () -> Rig.close far) in
   Thread.join opener;
-  equal ~msg:"the close waited" bool true waited;
-  equal ~msg:"the open" string "raised Exit" !first;
+  equal ~msg:"the open, and whether the close waited" (pair string bool)
+    ("raised Exit", true) (!first, waited);
   equal ~msg:"the host" (option string) (Some "closed") (Rig.lost far)
 
-(* An open on a machine that its opener's exception ended, with no open after
-   it, is no open in flight: the close of the machine's host returns. *)
+(* An open that its opener's exception ended, with no open after it, is no open
+   in flight. *)
 let test_close_after_raised_open () =
-  let far =
-    require_ok ~pp:Format.pp_print_string (open_host "close-raised" "CPU")
-  in
+  let far = opened (open_host "close-raised" "CPU") in
   raises Exit (fun () ->
       Rig.open_ ~machine:far
         {
@@ -1197,83 +854,25 @@ let test_close_after_raised_open () =
   Rig.close far;
   equal ~msg:"the host" (option string) (Some "closed") (Rig.lost far)
 
-(* A lost device's name opens again only once its stop returned: before, the
-   open is an [Error]. The stop runs in a close. *)
-let test_reopen_early () =
-  let d, p = P.open_ "open:early" in
-  P.gate p;
-  P.fail p;
-  let loser =
-    Thread.create
-      (fun () ->
-        (try ignore (submit (Rig.Submission.make d [||]))
-         with Rig.Lost _ -> ());
-        Rig.close d)
-      ()
+let test_close_inside_open () =
+  let far = opened (open_host "close-inside" "CPU") in
+  let inner = ref (Ok ()) in
+  let make ~word =
+    (inner :=
+       match Rig.close far with
+       | () -> Ok ()
+       | exception Invalid_argument why -> Error why);
+    Ok (P.bind (P.make ()) ~word)
   in
-  Support.await "a stop at the gate" (fun () -> P.sleepers p = 1);
-  is_error
-    (Rig.open_
-       {
-         name = "open:early";
-         driver = (module P);
-         make = (fun ~word -> Ok (P.bind (P.make ()) ~word));
-       });
-  P.open_gate p;
-  Thread.join loser;
-  let d', _ = P.open_ "open:early" in
-  not_equal device d d'
+  ignore
+    (opened
+       (Rig.open_ ~machine:far
+          { name = "open:close-inside"; driver = (module P); make }));
+  satisfies ~claim:"Invalid_argument" (result unit string) Result.is_error
+    !inner;
+  equal ~msg:"the host" (option string) None (Rig.lost far)
 
-(* An open of a lost device's name runs the device's stop, then opens the
-   name anew. *)
-let test_reopen () =
-  let d, p = P.open_ "open:reopen" in
-  let s = Rig.Submission.make d [||] in
-  P.fail p;
-  raises_match (function Rig.Lost _ -> true | _ -> false) (fun () -> submit s);
-  equal ~msg:"the calls before the open" (list string) [] (P.log p);
-  let d', _ = P.open_ "open:reopen" in
-  equal ~msg:"the calls after the open" (list string) [ "stop" ] (P.log p);
-  not_equal device d d';
-  equal (option string) None (Rig.lost d')
-
-(* An open of a lost device's name runs the device's owed stop, then opens the
-   name anew. [x1] and [x2], lost together, [x2] by spread, owe their stops;
-   an open whose stop raises raises it, and the next open of the name opens
-   it anew, the stop having returned. *)
-let test_reopen_owed () =
-  let x1, p1 = P.open_ "open:owed-1" in
-  let x2, p2 = P.open_ ~waits_on:[ `Host ] "open:owed-2" in
-  let raised = Atomic.make false in
-  let stop () =
-    if not (Atomic.exchange raised true) then failwith "the first stop"
-  in
-  P.before p1 "stop" stop;
-  P.before p2 "stop" stop;
-  let first = submit (Rig.Submission.make x1 [||]) in
-  ignore (submit (Rig.Submission.make x2 [||]) ~waits:[| first |]);
-  P.fail p1;
-  raises_match
-    (function Rig.Lost _ -> true | _ -> false)
-    (fun () -> submit (Rig.Submission.make x1 [||]));
-  equal ~msg:"the spread" (option string) (Some "open:owed-1 lost")
-    (Rig.lost x2);
-  equal ~msg:"stops before the opens" (pair int int) (0, 0)
-    (P.stops p1, P.stops p2);
-  let reopen name =
-    match Rig.open_ (P.opener name (P.make ())) with
-    | Ok d -> d
-    | Error e -> failf "%s: %s" name e
-  in
-  raises_match
-    (function Failure _ -> true | _ -> false)
-    (fun () -> reopen "open:owed-1");
-  let y = reopen "open:owed-1" in
-  let y' = reopen "open:owed-2" in
-  equal ~msg:"stops" (pair int int) (1, 1) (P.stops p1, P.stops p2);
-  List.iter
-    (fun (x, y) -> not_equal device x y)
-    [ (x1, y); (x1, y'); (x2, y); (x2, y') ]
+(* Properties *)
 
 (* Collects, then frees [d]'s cache, which first drains [d]: a closed device's
    memory collected after its stop returns so. *)
@@ -1281,11 +880,38 @@ let settle d =
   Gc.full_major ();
   Rig.free_cache d
 
-let lost = function Rig.Lost _ -> true | _ -> false
+(* The opens [taker] makes before it closes them and gives up, so that a rig
+   that never passes a slot on fails here and leaves later tests every slot but
+   these. *)
+let tries = 1024
 
-(* A closed device answers its properties and timeline as it did, also once
-   a later device took its slot: its points then name no device, and their
-   waits return. *)
+(* What a point names, for a failure. *)
+let naming p =
+  Printf.sprintf "the point %s, which names %s"
+    (Format.asprintf "%a" Rig.Point.pp p)
+    (match Rig.Point.device p with Some d -> Rig.name d | None -> "none")
+
+(* [taker p name] opens Polled devices named [name]-[i] until one takes the slot
+   of [p]'s device, which [p] then shows by naming no device, and is that
+   device: no call names a slot, and an open takes any free one. The others are
+   closed. After [tries] opens it closes them all and fails. *)
+let taker p name =
+  let rec go i opened =
+    if i > tries then begin
+      List.iter Rig.close opened;
+      failf "none of %d opens took the slot of %s" tries (naming p)
+    end;
+    let d, _ = P.open_ (Printf.sprintf "%s-%d" name i) in
+    if Rig.Point.device p = None then begin
+      List.iter Rig.close opened;
+      d
+    end
+    else go (i + 1) (d :: opened)
+  in
+  go 1 []
+
+(* Its points name it until a later device took its slot, then name no device,
+   and their waits return. *)
 let test_ended () =
   let key : string list Type.Id.t = Type.Id.make () in
   let cap = [ "add" ] in
@@ -1293,467 +919,1054 @@ let test_ended () =
     Ok (P.bind (P.make ~capability:(Rig_edge.Capability (key, cap)) ()) ~word)
   in
   let d =
-    Result.get_ok
-      (Rig.open_ { name = "open:ended"; driver = (module P); make })
+    opened (Rig.open_ { name = "open:ended"; driver = (module P); make })
   in
   let k = Rig.Local.new_key (fun _ -> ()) in
   Rig.Local.get k d;
-  ignore (Rig.Buffer.create d 64 : Rig.Buffer.t);
+  ignore (B.create d 64 : B.t);
   let base = Rig.submitted d in
-  let p = submit (Rig.Submission.make d [||]) in
+  let p = submit (empty d) in
   Rig.Point.wait p;
   let facts d =
-    [
-      Rig.computes d;
-      Rig.runs_on_host d;
-      Rig.reaches Rig.host d;
-      Rig.reaches d Rig.host;
-    ]
+    ( Rig.arch d,
+      [
+        Rig.computes d;
+        Rig.runs_on_host d;
+        Rig.reaches Rig.host d;
+        Rig.reaches d Rig.host;
+      ] )
   in
-  let before = facts d and arch = Rig.arch d in
+  let before = facts d in
   Rig.set_budget d 4096;
   Rig.close d;
   settle d;
   equal string "open:ended" (Rig.name d);
-  equal string arch (Rig.arch d);
-  equal (list bool) before (facts d);
+  equal ~msg:"arch and facts" (pair string (list bool)) before (facts d);
   equal device Rig.host (Rig.host_of d);
-  equal bool true
-    (match Rig.capability d key with Some c -> c == cap | None -> false);
-  equal int 4096 (Rig.budget d);
-  equal int 0 (Rig.allocated d);
+  satisfies ~claim:"the record declared"
+    (option (list string))
+    (function Some c -> c == cap | None -> false)
+    (Rig.capability d key);
+  equal ~msg:"budget and allocated" (pair int int) (4096, 0)
+    (Rig.budget d, Rig.allocated d);
   equal (option string) (Some "closed") (Rig.lost d);
   let answers () =
-    equal int (base + 1) (Rig.submitted d);
-    equal int (base + 1) (Rig.signaled d);
-    equal bool true (Rig.Point.reached p);
+    equal ~msg:"submitted, signaled, reached" (triple int int bool)
+      (base + 1, base + 1, true)
+      (Rig.submitted d, Rig.signaled d, Rig.Point.reached p);
     Rig.Point.wait p;
-    raises_match lost (fun () -> Rig.Buffer.create d 1);
-    raises_match lost (fun () -> Rig.Local.get k d);
-    raises_match lost (fun () -> submit (Rig.Submission.make d [||]))
+    raises_match (lost d) (fun () -> B.create d 1);
+    raises_match (lost d) (fun () -> Rig.Local.get k d);
+    raises_match (lost d) (fun () -> submit (empty d))
   in
   answers ();
   equal (option device) (Some d) (Rig.Point.device p);
-  equal string
-    (Printf.sprintf "open:ended:%d" (base + 1))
-    (Format.asprintf "%a" Rig.Point.pp p);
-  let later, _ = P.open_ "open:ended-later" in
-  equal ~msg:"the later device's first value" int (base + 1)
+  let later = taker p "open:ended-later" in
+  (* "its values go on past every value the slot's earlier devices were
+     given" *)
+  at_least ~msg:"the later device's first value, less 1" int ~than:(base + 1)
     (Rig.submitted later);
   answers ();
-  equal (option device) None (Rig.Point.device p);
-  equal string
-    (Printf.sprintf "ended:%d" (base + 1))
-    (Format.asprintf "%a" Rig.Point.pp p)
+  Rig.close later
 
-(* A point names its device after the program let go of the device, until a
-   later device takes its slot. A lost device's slot passes on too: a point it
-   reached waits as reached, and one its loss dropped raises the loss with
-   that device and its reason, whatever device the slot holds. *)
-let test_points_name_device () =
-  let point name =
-    let d, p = P.open_ name in
-    let reached = submit (Rig.Submission.make d [||]) in
-    Rig.Point.wait reached;
-    P.fault p (name ^ " faulted");
-    let dropped = submit (Rig.Submission.make d [||]) in
-    (try Rig.Point.wait dropped with Rig.Lost _ -> ());
-    Rig.close d;
-    (d, reached, dropped)
-  in
-  (* The process's first failure keeps its slot: one comes first. *)
-  ignore (point "open:named-first");
-  let d, p, dropped = point "open:named-a" in
-  Gc.full_major ();
-  equal ~msg:"before its slot passes on" (option device) (Some d)
-    (Rig.Point.device p);
-  let e, q, _ = point "open:named-b" in
-  not_equal device d e;
-  equal ~msg:"once its slot passed on" (option device) None
-    (Rig.Point.device p);
-  equal (option device) (Some e) (Rig.Point.device q);
-  equal (option string) (Some "open:named-a faulted") (Rig.lost d);
-  equal string
-    (Printf.sprintf "ended:%d" (Rig.Point.value p))
-    (Format.asprintf "%a" Rig.Point.pp p);
-  equal bool true (Rig.Point.reached p);
-  Rig.Point.wait p;
-  raises_match
-    (function
-      | Rig.Lost (d', why) -> Rig.equal d d' && why = "open:named-a faulted"
-      | _ -> false)
-    (fun () -> Rig.Point.wait dropped)
+(* [name] *)
 
-(* A device that waits in its queue for the values of other devices, closed or
-   not, maps rig's words once for all of them, and gives that mapping back once
-   it is closed. *)
-let test_close_unmaps_word () =
-  let consumer, cp = P.open_ ~waits_on:[ `Host ] "open:pair-consumer" in
-  for i = 1 to 3 do
-    let producer, _ = P.open_ (Printf.sprintf "open:pair-producer-%d" i) in
-    let a = submit (Rig.Submission.make producer [||]) in
-    Rig.Point.wait (submit (Rig.Submission.make consumer [||]) ~waits:[| a |]);
-    equal ~msg:"the consumer's wait in its queue" int 1
-      (List.length (P.last_waits cp));
-    Rig.close producer
-  done;
-  Rig.close consumer;
-  settle consumer;
-  let count call = List.length (List.filter (String.equal call) (P.log cp)) in
-  equal ~msg:"its mappings" int 1 (count "map_host");
-  equal ~msg:"its mappings given back" int 1 (count "unmap")
+(* rig.mli: host "is this process's device, named "CPU"". *)
+let test_host_name () = equal string "CPU" (Rig.name Rig.host)
 
-(* Two submits on two domains that decide at once how a consumer waits for one
-   producer keep one mapping of rig's words: the first decision waits in its
-   map, at Polled's [before] seam, until the second has decided and its submit
-   returned; it then takes the second's way and gives its own mapping back.
-   Both waits run. *)
-let test_pair_race () =
-  let producer, _ = P.open_ "open:race-producer" in
-  let consumer, cp = P.open_ ~waits_on:[ `Host ] "open:race-consumer" in
-  let a = submit (Rig.Submission.make producer [||]) in
-  let mapping = Atomic.make false and second = Atomic.make false in
-  P.before cp "map_host" (fun () ->
-      Atomic.set mapping true;
-      Support.await "the second submit" (fun () -> Atomic.get second));
-  let wait () = submit (Rig.Submission.make consumer [||]) ~waits:[| a |] in
-  let first = Domain.spawn wait in
-  Support.await "the first decision's map" (fun () -> Atomic.get mapping);
-  let q = wait () in
-  Atomic.set second true;
-  let p = Domain.join first in
-  Rig.Point.wait p;
-  Rig.Point.wait q;
-  let count call = List.length (List.filter (String.equal call) (P.log cp)) in
-  equal ~msg:"the maps of the words" int 2 (count "map_host");
-  equal ~msg:"the maps given back" int 1 (count "unmap")
-
-(* Opens and closes in a loop keep a fixed record per device, whatever work
-   the device did: rig's records, name and reason, and the driver's state
-   with its word ([kept_c], [kept_ml]). The driver's stop gives back the
-   rest of its state, and rig its mappings of other devices' words and
-   memory once the device is Stopped. Polled's handle also keeps a log of
-   the driver's calls, which grows with the work and which the OCaml laws
-   leave out. Each cycle opens a producer and a consumer whose queue
-   waits for the producer's value; the consumer allocates, then both close.
-   After a warm window of each kind, each window of [opens] cycles grows
-   each heap by at most that a device.
-
-   Windows differ by what both devices do with [kept] host buffers that the
-   program keeps: nothing in a [Bare] window; in a [Mapping] one each
-   borrows them, which maps them; in a [Reading] one each also reads them.
-   A mapping kept per device and buffer would add at least a mapping
-   record, its cell in the buffer's list and its region to the OCaml heap,
-   13 words, 416 KiB a window, and slots of stamps kept per device would add
-   a 112-byte chunk to the C heap every four devices and buffer, 112 KiB a
-   window. So a window of each kind grows each heap no more than a bare
-   one, up to [step]: macOS's count of the C heap can step by 16 KiB or more
-   over one window, and the laws check the least growth of [windows] of each
-   kind. *)
-let opens = 1024
-let windows = 3
-let kept = 2
-let step = 16 * 1024
-
-(* What a closed Polled device keeps, per device, baselines measured on the
-   M1 Max: about 1.1 KiB of C heap and 1.5 KiB of OCaml heap, Polled's log
-   left out. *)
-let kept_c = 1536
-let kept_ml = 2048
-
-type cycles = Bare | Mapping | Reading
-
-let words v = Obj.reachable_words (Obj.repr v) * (Sys.word_size / 8)
-
-(* The bytes of Polled's log of [p]'s calls. *)
-let logged p = words (P.log p, P.frees p, P.allocs p, P.host_maps p)
-
-let test_open_close () =
-  let hs =
-    List.init kept (fun _ -> Rig.Buffer.create Rig.host Rig.Buffer.paged_from)
-  in
-  let reads = Support.touching (Array.make kept Rig.Submission.read) in
-  let cycle kind i =
-    let p, pp = P.open_ (Printf.sprintf "open:producer%d" (i mod 2)) in
-    let d, dp =
-      P.open_ ~waits_on:[ `Host ] (Printf.sprintf "open:cycle%d" (i mod 2))
-    in
-    ignore (Rig.Buffer.create d 64 : Rig.Buffer.t);
-    let borrows d =
-      Array.of_list
-        (List.map (fun h -> require_some (Rig.Buffer.borrow d h)) hs)
-    in
-    let work d =
-      match kind with
-      | Bare -> (Rig.Submission.make d [||], [||], [||])
-      | Mapping ->
-          ignore (borrows d : Rig.Buffer.t array);
-          (Rig.Submission.make d [||], [||], [||])
-      | Reading ->
-          (Rig.Submission.make d [| reads |], borrows d, Support.zeros 1)
-    in
-    let s, buffers, args = work p in
-    let a = submit s ~buffers ~args in
-    let s, buffers, args = work d in
-    Rig.Point.wait (submit s ~buffers ~args ~waits:[| a |]);
-    Rig.close d;
-    Rig.close p;
-    [ (p, pp); (d, dp) ]
-  in
-  let heap () =
-    match Support.heap_bytes () with
-    | Some n -> n
-    | None -> skip ~reason:"the system counts no C heap" ()
-  in
-  let live () = (Gc.stat ()).live_words * (Sys.word_size / 8) in
-  let settle closed =
-    Gc.full_major ();
-    List.iter (fun (d, _) -> Rig.free_cache d) closed;
-    List.iter (fun h -> Rig.Buffer.wait h Rig.Read_write) hs
-  in
-  let window kind =
-    let c = heap () and ml = live () in
-    let closed = List.concat (List.init opens (fun i -> cycle kind (i + 1))) in
-    settle closed;
-    let logs = List.fold_left (fun n (_, p) -> n + logged p) 0 closed in
-    (heap () - c, live () - ml - logs)
-  in
-  let kinds = [ ("bare", Bare); ("mappings", Mapping); ("reads", Reading) ] in
-  List.iter (fun (_, kind) -> ignore (window kind)) kinds;
-  let grown =
-    List.init windows (fun _ -> List.map (fun (_, kind) -> window kind) kinds)
-  in
-  let least heap i =
-    List.fold_left (fun n g -> Int.min n (heap (List.nth g i))) max_int grown
-  in
-  let shown heap i =
-    String.concat ", "
-      (List.map (fun g -> string_of_int (heap (List.nth g i))) grown)
-  in
-  let law i name (what, heap, record) =
-    at_most int
-      ~msg:
-        (Printf.sprintf "the %s heap's least growth over a window of %s (%s)"
-           what name (shown heap i))
-      ~than:(2 * opens * record) (least heap i);
-    at_most int
-      ~msg:
-        (Printf.sprintf
-           "the %s heap's least growth over a window of %s (%s), past the \
-            least of bare ones (%s)"
-           what name (shown heap i) (shown heap 0))
-      ~than:step
-      (least heap i - least heap 0)
-  in
-  List.iteri
-    (fun i (name, _) ->
-      List.iter (law i name)
-        [ ("C", fst, kept_c); ("OCaml", snd, kept_ml) ])
-    kinds
-
-(* A borrower that maps [peak] allocations at once keeps, once they are
-   freed and it closed, no more than one that mapped a single allocation:
-   no bucket of its record of mappings outlives the mappings. Each allocation
-   is 64 bytes of another Polled device, which the borrower maps as a
-   peer's. [order] frees the allocations before the close or after it. The
-   law takes the least growth of [windows] runs, as the law above does. *)
-let peak = 8192
-
-type order = Freed_first | Closed_first
-
-let test_mapped_peak order () =
-  let live () = (Gc.stat ()).live_words * (Sys.word_size / 8) in
-  let run n =
-    let ml = live () in
-    let o, po = P.open_ "open:peak-owner" and d, pd = P.open_ "open:peak" in
-    let[@inline never] borrowed () =
-      let bs = List.init n (fun _ -> Rig.Buffer.create o 64) in
-      List.iter (fun b -> ignore (require_some (Rig.Buffer.borrow d b))) bs;
-      ref bs
-    in
-    let bs = borrowed () in
-    let free () =
-      bs := [];
-      Gc.full_major ();
-      Rig.free_cache Rig.host;
-      Rig.free_cache o
-    in
-    (match order with
-    | Freed_first ->
-        free ();
-        Rig.close d
-    | Closed_first ->
-        Rig.close d;
-        Rig.free_cache d;
-        free ());
-    Rig.close o;
-    Gc.full_major ();
-    List.iter Rig.free_cache [ o; d ];
-    live () - ml - logged po - logged pd
-  in
-  let least n =
-    List.fold_left Int.min max_int (List.init windows (fun _ -> run n))
-  in
-  ignore (run peak);
-  let one = least 1 and many = least peak in
-  at_most int
-    ~msg:
-      (Printf.sprintf "a borrower of %d's growth past one of 1 (%d)" peak one)
-    ~than:step (many - one)
-
-(* An open whose opener blocks holds back only opens of its own name. *)
-let test_blocked_opener () =
-  let lock = Mutex.create () and cond = Condition.create () in
-  let inside = ref false and go = ref false and calls = ref 0 in
-  let make ~word =
-    Mutex.protect lock (fun () ->
-        incr calls;
-        inside := true;
-        while not !go do
-          Condition.wait cond lock
-        done);
-    Ok (P.bind (P.make ()) ~word)
-  in
-  let opener : P.t Rig_edge.opener =
-    { name = "open:slow"; driver = (module P); make }
-  in
-  let first = ref None and second = ref None in
-  let slow =
-    Thread.create (fun () -> first := Some (require_ok (Rig.open_ opener))) ()
-  in
-  Support.await "a running opener" (fun () ->
-      Mutex.protect lock (fun () -> !inside));
-  let started = Atomic.make false in
-  let same =
-    Thread.create
-      (fun () ->
-        Atomic.set started true;
-        let another = { opener with make = (fun ~word -> make ~word) } in
-        second := Some (require_ok (Rig.open_ another)))
-      ()
-  in
-  Support.await "a concurrent open of the same name" (fun () ->
-      Atomic.get started);
-  let d, _ = P.open_ "open:fast" in
-  equal string "open:fast" (Rig.name d);
-  Mutex.protect lock (fun () ->
-      go := true;
-      Condition.broadcast cond);
-  Thread.join slow;
-  Thread.join same;
-  let d = Option.get !first in
-  equal device d (Option.get !second);
-  equal int 1 !calls;
-  Rig.close d;
-  let reopened = require_ok (Rig.open_ opener) in
-  not_equal device d reopened;
-  equal int 2 !calls;
-  Rig.close reopened
-
-(* An opener whose make opens its own name: the inner open raises
-   Invalid_argument, which ends the outer one, and the name then opens. *)
-let test_opener_opens_itself () =
-  let rec opener : P.t Rig_edge.opener =
-    { name = "open:itself"; driver = (module P); make }
-  and make ~word =
-    ignore (Rig.open_ opener);
-    Ok (P.bind (P.make ()) ~word)
-  in
-  raises_match ~msg:"the open" Exn.invalid_arg (fun () -> Rig.open_ opener);
-  let d, _ = P.open_ "open:itself" in
-  equal string "open:itself" (Rig.name d);
-  Rig.close d
-
-let tests =
-  group "opening"
+let test_name () =
+  equal
+    (list (pair string string))
     [
-      test "one name opens one device, until it is lost" test_same_name;
-      test "a name open as another driver's device raises" test_other_driver;
-      test "a device states its facts" test_facts;
-      test "rig's copies go to the copy engine the facts name" test_copy_engine;
-      test "a copy engine that names no copying queue refuses the open"
-        test_copy_engine_refused;
-      test "a region against the host_addresses fact faults the device"
-        test_overstated;
-      test "a hang bound below 1 ms refuses the open" test_hang_refused;
-      test "counters without measures, or without values, refuse the open"
-        test_counters_refused;
-      test "a buffer starts on its device's alignment" test_alignment;
-      test "a buffer's memory runs on to whole words, no other memory's"
-        test_tail;
-      test "an alignment not a power of two refuses the open"
-        test_alignment_refused;
-      test "a region off its device's alignment faults the device"
-        test_misaligned;
-      test "a device states its driver's last-level cache" test_cache_bytes;
-      test "a last-level cache below 1 byte refuses the open"
-        test_cache_refused;
-      test "an edge that names no C state or driver refuses the open"
-        test_edge_refused;
-      test "the host states its facts" test_host;
-      test "a driver's device reaches by its facts and its peers" test_reach;
-      test "where the host reaches a device, its buffers have host addresses"
-        test_reach_addresses;
-      test "an io device computes nothing and reaches nothing" test_io;
-      test "an io open answers its name's io device and refuses a driver's"
-        test_io_name;
-      test "a region an io library gave is a buffer of its device" test_of_io;
-      test "a device of another machine is named after it, its host the io's"
-        test_machine;
-      test "a machine has one host" test_one_host;
-      test "a machine has one host for its life" test_host_for_life;
-      test "closing a machine's host closes its devices" test_close_machine;
-      test "a machine whose host ended opens no more devices"
-        test_open_on_ended_host;
-      test "the loss of a machine's host loses none of its devices"
-        test_host_loss_spares_devices;
-      test "closing a lost host closes its machine's devices"
-        test_close_lost_host;
-      test "a point prints as its device's name and its value" test_point;
-      test "an opener's error leaves the name free" test_failed_open;
-      test "an opener's exception is raised, the name left free"
-        test_opener_raises;
-      test "an exception at any allocation of an open stops what it was handed"
-        test_driver_raise_anywhere;
-      test "an exception at any allocation of an io open leaves its name"
-        test_io_raise_anywhere;
-      test "a lost device's name opens again only once its stop returned"
-        test_reopen_early;
-      test "a fault reading a device's facts stops its handle"
-        test_fault_at_open;
-      test "a lost device's name opens anew once its stop answered" test_reopen;
-      test "an open of a lost device's name runs its owed stop"
-        test_reopen_owed;
-      test "a blocked opener holds back no other name" test_blocked_opener;
-      test "an opener that opens its own name raises" test_opener_opens_itself;
-      test "an open waiting for its name's open takes Sys.Break"
-        test_break_waiting_open;
-      test "a signal handler in an open's wait for its name calls rig"
-        test_handled_in_open_wait;
-      test "a Ctrl-C in a close's wait for an open leaves the machine open"
-        test_break_waiting_close;
-      test "a Ctrl-C in a second close leaves the first close's mark"
-        test_break_second_close;
-      test "an open an exception ended wakes the opens waiting for its name"
-        test_ended_wakes_waiter;
-      test "a close ends an open in flight that an exception ended"
-        test_close_ends_interrupted_open;
-      test "a close ends an open on its machine that an exception ended"
-        test_close_after_raised_open;
-      test "a closed device answers as it did before its close" test_ended;
-      test "a point names its device after the program let go of it"
-        test_points_name_device;
-      test "a device maps other devices' words once and gives them back"
-        test_close_unmaps_word;
-      test
-        "two domains that decide at once how a device waits for another keep \
-         one mapping of its word"
-        test_pair_race;
-      test "opens and closes keep a fixed record per device" test_open_close;
-      test "a borrower closed after its peak's memory went keeps no more"
-        (test_mapped_peak Freed_first);
-      test "a borrower closed before its peak's memory went keeps no more"
-        (test_mapped_peak Closed_first);
+      ("a software device", "open:name-software");
+      ("a driver's device", "open:name-polled");
+      ("an io device", "open:name-io");
+      ("another machine's device", "open:name-far@name");
+      ("another machine's host", "CPU@name");
+    ]
+    (answers Rig.name
+       [
+         ("a software device", software "open:name-software");
+         ("a driver's device", fst (P.open_ "open:name-polled"));
+         ("an io device", io "open:name-io");
+         ("another machine's device", remote "name" "open:name-far");
+         ("another machine's host", Support.machine "name");
+       ])
+
+(* [equal] *)
+
+let test_reopened () =
+  let d, _ = P.open_ "open:reopened" in
+  equal device d d;
+  Rig.close d;
+  let d' = fst (P.open_ "open:reopened") in
+  not_equal device d d';
+  equal (option string) None (Rig.lost d')
+
+(* [pp] *)
+
+let test_pp () =
+  let devices =
+    [
+      ("the host", Rig.host);
+      ("a software device", software "open:pp-software");
+      ("a driver's device", fst (P.open_ "open:pp-polled"));
+      ("an io device", io "open:pp-io");
+      ("another machine's device", remote "pp" "open:pp-far");
+    ]
+  in
+  equal
+    (list (pair string string))
+    (answers Rig.name devices)
+    (answers (Format.asprintf "%a" Rig.pp) devices)
+
+(* [arch] *)
+
+(* Polled names its processor ["polled"], or the [arch] it is made with. *)
+let test_driver_arch () =
+  equal
+    (list (pair string string))
+    [ ("Polled's own", "polled"); ("one made gfx1201", "gfx1201") ]
+    (answers Rig.arch
+       [
+         ("Polled's own", fst (P.open_ "open:arch"));
+         ("one made gfx1201", fst (P.open_ ~arch:"gfx1201" "open:arch-gfx"));
+       ])
+
+(* [instruction_set] *)
+
+(* rig.mli: "["x86_64"] for a level of x86-64, ["arm64"] for an arm64 arch, and
+   the arch itself for any other". *)
+let instruction_sets =
+  cases ~id:fst "a driver's device's instruction set is its arch's"
+    [
+      ("x86-64", "x86_64");
+      ("x86-64-v3", "x86_64");
+      ("x86-64-v4", "x86_64");
+      ("x86-64-v5", "x86-64-v5");
+      ("arm64", "arm64");
+      ("arm64+bf16+fp16", "arm64");
+      ("gfx1201", "gfx1201");
+      ("gfx90a:xnack+", "gfx90a:xnack+");
+      ("", "");
+    ]
+  @@ fun (arch, isa) ->
+  let d, _ = P.open_ ~arch ("open:isa " ^ arch) in
+  equal string isa (Rig.instruction_set d)
+
+(* rig.mli's arch names the instruction sets rig knows, and [""] for another. *)
+let test_host_isa () =
+  mem string
+    (Rig.instruction_set Rig.host)
+    [
+      "arm64";
+      "x86_64";
+      "ppc64le";
+      "ppc64";
+      "s390x";
+      "riscv64";
+      "loongarch64";
+      "";
     ]
 
-let () = exit (run "rig.open" [ tests ])
+(* [bus] *)
+
+let test_bus () =
+  let bus = "0000:03:00.0" in
+  equal
+    (list (pair string (option string)))
+    [
+      ("a driver's stated", Some bus);
+      ("a driver's, none stated", None);
+      ("the host", None);
+      ("a software device", None);
+      ("an io device", None);
+    ]
+    (answers Rig.bus
+       [
+         ("a driver's stated", fst (P.open_ ~bus "open:bus"));
+         ("a driver's, none stated", fst (P.open_ "open:no-bus"));
+         ("the host", Rig.host);
+         ("a software device", software "open:bus-software");
+         ("an io device", io "open:bus-io");
+       ])
+
+(* rig.mli: [None] for "a device of another machine", whatever its driver
+   states. Today rig answers the driver's fact. *)
+let test_remote_bus () =
+  let d = remote ~bus:"0000:03:00.0" "bus" "open:bus-far" in
+  equal (option string) None (Rig.bus d)
+
+(* [computes] *)
+
+let test_computes () =
+  equal
+    (list (pair string bool))
+    [
+      ("the host", true);
+      ("a software device", true);
+      ("a driver's device", true);
+      ("another machine's device", true);
+      ("an io device", false);
+    ]
+    (answers Rig.computes
+       [
+         ("the host", Rig.host);
+         ("a software device", software "open:computes-software");
+         ("a driver's device", fst (P.open_ "open:computes-polled"));
+         ("another machine's device", remote "computes" "open:computes-far");
+         ("an io device", io "open:computes-io");
+       ])
+
+(* [runs_on_host] *)
+
+let test_runs_on_host () =
+  equal
+    (list (pair string bool))
+    [
+      ("the host", true);
+      ("a software device", true);
+      ("a driver's device", false);
+      ("another machine's device", false);
+      ("an io device", false);
+    ]
+    (answers Rig.runs_on_host
+       [
+         ("the host", Rig.host);
+         ("a software device", software "open:on-host-software");
+         ("a driver's device", fst (P.open_ "open:on-host-polled"));
+         ("another machine's device", remote "on-host" "open:on-host-far");
+         ("an io device", io "open:on-host-io");
+       ])
+
+(* [offers] *)
+
+let kinds = B.[ ("Device", Device); ("Pinned", Pinned); ("Mapped", Mapped) ]
+
+(* What [offers] answers of each kind on [d], in [kinds]' order. *)
+let offered d = List.map (fun (_, k) -> Rig.offers d k) kinds
+
+(* The devices of the offers table: the host, a software device, an io device,
+   and Polled devices whose memory the host addresses or not, with Mapped memory
+   or without. *)
+let offering prefix =
+  let polled ?transport ~host_visible ~mapped name =
+    let d, p = P.open_ ?transport ~host_visible ~mapped (prefix ^ name) in
+    (d, Some p)
+  in
+  [
+    ("the host", (Rig.host, None));
+    ("a software device", (software (prefix ^ "software"), None));
+    ("an io device", (io (prefix ^ "io"), None));
+    ("addressed", polled ~host_visible:true ~mapped:true "addressed");
+    ("addressed, no Mapped", polled ~host_visible:true ~mapped:false "own");
+    ("hidden", polled ~host_visible:false ~mapped:true "hidden");
+    ("hidden, no Mapped", polled ~host_visible:false ~mapped:false "none");
+    ( "behind a transport",
+      polled ~transport:true ~host_visible:true ~mapped:true "transport" );
+  ]
+
+(* rig.mli, offers: Device memory on every device but an io device; Pinned where
+   the host does not address the device's memory ([host_addresses], which Polled
+   states with [host_visible] and without [transport]); Mapped where the host
+   addresses the memory, or the driver makes it. *)
+let offers_table =
+  [
+    ("the host", [ true; false; true ]);
+    ("a software device", [ true; false; true ]);
+    ("an io device", [ false; false; false ]);
+    ("addressed", [ true; false; true ]);
+    ("addressed, no Mapped", [ true; false; true ]);
+    ("hidden", [ true; true; true ]);
+    ("hidden, no Mapped", [ true; true; false ]);
+    ("behind a transport", [ true; true; true ]);
+  ]
+
+let test_offers () =
+  let devices = offering "open:offers-" in
+  equal
+    (list (pair string (list bool)))
+    offers_table
+    (answers (fun (d, _) -> offered d) devices)
+
+(* Where [offers] is [false], {!Buffer.create} of a word raises. *)
+let test_offers_create () =
+  let made d memory =
+    match B.create ~memory d 8 with
+    | b ->
+        ignore (Sys.opaque_identity b);
+        true
+    | exception Invalid_argument _ -> false
+  in
+  let devices = offering "open:offers-create-" in
+  equal
+    (list (pair string (list bool)))
+    (answers (fun (d, _) -> offered d) devices)
+    (answers (fun (d, _) -> List.map (fun (_, k) -> made d k) kinds) devices)
+
+(* Unlike an io device's refusal, which holds for [n > 0], a kind the device
+   does not offer raises for every [n], 0 included (rig.mli, Buffer.create):
+   Mapped memory where the driver makes none and the host does not address the
+   device's memory, Pinned memory where the host addresses it. *)
+let no_kind_empty =
+  cases ~id:fst "create of no bytes of a kind not offered raises"
+    [ ("Mapped", `Mapped); ("Pinned", `Pinned) ]
+  @@ fun (kind, which) ->
+  let name = "open:offers-empty-" ^ kind in
+  let d, memory, sub =
+    match which with
+    | `Mapped ->
+        ( fst (P.open_ ~host_visible:false ~mapped:false name),
+          B.Mapped,
+          "no Mapped memory" )
+    | `Pinned -> (fst (P.open_ name), B.Pinned, "no Pinned memory")
+  in
+  raises_match (Exn.invalid_arg ~sub) (fun () -> B.create ~memory d 0)
+
+let test_offers_lost () =
+  let devices = offering "open:offers-lost-" in
+  let before = answers (fun (d, _) -> offered d) devices in
+  List.iter
+    (fun (_, (d, p)) ->
+      match p with
+      | Some p -> (
+          P.fault p "gone";
+          try ignore (B.create d 8) with Rig.Lost _ -> ())
+      | None -> if d != Rig.host then Rig.close d)
+    devices;
+  equal ~msg:"every device but the host lost"
+    (list (pair string bool))
+    (List.map (fun (what, _) -> (what, what <> "the host")) devices)
+    (answers (fun (d, _) -> Rig.lost d <> None) devices);
+  equal
+    (list (pair string (list bool)))
+    before
+    (answers (fun (d, _) -> offered d) devices)
+
+(* [alignment] *)
+
+(* rig.mli, alignment: "[16] for host and [64] for a software device", a
+   driver's as it states. An io device makes no buffer: [1]. *)
+let test_alignment () =
+  equal
+    (list (pair string int))
+    [
+      ("the host", 16);
+      ("a software device", 64);
+      ("a driver's device", 256);
+      ("a driver's device the host does not address", 256);
+      ("an io device", 1);
+      ("another machine's device", 512);
+    ]
+    (answers Rig.alignment
+       [
+         ("the host", Rig.host);
+         ("a software device", software "open:alignment-software");
+         ("a driver's device", fst (P.open_ ~alignment:256 "open:alignment"));
+         ( "a driver's device the host does not address",
+           fst
+             (P.open_ ~alignment:256 ~host_visible:false "open:alignment-hidden")
+         );
+         ("an io device", io "open:alignment-io");
+         ( "another machine's device",
+           remote ~alignment:512 "alignment" "open:alignment-far" );
+       ])
+
+(* Every non-empty buffer starts on its device's alignment, of each kind it has
+   and on either side of the sizes the host aligns further. *)
+let test_aligned () =
+  let d = software "open:aligned-software" in
+  let p, _ = P.open_ ~alignment:256 "open:aligned-polled" in
+  let hidden, _ =
+    P.open_ ~alignment:256 ~host_visible:false "open:aligned-hidden"
+  in
+  let sizes = [ 1; 15; 16; 17; 127; 128; 129; 4096; 65535; 1 lsl 18 ] in
+  let off =
+    List.concat_map
+      (fun (d, kinds) ->
+        List.concat_map
+          (fun memory ->
+            List.filter_map
+              (fun n ->
+                let b = B.create ~memory d n in
+                if B.aligned b ~at:0 (Rig.alignment d) then None
+                else Some (Printf.sprintf "%s, %d bytes" (Rig.name d) n))
+              sizes)
+          kinds)
+      B.
+        [
+          (Rig.host, [ Device; Mapped ]);
+          (d, [ Device; Mapped ]);
+          (p, [ Device; Mapped ]);
+          (hidden, [ Device; Pinned; Mapped ]);
+        ]
+  in
+  equal ~msg:"buffers off their device's alignment" (list string) [] off
+
+let alignment_refused =
+  cases ~id:string_of_int "an alignment that is not a power of two raises"
+    [ 0; -16; 24; 48 ]
+  @@ fun n ->
+  refuses ~sub:"power of two" (P.make ~alignment:n ())
+    (Printf.sprintf "open:alignment %d" n)
+
+(* A region off the device's alignment goes back to the driver and faults the
+   device: Polled's start on a page, never on 2^60. *)
+let test_misaligned () =
+  let d, p = P.open_ ~alignment:(1 lsl 60) "open:misaligned" in
+  raises_match ~msg:"the allocation" (lost d) (fun () -> B.create d 64);
+  satisfies ~claim:"lost" (option string) Option.is_some (Rig.lost d);
+  equal ~msg:"the region freed" (list string) [ "alloc"; "free" ]
+    (List.filter (fun c -> c = "alloc" || c = "free") (P.log p))
+
+(* [granules] *)
+
+(* rig.mli, granules: "[[(0, 4)]] ... host, ..., an io device and a software
+   device", a driver's as it states them, here NVIDIA RM's. *)
+let test_granules () =
+  let kib = 1024 and mib = 1 lsl 20 in
+  let rm = [ (0, 64 * kib); (2 * mib, 2 * mib) ] in
+  equal
+    (list (pair string (list (pair int int))))
+    [
+      ("the host", [ (0, 4) ]);
+      ("a software device", [ (0, 4) ]);
+      ("an io device", [ (0, 4) ]);
+      ("a driver's device", rm);
+      ("another machine's device", rm);
+    ]
+    (answers Rig.granules
+       [
+         ("the host", Rig.host);
+         ("a software device", software "open:granules-software");
+         ("an io device", io "open:granules-io");
+         ("a driver's device", fst (P.open_ ~granules:rm "open:granules"));
+         ( "another machine's device",
+           remote ~granules:rm "granules" "open:granules-far" );
+       ])
+
+(* Rig_edge.facts: units from 0, each a power of two of at least a word and none
+   below the one before. *)
+let units g =
+  String.concat "; " (List.map (fun (a, b) -> Printf.sprintf "(%d, %d)" a b) g)
+
+let granules_refused =
+  cases ~id:units "units that do not start from 0 and increase raise"
+    [
+      [];
+      [ (4, 4) ];
+      [ (0, 2) ];
+      [ (0, 12) ];
+      [ (0, 4); (0, 8) ];
+      [ (0, 64); (1024, 16) ];
+    ]
+  @@ fun granules ->
+  refuses ~sub:"units" (P.make ~granules ()) ("open:granules " ^ units granules)
+
+(* [cache_bytes] *)
+
+let test_cache_bytes () =
+  let mib48 = 48 lsl 20 in
+  equal
+    (list (pair string (option int)))
+    [
+      ("a software device, the host's", Rig.cache_bytes Rig.host);
+      ("a driver's device", Some mib48);
+      ("a driver's device, none stated", None);
+      ("an io device", None);
+      ("another machine's device", Some mib48);
+    ]
+    (answers Rig.cache_bytes
+       [
+         ("a software device, the host's", software "open:cache-software");
+         ("a driver's device", fst (P.open_ ~cache_bytes:mib48 "open:cache"));
+         ("a driver's device, none stated", fst (P.open_ "open:cache-none"));
+         ("an io device", io "open:cache-io");
+         ( "another machine's device",
+           remote ~cache_bytes:mib48 "cache" "open:cache-far" );
+       ])
+
+(* macOS states the caches, and Linux in sysfs where the firmware describes
+   them: a cache's size file that holds a positive size. A sandbox may show no
+   sysfs, and other systems state none. *)
+let test_host_cache () =
+  let sysfs = "/sys/devices/system/cpu/cpu0/cache" in
+  let sized i =
+    let file = Printf.sprintf "%s/index%d/size" sysfs i in
+    match In_channel.with_open_text file In_channel.input_all with
+    | s -> Scanf.sscanf_opt s "%d" Fun.id
+    | exception Sys_error _ -> None
+  in
+  let rec stated i =
+    Sys.file_exists (Printf.sprintf "%s/index%d" sysfs i)
+    && (Option.fold ~none:false ~some:(fun n -> n > 0) (sized i)
+       || stated (i + 1))
+  in
+  let states =
+    Sys.os_type = "Unix"
+    && match os () with "Darwin" -> true | "Linux" -> stated 0 | _ -> false
+  in
+  match Rig.cache_bytes Rig.host with
+  | Some n -> greater int ~msg:"the host's cache" ~than:0 n
+  | None -> if states then fail "the host states no cache"
+
+let cache_refused =
+  cases ~id:string_of_int "a last-level cache below 1 byte raises"
+    [ 0; -1; min_int ]
+  @@ fun n ->
+  refuses ~sub:"last-level cache" (P.make ~cache_bytes:n ())
+    (Printf.sprintf "open:cache %d" n)
+
+(* [capability] *)
+
+let test_capability () =
+  let key : string list Type.Id.t = Type.Id.make () in
+  let other : int Type.Id.t = Type.Id.make () in
+  let cap = [ "add" ] in
+  let p = P.make ~capability:(Rig_edge.Capability (key, cap)) () in
+  let d = opened (Rig.open_ (P.opener "open:capability" p)) in
+  satisfies ~claim:"the record declared"
+    (option (list string))
+    (function Some c -> c == cap | None -> false)
+    (Rig.capability d key);
+  equal ~msg:"another key" (option int) None (Rig.capability d other)
+
+(* [open_host] *)
+
+let test_one_host () =
+  let h = opened (open_host "one" "A") in
+  raises_match ~msg:"another name" Exn.invalid_arg (fun () ->
+      open_host "one" "B");
+  equal ~msg:"the same name" device h (opened (open_host "one" "A"))
+
+(* The machine's host [A] parks in its [make] until the open of [B] has
+   answered. *)
+let test_host_opening () =
+  let make ~word =
+    Support.park ();
+    Ok (P.bind (P.make ()) ~word)
+  in
+  let first = ref (Error "not returned") in
+  let opener =
+    Thread.create
+      (fun () ->
+        first :=
+          Rig.open_host ~machine:"opening"
+            { name = "A"; driver = (module P); make })
+      ()
+  in
+  Fun.protect ~finally:Support.unpark (fun () ->
+      Support.await "the first host's opener" Support.parked;
+      raises_match (Exn.invalid_arg ~sub:"opening") (fun () ->
+          open_host "opening" "B"));
+  Thread.join opener;
+  equal string "A@opening" (Rig.name (opened !first))
+
+(* A machine has one host for its life: once it is closed or lost, [open_host]
+   of the machine answers [Error], under its name or another. *)
+let test_host_for_life () =
+  let closed = opened (open_host "life-closed" "CPU") in
+  Rig.close closed;
+  let lost = P.make () in
+  let host =
+    opened (Rig.open_host ~machine:"life-lost" (P.opener "CPU" lost))
+  in
+  P.fault lost "unplugged";
+  (try ignore (B.create host 8) with Rig.Lost _ -> ());
+  Rig.close host;
+  List.iter
+    (fun (machine, name) ->
+      is_error ~pp:Rig.pp ~msg:(machine ^ " " ^ name) (open_host machine name))
+    [
+      ("life-closed", "CPU");
+      ("life-closed", "OTHER");
+      ("life-lost", "CPU");
+      ("life-lost", "OTHER");
+    ]
+
+let test_host_runs () =
+  let far = opened (open_host "runs" "HOST") in
+  Rig.Point.wait (submit (empty far));
+  equal ~msg:"its signaled value" int (Rig.submitted far) (Rig.signaled far)
+
+(* [host_of] *)
+
+let test_host_of () =
+  let far = opened (open_host "host-of" "HOST") in
+  let beside machine name = opened (Rig.open_ ~machine (polled name)) in
+  let g = beside far "open:host-of-gpu" in
+  equal
+    (list (pair string device))
+    [
+      ("the host", Rig.host);
+      ("a software device", Rig.host);
+      ("a driver's device", Rig.host);
+      ("an io device", Rig.host);
+      ("a device beside the host", Rig.host);
+      ("another machine's host", far);
+      ("a device beside it", far);
+      ("a device beside that device", far);
+    ]
+    (answers Rig.host_of
+       [
+         ("the host", Rig.host);
+         ("a software device", software "open:host-of-software");
+         ("a driver's device", fst (P.open_ "open:host-of-polled"));
+         ("an io device", io "open:host-of-io");
+         ("a device beside the host", beside Rig.host "open:host-of-here");
+         ("another machine's host", far);
+         ("a device beside it", g);
+         ("a device beside that device", beside g "open:host-of-beside");
+       ])
+
+(* The machine's devices run work as before. *)
+let test_host_loss_spares_devices () =
+  let lost = P.make () in
+  let far = opened (Rig.open_host ~machine:"host-loss" (P.opener "CPU" lost)) in
+  let g = opened (Rig.open_ ~machine:far (polled "open:host-loss-gpu")) in
+  P.fault lost "unplugged";
+  (try ignore (B.create far 8) with Rig.Lost _ -> ());
+  equal (option string) ~msg:"the host" (Some "unplugged") (Rig.lost far);
+  equal (option string) ~msg:"its device" None (Rig.lost g);
+  Rig.Point.wait (submit (empty g));
+  equal (option string) ~msg:"after its work" None (Rig.lost g)
+
+(* [reaches] *)
+
+(* [reach pairs] is [(what, reaches d d')] for each [(what, d, d')]. *)
+let reach pairs = List.map (fun (what, d, d') -> (what, Rig.reaches d d')) pairs
+let reachable = list (pair string bool)
+
+let test_reaches_own () =
+  let far = opened (open_host "reaches-own" "HOST") in
+  let g = opened (Rig.open_ ~machine:far (polled "open:reaches-own-far")) in
+  let sw = software "open:reaches-own-software" in
+  let d, _ = P.open_ "open:reaches-own" in
+  let hidden, _ = P.open_ ~host_visible:false "open:reaches-own-hidden" in
+  let io = io "open:reaches-own-io" in
+  equal reachable
+    (List.map
+       (fun w -> (w, true))
+       [
+         "the host";
+         "a software device";
+         "a driver's device";
+         "a driver's device the host does not address";
+         "an io device";
+         "another machine's host";
+         "another machine's device";
+       ])
+    (reach
+       [
+         ("the host", Rig.host, Rig.host);
+         ("a software device", sw, sw);
+         ("a driver's device", d, d);
+         ("a driver's device the host does not address", hidden, hidden);
+         ("an io device", io, io);
+         ("another machine's host", far, far);
+         ("another machine's device", g, g);
+       ])
+
+(* Polled states [host_addresses] with [host_visible] and without [transport],
+   whatever its queues. *)
+let test_reaches_from_host () =
+  let sw = software "open:from-host-software" in
+  let d, _ = P.open_ "open:from-host" in
+  let h, _ = P.open_ ~host_visible:false "open:from-host-hidden" in
+  let g, _ =
+    P.open_ ~copies:false ~host_visible:false "open:from-host-no-copy"
+  in
+  let t, _ = P.open_ ~transport:true "open:from-host-transport" in
+  equal reachable
+    [
+      ("a software device", true);
+      ("addressed", true);
+      ("not addressed", false);
+      ("not addressed, no copy queue", false);
+      ("behind a transport", false);
+    ]
+    (reach
+       [
+         ("a software device", Rig.host, sw);
+         ("addressed", Rig.host, d);
+         ("not addressed", Rig.host, h);
+         ("not addressed, no copy queue", Rig.host, g);
+         ("behind a transport", Rig.host, t);
+       ])
+
+let test_reaches_maps_host () =
+  let sw = software "open:maps-host-software" in
+  let sw' = software "open:maps-host-software-2" in
+  let d, _ = P.open_ "open:maps-host" in
+  let h, _ = P.open_ ~host_visible:false "open:maps-host-hidden" in
+  let n, _ = P.open_ ~maps_host:false "open:maps-host-none" in
+  equal reachable
+    [
+      ("a software device, the host", true);
+      ("a software device, another", true);
+      ("a mapping driver's device, the host", true);
+      ("a mapping driver's device, a software device", true);
+      ("one the host does not address, the host", true);
+      ("one the host does not address, a software device", true);
+      ("no maps_host, the host", false);
+      ("no maps_host, a software device", false);
+    ]
+    (reach
+       [
+         ("a software device, the host", sw, Rig.host);
+         ("a software device, another", sw, sw');
+         ("a mapping driver's device, the host", d, Rig.host);
+         ("a mapping driver's device, a software device", d, sw);
+         ("one the host does not address, the host", h, Rig.host);
+         ("one the host does not address, a software device", h, sw);
+         ("no maps_host, the host", n, Rig.host);
+         ("no maps_host, a software device", n, sw);
+       ])
+
+let test_reaches_peers () =
+  let d, _ = P.open_ "open:peers" in
+  let e, _ = P.open_ "open:peers-other" in
+  let f, _ = P.open_ ~peers:false "open:peers-alone" in
+  equal reachable
+    [ ("a peer it maps", true); ("one that maps no peer", false) ]
+    (reach [ ("a peer it maps", d, e); ("one that maps no peer", f, d) ])
+
+let test_reaches_machines () =
+  let far = opened (open_host "reaches-far" "HOST") in
+  let g = opened (Rig.open_ ~machine:far (polled "open:reaches-far-gpu")) in
+  let sw = software "open:reaches-far-software" in
+  (* A device of [g]'s driver here, which maps its peers: the peer rule alone
+     would let them reach each other. *)
+  let peer, _ = P.open_ "open:reaches-far-peer" in
+  equal reachable
+    (List.map
+       (fun w -> (w, false))
+       [
+         "its device, a peer of its driver here";
+         "a peer of its driver here, its device";
+         "its device, the host";
+         "the host, its device";
+         "its host, the host";
+         "the host, its host";
+         "its device, a software device";
+         "a software device, its device";
+       ])
+    (reach
+       [
+         ("its device, a peer of its driver here", g, peer);
+         ("a peer of its driver here, its device", peer, g);
+         ("its device, the host", g, Rig.host);
+         ("the host, its device", Rig.host, g);
+         ("its host, the host", far, Rig.host);
+         ("the host, its host", Rig.host, far);
+         ("its device, a software device", g, sw);
+         ("a software device, its device", sw, g);
+       ])
+
+let test_reaches_io () =
+  let io = io "open:reaches-io" in
+  let sw = software "open:reaches-io-software" in
+  let d, _ = P.open_ "open:reaches-io-polled" in
+  equal reachable
+    (List.map
+       (fun w -> (w, false))
+       [
+         "io, the host";
+         "the host, io";
+         "io, a software device";
+         "a software device, io";
+         "io, a driver's device";
+         "a driver's device, io";
+       ])
+    (reach
+       [
+         ("io, the host", io, Rig.host);
+         ("the host, io", Rig.host, io);
+         ("io, a software device", io, sw);
+         ("a software device, io", sw, io);
+         ("io, a driver's device", io, d);
+         ("a driver's device, io", d, io);
+       ])
+
+(* Where the host reaches a device's memory, every buffer of it has a host
+   address, of each memory it has and in each of Polled's modes, and on a
+   software device. It has no Pinned memory. *)
+let test_reach_addresses () =
+  let n = ref 0 in
+  let check ~msg d =
+    if Rig.reaches Rig.host d then begin
+      List.iter
+        (fun memory ->
+          let b = B.create ~memory d 64 in
+          not_equal ~msg int 0 (Support.Reader.host b))
+        B.[ Device; Mapped ];
+      raises_match ~msg Exn.invalid_arg (fun () -> B.create ~memory:Pinned d 64)
+    end
+  in
+  let bools = [ false; true ] in
+  List.iter
+    (fun copies ->
+      List.iter
+        (fun host_visible ->
+          List.iter
+            (fun transport ->
+              incr n;
+              let name = Printf.sprintf "open:reach-addresses-%d" !n in
+              let d, _ = P.open_ ~copies ~host_visible ~transport name in
+              let msg =
+                Printf.sprintf "copies %b, host_visible %b, transport %b" copies
+                  host_visible transport
+              in
+              check ~msg d;
+              Rig.close d)
+            bools)
+        bools)
+    bools;
+  check ~msg:"a software device" (software "open:reach-addresses-software")
+
+(* A region without the host address the facts promise goes back to the driver
+   and faults the device. *)
+let test_overstated () =
+  let p = P.make ~host_visible:false () in
+  let d =
+    opened
+      (Rig.open_
+         {
+           name = "open:overstated";
+           driver = (module Overstated);
+           make = (fun ~word -> Ok (P.bind p ~word));
+         })
+  in
+  raises_match ~msg:"the allocation" (lost d) (fun () -> B.create d 64);
+  satisfies ~claim:"lost" (option string) Option.is_some (Rig.lost d);
+  equal ~msg:"the region freed" (list string) [ "alloc"; "free" ]
+    (List.filter (fun c -> c = "alloc" || c = "free") (P.log p))
+
+let () =
+  exit
+    (run "rig.open"
+       [
+         group "open_"
+           [
+             test "opens of one name answer one device" test_same_name;
+             other_driver;
+             test "an opener's error is the open's, and leaves the name free"
+               test_failed_open;
+             copy_engine_refused;
+             hang_refused;
+             counters_refused;
+             edge_refused;
+             test
+               "an exception at any allocation of an open stops the handle it \
+                was handed, the name free or open"
+               test_raise_anywhere;
+             test "an open while a lost device's stop runs is Error"
+               test_reopen_early;
+             test
+               "an open of a lost device's name runs its stop and makes a new \
+                device"
+               test_reopen;
+             test
+               "an open whose owed stop raises raises it, and the next open \
+                makes a new device"
+               test_reopen_owed;
+             test
+               "an open on a machine whose host ended is Error, as the host's \
+                Lost prints"
+               test_open_on_ended_host;
+             test "a blocked opener holds back opens of its name alone"
+               test_blocked_opener;
+             test "an open of its own name from its make raises"
+               test_opener_opens_itself;
+             test "an open waiting for its name's open takes Sys.Break"
+               test_break_waiting_open;
+             test "a signal handler in an open's wait for its name calls rig"
+               test_handled_in_open_wait;
+             test
+               "an open an exception ended wakes the opens waiting for its name"
+               test_ended_wakes_waiter;
+           ];
+         group "open_io"
+           [
+             test "two opens of one name answer one device" test_io_name;
+             test "an open of a name a driver's device holds raises"
+               test_io_driver_name;
+             test "an open from a make of its name's open raises"
+               test_io_inside_open;
+             test "an io device makes no memory" test_io_no_memory;
+             test "an io device's budget is max_int, its capacity None"
+               test_io_budget;
+             test
+               "an exception at any allocation of an io open leaves the name \
+                free or open"
+               test_io_raise_anywhere;
+           ];
+         group "software"
+           [
+             test "an open of a name a driver's device holds raises"
+               test_software_driver_name;
+           ];
+         group "close"
+           [
+             test
+               "a close waits for the work submitted before it, then loses the \
+                device \"closed\""
+               test_close;
+             test
+               "two domains closing one device stop it once, and both return \
+                after it (sampled for 50 ms)"
+               test_two_closes;
+             test "a fault during a close's wait is the device's loss"
+               test_close_fault;
+             test "a close of the host raises" test_close_host;
+             test "an io device's close ends it at once" test_close_io;
+             test "a close of a machine's host closes its devices"
+               test_close_machine;
+             test "a close of a lost machine's host closes its devices"
+               test_close_lost_host;
+             test
+               "a close of a machine's host closes a device that was still \
+                opening"
+               test_close_opening;
+             test
+               "a Ctrl-C in a close's wait for an open leaves the machine open"
+               test_break_waiting_close;
+             test "a Ctrl-C in a second close leaves the first close's mark"
+               test_break_second_close;
+             test
+               "a close of a machine's host ends an open in flight that an \
+                exception ended"
+               test_close_ends_interrupted_open;
+             test
+               "a close of a machine's host returns after an open its opener's \
+                exception ended"
+               test_close_after_raised_open;
+             test
+               "a close of a machine's host from a make of an open on it raises"
+               test_close_inside_open;
+           ];
+         group "properties"
+           [
+             test
+               "a closed device answers its properties and timeline as it did"
+               test_ended;
+           ];
+         group "name"
+           [
+             test "the host is named CPU" test_host_name;
+             test
+               "a device is named by its opener, NAME@MACHINE on another \
+                machine"
+               test_name;
+           ];
+         group "equal"
+           [ test "a reopened name is another device" test_reopened ];
+         group "pp" [ test "pp formats a device's name" test_pp ];
+         group "arch"
+           [
+             test "a driver's device's arch is the processor its driver names"
+               test_driver_arch;
+           ];
+         group "instruction_set"
+           [
+             instruction_sets;
+             test "the host's instruction set is one rig.mli names, or \"\""
+               test_host_isa;
+           ];
+         group "bus"
+           [
+             test
+               "bus is the driver's address, None for the host, software and \
+                io devices"
+               test_bus;
+             xfail
+               ~reason:
+                 "rig answers the driver's bus for a device of another machine"
+               (test
+                  "a device of another machine has no bus, whatever its driver \
+                   states"
+                  test_remote_bus);
+           ];
+         group "computes"
+           [ test "every device but an io device computes" test_computes ];
+         group "runs_on_host"
+           [
+             test "the host and a software device alone run on the host"
+               test_runs_on_host;
+           ];
+         group "offers"
+           [
+             test "each device offers the kinds rig.mli lists" test_offers;
+             test "create makes a word of a kind iff the device offers it"
+               test_offers_create;
+             test "a lost device offers what it offered at its open"
+               test_offers_lost;
+             no_kind_empty;
+           ];
+         group "alignment"
+           [
+             test "a device's alignment is its stated one" test_alignment;
+             test "a non-empty buffer starts on its device's alignment"
+               test_aligned;
+             alignment_refused;
+             test "a region off its device's alignment faults the device"
+               test_misaligned;
+           ];
+         group "granules"
+           [
+             test "a device's units are its driver's, a word's elsewhere"
+               test_granules;
+             granules_refused;
+           ];
+         group "cache_bytes"
+           [
+             test "a device states its driver's last-level cache"
+               test_cache_bytes;
+             test "the host states a cache where its system states one"
+               test_host_cache;
+             cache_refused;
+           ];
+         group "capability"
+           [
+             test
+               "a driver's capability is the record it declared, None under \
+                another key"
+               test_capability;
+           ];
+         group "open_host"
+           [
+             test "a machine whose host is open under one name refuses another"
+               test_one_host;
+             test "a machine whose host is still opening refuses another name"
+               test_host_opening;
+             test "a machine has one host for its life" test_host_for_life;
+             test "another machine's host runs submissions" test_host_runs;
+           ];
+         group "host_of"
+           [
+             test "a device's host is its machine's host" test_host_of;
+             test "the loss of a machine's host loses none of its devices"
+               test_host_loss_spares_devices;
+           ];
+         group "reaches"
+           [
+             test "a device reaches its own memory" test_reaches_own;
+             test
+               "the host reaches a software device and a device whose memory \
+                it addresses"
+               test_reaches_from_host;
+             test
+               "a device that maps the host reaches its memory and every \
+                software device's"
+               test_reaches_maps_host;
+             test "a driver's device reaches a peer it maps" test_reaches_peers;
+             test "devices of different machines never reach each other"
+               test_reaches_machines;
+             test "an io device and any other never reach each other"
+               test_reaches_io;
+             test "a device the host reaches has buffers with host addresses"
+               test_reach_addresses;
+             test "a region against the host_addresses fact faults the device"
+               test_overstated;
+           ];
+       ])
