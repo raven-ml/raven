@@ -104,9 +104,14 @@ let findlib ?(extra_paths = []) name paths =
             (dirs p))
       paths
 
+(* The inode tells a library renamed into place, as an upgrade installs one,
+   from the file it replaced. The device is left out, since it changes across
+   reboots on btrfs, APFS and overlay file systems and would miss every cached
+   binary. The time is the float [Unix.stat] gives, written exactly in
+   hexadecimal, which resolves a fraction of a microsecond at today's times. *)
 let identity = function
   | None -> "none"
   | Some path -> (
       match Unix.stat path with
-      | st -> Printf.sprintf "%s %d %.0f" path st.st_size st.st_mtime
+      | st -> Printf.sprintf "%s %d %d %h" path st.st_ino st.st_size st.st_mtime
       | exception Unix.Unix_error _ -> path)

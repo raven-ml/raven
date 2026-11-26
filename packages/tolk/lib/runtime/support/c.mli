@@ -36,7 +36,8 @@ val findlib : ?extra_paths:string list -> string -> string list -> string option
 
 val identity : string option -> string
 (** [identity file] names the library [file], as {!findlib} finds it: its path,
-    size and time of last modification, or its path alone if it cannot be read,
-    as a library of macOS's shared cache, and ["none"] for [None]. A library
-    that changes changes its identity, so that what was compiled with it can be
-    told from what another compiles. *)
+    inode, size and time of last modification, the time to a fraction of a
+    microsecond; its path alone if the system has no status of it, as of a
+    library of macOS's shared cache; and ["none"] for [None]. A library replaced
+    by a rename, or rewritten at another size or time, changes its identity, so
+    that what was compiled with it can be told from what another compiles. *)

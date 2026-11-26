@@ -262,7 +262,20 @@ let multiarch =
           contains ~sub:"-linux-" C.multiarch);
     ]
 
-(* Identities *)
+(* identity *)
+
+(* A second of 2023, and times a tenth and four tenths into it, which a time
+   kept in whole seconds, rounded or cut, tells apart from none. *)
+let second = 1_700_000_000.
+let early = second +. 0.1
+let late = second +. 0.4
+
+(* [library ~at] is a new library file, last modified at [at]. *)
+let library ?(at = second) () =
+  let file = Filename.concat (temp_dir ()) "libx.so" in
+  write file elf;
+  Unix.utimes file at at;
+  file
 
 let identity =
   group "identity"
@@ -270,19 +283,34 @@ let identity =
       test "no library is none" (fun () ->
           equal string "none" (C.identity None));
       test "a library names its path" (fun () ->
-          let file = Filename.concat (temp_dir ()) "libx.so" in
-          write file elf;
+          let file = library () in
           contains ~sub:file (C.identity (Some file)));
-      test "a library that changes changes its identity" (fun () ->
-          let file = Filename.concat (temp_dir ()) "libx.so" in
-          write file elf;
+      test "a library rewritten at another size changes its identity" (fun () ->
+          let file = library () in
           let before = C.identity (Some file) in
           write file (elf ^ elf);
+          Unix.utimes file second second;
           not_equal string before (C.identity (Some file)));
-      test "a library that cannot be read is its path" (fun () ->
-          let link = Filename.concat (temp_dir ()) "libx.so" in
-          Unix.symlink "/nonexistent/libx.so" link;
-          equal string link (C.identity (Some link)));
+      test
+        "a library rewritten at its size within a second changes its identity"
+        (fun () ->
+          let file = library ~at:early () in
+          if Float.is_integer (Unix.stat file).st_mtime then
+            skip ~reason:"the file system keeps whole seconds" ();
+          let before = C.identity (Some file) in
+          Unix.utimes file late late;
+          not_equal string before (C.identity (Some file)));
+      test "a library replaced by a rename changes its identity" (fun () ->
+          let file = library () in
+          let before = C.identity (Some file) in
+          let copy = file ^ ".new" in
+          write copy elf;
+          Unix.utimes copy second second;
+          Sys.rename copy file;
+          not_equal string before (C.identity (Some file)));
+      test "a library that cannot be found is its path" (fun () ->
+          let absent = Filename.concat (temp_dir ()) "libx.so" in
+          equal string absent (C.identity (Some absent)));
     ]
 
 let () =
