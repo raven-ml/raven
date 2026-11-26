@@ -414,17 +414,18 @@ val can_lossless_cast : t -> t -> bool
 val truncate : t -> value -> value
 (** [truncate dt v] is [v] as a value of [dt]:
     - for a float of known width, [v] as a float rounded once to [dt]'s
-      precision, to nearest with ties to even. A finite value that overflows a
-      16-bit or wider float is an infinity, and one that overflows an 8-bit
-      float is its greatest finite value of the same sign. An infinity is itself
-      where the format has infinities, and its NaN where it has none. A NaN is
-      quiet, as a conversion makes it: a signalling NaN becomes quiet with the
-      same payload. A float that has infinities keeps its sign and the top of
-      its payload, one bit in {!Fp8e5m2}; {!Fp8e4m3} has one NaN of each sign,
-      and an [fnuz] format one positive NaN. An integer is rounded once, from
-      its exact value, as a finite value: one that rounds past the greatest
-      double is the infinity of its sign in {!Float64}, and overflows a narrower
-      float.
+      precision, to nearest with ties to even. Past the greatest finite value,
+      a rounded value or an infinity is the infinity of its sign in a format
+      that has one, {!Fp8e5m2} included, and the greatest finite value of its
+      sign in {!Fp8e4m3}, which has none. An [fnuz] format takes its greatest
+      finite value of the same sign for a finite value, and its NaN for an
+      infinity. A NaN is quiet, as a conversion makes it: a signalling NaN
+      becomes quiet with the same payload. A float that has infinities keeps
+      its sign and the top of its payload, one bit in {!Fp8e5m2}; {!Fp8e4m3}
+      has one NaN of each sign, and an [fnuz] format one positive NaN. An
+      integer is rounded once, from its exact value, as a finite value: one
+      that rounds past the greatest double is the infinity of its sign in
+      {!Float64}, and overflows a narrower float.
     - for an integer of known width, [v] wrapped to [dt]'s width in two's
       complement;
     - for {!Bool}, [true] iff [v] is nonzero;

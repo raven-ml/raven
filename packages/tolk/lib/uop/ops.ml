@@ -2492,9 +2492,10 @@ and float_bounds op dt (s0_min, s0_max) (s1_min, s1_max) =
    integer, to nearest into a float, which for a weak float is a double, as its
    value is ({!Dtype.const}). An integer keeps its value in an integer type,
    where [min_max] wraps it. A float target holds the rounded bounds only where
-   they are its values: a value past them is NaN in a type without infinities,
-   and a NaN bound is no value. A signed target holds the part of the source
-   range that overlaps it; a float overflowing an integer is undefined. *)
+   they are its values: a value past them is the greatest finite value or a
+   NaN in a type without infinities, and a NaN bound is no value. A signed
+   target holds the part of the source range that overlaps it; a float
+   overflowing an integer is undefined. *)
 and cast_bounds src dt (lo, hi) =
   let round (x : Dtype.value) : Dtype.value =
     match x with

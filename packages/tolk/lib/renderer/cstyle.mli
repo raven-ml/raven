@@ -163,10 +163,10 @@ val cuda : Helpers.Target.t -> Renderer.t
     and each barrier of a kernel holding one first waits for the thread's
     copies. {!Dtype.Float16} needs capability 53, {!Dtype.Bfloat16} 80, and the
     8-bit floats {!Dtype.fp8_ocp} 89. The [fnuz] floats are not supported. A
-    conversion to an 8-bit float saturates: a value too large for the format, an
-    infinity included, becomes its greatest finite value of the same sign, where
-    a folded constant keeps an infinity in {!Dtype.Fp8e5m2} and makes it a NaN
-    in {!Dtype.Fp8e4m3} ({!Dtype.truncate}). A conversion of an integer to
+    conversion to an 8-bit float, of a constant or a cast, gives the value
+    {!Dtype.truncate} gives: past the greatest finite value, an infinity in
+    {!Dtype.Fp8e5m2} and the greatest finite value of the same sign in
+    {!Dtype.Fp8e4m3}, an infinity included. A conversion of an integer to
     {!Dtype.Bfloat16} rounds once, to nearest with ties to even, as
     [cuda_bf16.h]'s [__int2bfloat16_rn] does. The [CUDA] and [NV] devices of one
     architecture are given one source. Code generation hands the renderer a
@@ -186,8 +186,10 @@ val hip : Helpers.Target.t -> Renderer.t
     A launch has at most [2^31 - 1] by 65535 by 65535 workgroups and [2^32 - 1]
     threads on each axis, and a workgroup shares 64 KiB of memory. The tensor
     cores are those of the GPU ({!Tc.amd}). The 8-bit floats are the [fnuz] ones
-    on ["gfx942"] and {!Dtype.fp8_ocp} on ["gfx950"], and none elsewhere. A load
-    marked ["nontemporal"] bypasses the caches. A conversion to
+    on ["gfx942"] and {!Dtype.fp8_ocp} on ["gfx950"], ["gfx1200"] and
+    ["gfx1201"], and none elsewhere. A conversion of a {!Dtype.Float32} to one
+    gives the value {!Dtype.truncate} gives. A load marked ["nontemporal"]
+    bypasses the caches. A conversion to
     {!Dtype.Bfloat16} from an integer or a {!Dtype.Float32} rounds once, to
     nearest with ties to even, a NaN staying a NaN, and one from it to a
     {!Dtype.Float32} is exact. Each is written on the value's bits.

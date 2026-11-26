@@ -1,11 +1,11 @@
-# tolk D27 D342 golden=2424e407569a03782ed9156db6e7cbce
+# tolk D27 D342 D508 golden=2424e407569a03782ed9156db6e7cbce
 #define INFINITY (__builtin_inff())
 #define NAN (__builtin_nanf(""))
 typedef long unsigned int size_t;
 typedef unsigned char hip_bf8;
 typedef unsigned char hip_fp8;
 static inline __attribute__((device)) unsigned char f32_to_fp8(float v, int is_bf8) {
-  v = (((*(unsigned*)&v)&0x7F800000)!=0x7F800000)?__builtin_amdgcn_fmed3f(v,is_bf8?57344.0f:448.0f,is_bf8?-57344.0f:-448.0f) : v;
+  v = v!=v ? v : is_bf8?(__builtin_fabsf(v)>=61440.0f?__builtin_copysignf(__builtin_inff(),v):__builtin_amdgcn_fmed3f(v,57344.0f,-57344.0f)) : __builtin_amdgcn_fmed3f(v,448.0f,-448.0f);
   return (unsigned char)(is_bf8?__builtin_amdgcn_cvt_pk_bf8_f32(v,v,0,false):__builtin_amdgcn_cvt_pk_fp8_f32(v,v,0,false));
 }
 extern "C" __attribute__((device, const)) size_t __ockl_get_local_id(unsigned int);

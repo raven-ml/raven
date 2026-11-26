@@ -523,16 +523,15 @@ let rec f2f ?(sat = true) v fr to_ =
     let nosign = O.(v land magnitude) in
     let exp = O.(shr v fm land ones fe) in
     (* One past the greatest finite code: the infinity, or the NaN of a format
-       without one. An 8-bit float saturates below it. *)
+       without one, which saturates below it. *)
     let top =
       if Dtype.equal to_ Fp8e4m3 then int 0x7f
       else if Dtype.mem to_ Dtype.fp8_fnuz then int 0x80
       else exp_ones
     in
     let inf = int (((1 lsl fe) - 1) lsl fm) in
-    let limit =
-      if sat && Dtype.mem to_ Dtype.fp8s then O.(top - int 1) else top
-    in
+    let no_infinity = Dtype.mem to_ (Dtype.Fp8e4m3 :: Dtype.fp8_fnuz) in
+    let limit = if sat && no_infinity then O.(top - int 1) else top in
     let norm = minimum O.(rne nosign dropped - unbias) limit in
     (* A NaN is the format's quiet NaN, of its sign. *)
     let nan =
@@ -566,7 +565,8 @@ let rec f2f ?(sat = true) v fr to_ =
         where O.(inf <= nosign) top
           (where (eq finite (int 0)) (int 0) O.(sign lor finite))
       else
-        O.(sign lor where (inf < nosign) nan (where (eq nosign inf) top finite))
+        let special = where (eq nosign inf) limit finite in
+        O.(sign lor where (inf < nosign) nan special)
     in
     cast code tdt
   end

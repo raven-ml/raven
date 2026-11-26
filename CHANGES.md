@@ -3238,8 +3238,10 @@ its lock and from samples the dashboard saw arrive.
   mismatch".
 - A folded `Op.Where` or `Op.Neg` keeps a NaN's payload, a signalling NaN's
   included, where it quieted one: a selection and a negation convert nothing.
-- A CUDA conversion to `Fp8e4m3` or `Fp8e5m2` saturates an infinity to the
-  format's greatest finite value, where it kept it an infinity or a NaN.
+- A conversion to `Fp8e4m3` or `Fp8e5m2`, folded (`Dtype.truncate`), emulated
+  (`Decomp_dtype.f2f`) or on CUDA and HIP, stores as nx does: past the
+  greatest finite value e4m3 saturates to ±448, an infinity included, and
+  e5m2 gives an infinity from 61440.
 - An 8-bit float's NaN folds as its format's NaN of its sign, the positive one
   in e4m3 and the fnuz formats, and an emulated cast to a narrow float gives
   its quiet NaN: a NaN result's sign and payload are unspecified.

@@ -550,9 +550,10 @@ let nearest ~mant ~emin x =
     in
     Float.copy_sign (Float.ldexp r q) x
 
-(* Past the greatest finite value, 16-bit formats give their infinity and 8-bit
-   ones saturate to it. An infinity stays one where the format has infinities,
-   and is its NaN where it has none. A NaN of a format with infinities keeps its
+(* Past the greatest finite value, a rounded value or an infinity is the
+   infinity of a format that has one, and saturates to the greatest finite
+   value in Fp8e4m3, which has none. An fnuz format saturates a finite value
+   and makes an infinity its NaN. A NaN of a format with infinities keeps its
    sign and the leading bits of its payload, so that a bitcast through the
    format keeps every word; Fp8e4m3's is its NaN of its sign, and an fnuz
    format's its one NaN. *)
@@ -560,14 +561,14 @@ let encode_format f x =
   let sign = if Float.sign_bit x then 1 lsl (f.bits - 1) else 0 in
   if Float.is_nan x && f.specials = Ieee then
     sign lor (f.top + 1) lor nan_payload ~mant:f.mant x
-  else if Float.is_nan x || (f.specials <> Ieee && not (Float.is_finite x)) then
+  else if Float.is_nan x || (f.specials = Fnuz && not (Float.is_finite x)) then
     if f.specials = Fnuz then f.nan else sign lor f.nan
   else
     let emin = 1 - f.bias in
     let a = Float.abs (nearest ~mant:f.mant ~emin x) in
     let q =
       if a > decode_format f f.top then
-        if f.bits = 8 && Float.is_finite x then f.top else f.top + 1
+        if f.specials = Ieee then f.top + 1 else f.top
       else if a = 0. then 0
       else
         (* Subnormals share the least normal exponent, whose field is 1: the

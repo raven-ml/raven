@@ -868,12 +868,33 @@ let word dt v = as_int (Dtype.bitcast dt (word_of dt) v)
 
    An integer from 2^1024 - 2^970 converts to a double as the infinity of its
    sign, and overflows a narrower float as the greatest double does (truncate),
-   where Python refuses to convert it. *)
+   where Python refuses to convert it.
+
+   D508: past an 8-bit float's greatest finite value, Fp8e5m2 gives the
+   infinity of the value's sign, from 61440, where tinygrad saturates to
+   57344, and Fp8e4m3 saturates an infinity to 448, where tinygrad gives a
+   NaN. *)
 let bfloat16_ties = [ 1.0039062500000002; 1. +. 0x1p-8 +. 0x1p-40 ]
+
+let e5m2_overflow = 61440.
 
 let as_tinygrad dt cell = function
   | `Float f when Dtype.equal dt Dtype.Bfloat16 && List.mem f bfloat16_ties ->
       Some (`Float 1.0078125)
+  | `Float f when Dtype.equal dt Dtype.Fp8e4m3 && Float.abs f = Float.infinity
+    ->
+      Some (`Float (Float.copy_sign 448. f))
+  | `Float f
+    when Dtype.equal dt Dtype.Fp8e5m2
+         && Float.is_finite f
+         && Float.abs f >= e5m2_overflow ->
+      Some (`Float (Float.copy_sign Float.infinity f))
+  | `Int n
+    when Dtype.equal dt Dtype.Fp8e5m2
+         && Bigint.geq (Bigint.abs n) (Bigint.of_float e5m2_overflow)
+         && not (raised cell) ->
+      let s = if Bigint.sign n < 0 then -1. else 1. in
+      Some (`Float (Float.copy_sign Float.infinity s))
   | `Int n
     when Dtype.is_float dt
          && Bigint.geq (Bigint.abs n) beyond_doubles
@@ -1570,10 +1591,54 @@ let truncate_group =
             if List.mem dt Dtype.fp8_fnuz && r = 0. then 0. else -.r
           in
           equal value (`Float negated) (Dtype.truncate dt (`Float (-.f))));
-      prop "keeps a finite float finite in an 8-bit float"
-        (Gen.pair (dtype_list Dtype.fp8s) finite_float)
+      prop
+        "past an 8-bit float's greatest value is Fp8e5m2's infinity from 61440 \
+         and Fp8e4m3's greatest value, an infinity included"
+        ~examples:
+          (List.concat_map
+             (fun dt ->
+               List.map
+                 (fun f -> (dt, f))
+                 [ Float.infinity; Float.neg_infinity; 61440.; -61440. ])
+             Dtype.fp8s)
+        (Gen.pair (dtype_list Dtype.fp8s) Gen.any_float)
         (fun (dt, f) ->
-          satisfies ~claim:"finite" float_exact Float.is_finite (truncated dt f));
+          let r = truncated dt f in
+          let magnitude = Float.abs f in
+          cover "an infinity" (magnitude = Float.infinity);
+          cover "a finite value past 61440"
+            (Float.is_finite f && magnitude >= e5m2_overflow);
+          match dt with
+          | _ when Float.is_nan f -> ()
+          | Dtype.Fp8e5m2 ->
+              equal bool ~msg:"an infinity" (magnitude >= e5m2_overflow)
+                (Float.abs r = Float.infinity)
+          | Fp8e4m3 ->
+              satisfies ~claim:"finite" float_exact Float.is_finite r
+          | _ ->
+              equal bool ~msg:"a NaN" (magnitude = Float.infinity)
+                (Float.is_nan r));
+      cases
+        "rounds an 8-bit float's greatest value, the tie past it and an infinity"
+        ~id:(fun (dt, f, _) -> Format.asprintf "%a %h" Dtype.pp dt f)
+        Dtype.
+          [
+            (Fp8e4m3, 448., 448.);
+            (Fp8e4m3, 464., 448.);
+            (Fp8e4m3, 480., 448.);
+            (Fp8e4m3, -1e10, -448.);
+            (Fp8e4m3, Float.infinity, 448.);
+            (Fp8e4m3, Float.neg_infinity, -448.);
+            (Fp8e5m2, 57344., 57344.);
+            (Fp8e5m2, Float.pred 61440., 57344.);
+            (Fp8e5m2, -.Float.pred 61440., -57344.);
+            (Fp8e5m2, 61440., Float.infinity);
+            (Fp8e5m2, -61440., Float.neg_infinity);
+            (Fp8e5m2, 65536., Float.infinity);
+            (Fp8e5m2, Float.infinity, Float.infinity);
+            (Fp8e5m2, Float.neg_infinity, Float.neg_infinity);
+          ]
+        (fun (dt, f, want) -> equal float_exact want (truncated dt f));
       prop "is monotone on floats"
         (Gen.triple (dtype_list Dtype.floats) finite_float finite_float)
         (fun (dt, a, b) ->

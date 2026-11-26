@@ -1,4 +1,4 @@
-# tolk D27 D342 golden=eab2fb706752ea8207a77cf54b5fce3f
+# tolk D27 D342 D508 golden=eab2fb706752ea8207a77cf54b5fce3f
 typedef unsigned int uint;
 #define INFINITY (__int_as_float(0x7f800000))
 #define NAN (__int_as_float(0x7fffffff))
@@ -14,16 +14,16 @@ extern "C" __global__ void __launch_bounds__(4) E_4_4(__nv_fp8_e5m2* data0_16, _
   float cast2 = ((float)(val0.z));
   float cast3 = ((float)(val0.w));
   __nv_fp8_e5m2 alu1 = ((cast0<-1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(0x7eu)):val0.x);
-  __nv_fp8_e5m2 alu2 = ((0.0f<cast0)?val0.x:((__nv_fp8_e5m2)(INFINITY)));
+  __nv_fp8_e5m2 alu2 = ((0.0f<cast0)?val0.x:tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8(INFINITY, __NV_NOSAT, __NV_E5M2))));
   __nv_fp8_e5m2 alu3 = ((cast1<-1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(0x7eu)):val0.y);
-  __nv_fp8_e5m2 alu4 = ((0.0f<cast1)?val0.y:((__nv_fp8_e5m2)(INFINITY)));
+  __nv_fp8_e5m2 alu4 = ((0.0f<cast1)?val0.y:tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8(INFINITY, __NV_NOSAT, __NV_E5M2))));
   __nv_fp8_e5m2 alu5 = ((cast2<-1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(0x7eu)):val0.z);
-  __nv_fp8_e5m2 alu6 = ((0.0f<cast2)?val0.z:((__nv_fp8_e5m2)(INFINITY)));
+  __nv_fp8_e5m2 alu6 = ((0.0f<cast2)?val0.z:tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8(INFINITY, __NV_NOSAT, __NV_E5M2))));
   __nv_fp8_e5m2 alu7 = ((cast3<-1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(0x7eu)):val0.w);
-  __nv_fp8_e5m2 alu8 = ((0.0f<cast3)?val0.w:((__nv_fp8_e5m2)(INFINITY)));
-  __nv_fp8_e5m2 alu9 = ((cast0<1.0f)?((__nv_fp8_e5m2)(-INFINITY)):val0.x);
-  __nv_fp8_e5m2 alu10 = ((cast1<1.0f)?((__nv_fp8_e5m2)(-INFINITY)):val0.y);
-  __nv_fp8_e5m2 alu11 = ((cast2<1.0f)?((__nv_fp8_e5m2)(-INFINITY)):val0.z);
-  __nv_fp8_e5m2 alu12 = ((cast3<1.0f)?((__nv_fp8_e5m2)(-INFINITY)):val0.w);
-  *((__nv_fp8_e5m24*)((data0_16+alu0))) = make___nv_fp8_e5m24(((__nv_fp8_e5m2)((((float)(((__nv_fp8_e5m2)((((float)(alu2))+((float)(alu1)))))))+((float)(alu9))))),((__nv_fp8_e5m2)((((float)(((__nv_fp8_e5m2)((((float)(alu4))+((float)(alu3)))))))+((float)(alu10))))),((__nv_fp8_e5m2)((((float)(((__nv_fp8_e5m2)((((float)(alu6))+((float)(alu5)))))))+((float)(alu11))))),((__nv_fp8_e5m2)((((float)(((__nv_fp8_e5m2)((((float)(alu8))+((float)(alu7)))))))+((float)(alu12))))));
+  __nv_fp8_e5m2 alu8 = ((0.0f<cast3)?val0.w:tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8(INFINITY, __NV_NOSAT, __NV_E5M2))));
+  __nv_fp8_e5m2 alu9 = ((cast0<1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8(-INFINITY, __NV_NOSAT, __NV_E5M2))):val0.x);
+  __nv_fp8_e5m2 alu10 = ((cast1<1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8(-INFINITY, __NV_NOSAT, __NV_E5M2))):val0.y);
+  __nv_fp8_e5m2 alu11 = ((cast2<1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8(-INFINITY, __NV_NOSAT, __NV_E5M2))):val0.z);
+  __nv_fp8_e5m2 alu12 = ((cast3<1.0f)?tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8(-INFINITY, __NV_NOSAT, __NV_E5M2))):val0.w);
+  *((__nv_fp8_e5m24*)((data0_16+alu0))) = make___nv_fp8_e5m24(tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8((((float)(tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8((((float)(alu2))+((float)(alu1))), __NV_NOSAT, __NV_E5M2)))))+((float)(alu9))), __NV_NOSAT, __NV_E5M2))),tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8((((float)(tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8((((float)(alu4))+((float)(alu3))), __NV_NOSAT, __NV_E5M2)))))+((float)(alu10))), __NV_NOSAT, __NV_E5M2))),tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8((((float)(tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8((((float)(alu6))+((float)(alu5))), __NV_NOSAT, __NV_E5M2)))))+((float)(alu11))), __NV_NOSAT, __NV_E5M2))),tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8((((float)(tg_bitcast<__nv_fp8_e5m2>((unsigned char)(__nv_cvt_float_to_fp8((((float)(alu8))+((float)(alu7))), __NV_NOSAT, __NV_E5M2)))))+((float)(alu12))), __NV_NOSAT, __NV_E5M2))));
 }

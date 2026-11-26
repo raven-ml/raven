@@ -25,7 +25,8 @@
       integer writes them.
 
     The conversions are IEEE's: one rounding, to nearest with ties to even,
-    gradual underflow, and infinities and NaNs kept where the format has them.
+    gradual underflow, and infinities and NaNs kept where the format has them;
+    a value past the greatest finite one converts as {!f2f} states.
 
     A type is emulated when the target does not support it
     ({!Renderer.supported_dtypes}) or the setting {!Setting.emulated_dtypes}
@@ -43,13 +44,14 @@ val f2f : ?sat:bool -> Ops.t -> Dtype.t -> Dtype.t -> Ops.t
       of [to_]'s width, of the value [v] encodes rounded to [to_]'s precision,
       to nearest with ties to even, into a subnormal below [to_]'s least
       normal. A value that rounds past [to_]'s greatest finite value, and an
-      infinity, is an infinity, which a format without one holds as its NaN;
-      but a finite value of an 8-bit float, if [sat], is at most its greatest
-      finite value.
+      infinity, is the infinity of a format that has one. A format without
+      one holds it as its NaN, unless [sat]: then it is the greatest finite
+      value of the same sign, in {!Dtype.Fp8e4m3} for an infinity too, and in
+      an [fnuz] format for a finite value only, an infinity staying its NaN.
 
-    A NaN stays a NaN, and a quiet one stays quiet; an infinity, or a NaN,
-    narrows to the NaN of its sign where the format has two; an [fnuz] format
-    has one NaN, and no negative zero. [sat] defaults to [true].
+    A NaN stays a NaN, and a quiet one stays quiet; a NaN narrows to the NaN of
+    its sign where the format has two; an [fnuz] format has one NaN, and no
+    negative zero. [sat] defaults to [true].
 
     Raises [Invalid_argument] unless one of [fr] and [to_] is {!Dtype.Float32}
     and the other a narrower float. *)

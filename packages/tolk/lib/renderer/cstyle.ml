@@ -2611,6 +2611,35 @@ let nms =
 
 let rec take n = function x :: l when n > 0 -> x :: take (n - 1) l | _ -> []
 
+(* An e5m2 conversion, a constant's or a cast's, past the greatest finite value
+   57344 is an infinity: cuda_fp8.hpp's __NV_NOSAT conversion gives one from
+   61440, the tie to even past it, where __nv_fp8_e5m2's constructor saturates
+   (__NV_SATFINITE). A double converts once; every other source is exact in
+   float32 below 61440. e4m3, which has no infinity, saturates, as its
+   constructor does. A NaN constant stays written from its bits. *)
+let cuda_e5m2 ctx from v =
+  ctx.lang.bitcast "__nv_fp8_e5m2" "unsigned char"
+    (strf "__nv_cvt_%s_to_fp8(%s, __NV_NOSAT, __NV_E5M2)" from v)
+
+let cuda_fp8_rewrite =
+  Pattern_matcher.fold
+    (fun () -> [
+      rule_ctx (cast_of ~dtype:[ Dtype.Fp8e5m2 ] c) (fun ctx m ->
+          match cval (m "c") with
+          | `Float v when Float.is_nan v -> None
+          | `Float v when not (Float.is_finite v) ->
+              Some (cuda_e5m2 ctx "float" (special ctx.lang v))
+          | _ -> Some (cuda_e5m2 ctx "float" (const_str (m "c") ^ "f")));
+      rule_ctx (Upat.op ~dtype:[ Dtype.Fp8e5m2 ] ~name:"x" Op.Cast)
+        (fun ctx m ->
+          let s = nth (m "x") 0 in
+          match dtype s with
+          | _ when is Op.Const s -> None
+          | Dtype.Float64 -> Some (cuda_e5m2 ctx "double" ctx.%{s})
+          | Dtype.Float32 -> Some (cuda_e5m2 ctx "float" ctx.%{s})
+          | _ -> Some (cuda_e5m2 ctx "float" (strf "(float)(%s)" ctx.%{s})));
+    ])
+
 let cuda_lang =
   let half dt = Dtype.equal dt Dtype.Float16 || Dtype.equal dt Dtype.Bfloat16 in
   let h name =
@@ -2656,7 +2685,7 @@ let cuda_lang =
       :: cstyle.type_map;
     bitcast = strf "tg_bitcast<%s>((%s)(%s))";
     byte_words = true;
-    string_rewrite = base_rewrite;
+    string_rewrite = Pattern_matcher.append cuda_fp8_rewrite base_rewrite;
   }
 
 (* Asynchronous copies
@@ -3382,15 +3411,31 @@ let hip_kernel arch tensor_cores ?(prefix = []) l ~name kernel bufs uops =
       | dt :: _ -> Format.asprintf "%a" Dtype.pp_const (Dtype.max dt)
       | [] -> invalid_arg (strf "%S has no 8-bit float" arch)
     in
-    String.concat "\n"
-      [
-        "static inline __attribute__((device)) unsigned char f32_to_fp8(float \
-         v, int is_bf8) {";
+    (* The hardware sees a value it rounds without overflow, an infinity of a
+       format that has one, or a NaN. The fnuz formats saturate a finite
+       value, and the converter makes an infinity their NaN. On an OCP GPU,
+       e4m3, which has no infinity, saturates every value but NaN, an
+       infinity included, and e5m2 gives the infinity of its sign from 61440,
+       the tie to even past its greatest finite value, 57344. *)
+    let clamp =
+      if amd_fp8s arch = Dtype.fp8_fnuz then
         strf
           "  v = \
            (((*(unsigned*)&v)&0x7F800000)!=0x7F800000)?__builtin_amdgcn_fmed3f(v,is_bf8?57344.0f:%sf,is_bf8?-57344.0f:-%sf) \
            : v;"
-          fp8_max fp8_max;
+          fp8_max fp8_max
+      else
+        strf
+          "  v = v!=v ? v : \
+           is_bf8?(__builtin_fabsf(v)>=61440.0f?__builtin_copysignf(__builtin_inff(),v):__builtin_amdgcn_fmed3f(v,57344.0f,-57344.0f)) \
+           : __builtin_amdgcn_fmed3f(v,%sf,-%sf);"
+          fp8_max fp8_max
+    in
+    String.concat "\n"
+      [
+        "static inline __attribute__((device)) unsigned char f32_to_fp8(float \
+         v, int is_bf8) {";
+        clamp;
         "  return (unsigned \
          char)(is_bf8?__builtin_amdgcn_cvt_pk_bf8_f32(v,v,0,false):__builtin_amdgcn_cvt_pk_fp8_f32(v,v,0,false));";
         "}";

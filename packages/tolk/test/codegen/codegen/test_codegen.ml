@@ -438,8 +438,8 @@ let per_row ?(only = fun _ -> true) check =
     rows
 
 (* An emulated float8 converts as IEEE does, where the goldens' programs
-   saturate and flush (D9), so these programs' graphs differ from their goldens'
-   in their conversions; `values on the host` pins what they compute. *)
+   saturate and flush (D9, D508), so these programs' graphs differ from their
+   goldens' in their conversions; `values on the host` pins what they compute. *)
 let emulated_fp8 = [ "fp8_clang"; "fp8_metal"; "fp8_hip" ]
 let d9 row = List.mem (row "name") emulated_fp8
 
@@ -5852,15 +5852,6 @@ let fma f x y z =
     let w = spacing f s in
     rounded f (if e > 0. then s +. (w /. 2.) else s -. (w /. 2.))
 
-(* [h], [f]'s value of the sum [s], as a conversion that saturates stores it:
-   past the greatest finite value, an infinity included, it is that value of
-   [s]'s sign. *)
-let saturated f s h =
-  if Float.is_nan s then h
-  else if Float.abs h = Float.infinity || Float.is_nan h then
-    Float.copy_sign (of_bits f f.greatest) s
-  else h
-
 (* A value of [f] of at most the bits [greatest], of either sign, but for a
    negative zero where [f] has none. *)
 let narrow_value f greatest =
@@ -6015,23 +6006,16 @@ let exempt least (x, y, z) h =
   let below v = v <> 0. && Float.abs v < least in
   List.exists below [ x; y; z; x *. y; sum (x, y, z); h ]
 
-(* [run] compiles a kernel and returns whether the target's conversions to [f]
-   saturate, the narrow float's least normal value if it flushes subnormals, and
-   how the kernel runs. *)
+(* [run] compiles a kernel and returns the narrow float's least normal value if
+   the target flushes subnormals, and how the kernel runs. *)
 let muladd_rounds_once f run lanes =
   let n = 8 in
   let prg = lazy (run (narrow_muladd f.dt ~lanes n)) in
   prop ~count:200 (Printf.sprintf "in %d lanes" lanes) (narrow_triples f)
     (fun triples ->
-      let saturates, flushes, run = Lazy.force prg in
+      let flushes, run = Lazy.force prg in
       let column g = Array.map (fun t -> `Float (g t)) triples in
-      let expected =
-        Array.map
-          (fun ((x, y, z) as t) ->
-            let h = fma f x y z in
-            if saturates then saturated f (sum t) h else h)
-          triples
-      in
+      let expected = Array.map (fun (x, y, z) -> fma f x y z) triples in
       let f32 x = Int32.float_of_bits (Int32.bits_of_float x) in
       let g = of_bits f f.greatest in
       let is_special v =
@@ -6118,7 +6102,7 @@ let compiled_on d (r : Renderer.t) k =
   fun buffers ->
     read_back ~kernel ~program (Run.on d prg (stored ~kernel ~program buffers))
 
-let on_host k = (false, None, compiled_on Rig.host (Lazy.force host) k)
+let on_host k = (None, compiled_on Rig.host (Lazy.force host) k)
 
 (* [k] compiled for arm64 at [arch] and run on this machine's host, which runs
    it where the host is arm64 with each feature [arch] names and compiles
@@ -6132,22 +6116,21 @@ let on_arm64 arch k =
   | _ -> skip ~reason:("the host does not run " ^ arch) ());
   Clang.here arch;
   let r = Cstyle.clang (target "CPU" "CLANG" arch) in
-  (false, None, compiled_on Rig.host r k)
+  (None, compiled_on Rig.host r k)
 
 (* The GPUs the law runs on, each opened once, at its first case, and skipping
-   it without one or without its compiler, whether its conversions to an 8-bit
-   float saturate ({!Cstyle.cuda}), and whether it flushes subnormals. *)
+   it without one or without its compiler, and whether it flushes subnormals. *)
 let gpus =
   let opened opener = lazy (Rig.open_ opener) in
   [
-    ("Metal", opened (Rig_metal.gpu 0), false, true);
-    ("CUDA", opened (Rig_cuda.gpu 0), true, false);
-    ("NV", opened (Rig_nv_nvidia.gpu 0), true, false);
-    ("AMD", opened (Rig_amd_amdgpu.gpu 0), false, false);
+    ("Metal", opened (Rig_metal.gpu 0), true);
+    ("CUDA", opened (Rig_cuda.gpu 0), false);
+    ("NV", opened (Rig_nv_nvidia.gpu 0), false);
+    ("AMD", opened (Rig_amd_amdgpu.gpu 0), false);
   ]
 
 (* The device of [gpu] and its renderer, or a skip without them. *)
-let opened_gpu (_, device, _, _) =
+let opened_gpu (_, device, _) =
   match Lazy.force device with
   | Error why -> skip ~reason:why ()
   | Ok d -> (
@@ -6155,11 +6138,9 @@ let opened_gpu (_, device, _, _) =
       | r -> (d, r)
       | exception Failure why -> skip ~reason:why ())
 
-let on_narrow_gpu ((_, _, saturates, flushes) as gpu) f k =
+let on_narrow_gpu ((_, _, flushes) as gpu) f k =
   let d, r = opened_gpu gpu in
-  ( saturates && Dtype.mem f.dt Dtype.fp8s,
-    (if flushes then Some (Float.ldexp 1. f.emin) else None),
-    compiled_on d r k )
+  ((if flushes then Some (Float.ldexp 1. f.emin) else None), compiled_on d r k)
 
 let narrow_multiply_adds =
   let widths = [ 1; 4; 8 ] in
@@ -6171,7 +6152,7 @@ let narrow_multiply_adds =
              (List.map (muladd_rounds_once f (on_arm64 arch)) widths))
          [ "arm64,generic"; "arm64,generic,fp16" ]
     @ List.map
-        (fun ((kind, _, _, _) as gpu) ->
+        (fun ((kind, _, _) as gpu) ->
           group ("on " ^ kind)
             (List.map (muladd_rounds_once f (on_narrow_gpu gpu f)) widths))
         gpus
@@ -6763,7 +6744,7 @@ module Gated_loads = struct
     group "a gated load takes its alternative where its gate fails"
       (group "on the host" (on ~shared:false on_host)
       :: List.map
-           (fun ((kind, _, _, _) as gpu) ->
+           (fun ((kind, _, _) as gpu) ->
              group ("on " ^ kind) (on ~shared:true (on_gpu gpu)))
            gpus)
 end

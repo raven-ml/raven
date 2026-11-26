@@ -531,12 +531,8 @@ load it (D5).
 
 ## D16. Withdrawn
 
-A CUDA conversion to an 8-bit float kept an infinity special. rune hands tolk
-no 8-bit float, so `Cstyle.cuda` saturates, as `renderer/cstyle.py`
-`base_rewrite` does: an infinity becomes the greatest finite value of its
-sign. This departs from nx's e5m2 and from `Dtype.encode_format`, which keeps
-an infinity in e5m2 and makes it a NaN in e4m3, as `dtype.py` `float_to_fp8`
-does.
+A CUDA conversion to an 8-bit float kept an infinity special. D508 holds the
+rule every conversion to an 8-bit float now follows, CUDA's included.
 
 ## D17. Each operation on a narrow signed scalar is narrowed in the source
 
@@ -10433,3 +10429,49 @@ D466.
   `u`'s bounds), `pm_commit_weak › keeps the value of a cast over a 64-bit
   unsigned and a signed operand`, and `pm_lower_weak › an expression whose
   bounds are one value no 64-bit integer holds commits at Int64`.
+
+## D508. An 8-bit float overflows as nx stores it
+
+- **tinygrad:** `dtype.py` `float_to_fp8` (an e4m3 infinity is its NaN, an
+  e5m2 value past 57344 saturates to it); `codegen/decomp/dtype.py` `f2f`
+  (the same, with `sat`); `renderer/cstyle.py` `CUDARenderer`'s casts and
+  constants (`__nv_fp8_e5m2`'s saturating constructor) and `HIPRenderer`'s
+  `f32_to_fp8` (clamps a finite value, and hands an infinity to the
+  hardware's conversion).
+- **tolk:** `Dtype.encode_format`, behind `Dtype.truncate`;
+  `Decomp_dtype.f2f`; `Cstyle.cuda_fp8_rewrite`; the `f32_to_fp8` of
+  `Cstyle.hip_kernel` on an OCP GPU.
+- **Differs:** past the greatest finite value, a rounded value or an
+  infinity is `Fp8e5m2`'s infinity of its sign, from 61440, the tie to even
+  past 57344, and `Fp8e4m3`'s ±448, an infinity included, folded, emulated
+  and native alike. tinygrad saturates e5m2 to ±57344 and makes an e4m3
+  infinity a NaN in its folder, emulation and HIP, and saturates both
+  formats on CUDA, an e5m2 infinity constant included. CUDA converts to e5m2
+  with `__nv_cvt_float_to_fp8` or, from a double, `__nv_cvt_double_to_fp8`,
+  under `__NV_NOSAT`, constants and casts alike, and keeps e4m3's
+  constructor. HIP's helper saturates every e4m3 value but NaN and gives an
+  e5m2 value from 61440 its infinity before the hardware converts. The fnuz
+  formats, which nx lacks, keep tinygrad's values: a finite value saturates
+  and an infinity is the NaN.
+- **Reason:** (e): nx stores a float into `float8_e4m3fn` saturated to ±448,
+  an infinity included, and into `float8_e5m2` as an infinity past its
+  greatest finite value. At the pinned commit, the folder casts an e4m3
+  infinity to NaN and 61440 to e5m2's 57344, and a CUDA kernel casts an e5m2
+  infinity to 57344, so one cast gave one value folded and another computed.
+  rune encodes its 8-bit floats itself and hands tolk none.
+- **Pinned by:** the Dtype suite's `Casts › truncate › past an 8-bit float's
+  greatest value is Fp8e5m2's infinity from 61440 and Fp8e4m3's greatest
+  value, an infinity included` and `› rounds an 8-bit float's greatest
+  value, the tie past it and an infinity`; the Decomp_dtype suite's `f2f ›
+  a float with infinities is an infinity from its greatest value plus half an
+  ulp`, `› with saturation, a float without infinities overflows to its
+  greatest value, and an infinity is that value in e4m3 and the NaN in
+  fnuz`, `› narrowing a NaN to e4m3 gives the NaN of its sign, and an
+  infinity the greatest value of its sign` and `pm_dtype_decomps › narrow
+  floats › an infinity and an overflow are e5m2's infinity and e4m3's
+  greatest value; an fnuz format saturates an overflow and makes an infinity
+  its NaN`; the Tolk_engine suite's `kernels on the host › a cast to an
+  8-bit float at its bounds computes as truncate`, emulated, and `GPUs ›` the
+  same, native on fudge's CUDA and NV, from float32, float64, float16 and
+  int32, with e5m2 infinity constants; the Cstyle suite's `cuda_*fp8e5m2`,
+  `cuda_constants` and OCP `hip_*` goldens' `.tolk` files.

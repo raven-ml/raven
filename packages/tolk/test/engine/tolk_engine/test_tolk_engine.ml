@@ -609,6 +609,94 @@ let extremes_prop name d =
     (Gen.with_pp pp_extremes extreme_gen)
     (fun e -> extremes_compute (d ()) e)
 
+(* Casts to an 8-bit float at its bounds
+
+   A cast to Fp8e4m3 or Fp8e5m2 gives the value Dtype.truncate gives, folded,
+   emulated or native: past the greatest finite value, Fp8e5m2's infinity from
+   61440, the tie to even past 57344, and Fp8e4m3's 448, an infinity included.
+   A kernel casts [fp8_values src] of each source type into both formats, and
+   stores Fp8e5m2's infinities as constants into an Fp8e5m2 buffer, which a
+   target writes through its own conversion. *)
+
+let fp8_sources = Dtype.[ Float32; Float64; Float16; Int32 ]
+
+let fp8_values src =
+  let floats =
+    [ 448.; 464. -. 0x1p-15; 464.; 464. +. 0x1p-15; 480.; 57344.;
+      61440. -. 0x1p-8; 61440.; 61440. +. 0x1p-8; 65536.; 1e10;
+      Float.infinity ]
+  in
+  let xs =
+    match (src : Dtype.t) with
+    | Float64 -> floats @ [ Float.pred 61440.; Float.succ 61440.; 1e300 ]
+    | Float16 -> [ 448.; 464.; 480.; 57344.; 61440.; 65504.; Float.infinity ]
+    | Int32 -> [ 448.; 464.; 480.; 57344.; 61439.; 61440.; 65536.; 0x1p31 -. 1. ]
+    | _ -> floats
+  in
+  let xs = xs @ List.map Float.neg xs in
+  let xs = if Dtype.is_float src then Float.nan :: xs else xs in
+  Array.of_list
+    (List.map
+       (fun x ->
+         if Dtype.is_float src then Dtype.truncate src (`Float x)
+         else `Int (Bigint.of_float x))
+       xs)
+
+(* A narrow type's elements move as the unsigned integers of their width,
+   which an emulating target stores them as. *)
+let held dt = if Dtype.equal dt Float16 then Dtype.Uint16 else dt
+
+let fp8_kernel src n =
+  let i = Ops.range ~axis_type:Weak (Int n) [ 0 ] in
+  let at slot dt = Ops.index (Shape.placeholder ~slot [ n ] dt) [ i ] in
+  let x = at 2 (held src) in
+  let x = if Dtype.equal (held src) src then x else Ops.bitcast x src in
+  let code y = Ops.bitcast y Uint8 in
+  let infinity s = Ops.float ~dtype:Fp8e5m2 (Float.copy_sign Float.infinity s) in
+  Ops.sink
+    ~kernel:(Ops.kernel_info ~name:"fp8_casts" ~opts_to_apply:[] ())
+    [
+      Ops.end_
+        (Ops.group
+           [
+             Ops.store (at 0 Uint8) (code (Ops.cast x Fp8e4m3));
+             Ops.store (at 1 Uint8) (code (Ops.cast x Fp8e5m2));
+             Ops.store (at 3 Fp8e5m2) (infinity 1.);
+             Ops.store (at 4 Fp8e5m2) (infinity (-1.));
+           ])
+        [ i ];
+    ]
+
+let casts_to_fp8 d src =
+  let supported = Renderer.supported_dtypes (Run.renderer d) in
+  if Dtype.equal src Float64 && not (List.mem src supported) then
+    skip ~reason:"no float64 on this target" ();
+  let xs = fp8_values src in
+  let n = Array.length xs in
+  let prg = Codegen.to_program (fp8_kernel src n) (Run.renderer d) in
+  let held_xs = Array.map (Dtype.bitcast src (held src)) xs in
+  let held_xs = if Dtype.equal (held src) src then xs else held_xs in
+  let out = Run.on d prg [ (2, held_xs) ] in
+  (* An Fp8e5m2 buffer an emulating target holds as codes reads as bytes. *)
+  let read dt slot =
+    Array.map
+      (function `Int _ as c -> Dtype.bitcast Uint8 dt c | v -> v)
+      (List.assoc slot out)
+  in
+  let truncated dt = Array.map (Dtype.truncate dt) xs in
+  let msg dt = Format.asprintf "%a to %a" Dtype.pp src Dtype.pp dt in
+  equal ~msg:(msg Fp8e4m3) values (truncated Fp8e4m3) (read Fp8e4m3 0);
+  equal ~msg:(msg Fp8e5m2) values (truncated Fp8e5m2) (read Fp8e5m2 1);
+  equal ~msg:"an Fp8e5m2 infinity constant" values
+    (Array.make n (`Float Float.infinity))
+    (read Fp8e5m2 3);
+  equal ~msg:"an Fp8e5m2 negative infinity constant" values
+    (Array.make n (`Float Float.neg_infinity))
+    (read Fp8e5m2 4)
+
+let fp8_cases name d =
+  cases name ~id:Dtype.name fp8_sources (fun src -> casts_to_fp8 (d ()) src)
+
 (* A shift's count may be a uint32 whatever the shifted type: the constant
    counts past a narrow type's width, 32 and 65536 shift its extremes as the
    interpreter does, in scalars. *)
@@ -1169,6 +1257,8 @@ let on_the_host =
          interpreter" (fun () -> host);
       wide_count_cases "a narrow type shifted by a uint32 count computes as \
          the interpreter" (fun () -> host);
+      fp8_cases "a cast to an 8-bit float at its bounds computes as truncate"
+        (fun () -> host);
       shift_counts_prop
         "a shift by a literal or weak count of any size computes the shift"
         (fun () -> host);
@@ -8212,6 +8302,8 @@ let on_a_gpu kind =
         (divides_by_a_table ~devices "CPU:1");
       wide_count_cases
         "a narrow type shifted by a uint32 count computes as the interpreter"
+        (fun () -> devices "CPU:1");
+      fp8_cases "a cast to an 8-bit float at its bounds computes as truncate"
         (fun () -> devices "CPU:1");
       shift_counts_prop
         "a shift by a literal or weak count of any size computes the shift"

@@ -254,16 +254,26 @@ let narrowed_code dt b =
 let narrowed ?sat dt x = as_int (at_code (narrowing ?sat dt) (bits x))
 let infinity_of s = Float.copy_sign Float.infinity s
 
-(* [overflows_at_the_edge ?sat dt] checks that narrowing keeps [dt]'s greatest
-   value and the float32 below the edge, and gives the code of an infinity, a
-   NaN in a format without one, above the edge. The edge is a tie, which rounds
-   to the even code: the greatest one if it is even, as e4m3's is. *)
-let overflows_at_the_edge ?sat dt =
+(* [overflow ~sat dt s] is the code f2f gives past [dt]'s greatest finite value
+   of the sign [s]: its infinity, or in a format without one its NaN, or with
+   [sat] its greatest finite value. *)
+let overflow ~sat dt s =
+  let sign = if s < 0. then size dt / 2 else 0 in
+  match dt with
+  | Dtype.Fp8e4m3 -> sign lor if sat then 0x7e else 0x7f
+  | Fp8e4m3fnuz | Fp8e5m2fnuz -> if sat then sign lor 0x7f else 0x80
+  | _ -> encode dt (`Float (infinity_of s))
+
+(* [overflows_at_the_edge ~sat dt] checks that narrowing keeps [dt]'s greatest
+   value and the float32 below the edge, and gives the code of [overflow]
+   above the edge. The edge is a tie, which rounds to the even code: the
+   greatest one if it is even, as e4m3's is. *)
+let overflows_at_the_edge ~sat dt =
   List.iter
     (fun s ->
-      let x = narrowed ?sat dt
+      let x = narrowed ~sat dt
       and greatest = encode dt (`Float (s *. top dt)) in
-      let infinity = encode dt (`Float (infinity_of s)) in
+      let infinity = overflow ~sat dt s in
       let tie = if greatest land 1 = 0 then greatest else infinity in
       equal ~msg:"the greatest value" hex greatest (x (s *. top dt));
       equal ~msg:"below the edge" hex greatest (x (s *. below (edge dt)));
@@ -340,25 +350,28 @@ let f2f =
       cases
         "without saturation, an 8-bit float overflows to its infinity or NaN"
         ~id:alias Dtype.fp8s (fun dt ->
-          equal hex
-            (encode dt (`Float Float.infinity))
+          equal hex (overflow ~sat:false dt 1.)
             (as_int (at_code (narrowing ~sat:false dt) (bits 1e10))));
       cases
-        "a 16-bit float is an infinity from its greatest value plus half an ulp"
+        "a float with infinities is an infinity from its greatest value plus \
+         half an ulp"
         ~id:alias
-        Dtype.[ Float16; Bfloat16 ]
+        Dtype.[ Float16; Bfloat16; Fp8e5m2 ]
         (fun dt ->
-          overflows_at_the_edge dt;
+          overflows_at_the_edge ~sat:true dt;
           overflows_at_the_edge ~sat:false dt);
       cases
-        "without saturation, an 8-bit float is an infinity or its NaN past its \
+        "without saturation, a float without infinities is its NaN past its \
          greatest value plus half an ulp"
-        ~id:alias Dtype.fp8s
+        ~id:alias
+        Dtype.(Fp8e4m3 :: fp8_fnuz)
         (overflows_at_the_edge ~sat:false);
       cases
-        "with saturation, an 8-bit float's overflow is its greatest value, and \
-         an infinity is its infinity or its NaN"
-        ~id:alias Dtype.fp8s (fun dt ->
+        "with saturation, a float without infinities overflows to its greatest \
+         value, and an infinity is that value in e4m3 and the NaN in fnuz"
+        ~id:alias
+        Dtype.(Fp8e4m3 :: fp8_fnuz)
+        (fun dt ->
           List.iter
             (fun s ->
               let greatest = encode dt (`Float (s *. top dt)) in
@@ -403,15 +416,21 @@ let f2f =
           cover (alias dt) true;
           satisfies ~claim:"a NaN" (code_of dt) (is_nan_code dt)
             (narrowed_code dt b));
-      (* e4m3's NaNs are 0x7f and 0xff; the input's bits are moved *)
-      cases "narrowing an infinity or a NaN to e4m3 gives the NaN of its sign"
-        ~id:(Printf.sprintf "0x%08x")
+      (* e4m3's NaNs are 0x7f and 0xff, its greatest values 0x7e and 0xfe; the
+         input's sign is moved *)
+      cases
+        "narrowing a NaN to e4m3 gives the NaN of its sign, and an infinity \
+         the greatest value of its sign"
+        ~id:(fun (b, _) -> Printf.sprintf "0x%08x" b)
         [
-          0x7f800000; 0xff800000; 0x7fc00000; 0xffc00000; 0x7f800001; 0xff800001;
-        ] (fun b ->
-          equal hex
-            (if b land 0x80000000 <> 0 then 0xff else 0x7f)
-            (narrowed_code Fp8e4m3 b));
+          (0x7f800000, 0x7e);
+          (0xff800000, 0xfe);
+          (0x7fc00000, 0x7f);
+          (0xffc00000, 0xff);
+          (0x7f800001, 0x7f);
+          (0xff800001, 0xff);
+        ]
+        (fun (b, c) -> equal hex c (narrowed_code Fp8e4m3 b));
       test "f2f converts only between a narrow float and a float32" (fun () ->
           let v = Shape.param 0 Dtype.Uint16 in
           rejects (fun () -> Decomp_dtype.f2f v Float16 Bfloat16);
@@ -1303,16 +1322,16 @@ let ieee_facets =
             ] );
         ]
       (fun (dt, table) -> casts dt table);
-    (* An infinity narrows to the NaN of its sign in e4m3, whose NaNs are 0x7f
-       and 0xff; an fnuz format has the one NaN 0x80. *)
+    (* e5m2's infinities are 0x7c and 0xfc, e4m3's greatest values 0x7e and
+       0xfe; an fnuz format has the one NaN 0x80. *)
     cases
-      "an infinity stays one in e5m2 and is the NaN of e4m3 and the fnuz \
-       formats, and a finite overflow saturates"
+      "an infinity and an overflow are e5m2's infinity and e4m3's greatest \
+       value; an fnuz format saturates an overflow and makes an infinity its NaN"
       ~id:(fun (dt, _) -> alias dt)
       Dtype.
         [
-          (Fp8e4m3, [ 0x7f; 0xff; 0x7e; 0xfe ]);
-          (Fp8e5m2, [ 0x7c; 0xfc; 0x7b; 0xfb ]);
+          (Fp8e4m3, [ 0x7e; 0xfe; 0x7e; 0xfe ]);
+          (Fp8e5m2, [ 0x7c; 0xfc; 0x7c; 0xfc ]);
           (Fp8e4m3fnuz, [ 0x80; 0x80; 0x7f; 0xff ]);
           (Fp8e5m2fnuz, [ 0x80; 0x80; 0x7f; 0xff ]);
         ]
