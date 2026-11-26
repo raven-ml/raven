@@ -510,7 +510,7 @@ let law_within_bound (c, with_init) =
       let rounding = if with_init then u *. Float.abs r else 0. in
       at_most float_exact
         ~than:(rounding +. ((1. +. u) *. g *. abs))
-        (Float.abs (y.(o) -. r)))
+        (Nx_support.gap y.(o) r))
     (reference c.meaning xa xb)
 
 (* Complex operands whose parts are {!operand}'s: each part of every product and
@@ -537,7 +537,9 @@ let law_complex_within_bound c =
       in
       at_most float_exact
         ~than:((1. +. u) *. g *. abs)
-        (Complex.norm (Complex.sub y.(o) exact)))
+        (Float.hypot
+           (Nx_support.gap y.(o).re exact.re)
+           (Nx_support.gap y.(o).im exact.im)))
     (terms c.meaning)
 
 (* [x] and [y] are the same value of [dt]: a float by its bits, NaNs as one
