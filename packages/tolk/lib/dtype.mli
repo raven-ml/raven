@@ -125,13 +125,23 @@ module Value : sig
   (** [v0 * v1] is the product of [v0] and [v1]. *)
 
   val ( // ) : t -> t -> t
-  (** [v0 // v1] is the quotient of [v0] by [v1] rounded down.
+  (** [v0 // v1] is the quotient of [v0] by [v1] rounded down. Of floats it is
+      the floor of their exact quotient rounded once to a double, to nearest
+      with ties to even: from 2{^ 53} in magnitude it can exceed the quotient,
+      and past the greatest double it is the infinity of its sign. A zero
+      quotient has the sign of [v0 /. v1]. By an infinite [v1], a finite [v0] of
+      [v1]'s sign, or a zero, has the quotient [0], and one of the other sign
+      the quotient [-1]. An infinite [v0] or a NaN gives NaN.
 
       Raises [Division_by_zero] if [v1] is zero. *)
 
   val ( % ) : t -> t -> t
-  (** [v0 % v1] is [v0 - (v0 // v1) * v1], of the sign of [v1] when it is not
-      zero: a float remainder is exact.
+  (** [v0 % v1] is [v0 - q * v1] for the exact floor [q] of the quotient of [v0]
+      by [v1], which lies from [0] toward [v1], [v1] excluded. Of floats it is
+      that exact value rounded once to a double, to nearest with ties to even,
+      so it can be [v1] itself, and a zero remainder has [v1]'s sign. By an
+      infinite [v1], it is [v0] where the quotient is [0], and [v1] where it is
+      [-1]. An infinite [v0] or a NaN gives NaN.
 
       Raises [Division_by_zero] if [v1] is zero. *)
 end

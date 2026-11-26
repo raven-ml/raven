@@ -379,24 +379,53 @@ module Value = struct
     | `Int n0, `Int n1 -> `Int (int_op n0 n1)
     | v0, v1 -> `Float (float_op (to_float (v0 :> t)) (to_float (v1 :> t)))
 
-  (* Floats divide as CPython's float_divmod does: through fmod, whose remainder
-     is exact, then moved to the divisor's sign. *)
+  (* A finite float [x] as [(m, e)], [x = m * 2^e] with [m] an integer. *)
+  let exact x =
+    let f, e = Float.frexp x in
+    (Bigint.of_float (Float.ldexp f 53), e - 53)
+
+  (* [m * 2^e] rounded once to a double, for a value that a double holds exactly
+     or that is normal. [m] is rounded to odd at 64 bits first, which keeps its
+     rounding to 53 bits the one rounding. *)
+  let scaled m e =
+    let a = Bigint.abs m in
+    let s = Bigint.numbits a - 64 in
+    let x =
+      if s <= 0 then Float.ldexp (Bigint.to_float a) e
+      else
+        let t = Bigint.shift_right a s in
+        let t =
+          if Bigint.equal (Bigint.shift_left t s) a then t
+          else Bigint.logor t Bigint.one
+        in
+        Float.ldexp (Bigint.to_float t) (e + s)
+    in
+    if Bigint.sign m < 0 then -.x else x
+
+  (* Floats divide as real numbers: the floor [q] of the exact quotient and the
+     remainder [x - q * y] are computed exactly, on significands brought to a
+     common exponent, and each rounds once. A remainder below the least normal
+     is a multiple of the least subnormal, so a double holds it. By an infinite
+     [y] a finite [x] has the limits: [q] is 0, or -1 where the signs differ. A
+     zero quotient has the sign of [x /. y], and a zero remainder [y]'s. *)
   let float_divmod x y =
     if y = 0. then raise Division_by_zero;
-    let m = Float.rem x y in
-    let d = (x -. m) /. y in
-    let d, m =
-      if m = 0. then (d, Float.copy_sign 0. y)
-      else if not (Bool.equal (y < 0.) (m < 0.)) then (d -. 1., m +. y)
-      else (d, m)
-    in
-    let q =
-      if d = 0. then Float.copy_sign 0. (x /. y)
-      else
-        let f = Float.floor d in
-        if d -. f > 0.5 then f +. 1. else f
-    in
-    (q, m)
+    if Float.is_nan x || Float.is_nan y then (x +. y, x +. y)
+    else if not (Float.is_finite x) then (nan, nan)
+    else if not (Float.is_finite y) then
+      if x = 0. || Bool.equal (Float.sign_bit x) (Float.sign_bit y) then
+        (Float.copy_sign 0. (x /. y), if x = 0. then Float.copy_sign 0. y else x)
+      else (-1., y)
+    else
+      let (mx, ex), (my, ey) = (exact x, exact y) in
+      let e = Int.min ex ey in
+      let a = Bigint.shift_left mx (ex - e)
+      and b = Bigint.shift_left my (ey - e) in
+      let q = Bigint.fdiv a b in
+      let r = Bigint.sub a (Bigint.mul q b) in
+      let zero n = Bigint.equal n Bigint.zero in
+      ( (if zero q then Float.copy_sign 0. (x /. y) else Bigint.to_float q),
+        if zero r then Float.copy_sign 0. y else scaled r e )
 
   let ( = ) v0 v1 = match order v0 v1 with Some 0 -> true | _ -> false
   let ( <> ) v0 v1 = not (v0 = v1)

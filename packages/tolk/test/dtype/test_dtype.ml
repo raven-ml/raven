@@ -1001,6 +1001,18 @@ let values =
           let r = as_float (`Float x % `Float y) in
           equal ~msg:"sign" bool (Float.sign_bit y) (Float.sign_bit r);
           is_true ~msg:"size" (Stdlib.( <= ) (Float.abs r) (Float.abs y)));
+      (* Each quotient is math.floor(Fraction(x) / Fraction(y)) in Python,
+         converted to a float. *)
+      cases "a float quotient is the floor of the exact quotient, rounded once"
+        ~id:(fun (x, y, _) -> Format.asprintf "%h // %h" x y)
+        [
+          (-8987075619625.855, 0.0028853025083442675, -3114777599102804.);
+          (4562701585591296., -0.7670218673952995, -5948593879188349.);
+          (-4.758569141785631e+17, -35.4099496915218, 1.3438508620431544e+16);
+          (1e308, 1e-308, Float.infinity);
+          (-1e308, 1e-308, Float.neg_infinity);
+        ]
+        (fun (x, y, q) -> equal value (`Float q) (`Float x // `Float y));
       cases "a zero divisor raises Division_by_zero"
         ~id:(Format.asprintf "%a" (Testable.pp value))
         [ `Int Bigint.zero; `Bool false; `Float 0.; `Float (-0.) ]
