@@ -109,18 +109,18 @@ val clang : string -> Renderer.Compiler.t
     it rejects those, and again under the options of another release it states,
     unless they only disable AVX10.1 and the macros show none of it on; Clang
     then states once what it runs for the options of its release. A run of the
-    preprocessor that fails is not kept, and the next compile runs it again.
-    {!Renderer.Compiler.compile} raises {!Renderer.Compiler.Compile_error} with
-    Clang's diagnostics if Clang rejects the source or does not run, and before
-    it compiles anything: naming the Clang and its version under a Clang before
-    LLVM 16 or Apple's before 15, as it states its release, or as its macro
-    [__clang_major__] names it where it states none, which compile some
-    selections between a value and a zero into the zero of the wrong sign, as
-    [x > 0.0f ? -0.0f : x] into [-0.0] at [x = +0.0]; naming why under a Clang
-    whose preprocessor gives no macros; and naming SSE2 for an x86_64 [arch]
-    that turns it off, without which Clang has no [_Float16].
-    {!Renderer.Compiler.disassemble} prints what [objdump -d] prints
-    ({!Helpers.cpu_objdump}).
+    preprocessor that fails is not kept, nor is what [native] resolves to
+    without it, and the next compile runs it again. {!Renderer.Compiler.compile}
+    raises {!Renderer.Compiler.Compile_error} with Clang's diagnostics if Clang
+    rejects the source or does not run, and before it compiles anything: naming
+    the Clang and its version under a Clang before LLVM 16 or Apple's before 15,
+    as it states its release, or as its macro [__clang_major__] names it where
+    it states none, which compile some selections between a value and a zero
+    into the zero of the wrong sign, as [x > 0.0f ? -0.0f : x] into [-0.0] at
+    [x = +0.0]; naming why under a Clang whose preprocessor gives no macros; and
+    naming SSE2 for an x86_64 [arch] that turns it off, without which Clang has
+    no [_Float16]. {!Renderer.Compiler.disassemble} prints what [objdump -d]
+    prints ({!Helpers.cpu_objdump}).
 
     Raises [Invalid_argument] naming [arch] if it has fewer than two fields, and
     naming its [MACHINE] if that is another. *)

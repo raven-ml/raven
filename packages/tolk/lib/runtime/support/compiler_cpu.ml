@@ -770,6 +770,10 @@ let clang arch =
       Fun.protect ~finally:(fun () -> Mutex.unlock lock) @@ fun () ->
       match !settled_to with
       | Some selected -> selected
+      | None when Result.is_error (dumped cc (selection arch)) ->
+          (* Without the preprocessor's macros [native] is not resolved, so
+             nothing is kept: the next compile settles it again. *)
+          selection arch
       | None ->
           let selected = settled cc arch in
           settled_to := Some selected;

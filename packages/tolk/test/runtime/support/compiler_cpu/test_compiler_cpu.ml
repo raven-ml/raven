@@ -1200,6 +1200,21 @@ let native_avx10 =
           | exception Compiler.Compile_error msg ->
               equal (list string) [ "-march=graniterapids" ]
                 (marches (received clang msg)));
+      test
+        "native compiles for its processor by name after a compile whose \
+         preprocessor failed" (fun () ->
+          under_stand_in (llvm21_avx10 ~gated:true ()) @@ fun clang ->
+          let compiler = Compiler_cpu.clang "x86_64,native" in
+          let error () =
+            match Compiler.compile compiler increment with
+            | _ -> fail "a stand-in that compiles nothing compiled"
+            | exception Compiler.Compile_error msg -> msg
+          in
+          contains ~sub:"release is unknown" (error ());
+          Out_channel.with_open_bin (clang ^ ".ready") ignore;
+          let msg = error () in
+          equal (list string) [ "-march=graniterapids" ]
+            (marches (received clang msg)));
       test "an arch that names AVX10.1 compiles nothing, saying what to name"
         (fun () ->
           under_stand_in (llvm21_avx10 ()) @@ fun _ ->
