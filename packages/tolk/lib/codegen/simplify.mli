@@ -83,10 +83,11 @@ val pm_reduce_unparented : (unit, Ops.t) Ops.Pattern_matcher.t
     the ranges its value does not run inside: a sum over such ranges is
     multiplied by the product of their sizes, and a product raised to it, where
     that product is positive; where it is not, the reduction is its operation's
-    identity.
+    identity. A constant source after its value, a range of one trip folded to
+    its one value, is dropped.
 
     Raises [Invalid_argument] if a source of the reduction after its value is
-    not a range. *)
+    neither a range nor a constant. *)
 
 val pm_reduce_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_reduce_collapse] is the rewrites that compute a sum over a range in
@@ -99,10 +100,10 @@ val pm_reduce_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
     selection whose condition has a conjunct free of the range, as that conjunct
     selecting the sum over the rest, [0] where it is false; and
     {!Shape.val-symbolic}. A float sum so computed is its terms added in another
-    order, which rounds differently.
+    order, which rounds differently. A sum over a range of size [1] is its value
+    where the range is [0].
 
-    Raises [Invalid_argument] on a sum over a range of size [1]: the range folds
-    to [0], which {!pm_reduce_unparented} refuses. *)
+    Raises [Invalid_argument] as {!pm_reduce_unparented} does. *)
 
 val pm_reduce_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_reduce_simplify] is {!pm_reduce_unparented}, and replaces a sum over
@@ -112,7 +113,7 @@ val pm_reduce_simplify : (unit, Ops.t) Ops.Pattern_matcher.t
     bounded as those values are; a sum whose part holds an effect
     ({!Op.Set.effectful}) or another reduction is left as it is.
 
-    Raises [Invalid_argument] as {!pm_reduce_collapse} does. *)
+    Raises [Invalid_argument] as {!pm_reduce_unparented} does. *)
 
 val load_collapse : Ops.t -> Ops.t option
 (** [load_collapse red] is the sum [red] over one range ({!Op.Reduce} of
@@ -124,7 +125,7 @@ val load_collapse : Ops.t -> Ops.t option
     when no such form removes the range, and when [red] is no sum or sums over
     several ranges.
 
-    Raises [Invalid_argument] as {!pm_reduce_collapse} does. *)
+    Raises [Invalid_argument] as {!pm_reduce_unparented} does. *)
 
 val pm_load_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_load_collapse] replaces a sum by {!load_collapse}'s, where it is one;
