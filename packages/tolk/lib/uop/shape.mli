@@ -481,9 +481,10 @@ val param_like : ?name:string -> Ops.t -> int -> Ops.t
 val run_of_storage : Ops.t -> bool
 (** [run_of_storage s] is whether [s] is a run of storage's elements, wherever
     it starts: an {!Op.Shrink} of storage, or of a state of it, whose axes of
-    one element come first, its one partial axis next and whole axes after.
-    Where loops move it along, it is such a run on each trip. A call compiled
-    on its own takes such an argument as it is, written or read
+    one element come first, its one partial axis next and whole axes after. A
+    reshape of storage counts as storage, its axes the reshape's; a reshape of a
+    run is no run. Where loops move it along, it is such a run on each trip. A
+    call compiled on its own takes such an argument as it is, written or read
     ({!Indexing.run_rangeify}), and the kernel graph keeps it as the call's
     argument. *)
 

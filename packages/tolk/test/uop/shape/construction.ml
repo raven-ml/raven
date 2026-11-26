@@ -841,6 +841,11 @@ let storage =
            ( "a shrink of a value computed",
              Shape.shrink Ops.O.(b + b) [ range 1 2; None; None ],
              false );
+           ( "a reshape of a run",
+             Shape.reshape
+               (Shape.shrink b [ range 1 2; None; None ])
+               (ints [ 12 ]),
+             false );
          ]
        in
        test
