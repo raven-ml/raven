@@ -54,6 +54,16 @@ let gen_typed_const =
 
 let literal c = Ops.v ~arg:(Const c) Op.Const
 
+(* [same_outcome f g] is that [f] and [g] build one node, or both raise
+   [Invalid_argument]: a type an operation refuses is refused either way. *)
+let same_outcome f g =
+  let built f =
+    match f () with u -> Ok u | exception Invalid_argument _ -> Error ()
+  in
+  let expected = built f in
+  cover "a node" (Result.is_ok expected);
+  equal (result uop unit) expected (built g)
+
 let const_group =
   group "const"
     [
@@ -96,19 +106,13 @@ let literal_makers =
   group "int, float, bool and invalid"
     [
       prop "are const of their value" gen_number (fun (dt, n, (x, b)) ->
-          let built f =
-            match f () with
-            | u -> Ok u
-            | exception Invalid_argument _ -> Error ()
-          in
-          let same f g = equal (result uop unit) (built f) (built g) in
-          same
+          same_outcome
             (fun () -> Ops.const ~dtype:dt (`Int (Bigint.of_int n)))
             (fun () -> Ops.int ~dtype:dt n);
-          same
+          same_outcome
             (fun () -> Ops.const ~dtype:dt (`Float x))
             (fun () -> Ops.float ~dtype:dt x);
-          same
+          same_outcome
             (fun () -> Ops.const ~dtype:dt (`Bool b))
             (fun () -> Ops.bool ~dtype:dt b);
           equal uop (Ops.const `Invalid) Ops.invalid);
@@ -1020,6 +1024,7 @@ let call_group =
 
 (* Elementwise *)
 
+(* The committed types, one of each kind and width but the narrow floats. *)
 let dtypes =
   Dtype.
     [
@@ -1037,166 +1042,408 @@ let dtypes =
 
 let gen_dtype = Gen.of_list ~pp:(Testable.pp dtype) dtypes
 
+(* [typed dt name] is a variable of type [dt]. *)
 let typed dt name =
   if Dtype.equal dt Bool then flag name
   else Ops.variable ~dtype:dt name (i 0) (i 1)
 
-(* A binary operation of the interface, by name. *)
-let binary =
+let named fns =
+  Gen.of_list ~pp:(fun ppf (n, _, _) -> Format.pp_print_string ppf n) fns
+
+(* The binary operations the .mli names by their operation. *)
+let primitive_binary =
   Ops.
     [
-      ("add", add);
-      ("sub", sub);
-      ("mul", mul);
-      ("maximum", maximum);
-      ("lt", lt);
-      ("ne", ne);
-      ("eq", eq);
-      ("where", fun x y -> where (flag "c") x y);
+      ("add", add, Op.Add);
+      ("mul", mul, Mul);
+      ("lt", lt, Cmplt);
+      ("eq", eq, Cmpeq);
+      ("maximum", maximum, Max);
+      ("bitwise_and", bitwise_and, And);
+      ("bitwise_or", bitwise_or, Or);
+      ("bitwise_xor", bitwise_xor, Xor);
+      ("shl", shl, Shl);
+      ("shr", shr, Shr);
     ]
 
-let gen_binary =
-  Gen.of_list ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n) binary
+let primitive_unary =
+  Ops.
+    [
+      ("reciprocal", reciprocal, Op.Recip);
+      ("trunc", trunc, Trunc);
+      ("sqrt", sqrt, Sqrt);
+      ("exp2", exp2, Exp2);
+      ("log2", log2, Log2);
+    ]
 
-let elementwise =
-  let a = var "a" 0 10 and b = var "b" 0 10 in
-  group "elementwise"
+(* The operations the .mli builds from others, each beside its definition. *)
+let derived =
+  Ops.
+    [
+      ("sub", sub, fun x y -> add x (neg y));
+      ("gt", gt, fun x y -> lt y x);
+      ("le", le, fun x y -> logical_not (gt x y));
+      ("ge", ge, fun x y -> logical_not (lt x y));
+      ("ne", ne, fun x y -> logical_not (eq x y));
+      ( "neg of the first",
+        (fun x _ -> neg x),
+        fun x _ ->
+          if Dtype.equal (dtype x) Bool then logical_not x else mul x (int (-1))
+      );
+      ( "logical_not of the first",
+        (fun x _ -> logical_not x),
+        fun x _ -> eq (cast x Bool) (bool false) );
+      ( "floor of the first",
+        (fun x _ -> floor x),
+        fun x _ ->
+          let t = trunc x in
+          where (gt t x) (sub t (int 1)) t );
+    ]
+
+let elementwise_group =
+  group "Elementwise"
     [
       prop "a binary operation promotes its operands to their least upper type"
-        (Gen.triple gen_binary gen_dtype gen_dtype) (fun ((name, fn), d0, d1) ->
-          assume (not (Dtype.equal d0 Bool && Dtype.equal d1 Bool));
-          let u = fn (typed d0 "x") (typed d1 "y") in
-          let promoted = Dtype.least_upper [ d0; d1 ] in
-          let expected =
-            if name = "lt" || name = "ne" || name = "eq" then Dtype.Bool
-            else promoted
-          in
-          equal dtype expected (Ops.dtype u));
+        (Gen.triple (named primitive_binary) gen_dtype gen_dtype)
+        (fun ((_, fn, op), d0, d1) ->
+          let x = typed d0 "x" and y = typed d1 "y" in
+          let t = Dtype.least_upper [ d0; d1 ] in
+          same_outcome
+            (fun () -> Ops.v ~src:[ Ops.cast x t; Ops.cast y t ] op)
+            (fun () -> fn x y));
       prop "a weak constant takes the other operand's kind and stays weak"
         gen_dtype (fun dt ->
           assume (not (Dtype.equal dt Bool));
           let u = Ops.O.(typed dt "x" + int 1) in
-          equal dtype dt (Ops.dtype u);
-          equal dtype (Dtype.weak dt) (Ops.dtype (Ops.nth u 1)));
-      test "the operators are the named operations" (fun () ->
-          List.iter
-            (fun (name, x, y) -> equal ~msg:name uop x y)
-            Ops.
-              [
-                ("+", O.(a + b), add a b);
-                ("-", O.(a - b), sub a b);
-                ("*", O.(a * b), mul a b);
-                ("/", O.(a / b), div a b);
-                ("//", O.(a // b), div ~rounding:`Floor a b);
-                ("%", O.(a % b), mod_ a b);
-                ("~-", O.(~-a), neg a);
-                ("<", O.(a < b), lt a b);
-                (">", O.(a > b), gt a b);
-                ("<=", O.(a <= b), le a b);
-                (">=", O.(a >= b), ge a b);
-                ("<>", O.(a <> b), ne a b);
-                ("land", O.(a land b), bitwise_and a b);
-                ("lor", O.(a lor b), bitwise_or a b);
-                ("lxor", O.(a lxor b), bitwise_xor a b);
-                ("lnot", O.(lnot a), bitwise_not a);
-                ("lsl", O.(a lsl b), shl a b);
-                ("lsr", O.(a lsr b), shr a b);
-                ("int", O.int 3, int 3);
-                ("float", O.float 1.5, float 1.5);
-                ("bool", O.bool true, bool true);
-              ]);
-      test "alu applies an operation as given" (fun () ->
-          equal uop (Ops.v ~src:[ a; b ] Op.Add) (Ops.alu a Op.Add [ b ]);
-          equal uop
-            (Ops.v ~src:[ a; Ops.float 1. ] Op.Mul)
-            (Ops.alu a Op.Mul [ Ops.float 1. ]));
-      test "a cast or bitcast to the node's own type is the node" (fun () ->
-          is_true (Ops.cast a Int32 == a);
-          is_true (Ops.bitcast a Int32 == a));
-      test "a bitcast rejects a weak type on either side" (fun () ->
-          rejects (fun () -> Ops.bitcast (Ops.int 1) Int32);
-          rejects (fun () -> Ops.bitcast a Weak_int));
-      test
-        "pow rejects an integer base raised to a constant that is not a natural"
-        (fun () ->
-          rejects (fun () -> Ops.pow a (Ops.int (-1)));
-          ignore (Ops.pow a (Ops.int 0));
-          ignore (Ops.pow a (Ops.float 0.5));
-          ignore (Ops.pow (fvar "x") (Ops.float 0.5)));
-      test "usum and uprod fold booleans with or and and" (fun () ->
-          let p = flag "p" and q = flag "q" in
-          equal uop (Ops.bitwise_or p q) (Ops.usum p [ q ]);
-          equal uop (Ops.bitwise_and p q) (Ops.uprod p [ q ]);
-          equal uop Ops.O.(a + b + b) (Ops.usum a [ b; b ]);
-          is_true (Ops.uprod a [] == a));
-      test
-        "commit_dtype commits a weak integer to the narrowest type of its \
-         bounds" (fun () ->
-          equal dtype Int32 (Ops.commit_dtype (weak_var "n" 0 10));
-          equal dtype Int64
-            (Ops.commit_dtype
-               (Ops.variable ~dtype:Weak_int "n" (i 0)
-                  (`Int (Bigint.shift_left Bigint.one 40))));
-          equal dtype Int64
-            (Ops.commit_dtype ~default_int:Int64 (weak_var "n" 0 10));
-          equal dtype Float32 (Ops.commit_dtype (Ops.float 1.));
-          equal dtype Float16 (Ops.commit_dtype (fvar ~dtype:Float16 "x")));
-      test "element_size is the type's size, and rejects a weak type" (fun () ->
-          equal int 2 (Ops.element_size (fvar ~dtype:Float16 "x"));
-          equal int 8 (Ops.element_size (var ~dtype:Int64 "n" 0 1));
-          rejects (fun () -> Ops.element_size (Ops.int 1)));
-      test "contiguous stages a placed value, and is the node otherwise"
-        (fun () ->
-          let p = param ~device:cpu [ 4 ] 0 Float32 in
-          let v = Ops.O.(p + float 1.) in
-          equal uop (Ops.v ~src:[ v ] Op.Stage) (Ops.contiguous v);
-          is_true (Ops.contiguous p == p);
-          is_true (Ops.contiguous (Ops.contiguous v) == Ops.contiguous v);
-          is_true (Ops.contiguous (Ops.int 1) == Ops.int 1);
-          let unplaced = Ops.O.(param [ 4 ] 1 Float32 + float 1.) in
-          is_true (Ops.contiguous unplaced == unplaced));
+          equal (pair dtype dtype)
+            (dt, Dtype.weak dt)
+            (Ops.dtype u, Ops.dtype (Ops.nth u 1)));
+      test "a binary operation has its operands' broadcast shape" (fun () ->
+          let p = param [ 4; 3 ] 0 Float32 in
+          equal shape (ints [ 4; 3 ]) (Shape.shape Ops.O.(p + float 1.)));
+      prop "a unary operation is its operation of the operand"
+        (Gen.pair (named primitive_unary) gen_dtype)
+        (fun ((_, fn, op), dt) ->
+          let x = typed dt "x" in
+          same_outcome (fun () -> Ops.v ~src:[ x ] op) (fun () -> fn x));
+      prop "the derived operations are their definitions on operands of a type"
+        (Gen.pair (named derived) gen_dtype)
+        (fun ((_, fn, def), dt) ->
+          let x = typed dt "x" and y = typed dt "y" in
+          same_outcome (fun () -> def x y) (fun () -> fn x y));
     ]
 
-let elementwise_goldens =
-  [
-    golden "sub" "builds each difference as subtraction.golden states"
-      "subtraction.golden" Goldens.subtraction;
-    golden "neg" "builds each negation as negation.golden states"
-      "negation.golden" Goldens.negation;
-    golden "add"
-      "promotes its operands, a weak constant staying weak, as \
-       weak_promotion.golden states"
-      "weak_promotion.golden" Goldens.weak_promotion;
-    group "div, mod_ and fmod"
-      [
-        group "build each quotient and remainder as division.golden states"
-          [ Golden.graph "division.golden" Goldens.division ];
-        group
-          "build each quotient and remainder by a constant as \
-           constant_division.golden states"
-          [ Golden.graph "constant_division.golden" Goldens.constant_division ];
-      ];
-    golden "lt, gt, le, ge, eq and ne"
-      "build each comparison as comparisons.golden states" "comparisons.golden"
-      Goldens.comparisons;
-    golden "the bitwise operations" "build each node as bitwise.golden states"
-      "bitwise.golden" Goldens.bitwise;
-    golden "maximum and minimum" "build each node as extrema.golden states"
-      "extrema.golden" Goldens.extrema;
-    golden "where" "builds each selection as selection.golden states"
-      "selection.golden" Goldens.selection;
-    golden "the unary operations" "build each node as unary.golden states"
-      "unary.golden" Goldens.unary;
-    golden "pow" "builds each power as powers.golden states" "powers.golden"
-      Goldens.powers;
-    golden "usum and uprod"
-      "build each sum and product as sums_and_products.golden states"
-      "sums_and_products.golden" Goldens.sums_and_products;
-    golden "cast" "builds each cast as casts.golden states" "casts.golden"
-      Goldens.casts;
-    golden "bitcast" "builds each bitcast as bitcasts.golden states"
-      "bitcasts.golden" Goldens.bitcasts;
-  ]
+let alu_group =
+  let a = var "a" 0 10 and b = var "b" 0 10 in
+  group "alu"
+    [
+      cases "is the operation on the operands as given"
+        ~id:(fun (w, _, _) -> w)
+        [
+          ("a sum of int32s", Op.Add, [ a; b ]);
+          ("a product of an int32 and a weak float", Op.Mul, [ a; Ops.float 1. ]);
+          ("a negation", Op.Neg, [ a ]);
+        ]
+        (fun (_, op, src) ->
+          equal uop (Ops.v ~src op) (Ops.alu (List.hd src) op (List.tl src)));
+    ]
+
+let cast_group =
+  let a = var "a" 0 10 in
+  group "cast"
+    [
+      golden_graph "builds each cast as casts.golden states" "casts.golden"
+        Goldens.casts;
+      test "to another type is the Cast of the node" (fun () ->
+          equal uop
+            (Ops.v ~src:[ a ] ~arg:(Dtype Float32) Op.Cast)
+            (Ops.cast a Float32));
+      test "to the node's own type is the node" (fun () ->
+          equal uop a (Ops.cast a Int32));
+    ]
+
+let add_group =
+  group "add"
+    [
+      golden_graph
+        "promotes its operands, a weak constant staying weak, as \
+         weak_promotion.golden states"
+        "weak_promotion.golden" Goldens.weak_promotion;
+    ]
+
+let bitwise_group =
+  group "the bitwise operations"
+    [
+      golden_graph "build each node as bitwise.golden states" "bitwise.golden"
+        Goldens.bitwise;
+    ]
+
+let unary_group =
+  group "the unary operations"
+    [
+      golden_graph "build each node as unary.golden states" "unary.golden"
+        Goldens.unary;
+    ]
+
+let sub_group =
+  group "sub"
+    [
+      golden_graph "builds each difference as subtraction.golden states"
+        "subtraction.golden" Goldens.subtraction;
+    ]
+
+let neg_group =
+  group "neg"
+    [
+      golden_graph "builds each negation as negation.golden states"
+        "negation.golden" Goldens.negation;
+    ]
+
+let division_group =
+  group "div, mod_ and fmod"
+    [
+      golden_graph "build each quotient and remainder as division.golden states"
+        "division.golden" Goldens.division;
+      golden_graph
+        "build each quotient and remainder by a constant as \
+         constant_division.golden states"
+        "constant_division.golden" Goldens.constant_division;
+    ]
+
+let pow_group =
+  let a = var "a" 0 10 in
+  group "pow"
+    [
+      golden_graph "builds each power as powers.golden states" "powers.golden"
+        Goldens.powers;
+      test
+        "raises for a negative integer constant exponent of a type that is no \
+         float" (fun () ->
+          let raises f =
+            match f () with _ -> false | exception Invalid_argument _ -> true
+          in
+          equal (list string) [ "an int32 to -1" ]
+            (List.filter_map
+               (fun (what, f) -> if raises f then Some what else None)
+               [
+                 ("an int32 to -1", fun () -> Ops.pow a (Ops.int (-1)));
+                 ( "an int32 to an int8 -1",
+                   fun () -> Ops.pow a (Ops.int ~dtype:Int8 (-1)) );
+                 ("an int32 to 0", fun () -> Ops.pow a (Ops.int 0));
+                 ("an int32 to 0.5", fun () -> Ops.pow a (Ops.float 0.5));
+                 ( "an int32 to a float -1",
+                   fun () -> Ops.pow a (Ops.float (-1.)) );
+                 ("a float32 to -1", fun () -> Ops.pow (fvar "x") (Ops.int (-1)));
+                 ("an int32 to a variable", fun () -> Ops.pow a (var "b" (-2) 2));
+               ]));
+    ]
+
+let comparisons_group =
+  group "lt, gt, le, ge, eq and ne"
+    [
+      golden_graph "build each comparison as comparisons.golden states"
+        "comparisons.golden" Goldens.comparisons;
+    ]
+
+let where_group =
+  group "where"
+    [
+      golden_graph "builds each selection as selection.golden states"
+        "selection.golden" Goldens.selection;
+    ]
+
+let extrema_group =
+  group "maximum and minimum"
+    [
+      golden_graph "build each node as extrema.golden states" "extrema.golden"
+        Goldens.extrema;
+    ]
+
+let operators_group =
+  let a = var "a" 0 10 and b = var "b" 0 10 in
+  group "O"
+    [
+      cases "each operator is the function of the same meaning"
+        ~id:(fun (name, _, _) -> name)
+        Ops.
+          [
+            ("+", O.(a + b), add a b);
+            ("-", O.(a - b), sub a b);
+            ("*", O.(a * b), mul a b);
+            ("/", O.(a / b), div a b);
+            ("//", O.(a // b), div ~rounding:`Floor a b);
+            ("%", O.(a % b), mod_ a b);
+            ("~-", O.(~-a), neg a);
+            ("<", O.(a < b), lt a b);
+            (">", O.(a > b), gt a b);
+            ("<=", O.(a <= b), le a b);
+            (">=", O.(a >= b), ge a b);
+            ("<>", O.(a <> b), ne a b);
+            ("land", O.(a land b), bitwise_and a b);
+            ("lor", O.(a lor b), bitwise_or a b);
+            ("lxor", O.(a lxor b), bitwise_xor a b);
+            ("lnot", O.(lnot a), bitwise_not a);
+            ("lsl", O.(a lsl b), shl a b);
+            ("lsr", O.(a lsr b), shr a b);
+          ]
+        (fun (_, op, fn) -> equal uop fn op);
+      cases "int, float and bool are the weak literals"
+        ~id:(fun (n, _, _) -> n)
+        [
+          ("int", Ops.O.int 3, literal (i 3));
+          ("float", Ops.O.float 1.5, literal (f 1.5));
+          ("bool", Ops.O.bool true, literal (`Bool true));
+        ]
+        (fun (_, u, expected) -> equal uop expected u);
+    ]
+
+let bitcast_group =
+  let a = var "a" 0 10 in
+  group "bitcast"
+    [
+      golden_graph "builds each bitcast as bitcasts.golden states"
+        "bitcasts.golden" Goldens.bitcasts;
+      test "to another type is the Bitcast of the node" (fun () ->
+          equal uop
+            (Ops.v ~src:[ a ] ~arg:(Dtype Uint32) Op.Bitcast)
+            (Ops.bitcast a Uint32));
+      test "to the node's own type is the node" (fun () ->
+          equal uop a (Ops.bitcast a Int32));
+      cases "raises for a weak type on either side"
+        ~id:(fun (w, _, _) -> w)
+        [
+          ("from a weak integer", Ops.int 1, Dtype.Int32);
+          ("from a weak float", Ops.float 1., Float32);
+          ("to a weak integer", a, Weak_int);
+          ("to a weak float", a, Weak_float);
+        ]
+        (fun (_, u, dt) -> rejects (fun () -> Ops.bitcast u dt));
+    ]
+
+let commit_dtype_group =
+  group "commit_dtype"
+    [
+      cases
+        "commits a weak integer to the narrowest type of its bounds, a weak \
+         float to its default"
+        ~id:(fun (w, _, _, _) -> w)
+        [
+          ("a weak integer of 0 to 10", None, weak_var "n" 0 10, Dtype.Int32);
+          ( "a weak integer up to 2^40",
+            None,
+            Ops.variable ~dtype:Weak_int "n" (i 0)
+              (`Int (Bigint.shift_left Bigint.one 40)),
+            Int64 );
+          ( "a weak integer of 0 to 10, by default an int64",
+            Some Dtype.Int64,
+            weak_var "n" 0 10,
+            Int64 );
+          ("a weak float", None, Ops.float 1., Float32);
+          ("a float16", None, fvar ~dtype:Float16 "x", Float16);
+        ]
+        (fun (_, default_int, u, expected) ->
+          equal dtype expected (Ops.commit_dtype ?default_int u));
+    ]
+
+let widens_group =
+  group "widens"
+    [
+      (* Every cast between two types, against widens' sentence: to more bytes,
+         lossless, neither type boolean or weak. *)
+      test "is true of a cast to a type of more bytes that holds every value"
+        (fun () ->
+          let types =
+            List.filter (fun dt -> dt <> Dtype.Void) Dtypes.declared
+          in
+          let pairs =
+            List.concat_map (fun s -> List.map (fun d -> (s, d)) types) types
+          in
+          let stated (s, d) =
+            let plain dt = not (Dtype.is_bool dt || Dtype.mem dt Dtype.weaks) in
+            plain s && plain d
+            && Dtype.itemsize s < Dtype.itemsize d
+            && Dtype.can_lossless_cast s d
+          in
+          let widening (s, d) =
+            let x = Ops.variable ~dtype:s "x" (Dtype.min s) (Dtype.max s) in
+            Ops.widens (Ops.v ~src:[ x ] ~arg:(Dtype d) Op.Cast)
+          in
+          equal
+            (list (pair dtype dtype))
+            (List.filter stated pairs)
+            (List.filter widening pairs));
+      test "is false of a node that is no cast" (fun () ->
+          let x = var ~dtype:Int8 "x" 0 1 in
+          equal (list bool) [ false; false ]
+            [ Ops.widens x; Ops.widens (Ops.bitcast x Uint8) ]);
+    ]
+
+let element_size_group =
+  group "element_size"
+    [
+      cases "is the size of the node's type"
+        ~id:(fun (w, _, _) -> w)
+        [
+          ("a float16", fvar ~dtype:Float16 "x", 2);
+          ("an int64", var ~dtype:Int64 "n" 0 1, 8);
+          ("a boolean", flag "p", 1);
+        ]
+        (fun (_, u, expected) -> equal int expected (Ops.element_size u));
+      cases "raises for a weak type" ~id:fst
+        [ ("a weak integer", Ops.int 1); ("a weak float", Ops.float 1.) ]
+        (fun (_, u) -> rejects (fun () -> Ops.element_size u));
+    ]
+
+let contiguous_group =
+  group "contiguous"
+    [
+      test "stages a placed value, and is any other node itself" (fun () ->
+          let p = param ~device:cpu [ 4 ] 0 Float32 in
+          let v = Ops.O.(p + float 1.) in
+          let unplaced = Ops.O.(param [ 4 ] 1 Float32 + float 1.) in
+          let staged = Ops.v ~src:[ v ] Op.Stage in
+          equal
+            (list (pair string uop))
+            [
+              ("a placed value", staged);
+              ("a stage", staged);
+              ("storage", p);
+              ("a weak constant", Ops.int 1);
+              ("an unplaced value", unplaced);
+            ]
+            (List.map
+               (fun (what, u) -> (what, Ops.contiguous u))
+               [
+                 ("a placed value", v);
+                 ("a stage", staged);
+                 ("storage", p);
+                 ("a weak constant", Ops.int 1);
+                 ("an unplaced value", unplaced);
+               ]));
+    ]
+
+let usum_group =
+  let a = var "a" 0 10 and b = var "b" 0 10 in
+  let p = flag "p" and q = flag "q" in
+  group "usum and uprod"
+    [
+      golden_graph
+        "build each sum and product as sums_and_products.golden states"
+        "sums_and_products.golden" Goldens.sums_and_products;
+      cases
+        "are the sum and product, or disjunction and conjunction of booleans"
+        ~id:(fun (w, _, _) -> w)
+        Ops.
+          [
+            ("a sum", usum a [ b; b ], add (add a b) b);
+            ("a product", uprod a [ b; b ], mul (mul a b) b);
+            ("a sum of booleans", usum p [ q ], bitwise_or p q);
+            ("a product of booleans", uprod p [ q ], bitwise_and p q);
+            ("a sum of one", usum a [], a);
+            ("a product of one", uprod a [], a);
+          ]
+        (fun (_, u, expected) -> equal uop expected u);
+    ]
 
 let substitute_goldens =
   [
@@ -1256,6 +1503,28 @@ let groups =
     is_inline_call_group;
   ]
   @ unbound_outputs_groups
-  @ [ custom_function_group; call_group ]
-  @ (elementwise :: elementwise_goldens)
+  @ [
+      custom_function_group;
+      call_group;
+      elementwise_group;
+      alu_group;
+      cast_group;
+      add_group;
+      bitwise_group;
+      unary_group;
+      sub_group;
+      neg_group;
+      division_group;
+      pow_group;
+      comparisons_group;
+      where_group;
+      extrema_group;
+      operators_group;
+      bitcast_group;
+      commit_dtype_group;
+      widens_group;
+      element_size_group;
+      contiguous_group;
+      usum_group;
+    ]
   @ substitute_goldens

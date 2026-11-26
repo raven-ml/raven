@@ -1253,8 +1253,8 @@ module type Elementwise = sig
       an integer [x] and a weak integer [y], which keeps its value at no width
       ({!Op.Pow}'s exponent is a number).
 
-      Raises [Invalid_argument] if the promoted type is not a float and [y] is a
-      negative integer constant. *)
+      Raises [Invalid_argument] if the promoted type is not a float and [y] is
+      the weak literal of a negative integer. *)
 
   val gt : t -> t -> t
   (** [gt x y] is [lt y x]. *)
