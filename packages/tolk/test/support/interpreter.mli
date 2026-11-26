@@ -75,7 +75,8 @@ val eval :
     outside its vector or stack, or holds an operation other than a constant, a
     scalar leaf, an arithmetic operation, a cast, a bit reinterpretation, a
     reduction over ranges, an index of storage, of a vector load, or of stacks
-    by one integer, or a load. *)
+    by one integer, or a load, or an operation {!Tolk.Ops.exec_alu} refuses, as
+    a shift by a negative count. *)
 
 val overflows :
   ?vars:(string * Dtype.value) list ->
@@ -90,7 +91,10 @@ val overflows :
     or casts a NaN or an infinity to such a type, which has no value there, as
     for a float past the type: "If the value of the integral part cannot be
     represented by the integer type, the behavior is undefined" (C11 6.3.1.4p1).
-    Where it is [false], {!eval} computes what exact integer arithmetic does.
+    A left shift by a count of its type's width or more does not overflow, since
+    its value, [0] ({!Tolk.Ops.exec_alu}), is defined. Where it is [false],
+    {!eval} computes what exact integer arithmetic does, except that a left
+    shift by its type's width or more is [0].
 
     Raises [Invalid_argument] as {!eval} does. *)
 
