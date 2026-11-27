@@ -13,7 +13,7 @@ raven exchanges `Nx.t` values and `Nx.Ptree` structures.
   kernel library implements, its programs (`Prog`) and `nx_kinds.h`.
 - `nx.cpu` computes on memory the host addresses, `nx.cuda` on NVIDIA
   GPUs of sm_89, `nx.amd` on AMD GPUs of RDNA4 and `nx.metal` on Apple
-  GPUs of the Apple7 family. No kernel library uses another's code. A GPU
+  GPUs of the Apple7 and Apple8 families. No kernel library uses another's code. A GPU
   set computes eagerly when `Nx.devices` mints it with `~kernels`; other
   sets of GPUs compute under `Rune.jit`.
 - `nx.cuda`'s device code is compiled into committed sm_89 cubins:

@@ -382,7 +382,7 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     [~kernels:(module Nx_cuda)], from the library [nx.cuda], computes a set of
     NVIDIA GPUs of [sm_89], [~kernels:(module Nx_amd)], from [nx.amd], a set of
     AMD GPUs of RDNA4, and [~kernels:(module Nx_metal)], from [nx.metal], a set
-    of Apple GPUs of the Apple7 family. On a set without kernels, a creation
+    of Apple GPUs of the Apple7 and Apple8 families. On a set without kernels, a creation
     ({!section-creation}), a value whose elements come from numbers, is made on
     the devices of the placement the call names, its bits the host form's: the
     host computes it into a device's memory where it addresses it, else in slabs

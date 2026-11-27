@@ -24,8 +24,9 @@ compiled for the CPU, so `Rune.jit` evaluates its function eagerly there:
 results are the same, at eager speed.
 
 GPU backends are tier 1 on the hardware they target: Metal on Apple
-silicon, CUDA on NVIDIA GPUs of compute capability 8.9, and AMD GPUs of
-RDNA4. Other GPUs of a supported vendor compute through `Rune.jit`.
+GPUs of the Apple7 and Apple8 families, CUDA on NVIDIA GPUs of compute
+capability 8.9, and AMD GPUs of RDNA4. Other GPUs of a supported vendor
+compute through `Rune.jit`.
 
 ## Installing from opam
 

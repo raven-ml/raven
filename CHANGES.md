@@ -3919,6 +3919,8 @@ its lock and from samples the dashboard saw arrive.
 
 ### Nx
 
+- `Nx_metal.computes_on` is true for an Apple8 GPU when the metallib loads,
+  so an M2 computes with the Metal kernels. The launch budget stays the M1's.
 - An eager map, reduction or scan of a program too wide for one launch on
   nx.cuda, such as an `Nx.Rng.binomial` draw, plans its parts in a launch's
   width: a warm binomial allocates 18M words in 36 ms where it took 46M in
