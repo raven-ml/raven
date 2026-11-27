@@ -35,6 +35,23 @@ let fresh f =
             skip ~reason:"no Metal GPU nx.metal computes on" ();
           f d)
 
+(* nx_metal.mli: computes_on is true for Apple7 and Apple8 when the
+   metallib loads. [fresh] skips when it is false, so a closed gate
+   would not fail. This opens the GPU and requires the promise. *)
+let test_family () =
+  if Sys.getenv_opt "NX_KERNELS" = Some "cpu" then
+    skip ~reason:"NX_KERNELS=cpu" ();
+  match Rig.open_ (Rig_metal.gpu 0) with
+  | Error _ -> skip ~reason:"no Metal GPU" ()
+  | Ok d ->
+      Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+      let arch = Rig.arch d in
+      let named =
+        String.equal arch "Apple7" || String.equal arch "Apple8"
+      in
+      if not named then skip ~reason:("arch " ^ arch) ()
+      else equal bool true (Nx_metal.computes_on d)
+
 let names ks = List.sort_uniq compare (List.map K.name ks)
 let made d = names (List.filter (Nx_metal.resolved d) (Array.to_list K.all))
 
@@ -220,6 +237,7 @@ let () =
   exit
     (run "nx_metal.pipelines"
        [
+         test "computes on an Apple7 or Apple8 GPU" test_family;
          test "a contraction makes its own launches' pipelines alone"
            test_contract;
          test "a cast waits for its own kernel alone" test_cast;

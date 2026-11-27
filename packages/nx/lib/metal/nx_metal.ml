@@ -65,9 +65,10 @@ and entry = { answer : (Plan.t option, A.answer) result; bytes : int }
 (* The caches of map plans a device keeps, chosen by the facts' hash. *)
 let buckets = 256
 
-(* A device of the Apple7 family, which loads the metallib. *)
+(* A device of the Apple7 or Apple8 family, which loads the metallib. *)
 let load d =
-  if not (String.equal (Rig.arch d) gpu_family) then None
+  let arch = Rig.arch d in
+  if not (String.equal arch gpu_family || String.equal arch "Apple8") then None
   else
     match Rig.Image.load d Metallib.metallib with
     | Error _ -> None

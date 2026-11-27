@@ -3,13 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Kernels of {!Nx_kernel.S} for Apple GPUs of the Apple7 family.
+(** Kernels of {!Nx_kernel.S} for Apple GPUs of the Apple7 and Apple8
+    families.
 
     [computes_on d] is [true] iff [d]'s processor ({!Rig.arch}) is ["Apple7"],
-    the GPU of an M1, M1 Pro, M1 Max or M1 Ultra, and this library's metallib
-    loads on [d]. Its kernels are checked on that family alone, so it computes
-    on no other. The first call for [d], of [computes_on] or of a kernel, loads
-    the metallib, and a load that fails answers [false] from [computes_on] and
+    the GPU of an M1, M1 Pro, M1 Max or M1 Ultra, or ["Apple8"], and this
+    library's metallib loads on [d]. The kernels were checked on Apple7, and
+    for correctness on an M2 Pro, whose arch is ["Apple8"]. It computes on no
+    other arch. The times below were measured on an M1 and an M1 Max, and the
+    launch budget stays the M1's. The first call for [d], of [computes_on] or
+    of a kernel, loads the metallib, and a load that fails answers [false]
+    from [computes_on] and
     [Declined] from a kernel, as every later call does. [computes_on d] raises
     {!Rig.Lost} if [d] is lost. Kernels claim through {!Nx_array.door} until
     their work is submitted, and answer [Done] once it is on [d]'s timeline; on
